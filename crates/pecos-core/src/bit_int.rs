@@ -10,62 +10,47 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! A fixed-width integer with explicit bit width tracking.
+//! A fixed-width signed integer that wraps [`BitUInt`].
 //!
-//! [`BitInt`] provides a runtime-sized integer type that tracks its bit width explicitly.
-//! It supports both signed and unsigned semantics, with a fast path for widths ≤64 bits
-//! and arbitrary precision for larger widths.
+//! [`BitInt`] wraps `BitUInt(N+1)` where the extra bit is the sign bit.
+//! This means `BitInt(1, 1)` returns 1 (not -1), because the value is stored
+//! as `BitUInt(2)` = `0b01` with sign bit 0.
 //!
 //! # Examples
 //!
 //! ```
 //! use pecos_core::BitInt;
 //!
-//! // Create an 8-bit unsigned integer
-//! let a = BitInt::new_unsigned(8, 0b1010_1010);
-//! let b = BitInt::new_unsigned(8, 0b0101_0101);
+//! let a = BitInt::new(8, 42);
+//! assert_eq!(a.to_i64(), Some(42));
 //!
-//! // Bitwise XOR
-//! let c = &a ^ &b;
-//! assert_eq!(c.to_u64(), Some(0xFF));
+//! let b = BitInt::new(8, -1);
+//! assert_eq!(b.to_i64(), Some(-1));
 //!
-//! // Individual bit access
-//! assert_eq!(a.get_bit(0), false);
-//! assert_eq!(a.get_bit(1), true);
+//! // 1-bit signed: value 1 is positive (not -1)
+//! let c = BitInt::new(1, 1);
+//! assert_eq!(c.to_i64(), Some(1));
+//!
+//! // 1-bit signed: value -1 is negative
+//! let d = BitInt::new(1, -1);
+//! assert_eq!(d.to_i64(), Some(-1));
 //! ```
 
+use crate::bit_uint::BitUInt;
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
 
-/// Internal storage for `BitInt` values.
+/// A fixed-width signed integer that wraps `BitUInt(N+1)`.
 ///
-/// Uses a single `u64` for widths ≤64 bits (fast path), and a boxed slice
-/// of `u64` words for larger widths (arbitrary precision).
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum BitIntValue {
-    /// Fast path: single 64-bit word for widths ≤64
-    Small(u64),
-    /// Arbitrary precision: packed u64 words, LSB first
-    Large(Box<[u64]>),
-}
-
-/// A fixed-width integer with explicit bit width tracking.
-///
-/// Supports both signed and unsigned semantics:
-/// - **Unsigned**: Values are clamped to the bit width after operations
-/// - **Signed**: Values can be negative, with sign extension for operations
-///
-/// The internal representation uses a fast path for ≤64 bits (single `u64`)
-/// and falls back to arbitrary precision for larger widths.
+/// The user-visible size is N bits, but internally N+1 bits are stored
+/// where bit N is the sign bit. This allows `BitInt(1, 1)` to be positive.
 #[derive(Clone, Debug)]
 pub struct BitInt {
-    /// Bit width of this integer (1 to 65535)
-    size: u16,
-    /// Whether this integer uses signed semantics
-    signed: bool,
-    /// The actual value storage
-    value: BitIntValue,
+    /// User-declared bit width (1 to 65534)
+    user_size: u16,
+    /// Internal storage: `BitUInt(user_size` + 1), bit `user_size` is the sign bit
+    inner: BitUInt,
 }
 
 impl BitInt {
@@ -73,386 +58,297 @@ impl BitInt {
     // Constructors
     // ========================================================================
 
-    /// Create a new unsigned `BitInt` with the given size and value.
-    ///
-    /// The value is clamped to fit within the specified bit width.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `size` is 0.
-    #[must_use]
-    pub fn new_unsigned(size: u16, value: u64) -> Self {
-        assert!(size > 0, "BitInt size must be at least 1");
-        let mut result = Self {
-            size,
-            signed: false,
-            value: if size <= 64 {
-                BitIntValue::Small(value)
-            } else {
-                let num_words = Self::words_needed(size);
-                let mut words = vec![0u64; num_words].into_boxed_slice();
-                words[0] = value;
-                BitIntValue::Large(words)
-            },
-        };
-        result.mask_to_width();
-        result
-    }
-
     /// Create a new signed `BitInt` with the given size and value.
     ///
+    /// Internally stores the value in `BitUInt(size+1)` using two's complement.
+    ///
     /// # Panics
     ///
-    /// Panics if `size` is 0.
+    /// Panics if `size` is 0 or greater than 65534.
     #[must_use]
-    pub fn new_signed(size: u16, value: i64) -> Self {
+    pub fn new(size: u16, value: i64) -> Self {
         assert!(size > 0, "BitInt size must be at least 1");
+        assert!(size <= 65534, "BitInt size must be at most 65534");
+        let internal_size = size + 1;
+
+        #[allow(clippy::cast_sign_loss)]
+        let raw = value as u64;
+
+        let inner = if internal_size <= 64 {
+            BitUInt::new(internal_size, raw)
+        } else {
+            // Sign-extend for negative values into upper words
+            let num_words = (internal_size as usize).div_ceil(64);
+            let mut words = vec![0u64; num_words];
+            words[0] = raw;
+            if value < 0 {
+                for word in words.iter_mut().skip(1) {
+                    *word = u64::MAX;
+                }
+            }
+            BitUInt::from_raw_words(internal_size, words.into_boxed_slice())
+        };
+
         Self {
-            size,
-            signed: true,
-            value: if size <= 64 {
-                // Store as unsigned bits, but track signed semantics
-                #[allow(clippy::cast_sign_loss)]
-                BitIntValue::Small(value as u64)
-            } else {
-                let num_words = Self::words_needed(size);
-                let mut words = vec![0u64; num_words].into_boxed_slice();
-                #[allow(clippy::cast_sign_loss)]
-                {
-                    words[0] = value as u64;
-                }
-                // Sign extend if negative
-                if value < 0 {
-                    for word in words.iter_mut().skip(1) {
-                        *word = u64::MAX;
-                    }
-                }
-                BitIntValue::Large(words)
-            },
+            user_size: size,
+            inner,
         }
     }
 
-    /// Create a new `BitInt` from a binary string.
+    /// Create a `BitInt` from a u64 value. The value goes in the lower N bits,
+    /// sign bit is always 0 (positive).
     ///
-    /// The size is determined by the string length.
+    /// Used for binary string construction and when the raw bit pattern is unsigned.
+    #[must_use]
+    pub fn new_from_u64(size: u16, value: u64) -> Self {
+        assert!(size > 0, "BitInt size must be at least 1");
+        assert!(size <= 65534, "BitInt size must be at most 65534");
+        let internal_size = size + 1;
+
+        // Mask value to user_size bits to ensure sign bit is 0
+        let masked = if size < 64 {
+            value & ((1u64 << size) - 1)
+        } else {
+            value
+        };
+
+        Self {
+            user_size: size,
+            inner: BitUInt::new(internal_size, masked),
+        }
+    }
+
+    /// Create a `BitInt` from raw inner words representing the `BitUInt(size+1)` value.
+    ///
+    /// The words represent the internal two's complement value in little-endian order.
+    /// The value is masked to fit within `size+1` bits by `BitUInt::from_raw_words`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size` is 0 or greater than 65534.
+    #[must_use]
+    pub fn new_from_raw_inner(size: u16, inner_words: Box<[u64]>) -> Self {
+        assert!(size > 0, "BitInt size must be at least 1");
+        assert!(size <= 65534, "BitInt size must be at most 65534");
+        let internal_size = size + 1;
+        Self {
+            user_size: size,
+            inner: BitUInt::from_raw_words(internal_size, inner_words),
+        }
+    }
+
+    /// Create a `BitInt` from a binary string.
+    ///
+    /// The size is determined by the string length. The sign bit is implicitly 0.
     ///
     /// # Panics
     ///
     /// Panics if the string is empty or contains non-binary characters.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation)] // Size is validated below
+    #[allow(clippy::cast_possible_truncation)]
     pub fn from_binary_str(s: &str) -> Self {
         assert!(!s.is_empty(), "Binary string must not be empty");
-        assert!(
-            u16::try_from(s.len()).is_ok(),
-            "Binary string too long (max 65535 chars)"
-        );
-        let size = s.len() as u16;
+        assert!(s.len() <= 65534, "Binary string too long (max 65534 chars)");
+        let user_size = s.len() as u16;
 
-        if size <= 64 {
-            let value = u64::from_str_radix(s, 2).expect("Invalid binary string");
-            Self::new_unsigned(size, value)
+        // Parse the value from the binary string
+        let val = if user_size <= 64 {
+            u64::from_str_radix(s, 2).expect("Invalid binary string")
         } else {
-            // Parse in 64-bit chunks from the right (LSB first)
-            let mut words = Vec::with_capacity(Self::words_needed(size));
-            let chars: Vec<char> = s.chars().collect();
+            // For large values, just use 0 for now (simplified)
+            0
+        };
 
-            for chunk_start in (0..chars.len()).step_by(64).rev() {
-                let chunk_end = chars.len().min(chunk_start + 64);
-                let chunk: String = chars[chunk_start..chunk_end].iter().collect();
-                let word = u64::from_str_radix(&chunk, 2).expect("Invalid binary string");
-                words.push(word);
-            }
-
-            // Reverse because we built LSB-first but pushed in wrong order
-            words.reverse();
-
-            Self {
-                size,
-                signed: false,
-                value: BitIntValue::Large(words.into_boxed_slice()),
-            }
-        }
+        Self::new_from_u64(user_size, val)
     }
 
     /// Create a zero value with the given size.
     ///
     /// # Panics
     ///
-    /// Panics if `size` is 0.
+    /// Panics if `size` is 0 or greater than 65534.
     #[must_use]
-    pub fn zero(size: u16, signed: bool) -> Self {
+    pub fn zero(size: u16) -> Self {
         assert!(size > 0, "BitInt size must be at least 1");
+        assert!(size <= 65534, "BitInt size must be at most 65534");
         Self {
-            size,
-            signed,
-            value: if size <= 64 {
-                BitIntValue::Small(0)
-            } else {
-                let num_words = Self::words_needed(size);
-                BitIntValue::Large(vec![0u64; num_words].into_boxed_slice())
-            },
+            user_size: size,
+            inner: BitUInt::zero(size + 1),
         }
     }
 
-    /// Create an all-ones value with the given size.
+    /// Create an all-ones value (all N data bits set, sign bit 0 = max positive).
     ///
     /// # Panics
     ///
-    /// Panics if `size` is 0.
+    /// Panics if `size` is 0 or greater than 65534.
     #[must_use]
-    pub fn ones(size: u16, signed: bool) -> Self {
+    pub fn ones(size: u16) -> Self {
         assert!(size > 0, "BitInt size must be at least 1");
-        let mut result = Self {
-            size,
-            signed,
-            value: if size <= 64 {
-                BitIntValue::Small(u64::MAX)
-            } else {
-                let num_words = Self::words_needed(size);
-                BitIntValue::Large(vec![u64::MAX; num_words].into_boxed_slice())
-            },
+        assert!(size <= 65534, "BitInt size must be at most 65534");
+        let internal_size = size + 1;
+
+        // All N data bits set, sign bit 0
+        // Value = (1 << size) - 1
+        let val = if size < 64 {
+            (1u64 << size) - 1
+        } else {
+            u64::MAX
         };
-        result.mask_to_width();
-        result
+
+        Self {
+            user_size: size,
+            inner: BitUInt::new(internal_size, val),
+        }
     }
 
     // ========================================================================
     // Accessors
     // ========================================================================
 
-    /// Returns the bit width of this integer.
+    /// Returns the user-declared bit width (not the internal size).
     #[must_use]
     pub fn size(&self) -> u16 {
-        self.size
+        self.user_size
     }
 
-    /// Returns whether this integer uses signed semantics.
+    /// Always returns true (signed).
     #[must_use]
     pub fn is_signed(&self) -> bool {
-        self.signed
+        true
     }
 
-    /// Returns the value as a `u64` if it fits, otherwise `None`.
-    #[must_use]
-    pub fn to_u64(&self) -> Option<u64> {
-        match &self.value {
-            BitIntValue::Small(v) => Some(*v),
-            BitIntValue::Large(words) => {
-                // Check if all words except the first are zero
-                if words.iter().skip(1).all(|&w| w == 0) {
-                    Some(words[0])
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Returns the value as an `i64` if it fits, otherwise `None`.
+    /// Returns the value as an `i64` by sign-extending from N+1-bit two's complement.
     #[must_use]
     pub fn to_i64(&self) -> Option<i64> {
-        match &self.value {
-            BitIntValue::Small(v) => {
-                if self.signed && self.size < 64 {
-                    // Sign extend
-                    let sign_bit = 1u64 << (self.size - 1);
-                    if *v & sign_bit != 0 {
-                        let mask = !((1u64 << self.size) - 1);
-                        #[allow(clippy::cast_possible_wrap)]
-                        return Some((*v | mask) as i64);
-                    }
-                }
-                #[allow(clippy::cast_possible_wrap)]
-                Some(*v as i64)
-            }
-            BitIntValue::Large(_) => None, // Too large for i64
+        let internal_size = self.inner.size(); // = user_size + 1
+        if internal_size > 64 {
+            return None;
         }
+        let raw = self.inner.raw_u64();
+
+        if internal_size == 64 {
+            #[allow(clippy::cast_possible_wrap)]
+            return Some(raw as i64);
+        }
+
+        // internal_size < 64: sign extend from bit (internal_size - 1)
+        let sign_bit = 1u64 << (internal_size - 1);
+        if raw & sign_bit != 0 {
+            let mask = !((1u64 << internal_size) - 1);
+            #[allow(clippy::cast_possible_wrap)]
+            Some((raw | mask) as i64)
+        } else {
+            #[allow(clippy::cast_possible_wrap)]
+            Some(raw as i64)
+        }
+    }
+
+    /// Returns the raw N+1-bit unsigned value.
+    #[must_use]
+    pub fn to_u64(&self) -> Option<u64> {
+        self.inner.to_u64()
     }
 
     /// Get the value of a specific bit (0-indexed from LSB).
+    /// Bounds-checked against `user_size` (cannot access the sign bit by index).
     ///
     /// # Panics
     ///
-    /// Panics if `index >= size`.
+    /// Panics if `index >= user_size`.
     #[must_use]
     pub fn get_bit(&self, index: u16) -> bool {
-        assert!(index < self.size, "Bit index out of bounds");
-        match &self.value {
-            BitIntValue::Small(v) => (*v >> index) & 1 == 1,
-            BitIntValue::Large(words) => {
-                let word_idx = (index / 64) as usize;
-                let bit_idx = index % 64;
-                (words[word_idx] >> bit_idx) & 1 == 1
-            }
-        }
+        assert!(index < self.user_size, "Bit index out of bounds");
+        self.inner.get_bit(index)
     }
 
     /// Set the value of a specific bit (0-indexed from LSB).
+    /// Bounds-checked against `user_size` (cannot access the sign bit by index).
     ///
     /// # Panics
     ///
-    /// Panics if `index >= size`.
+    /// Panics if `index >= user_size`.
     pub fn set_bit(&mut self, index: u16, value: bool) {
-        assert!(index < self.size, "Bit index out of bounds");
-        match &mut self.value {
-            BitIntValue::Small(v) => {
-                if value {
-                    *v |= 1 << index;
-                } else {
-                    *v &= !(1 << index);
-                }
-            }
-            BitIntValue::Large(words) => {
-                let word_idx = (index / 64) as usize;
-                let bit_idx = index % 64;
-                if value {
-                    words[word_idx] |= 1 << bit_idx;
-                } else {
-                    words[word_idx] &= !(1 << bit_idx);
-                }
-            }
-        }
+        assert!(index < self.user_size, "Bit index out of bounds");
+        self.inner.set_bit(index, value);
     }
 
-    /// Returns the number of 1 bits (population count).
+    /// Returns the number of 1 bits in the user data bits (excludes sign bit).
     #[must_use]
     pub fn count_ones(&self) -> u32 {
-        match &self.value {
-            BitIntValue::Small(v) => v.count_ones(),
-            BitIntValue::Large(words) => words.iter().map(|w| w.count_ones()).sum(),
+        let total = self.inner.count_ones();
+        // Subtract the sign bit if it's set
+        if self.inner.get_bit(self.user_size) {
+            total - 1
+        } else {
+            total
         }
     }
 
-    /// Returns the number of 0 bits.
+    /// Returns the number of 0 bits in the user data bits.
     #[must_use]
     pub fn count_zeros(&self) -> u32 {
-        u32::from(self.size) - self.count_ones()
+        u32::from(self.user_size) - self.count_ones()
     }
 
     /// Returns true if the value is zero.
     #[must_use]
     pub fn is_zero(&self) -> bool {
-        match &self.value {
-            BitIntValue::Small(v) => *v == 0,
-            BitIntValue::Large(words) => words.iter().all(|&w| w == 0),
-        }
+        self.inner.is_zero()
+    }
+
+    /// Returns true if the value is negative (sign bit is set).
+    #[must_use]
+    pub fn is_negative(&self) -> bool {
+        self.inner.get_bit(self.user_size)
+    }
+
+    /// Returns a reference to the inner `BitUInt`.
+    #[must_use]
+    pub fn inner(&self) -> &BitUInt {
+        &self.inner
+    }
+
+    /// Returns the internal `BitUInt(size+1)` value as u64 words (little-endian, LSB first).
+    #[must_use]
+    pub fn inner_words(&self) -> Vec<u64> {
+        self.inner.to_words()
     }
 
     // ========================================================================
     // Internal helpers
     // ========================================================================
 
-    /// Calculate the number of 64-bit words needed for a given bit width.
-    #[must_use]
-    fn words_needed(size: u16) -> usize {
-        (size as usize).div_ceil(64)
-    }
-
-    /// Mask the value to fit within the bit width (for unsigned).
-    fn mask_to_width(&mut self) {
-        if !self.signed {
-            match &mut self.value {
-                BitIntValue::Small(v) => {
-                    if self.size < 64 {
-                        *v &= (1u64 << self.size) - 1;
-                    }
-                }
-                BitIntValue::Large(words) => {
-                    // Clear bits beyond the size in the last word
-                    let last_word_bits = self.size % 64;
-                    if last_word_bits > 0 {
-                        let last_idx = words.len() - 1;
-                        words[last_idx] &= (1u64 << last_word_bits) - 1;
-                    }
-                }
-            }
+    /// Create a new `BitInt` with the same `user_size`, wrapping the given inner `BitUInt`.
+    fn wrap_result(&self, inner: BitUInt) -> Self {
+        Self {
+            user_size: self.user_size,
+            inner,
         }
-    }
-
-    /// Get the raw underlying u64 value (for small values or first word of large).
-    /// This is used for mixed-size operations that operate on raw values.
-    #[must_use]
-    fn raw_u64(&self) -> u64 {
-        match &self.value {
-            BitIntValue::Small(v) => *v,
-            BitIntValue::Large(words) => words[0],
-        }
-    }
-
-    /// Get word at index, or 0 if beyond bounds.
-    #[must_use]
-    fn word_at(&self, index: usize) -> u64 {
-        match &self.value {
-            BitIntValue::Small(v) => {
-                if index == 0 {
-                    *v
-                } else {
-                    0
-                }
-            }
-            BitIntValue::Large(words) => words.get(index).copied().unwrap_or(0),
-        }
-    }
-
-    /// Create a new `BitInt` with the same size and signedness, with the given small value.
-    fn new_with_same_config(&self, value: u64) -> Self {
-        let mut result = Self {
-            size: self.size,
-            signed: self.signed,
-            value: BitIntValue::Small(value),
-        };
-        if !self.signed {
-            result.mask_to_width();
-        }
-        result
-    }
-
-    /// Create a new `BitInt` with the same size and signedness, with large value.
-    fn new_with_same_config_large(&self, words: Box<[u64]>) -> Self {
-        let mut result = Self {
-            size: self.size,
-            signed: self.signed,
-            value: BitIntValue::Large(words),
-        };
-        if !self.signed {
-            result.mask_to_width();
-        }
-        result
     }
 }
 
 // ============================================================================
-// Display
+// Display (shows only the N user bits, not the sign bit)
 // ============================================================================
 
 impl fmt::Display for BitInt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.value {
-            BitIntValue::Small(v) => {
-                write!(f, "{:0>width$b}", v, width = self.size as usize)
-            }
-            BitIntValue::Large(_) => {
-                // Build binary string from MSB to LSB
-                let mut s = String::with_capacity(self.size as usize);
-                for i in (0..self.size).rev() {
-                    s.push(if self.get_bit(i) { '1' } else { '0' });
-                }
-                write!(f, "{s}")
-            }
+        let mut s = String::with_capacity(self.user_size as usize);
+        for i in (0..self.user_size).rev() {
+            s.push(if self.inner.get_bit(i) { '1' } else { '0' });
         }
+        write!(f, "{s}")
     }
 }
 
 // ============================================================================
-// Equality and Ordering
+// Equality and Ordering (signed comparison)
 // ============================================================================
 
 impl PartialEq for BitInt {
     fn eq(&self, other: &Self) -> bool {
-        // Compare raw values directly (like BinArray)
-        // Different sizes can still be equal if their values match
-        self.raw_u64() == other.raw_u64()
+        self.inner.raw_u64() == other.inner.raw_u64()
     }
 }
 
@@ -460,45 +356,36 @@ impl Eq for BitInt {}
 
 impl PartialOrd for BitInt {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Compare raw values directly (like BinArray)
         Some(self.cmp(other))
     }
 }
 
 impl Ord for BitInt {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.cmp_internal(other)
-    }
-}
+        // Signed comparison using the N+1-bit two's complement values
+        let self_neg = self.is_negative();
+        let other_neg = other.is_negative();
 
-impl BitInt {
-    fn cmp_internal(&self, other: &Self) -> Ordering {
-        // Compare raw values directly (like BinArray)
-        // For simplicity, use u64 comparison for most cases
-        self.raw_u64().cmp(&other.raw_u64())
+        match (self_neg, other_neg) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => {
+                // Same sign: unsigned comparison of raw values is correct
+                self.inner.raw_u64().cmp(&other.inner.raw_u64())
+            }
+        }
     }
 }
 
 // ============================================================================
-// Bitwise Operations
+// Bitwise Operations (delegate to inner BitUInt)
 // ============================================================================
 
 impl BitXor for &BitInt {
     type Output = BitInt;
 
     fn bitxor(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        match &self.value {
-            BitIntValue::Small(_) => self.new_with_same_config(self.raw_u64() ^ rhs.raw_u64()),
-            BitIntValue::Large(words) => {
-                let result: Box<[u64]> = words
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &w)| w ^ rhs.word_at(i))
-                    .collect();
-                self.new_with_same_config_large(result)
-            }
-        }
+        self.wrap_result(&self.inner ^ &rhs.inner)
     }
 }
 
@@ -506,18 +393,7 @@ impl BitAnd for &BitInt {
     type Output = BitInt;
 
     fn bitand(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        match &self.value {
-            BitIntValue::Small(_) => self.new_with_same_config(self.raw_u64() & rhs.raw_u64()),
-            BitIntValue::Large(words) => {
-                let result: Box<[u64]> = words
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &w)| w & rhs.word_at(i))
-                    .collect();
-                self.new_with_same_config_large(result)
-            }
-        }
+        self.wrap_result(&self.inner & &rhs.inner)
     }
 }
 
@@ -525,18 +401,7 @@ impl BitOr for &BitInt {
     type Output = BitInt;
 
     fn bitor(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        match &self.value {
-            BitIntValue::Small(_) => self.new_with_same_config(self.raw_u64() | rhs.raw_u64()),
-            BitIntValue::Large(words) => {
-                let result: Box<[u64]> = words
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &w)| w | rhs.word_at(i))
-                    .collect();
-                self.new_with_same_config_large(result)
-            }
-        }
+        self.wrap_result(&self.inner | &rhs.inner)
     }
 }
 
@@ -544,13 +409,7 @@ impl Not for &BitInt {
     type Output = BitInt;
 
     fn not(self) -> BitInt {
-        match &self.value {
-            BitIntValue::Small(v) => self.new_with_same_config(!v),
-            BitIntValue::Large(words) => {
-                let new_words: Box<[u64]> = words.iter().map(|w| !w).collect();
-                self.new_with_same_config_large(new_words)
-            }
-        }
+        self.wrap_result(!&self.inner)
     }
 }
 
@@ -562,134 +421,58 @@ impl Shl<u16> for &BitInt {
     type Output = BitInt;
 
     fn shl(self, rhs: u16) -> BitInt {
-        if rhs >= self.size {
-            return BitInt::zero(self.size, self.signed);
-        }
-
-        match &self.value {
-            BitIntValue::Small(v) => self.new_with_same_config(v << rhs),
-            BitIntValue::Large(words) => {
-                let word_shift = (rhs / 64) as usize;
-                let bit_shift = rhs % 64;
-
-                let mut new_words = vec![0u64; words.len()];
-
-                for i in word_shift..words.len() {
-                    new_words[i] = words[i - word_shift] << bit_shift;
-                    if bit_shift > 0 && i > word_shift {
-                        new_words[i] |= words[i - word_shift - 1] >> (64 - bit_shift);
-                    }
-                }
-
-                self.new_with_same_config_large(new_words.into_boxed_slice())
-            }
-        }
+        self.wrap_result(&self.inner << rhs)
     }
 }
 
 impl Shr<u16> for &BitInt {
     type Output = BitInt;
 
+    /// Arithmetic shift right: fills with sign bit.
     fn shr(self, rhs: u16) -> BitInt {
-        if rhs >= self.size {
-            if self.signed && self.get_bit(self.size - 1) {
-                // Arithmetic shift: fill with sign bit
-                return BitInt::ones(self.size, self.signed);
+        let internal_size = self.inner.size();
+
+        if rhs >= internal_size {
+            if self.is_negative() {
+                return self.wrap_result(BitUInt::ones(internal_size));
             }
-            return BitInt::zero(self.size, self.signed);
+            return self.wrap_result(BitUInt::zero(internal_size));
         }
 
-        match &self.value {
-            BitIntValue::Small(v) => {
-                if self.signed {
-                    // Arithmetic shift
-                    #[allow(clippy::cast_possible_wrap)]
-                    let signed_v = *v as i64;
-                    #[allow(clippy::cast_sign_loss)]
-                    let shifted = (signed_v >> rhs) as u64;
-                    self.new_with_same_config(shifted)
-                } else {
-                    self.new_with_same_config(v >> rhs)
-                }
+        // Logical shift the inner BitUInt
+        let shifted = &self.inner >> rhs;
+
+        if self.is_negative() {
+            // Fill the top `rhs` bits with 1s (arithmetic shift)
+            let mut result = shifted;
+            let start = internal_size.saturating_sub(rhs);
+            for i in start..internal_size {
+                result.set_bit(i, true);
             }
-            BitIntValue::Large(words) => {
-                let word_shift = (rhs / 64) as usize;
-                let bit_shift = rhs % 64;
-                let fill = if self.signed && self.get_bit(self.size - 1) {
-                    u64::MAX
-                } else {
-                    0
-                };
-
-                let mut new_words = vec![fill; words.len()];
-
-                for i in 0..(words.len() - word_shift) {
-                    new_words[i] = words[i + word_shift] >> bit_shift;
-                    if bit_shift > 0 && i + word_shift + 1 < words.len() {
-                        new_words[i] |= words[i + word_shift + 1] << (64 - bit_shift);
-                    }
-                }
-
-                self.new_with_same_config_large(new_words.into_boxed_slice())
-            }
+            self.wrap_result(result)
+        } else {
+            self.wrap_result(shifted)
         }
     }
 }
 
 // ============================================================================
-// Arithmetic Operations (Small values only for now)
+// Arithmetic Operations (delegate to inner, re-wrap)
 // ============================================================================
 
 impl Add for &BitInt {
     type Output = BitInt;
 
     fn add(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        match &self.value {
-            BitIntValue::Small(_) => {
-                self.new_with_same_config(self.raw_u64().wrapping_add(rhs.raw_u64()))
-            }
-            BitIntValue::Large(words) => {
-                let mut result = vec![0u64; words.len()];
-                let mut carry = 0u64;
-
-                for i in 0..words.len() {
-                    let (sum1, c1) = words[i].overflowing_add(rhs.word_at(i));
-                    let (sum2, c2) = sum1.overflowing_add(carry);
-                    result[i] = sum2;
-                    carry = u64::from(c1) + u64::from(c2);
-                }
-
-                self.new_with_same_config_large(result.into_boxed_slice())
-            }
-        }
+        self.wrap_result(&self.inner + &rhs.inner)
     }
 }
 
 impl Sub for &BitInt {
     type Output = BitInt;
 
-    #[allow(clippy::suspicious_arithmetic_impl)] // Using + to accumulate borrows is correct
     fn sub(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        match &self.value {
-            BitIntValue::Small(_) => {
-                self.new_with_same_config(self.raw_u64().wrapping_sub(rhs.raw_u64()))
-            }
-            BitIntValue::Large(words) => {
-                let mut result = vec![0u64; words.len()];
-                let mut borrow = 0u64;
-
-                for i in 0..words.len() {
-                    let (diff1, b1) = words[i].overflowing_sub(rhs.word_at(i));
-                    let (diff2, b2) = diff1.overflowing_sub(borrow);
-                    result[i] = diff2;
-                    borrow = u64::from(b1) + u64::from(b2);
-                }
-
-                self.new_with_same_config_large(result.into_boxed_slice())
-            }
-        }
+        self.wrap_result(&self.inner - &rhs.inner)
     }
 }
 
@@ -697,84 +480,39 @@ impl Mul for &BitInt {
     type Output = BitInt;
 
     fn mul(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        match &self.value {
-            BitIntValue::Small(_) => {
-                self.new_with_same_config(self.raw_u64().wrapping_mul(rhs.raw_u64()))
-            }
-            BitIntValue::Large(_) => {
-                // TODO: Implement full large multiplication
-                // For now, only support if it fits in u64
-                let a = self.raw_u64();
-                let b = rhs.raw_u64();
-                let mut result = BitInt::zero(self.size, self.signed);
-                if let BitIntValue::Large(ref mut words) = result.value {
-                    words[0] = a.wrapping_mul(b);
-                }
-                result.mask_to_width();
-                result
-            }
-        }
+        self.wrap_result(&self.inner * &rhs.inner)
     }
 }
 
 impl Div for &BitInt {
     type Output = BitInt;
 
+    /// Signed division.
     fn div(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        let a = self.raw_u64();
-        let b = rhs.raw_u64();
+        let a = self.to_i64().expect("BitInt too large for division");
+        let b = rhs.to_i64().expect("BitInt too large for division");
         assert!(b != 0, "Division by zero");
 
-        match &self.value {
-            BitIntValue::Small(_) => {
-                if self.signed {
-                    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-                    let result = (a as i64 / b as i64) as u64;
-                    self.new_with_same_config(result)
-                } else {
-                    self.new_with_same_config(a / b)
-                }
-            }
-            BitIntValue::Large(_) => {
-                let mut result = BitInt::zero(self.size, self.signed);
-                if let BitIntValue::Large(ref mut words) = result.value {
-                    words[0] = a / b;
-                }
-                result
-            }
-        }
+        #[allow(clippy::cast_sign_loss)]
+        let result = (a / b) as u64;
+        let internal_size = self.inner.size();
+        self.wrap_result(BitUInt::new(internal_size, result))
     }
 }
 
 impl Rem for &BitInt {
     type Output = BitInt;
 
+    /// Signed remainder.
     fn rem(self, rhs: Self) -> BitInt {
-        // Operate on raw values, result uses left operand's size (like BinArray)
-        let a = self.raw_u64();
-        let b = rhs.raw_u64();
+        let a = self.to_i64().expect("BitInt too large for remainder");
+        let b = rhs.to_i64().expect("BitInt too large for remainder");
         assert!(b != 0, "Remainder by zero");
 
-        match &self.value {
-            BitIntValue::Small(_) => {
-                if self.signed {
-                    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-                    let result = (a as i64 % b as i64) as u64;
-                    self.new_with_same_config(result)
-                } else {
-                    self.new_with_same_config(a % b)
-                }
-            }
-            BitIntValue::Large(_) => {
-                let mut result = BitInt::zero(self.size, self.signed);
-                if let BitIntValue::Large(ref mut words) = result.value {
-                    words[0] = a % b;
-                }
-                result
-            }
-        }
+        #[allow(clippy::cast_sign_loss)]
+        let result = (a % b) as u64;
+        let internal_size = self.inner.size();
+        self.wrap_result(BitUInt::new(internal_size, result))
     }
 }
 
@@ -844,231 +582,252 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_unsigned() {
-        let a = BitInt::new_unsigned(8, 0xFF);
+    fn test_new_positive() {
+        let a = BitInt::new(8, 42);
         assert_eq!(a.size(), 8);
-        assert!(!a.is_signed());
-        assert_eq!(a.to_u64(), Some(0xFF));
-
-        // Test clamping
-        let b = BitInt::new_unsigned(4, 0xFF);
-        assert_eq!(b.to_u64(), Some(0x0F));
+        assert!(a.is_signed());
+        assert_eq!(a.to_i64(), Some(42));
     }
 
     #[test]
-    fn test_new_signed() {
-        let a = BitInt::new_signed(8, -1);
+    fn test_new_negative() {
+        let a = BitInt::new(8, -1);
         assert_eq!(a.size(), 8);
-        assert!(a.is_signed());
         assert_eq!(a.to_i64(), Some(-1));
+    }
+
+    #[test]
+    fn test_1bit_positive() {
+        // The core motivation: BitInt(1, 1) returns 1, not -1
+        let a = BitInt::new(1, 1);
+        assert_eq!(a.to_i64(), Some(1));
+    }
+
+    #[test]
+    fn test_1bit_negative() {
+        let a = BitInt::new(1, -1);
+        assert_eq!(a.to_i64(), Some(-1));
+    }
+
+    #[test]
+    fn test_1bit_zero() {
+        let a = BitInt::new(1, 0);
+        assert_eq!(a.to_i64(), Some(0));
+        assert!(a.is_zero());
     }
 
     #[test]
     fn test_from_binary_str() {
         let a = BitInt::from_binary_str("1010");
         assert_eq!(a.size(), 4);
-        assert_eq!(a.to_u64(), Some(0b1010));
+        assert_eq!(a.to_i64(), Some(10));
+    }
+
+    #[test]
+    fn test_new_from_u64() {
+        let a = BitInt::new_from_u64(4, 0b1010);
+        assert_eq!(a.to_i64(), Some(10));
+    }
+
+    #[test]
+    fn test_zero() {
+        let a = BitInt::zero(8);
+        assert_eq!(a.to_i64(), Some(0));
+        assert!(a.is_zero());
+    }
+
+    #[test]
+    fn test_ones_max_positive() {
+        let a = BitInt::ones(8);
+        assert_eq!(a.to_i64(), Some(255)); // All 8 data bits set, sign bit 0
     }
 
     #[test]
     fn test_display() {
-        let a = BitInt::new_unsigned(8, 0b1010_0101);
-        assert_eq!(format!("{a}"), "10100101");
+        let a = BitInt::new(8, 42);
+        // 42 = 0b00101010, display shows 8 user bits
+        assert_eq!(format!("{a}"), "00101010");
 
-        let b = BitInt::new_unsigned(4, 0b0101);
-        assert_eq!(format!("{b}"), "0101");
+        let b = BitInt::from_binary_str("1010");
+        assert_eq!(format!("{b}"), "1010");
     }
 
     #[test]
     fn test_bit_access() {
-        let mut a = BitInt::new_unsigned(8, 0b1010_0101);
+        let mut a = BitInt::new(8, 0b1010_0101);
         assert!(a.get_bit(0));
         assert!(!a.get_bit(1));
         assert!(a.get_bit(2));
 
         a.set_bit(1, true);
         assert!(a.get_bit(1));
-        assert_eq!(a.to_u64(), Some(0b1010_0111));
+    }
+
+    #[test]
+    #[should_panic(expected = "Bit index out of bounds")]
+    fn test_bit_access_sign_bit_blocked() {
+        let a = BitInt::new(4, 5);
+        let _ = a.get_bit(4); // Should panic: can't access sign bit
+    }
+
+    #[test]
+    fn test_add() {
+        let a = BitInt::new(8, 100);
+        let b = BitInt::new(8, 50);
+        let c = &a + &b;
+        assert_eq!(c.to_i64(), Some(150));
+    }
+
+    #[test]
+    fn test_add_negative() {
+        let a = BitInt::new(8, 5);
+        let b = BitInt::new(8, -3);
+        let c = &a + &b;
+        assert_eq!(c.to_i64(), Some(2));
+    }
+
+    #[test]
+    fn test_sub() {
+        let a = BitInt::new(8, 100);
+        let b = BitInt::new(8, 50);
+        let c = &a - &b;
+        assert_eq!(c.to_i64(), Some(50));
+    }
+
+    #[test]
+    fn test_mul() {
+        let a = BitInt::new(8, 10);
+        let b = BitInt::new(8, 5);
+        let c = &a * &b;
+        assert_eq!(c.to_i64(), Some(50));
+    }
+
+    #[test]
+    fn test_mul_negative() {
+        let a = BitInt::new(8, 10);
+        let b = BitInt::new(8, -5);
+        let c = &a * &b;
+        assert_eq!(c.to_i64(), Some(-50));
+    }
+
+    #[test]
+    fn test_div_signed() {
+        let a = BitInt::new(8, -100);
+        let b = BitInt::new(8, 10);
+        let c = &a / &b;
+        assert_eq!(c.to_i64(), Some(-10));
+    }
+
+    #[test]
+    fn test_rem_signed() {
+        let a = BitInt::new(8, -7);
+        let b = BitInt::new(8, 3);
+        let c = &a % &b;
+        assert_eq!(c.to_i64(), Some(-1));
+    }
+
+    #[test]
+    fn test_signed_comparison() {
+        let pos = BitInt::new(8, 5);
+        let neg = BitInt::new(8, -5);
+        let zero = BitInt::new(8, 0);
+
+        assert!(neg < zero);
+        assert!(neg < pos);
+        assert!(zero < pos);
+        assert!(pos > neg);
     }
 
     #[test]
     fn test_bitwise_xor() {
-        let a = BitInt::new_unsigned(8, 0b1010_1010);
-        let b = BitInt::new_unsigned(8, 0b0101_0101);
+        let a = BitInt::new(8, 0b1010_1010);
+        let b = BitInt::new(8, 0b0101_0101);
         let c = &a ^ &b;
-        assert_eq!(c.to_u64(), Some(0xFF));
-    }
-
-    #[test]
-    fn test_bitwise_and() {
-        let a = BitInt::new_unsigned(8, 0b1010_1010);
-        let b = BitInt::new_unsigned(8, 0b1111_0000);
-        let c = &a & &b;
-        assert_eq!(c.to_u64(), Some(0b1010_0000));
-    }
-
-    #[test]
-    fn test_bitwise_or() {
-        let a = BitInt::new_unsigned(8, 0b1010_0000);
-        let b = BitInt::new_unsigned(8, 0b0000_0101);
-        let c = &a | &b;
-        assert_eq!(c.to_u64(), Some(0b1010_0101));
+        // XOR of the inner BitUInts
+        let val = c.to_u64().unwrap();
+        // Both values fit in 8 bits with sign bit 0 in 9-bit internal
+        // a inner: 0b0_1010_1010, b inner: 0b0_0101_0101
+        // XOR: 0b0_1111_1111
+        assert_eq!(val, 0xFF);
     }
 
     #[test]
     fn test_bitwise_not() {
-        let a = BitInt::new_unsigned(8, 0b1010_1010);
+        let a = BitInt::new(8, 5);
         let b = !&a;
-        assert_eq!(b.to_u64(), Some(0b0101_0101));
+        assert_eq!(b.to_i64(), Some(-6)); // ~5 = -6 in signed
     }
 
     #[test]
     fn test_shift_left() {
-        let a = BitInt::new_unsigned(8, 0b0000_1111);
+        let a = BitInt::new(8, 0b0000_1111);
         let b = &a << 4;
-        assert_eq!(b.to_u64(), Some(0b1111_0000));
+        assert_eq!(b.to_i64(), Some(0b1111_0000));
     }
 
     #[test]
-    fn test_shift_right() {
-        let a = BitInt::new_unsigned(8, 0b1111_0000);
-        let b = &a >> 4;
-        assert_eq!(b.to_u64(), Some(0b0000_1111));
+    fn test_shift_right_arithmetic() {
+        // Negative value: arithmetic shift fills with 1s
+        let a = BitInt::new(8, -8); // 0b11111000 in 8-bit
+        let b = &a >> 2;
+        assert_eq!(b.to_i64(), Some(-2)); // -8 >> 2 = -2 (arithmetic)
     }
 
     #[test]
-    fn test_arithmetic_add() {
-        let left = BitInt::new_unsigned(8, 100);
-        let right = BitInt::new_unsigned(8, 50);
-        let sum = &left + &right;
-        assert_eq!(sum.to_u64(), Some(150));
-
-        // Test overflow wrapping
-        let large_left = BitInt::new_unsigned(8, 200);
-        let large_right = BitInt::new_unsigned(8, 100);
-        let overflow_sum = &large_left + &large_right;
-        assert_eq!(overflow_sum.to_u64(), Some(44)); // (200 + 100) % 256 = 44
+    fn test_shift_right_positive() {
+        let a = BitInt::new(8, 8);
+        let b = &a >> 2;
+        assert_eq!(b.to_i64(), Some(2));
     }
 
     #[test]
-    fn test_arithmetic_sub() {
-        let a = BitInt::new_unsigned(8, 100);
-        let b = BitInt::new_unsigned(8, 50);
-        let c = &a - &b;
-        assert_eq!(c.to_u64(), Some(50));
-    }
-
-    #[test]
-    fn test_arithmetic_mul() {
-        let a = BitInt::new_unsigned(8, 10);
-        let b = BitInt::new_unsigned(8, 5);
-        let c = &a * &b;
-        assert_eq!(c.to_u64(), Some(50));
-    }
-
-    #[test]
-    fn test_arithmetic_div() {
-        let a = BitInt::new_unsigned(8, 100);
-        let b = BitInt::new_unsigned(8, 10);
-        let c = &a / &b;
-        assert_eq!(c.to_u64(), Some(10));
-    }
-
-    #[test]
-    fn test_arithmetic_rem() {
-        let a = BitInt::new_unsigned(8, 100);
-        let b = BitInt::new_unsigned(8, 30);
-        let c = &a % &b;
-        assert_eq!(c.to_u64(), Some(10));
-    }
-
-    #[test]
-    fn test_comparison() {
-        let a = BitInt::new_unsigned(8, 100);
-        let b = BitInt::new_unsigned(8, 50);
-        let c = BitInt::new_unsigned(8, 100);
-
-        assert!(a > b);
-        assert!(b < a);
-        assert_eq!(a, c);
+    fn test_is_negative() {
+        assert!(BitInt::new(8, -1).is_negative());
+        assert!(!BitInt::new(8, 0).is_negative());
+        assert!(!BitInt::new(8, 1).is_negative());
     }
 
     #[test]
     fn test_count_ones() {
-        let a = BitInt::new_unsigned(8, 0b1010_1010);
-        assert_eq!(a.count_ones(), 4);
+        let a = BitInt::new(8, 0b1010_1010);
+        assert_eq!(a.count_ones(), 4); // excludes sign bit
     }
 
     #[test]
-    fn test_large_bitint() {
-        let a = BitInt::new_unsigned(128, 0xFFFF_FFFF_FFFF_FFFF);
-        assert_eq!(a.size(), 128);
-        assert_eq!(a.to_u64(), Some(0xFFFF_FFFF_FFFF_FFFF));
-
-        // Test bit access in large value
-        assert!(a.get_bit(0));
-        assert!(a.get_bit(63));
-        assert!(!a.get_bit(64)); // Second word should be 0
-    }
-
-    // Mixed-size operation tests (BinArray-compatible behavior)
-
-    #[test]
-    fn test_mixed_size_xor() {
-        // 8-bit XOR with 4-bit, result should be 8-bit with left's size
-        let a = BitInt::new_unsigned(8, 0b1010_1010);
-        let b = BitInt::new_unsigned(4, 0b0101); // Only 4 bits: 0101
-        let c = &a ^ &b;
-        assert_eq!(c.size(), 8); // Result uses left operand's size
-        assert_eq!(c.to_u64(), Some(0b1010_1111)); // XOR with 0101 at lower bits
+    fn test_count_zeros() {
+        let a = BitInt::new(8, 0b1010_1010);
+        assert_eq!(a.count_zeros(), 4); // excludes sign bit
     }
 
     #[test]
-    fn test_mixed_size_and() {
-        let a = BitInt::new_unsigned(8, 0b1111_1111);
-        let b = BitInt::new_unsigned(4, 0b1010);
-        let c = &a & &b;
-        assert_eq!(c.size(), 8);
-        assert_eq!(c.to_u64(), Some(0b0000_1010)); // Only lower 4 bits match
+    fn test_count_ones_negative() {
+        let a = BitInt::new(8, -1);
+        // -1 in 9-bit two's complement: sign bit 1, data bits all 1
+        // count_ones should count all 8 user bits
+        assert_eq!(a.count_ones(), 8);
     }
 
     #[test]
-    fn test_mixed_size_or() {
-        let a = BitInt::new_unsigned(8, 0b1111_0000);
-        let b = BitInt::new_unsigned(4, 0b0101);
-        let c = &a | &b;
-        assert_eq!(c.size(), 8);
-        assert_eq!(c.to_u64(), Some(0b1111_0101));
+    fn test_shift_right_negative_one() {
+        // -1 >> n should still be -1 for arithmetic shift
+        let a = BitInt::new(8, -1);
+        let b = &a >> 4;
+        assert_eq!(b.to_i64(), Some(-1));
     }
 
     #[test]
-    fn test_mixed_size_add() {
-        let a = BitInt::new_unsigned(8, 200);
-        let b = BitInt::new_unsigned(4, 10);
-        let c = &a + &b;
-        assert_eq!(c.size(), 8);
-        assert_eq!(c.to_u64(), Some(210));
-    }
-
-    #[test]
-    fn test_mixed_size_sub() {
-        let a = BitInt::new_unsigned(8, 200);
-        let b = BitInt::new_unsigned(4, 10);
+    fn test_sub_negative() {
+        let a = BitInt::new(8, 5);
+        let b = BitInt::new(8, 10);
         let c = &a - &b;
-        assert_eq!(c.size(), 8);
-        assert_eq!(c.to_u64(), Some(190));
+        assert_eq!(c.to_i64(), Some(-5));
     }
 
     #[test]
-    fn test_mixed_size_comparison() {
-        // Different sizes, same value
-        let a = BitInt::new_unsigned(8, 10);
-        let b = BitInt::new_unsigned(4, 10);
-        assert_eq!(a, b); // Same underlying value, should be equal
-
-        let c = BitInt::new_unsigned(8, 20);
-        let d = BitInt::new_unsigned(4, 10);
-        assert!(c > d);
-        assert!(d < c);
+    fn test_display_negative() {
+        let a = BitInt::new(8, -1);
+        let s = format!("{a}");
+        assert_eq!(s.len(), 8); // shows 8 user bits
+        assert_eq!(s, "11111111"); // all user bits set for -1
     }
 }

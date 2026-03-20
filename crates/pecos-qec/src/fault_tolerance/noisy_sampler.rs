@@ -38,10 +38,8 @@
 
 use super::propagator::Pauli;
 use super::propagator::dag::DagFaultInfluenceMap;
-use pecos_rng::PecosRng;
 use pecos_rng::rng_ext::RngProbabilityExt;
-use rand::rngs::StdRng;
-use rand_core::{Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng};
 use std::collections::BTreeSet;
 
 /// Result from a single shot of noisy sampling.
@@ -210,7 +208,7 @@ pub struct NoisySampler<'a, N: NoiseModel> {
     /// Noise model for sampling faults.
     noise_model: N,
     /// Random number generator.
-    rng: StdRng,
+    rng: PecosRng,
     /// Number of fault locations.
     num_locations: usize,
     /// Number of detectors.
@@ -240,7 +238,7 @@ impl<'a, N: NoiseModel> NoisySampler<'a, N> {
         Self {
             influence_map,
             noise_model,
-            rng: StdRng::seed_from_u64(seed),
+            rng: PecosRng::seed_from_u64(seed),
             num_locations,
             num_detectors,
             num_logicals,
@@ -583,7 +581,7 @@ mod tests {
     #[test]
     fn test_uniform_noise_model() {
         let mut noise = UniformNoiseModel::new(0.5);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = PecosRng::seed_from_u64(42);
 
         let mut error_count = 0;
         for _ in 0..1000 {
@@ -600,7 +598,7 @@ mod tests {
     fn test_per_location_noise_model() {
         let probs = vec![0.0, 0.5, 1.0];
         let mut noise = PerLocationNoiseModel::new(probs);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = PecosRng::seed_from_u64(42);
 
         // Location 0: never errors
         for _ in 0..100 {

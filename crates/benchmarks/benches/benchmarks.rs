@@ -14,14 +14,22 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 mod modules {
     pub mod allocation_overhead;
+    pub mod cpu_stabilizer_comparison;
     pub mod dem_sampler;
     pub mod dod_statevec;
     // TODO: pub mod hadamard_ops;
+    #[cfg(feature = "cuquantum")]
+    pub mod cuquantum;
     #[cfg(feature = "gpu-sims")]
     pub mod gpu_influence_sampler;
     pub mod measurement_sampling;
+    pub mod native_statevec_comparison;
     pub mod noise_models;
+    #[cfg(feature = "cppsparsesim")]
+    pub mod sparse_stab_vs_cpp;
+    pub mod sparse_stab_w_vs_y;
     // TODO: pub mod pauli_ops;
+    pub mod pecos_neo_comparison;
     pub mod rng;
     pub mod set_ops;
     pub mod sparse_state_vec;
@@ -31,26 +39,40 @@ mod modules {
     pub mod trig;
 }
 
+#[cfg(feature = "cuquantum")]
+use modules::cuquantum;
 #[cfg(feature = "gpu-sims")]
 use modules::gpu_influence_sampler;
+#[cfg(feature = "cppsparsesim")]
+use modules::sparse_stab_vs_cpp;
 use modules::{
-    allocation_overhead, dem_sampler, dod_statevec, measurement_sampling, noise_models, rng,
-    set_ops, sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code, trig,
+    allocation_overhead, cpu_stabilizer_comparison, dem_sampler, dod_statevec,
+    measurement_sampling, native_statevec_comparison, noise_models, pecos_neo_comparison, rng,
+    set_ops, sparse_stab_w_vs_y, sparse_state_vec, stabilizer_sims, state_vec_sims, surface_code,
+    trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
     allocation_overhead::benchmarks(c);
+    cpu_stabilizer_comparison::benchmarks(c);
+    #[cfg(feature = "cuquantum")]
+    cuquantum::benchmarks(c);
     dem_sampler::benchmarks(c);
     dod_statevec::benchmarks(c);
     #[cfg(feature = "gpu-sims")]
     gpu_influence_sampler::benchmarks(c);
     measurement_sampling::benchmarks(c);
+    native_statevec_comparison::benchmarks(c);
     noise_models::benchmarks(c);
+    pecos_neo_comparison::benchmarks(c);
     rng::benchmarks(c);
     set_ops::benchmarks(c);
     sparse_state_vec::benchmarks(c);
     stabilizer_sims::benchmarks(c);
     state_vec_sims::benchmarks(c);
+    #[cfg(feature = "cppsparsesim")]
+    sparse_stab_vs_cpp::benchmarks(c);
+    sparse_stab_w_vs_y::benchmarks(c);
     surface_code::benchmarks(c);
     trig::benchmarks(c);
     // TODO: pauli_ops::benchmarks(c);

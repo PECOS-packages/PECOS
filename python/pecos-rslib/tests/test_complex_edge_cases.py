@@ -19,7 +19,7 @@ from pecos_rslib import Array, dtypes
 class TestComplexArrayCreation:
     """Test array creation with complex dtypes."""
 
-    def test_array_from_complex_list(self):
+    def test_array_from_complex_list(self) -> None:
         """Test creating complex array from Python list."""
         data = [1 + 2j, 3 + 4j, 5 + 6j]
 
@@ -29,7 +29,7 @@ class TestComplexArrayCreation:
         assert pa_arr.dtype == dtypes.complex128
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_array_quantum_state(self):
+    def test_array_quantum_state(self) -> None:
         """Test creating quantum state vector (common pattern in quantum-pecos)."""
         # Quantum state: |+⟩ = (|0⟩ + |1⟩)/√2
         sqrt2 = np.sqrt(2)
@@ -45,7 +45,7 @@ class TestComplexArrayCreation:
         np.testing.assert_almost_equal(pa_norm, np_norm)
         np.testing.assert_almost_equal(pa_norm, 1.0)
 
-    def test_array_with_phase(self):
+    def test_array_with_phase(self) -> None:
         """Test complex array with phase factors (e^(iθ))."""
         # Common quantum gate pattern: exp(i * pi/4)
         theta = np.pi / 4
@@ -61,7 +61,7 @@ class TestComplexArrayCreation:
 class TestComplexArithmetic:
     """Test arithmetic operations with complex arrays."""
 
-    def test_complex_addition(self):
+    def test_complex_addition(self) -> None:
         """Test complex array addition."""
         np_a = np.array([1 + 2j, 3 + 4j], dtype=np.complex128)
         np_b = np.array([5 + 6j, 7 + 8j], dtype=np.complex128)
@@ -74,7 +74,7 @@ class TestComplexArithmetic:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_complex_scalar_multiplication(self):
+    def test_complex_scalar_multiplication(self) -> None:
         """Test multiplying complex array by scalar."""
         np_arr = np.array([1 + 2j, 3 + 4j], dtype=np.complex128)
         pa_arr = Array(np_arr)
@@ -86,7 +86,7 @@ class TestComplexArithmetic:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_complex_phase_multiplication(self):
+    def test_complex_phase_multiplication(self) -> None:
         """Test multiplying by complex phase (common in quantum gates)."""
         np_arr = np.array([1.0, 0.0], dtype=np.complex128)
         pa_arr = Array(np_arr)
@@ -99,7 +99,7 @@ class TestComplexArithmetic:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_complex_broadcasting(self):
+    def test_complex_broadcasting(self) -> None:
         """Test broadcasting with complex arrays."""
         np_col = np.array([[1 + 1j], [2 + 2j]], dtype=np.complex128)
         np_row = np.array([[1.0, 2.0, 3.0]], dtype=np.complex128)
@@ -116,7 +116,7 @@ class TestComplexArithmetic:
 class TestComplexComparisons:
     """Test comparison functions with complex arrays."""
 
-    def test_isclose_complex(self):
+    def test_isclose_complex(self) -> None:
         """Test isclose with complex arrays."""
         from pecos_rslib.num import isclose
 
@@ -134,7 +134,7 @@ class TestComplexComparisons:
 
         np.testing.assert_array_equal(np.asarray(pa_result), np_result)
 
-    def test_allclose_complex(self):
+    def test_allclose_complex(self) -> None:
         """Test allclose with complex arrays."""
         from pecos_rslib.num import allclose
 
@@ -154,7 +154,7 @@ class TestComplexComparisons:
 class TestComplexMathFunctions:
     """Test math functions with complex inputs."""
 
-    def test_abs_complex(self):
+    def test_abs_complex(self) -> None:
         """Test abs (magnitude) of complex numbers."""
         np_arr = np.array([3 + 4j, 1 + 0j], dtype=np.complex128)
         pa_arr = Array(np_arr)
@@ -167,7 +167,7 @@ class TestComplexMathFunctions:
         # Verify: |3+4i| = 5
         assert abs(pa_result[0] - 5.0) < 1e-10
 
-    def test_exp_imaginary(self):
+    def test_exp_imaginary(self) -> None:
         """Test exp with imaginary argument (e^(iθ) = cos(θ) + i*sin(θ))."""
         from pecos_rslib.num import pi
 
@@ -180,7 +180,7 @@ class TestComplexMathFunctions:
         # Verify Euler's identity
         np.testing.assert_almost_equal(np_result, -1.0)
 
-    def test_sqrt_complex(self):
+    def test_sqrt_complex(self) -> None:
         """Test sqrt with complex numbers."""
 
         # sqrt(-1) = i
@@ -197,7 +197,7 @@ class TestComplexMathFunctions:
 class TestQuantumStatePatterns:
     """Test patterns commonly found in quantum-pecos codebase."""
 
-    def test_quantum_state_normalization(self):
+    def test_quantum_state_normalization(self) -> None:
         """Test quantum state vector normalization check."""
         # Pattern from test_qulacs.py: norm = np.sum(abs(state) ** 2)
         sqrt2 = np.sqrt(2)
@@ -211,7 +211,7 @@ class TestQuantumStatePatterns:
         np.testing.assert_almost_equal(pa_norm, 1.0)
         np.testing.assert_almost_equal(pa_norm, np_norm)
 
-    def test_bell_state_pattern(self):
+    def test_bell_state_pattern(self) -> None:
         """Test Bell state creation (common in quantum tests)."""
         # |Φ+⟩ = (|00⟩ + |11⟩)/√2
         sqrt2 = np.sqrt(2)
@@ -222,7 +222,7 @@ class TestQuantumStatePatterns:
         norm = np.sum(np.abs(np.asarray(pa_state)) ** 2)
         np.testing.assert_almost_equal(norm, 1.0)
 
-    def test_gate_matrix_pattern(self):
+    def test_gate_matrix_pattern(self) -> None:
         """Test quantum gate matrix creation pattern."""
         # Hadamard gate from find_cliffs.py pattern
         sqrt2 = np.sqrt(2)
@@ -234,7 +234,7 @@ class TestQuantumStatePatterns:
         assert pa_hadamard.shape == (2, 2)
         assert pa_hadamard.dtype == dtypes.complex128
 
-    def test_phase_gate_pattern(self):
+    def test_phase_gate_pattern(self) -> None:
         """Test phase gate with complex phase factor."""
         # S gate: [[1, 0], [0, i]]
         np_s_gate = np.array([[1.0, 0.0], [0.0, 1j]], dtype=np.complex128)
@@ -247,7 +247,7 @@ class TestQuantumStatePatterns:
 class TestComplexDtypeSystem:
     """Test dtype system with complex types."""
 
-    def test_complex128_dtype(self):
+    def test_complex128_dtype(self) -> None:
         """Test complex128 dtype handling."""
         np_arr = np.array([1 + 2j], dtype=np.complex128)
         pa_arr = Array(np_arr)
@@ -255,7 +255,7 @@ class TestComplexDtypeSystem:
         assert pa_arr.dtype == dtypes.complex128
         assert pa_arr.dtype.is_complex
 
-    def test_complex64_dtype(self):
+    def test_complex64_dtype(self) -> None:
         """Test complex64 dtype handling."""
         np_arr = np.array([1 + 2j], dtype=np.complex64)
         pa_arr = Array(np_arr)
@@ -263,7 +263,7 @@ class TestComplexDtypeSystem:
         assert pa_arr.dtype == dtypes.complex64
         assert pa_arr.dtype.is_complex
 
-    def test_dtype_preservation(self):
+    def test_dtype_preservation(self) -> None:
         """Test that complex dtype is preserved through operations."""
         np_arr = np.array([1 + 2j, 3 + 4j], dtype=np.complex128)
         pa_arr = Array(np_arr)
@@ -276,21 +276,21 @@ class TestComplexDtypeSystem:
 class TestComplexEdgeCases:
     """Test edge cases with complex numbers."""
 
-    def test_zero_imaginary_part(self):
+    def test_zero_imaginary_part(self) -> None:
         """Test complex numbers with zero imaginary part."""
         np_arr = np.array([1 + 0j, 2 + 0j], dtype=np.complex128)
         pa_arr = Array(np_arr)
 
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_zero_real_part(self):
+    def test_zero_real_part(self) -> None:
         """Test complex numbers with zero real part."""
         np_arr = np.array([0 + 1j, 0 + 2j], dtype=np.complex128)
         pa_arr = Array(np_arr)
 
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_pure_imaginary_arithmetic(self):
+    def test_pure_imaginary_arithmetic(self) -> None:
         """Test arithmetic with pure imaginary numbers."""
         np_a = np.array([1j, 2j], dtype=np.complex128)
         np_b = np.array([3j, 4j], dtype=np.complex128)
@@ -303,7 +303,7 @@ class TestComplexEdgeCases:
 
         np.testing.assert_array_equal(np.asarray(pa_result), np_result)
 
-    def test_negative_complex(self):
+    def test_negative_complex(self) -> None:
         """Test negative complex numbers."""
         np_arr = np.array([-1 - 2j, -3 - 4j], dtype=np.complex128)
         pa_arr = Array(np_arr)

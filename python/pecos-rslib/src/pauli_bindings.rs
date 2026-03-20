@@ -158,7 +158,7 @@ impl Pauli {
 #[pyclass(name = "PauliString", module = "pecos_rslib", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PauliString {
-    inner: RustPauliString,
+    pub(crate) inner: RustPauliString,
 }
 
 // SAFETY: PauliString wraps RustPauliString which is thread-safe
@@ -374,6 +374,35 @@ impl PauliString {
             .iter()
             .map(|(p, q)| (Pauli(*p), q.index()))
             .collect()
+    }
+
+    /// Get the 2^n x 2^n complex matrix representation.
+    ///
+    /// Returns a list of lists of complex numbers (row-major).
+    /// Only suitable for small systems (n <= 12).
+    ///
+    /// Args:
+    ///     num_qubits: Number of qubits for the matrix dimension (default: auto)
+    #[allow(clippy::doc_markdown)]
+    #[pyo3(signature = (num_qubits=None))]
+    fn to_matrix(&self, num_qubits: Option<usize>) -> PyResult<Vec<Vec<(f64, f64)>>> {
+        let n = num_qubits
+            .unwrap_or_else(|| self.inner.qubits().into_iter().max().map_or(1, |m| m + 1));
+        if n > 12 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "to_matrix supports at most 12 qubits",
+            ));
+        }
+        let (flat, dim) = self.inner.to_flat_matrix(n);
+        let rows = (0..dim)
+            .map(|r| {
+                flat[r * dim..(r + 1) * dim]
+                    .iter()
+                    .map(|c| (c.re, c.im))
+                    .collect()
+            })
+            .collect();
+        Ok(rows)
     }
 }
 

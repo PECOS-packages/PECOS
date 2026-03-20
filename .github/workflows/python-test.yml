@@ -45,7 +45,7 @@ jobs:
     steps:
     - name: Free Disk Space (Ubuntu)
       if: runner.os == 'Linux'
-      uses: jlumbroso/free-disk-space@main
+      uses: jlumbroso/free-disk-space@v1.3.1
       with:
         # Remove Android tools (saves ~14GB)
         android: true

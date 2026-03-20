@@ -33,13 +33,16 @@
 #![allow(clippy::unnecessary_wraps)] // PyResult is required for Python error handling
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing Bound by value
 
-use ndarray::{ArrayD, Axis, IxDyn, Slice};
+use ndarray::{ArrayD, Axis, Ix2, IxDyn, Slice};
 use num_complex::{Complex32, Complex64};
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PySequence, PySlice, PySliceIndices, PyTuple, PyType};
 
 use crate::dtypes::DType;
 use crate::pauli_bindings::{Pauli, PauliString};
+
+type ComplexBinOp = Box<dyn Fn(&Complex64, &Complex64) -> Complex64>;
 
 /// Internal storage for array data
 /// We use separate variants for each dtype to maintain type safety
@@ -120,6 +123,29 @@ impl ArrayData {
     /// Get the total number of elements
     fn size(&self) -> usize {
         self.shape().iter().product()
+    }
+
+    /// Convert to a boolean array (truthy: non-zero / non-false).
+    fn to_bool_array(&self) -> ArrayD<bool> {
+        match self {
+            ArrayData::Bool(arr) => arr.clone(),
+            ArrayData::I8(arr) => arr.mapv(|x| x != 0),
+            ArrayData::I16(arr) => arr.mapv(|x| x != 0),
+            ArrayData::I32(arr) => arr.mapv(|x| x != 0),
+            ArrayData::I64(arr) => arr.mapv(|x| x != 0),
+            ArrayData::U8(arr) => arr.mapv(|x| x != 0),
+            ArrayData::U16(arr) => arr.mapv(|x| x != 0),
+            ArrayData::U32(arr) => arr.mapv(|x| x != 0),
+            ArrayData::U64(arr) => arr.mapv(|x| x != 0),
+            ArrayData::F32(arr) => arr.mapv(|x| x != 0.0),
+            ArrayData::F64(arr) => arr.mapv(|x| x != 0.0),
+            ArrayData::Complex64(arr) => arr.mapv(|x| x.re != 0.0 || x.im != 0.0),
+            ArrayData::Complex128(arr) => arr.mapv(|x| x.re != 0.0 || x.im != 0.0),
+            ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
+                // Treat all Pauli elements as truthy
+                ArrayD::from_elem(ndarray::IxDyn(self.shape()), true)
+            }
+        }
     }
 }
 
@@ -275,12 +301,12 @@ impl Array {
     /// or non-zero (for numeric arrays).
     ///
     /// Args:
-    ///     axis: Ignored (for `NumPy` compatibility)
+    ///     axis: Axis along which to reduce. None reduces the entire array.
     ///     out: Ignored (for `NumPy` compatibility)
     ///     keepdims: Ignored (for `NumPy` compatibility)
     ///
     /// Returns:
-    ///     bool: True if all elements are True/non-zero, False otherwise
+    ///     bool (axis=None) or Array (axis=int)
     ///
     /// # Examples
     ///
@@ -297,12 +323,29 @@ impl Array {
     #[allow(unused_variables)]
     pub fn all(
         &self,
-        axis: Option<Py<PyAny>>,
+        py: Python<'_>,
+        axis: Option<isize>,
         out: Option<Py<PyAny>>,
         keepdims: Option<bool>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> bool {
-        match &self.data {
+    ) -> PyResult<Py<PyAny>> {
+        if let Some(axis_val) = axis {
+            let bool_arr = self.data.to_bool_array();
+            let ndim = bool_arr.ndim();
+            let normalized = Self::normalize_axis(axis_val, ndim)?;
+            let result =
+                bool_arr.map_axis(ndarray::Axis(normalized), |lane| lane.iter().all(|&x| x));
+            return Ok(Py::new(
+                py,
+                Self {
+                    data: ArrayData::Bool(result),
+                },
+            )?
+            .into_any());
+        }
+
+        // axis=None: reduce entire array to a scalar bool
+        let result = match &self.data {
             ArrayData::Bool(arr) => arr.iter().all(|&x| x),
             ArrayData::I8(arr) => arr.iter().all(|&x| x != 0),
             ArrayData::I16(arr) => arr.iter().all(|&x| x != 0),
@@ -316,12 +359,64 @@ impl Array {
             ArrayData::F64(arr) => arr.iter().all(|&x| x != 0.0),
             ArrayData::Complex64(arr) => arr.iter().all(|&x| x.re != 0.0 || x.im != 0.0),
             ArrayData::Complex128(arr) => arr.iter().all(|&x| x.re != 0.0 || x.im != 0.0),
-            ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
-                // Pauli arrays don't have a meaningful all() operation
-                // We'll return true if there are any elements
-                self.data.size() > 0
-            }
+            ArrayData::Pauli(_) | ArrayData::PauliString(_) => self.data.size() > 0,
+        };
+        result.into_py_any(py)
+    }
+
+    /// Check if any element in the array is True (for boolean arrays)
+    /// or non-zero (for numeric arrays).
+    ///
+    /// Args:
+    ///     axis: Axis along which to reduce. None reduces the entire array.
+    ///     out: Ignored (for `NumPy` compatibility)
+    ///     keepdims: Ignored (for `NumPy` compatibility)
+    ///
+    /// Returns:
+    ///     bool (axis=None) or Array (axis=int)
+    #[pyo3(signature = (axis=None, out=None, keepdims=None, **_kwargs))]
+    #[allow(unused_variables)]
+    pub fn any(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        out: Option<Py<PyAny>>,
+        keepdims: Option<bool>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
+        if let Some(axis_val) = axis {
+            let bool_arr = self.data.to_bool_array();
+            let ndim = bool_arr.ndim();
+            let normalized = Self::normalize_axis(axis_val, ndim)?;
+            let result =
+                bool_arr.map_axis(ndarray::Axis(normalized), |lane| lane.iter().any(|&x| x));
+            return Ok(Py::new(
+                py,
+                Self {
+                    data: ArrayData::Bool(result),
+                },
+            )?
+            .into_any());
         }
+
+        // axis=None: reduce entire array to a scalar bool
+        let result = match &self.data {
+            ArrayData::Bool(arr) => arr.iter().any(|&x| x),
+            ArrayData::I8(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::I16(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::I32(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::I64(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::U8(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::U16(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::U32(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::U64(arr) => arr.iter().any(|&x| x != 0),
+            ArrayData::F32(arr) => arr.iter().any(|&x| x != 0.0),
+            ArrayData::F64(arr) => arr.iter().any(|&x| x != 0.0),
+            ArrayData::Complex64(arr) => arr.iter().any(|&x| x.re != 0.0 || x.im != 0.0),
+            ArrayData::Complex128(arr) => arr.iter().any(|&x| x.re != 0.0 || x.im != 0.0),
+            ArrayData::Pauli(_) | ArrayData::PauliString(_) => self.data.size() > 0,
+        };
+        result.into_py_any(py)
     }
 
     /// Convert array to a different dtype
@@ -934,6 +1029,25 @@ impl Array {
         }
     }
 
+    /// Iterate over the first axis of the array.
+    /// For 1D arrays, yields scalars. For ND arrays, yields (N-1)D sub-arrays.
+    fn __iter__(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        use pyo3::conversion::IntoPyObjectExt;
+        let py = slf.py();
+        let len = slf.data.shape().first().copied().unwrap_or(0);
+        // Build a Python list of elements, then return its iterator via Python's iter()
+        let items: Vec<Py<PyAny>> = (0..len)
+            .map(|i| {
+                let idx = (i as isize).into_bound_py_any(py)?;
+                slf.__getitem__(&idx)
+            })
+            .collect::<PyResult<_>>()?;
+        let list = pyo3::types::PyList::new(py, &items)?;
+        let builtins = py.import("builtins")?;
+        let iter_fn = builtins.getattr("iter")?;
+        Ok(iter_fn.call1((list,))?.unbind())
+    }
+
     /// String representation
     fn __repr__(&self) -> String {
         format!(
@@ -1404,8 +1518,28 @@ impl Array {
         self.binary_op(other, py, |a, b| a - b, "subtract")
     }
 
-    /// Multiply arrays element-wise: self * other
+    /// Multiply: self * other
+    /// If other is an Array, performs matrix multiplication.
+    /// If other is a scalar, performs element-wise scaling.
     fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if other.extract::<PyRef<Array>>().is_ok() {
+            return self.matmul_impl(other, py);
+        }
+        self.binary_op(other, py, |a, b| a * b, "multiply")
+    }
+
+    /// The @ operator is not supported. Provide a helpful error directing
+    /// users to * for matrix multiplication and .`elemwise_mul()` for
+    /// element-wise multiplication.
+    fn __matmul__(&self, _other: &Bound<'_, PyAny>, _py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "The @ operator is not supported for PECOS Arrays. \
+             Use * for matrix multiplication and .elemwise_mul() for element-wise multiplication.",
+        ))
+    }
+
+    /// Element-wise multiplication of two arrays
+    fn elemwise_mul(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.binary_op(other, py, |a, b| a * b, "multiply")
     }
 
@@ -1428,9 +1562,14 @@ impl Array {
     }
 
     /// Reverse multiply: other * self
+    /// If other is an Array, performs matrix multiplication (other * self).
+    /// If other is a scalar, performs element-wise scaling.
     fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        // Multiplication is commutative, so rmul is the same as mul
-        self.__mul__(other, py)
+        if let Ok(other_arr) = other.extract::<PyRef<Array>>() {
+            return other_arr.matmul_impl_inner(self, py);
+        }
+        // Scalar multiplication is commutative
+        self.binary_op(other, py, |a, b| a * b, "multiply")
     }
 
     /// Reverse divide: other / self
@@ -1598,6 +1737,129 @@ impl Array {
         }
     }
 
+    /// Unary negation: -self
+    fn __neg__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let result = match &self.data {
+            ArrayData::F64(arr) => Array {
+                data: ArrayData::F64(arr.mapv(|x| -x)),
+            },
+            ArrayData::F32(arr) => Array {
+                data: ArrayData::F32(arr.mapv(|x| -x)),
+            },
+            ArrayData::I64(arr) => Array {
+                data: ArrayData::I64(arr.mapv(|x| -x)),
+            },
+            ArrayData::I32(arr) => Array {
+                data: ArrayData::I32(arr.mapv(|x| -x)),
+            },
+            ArrayData::I16(arr) => Array {
+                data: ArrayData::I16(arr.mapv(|x| -x)),
+            },
+            ArrayData::I8(arr) => Array {
+                data: ArrayData::I8(arr.mapv(|x| -x)),
+            },
+            ArrayData::Complex64(arr) => Array {
+                data: ArrayData::Complex64(arr.mapv(|x| -x)),
+            },
+            ArrayData::Complex128(arr) => Array {
+                data: ArrayData::Complex128(arr.mapv(|x| -x)),
+            },
+            _ => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Negation not supported for this dtype",
+                ));
+            }
+        };
+        Ok(Py::new(py, result)?.into_any())
+    }
+
+    /// Complex conjugate of the array.
+    /// For complex types, conjugates each element. For real types, returns a copy.
+    fn conj(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let result = match &self.data {
+            ArrayData::Complex64(arr) => Array {
+                data: ArrayData::Complex64(arr.mapv(|x| x.conj())),
+            },
+            ArrayData::Complex128(arr) => Array {
+                data: ArrayData::Complex128(arr.mapv(|x| x.conj())),
+            },
+            // conj is identity for real types
+            _ => self.copy(),
+        };
+        Ok(Py::new(py, result)?.into_any())
+    }
+
+    /// Transpose of the array (reverses axes).
+    #[getter]
+    #[allow(non_snake_case)]
+    fn T(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let result = match &self.data {
+            ArrayData::Bool(arr) => Array {
+                data: ArrayData::Bool(arr.t().to_owned()),
+            },
+            ArrayData::I8(arr) => Array {
+                data: ArrayData::I8(arr.t().to_owned()),
+            },
+            ArrayData::I16(arr) => Array {
+                data: ArrayData::I16(arr.t().to_owned()),
+            },
+            ArrayData::I32(arr) => Array {
+                data: ArrayData::I32(arr.t().to_owned()),
+            },
+            ArrayData::I64(arr) => Array {
+                data: ArrayData::I64(arr.t().to_owned()),
+            },
+            ArrayData::U8(arr) => Array {
+                data: ArrayData::U8(arr.t().to_owned()),
+            },
+            ArrayData::U16(arr) => Array {
+                data: ArrayData::U16(arr.t().to_owned()),
+            },
+            ArrayData::U32(arr) => Array {
+                data: ArrayData::U32(arr.t().to_owned()),
+            },
+            ArrayData::U64(arr) => Array {
+                data: ArrayData::U64(arr.t().to_owned()),
+            },
+            ArrayData::F32(arr) => Array {
+                data: ArrayData::F32(arr.t().to_owned()),
+            },
+            ArrayData::F64(arr) => Array {
+                data: ArrayData::F64(arr.t().to_owned()),
+            },
+            ArrayData::Complex64(arr) => Array {
+                data: ArrayData::Complex64(arr.t().to_owned()),
+            },
+            ArrayData::Complex128(arr) => Array {
+                data: ArrayData::Complex128(arr.t().to_owned()),
+            },
+            ArrayData::Pauli(arr) => Array {
+                data: ArrayData::Pauli(arr.t().to_owned()),
+            },
+            ArrayData::PauliString(arr) => Array {
+                data: ArrayData::PauliString(arr.t().to_owned()),
+            },
+        };
+        Ok(Py::new(py, result)?.into_any())
+    }
+
+    /// Matrix multiply (like numpy's dot for 2D arrays)
+    fn dot(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.matmul_impl(other, py)
+    }
+
+    /// Kronecker product: self & other
+    fn __and__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let other_arr = other.extract::<PyRef<Array>>()?;
+        self.kron_impl(&other_arr, py)
+    }
+
+    /// Reverse Kronecker product: other & self
+    fn __rand__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let other_arr = other.extract::<PyRef<Array>>()?;
+        other_arr.kron_impl(self, py)
+    }
+
     /// Greater than: self > other
     fn __gt__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.comparison_op(
@@ -1634,16 +1896,22 @@ impl Array {
     }
 
     /// Equal: self == other
-    /// Note: Uses exact float equality to match numpy behavior
+    /// Supports element-wise equality for all dtypes including Complex128 arrays
     #[allow(clippy::float_cmp)]
     fn __eq__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        // Try Array-vs-Array comparison first (handles complex)
+        if let Ok(other_arr) = other.extract::<PyRef<Array>>() {
+            return self.eq_array(&other_arr, py, false);
+        }
         self.comparison_op(other, py, |a, b| if a == b { 1.0 } else { 0.0 }, "equal")
     }
 
     /// Not equal: self != other
-    /// Note: Uses exact float equality to match numpy behavior
     #[allow(clippy::float_cmp)]
     fn __ne__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Ok(other_arr) = other.extract::<PyRef<Array>>() {
+            return self.eq_array(&other_arr, py, true);
+        }
         self.comparison_op(
             other,
             py,
@@ -1654,6 +1922,21 @@ impl Array {
 }
 
 impl Array {
+    /// Normalize a possibly-negative axis index and bounds-check it.
+    fn normalize_axis(axis: isize, ndim: usize) -> PyResult<usize> {
+        let normalized = if axis < 0 {
+            (ndim as isize + axis) as usize
+        } else {
+            axis as usize
+        };
+        if normalized >= ndim {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "axis {axis} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+        Ok(normalized)
+    }
+
     /// Create a new `Array` from `ArrayData`
     pub fn new(data: ArrayData) -> Self {
         Self { data }
@@ -2738,9 +3021,8 @@ impl Array {
                     .into_any())
                 }
                 ArrayData::Complex64(arr) => {
-                    // For f64 scalar with complex array:
-                    // - For add/subtract: only modify real part (a+bi) + c = (a+c) + bi
-                    // - For multiply/divide: modify both parts (a+bi) * c = (a*c) + (b*c)i
+                    // Treat f64 scalar as complex: scalar + 0i
+                    let s = Complex64::new(scalar, 0.0);
                     let result = match op_name {
                         "add" | "subtract" => arr.mapv(|x| {
                             let re = op(f64::from(x.re), scalar);
@@ -2750,6 +3032,11 @@ impl Array {
                             let re = op(f64::from(x.re), scalar);
                             let im = op(f64::from(x.im), scalar);
                             Complex32::new(re as f32, im as f32)
+                        }),
+                        "power" => arr.mapv(|x| {
+                            let x64 = Complex64::new(f64::from(x.re), f64::from(x.im));
+                            let res = x64.powc(s);
+                            Complex32::new(res.re as f32, res.im as f32)
                         }),
                         _ => {
                             return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
@@ -2766,9 +3053,8 @@ impl Array {
                     .into_any())
                 }
                 ArrayData::Complex128(arr) => {
-                    // For f64 scalar with complex array:
-                    // - For add/subtract: only modify real part (a+bi) + c = (a+c) + bi
-                    // - For multiply/divide: modify both parts (a+bi) * c = (a*c) + (b*c)i
+                    // Treat f64 scalar as complex: scalar + 0i
+                    let s = Complex64::new(scalar, 0.0);
                     let result = match op_name {
                         "add" | "subtract" => arr.mapv(|x| {
                             let re = op(x.re, scalar);
@@ -2779,6 +3065,7 @@ impl Array {
                             let im = op(x.im, scalar);
                             Complex64::new(re, im)
                         }),
+                        "power" => arr.mapv(|x| x.powc(s)),
                         _ => {
                             return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
                                 "Operation {op_name} is not implemented for Complex128 with f64 scalar"
@@ -2872,8 +3159,42 @@ impl Array {
                     )?
                     .into_any())
                 }
+                ArrayData::F64(arr) => {
+                    // Promote F64 to Complex128
+                    let result: PyResult<Vec<Complex64>> = arr
+                        .iter()
+                        .map(|&x| {
+                            let x_c = Complex64::new(x, 0.0);
+                            let res = match op_name {
+                                "add" => x_c + c,
+                                "subtract" => x_c - c,
+                                "multiply" => x_c * c,
+                                "divide" => x_c / c,
+                                "power" => x_c.powc(c),
+                                _ => {
+                                    return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                                        format!("Complex scalar {op_name} is not implemented"),
+                                    ));
+                                }
+                            };
+                            Ok(res)
+                        })
+                        .collect();
+                    let result_vec = result?;
+                    let result_arr =
+                        ArrayD::from_shape_vec(arr.raw_dim(), result_vec).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                        })?;
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex128(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
                 _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "Complex scalar {op_name} is only supported for complex arrays"
+                    "Complex scalar {op_name} is not supported for this dtype"
                 ))),
             }
         } else if let Ok(other_array) = other.cast::<Array>() {
@@ -2991,15 +3312,186 @@ impl Array {
                         ))
                     })?;
 
-                    // Apply operation element-wise on broadcasted arrays
+                    // Use proper complex arithmetic -- component-wise f64 ops are
+                    // only correct for add/subtract.
+                    let complex_op: ComplexBinOp = match op_name {
+                        "add" => Box::new(|x, y| x + y),
+                        "subtract" => Box::new(|x, y| x - y),
+                        "multiply" => Box::new(|x, y| x * y),
+                        "divide" => Box::new(|x, y| x / y),
+                        "power" => Box::new(|x, y| x.powc(*y)),
+                        _ => {
+                            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                                "Operation {op_name} is not supported for complex arrays"
+                            )));
+                        }
+                    };
+
+                    let result = a_broadcast
+                        .iter()
+                        .zip(b_broadcast.iter())
+                        .map(|(x, y)| complex_op(x, y))
+                        .collect::<Vec<_>>();
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                    })?;
+
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex128(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
+                (ArrayData::Complex64(a), ArrayData::Complex64(b)) => {
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    let a_broadcast = a.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            a.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_broadcast = b.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            b.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+
+                    let complex_op: Box<dyn Fn(Complex64, Complex64) -> Complex64> = match op_name {
+                        "add" => Box::new(|x, y| x + y),
+                        "subtract" => Box::new(|x, y| x - y),
+                        "multiply" => Box::new(|x, y| x * y),
+                        "divide" => Box::new(|x, y| x / y),
+                        "power" => Box::new(num_complex::Complex::powc),
+                        _ => {
+                            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                                "Operation {op_name} is not supported for complex arrays"
+                            )));
+                        }
+                    };
+
                     let result = a_broadcast
                         .iter()
                         .zip(b_broadcast.iter())
                         .map(|(x, y)| {
-                            let re = op(x.re, y.re);
-                            let im = op(x.im, y.im);
-                            Complex64::new(re, im)
+                            let x64 = Complex64::new(f64::from(x.re), f64::from(x.im));
+                            let y64 = Complex64::new(f64::from(y.re), f64::from(y.im));
+                            let res = complex_op(x64, y64);
+                            Complex32::new(res.re as f32, res.im as f32)
                         })
+                        .collect::<Vec<_>>();
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                    })?;
+
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex64(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
+                // Cross-type: promote F64 to Complex128
+                (ArrayData::F64(a), ArrayData::Complex128(b)) => {
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    let a_c = a.mapv(|x| Complex64::new(x, 0.0));
+                    let a_broadcast = a_c.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            a.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_broadcast = b.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            b.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+
+                    let complex_op: ComplexBinOp = match op_name {
+                        "add" => Box::new(|x, y| x + y),
+                        "subtract" => Box::new(|x, y| x - y),
+                        "multiply" => Box::new(|x, y| x * y),
+                        "divide" => Box::new(|x, y| x / y),
+                        "power" => Box::new(|x, y| x.powc(*y)),
+                        _ => {
+                            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                                "Operation {op_name} is not supported for complex arrays"
+                            )));
+                        }
+                    };
+
+                    let result = a_broadcast
+                        .iter()
+                        .zip(b_broadcast.iter())
+                        .map(|(x, y)| complex_op(x, y))
+                        .collect::<Vec<_>>();
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                    })?;
+
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex128(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
+                (ArrayData::Complex128(a), ArrayData::F64(b)) => {
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    let a_broadcast = a.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            a.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_c = b.mapv(|x| Complex64::new(x, 0.0));
+                    let b_broadcast = b_c.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            b.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+
+                    let complex_op: ComplexBinOp = match op_name {
+                        "add" => Box::new(|x, y| x + y),
+                        "subtract" => Box::new(|x, y| x - y),
+                        "multiply" => Box::new(|x, y| x * y),
+                        "divide" => Box::new(|x, y| x / y),
+                        "power" => Box::new(|x, y| x.powc(*y)),
+                        _ => {
+                            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                                "Operation {op_name} is not supported for complex arrays"
+                            )));
+                        }
+                    };
+
+                    let result = a_broadcast
+                        .iter()
+                        .zip(b_broadcast.iter())
+                        .map(|(x, y)| complex_op(x, y))
                         .collect::<Vec<_>>();
 
                     let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
@@ -3197,10 +3689,20 @@ impl Array {
                     .into_any())
                 }
                 ArrayData::Complex64(arr) => {
+                    // Treat scalar as complex: scalar + 0i
+                    let s = Complex64::new(scalar, 0.0);
                     let result = arr.mapv(|x| {
-                        let re = op(scalar, f64::from(x.re));
-                        let im = op(scalar, f64::from(x.im));
-                        Complex32::new(re as f32, im as f32)
+                        let x64 = Complex64::new(f64::from(x.re), f64::from(x.im));
+                        let res = match op_name {
+                            "subtract" => s - x64,
+                            "divide" => s / x64,
+                            "power" => s.powc(x64),
+                            _ => Complex64::new(
+                                op(scalar, f64::from(x.re)),
+                                op(scalar, f64::from(x.im)),
+                            ),
+                        };
+                        Complex32::new(res.re as f32, res.im as f32)
                     });
                     Ok(Py::new(
                         py,
@@ -3211,10 +3713,13 @@ impl Array {
                     .into_any())
                 }
                 ArrayData::Complex128(arr) => {
-                    let result = arr.mapv(|x| {
-                        let re = op(scalar, x.re);
-                        let im = op(scalar, x.im);
-                        Complex64::new(re, im)
+                    // Treat scalar as complex: scalar + 0i
+                    let s = Complex64::new(scalar, 0.0);
+                    let result = arr.mapv(|x| match op_name {
+                        "subtract" => s - x,
+                        "divide" => s / x,
+                        "power" => s.powc(x),
+                        _ => Complex64::new(op(scalar, x.re), op(scalar, x.im)),
                     });
                     Ok(Py::new(
                         py,
@@ -3231,11 +3736,228 @@ impl Array {
                     "Arithmetic operations not supported on PauliString arrays",
                 )),
             }
+        } else if let Ok(complex_scalar) = other.cast::<pyo3::types::PyComplex>() {
+            // Complex scalar reverse operation: complex_scalar op array
+            let c_real = complex_scalar.real();
+            let c_imag = complex_scalar.imag();
+            let c = Complex64::new(c_real, c_imag);
+
+            let complex_rev_op = |c: Complex64, x: Complex64| -> PyResult<Complex64> {
+                match op_name {
+                    "add" => Ok(c + x),
+                    "subtract" => Ok(c - x),
+                    "multiply" => Ok(c * x),
+                    "divide" => Ok(c / x),
+                    "power" => Ok(c.powc(x)),
+                    _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                        "Reverse complex scalar {op_name} is not implemented"
+                    ))),
+                }
+            };
+
+            match &self.data {
+                ArrayData::Complex64(arr) => {
+                    let result: PyResult<Vec<Complex32>> = arr
+                        .iter()
+                        .map(|&x| {
+                            let x64 = Complex64::new(f64::from(x.re), f64::from(x.im));
+                            let res = complex_rev_op(c, x64)?;
+                            Ok(Complex32::new(res.re as f32, res.im as f32))
+                        })
+                        .collect();
+                    let result_vec = result?;
+                    let result_arr =
+                        ArrayD::from_shape_vec(arr.raw_dim(), result_vec).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                        })?;
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex64(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::Complex128(arr) => {
+                    let result: PyResult<Vec<Complex64>> =
+                        arr.iter().map(|&x| complex_rev_op(c, x)).collect();
+                    let result_vec = result?;
+                    let result_arr =
+                        ArrayD::from_shape_vec(arr.raw_dim(), result_vec).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                        })?;
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex128(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::F64(arr) => {
+                    // Promote F64 to Complex128
+                    let result: PyResult<Vec<Complex64>> = arr
+                        .iter()
+                        .map(|&x| {
+                            let x_c = Complex64::new(x, 0.0);
+                            complex_rev_op(c, x_c)
+                        })
+                        .collect();
+                    let result_vec = result?;
+                    let result_arr =
+                        ArrayD::from_shape_vec(arr.raw_dim(), result_vec).map_err(|e| {
+                            pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                        })?;
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::Complex128(result_arr),
+                        },
+                    )?
+                    .into_any())
+                }
+                _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Reverse complex scalar {op_name} is not supported for this dtype"
+                ))),
+            }
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(format!(
                 "Unsupported operand type for reverse {op_name}"
             )))
         }
+    }
+
+    /// Helper for element-wise Array == Array (or !=) comparison.
+    /// `negate`: if true, returns != instead of ==.
+    fn eq_array(&self, other: &Array, py: Python<'_>, negate: bool) -> PyResult<Py<PyAny>> {
+        macro_rules! eq_impl {
+            ($a:expr, $b:expr) => {{
+                let result = if negate {
+                    ndarray::Zip::from($a).and($b).map_collect(|a, b| a != b)
+                } else {
+                    ndarray::Zip::from($a).and($b).map_collect(|a, b| a == b)
+                };
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::Bool(result),
+                    },
+                )?
+                .into_any())
+            }};
+        }
+        match (&self.data, &other.data) {
+            (ArrayData::F64(a), ArrayData::F64(b)) => eq_impl!(a, b),
+            (ArrayData::F32(a), ArrayData::F32(b)) => eq_impl!(a, b),
+            (ArrayData::I64(a), ArrayData::I64(b)) => eq_impl!(a, b),
+            (ArrayData::I32(a), ArrayData::I32(b)) => eq_impl!(a, b),
+            (ArrayData::Bool(a), ArrayData::Bool(b)) => eq_impl!(a, b),
+            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => eq_impl!(a, b),
+            (ArrayData::Complex64(a), ArrayData::Complex64(b)) => eq_impl!(a, b),
+            (ArrayData::U64(a), ArrayData::U64(b)) => eq_impl!(a, b),
+            (ArrayData::U32(a), ArrayData::U32(b)) => eq_impl!(a, b),
+            (ArrayData::U16(a), ArrayData::U16(b)) => eq_impl!(a, b),
+            (ArrayData::U8(a), ArrayData::U8(b)) => eq_impl!(a, b),
+            (ArrayData::I16(a), ArrayData::I16(b)) => eq_impl!(a, b),
+            (ArrayData::I8(a), ArrayData::I8(b)) => eq_impl!(a, b),
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Cannot compare {:?} with {:?}",
+                self.data.dtype(),
+                other.data.dtype()
+            ))),
+        }
+    }
+
+    /// Helper for matrix multiplication (used by __mul__, dot, etc.)
+    fn matmul_impl(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let other_arr = other.extract::<PyRef<Array>>()?;
+        self.matmul_impl_inner(&other_arr, py)
+    }
+
+    /// Inner matrix multiplication on two Array references
+    fn matmul_impl_inner(&self, other: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        // Helper to do 2D dot product for a given element type
+        macro_rules! matmul_same {
+            ($a:expr, $b:expr, $variant:ident) => {{
+                let a2 = $a.clone().into_dimensionality::<Ix2>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err("matmul requires 2D arrays")
+                })?;
+                let b2 = $b.clone().into_dimensionality::<Ix2>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err("matmul requires 2D arrays")
+                })?;
+                let result = a2.dot(&b2).into_dyn();
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::$variant(result),
+                    },
+                )?
+                .into_any())
+            }};
+        }
+
+        match (&self.data, &other.data) {
+            (ArrayData::F64(a), ArrayData::F64(b)) => matmul_same!(a, b, F64),
+            (ArrayData::F32(a), ArrayData::F32(b)) => matmul_same!(a, b, F32),
+            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => matmul_same!(a, b, Complex128),
+            (ArrayData::Complex64(a), ArrayData::Complex64(b)) => matmul_same!(a, b, Complex64),
+            // Cross-type: promote F64 -> Complex128
+            (ArrayData::Complex128(a), ArrayData::F64(b)) => {
+                let b_c = b.mapv(|x| Complex64::new(x, 0.0));
+                matmul_same!(a, b_c, Complex128)
+            }
+            (ArrayData::F64(a), ArrayData::Complex128(b)) => {
+                let a_c = a.mapv(|x| Complex64::new(x, 0.0));
+                matmul_same!(a_c, b, Complex128)
+            }
+            // Integer types: promote to F64
+            (ArrayData::I64(a), ArrayData::I64(b)) => {
+                let a_f = a.mapv(|x| x as f64);
+                let b_f = b.mapv(|x| x as f64);
+                matmul_same!(a_f, b_f, F64)
+            }
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "matmul not supported for {:?} * {:?}",
+                self.data.dtype(),
+                other.data.dtype()
+            ))),
+        }
+    }
+
+    /// Helper for Kronecker product (used by __and__ and __rand__)
+    fn kron_impl(&self, other: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        macro_rules! to_2d {
+            ($arr:expr) => {
+                $arr.clone().into_dimensionality::<Ix2>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err("kron requires 2D arrays")
+                })?
+            };
+        }
+
+        let result_data = match (&self.data, &other.data) {
+            (ArrayData::F64(a), ArrayData::F64(b)) => {
+                ArrayData::F64(pecos::linalg::kron(&to_2d!(a), &to_2d!(b)).into_dyn())
+            }
+            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => {
+                ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a), &to_2d!(b)).into_dyn())
+            }
+            (ArrayData::Complex128(a), ArrayData::F64(b)) => {
+                let b_c = b.mapv(|x| Complex64::new(x, 0.0));
+                ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a), &to_2d!(b_c)).into_dyn())
+            }
+            (ArrayData::F64(a), ArrayData::Complex128(b)) => {
+                let a_c = a.mapv(|x| Complex64::new(x, 0.0));
+                ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_c), &to_2d!(b)).into_dyn())
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "kron not supported for {:?} and {:?}",
+                    self.data.dtype(),
+                    other.data.dtype()
+                )));
+            }
+        };
+        Ok(Py::new(py, Array::new(result_data))?.into_any())
     }
 
     /// Helper method for comparison operations: self op other
@@ -5282,4 +6004,241 @@ impl Array {
 #[pyo3(signature = (data, dtype=None))]
 pub fn array(data: &Bound<'_, PyAny>, dtype: Option<&Bound<'_, PyAny>>) -> PyResult<Array> {
     Array::from_python_value(data, dtype)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::ArrayD;
+    use num_complex::Complex64;
+
+    // -----------------------------------------------------------------------
+    // broadcast_shape
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn broadcast_same_shape() {
+        let result = Array::broadcast_shape(&[3, 4], &[3, 4]).unwrap();
+        assert_eq!(result, vec![3, 4]);
+    }
+
+    #[test]
+    fn broadcast_scalar_left() {
+        // (1,) + (3,4) -> (3,4)
+        let result = Array::broadcast_shape(&[1], &[3, 4]).unwrap();
+        assert_eq!(result, vec![3, 4]);
+    }
+
+    #[test]
+    fn broadcast_scalar_right() {
+        let result = Array::broadcast_shape(&[3, 4], &[1]).unwrap();
+        assert_eq!(result, vec![3, 4]);
+    }
+
+    #[test]
+    fn broadcast_column_row() {
+        // (3,1) + (1,4) -> (3,4)
+        let result = Array::broadcast_shape(&[3, 1], &[1, 4]).unwrap();
+        assert_eq!(result, vec![3, 4]);
+    }
+
+    #[test]
+    fn broadcast_1d_to_2d() {
+        // (4,) + (3,4) -> (3,4)
+        let result = Array::broadcast_shape(&[4], &[3, 4]).unwrap();
+        assert_eq!(result, vec![3, 4]);
+    }
+
+    #[test]
+    fn broadcast_3d() {
+        // (2,3,1) + (1,3,4) -> (2,3,4)
+        let result = Array::broadcast_shape(&[2, 3, 1], &[1, 3, 4]).unwrap();
+        assert_eq!(result, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn broadcast_5d() {
+        // (2,3,1,4,5) + (1,6,1,5) -> (2,3,6,4,5)
+        let result = Array::broadcast_shape(&[2, 3, 1, 4, 5], &[1, 6, 1, 5]).unwrap();
+        assert_eq!(result, vec![2, 3, 6, 4, 5]);
+    }
+
+    #[test]
+    fn broadcast_incompatible() {
+        let result = Array::broadcast_shape(&[3, 4], &[2, 4]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot broadcast"));
+    }
+
+    #[test]
+    fn broadcast_empty_shapes() {
+        // () + (3,) -> (3,)
+        let result = Array::broadcast_shape(&[], &[3]).unwrap();
+        assert_eq!(result, vec![3]);
+    }
+
+    #[test]
+    fn broadcast_both_empty() {
+        let result = Array::broadcast_shape(&[], &[]).unwrap();
+        assert_eq!(result, Vec::<usize>::new());
+    }
+
+    // -----------------------------------------------------------------------
+    // ArrayData construction and dtype()
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn array_data_dtype_f64() {
+        let data = ArrayData::F64(ArrayD::zeros(IxDyn(&[2, 3])));
+        assert_eq!(data.dtype(), DType::F64);
+    }
+
+    #[test]
+    fn array_data_dtype_complex128() {
+        let data = ArrayData::Complex128(ArrayD::zeros(IxDyn(&[2])));
+        assert_eq!(data.dtype(), DType::Complex128);
+    }
+
+    #[test]
+    fn array_data_dtype_complex64() {
+        let data = ArrayData::Complex64(ArrayD::zeros(IxDyn(&[2])));
+        assert_eq!(data.dtype(), DType::Complex64);
+    }
+
+    #[test]
+    fn array_data_dtype_i64() {
+        let data = ArrayData::I64(ArrayD::zeros(IxDyn(&[5])));
+        assert_eq!(data.dtype(), DType::I64);
+    }
+
+    #[test]
+    fn array_data_dtype_bool() {
+        let data = ArrayData::Bool(ArrayD::from_elem(IxDyn(&[3]), false));
+        assert_eq!(data.dtype(), DType::Bool);
+    }
+
+    // -----------------------------------------------------------------------
+    // Kron helpers (pure Rust, no Python needed)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn kron_f64_identity() {
+        // kron(I2, I2) = I4
+        let i2 = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0_f64, 0.0, 0.0, 1.0]).unwrap();
+
+        let a2 = i2.clone().into_dimensionality::<Ix2>().unwrap();
+        let b2 = i2.into_dimensionality::<Ix2>().unwrap();
+
+        let (ar, ac) = (a2.nrows(), a2.ncols());
+        let (br, bc) = (b2.nrows(), b2.ncols());
+        let mut result = ndarray::Array2::<f64>::zeros((ar * br, ac * bc));
+        for i in 0..ar {
+            for j in 0..ac {
+                let a_val = a2[[i, j]];
+                for k in 0..br {
+                    for l in 0..bc {
+                        result[[i * br + k, j * bc + l]] = a_val * b2[[k, l]];
+                    }
+                }
+            }
+        }
+
+        // I4 diagonal should be 1
+        for i in 0..4 {
+            assert!((result[[i, i]] - 1.0).abs() < 1e-15);
+            for j in 0..4 {
+                if i != j {
+                    assert!(result[[i, j]].abs() < 1e-15);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn kron_complex_known_value() {
+        // kron([[a]], [[b]]) = [[a*b]] for 1x1 matrices
+        let a = Complex64::new(1.0, 2.0);
+        let b = Complex64::new(3.0, 4.0);
+        let expected = a * b;
+
+        let a_arr = ndarray::Array2::from_shape_vec((1, 1), vec![a]).unwrap();
+        let b_arr = ndarray::Array2::from_shape_vec((1, 1), vec![b]).unwrap();
+
+        let mut result = ndarray::Array2::<Complex64>::zeros((1, 1));
+        result[[0, 0]] = a_arr[[0, 0]] * b_arr[[0, 0]];
+
+        assert!((result[[0, 0]] - expected).norm() < 1e-15);
+    }
+
+    #[test]
+    fn kron_not_commutative() {
+        // kron(A, B) != kron(B, A) in general
+        let a = ndarray::Array2::from_shape_vec((2, 2), vec![1.0_f64, 2.0, 3.0, 4.0]).unwrap();
+        let b = ndarray::Array2::from_shape_vec((2, 2), vec![0.0_f64, 5.0, 6.0, 7.0]).unwrap();
+
+        let kron_ab = kron_2d_f64(&a, &b);
+        let kron_ba = kron_2d_f64(&b, &a);
+
+        assert_ne!(kron_ab, kron_ba);
+    }
+
+    // Helper for the Rust-only kron test
+    fn kron_2d_f64(a: &ndarray::Array2<f64>, b: &ndarray::Array2<f64>) -> ndarray::Array2<f64> {
+        let (ar, ac) = (a.nrows(), a.ncols());
+        let (br, bc) = (b.nrows(), b.ncols());
+        let mut result = ndarray::Array2::<f64>::zeros((ar * br, ac * bc));
+        for i in 0..ar {
+            for j in 0..ac {
+                let a_val = a[[i, j]];
+                for k in 0..br {
+                    for l in 0..bc {
+                        result[[i * br + k, j * bc + l]] = a_val * b[[k, l]];
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    // -----------------------------------------------------------------------
+    // Complex arithmetic correctness (pure Rust)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn complex_mul_not_componentwise() {
+        // (1+1j) * (2+0j) should be (2+2j), NOT (2+0j)
+        let a = Complex64::new(1.0, 1.0);
+        let b = Complex64::new(2.0, 0.0);
+        let result = a * b;
+        assert!((result.re - 2.0).abs() < 1e-15);
+        assert!((result.im - 2.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn complex_div_not_componentwise() {
+        // (1+2j) / (2+0j) should be (0.5+1j), NOT (0.5+inf)
+        let a = Complex64::new(1.0, 2.0);
+        let b = Complex64::new(2.0, 0.0);
+        let result = a / b;
+        assert!((result.re - 0.5).abs() < 1e-15);
+        assert!((result.im - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn complex_powc_known() {
+        // i^2 = -1
+        let i = Complex64::new(0.0, 1.0);
+        let two = Complex64::new(2.0, 0.0);
+        let result = i.powc(two);
+        assert!((result.re - (-1.0)).abs() < 1e-10);
+        assert!(result.im.abs() < 1e-10);
+    }
+
+    #[test]
+    fn complex_neg() {
+        let a = Complex64::new(3.0, -4.0);
+        let result = -a;
+        assert!((result.re - (-3.0)).abs() < 1e-15);
+        assert!((result.im - 4.0).abs() < 1e-15);
+    }
 }

@@ -25,11 +25,15 @@
 //!
 //! The polymorphism happens in the `PyO3` bindings, not in custom Rust traits.
 
-use ndarray::{Array, Array1, ArrayBase, ArrayView2, Axis, Data, Dimension, RemoveAxis};
+use ndarray::{
+    Array, Array1, Array2, ArrayBase, ArrayD, ArrayView1, ArrayView2, ArrayViewD, Axis, Data,
+    Dimension, IxDyn, LinalgScalar, RemoveAxis,
+};
 
 /// Extract the diagonal elements from a 2D array (matrix).
 ///
 /// This is a drop-in replacement for `numpy.diag()` when extracting diagonal elements.
+/// Works with any element type that implements `LinalgScalar` (f64, Complex64, etc.).
 ///
 /// # Arguments
 ///
@@ -61,7 +65,7 @@ use ndarray::{Array, Array1, ArrayBase, ArrayView2, Axis, Data, Dimension, Remov
 /// ```
 #[must_use]
 #[allow(clippy::needless_pass_by_value)] // ArrayView is a borrowed view, designed to be passed by value
-pub fn diag(matrix: ArrayView2<f64>) -> Array1<f64> {
+pub fn diag<T: LinalgScalar>(matrix: ArrayView2<T>) -> Array1<T> {
     let (nrows, ncols) = matrix.dim();
     let diag_len = nrows.min(ncols);
 
@@ -71,6 +75,131 @@ pub fn diag(matrix: ArrayView2<f64>) -> Array1<f64> {
     }
 
     diagonal
+}
+
+/// Create a diagonal matrix from a 1D vector.
+///
+/// This is a drop-in replacement for `numpy.diag()` when creating a diagonal matrix from a vector.
+///
+/// # Arguments
+///
+/// * `v` - A 1D array view of values to place on the diagonal
+///
+/// # Returns
+///
+/// A 2D square array with the input values on the diagonal and zeros elsewhere
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::array;
+/// use pecos_num::array::diag_matrix;
+///
+/// let v = array![1.0, 2.0, 3.0];
+/// let m = diag_matrix(v.view());
+/// assert_eq!(m, array![[1.0, 0.0, 0.0],
+///                       [0.0, 2.0, 0.0],
+///                       [0.0, 0.0, 3.0]]);
+/// ```
+#[must_use]
+#[allow(clippy::needless_pass_by_value)] // ArrayView is a borrowed view, designed to be passed by value
+pub fn diag_matrix<T: LinalgScalar>(v: ArrayView1<T>) -> Array2<T> {
+    let n = v.len();
+    let mut result = Array2::<T>::zeros((n, n));
+    for i in 0..n {
+        result[(i, i)] = v[i];
+    }
+    result
+}
+
+/// Compute the broadcast shape for a set of array shapes.
+///
+/// Follows `NumPy` broadcasting rules: dimensions are compared from right to left,
+/// and each dimension must be either equal or one of them must be 1.
+///
+/// # Arguments
+///
+/// * `shapes` - Slice of shape slices to broadcast together
+///
+/// # Returns
+///
+/// The broadcast-compatible shape, or an error if shapes are incompatible
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::array::broadcast_shapes;
+///
+/// // Scalar + vector
+/// let result = broadcast_shapes(&[&[1], &[3]]).unwrap();
+/// assert_eq!(result, vec![3]);
+///
+/// // Vector + matrix
+/// let result = broadcast_shapes(&[&[3], &[2, 3]]).unwrap();
+/// assert_eq!(result, vec![2, 3]);
+/// ```
+pub fn broadcast_shapes(shapes: &[&[usize]]) -> Result<Vec<usize>, String> {
+    let max_ndim = shapes.iter().map(|s| s.len()).max().unwrap_or(0);
+    let mut result_shape = vec![1; max_ndim];
+
+    for shape in shapes {
+        let offset = max_ndim - shape.len();
+        for (i, &dim) in shape.iter().enumerate() {
+            let result_idx = offset + i;
+            if result_shape[result_idx] == 1 {
+                result_shape[result_idx] = dim;
+            } else if dim != 1 && dim != result_shape[result_idx] {
+                return Err(format!(
+                    "operands could not be broadcast together with shapes {shapes:?}"
+                ));
+            }
+        }
+    }
+
+    Ok(result_shape)
+}
+
+/// Broadcast an array to a target shape.
+///
+/// Uses NumPy-style broadcasting rules.
+///
+/// # Arguments
+///
+/// * `arr` - Input array view (dynamic dimensionality)
+/// * `target_shape` - The shape to broadcast to
+///
+/// # Returns
+///
+/// A new array with the target shape, or an error if broadcasting is not possible
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::{arr0, IxDyn};
+/// use pecos_num::array::broadcast_to;
+///
+/// let scalar = arr0(5.0).into_dyn();
+/// let result = broadcast_to(scalar.view(), &[2, 3]).unwrap();
+/// assert_eq!(result.shape(), &[2, 3]);
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+pub fn broadcast_to<T: Clone>(
+    arr: ArrayViewD<'_, T>,
+    target_shape: &[usize],
+) -> Result<ArrayD<T>, String> {
+    if arr.shape() == target_shape {
+        return Ok(arr.to_owned());
+    }
+
+    let broadcast_view = arr.broadcast(IxDyn(target_shape)).ok_or_else(|| {
+        format!(
+            "cannot broadcast shape {:?} to {:?}",
+            arr.shape(),
+            target_shape
+        )
+    })?;
+
+    Ok(broadcast_view.to_owned())
 }
 
 /// Return evenly spaced values within a given interval.
@@ -403,6 +532,7 @@ pub fn delete<T: Clone>(arr: &Array1<T>, index: usize) -> Array1<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_complex::Complex64;
 
     // Tests for diag()
     #[test]
@@ -463,8 +593,8 @@ mod tests {
         let variances = diag(cov_matrix.view());
 
         assert_eq!(variances.len(), 2);
-        assert!((variances[0] - 0.0025).abs() < 1e-10);
-        assert!((variances[1] - 0.0004).abs() < 1e-10);
+        assert!((variances[0] - 0.0025_f64).abs() < 1e-10);
+        assert!((variances[1] - 0.0004_f64).abs() < 1e-10);
     }
 
     #[test]
@@ -749,5 +879,156 @@ mod tests {
     #[should_panic(expected = "arange: step cannot be zero")]
     fn test_arange_zero_step() {
         let _values = arange(0.0, 5.0, 0.0);
+    }
+
+    // Tests for diag_matrix()
+    #[test]
+    fn test_diag_matrix_f64_roundtrip() {
+        use ndarray::array;
+
+        let v = array![1.0, 5.0, 9.0];
+        let m = diag_matrix(v.view());
+        let extracted = diag(m.view());
+        assert_eq!(extracted, v);
+    }
+
+    #[test]
+    fn test_diag_matrix_complex_identity() {
+        use ndarray::array;
+
+        let one = Complex64::new(1.0, 0.0);
+        let zero = Complex64::new(0.0, 0.0);
+        let v = array![one, one, one];
+        let m = diag_matrix(v.view());
+        assert_eq!(m.shape(), &[3, 3]);
+        assert_eq!(m[(0, 0)], one);
+        assert_eq!(m[(1, 1)], one);
+        assert_eq!(m[(2, 2)], one);
+        assert_eq!(m[(0, 1)], zero);
+        assert_eq!(m[(1, 0)], zero);
+    }
+
+    // Tests for diag() with complex numbers (generic over LinalgScalar)
+    #[test]
+    fn test_diag_complex_extraction() {
+        use ndarray::array;
+
+        let a = Complex64::new(1.0, 2.0);
+        let b = Complex64::new(3.0, 4.0);
+        let c = Complex64::new(5.0, 6.0);
+        let d = Complex64::new(7.0, 8.0);
+        let m = array![[a, b], [c, d]];
+        let diagonal = diag(m.view());
+        assert_eq!(diagonal, array![a, d]);
+    }
+
+    #[test]
+    fn test_diag_complex_rectangular() {
+        use ndarray::array;
+
+        let a = Complex64::new(1.0, 0.0);
+        let b = Complex64::new(2.0, 0.0);
+        let c = Complex64::new(3.0, 0.0);
+        let d = Complex64::new(4.0, 0.0);
+        let e = Complex64::new(5.0, 0.0);
+        let f = Complex64::new(6.0, 0.0);
+        // 3x2 matrix
+        let m = array![[a, b], [c, d], [e, f]];
+        let diagonal = diag(m.view());
+        assert_eq!(diagonal.len(), 2);
+        assert_eq!(diagonal[0], a);
+        assert_eq!(diagonal[1], d);
+    }
+
+    // Tests for broadcast_shapes()
+    #[test]
+    fn test_broadcast_shapes_scalar_vector() {
+        let result = broadcast_shapes(&[&[1], &[3]]).unwrap();
+        assert_eq!(result, vec![3]);
+    }
+
+    #[test]
+    fn test_broadcast_shapes_vector_matrix() {
+        let result = broadcast_shapes(&[&[3], &[2, 3]]).unwrap();
+        assert_eq!(result, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_broadcast_shapes_incompatible() {
+        let result = broadcast_shapes(&[&[2], &[3]]);
+        assert!(result.is_err());
+    }
+
+    // Tests for broadcast_to()
+    #[test]
+    fn test_broadcast_to_scalar() {
+        let scalar = ndarray::arr0(5.0).into_dyn();
+        let result = broadcast_to(scalar.view(), &[2, 3]).unwrap();
+        assert_eq!(result.shape(), &[2, 3]);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(result[[0, 0]], 5.0);
+            assert_eq!(result[[1, 2]], 5.0);
+        }
+    }
+
+    #[test]
+    fn test_broadcast_to_identity() {
+        use ndarray::array;
+
+        let arr = array![1.0, 2.0, 3.0].into_dyn();
+        let result = broadcast_to(arr.view(), &[3]).unwrap();
+        assert_eq!(result.shape(), &[3]);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(result[0], 1.0);
+            assert_eq!(result[2], 3.0);
+        }
+    }
+
+    #[test]
+    fn test_broadcast_to_vector_to_matrix() {
+        use ndarray::array;
+
+        let arr = array![1.0, 2.0, 3.0]
+            .into_shape_with_order(ndarray::IxDyn(&[1, 3]))
+            .unwrap();
+        let result = broadcast_to(arr.view(), &[2, 3]).unwrap();
+        assert_eq!(result.shape(), &[2, 3]);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(result[[0, 0]], 1.0);
+            assert_eq!(result[[0, 2]], 3.0);
+            assert_eq!(result[[1, 0]], 1.0);
+            assert_eq!(result[[1, 2]], 3.0);
+        }
+    }
+
+    #[test]
+    fn test_broadcast_to_incompatible() {
+        use ndarray::array;
+
+        let arr = array![1.0, 2.0, 3.0].into_dyn();
+        let result = broadcast_to(arr.view(), &[2]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_broadcast_shapes_multiple() {
+        // Three shapes at once
+        let result = broadcast_shapes(&[&[1, 3], &[2, 1], &[2, 3]]).unwrap();
+        assert_eq!(result, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_broadcast_shapes_higher_dim() {
+        let result = broadcast_shapes(&[&[1, 4, 1], &[3, 1, 5]]).unwrap();
+        assert_eq!(result, vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn test_broadcast_shapes_empty() {
+        let result = broadcast_shapes(&[]).unwrap();
+        assert_eq!(result, Vec::<usize>::new());
     }
 }

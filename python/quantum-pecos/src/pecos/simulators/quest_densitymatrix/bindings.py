@@ -239,14 +239,21 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
         "RXX": lambda _s, qs, **p: _rxx_decomposition(backend, qs, p),
         "RYY": lambda _s, qs, **p: _ryy_decomposition(backend, qs, p),
         "RZZ": lambda _s, qs, **p: _rzz_decomposition(backend, qs, p),
-        "R2XXYYZZ": lambda _s, qs, **p: backend.rzzryyrxx_gate(
+        "RXXRYYRZZ": lambda _s, qs, **p: backend.rxxryyrzz_gate(
             p["angles"][0] if "angles" in p else 0,
             p["angles"][1] if "angles" in p and len(p["angles"]) > 1 else 0,
             p["angles"][2] if "angles" in p and len(p["angles"]) > 2 else 0,
             qs[0] if isinstance(qs, list | tuple) else qs,
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
-        "RZZRYYRXX": lambda _s, qs, **p: backend.rzzryyrxx_gate(
+        "R2XXYYZZ": lambda _s, qs, **p: backend.rxxryyrzz_gate(  # backward compat alias
+            p["angles"][0] if "angles" in p else 0,
+            p["angles"][1] if "angles" in p and len(p["angles"]) > 1 else 0,
+            p["angles"][2] if "angles" in p and len(p["angles"]) > 2 else 0,
+            qs[0] if isinstance(qs, list | tuple) else qs,
+            qs[1] if isinstance(qs, list | tuple) else qs,
+        ),
+        "RZZRYYRXX": lambda _s, qs, **p: backend.rxxryyrzz_gate(
             p["angles"][0] if "angles" in p else 0,
             p["angles"][1] if "angles" in p and len(p["angles"]) > 1 else 0,
             p["angles"][2] if "angles" in p and len(p["angles"]) > 2 else 0,

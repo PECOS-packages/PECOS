@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Operator algebra for Pauli strings with ergonomic syntax.
+//! `UnitaryRep` algebra for Pauli strings with ergonomic syntax.
 //!
 //! This module extends `PauliString` with operator overloading for natural
 //! mathematical syntax.
@@ -392,5 +392,136 @@ mod tests {
         let ps = PauliString::z(0) * PauliString::x(0);
         assert_eq!(ps.get(0), Pauli::Y);
         assert_eq!(ps.phase(), QuarterPhase::PlusI);
+    }
+
+    #[test]
+    fn test_anticommutes_with() {
+        let x = PauliString::x(0);
+        let z = PauliString::z(0);
+        let z1 = PauliString::z(1);
+
+        assert!(x.anticommutes_with(&z));
+        assert!(!x.anticommutes_with(&z1));
+        assert!(!x.anticommutes_with(&x));
+    }
+
+    // ========================================================================
+    // Algebraic property tests for operator overloading
+    // ========================================================================
+
+    #[test]
+    fn test_mul_associativity() {
+        // (X * Y) * Z == X * (Y * Z) on same qubit
+        let x = PauliString::x(0);
+        let y = PauliString::y(0);
+        let z = PauliString::z(0);
+
+        let lhs = (x.clone() * y.clone()) * z.clone();
+        let rhs = x * (y * z);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_mul_identity_neutral() {
+        let x = PauliString::x(0);
+        let id = PauliString::identity();
+
+        let result = x.clone() * id.clone();
+        assert_eq!(result, x.clone());
+
+        let result = id * x.clone();
+        assert_eq!(result, x);
+    }
+
+    #[test]
+    fn test_double_negation() {
+        let x = PauliString::x(0);
+        let result = -(-x.clone());
+        assert_eq!(result, x);
+    }
+
+    #[test]
+    fn test_i_times_i_is_minus_one() {
+        // i * (i * X) should equal -X
+        let x = PauliString::x(0);
+        let ix = i * x.clone();
+        let iix = i * ix;
+        let neg_x = -x;
+        assert_eq!(iix, neg_x);
+    }
+
+    #[test]
+    fn test_neg_i_times_i_is_plus_one() {
+        // (-i) * (i * X) should equal X
+        let x = PauliString::x(0);
+        let ix = i * x.clone();
+        let result = -i * ix;
+        assert_eq!(result, x);
+    }
+
+    #[test]
+    fn test_tensor_commutativity() {
+        // X(0) & Z(1) == Z(1) & X(0) (tensor product is commutative for different qubits)
+        let lhs = PauliString::x(0) & PauliString::z(1);
+        let rhs = PauliString::z(1) & PauliString::x(0);
+        // Both should represent the same operator
+        assert_eq!(lhs.get(0), rhs.get(0));
+        assert_eq!(lhs.get(1), rhs.get(1));
+        assert_eq!(lhs.phase(), rhs.phase());
+    }
+
+    #[test]
+    fn test_mul_reference_variants() {
+        // Verify all reference combinations produce same result
+        let x = PauliString::x(0);
+        let y = PauliString::y(0);
+
+        let result1 = x.clone() * y.clone();
+        let result2 = &x * y.clone();
+        let result3 = x.clone() * &y;
+        let result4 = &x * &y;
+
+        assert_eq!(result1, result2);
+        assert_eq!(result1, result3);
+        assert_eq!(result1, result4);
+    }
+
+    #[test]
+    fn test_tensor_reference_variants() {
+        let x = PauliString::x(0);
+        let z = PauliString::z(1);
+
+        let result1 = x.clone() & z.clone();
+        let result2 = &x & z.clone();
+        let result3 = x.clone() & &z;
+        let result4 = &x & &z;
+
+        assert_eq!(result1, result2);
+        assert_eq!(result1, result3);
+        assert_eq!(result1, result4);
+    }
+
+    #[test]
+    fn test_neg_reference() {
+        let x = PauliString::x(0);
+        let result1 = -x.clone();
+        let result2 = -&x;
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_i_reference() {
+        let x = PauliString::x(0);
+        let result1 = i * x.clone();
+        let result2 = i * &x;
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_neg_i_reference() {
+        let x = PauliString::x(0);
+        let result1 = -i * x.clone();
+        let result2 = -i * &x;
+        assert_eq!(result1, result2);
     }
 }

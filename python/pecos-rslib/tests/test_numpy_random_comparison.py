@@ -24,7 +24,7 @@ pytestmark = pytest.mark.numpy
 class TestRandomComparison:
     """Test random() function against numpy.random.random()."""
 
-    def test_random_output_shape(self):
+    def test_random_output_shape(self) -> None:
         """Test that output shapes match numpy."""
         for size in [1, 10, 100, 1000]:
             pecos_vals = pc.random.random(size)
@@ -33,7 +33,7 @@ class TestRandomComparison:
             assert pecos_vals.shape == numpy_vals.shape
             assert len(pecos_vals) == size
 
-    def test_random_output_type(self):
+    def test_random_output_type(self) -> None:
         """Test that output type matches numpy."""
         pecos_vals = pc.random.random(100)
         numpy_vals = np.random.random(100)
@@ -41,13 +41,13 @@ class TestRandomComparison:
         assert isinstance(pecos_vals, pc.Array)
         assert pecos_vals.dtype == numpy_vals.dtype
 
-    def test_random_range(self):
+    def test_random_range(self) -> None:
         """Test that all values are in [0, 1) like numpy."""
         vals = pc.random.random(10000)
         assert np.all(vals >= 0.0)
         assert np.all(vals < 1.0)
 
-    def test_random_statistical_mean(self):
+    def test_random_statistical_mean(self) -> None:
         """Test that mean is approximately 0.5 (uniform distribution)."""
         vals = pc.random.random(10000)
         mean = np.mean(vals)
@@ -56,7 +56,7 @@ class TestRandomComparison:
         # With n=10000, standard error ~ 0.003
         assert abs(mean - 0.5) < 0.02, f"Mean {mean} too far from expected 0.5"
 
-    def test_random_statistical_variance(self):
+    def test_random_statistical_variance(self) -> None:
         """Test that variance matches uniform [0, 1) distribution."""
         vals = pc.random.random(10000)
         variance = np.var(vals)
@@ -67,7 +67,7 @@ class TestRandomComparison:
             abs(variance - expected_variance) < 0.01
         ), f"Variance {variance} too far from expected {expected_variance}"
 
-    def test_random_uniformity_ks_test(self):
+    def test_random_uniformity_ks_test(self) -> None:
         """Test uniformity using Kolmogorov-Smirnov test."""
         # Use a fixed seed for deterministic test behavior
         pc.random.seed(42)
@@ -80,7 +80,7 @@ class TestRandomComparison:
         # (i.e., data is consistent with uniform distribution)
         assert p_value > 0.01, f"KS test failed: p={p_value}, statistic={ks_statistic}"
 
-    def test_random_chi_square_uniformity(self):
+    def test_random_chi_square_uniformity(self) -> None:
         """Test uniformity using chi-square goodness-of-fit test."""
         # Use a fixed seed for deterministic test behavior
         pc.random.seed(123)
@@ -101,7 +101,7 @@ class TestRandomComparison:
 class TestRandintComparison:
     """Test randint() function against numpy.random.randint()."""
 
-    def test_randint_array_shape(self):
+    def test_randint_array_shape(self) -> None:
         """Test that output shapes match numpy."""
         for size in [1, 10, 100]:
             pecos_vals = pc.random.randint(0, 10, size)
@@ -110,7 +110,7 @@ class TestRandintComparison:
             assert pecos_vals.shape == numpy_vals.shape
             assert len(pecos_vals) == size
 
-    def test_randint_array_type(self):
+    def test_randint_array_type(self) -> None:
         """Test that output type matches numpy."""
         pecos_vals = pc.random.randint(0, 10, 100)
         numpy_vals = np.random.randint(0, 10, 100)
@@ -118,7 +118,7 @@ class TestRandintComparison:
         assert isinstance(pecos_vals, pc.Array)
         assert pecos_vals.dtype == numpy_vals.dtype
 
-    def test_randint_scalar_type(self):
+    def test_randint_scalar_type(self) -> None:
         """Test that scalar output is Python int like numpy."""
         pecos_val = pc.random.randint(0, 10)
         numpy_val = np.random.randint(0, 10)
@@ -126,19 +126,19 @@ class TestRandintComparison:
         assert isinstance(pecos_val, int)
         assert isinstance(numpy_val, (int, np.integer))
 
-    def test_randint_range(self):
+    def test_randint_range(self) -> None:
         """Test that values are in correct range [low, high)."""
         vals = pc.random.randint(5, 15, 1000)
         assert np.all(vals >= 5)
         assert np.all(vals < 15)
 
-    def test_randint_negative_range(self):
+    def test_randint_negative_range(self) -> None:
         """Test that negative ranges work like numpy."""
         vals = pc.random.randint(-10, 10, 1000)
         assert np.all(vals >= -10)
         assert np.all(vals < 10)
 
-    def test_randint_uniformity(self):
+    def test_randint_uniformity(self) -> None:
         """Test that randint produces uniform distribution."""
         low, high = 0, 10
         vals = pc.random.randint(low, high, 10000)
@@ -152,7 +152,7 @@ class TestRandintComparison:
 
         assert p_value > 0.01, f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
 
-    def test_randint_default_low(self):
+    def test_randint_default_low(self) -> None:
         """Test [0, n) behavior when only one argument provided."""
         # NumPy: np.random.randint(10) gives [0, 10)
         # Our API: randint(10, None) gives [0, 10)
@@ -164,7 +164,7 @@ class TestRandintComparison:
 class TestChoiceComparison:
     """Test choice() function against numpy.random.choice()."""
 
-    def test_choice_scalar_type(self):
+    def test_choice_scalar_type(self) -> None:
         """Test that scalar choice returns correct type."""
         items = ["X", "Y", "Z"]
         sample = pc.random.choice(items)
@@ -172,14 +172,14 @@ class TestChoiceComparison:
         assert isinstance(sample, str)
         assert sample in items
 
-    def test_choice_array_length(self):
+    def test_choice_array_length(self) -> None:
         """Test that array choice returns correct length."""
         items = [1, 2, 3, 4, 5]
         for size in [1, 5, 10, 100]:
             samples = pc.random.choice(items, size)
             assert len(samples) == size
 
-    def test_choice_all_valid(self):
+    def test_choice_all_valid(self) -> None:
         """Test that all samples are from the original array."""
         items = ["A", "B", "C"]
         samples = pc.random.choice(items, 1000)
@@ -187,7 +187,7 @@ class TestChoiceComparison:
         for sample in samples:
             assert sample in items
 
-    def test_choice_with_replacement_allows_duplicates(self):
+    def test_choice_with_replacement_allows_duplicates(self) -> None:
         """Test that choice with replacement can produce duplicates."""
         items = ["X", "Y", "Z"]
         samples = pc.random.choice(items, 100, replace=True)
@@ -196,7 +196,7 @@ class TestChoiceComparison:
         unique_count = len(set(samples))
         assert unique_count <= len(items)
 
-    def test_choice_without_replacement_no_duplicates(self):
+    def test_choice_without_replacement_no_duplicates(self) -> None:
         """Test that choice without replacement produces no duplicates."""
         items = [1, 2, 3, 4, 5]
         samples = pc.random.choice(items, 5, replace=False)
@@ -205,19 +205,19 @@ class TestChoiceComparison:
         assert len(set(samples)) == 5
         assert set(samples) == set(items)
 
-    def test_choice_without_replacement_error(self):
+    def test_choice_without_replacement_error(self) -> None:
         """Test that choice without replacement fails if size > len(array)."""
         items = [1, 2, 3]
 
         with pytest.raises(ValueError, match="Cannot take larger sample"):
             pc.random.choice(items, 5, replace=False)
 
-    def test_choice_empty_array_error(self):
+    def test_choice_empty_array_error(self) -> None:
         """Test that choice from empty array raises error."""
         with pytest.raises(ValueError, match="Cannot sample from empty"):
             pc.random.choice([], 5)
 
-    def test_choice_uniformity(self):
+    def test_choice_uniformity(self) -> None:
         """Test that choice samples uniformly from array."""
         items = [0, 1, 2, 3, 4]
         samples = pc.random.choice(items, 10000)
@@ -231,7 +231,7 @@ class TestChoiceComparison:
 
         assert p_value > 0.01, f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
 
-    def test_choice_with_numpy_array(self):
+    def test_choice_with_numpy_array(self) -> None:
         """Test that choice works with numpy arrays like numpy.random.choice."""
         items = np.array([10, 20, 30, 40, 50])
         samples = pc.random.choice(items, 100)
@@ -244,7 +244,7 @@ class TestPerformanceComparison:
     """Basic performance comparison tests."""
 
     @pytest.mark.performance
-    def test_random_performance(self):
+    def test_random_performance(self) -> None:
         """Compare performance of random() vs numpy.random.random()."""
         size = 100000
 
@@ -268,7 +268,7 @@ class TestPerformanceComparison:
         assert speedup > 0.5, f"Implementation is too slow: {speedup:.2f}x"
 
     @pytest.mark.performance
-    def test_randint_performance(self):
+    def test_randint_performance(self) -> None:
         """Compare performance of randint() vs numpy.random.randint()."""
         size = 100000
 
@@ -291,7 +291,7 @@ class TestPerformanceComparison:
         assert speedup > 0.5, f"Implementation is too slow: {speedup:.2f}x"
 
     @pytest.mark.performance
-    def test_choice_performance(self):
+    def test_choice_performance(self) -> None:
         """Compare performance of choice() vs numpy.random.choice()."""
         items = list(range(100))
         size = 10000

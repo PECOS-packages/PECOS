@@ -13,7 +13,7 @@ import pecos as pc
 class TestDeleteBasic:
     """Test basic delete() functionality."""
 
-    def test_delete_middle_float(self):
+    def test_delete_middle_float(self) -> None:
         """Test deleting middle element from float array."""
         arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         result = pc.delete(arr, 2)
@@ -22,7 +22,7 @@ class TestDeleteBasic:
         np.testing.assert_array_equal(result, expected)
         assert result.dtype == expected.dtype
 
-    def test_delete_first_float(self):
+    def test_delete_first_float(self) -> None:
         """Test deleting first element from float array."""
         arr = np.array([10.0, 20.0, 30.0])
         result = pc.delete(arr, 0)
@@ -30,7 +30,7 @@ class TestDeleteBasic:
 
         np.testing.assert_array_equal(result, expected)
 
-    def test_delete_last_float(self):
+    def test_delete_last_float(self) -> None:
         """Test deleting last element from float array."""
         arr = np.array([10.0, 20.0, 30.0])
         result = pc.delete(arr, 2)
@@ -38,7 +38,7 @@ class TestDeleteBasic:
 
         np.testing.assert_array_equal(result, expected)
 
-    def test_delete_complex(self):
+    def test_delete_complex(self) -> None:
         """Test deleting from complex array."""
         arr = np.array([1 + 2j, 3 + 4j, 5 + 6j, 7 + 8j])
         result = pc.delete(arr, 1)
@@ -47,7 +47,7 @@ class TestDeleteBasic:
         np.testing.assert_array_equal(result, expected)
         assert result.dtype == expected.dtype
 
-    def test_delete_int(self):
+    def test_delete_int(self) -> None:
         """Test deleting from integer array."""
         arr = np.array([10, 20, 30, 40, 50], dtype=np.int64)
         result = pc.delete(arr, 3)
@@ -60,7 +60,7 @@ class TestDeleteBasic:
 class TestDeleteEdgeCases:
     """Test edge cases for delete()."""
 
-    def test_delete_two_elements(self):
+    def test_delete_two_elements(self) -> None:
         """Test deleting from 2-element array."""
         arr = np.array([1.0, 2.0])
 
@@ -74,7 +74,7 @@ class TestDeleteEdgeCases:
         expected = np.delete(arr, 1)
         np.testing.assert_array_equal(result, expected)
 
-    def test_delete_single_element(self):
+    def test_delete_single_element(self) -> None:
         """Test that deleting from single-element array returns empty array."""
         arr = np.array([42.0])
 
@@ -86,7 +86,7 @@ class TestDeleteEdgeCases:
         assert len(result) == 0
         assert result.shape == (0,)
 
-    def test_delete_out_of_bounds(self):
+    def test_delete_out_of_bounds(self) -> None:
         """Test deleting with out-of-bounds index."""
         arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
 
@@ -100,7 +100,7 @@ class TestDeleteEdgeCases:
 class TestDeleteJackknifeUseCase:
     """Test the jackknife resampling use case (leave-one-out)."""
 
-    def test_jackknife_simple(self):
+    def test_jackknife_simple(self) -> None:
         """Test jackknife resampling on simple array."""
         plist = np.array([0.01, 0.02, 0.03, 0.04, 0.05])
 
@@ -115,7 +115,7 @@ class TestDeleteJackknifeUseCase:
             # Verify the removed element is not in the result
             assert plist[i] not in rust_result
 
-    def test_jackknife_threshold_curve_use_case(self):
+    def test_jackknife_threshold_curve_use_case(self) -> None:
         """Test the actual use case from threshold_curve.py."""
         # Simulating the threshold curve fitting scenario
         plist = np.array([0.001, 0.002, 0.003, 0.004, 0.005, 0.006])
@@ -147,7 +147,7 @@ class TestDeleteJackknifeUseCase:
 class TestDeleteWithLists:
     """Test delete() with Python lists (should convert automatically)."""
 
-    def test_delete_from_list(self):
+    def test_delete_from_list(self) -> None:
         """Test deleting from Python list."""
         lst = [1.0, 2.0, 3.0, 4.0, 5.0]
         result = pc.delete(lst, 2)
@@ -155,7 +155,7 @@ class TestDeleteWithLists:
 
         np.testing.assert_array_equal(result, expected)
 
-    def test_delete_from_complex_list(self):
+    def test_delete_from_complex_list(self) -> None:
         """Test deleting from list of complex numbers."""
         lst = [1 + 2j, 3 + 4j, 5 + 6j]
         result = pc.delete(lst, 1)
@@ -167,7 +167,7 @@ class TestDeleteWithLists:
 class TestDeleteTypePreservation:
     """Test that delete() preserves array dtype."""
 
-    def test_float64_preserved(self):
+    def test_float64_preserved(self) -> None:
         """Test float64 dtype is preserved."""
         arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
         result = pc.delete(arr, 1)
@@ -175,7 +175,7 @@ class TestDeleteTypePreservation:
         assert result.dtype == np.float64
         np.testing.assert_array_equal(result, np.array([1.0, 3.0]))
 
-    def test_complex128_preserved(self):
+    def test_complex128_preserved(self) -> None:
         """Test complex128 dtype is preserved."""
         arr = np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex128)
         result = pc.delete(arr, 0)
@@ -183,7 +183,7 @@ class TestDeleteTypePreservation:
         assert result.dtype == np.complex128
         np.testing.assert_array_equal(result, np.array([3 + 4j, 5 + 6j]))
 
-    def test_int64_preserved(self):
+    def test_int64_preserved(self) -> None:
         """Test int64 dtype is preserved."""
         arr = np.array([10, 20, 30, 40], dtype=np.int64)
         result = pc.delete(arr, 2)
@@ -195,7 +195,7 @@ class TestDeleteTypePreservation:
 class TestDeletePerformance:
     """Test delete() performance characteristics."""
 
-    def test_delete_maintains_order(self):
+    def test_delete_maintains_order(self) -> None:
         """Test that delete() maintains element order."""
         arr = np.array([5.0, 3.0, 8.0, 1.0, 9.0, 2.0])
         result = pc.delete(arr, 2)
@@ -204,7 +204,7 @@ class TestDeletePerformance:
         expected = np.array([5.0, 3.0, 1.0, 9.0, 2.0])
         np.testing.assert_array_equal(result, expected)
 
-    def test_delete_from_pecos_num(self):
+    def test_delete_from_pecos_num(self) -> None:
         """Test that delete() is accessible from pecos."""
         # Already imported at top: import pecos as pc
 

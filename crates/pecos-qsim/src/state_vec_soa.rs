@@ -493,7 +493,7 @@ where
             scratch_real: Vec::new(),
             scratch_imag: Vec::new(),
             pending_gates: vec![None; num_qubits],
-            fusion_enabled: false,
+            fusion_enabled: true,
             parallel_enabled: false,
             num_threads: None,
         }
@@ -1443,21 +1443,49 @@ where
 
         // |0⟩ component: multiply by e^(-i*theta/2) = cos - i*sin
         // |1⟩ component: multiply by e^(i*theta/2) = cos + i*sin
-        for i in (0..n).step_by(step * 2) {
-            for j in i..(i + step) {
-                let paired_j = j + step;
+        if step >= 4 {
+            // SIMD path
+            let cos_v = f64x4::splat(cos_t);
+            let sin_v = f64x4::splat(sin_t);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
 
-                // |0⟩: (re, im) * (cos, -sin) = (re*cos + im*sin, im*cos - re*sin)
-                let a_re = self.real[j];
-                let a_im = self.imag[j];
-                self.real[j] = a_re * cos_t + a_im * sin_t;
-                self.imag[j] = a_im * cos_t - a_re * sin_t;
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
 
-                // |1⟩: (re, im) * (cos, sin) = (re*cos - im*sin, im*cos + re*sin)
-                let b_re = self.real[paired_j];
-                let b_im = self.imag[paired_j];
-                self.real[paired_j] = b_re * cos_t - b_im * sin_t;
-                self.imag[paired_j] = b_im * cos_t + b_re * sin_t;
+                    let new_a_re: [f64; 4] = (a_re * cos_v + a_im * sin_v).into();
+                    let new_a_im: [f64; 4] = (a_im * cos_v - a_re * sin_v).into();
+                    let new_b_re: [f64; 4] = (b_re * cos_v - b_im * sin_v).into();
+                    let new_b_im: [f64; 4] = (b_im * cos_v + b_re * sin_v).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    self.real[j] = a_re * cos_t + a_im * sin_t;
+                    self.imag[j] = a_im * cos_t - a_re * sin_t;
+
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+                    self.real[paired_j] = b_re * cos_t - b_im * sin_t;
+                    self.imag[paired_j] = b_im * cos_t + b_re * sin_t;
+                }
             }
         }
     }
@@ -1472,21 +1500,49 @@ where
         let cos_t = half_theta.cos();
         let sin_t = half_theta.sin();
 
-        for i in (0..n).step_by(step * 2) {
-            for j in i..(i + step) {
-                let paired_j = j + step;
+        if step >= 4 {
+            // SIMD path
+            let cos_v = f64x4::splat(cos_t);
+            let sin_v = f64x4::splat(sin_t);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
 
-                let a_re = self.real[j];
-                let a_im = self.imag[j];
-                let b_re = self.real[paired_j];
-                let b_im = self.imag[paired_j];
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
 
-                // new_a = cos*a - i*sin*b = (cos*a_re + sin*b_im, cos*a_im - sin*b_re)
-                // new_b = -i*sin*a + cos*b = (sin*a_im + cos*b_re, -sin*a_re + cos*b_im)
-                self.real[j] = cos_t * a_re + sin_t * b_im;
-                self.imag[j] = cos_t * a_im - sin_t * b_re;
-                self.real[paired_j] = sin_t * a_im + cos_t * b_re;
-                self.imag[paired_j] = -sin_t * a_re + cos_t * b_im;
+                    let new_a_re: [f64; 4] = (cos_v * a_re + sin_v * b_im).into();
+                    let new_a_im: [f64; 4] = (cos_v * a_im - sin_v * b_re).into();
+                    let new_b_re: [f64; 4] = (sin_v * a_im + cos_v * b_re).into();
+                    let new_b_im: [f64; 4] = (cos_v * b_im - sin_v * a_re).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    self.real[j] = cos_t * a_re + sin_t * b_im;
+                    self.imag[j] = cos_t * a_im - sin_t * b_re;
+                    self.real[paired_j] = sin_t * a_im + cos_t * b_re;
+                    self.imag[paired_j] = -sin_t * a_re + cos_t * b_im;
+                }
             }
         }
     }
@@ -1501,21 +1557,49 @@ where
         let cos_t = half_theta.cos();
         let sin_t = half_theta.sin();
 
-        for i in (0..n).step_by(step * 2) {
-            for j in i..(i + step) {
-                let paired_j = j + step;
+        if step >= 4 {
+            // SIMD path
+            let cos_v = f64x4::splat(cos_t);
+            let sin_v = f64x4::splat(sin_t);
+            for i in (0..n).step_by(step * 2) {
+                let mut j = i;
+                while j + 4 <= i + step {
+                    let paired_j = j + step;
 
-                let a_re = self.real[j];
-                let a_im = self.imag[j];
-                let b_re = self.real[paired_j];
-                let b_im = self.imag[paired_j];
+                    let a_re = f64x4::from(&self.real[j..j + 4]);
+                    let a_im = f64x4::from(&self.imag[j..j + 4]);
+                    let b_re = f64x4::from(&self.real[paired_j..paired_j + 4]);
+                    let b_im = f64x4::from(&self.imag[paired_j..paired_j + 4]);
 
-                // new_a = cos*a - sin*b
-                // new_b = sin*a + cos*b
-                self.real[j] = cos_t * a_re - sin_t * b_re;
-                self.imag[j] = cos_t * a_im - sin_t * b_im;
-                self.real[paired_j] = sin_t * a_re + cos_t * b_re;
-                self.imag[paired_j] = sin_t * a_im + cos_t * b_im;
+                    let new_a_re: [f64; 4] = (cos_v * a_re - sin_v * b_re).into();
+                    let new_a_im: [f64; 4] = (cos_v * a_im - sin_v * b_im).into();
+                    let new_b_re: [f64; 4] = (sin_v * a_re + cos_v * b_re).into();
+                    let new_b_im: [f64; 4] = (sin_v * a_im + cos_v * b_im).into();
+
+                    self.real[j..j + 4].copy_from_slice(&new_a_re);
+                    self.imag[j..j + 4].copy_from_slice(&new_a_im);
+                    self.real[paired_j..paired_j + 4].copy_from_slice(&new_b_re);
+                    self.imag[paired_j..paired_j + 4].copy_from_slice(&new_b_im);
+
+                    j += 4;
+                }
+            }
+        } else {
+            // Scalar fallback
+            for i in (0..n).step_by(step * 2) {
+                for j in i..(i + step) {
+                    let paired_j = j + step;
+
+                    let a_re = self.real[j];
+                    let a_im = self.imag[j];
+                    let b_re = self.real[paired_j];
+                    let b_im = self.imag[paired_j];
+
+                    self.real[j] = cos_t * a_re - sin_t * b_re;
+                    self.imag[j] = cos_t * a_im - sin_t * b_im;
+                    self.real[paired_j] = sin_t * a_re + cos_t * b_re;
+                    self.imag[paired_j] = sin_t * a_im + cos_t * b_im;
+                }
             }
         }
     }
@@ -1625,7 +1709,7 @@ where
             scratch_real: Vec::new(),
             scratch_imag: Vec::new(),
             pending_gates: vec![None; num_qubits],
-            fusion_enabled: false,
+            fusion_enabled: true,
             parallel_enabled: false,
             num_threads: None,
         }
@@ -2235,9 +2319,7 @@ where
             let control = pair[0].index();
             let target = pair[1].index();
 
-            // Flush pending gates on both qubits before two-qubit operation
-            self.flush_qubit(control);
-            self.flush_qubit(target);
+            self.flush_two_qubit(control, target);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if control < target {
@@ -2312,9 +2394,7 @@ where
             let q1 = pair[0].index();
             let q2 = pair[1].index();
 
-            // Flush pending gates on both qubits before two-qubit operation
-            self.flush_qubit(q1);
-            self.flush_qubit(q2);
+            self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -2369,9 +2449,7 @@ where
             let q1 = pair[0].index();
             let q2 = pair[1].index();
 
-            // Flush pending gates on both qubits before two-qubit operation
-            self.flush_qubit(q1);
-            self.flush_qubit(q2);
+            self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -2438,6 +2516,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let control = pair[0].index();
             let target = pair[1].index();
+
+            self.flush_two_qubit(control, target);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if control < target {
@@ -2540,6 +2620,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -2660,6 +2742,8 @@ where
             let q1 = pair[0].index();
             let q2 = pair[1].index();
 
+            self.flush_two_qubit(q1, q2);
+
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
@@ -2777,6 +2861,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -2896,6 +2982,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3019,6 +3107,9 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
+
             let q_lo = q1.min(q2);
 
             // When both qubits >= 2, consecutive indices share the same phase
@@ -3112,6 +3203,9 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
+
             let q_lo = q1.min(q2);
 
             // When both qubits >= 2, consecutive indices share the same phase
@@ -3206,6 +3300,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3609,8 +3705,7 @@ where
                 d_im: 0.0,
             };
             for &q in qubits {
-                self.flush_qubit(q.index());
-                self.apply_fused_matrix(q.index(), &m);
+                self.queue_gate(q.index(), &m);
             }
         } else {
             for &q in qubits {
@@ -3637,8 +3732,7 @@ where
                 d_im: 0.0,
             };
             for &q in qubits {
-                self.flush_qubit(q.index());
-                self.apply_fused_matrix(q.index(), &m);
+                self.queue_gate(q.index(), &m);
             }
         } else {
             for &q in qubits {
@@ -3666,8 +3760,7 @@ where
                 d_im: sin,
             };
             for &q in qubits {
-                self.flush_qubit(q.index());
-                self.apply_fused_matrix(q.index(), &m);
+                self.queue_gate(q.index(), &m);
             }
         } else {
             for &q in qubits {
@@ -3697,8 +3790,7 @@ where
             d_im: 0.0,
         };
         for &q in qubits {
-            self.flush_qubit(q.index());
-            self.apply_fused_matrix(q.index(), &m);
+            self.queue_gate(q.index(), &m);
         }
         self
     }
@@ -3718,6 +3810,9 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
+
             let q_lo = q1.min(q2);
 
             // When both qubits >= 2, consecutive indices share the same phase
@@ -3776,6 +3871,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             // Use strided iteration for cache efficiency
             let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3839,6 +3936,8 @@ where
         for pair in qubits.chunks_exact(2) {
             let q1 = pair[0].index();
             let q2 = pair[1].index();
+
+            self.flush_two_qubit(q1, q2);
 
             // Use strided iteration for cache efficiency
             let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3904,76 +4003,19 @@ where
         let sin = (theta / 2.0).sin();
 
         // U gate matrix elements
-        let u00_re = cos;
-        let u01_re = -sin * lambda.cos();
-        let u01_im = -sin * lambda.sin();
-        let u10_re = sin * phi.cos();
-        let u10_im = sin * phi.sin();
-        let u11_re = cos * (phi + lambda).cos();
-        let u11_im = cos * (phi + lambda).sin();
+        let m = Complex2x2 {
+            a_re: cos,
+            a_im: 0.0,
+            b_re: -sin * lambda.cos(),
+            b_im: -sin * lambda.sin(),
+            c_re: sin * phi.cos(),
+            c_im: sin * phi.sin(),
+            d_re: cos * (phi + lambda).cos(),
+            d_im: cos * (phi + lambda).sin(),
+        };
 
         for &q in qubits {
-            let q = q.index();
-            let step = 1 << q;
-
-            if step >= 4 {
-                // SIMD version
-                let u00_re_v = f64x4::splat(u00_re);
-                let u01_re_v = f64x4::splat(u01_re);
-                let u01_im_v = f64x4::splat(u01_im);
-                let u10_re_v = f64x4::splat(u10_re);
-                let u10_im_v = f64x4::splat(u10_im);
-                let u11_re_v = f64x4::splat(u11_re);
-                let u11_im_v = f64x4::splat(u11_im);
-
-                for i in (0..self.real.len()).step_by(step * 2) {
-                    let mut j = i;
-                    while j + 4 <= i + step {
-                        let p = j + step;
-
-                        let re_a = f64x4::from(&self.real[j..j + 4]);
-                        let im_a = f64x4::from(&self.imag[j..j + 4]);
-                        let re_b = f64x4::from(&self.real[p..p + 4]);
-                        let im_b = f64x4::from(&self.imag[p..p + 4]);
-
-                        let new_re_a: [f64; 4] =
-                            (u00_re_v * re_a + u01_re_v * re_b - u01_im_v * im_b).into();
-                        let new_im_a: [f64; 4] =
-                            (u00_re_v * im_a + u01_re_v * im_b + u01_im_v * re_b).into();
-                        let new_re_b: [f64; 4] =
-                            (u10_re_v * re_a - u10_im_v * im_a + u11_re_v * re_b - u11_im_v * im_b)
-                                .into();
-                        let new_im_b: [f64; 4] =
-                            (u10_re_v * im_a + u10_im_v * re_a + u11_re_v * im_b + u11_im_v * re_b)
-                                .into();
-
-                        self.real[j..j + 4].copy_from_slice(&new_re_a);
-                        self.imag[j..j + 4].copy_from_slice(&new_im_a);
-                        self.real[p..p + 4].copy_from_slice(&new_re_b);
-                        self.imag[p..p + 4].copy_from_slice(&new_im_b);
-
-                        j += 4;
-                    }
-                }
-            } else {
-                // Scalar fallback for small step
-                for i in (0..self.real.len()).step_by(step * 2) {
-                    for j in i..(i + step) {
-                        let p = j + step;
-                        let re_a = self.real[j];
-                        let im_a = self.imag[j];
-                        let re_b = self.real[p];
-                        let im_b = self.imag[p];
-
-                        self.real[j] = u00_re * re_a + u01_re * re_b - u01_im * im_b;
-                        self.imag[j] = u00_re * im_a + u01_re * im_b + u01_im * re_b;
-                        self.real[p] =
-                            u10_re * re_a - u10_im * im_a + u11_re * re_b - u11_im * im_b;
-                        self.imag[p] =
-                            u10_re * im_a + u10_im * re_a + u11_re * im_b + u11_im * re_b;
-                    }
-                }
-            }
+            self.queue_gate(q.index(), &m);
         }
         self
     }

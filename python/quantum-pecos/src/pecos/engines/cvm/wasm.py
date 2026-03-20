@@ -21,14 +21,18 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from pecos import BitInt, WasmForeignObject
+# Import the Rust WasmError for catching, then re-raise as pecos WasmError
+from pecos_rslib import WasmError as _RsWasmError
+
+from pecos import BitUInt, WasmForeignObject
 from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
-from pecos.exceptions import MissingCCOPError
+from pecos.exceptions import MissingCCOPError, WasmError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Any
 
+    from pecos import BitInt
     from pecos.circuits import QuantumCircuit
 
 
@@ -68,7 +72,10 @@ class WasmCCOP:
             path: Path to a WebAssembly file or raw WebAssembly bytes.
         """
         self._wasm = WasmForeignObject(path)
-        self._wasm.init()
+        try:
+            self._wasm.init()
+        except _RsWasmError as e:
+            raise WasmError(str(e)) from e
 
     def get_funcs(self) -> list[str]:
         """Get list of available function names from the WASM module.
@@ -99,13 +106,20 @@ class WasmCCOP:
         if debug and func_name.startswith("sim_") and func_name in sim_funcs:
             return sim_funcs[func_name](*args)
 
-        # Convert args from (type, value) tuples to just values
+        # Convert args from (type, value) tuples to unsigned bit patterns.
+        # Registers are BitUInt so int() already returns unsigned values.
         args_list = [int(b) for _, b in args]
-        return self._wasm.exec(func_name, args_list)
+        try:
+            return self._wasm.exec(func_name, args_list)
+        except _RsWasmError as e:
+            raise WasmError(str(e)) from e
 
     def shot_reinit(self) -> None:
         """Reset variables before each shot."""
-        self._wasm.shot_reinit()
+        try:
+            self._wasm.shot_reinit()
+        except _RsWasmError as e:
+            raise WasmError(str(e)) from e
 
     def teardown(self) -> None:
         """Clean up wasmtime resources."""
@@ -179,7 +193,7 @@ def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
 def eval_cfunc(
     runner: EngineRunner,
     params: dict[str, Any],
-    output: dict[str, BitInt],
+    output: dict[str, BitInt | BitUInt],
 ) -> None:
     """Evaluate a classical function using the coprocessor.
 
@@ -226,7 +240,7 @@ def eval_cfunc(
             if runner.debug and func.startswith("sim_"):
                 output[assign_vars[0]] = vals
             else:
-                b = BitInt(a_obj.size, int(vals))
+                b = BitUInt(a_obj.size, int(vals))
                 a_obj.set(b)
 
         else:
@@ -236,7 +250,7 @@ def eval_cfunc(
                 if runner.debug and func.startswith("sim_"):
                     output[asym] = b
                 elif isinstance(b, int):
-                    bin_array = BitInt(
+                    bin_array = BitUInt(
                         a_obj.size,
                         int(b),
                     )

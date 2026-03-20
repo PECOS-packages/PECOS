@@ -1,3 +1,49 @@
+//! Phase factors for quantum operators.
+//!
+//! This module provides a hierarchy of phase types corresponding to the natural
+//! stratification of phases in quantum computing:
+//!
+//! | Type | Values | Roots of unity | Used by |
+//! |------|--------|----------------|---------|
+//! | [`Sign`] | `{+1, -1}` | 2nd | [`PauliStabilizerGroup`] generators |
+//! | [`QuarterPhase`] | `{+1, -1, +i, -i}` | 4th | [`PauliString`], [`PauliSequence`] |
+//! | [`GlobalPhase`] | any `e^{i theta}` | continuous | [`UnitaryRep`] |
+//!
+//! The hierarchy forms a subtype chain: `Sign` < `QuarterPhase` < `GlobalPhase`,
+//! with lossless widening conversions (`From`) going up and fallible narrowing
+//! conversions (`TryFrom`) going down:
+//!
+//! ```
+//! use pecos_core::{QuarterPhase, Sign, GlobalPhase};
+//! use pecos_core::Phase;
+//!
+//! // Widening: Sign -> QuarterPhase (lossless)
+//! let qp: QuarterPhase = Sign::PlusOne.into();
+//! assert_eq!(qp, QuarterPhase::PlusOne);
+//!
+//! // Widening: QuarterPhase -> GlobalPhase (lossless)
+//! let gp: GlobalPhase = QuarterPhase::PlusI.into();
+//!
+//! // Narrowing: QuarterPhase -> Sign (fallible)
+//! assert!(Sign::try_from(QuarterPhase::PlusOne).is_ok());
+//! assert!(Sign::try_from(QuarterPhase::PlusI).is_err());
+//! ```
+//!
+//! ## Why three types?
+//!
+//! Multiplying Pauli operators naturally produces fourth roots of unity (`QuarterPhase`),
+//! but stabilizer groups require that every element squares to +I, which restricts
+//! generators to real phases (`Sign`). General quantum operators (rotations, etc.)
+//! can carry arbitrary phases (`GlobalPhase`).
+//!
+//! All three types implement the [`Phase`] trait.
+//!
+//! [`Sign`]: sign::Sign
+//! [`PauliString`]: crate::PauliString
+//! [`UnitaryRep`]: crate::UnitaryRep
+//! [`PauliSequence`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliSequence.html
+//! [`PauliStabilizerGroup`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliStabilizerGroup.html
+
 use crate::Angle64;
 use num_complex::Complex64;
 
@@ -7,25 +53,37 @@ pub mod sign;
 
 pub use quarter_phase::QuarterPhase;
 
+/// A trait for phase factors that can be converted to complex numbers,
+/// conjugated, and multiplied.
+///
+/// Implemented by [`Sign`](sign::Sign), [`QuarterPhase`], and [`GlobalPhase`].
 pub trait Phase {
     #[must_use]
     fn phase(&self) -> &Self {
         self
     }
+    /// Converts to a complex number representation.
     fn to_complex(&self) -> Complex64;
+    /// Returns the complex conjugate of this phase.
     #[must_use]
     fn conjugate(&self) -> Self;
-
+    /// Multiplies two phases.
     #[must_use]
     fn multiply(&self, other: &Self) -> Self;
 }
 
-/// A general phase factor, either a discrete quarter phase or arbitrary angle.
+/// A general phase factor `e^{i theta}`, used by [`UnitaryRep`](crate::UnitaryRep).
+///
+/// This is the most general phase type. When the phase happens to be a fourth
+/// root of unity it is stored as a [`QuarterPhase`] for efficiency; otherwise
+/// it is stored as an [`Angle64`] fixpoint angle.
+///
+/// Widens from: [`QuarterPhase`] (via `From`), [`Angle64`] (via `From`)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GlobalPhase {
-    /// Discrete phase: ±1, ±i (efficient for Paulis)
+    /// Discrete phase: +1, -1, +i, -i (efficient for Paulis)
     Quarter(QuarterPhase),
-    /// General phase: e^{iθ}
+    /// Arbitrary phase: e^{i theta}
     Angle(Angle64),
 }
 
@@ -122,6 +180,12 @@ impl GlobalPhase {
             (Self::Quarter(a), Self::Quarter(b)) => Self::Quarter(a.multiply(b)),
             _ => Self::from_angle(self.to_angle() + other.to_angle()),
         }
+    }
+}
+
+impl From<sign::Sign> for GlobalPhase {
+    fn from(s: sign::Sign) -> Self {
+        Self::Quarter(QuarterPhase::from(s))
     }
 }
 

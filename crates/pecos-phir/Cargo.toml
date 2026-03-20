@@ -13,7 +13,7 @@ description = "MLIR-inspired quantum program intermediate representation for PEC
 
 [dependencies]
 # Core PECOS dependencies
-pecos-core = { workspace = true, features = ["anyhow"] }
+pecos-core = { workspace = true, features = ["anyhow", "serde"] }
 pecos-engines.workspace = true
 
 # Logging

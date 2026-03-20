@@ -747,9 +747,19 @@ fn curve_fit_tuple<'py>(
 ///     >>> len(values)
 ///     5
 #[pyfunction]
-fn random(py: Python<'_>, size: usize) -> PyResult<Py<Array>> {
-    let result = pecos::prelude::random::random(size);
-    Ok(Py::new(py, Array::from_array_f64(result.into_dyn()))?)
+#[pyo3(signature = (size=None))]
+fn random(py: Python<'_>, size: Option<usize>) -> PyResult<Py<PyAny>> {
+    match size {
+        None => {
+            // Return a single float scalar (like numpy.random.random())
+            let result = pecos::prelude::random::random(1);
+            Ok(result[0].into_py_any(py)?)
+        }
+        Some(n) => {
+            let result = pecos::prelude::random::random(n);
+            Ok(Py::new(py, Array::from_array_f64(result.into_dyn()))?.into_any())
+        }
+    }
 }
 
 /// Generate random integers from a uniform distribution.
@@ -2365,44 +2375,84 @@ fn jackknife_weighted(data: Vec<(f64, f64)>) -> (f64, f64) {
     pecos::prelude::jackknife_weighted(&data)
 }
 
-/// Extract the diagonal elements from a 2D array.
+/// Drop-in replacement for `numpy.diag()`.
 ///
-/// This is a drop-in replacement for `numpy.diag()` when extracting diagonal elements.
+/// - 1D input: creates a 2D diagonal matrix with the input as diagonal elements.
+/// - 2D input: extracts the diagonal elements as a 1D array.
 ///
-/// # Arguments
-///
-/// * `matrix` - A 2D array
-///
-/// # Returns
-///
-/// A 1D array containing the diagonal elements
-///
-/// # Examples
-///
-/// ```python
-/// import numpy as np
-/// from pecos_rslib.num import diag
-///
-/// # Extract diagonal from covariance matrix
-/// cov_matrix = np.array([[0.0025, 0.0010], [0.0010, 0.0004]])
-/// variances = diag(cov_matrix)
-/// print(variances)  # [0.0025, 0.0004]
-/// ```
+/// Supports F64 and Complex128 arrays. Also accepts legacy `F64ArrayView` inputs.
 #[pyfunction]
-fn diag(
-    py: Python<'_>,
-    matrix: Bound<'_, PyAny>,
-) -> PyResult<Py<crate::array_buffer::F64ArrayView>> {
-    let matrix_array = array_buffer::extract_f64_array(&matrix)?;
-    // Convert to 2D array (diag expects 2D)
-    let matrix_view = matrix_array
-        .view()
-        .into_dimensionality::<ndarray::Ix2>()
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("matrix must be 2D array: {e}"))
-        })?;
-    let diagonal = pecos::prelude::diag(matrix_view);
-    Ok(array_buffer::f64_array_to_py(py, &diagonal))
+fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    // Try extracting as new Array type first
+    if let Ok(arr) = v.extract::<pyo3::PyRef<'_, Array>>() {
+        return match &arr.data {
+            ArrayData::F64(a) if a.ndim() == 1 => {
+                let arr1 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
+                let result = pecos::array::diag_matrix(arr1);
+                Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
+            }
+            ArrayData::Complex128(a) if a.ndim() == 1 => {
+                let arr1 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
+                let result = pecos::array::diag_matrix(arr1);
+                Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
+            }
+            ArrayData::F64(a) if a.ndim() == 2 => {
+                let arr2 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
+                let result = pecos::array::diag(arr2);
+                Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
+            }
+            ArrayData::Complex128(a) if a.ndim() == 2 => {
+                let arr2 = a
+                    .view()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
+                    })?;
+                let result = pecos::array::diag(arr2);
+                Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
+            }
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "diag requires a 1D or 2D array of type f64 or complex128",
+            )),
+        };
+    }
+
+    // Fall back to legacy F64ArrayView / raw numpy extraction
+    let f64_arr = array_buffer::extract_f64_array(&v)?;
+    if f64_arr.ndim() == 1 {
+        let arr1 = f64_arr
+            .view()
+            .into_dimensionality::<ndarray::Ix1>()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}")))?;
+        let result = pecos::array::diag_matrix(arr1);
+        Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
+    } else if f64_arr.ndim() == 2 {
+        let arr2 = f64_arr
+            .view()
+            .into_dimensionality::<ndarray::Ix2>()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}")))?;
+        let result = pecos::array::diag(arr2);
+        Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
+    } else {
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "diag requires a 1D or 2D array",
+        ))
+    }
 }
 
 /// Generate evenly spaced values over a specified interval.
@@ -4136,37 +4186,61 @@ fn log(py: Python<'_>, x: Bound<'_, PyAny>, base: f64) -> PyResult<Py<PyAny>> {
 ///
 /// Drop-in replacement for `numpy.all()`.
 /// Returns True if all elements are truthy (non-zero for numbers, True for bools).
+/// When `axis` is specified, reduces along that axis and returns an Array.
 #[pyfunction]
+#[pyo3(signature = (a, axis=None))]
 #[allow(clippy::needless_pass_by_value)]
-fn all(_py: Python<'_>, a: Bound<'_, PyAny>) -> PyResult<bool> {
-    // Handle boolean arrays
+fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    use crate::pecos_array::Array;
+
+    if let Some(axis_val) = axis {
+        // axis reduction: extract array, convert to bool, reduce with all_axis
+        let bool_arr = if let Ok(arr) = array_buffer::extract_bool_array(&a) {
+            arr
+        } else if let Ok(arr) = array_buffer::extract_f64_array(&a) {
+            arr.mapv(|x| x != 0.0)
+        } else if let Ok(arr) = array_buffer::extract_i64_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else {
+            return Err(PyTypeError::new_err(
+                "all() argument must be bool, numeric scalar, or array",
+            ));
+        };
+
+        let ndim = bool_arr.ndim();
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        let result = pecos::prelude::all_axis(&bool_arr, ndarray::Axis(normalized_axis));
+        return Ok(Py::new(py, Array::from_array_bool(result.into_dyn()))?.into_any());
+    }
+
+    // axis=None: reduce entire array to a scalar bool
     if let Ok(arr) = array_buffer::extract_bool_array(&a) {
-        return Ok(arr.iter().all(|&x| x));
+        return Ok(arr.iter().all(|&x| x).into_py_any(py)?);
     }
-
-    // Handle float arrays (non-zero is truthy)
     if let Ok(arr) = array_buffer::extract_f64_array(&a) {
-        return Ok(arr.iter().all(|&x| x != 0.0));
+        return Ok(arr.iter().all(|&x| x != 0.0).into_py_any(py)?);
     }
-
-    // Handle integer arrays
     if let Ok(arr) = array_buffer::extract_i64_array(&a) {
-        return Ok(arr.iter().all(|&x| x != 0));
+        return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
     }
-
-    // Handle boolean scalar
     if let Ok(val) = a.extract::<bool>() {
-        return Ok(val);
+        return Ok(val.into_py_any(py)?);
     }
-
-    // Handle float scalar
     if let Ok(val) = a.extract::<f64>() {
-        return Ok(val != 0.0);
+        return Ok((val != 0.0).into_py_any(py)?);
     }
-
-    // Handle integer scalar
     if let Ok(val) = a.extract::<i64>() {
-        return Ok(val != 0);
+        return Ok((val != 0).into_py_any(py)?);
     }
 
     Err(PyTypeError::new_err(
@@ -4178,37 +4252,61 @@ fn all(_py: Python<'_>, a: Bound<'_, PyAny>) -> PyResult<bool> {
 ///
 /// Drop-in replacement for `numpy.any()`.
 /// Returns True if any element is truthy (non-zero for numbers, True for bools).
+/// When `axis` is specified, reduces along that axis and returns an Array.
 #[pyfunction]
+#[pyo3(signature = (a, axis=None))]
 #[allow(clippy::needless_pass_by_value)]
-fn any(_py: Python<'_>, a: Bound<'_, PyAny>) -> PyResult<bool> {
-    // Handle boolean arrays
+fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    use crate::pecos_array::Array;
+
+    if let Some(axis_val) = axis {
+        // axis reduction: extract array, convert to bool, reduce with any_axis
+        let bool_arr = if let Ok(arr) = array_buffer::extract_bool_array(&a) {
+            arr
+        } else if let Ok(arr) = array_buffer::extract_f64_array(&a) {
+            arr.mapv(|x| x != 0.0)
+        } else if let Ok(arr) = array_buffer::extract_i64_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else {
+            return Err(PyTypeError::new_err(
+                "any() argument must be bool, numeric scalar, or array",
+            ));
+        };
+
+        let ndim = bool_arr.ndim();
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        let result = pecos::prelude::any_axis(&bool_arr, ndarray::Axis(normalized_axis));
+        return Ok(Py::new(py, Array::from_array_bool(result.into_dyn()))?.into_any());
+    }
+
+    // axis=None: reduce entire array to a scalar bool
     if let Ok(arr) = array_buffer::extract_bool_array(&a) {
-        return Ok(arr.iter().any(|&x| x));
+        return Ok(arr.iter().any(|&x| x).into_py_any(py)?);
     }
-
-    // Handle float arrays (non-zero is truthy)
     if let Ok(arr) = array_buffer::extract_f64_array(&a) {
-        return Ok(arr.iter().any(|&x| x != 0.0));
+        return Ok(arr.iter().any(|&x| x != 0.0).into_py_any(py)?);
     }
-
-    // Handle integer arrays
     if let Ok(arr) = array_buffer::extract_i64_array(&a) {
-        return Ok(arr.iter().any(|&x| x != 0));
+        return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
     }
-
-    // Handle boolean scalar
     if let Ok(val) = a.extract::<bool>() {
-        return Ok(val);
+        return Ok(val.into_py_any(py)?);
     }
-
-    // Handle float scalar
     if let Ok(val) = a.extract::<f64>() {
-        return Ok(val != 0.0);
+        return Ok((val != 0.0).into_py_any(py)?);
     }
-
-    // Handle integer scalar
     if let Ok(val) = a.extract::<i64>() {
-        return Ok(val != 0);
+        return Ok((val != 0).into_py_any(py)?);
     }
 
     Err(PyTypeError::new_err(
@@ -4230,7 +4328,7 @@ fn any(_py: Python<'_>, a: Bound<'_, PyAny>) -> PyResult<bool> {
 #[pyo3(signature = (x, ord=None))]
 #[allow(clippy::needless_pass_by_value)]
 fn norm(_py: Python<'_>, x: Bound<'_, PyAny>, ord: Option<f64>) -> PyResult<f64> {
-    use crate::pecos_array::{Array, ArrayData};
+    use crate::pecos_array::Array;
     use pecos::prelude::{norm as norm_fn, norm_complex};
 
     // Try Array first - extract underlying data directly
@@ -5036,25 +5134,7 @@ fn where_array<'py>(
 
 // Helper function to compute broadcast shape
 fn broadcast_shapes(shapes: &[&[usize]]) -> PyResult<Vec<usize>> {
-    let max_ndim = shapes.iter().map(|s| s.len()).max().unwrap_or(0);
-    let mut result_shape = vec![1; max_ndim];
-
-    for shape in shapes {
-        // Align to the right (numpy broadcasting rule)
-        let offset = max_ndim - shape.len();
-        for (i, &dim) in shape.iter().enumerate() {
-            let result_idx = offset + i;
-            if result_shape[result_idx] == 1 {
-                result_shape[result_idx] = dim;
-            } else if dim != 1 && dim != result_shape[result_idx] {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "operands could not be broadcast together with shapes {shapes:?}"
-                )));
-            }
-        }
-    }
-
-    Ok(result_shape)
+    pecos::array::broadcast_shapes(shapes).map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 // Helper function to broadcast array to target shape
@@ -5063,23 +5143,152 @@ fn broadcast_to<T: Clone>(
     arr: ndarray::ArrayViewD<'_, T>,
     target_shape: &[usize],
 ) -> PyResult<ArrayD<T>> {
-    use ndarray::IxDyn;
+    pecos::array::broadcast_to(arr, target_shape).map_err(pyo3::exceptions::PyValueError::new_err)
+}
 
-    // If already the right shape, return owned copy
-    if arr.shape() == target_shape {
-        return Ok(arr.to_owned());
+/// Kronecker product of two 2D arrays.
+///
+/// Drop-in replacement for `numpy.kron()` for 2D arrays.
+#[pyfunction]
+fn kron(a: &Array, b: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    use ndarray::Ix2;
+
+    macro_rules! to_2d {
+        ($arr:expr) => {
+            $arr.clone()
+                .into_dimensionality::<Ix2>()
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("kron requires 2D arrays"))?
+        };
     }
 
-    // Use ndarray's broadcast functionality
-    let broadcast_view = arr.broadcast(IxDyn(target_shape)).ok_or_else(|| {
-        pyo3::exceptions::PyValueError::new_err(format!(
-            "cannot broadcast shape {:?} to {:?}",
-            arr.shape(),
-            target_shape
-        ))
-    })?;
+    let result_data = match (&a.data, &b.data) {
+        (ArrayData::Complex128(a_arr), ArrayData::Complex128(b_arr)) => {
+            ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
+        }
+        (ArrayData::F64(a_arr), ArrayData::F64(b_arr)) => {
+            ArrayData::F64(pecos::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
+        }
+        (ArrayData::Complex128(a_arr), ArrayData::F64(b_arr)) => {
+            let b_c = b_arr.mapv(|x| Complex64::new(x, 0.0));
+            ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_arr), &to_2d!(b_c)).into_dyn())
+        }
+        (ArrayData::F64(a_arr), ArrayData::Complex128(b_arr)) => {
+            let a_c = a_arr.mapv(|x| Complex64::new(x, 0.0));
+            ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_c), &to_2d!(b_arr)).into_dyn())
+        }
+        _ => {
+            return Err(PyTypeError::new_err(format!(
+                "kron not supported for {:?} and {:?}",
+                a.dtype(),
+                b.dtype()
+            )));
+        }
+    };
+    Ok(Py::new(py, Array::new(result_data))?.into_any())
+}
 
-    Ok(broadcast_view.to_owned())
+/// Matrix exponential of a square complex matrix.
+///
+/// Drop-in replacement for `scipy.linalg.expm()`.
+#[pyfunction]
+fn expm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    use ndarray::Ix2;
+
+    // Get Complex128 2D data (promote from F64 if needed)
+    let c_arr = match &a.data {
+        ArrayData::Complex128(arr) => arr.clone(),
+        ArrayData::F64(arr) => arr.mapv(|x| Complex64::new(x, 0.0)),
+        _ => {
+            return Err(PyTypeError::new_err(
+                "expm requires Complex128 or F64 array",
+            ));
+        }
+    };
+
+    let arr2 = c_arr
+        .into_dimensionality::<Ix2>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("expm requires a 2D matrix"))?;
+
+    let result_arr = pecos::linalg::expm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result = ArrayData::Complex128(result_arr.into_dyn());
+
+    Ok(Py::new(py, Array::new(result))?.into_any())
+}
+
+/// Matrix logarithm of a square complex matrix.
+///
+/// Drop-in replacement for `scipy.linalg.logm()`.
+#[pyfunction]
+fn logm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    use ndarray::Ix2;
+
+    // Get Complex128 2D data (promote from F64 if needed)
+    let c_arr = match &a.data {
+        ArrayData::Complex128(arr) => arr.clone(),
+        ArrayData::F64(arr) => arr.mapv(|x| Complex64::new(x, 0.0)),
+        _ => {
+            return Err(PyTypeError::new_err(
+                "logm requires Complex128 or F64 array",
+            ));
+        }
+    };
+
+    let arr2 = c_arr
+        .into_dimensionality::<Ix2>()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("logm requires a 2D matrix"))?;
+
+    let result_arr = pecos::linalg::logm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result = ArrayData::Complex128(result_arr.into_dyn());
+
+    Ok(Py::new(py, Array::new(result))?.into_any())
+}
+
+/// Raise a square matrix to an integer power.
+///
+/// Drop-in replacement for `numpy.linalg.matrix_power()`.
+#[pyfunction]
+fn matrix_power(a: &Array, n: i32, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    if n < 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "matrix_power does not support negative exponents",
+        ));
+    }
+
+    macro_rules! validate_2d_square {
+        ($arr:expr) => {{
+            let arr2 = $arr
+                .clone()
+                .into_dimensionality::<ndarray::Ix2>()
+                .map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err("matrix_power requires a 2D array")
+                })?;
+            if arr2.nrows() != arr2.ncols() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "matrix_power requires a square matrix",
+                ));
+            }
+            arr2
+        }};
+    }
+
+    #[allow(clippy::cast_sign_loss)]
+    let exp = n as u32;
+
+    match &a.data {
+        ArrayData::F64(arr) => {
+            let arr2 = validate_2d_square!(arr);
+            let result = pecos::linalg::matrix_power_f64(&arr2, exp);
+            Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
+        }
+        ArrayData::Complex128(arr) => {
+            let arr2 = validate_2d_square!(arr);
+            let result = pecos::linalg::matrix_power_c64(&arr2, exp);
+            Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
+        }
+        _ => Err(PyTypeError::new_err(
+            "matrix_power requires F64 or Complex128 array",
+        )),
+    }
 }
 
 /// Register the num submodule with Python bindings.
@@ -5197,6 +5406,9 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Create linalg submodule
     let linalg_module = PyModule::new(m.py(), "linalg")?;
     linalg_module.add_function(wrap_pyfunction!(norm, &linalg_module)?)?;
+    linalg_module.add_function(wrap_pyfunction!(expm, &linalg_module)?)?;
+    linalg_module.add_function(wrap_pyfunction!(logm, &linalg_module)?)?;
+    linalg_module.add_function(wrap_pyfunction!(matrix_power, &linalg_module)?)?;
     num_module.add_submodule(&linalg_module)?;
 
     // Create random submodule (following numpy.random pattern)
@@ -5262,6 +5474,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add_function(wrap_pyfunction!(array, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(asarray, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(delete, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(kron, &num_module)?)?;
 
     // Optimization functions
     num_module.add_function(wrap_pyfunction!(brentq, &num_module)?)?;
@@ -5346,6 +5559,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         num_module.getattr("curve_fit")?,
     )?;
     modules.set_item("pecos_rslib.num.random", num_module.getattr("random")?)?;
+    modules.set_item("pecos_rslib.num.linalg", num_module.getattr("linalg")?)?;
 
     // Add 'where' alias for where_
     num_module.setattr("where", num_module.getattr("where_")?)?;

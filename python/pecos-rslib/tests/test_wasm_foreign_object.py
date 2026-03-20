@@ -20,7 +20,7 @@ def _wasm_from_wat(wat_content: str, **kwargs) -> WasmForeignObject:
     return obj
 
 
-def test_div_by_zero():
+def test_div_by_zero() -> None:
     """Division by zero in WASM should raise WasmError."""
     wat = """
     (module
@@ -39,7 +39,7 @@ def test_div_by_zero():
         wasm.exec("div_by_zero", [])
 
 
-def test_infinite_loop():
+def test_infinite_loop() -> None:
     """An infinite loop should raise WasmError due to timeout."""
     wat = """
     (module
@@ -59,7 +59,7 @@ def test_infinite_loop():
         wasm.exec("infinite_loop", [])
 
 
-def test_normal_execution_no_error():
+def test_normal_execution_no_error() -> None:
     """Normal WASM execution should not raise any error."""
     wat = """
     (module

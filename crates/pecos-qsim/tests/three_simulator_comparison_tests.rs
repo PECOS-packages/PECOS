@@ -441,3 +441,214 @@ fn test_reset_consistency() {
         compare_all_probabilities(&mut sv, &mut dm, &stab, num_qubits);
     }
 }
+
+// ============================================================================
+// H-variant gates (H2-H6): 3-simulator consistency
+// ============================================================================
+
+#[test]
+fn test_h_variant_gates_consistency() {
+    // Each H variant applied to |0>
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h2(&qid(0));
+        dm.h2(&qid(0));
+        stab.h2(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h3(&qid(0));
+        dm.h3(&qid(0));
+        stab.h3(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h4(&qid(0));
+        dm.h4(&qid(0));
+        stab.h4(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h5(&qid(0));
+        dm.h5(&qid(0));
+        stab.h5(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h6(&qid(0));
+        dm.h6(&qid(0));
+        stab.h6(&qid(0));
+    });
+
+    // H variants applied to H|0> = |+>
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h(&qid(0)).h2(&qid(0));
+        dm.h(&qid(0)).h2(&qid(0));
+        stab.h(&qid(0)).h2(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h(&qid(0)).h3(&qid(0));
+        dm.h(&qid(0)).h3(&qid(0));
+        stab.h(&qid(0)).h3(&qid(0));
+    });
+
+    // All H variants are self-inverse: Hi * Hi = I
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h(&qid(0)).h2(&qid(0)).h2(&qid(0));
+        dm.h(&qid(0)).h2(&qid(0)).h2(&qid(0));
+        stab.h(&qid(0)).h2(&qid(0)).h2(&qid(0));
+    });
+}
+
+// ============================================================================
+// F-family gates: 3-simulator consistency
+// ============================================================================
+
+#[test]
+fn test_f_family_gates_consistency() {
+    // Each F variant on |0>
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f(&qid(0));
+        dm.f(&qid(0));
+        stab.f(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.fdg(&qid(0));
+        dm.fdg(&qid(0));
+        stab.fdg(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f2(&qid(0));
+        dm.f2(&qid(0));
+        stab.f2(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f2dg(&qid(0));
+        dm.f2dg(&qid(0));
+        stab.f2dg(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f3(&qid(0));
+        dm.f3(&qid(0));
+        stab.f3(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f3dg(&qid(0));
+        dm.f3dg(&qid(0));
+        stab.f3dg(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f4(&qid(0));
+        dm.f4(&qid(0));
+        stab.f4(&qid(0));
+    });
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.f4dg(&qid(0));
+        dm.f4dg(&qid(0));
+        stab.f4dg(&qid(0));
+    });
+
+    // F * Fdg = I
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h(&qid(0)).f(&qid(0)).fdg(&qid(0));
+        dm.h(&qid(0)).f(&qid(0)).fdg(&qid(0));
+        stab.h(&qid(0)).f(&qid(0)).fdg(&qid(0));
+    });
+
+    // F^3 = I (F is order 3)
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h(&qid(0)).f(&qid(0)).f(&qid(0)).f(&qid(0));
+        dm.h(&qid(0)).f(&qid(0)).f(&qid(0)).f(&qid(0));
+        stab.h(&qid(0)).f(&qid(0)).f(&qid(0)).f(&qid(0));
+    });
+
+    // F on |+>
+    compare_clifford_circuit(1, |sv, dm, stab| {
+        sv.h(&qid(0)).f(&qid(0));
+        dm.h(&qid(0)).f(&qid(0));
+        stab.h(&qid(0)).f(&qid(0));
+    });
+}
+
+// ============================================================================
+// All 2q Clifford gates: 3-simulator consistency
+// ============================================================================
+
+#[test]
+fn test_all_2q_gates_consistency() {
+    // SXX family
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).sxx(&qid2(0, 1));
+        dm.h(&qid(0)).sxx(&qid2(0, 1));
+        stab.h(&qid(0)).sxx(&qid2(0, 1));
+    });
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).sxxdg(&qid2(0, 1));
+        dm.h(&qid(0)).sxxdg(&qid2(0, 1));
+        stab.h(&qid(0)).sxxdg(&qid2(0, 1));
+    });
+
+    // SYY family
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).syy(&qid2(0, 1));
+        dm.h(&qid(0)).syy(&qid2(0, 1));
+        stab.h(&qid(0)).syy(&qid2(0, 1));
+    });
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).syydg(&qid2(0, 1));
+        dm.h(&qid(0)).syydg(&qid2(0, 1));
+        stab.h(&qid(0)).syydg(&qid2(0, 1));
+    });
+
+    // SZZ family
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).szz(&qid2(0, 1));
+        dm.h(&qid(0)).szz(&qid2(0, 1));
+        stab.h(&qid(0)).szz(&qid2(0, 1));
+    });
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).szzdg(&qid2(0, 1));
+        dm.h(&qid(0)).szzdg(&qid2(0, 1));
+        stab.h(&qid(0)).szzdg(&qid2(0, 1));
+    });
+
+    // ISWAP family
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).iswap(&qid2(0, 1));
+        dm.h(&qid(0)).iswap(&qid2(0, 1));
+        stab.h(&qid(0)).iswap(&qid2(0, 1));
+    });
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).iswapdg(&qid2(0, 1));
+        dm.h(&qid(0)).iswapdg(&qid2(0, 1));
+        stab.h(&qid(0)).iswapdg(&qid2(0, 1));
+    });
+
+    // G family (G is self-inverse)
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).g(&qid2(0, 1));
+        dm.h(&qid(0)).g(&qid2(0, 1));
+        stab.h(&qid(0)).g(&qid2(0, 1));
+    });
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).gdg(&qid2(0, 1));
+        dm.h(&qid(0)).gdg(&qid2(0, 1));
+        stab.h(&qid(0)).gdg(&qid2(0, 1));
+    });
+
+    // CY
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).cy(&qid2(0, 1));
+        dm.h(&qid(0)).cy(&qid2(0, 1));
+        stab.h(&qid(0)).cy(&qid2(0, 1));
+    });
+
+    // ISWAP * ISWAPdg = I
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).iswap(&qid2(0, 1)).iswapdg(&qid2(0, 1));
+        dm.h(&qid(0)).iswap(&qid2(0, 1)).iswapdg(&qid2(0, 1));
+        stab.h(&qid(0)).iswap(&qid2(0, 1)).iswapdg(&qid2(0, 1));
+    });
+
+    // G * G = I (G is Hermitian)
+    compare_clifford_circuit(2, |sv, dm, stab| {
+        sv.h(&qid(0)).g(&qid2(0, 1)).g(&qid2(0, 1));
+        dm.h(&qid(0)).g(&qid2(0, 1)).g(&qid2(0, 1));
+        stab.h(&qid(0)).g(&qid2(0, 1)).g(&qid2(0, 1));
+    });
+}

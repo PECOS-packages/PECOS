@@ -320,7 +320,9 @@ impl RNGModel {
     pub fn set_index(&mut self, idx: u64) {
         assert!(
             self.count <= idx,
-            "RNGindex called after specified index already generated"
+            "Invalid start index: index {} is before the current stream index: {}",
+            idx,
+            self.count
         );
         while self.count < idx {
             self.rng_num();

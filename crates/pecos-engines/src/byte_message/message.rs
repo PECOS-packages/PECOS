@@ -975,19 +975,19 @@ mod tests {
         // Verify we have 5 measurement operations in the correct order
         assert_eq!(operations.len(), 5);
 
-        assert_eq!(operations[0].gate_type, GateType::Measure);
+        assert_eq!(operations[0].gate_type, GateType::MZ);
         assert_eq!(operations[0].qubits.as_slice(), &[QubitId(3)]);
 
-        assert_eq!(operations[1].gate_type, GateType::Measure);
+        assert_eq!(operations[1].gate_type, GateType::MZ);
         assert_eq!(operations[1].qubits.as_slice(), &[QubitId(1)]);
 
-        assert_eq!(operations[2].gate_type, GateType::Measure);
+        assert_eq!(operations[2].gate_type, GateType::MZ);
         assert_eq!(operations[2].qubits.as_slice(), &[QubitId(4)]);
 
-        assert_eq!(operations[3].gate_type, GateType::Measure);
+        assert_eq!(operations[3].gate_type, GateType::MZ);
         assert_eq!(operations[3].qubits.as_slice(), &[QubitId(0)]);
 
-        assert_eq!(operations[4].gate_type, GateType::Measure);
+        assert_eq!(operations[4].gate_type, GateType::MZ);
         assert_eq!(operations[4].qubits.as_slice(), &[QubitId(2)]);
     }
 }

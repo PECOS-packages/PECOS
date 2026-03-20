@@ -16,7 +16,7 @@ from pecos_rslib import Array
 class TestBasicBroadcasting:
     """Test basic broadcasting scenarios."""
 
-    def test_scalar_broadcast(self):
+    def test_scalar_broadcast(self) -> None:
         """Test scalar broadcasting (already working, but verify)."""
         np_arr = np.array([1.0, 2.0, 3.0])
         pa_arr = Array(np_arr)
@@ -27,7 +27,7 @@ class TestBasicBroadcasting:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_1d_to_2d_broadcast(self):
+    def test_1d_to_2d_broadcast(self) -> None:
         """Test broadcasting 1D array to 2D array."""
         # (3,) + (3, 4) -> should broadcast to (3, 4)
         np_a = np.array([1.0, 2.0, 3.0])
@@ -55,7 +55,7 @@ class TestBasicBroadcasting:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_column_vector_broadcast(self):
+    def test_column_vector_broadcast(self) -> None:
         """Test broadcasting a column vector (n, 1) with a matrix (n, m)."""
         np_col = np.array([[1.0], [2.0], [3.0]])  # (3, 1)
         np_mat = np.ones((3, 4))  # (3, 4)
@@ -69,7 +69,7 @@ class TestBasicBroadcasting:
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
         assert np.asarray(pa_result).shape == (3, 4)
 
-    def test_row_vector_broadcast(self):
+    def test_row_vector_broadcast(self) -> None:
         """Test broadcasting a row vector (1, m) with a matrix (n, m)."""
         np_row = np.array([[1.0, 2.0, 3.0, 4.0]])  # (1, 4)
         np_mat = np.ones((3, 4))  # (3, 4)
@@ -87,7 +87,7 @@ class TestBasicBroadcasting:
 class TestBroadcastingAllOperations:
     """Test that broadcasting works for all arithmetic operations."""
 
-    def test_broadcast_addition(self):
+    def test_broadcast_addition(self) -> None:
         """Test broadcasting with addition."""
         np_a = np.array([[1.0], [2.0], [3.0]])  # (3, 1)
         np_b = np.array([10.0, 20.0, 30.0, 40.0])  # (4,)
@@ -101,7 +101,7 @@ class TestBroadcastingAllOperations:
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
         assert np.asarray(pa_result).shape == (3, 4)
 
-    def test_broadcast_subtraction(self):
+    def test_broadcast_subtraction(self) -> None:
         """Test broadcasting with subtraction."""
         np_a = np.array([[1.0], [2.0], [3.0]])  # (3, 1)
         np_b = np.array([10.0, 20.0, 30.0, 40.0])  # (4,)
@@ -114,8 +114,8 @@ class TestBroadcastingAllOperations:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_broadcast_multiplication(self):
-        """Test broadcasting with multiplication."""
+    def test_broadcast_multiplication(self) -> None:
+        """Test broadcasting with elemwise_mul."""
         np_a = np.array([[2.0], [3.0], [4.0]])  # (3, 1)
         np_b = np.array([10.0, 20.0, 30.0])  # (3,)
 
@@ -123,11 +123,11 @@ class TestBroadcastingAllOperations:
         pa_b = Array(np_b)
 
         np_result = np_a * np_b
-        pa_result = pa_a * pa_b
+        pa_result = pa_a.elemwise_mul(pa_b)
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_broadcast_division(self):
+    def test_broadcast_division(self) -> None:
         """Test broadcasting with division."""
         np_a = np.array([[10.0], [20.0], [30.0]])  # (3, 1)
         np_b = np.array([2.0, 4.0, 5.0])  # (3,)
@@ -144,7 +144,7 @@ class TestBroadcastingAllOperations:
 class TestBroadcastingComplex:
     """Test broadcasting with different data types."""
 
-    def test_broadcast_int64(self):
+    def test_broadcast_int64(self) -> None:
         """Test broadcasting with int64 arrays."""
         np_a = np.array([[1], [2], [3]], dtype=np.int64)  # (3, 1)
         np_b = np.array([10, 20, 30], dtype=np.int64)  # (3,)
@@ -157,7 +157,7 @@ class TestBroadcastingComplex:
 
         np.testing.assert_array_equal(np.asarray(pa_result), np_result)
 
-    def test_broadcast_complex128(self):
+    def test_broadcast_complex128(self) -> None:
         """Test broadcasting with complex128 arrays."""
         np_a = np.array([[1 + 2j], [3 + 4j]], dtype=np.complex128)  # (2, 1)
         np_b = np.array([10 + 0j, 20 + 0j, 30 + 0j], dtype=np.complex128)  # (3,)
@@ -174,7 +174,7 @@ class TestBroadcastingComplex:
 class TestBroadcastingEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_incompatible_shapes_error(self):
+    def test_incompatible_shapes_error(self) -> None:
         """Test that incompatible shapes raise an error."""
         np_a = np.ones((3, 4))
         np_b = np.ones((2, 4))
@@ -186,7 +186,7 @@ class TestBroadcastingEdgeCases:
         with pytest.raises(ValueError, match="cannot broadcast"):
             pa_a + pa_b
 
-    def test_same_shape_no_broadcast(self):
+    def test_same_shape_no_broadcast(self) -> None:
         """Test that same-shaped arrays work (no broadcasting needed)."""
         np_a = np.ones((3, 4))
         np_b = np.ones((3, 4)) * 2.0
@@ -199,7 +199,7 @@ class TestBroadcastingEdgeCases:
 
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
 
-    def test_broadcast_single_element(self):
+    def test_broadcast_single_element(self) -> None:
         """Test broadcasting a single element (1,1) array."""
         np_a = np.array([[5.0]])  # (1, 1)
         np_b = np.ones((3, 4))  # (3, 4)
@@ -217,7 +217,7 @@ class TestBroadcastingEdgeCases:
 class TestBroadcastingWithNumPy:
     """Test broadcasting when one operand is a NumPy array."""
 
-    def test_pecos_array_plus_numpy_broadcast(self):
+    def test_pecos_array_plus_numpy_broadcast(self) -> None:
         """Test PECOS Array + NumPy array with broadcasting."""
         np_a = np.array([[1.0], [2.0], [3.0]])  # (3, 1)
         np_b = np.array([10.0, 20.0, 30.0, 40.0])  # (4,)
@@ -233,7 +233,7 @@ class TestBroadcastingWithNumPy:
 class TestBroadcastingHigherDimensions:
     """Test broadcasting with 3D and higher dimensional arrays."""
 
-    def test_3d_broadcast(self):
+    def test_3d_broadcast(self) -> None:
         """Test broadcasting with 3D arrays."""
         np_a = np.ones((2, 3, 1))  # (2, 3, 1)
         np_b = np.ones((1, 3, 4))  # (1, 3, 4)
@@ -247,7 +247,7 @@ class TestBroadcastingHigherDimensions:
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
         assert np.asarray(pa_result).shape == (2, 3, 4)
 
-    def test_4d_broadcast(self):
+    def test_4d_broadcast(self) -> None:
         """Test broadcasting with 4D arrays."""
         # Simulating batch_size × channels × height × width
         np_a = np.ones((2, 1, 3, 4))  # (2, 1, 3, 4)
@@ -262,7 +262,7 @@ class TestBroadcastingHigherDimensions:
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
         assert np.asarray(pa_result).shape == (2, 5, 3, 4)
 
-    def test_5d_broadcast(self):
+    def test_5d_broadcast(self) -> None:
         """Test broadcasting with 5D arrays."""
         # Simulating batch × time × qubits × gates × parameters
         np_a = np.ones((2, 3, 1, 4, 5))  # (2, 3, 1, 4, 5)
@@ -277,7 +277,7 @@ class TestBroadcastingHigherDimensions:
         np.testing.assert_array_almost_equal(np.asarray(pa_result), np_result)
         assert np.asarray(pa_result).shape == (2, 3, 6, 4, 5)
 
-    def test_6d_broadcast_extreme(self):
+    def test_6d_broadcast_extreme(self) -> None:
         """Test broadcasting with 6D arrays to verify truly general ND support."""
         # Extreme case: 6D tensors
         np_a = np.ones((1, 2, 1, 3, 1, 4))  # (1, 2, 1, 3, 1, 4)

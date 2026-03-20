@@ -13,26 +13,26 @@ from pecos_rslib import Array, dtypes
 class TestDTypeTypeProperty:
     """Test the .type property on DType objects."""
 
-    def test_dtype_has_type_property(self):
+    def test_dtype_has_type_property(self) -> None:
         """Test that dtype has a .type attribute."""
         arr = Array([1, 2, 3], dtype="int64")
         assert hasattr(arr.dtype, "type")
         assert arr.dtype.type is not None
 
-    def test_type_property_returns_class(self):
+    def test_type_property_returns_class(self) -> None:
         """Test that .type returns a class (type)."""
         arr = Array([1, 2, 3], dtype="int64")
         scalar_type = arr.dtype.type
         assert isinstance(scalar_type, type)
 
-    def test_type_property_is_callable(self):
+    def test_type_property_is_callable(self) -> None:
         """Test that the returned type can be called to create scalars."""
         arr = Array([1, 2, 3], dtype="int64")
         ScalarType = arr.dtype.type
         val = ScalarType(99)
         assert val == 99
 
-    def test_numpy_compatibility_pattern_type_of_scalar(self):
+    def test_numpy_compatibility_pattern_type_of_scalar(self) -> None:
         """Test NumPy pattern: dtype = type(a); b = dtype(1)"""
         # This is a common pattern in NumPy code
         pecos_scalar = dtypes.i64(5)
@@ -42,7 +42,7 @@ class TestDTypeTypeProperty:
         assert new_val == 42
         assert type(new_val).__name__ == "i64"
 
-    def test_numpy_compatibility_pattern_array_dtype_type(self):
+    def test_numpy_compatibility_pattern_array_dtype_type(self) -> None:
         """Test NumPy pattern: dtype = arr.dtype.type; b = dtype(1)"""
         # This is another common NumPy pattern
         arr = Array([1, 2, 3], dtype="int64")
@@ -52,7 +52,7 @@ class TestDTypeTypeProperty:
         assert val == 99
         assert type(val).__name__ == "i64"
 
-    def test_both_patterns_return_same_class(self):
+    def test_both_patterns_return_same_class(self) -> None:
         """Test that both patterns return the same scalar class."""
         # Pattern 1: type(scalar_instance)
         scalar = dtypes.i64(5)
@@ -81,7 +81,7 @@ class TestDTypeTypeProperty:
             ("bool", True),
         ],
     )
-    def test_type_property_for_all_dtypes(self, dtype_str, test_value):
+    def test_type_property_for_all_dtypes(self, dtype_str, test_value) -> None:
         """Test .type property works for all supported dtypes."""
         arr = Array([1], dtype=dtype_str)
         ScalarType = arr.dtype.type
@@ -90,7 +90,7 @@ class TestDTypeTypeProperty:
         # Just verify it doesn't raise and returns something
         assert result is not None
 
-    def test_comparison_with_numpy(self):
+    def test_comparison_with_numpy(self) -> None:
         """Compare PECOS behavior with NumPy behavior."""
         # NumPy behavior
         np_arr = np.array([1, 2, 3], dtype=np.int64)

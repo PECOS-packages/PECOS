@@ -188,7 +188,7 @@ fn expand_gate_operation(
                 Ok(qubits
                     .iter()
                     .map(|&qubit| {
-                        let gate = Gate::new(GateType::Prep, vec![], vec![], vec![QubitId(qubit)]);
+                        let gate = Gate::new(GateType::PZ, vec![], vec![], vec![QubitId(qubit)]);
                         Operation::NativeGate(gate)
                     })
                     .collect())
@@ -249,9 +249,9 @@ fn expand_register_measure(
 
     // Expand to individual measurements
     for (i, &qubit) in q_qubits.iter().enumerate() {
-        // Create a Gate with GateType::Measure
+        // Create a Gate with GateType::MZ
         let gate = Gate::new(
-            GateType::Measure,
+            GateType::MZ,
             vec![], // No angles
             vec![], // No parameters
             vec![QubitId(qubit)],

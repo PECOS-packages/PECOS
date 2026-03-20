@@ -203,7 +203,7 @@ def RZZ(
     _apply_two_qubit_matrix(state, qubits, matrix)
 
 
-def R2XXYYZZ(
+def RXXRYYRZZ(
     state: MPS,
     qubits: tuple[int, int],
     angles: tuple[float, float, float],

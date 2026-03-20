@@ -13,6 +13,7 @@ This module defines the complete operation set for PHIR, including:
 All operations follow MLIR's design where operations can contain nested regions.
 */
 
+use pecos_core::Angle64;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -58,25 +59,31 @@ pub enum QuantumOp {
 
     // Parameterized single-qubit rotations
     /// X-axis rotation
-    RX(f64),
+    RX(Angle64),
     /// Y-axis rotation
-    RY(f64),
+    RY(Angle64),
     /// Z-axis rotation
-    RZ(f64),
+    RZ(Angle64),
+    /// R1XY rotation (theta, phi) - hardware-native single-qubit gate
+    R1XY(Angle64, Angle64),
     /// Arbitrary single-qubit rotation
-    U3(f64, f64, f64), // theta, phi, lambda
+    U3(Angle64, Angle64, Angle64), // theta, phi, lambda
 
     // Two-qubit gates
     /// CNOT/CX gate
     CX,
+    /// Controlled-Y gate
+    CY,
     /// CZ gate
     CZ,
+    /// Controlled-Hadamard gate
+    CH,
     /// SWAP gate
     SWAP,
     /// Controlled phase
-    CPhase(f64),
+    CPhase(Angle64),
     /// ZZ rotation
-    RZZ(f64),
+    RZZ(Angle64),
 
     // Multi-qubit gates
     /// Multi-controlled NOT
@@ -187,8 +194,10 @@ pub enum ClassicalOp {
     IntToFloat,
     /// Float to integer
     FloatToInt,
-    /// Bitcast
+    /// Bitcast (also used for trunc/zext)
     Bitcast,
+    /// Select (ternary: `condition`, `true_value`, `false_value`)
+    Select,
 
     // Constants
     /// Integer constant
@@ -514,9 +523,12 @@ impl QuantumOp {
             QuantumOp::RX(_) => "rx",
             QuantumOp::RY(_) => "ry",
             QuantumOp::RZ(_) => "rz",
+            QuantumOp::R1XY(_, _) => "r1xy",
             QuantumOp::U3(_, _, _) => "u3",
             QuantumOp::CX => "cx",
+            QuantumOp::CY => "cy",
             QuantumOp::CZ => "cz",
+            QuantumOp::CH => "ch",
             QuantumOp::SWAP => "swap",
             QuantumOp::CPhase(_) => "cp",
             QuantumOp::RZZ(_) => "rzz",
@@ -553,6 +565,7 @@ impl QuantumOp {
             | QuantumOp::RX(_)
             | QuantumOp::RY(_)
             | QuantumOp::RZ(_)
+            | QuantumOp::R1XY(_, _)
             | QuantumOp::Measure
             | QuantumOp::MeasurePauli(_)
             | QuantumOp::Reset
@@ -561,7 +574,9 @@ impl QuantumOp {
 
             // Two-qubit gates
             QuantumOp::CX
+            | QuantumOp::CY
             | QuantumOp::CZ
+            | QuantumOp::CH
             | QuantumOp::SWAP
             | QuantumOp::CPhase(_)
             | QuantumOp::RZZ(_) => Some(2),
@@ -637,6 +652,7 @@ impl ClassicalOp {
             ClassicalOp::IntToFloat => "int_to_float",
             ClassicalOp::FloatToInt => "float_to_int",
             ClassicalOp::Bitcast => "bitcast",
+            ClassicalOp::Select => "select",
             ClassicalOp::ConstInt(_) => "const_int",
             ClassicalOp::ConstFloat(_) => "const_float",
             ClassicalOp::ConstBool(_) => "const_bool",
@@ -691,6 +707,9 @@ impl ClassicalOp {
             | ClassicalOp::ConstFloat(_)
             | ClassicalOp::ConstBool(_)
             | ClassicalOp::ConstString(_) => Some(0),
+
+            // Ternary (condition + two values)
+            ClassicalOp::Select => Some(3),
 
             // Result operation (variable number of operands)
             ClassicalOp::Result => None,

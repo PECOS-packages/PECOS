@@ -6,7 +6,7 @@ This will help us implement matching behavior in PecosArray.
 import numpy as np
 
 
-def test_numpy_slicing_behavior():
+def test_numpy_slicing_behavior() -> None:
     """Explore NumPy's behavior with negative step slicing."""
     arr = np.array([0.0, 1.0, 2.0, 3.0])
     print(f"Original array: {arr}\n")

@@ -190,10 +190,10 @@ pub fn dag_to_zx_circuit(dag: &DagCircuit) -> Result<ZxCircuit, ConvertError> {
                 }
 
                 // Measurement and prep
-                GateType::Measure | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree => {
                     zx_circ.push(ZxGate::new(GType::Measure, qs));
                 }
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     zx_circ.push(ZxGate::new(GType::InitAncilla, qs));
                 }
 

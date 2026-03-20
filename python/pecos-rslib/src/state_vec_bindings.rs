@@ -493,13 +493,13 @@ impl PyStateVec {
                 Ok(None)
             }
 
-            "RZZRYYRXX" => {
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
                 if let Some(params) = params {
                     match params.get_item("angles") {
                         Ok(Some(py_any)) => {
                             if let Ok(angles) = py_any.extract::<Vec<AngleParam>>() {
                                 if angles.len() >= 3 {
-                                    self.inner.rzzryyrxx(
+                                    self.inner.rxxryyrzz(
                                         angles[0].0,
                                         angles[1].0,
                                         angles[2].0,
@@ -507,18 +507,18 @@ impl PyStateVec {
                                     );
                                 } else {
                                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                        "RZZRYYRXX gate requires three angle parameters",
+                                        "RXXRYYRZZ gate requires three angle parameters",
                                     ));
                                 }
                             } else {
                                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "Expected valid angle parameters for RZZRYYRXX gate",
+                                    "Expected valid angle parameters for RXXRYYRZZ gate",
                                 ));
                             }
                         }
                         Ok(None) => {
                             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameters missing for RZZRYYRXX gate",
+                                "Angle parameters missing for RXXRYYRZZ gate",
                             ));
                         }
                         Err(err) => {
@@ -530,43 +530,6 @@ impl PyStateVec {
             }
             // Gate aliases - alternative names for two-qubit gates
             "II" => Ok(None), // Two-qubit identity - no operation
-            "R2XXYYZZ" => {
-                // Alias for RZZRYYRXX - same gate, different name
-                if let Some(params) = params {
-                    match params.get_item("angles") {
-                        Ok(Some(py_any)) => {
-                            if let Ok(angles) = py_any.extract::<Vec<AngleParam>>() {
-                                if angles.len() >= 3 {
-                                    self.inner.rzzryyrxx(
-                                        angles[0].0,
-                                        angles[1].0,
-                                        angles[2].0,
-                                        pair,
-                                    );
-                                } else {
-                                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                        "R2XXYYZZ gate requires three angle parameters",
-                                    ));
-                                }
-                            } else {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "Expected valid angle parameters for R2XXYYZZ gate",
-                                ));
-                            }
-                        }
-                        Ok(None) | Err(_) => {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameters missing for R2XXYYZZ gate",
-                            ));
-                        }
-                    }
-                } else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "Angle parameters missing for R2XXYYZZ gate",
-                    ));
-                }
-                Ok(None)
-            }
 
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported two-qubit gate",

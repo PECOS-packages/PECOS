@@ -15,10 +15,12 @@
 //! This module provides:
 //! - [`RngManageable`]: A trait for components that can have their RNG replaced or reseeded
 //! - [`derive_seed`]: A function for deriving related seeds from a base seed
+//! - [`time_seed`]: A function for generating a seed from system time
 
 use crate::{PecosRng, Rng, SeedableRng};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Derive a new seed from a base seed and a purpose string.
 ///
@@ -58,6 +60,59 @@ pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
     // Use the combined seed to initialize an RNG and get a random number
     let mut rng = PecosRng::seed_from_u64(combined_seed);
     rng.next_u64()
+}
+
+/// Generate a seed from the current system time.
+///
+/// This function provides a standardized way to generate a seed when no explicit
+/// seed is provided. It uses nanosecond precision for better uniqueness.
+///
+/// # Returns
+/// A seed value derived from the current system time, or a fallback value (12345)
+/// if the system time is unavailable.
+///
+/// # Example
+///
+/// ```
+/// use pecos_rng::rng_manageable::time_seed;
+/// use pecos_rng::{PecosRng, SeedableRng};
+///
+/// // Use time_seed when no explicit seed is provided
+/// let seed = time_seed();
+/// let rng = PecosRng::seed_from_u64(seed);
+/// ```
+#[must_use]
+pub fn time_seed() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(12345)
+}
+
+/// Resolve an optional seed, using system time if none provided.
+///
+/// This is a convenience function that combines `time_seed()` with `Option` handling.
+///
+/// # Arguments
+/// * `seed` - An optional seed value
+///
+/// # Returns
+/// The provided seed if `Some`, otherwise a seed from system time.
+///
+/// # Example
+///
+/// ```
+/// use pecos_rng::rng_manageable::resolve_seed;
+///
+/// let explicit = resolve_seed(Some(42));
+/// assert_eq!(explicit, 42);
+///
+/// let auto = resolve_seed(None);
+/// // auto is derived from system time
+/// ```
+#[must_use]
+pub fn resolve_seed(seed: Option<u64>) -> u64 {
+    seed.unwrap_or_else(time_seed)
 }
 
 /// Trait for components that can have their random number generator replaced or reseeded.

@@ -64,22 +64,27 @@
 //! ```
 
 mod circuit;
+mod circuit_display;
 mod dag_circuit;
-pub mod operator_matrix;
-pub mod teleportation;
+pub mod pass;
+pub mod pauli_group;
+pub mod pauli_sequence;
+pub mod pauli_set;
+pub mod stabilizer_group;
 mod tick_circuit;
 pub mod tick_circuit_soa;
+pub mod unitary_matrix;
 
 #[cfg(feature = "hugr")]
 pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    Attribute, ConditionalBuilder, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle,
-    TraversalWorkBuffers,
+    Attribute, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle, TraversalWorkBuffers,
 };
 pub use tick_circuit::{
-    QubitConflictError, Tick, TickCircuit, TickHandle, TickMeasureHandle, TickPrepHandle,
+    CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit, TickHandle,
+    TickMeasureHandle, TickPrepHandle,
 };
 pub use tick_circuit_soa::{
     CircuitIndexes, GateBatch, GateId, GateStorage, MetadataStorage, TickBatches, TickCircuitSoA,
@@ -88,11 +93,17 @@ pub use tick_circuit_soa::{
 
 // Re-export commonly used types from dependencies
 pub use pecos_core::gate_type::GateType;
-pub use pecos_core::{ClassicalBitId, Gate, Nanoseconds, QubitId};
+pub use pecos_core::{ClassicalBitId, Gate, QubitId, TimeScale, TimeUnits};
 pub use pecos_num::dag::DagWouldCycleError;
 
-// Re-export operator matrix trait for convenient method-style matrix conversion
-pub use operator_matrix::ToMatrix;
+// Re-export operator matrix types for convenient method-style matrix conversion
+pub use unitary_matrix::{ToMatrix, UnitaryMatrix};
+
+// Pauli collection and stabilizer group types
+pub use pauli_group::{PauliGroup, PauliGroupError};
+pub use pauli_sequence::{F2Matrix, PauliSequence};
+pub use pauli_set::PauliSet;
+pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
 
 // Re-export HUGR types when the feature is enabled
 #[cfg(feature = "hugr")]

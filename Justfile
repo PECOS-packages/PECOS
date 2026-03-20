@@ -191,16 +191,7 @@ build-selene:
     set -euo pipefail
     echo "Building Selene plugins..."
 
-    # Build Rust libraries (with GPU support if CUDA available)
-    if {{pecos}} cuda check -q >/dev/null 2>&1; then
-        echo "CUDA detected, building with GPU support..."
-        cargo build --release -p pecos-selene-quest --features cuda
-    else
-        echo "CUDA not detected, building CPU-only..."
-        cargo build --release -p pecos-selene-quest
-    fi
-
-    cargo build --release -p pecos-selene-qulacs -p pecos-selene-sparsestab -p pecos-selene-statevec
+    cargo build --release -p pecos-selene-stab -p pecos-selene-statevec
 
     # Copy libraries to Python package directories
     echo "Copying libraries to Python packages..."
@@ -345,11 +336,13 @@ normalize-line-endings:
 # Testing
 # =============================================================================
 
-# Run Rust tests (with GPU features only if CUDA available)
+# Run Rust tests.
+# Includes pecos-gpu-sims when the GPU probe succeeds.
 rstest: check-cli
     {{pecos}} rust test --release
 
-# Run Rust tests with all features
+# Run Rust tests in the default cargo profile.
+# Includes pecos-gpu-sims when the GPU probe succeeds.
 rstest-all: check-cli
     {{pecos}} rust test
 

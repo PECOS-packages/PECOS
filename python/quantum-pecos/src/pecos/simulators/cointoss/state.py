@@ -16,7 +16,6 @@ The simulator ignores all quantum gates and returns random measurement results b
 making it useful for debugging classical logic paths and testing error correction protocols with random noise.
 """
 
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -228,6 +227,7 @@ gate_dict = {
     "RXX": _noop_gate,
     "RYY": _noop_gate,
     "RZZ": _noop_gate,
+    "RXXRYYRZZ": _noop_gate,
     "R2XXYYZZ": _noop_gate,
     # Other gates
     "G": _noop_gate,

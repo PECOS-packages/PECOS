@@ -55,7 +55,7 @@
 
 pub mod ast;
 pub mod bitvec_expression;
-pub mod dag_bridge;
+// pub mod dag_bridge; // TODO: requires DagCircuit classical bit API
 // pub mod config; // TODO: Update to use unified API types
 pub mod engine;
 pub mod engine_builder;
@@ -71,6 +71,9 @@ pub mod simulation;
 pub mod unified_engine_builder;
 pub mod util;
 
+#[cfg(feature = "phir")]
+pub mod qasm_to_phir;
+
 #[cfg(feature = "wasm")]
 pub mod wasm_foreign_object;
 
@@ -83,6 +86,8 @@ pub use preprocessor::Preprocessor;
 pub use program::QASMProgram;
 #[cfg(feature = "wasm")]
 pub use program::QasmEngineWasm;
+#[cfg(feature = "phir")]
+pub use qasm_to_phir::{qasm_program_to_phir_module, qasm_to_phir_module, qasm_to_ron};
 pub use unified_engine_builder::{QasmEngineBuilder, qasm_engine};
 pub use util::{count_qubits_in_file, count_qubits_in_str};
 

@@ -3,8 +3,8 @@ use crate::v0_1::environment::{DataType, Environment, TypedValue};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
-use pecos_core::Angle64;
 use pecos_core::errors::PecosError;
+use pecos_core::{Angle64, Gate};
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1519,6 +1519,33 @@ impl OperationProcessor {
                 Ok((qop.to_string(), qubit_args, vec![theta, phi]))
             }
 
+            // Two-qubit rotation gate: RXXRYYRZZ (3 angles)
+            "RXXRYYRZZ" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles_ref = angles.as_ref().ok_or_else(|| {
+                    PecosError::ValidationInvalidGateParameters(
+                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma)".to_string(),
+                    )
+                })?;
+                if angles_ref.len() < 3 {
+                    return Err(PecosError::ValidationInvalidGateParameters(format!(
+                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma), but only {} provided",
+                        angles_ref.len()
+                    )));
+                }
+                if qubit_args.len() < 2 {
+                    return Err(PecosError::ValidationInvalidGateParameters(format!(
+                        "RXXRYYRZZ gate requires exactly two qubits, but found {}",
+                        qubit_args.len()
+                    )));
+                }
+                // Always return canonical name
+                Ok((
+                    "RXXRYYRZZ".to_string(),
+                    qubit_args,
+                    vec![angles_ref[0], angles_ref[1], angles_ref[2]],
+                ))
+            }
+
             // Two-qubit gates
             "SZZ" | "ZZ" => {
                 // Verify we have exactly 2 qubits
@@ -1573,6 +1600,15 @@ impl OperationProcessor {
                     Angle64::from_radians(angle_args[1]),
                     &[qubit_args[0]],
                 );
+            }
+            "RXXRYYRZZ" => {
+                let gate = Gate::rxxryyrzz(
+                    Angle64::from_radians(angle_args[0]),
+                    Angle64::from_radians(angle_args[1]),
+                    Angle64::from_radians(angle_args[2]),
+                    &[(qubit_args[0], qubit_args[1])],
+                );
+                builder.add_gate_command(&gate);
             }
             "SZZ" => {
                 builder.add_szz(&[qubit_args[0]], &[qubit_args[1]]);

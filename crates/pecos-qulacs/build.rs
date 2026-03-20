@@ -315,6 +315,18 @@ fn configure_build(
     if is_release {
         build.define("EIGEN_NO_DEBUG", None);
     }
+
+    // Enable SIMD-optimized gate kernels in Qulacs (matches Qulacs CMake USE_SIMD=Yes).
+    // _USE_SIMD activates hand-written SIMD intrinsics for gates like H, X, CNOT, RZ, etc.
+    // On x86/x86_64, Qulacs's type.hpp will #undef _USE_SIMD if the compiler doesn't define
+    // __AVX2__, so this is safe even when -march=native isn't used.
+    if target.contains("x86_64")
+        || target.contains("x86")
+        || target.contains("i686")
+        || target.contains("aarch64")
+    {
+        build.define("_USE_SIMD", None);
+    }
 }
 
 fn create_windows_boost_stub(out_dir: &Path) {

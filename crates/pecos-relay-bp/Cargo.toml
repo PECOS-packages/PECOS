@@ -1,0 +1,27 @@
+[package]
+name = "pecos-relay-bp"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Relay BP decoder for PECOS"
+
+[dependencies]
+pecos-decoder-core.workspace = true
+ndarray.workspace = true
+ndarray-016.workspace = true
+thiserror.workspace = true
+relay-bp.workspace = true
+sprs.workspace = true
+rayon.workspace = true
+
+[lib]
+name = "pecos_relay_bp"
+
+[lints]
+workspace = true

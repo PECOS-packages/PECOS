@@ -61,8 +61,8 @@
 //! ```
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, ClassicalBitId, Gate, GateQubits, Nanoseconds, QubitId};
-use std::collections::{BTreeMap, BTreeSet};
+use pecos_core::{Angle64, Gate, GateQubits, GateSignature, QubitId, TimeUnits};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Attribute;
 use crate::dag_circuit::DagCircuit;
@@ -103,6 +103,62 @@ impl fmt::Display for QubitConflictError {
 
 impl std::error::Error for QubitConflictError {}
 
+/// Error when a custom gate is used with a different signature than previously established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateSignatureMismatchError {
+    pub name: String,
+    pub expected_quantum_arity: usize,
+    pub actual_quantum_arity: usize,
+    pub expected_angle_arity: usize,
+    pub actual_angle_arity: usize,
+}
+
+impl fmt::Display for GateSignatureMismatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Gate '{}' signature mismatch: expected ({} qubits, {} angles), got ({} qubits, {} angles)",
+            self.name,
+            self.expected_quantum_arity,
+            self.expected_angle_arity,
+            self.actual_quantum_arity,
+            self.actual_angle_arity,
+        )
+    }
+}
+
+impl std::error::Error for GateSignatureMismatchError {}
+
+/// Error when adding a custom gate to a tick.
+#[derive(Debug, Clone)]
+pub enum CustomGateError {
+    SignatureMismatch(GateSignatureMismatchError),
+    QubitConflict(QubitConflictError),
+}
+
+impl fmt::Display for CustomGateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SignatureMismatch(e) => write!(f, "{e}"),
+            Self::QubitConflict(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for CustomGateError {}
+
+impl From<GateSignatureMismatchError> for CustomGateError {
+    fn from(e: GateSignatureMismatchError) -> Self {
+        Self::SignatureMismatch(e)
+    }
+}
+
+impl From<QubitConflictError> for CustomGateError {
+    fn from(e: QubitConflictError) -> Self {
+        Self::QubitConflict(e)
+    }
+}
+
 /// A single time slice containing gates that execute in parallel.
 #[derive(Debug, Clone, Default)]
 pub struct Tick {
@@ -137,6 +193,11 @@ impl Tick {
     #[must_use]
     pub fn gates(&self) -> &[Gate] {
         &self.gates
+    }
+
+    /// Get mutable access to the gates in this tick.
+    pub fn gates_mut(&mut self) -> &mut [Gate] {
+        &mut self.gates
     }
 
     /// Add a gate to this tick.
@@ -372,12 +433,8 @@ pub struct TickCircuit {
     next_tick: usize,
     /// Circuit-level metadata.
     circuit_attrs: BTreeMap<String, Attribute>,
-    /// Classical bit that receives a measurement outcome: (`tick_idx`, `gate_idx`) -> cbit.
-    measurement_targets: BTreeMap<(usize, usize), ClassicalBitId>,
-    /// Condition for conditional gates: (`tick_idx`, `gate_idx`) -> (cbit, `expected_value`).
-    conditions: BTreeMap<(usize, usize), (ClassicalBitId, bool)>,
-    /// Number of classical bits in this circuit.
-    num_cbits: usize,
+    /// Gate signatures for custom gate validation (JIT + AOT).
+    gate_signatures: HashMap<String, GateSignature>,
 }
 
 /// Handle to a specific tick for adding gates.
@@ -458,20 +515,14 @@ impl TickCircuit {
             ticks: Vec::new(),
             next_tick: 0,
             circuit_attrs: BTreeMap::new(),
-            measurement_targets: BTreeMap::new(),
-            conditions: BTreeMap::new(),
-            num_cbits: 0,
+            gate_signatures: HashMap::new(),
         }
     }
 
-    /// Get the number of ticks (excluding trailing empty ticks).
+    /// Get the number of ticks in the circuit.
     #[must_use]
     pub fn num_ticks(&self) -> usize {
-        let mut count = self.ticks.len();
-        while count > 0 && self.ticks[count - 1].is_empty() {
-            count -= 1;
-        }
-        count
+        self.ticks.len()
     }
 
     /// Get the total number of gates across all ticks.
@@ -495,6 +546,109 @@ impl TickCircuit {
     #[must_use]
     pub fn ticks(&self) -> &[Tick] {
         &self.ticks
+    }
+
+    /// Get mutable access to all ticks.
+    pub fn ticks_mut(&mut self) -> &mut [Tick] {
+        &mut self.ticks
+    }
+
+    /// Export as a plain ASCII circuit diagram.
+    ///
+    /// Produces horizontal qubit-wire lines with gate symbols placed at each
+    /// tick column. Two-qubit gates show `.`/`[X]` with `|` connectors.
+    #[must_use]
+    pub fn to_ascii(&self) -> String {
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .ascii()
+    }
+
+    /// ASCII circuit diagram with ANSI color codes.
+    ///
+    /// Same layout as [`to_ascii`](Self::to_ascii) with color-coded gate
+    /// categories: blue for single-qubit, green for two-qubit, yellow for
+    /// measurements, cyan for preparations.
+    #[must_use]
+    pub fn to_color_ascii(&self) -> String {
+        self.render_with(
+            &pecos_core::circuit_diagram::DiagramStyle::builder()
+                .ansi_color(true)
+                .build(),
+        )
+        .ascii()
+    }
+
+    /// Unicode circuit diagram with box-drawing characters.
+    #[must_use]
+    pub fn to_unicode(&self) -> String {
+        self.render_with(
+            &pecos_core::circuit_diagram::DiagramStyle::builder()
+                .symbols(pecos_core::circuit_diagram::SymbolSet::Unicode)
+                .build(),
+        )
+        .unicode()
+    }
+
+    /// Unicode circuit diagram with ANSI color codes.
+    #[must_use]
+    pub fn to_color_unicode(&self) -> String {
+        self.render_with(
+            &pecos_core::circuit_diagram::DiagramStyle::builder()
+                .symbols(pecos_core::circuit_diagram::SymbolSet::Unicode)
+                .ansi_color(true)
+                .build(),
+        )
+        .unicode()
+    }
+
+    /// Export as an SVG circuit diagram.
+    #[must_use]
+    pub fn to_svg(&self) -> String {
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .svg()
+    }
+
+    /// Export as a `TikZ` `tikzpicture`.
+    #[must_use]
+    pub fn to_tikz(&self) -> String {
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .tikz()
+    }
+
+    /// Export as a Graphviz DOT digraph.
+    #[must_use]
+    pub fn to_dot(&self) -> String {
+        self.render_with(&pecos_core::circuit_diagram::DiagramStyle::default())
+            .dot()
+    }
+
+    /// Create a [`DiagramRenderer`](pecos_core::circuit_diagram::DiagramRenderer)
+    /// bound to a custom [`DiagramStyle`](pecos_core::circuit_diagram::DiagramStyle).
+    #[must_use]
+    pub fn render_with<'a>(
+        &self,
+        style: &'a pecos_core::circuit_diagram::DiagramStyle,
+    ) -> pecos_core::circuit_diagram::DiagramRenderer<'a> {
+        let (header, layers) = self.diagram_parts();
+        let diagram = crate::circuit_display::build_diagram_or_empty(&layers, style.angle_unit);
+        pecos_core::circuit_diagram::DiagramRenderer::new(diagram, header, style)
+    }
+
+    fn diagram_parts(&self) -> (String, Vec<Vec<&pecos_core::Gate>>) {
+        let layers: Vec<Vec<&pecos_core::Gate>> = self
+            .ticks
+            .iter()
+            .map(|t| t.gates().iter().collect())
+            .collect();
+        let num_qubits = self.all_qubits().len();
+        let header = format!(
+            "TickCircuit: {} qubit{}, {} tick{}",
+            num_qubits,
+            if num_qubits == 1 { "" } else { "s" },
+            self.ticks.len(),
+            if self.ticks.len() == 1 { "" } else { "s" },
+        );
+        (header, layers)
     }
 
     /// Get the next tick index that will be allocated.
@@ -541,67 +695,6 @@ impl TickCircuit {
     /// Get all circuit-level attributes.
     pub fn circuit_attrs(&self) -> impl Iterator<Item = (&String, &Attribute)> {
         self.circuit_attrs.iter()
-    }
-
-    // =========================================================================
-    // Classical bit operations
-    // =========================================================================
-
-    /// Returns the number of classical bits in this circuit.
-    #[must_use]
-    #[inline]
-    pub fn num_cbits(&self) -> usize {
-        self.num_cbits
-    }
-
-    /// Sets the number of classical bits in this circuit.
-    pub fn set_num_cbits(&mut self, n: usize) {
-        self.num_cbits = n;
-    }
-
-    /// Returns the classical bit target for a measurement at (`tick_idx`, `gate_idx`).
-    #[must_use]
-    pub fn measurement_target(&self, tick_idx: usize, gate_idx: usize) -> Option<ClassicalBitId> {
-        self.measurement_targets.get(&(tick_idx, gate_idx)).copied()
-    }
-
-    /// Returns all measurement target mappings.
-    #[must_use]
-    pub fn measurement_targets(&self) -> &BTreeMap<(usize, usize), ClassicalBitId> {
-        &self.measurement_targets
-    }
-
-    /// Sets a measurement target for a gate at (`tick_idx`, `gate_idx`).
-    pub fn set_measurement_target(
-        &mut self,
-        tick_idx: usize,
-        gate_idx: usize,
-        cbit: ClassicalBitId,
-    ) {
-        self.measurement_targets.insert((tick_idx, gate_idx), cbit);
-    }
-
-    /// Returns the condition for a gate at (`tick_idx`, `gate_idx`).
-    #[must_use]
-    pub fn condition(&self, tick_idx: usize, gate_idx: usize) -> Option<(ClassicalBitId, bool)> {
-        self.conditions.get(&(tick_idx, gate_idx)).copied()
-    }
-
-    /// Returns all condition mappings.
-    #[must_use]
-    pub fn conditions(&self) -> &BTreeMap<(usize, usize), (ClassicalBitId, bool)> {
-        &self.conditions
-    }
-
-    /// Sets a condition for a gate at (`tick_idx`, `gate_idx`).
-    pub fn set_condition(
-        &mut self,
-        tick_idx: usize,
-        gate_idx: usize,
-        cbit: ClassicalBitId,
-        value: bool,
-    ) {
-        self.conditions.insert((tick_idx, gate_idx), (cbit, value));
     }
 
     // =========================================================================
@@ -663,9 +756,7 @@ impl TickCircuit {
         self.ticks.clear();
         self.next_tick = 0;
         self.circuit_attrs.clear();
-        self.measurement_targets.clear();
-        self.conditions.clear();
-        self.num_cbits = 0;
+        self.gate_signatures.clear();
     }
 
     /// Reserve empty ticks in advance.
@@ -802,6 +893,57 @@ impl TickCircuit {
         let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
         self.get_tick_mut(tick_idx)
             .map(|tick| tick.discard(&qubit_ids))
+    }
+
+    // =========================================================================
+    // Gate signature validation
+    // =========================================================================
+
+    /// Import gate signatures in bulk (e.g., from a `GateRegistry`).
+    pub fn import_signatures(&mut self, sigs: &HashMap<String, GateSignature>) {
+        self.gate_signatures
+            .extend(sigs.iter().map(|(name, sig)| (name.clone(), sig.clone())));
+    }
+
+    /// Get read access to the gate signatures.
+    #[must_use]
+    pub fn gate_signatures(&self) -> &HashMap<String, GateSignature> {
+        &self.gate_signatures
+    }
+
+    /// Validate a custom gate against its previously established signature,
+    /// or register it if this is the first use.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GateSignatureMismatchError` if the gate has been seen before
+    /// with a different quantum or angle arity.
+    pub fn validate_or_register_gate(
+        &mut self,
+        name: &str,
+        quantum_arity: usize,
+        angle_arity: usize,
+    ) -> Result<(), GateSignatureMismatchError> {
+        if let Some(existing) = self.gate_signatures.get(name) {
+            if existing.quantum_arity != quantum_arity || existing.angle_arity != angle_arity {
+                return Err(GateSignatureMismatchError {
+                    name: name.to_string(),
+                    expected_quantum_arity: existing.quantum_arity,
+                    actual_quantum_arity: quantum_arity,
+                    expected_angle_arity: existing.angle_arity,
+                    actual_angle_arity: angle_arity,
+                });
+            }
+        } else {
+            self.gate_signatures.insert(
+                name.to_string(),
+                GateSignature {
+                    quantum_arity,
+                    angle_arity,
+                },
+            );
+        }
+        Ok(())
     }
 
     // =========================================================================
@@ -1114,6 +1256,16 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::szdg(qubits))
     }
 
+    /// Apply F gate(s) to one or more qubits.
+    pub fn f(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::f(qubits))
+    }
+
+    /// Apply F-dagger gate(s) to one or more qubits.
+    pub fn fdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.add_gate(Gate::fdg(qubits))
+    }
+
     /// Apply T gate(s) to one or more qubits.
     pub fn t(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
         self.add_gate(Gate::t(qubits))
@@ -1283,6 +1435,54 @@ impl<'a> TickHandle<'a> {
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
         self.add_gate(Gate::szzdg(pairs))
+    }
+
+    /// Apply SXX gate(s) (sqrt-XX) to one or more qubit pairs.
+    pub fn sxx(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::sxx(pairs))
+    }
+
+    /// Apply SXX-dagger gate(s) to one or more qubit pairs.
+    pub fn sxxdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::sxxdg(pairs))
+    }
+
+    /// Apply SYY gate(s) (sqrt-YY) to one or more qubit pairs.
+    pub fn syy(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::syy(pairs))
+    }
+
+    /// Apply SYY-dagger gate(s) to one or more qubit pairs.
+    pub fn syydg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::syydg(pairs))
+    }
+
+    /// Apply SWAP gate(s) to one or more qubit pairs.
+    pub fn swap(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::swap(pairs))
+    }
+
+    /// Apply CH (controlled-Hadamard) gate(s) to one or more qubit pairs.
+    pub fn ch(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::ch(pairs))
     }
 
     /// Apply RXX rotation(s) to one or more qubit pairs.
@@ -1495,25 +1695,74 @@ impl<'a> TickHandle<'a> {
 
     /// Insert an idle (wait) operation for one or more qubits.
     ///
+    /// Duration is in abstract time units. The interpretation (nanoseconds,
+    /// clock cycles, etc.) is defined by your noise model or timing configuration.
+    ///
     /// # Examples
     ///
     /// ```
     /// use pecos_quantum::TickCircuit;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// // Idle for 100 nanoseconds
+    /// // Idle for 100 time units
     /// circuit.tick().idle(100, &[0, 1, 2]);
     /// ```
     pub fn idle(
         &mut self,
-        duration: impl Into<Nanoseconds>,
+        duration: impl Into<TimeUnits>,
         qubits: &[impl Into<QubitId> + Copy],
     ) -> &mut Self {
-        let ns: Nanoseconds = duration.into();
+        let units: TimeUnits = duration.into();
         self.add_gate(Gate::idle(
-            ns.as_f64(),
+            units.as_f64(),
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         ))
+    }
+
+    // =========================================================================
+    // Custom gates with signature validation
+    // =========================================================================
+
+    /// Add a custom gate with signature validation.
+    ///
+    /// On first use, the gate name's signature (quantum arity, angle arity)
+    /// is recorded. Subsequent uses are validated against this signature.
+    ///
+    /// The `_symbol` metadata is automatically set to the gate name.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CustomGateError::SignatureMismatch` if the arity does not match
+    /// a previous use, or `CustomGateError::QubitConflict` if a qubit is already
+    /// in use in this tick.
+    pub fn custom_gate(
+        &mut self,
+        name: &str,
+        qubits: &[usize],
+        angles: &[Angle64],
+    ) -> Result<&mut Self, CustomGateError> {
+        self.circuit
+            .validate_or_register_gate(name, qubits.len(), angles.len())?;
+
+        let qubit_ids: GateQubits = qubits.iter().map(|&q| QubitId::from(q)).collect();
+        let gate = Gate::new(GateType::Custom, angles.to_vec(), vec![], qubit_ids);
+
+        match self.circuit.ticks[self.tick_idx].try_add_gate(gate) {
+            Ok(idx) => {
+                self.last_gate_idx = Some(idx);
+                // Auto-store _symbol metadata
+                self.circuit.ticks[self.tick_idx].set_gate_attr(
+                    idx,
+                    "_symbol",
+                    Attribute::String(name.to_string()),
+                );
+                Ok(self)
+            }
+            Err(mut err) => {
+                err.tick_idx = Some(self.tick_idx);
+                Err(CustomGateError::QubitConflict(err))
+            }
+        }
     }
 }
 
@@ -1541,10 +1790,6 @@ impl From<&DagCircuit> for TickCircuit {
     /// ```
     fn from(dag: &DagCircuit) -> Self {
         let mut tc = TickCircuit::new();
-        tc.set_num_cbits(dag.num_cbits());
-
-        // Map from DAG node ID to (tick_idx, gate_idx) in the TickCircuit
-        let mut node_to_tick_gate: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
 
         for layer in dag.layers() {
             // Allocate a new tick for this layer
@@ -1558,7 +1803,6 @@ impl From<&DagCircuit> for TickCircuit {
                 for node_id in layer {
                     if let Some(gate) = dag.gate(node_id) {
                         let gate_idx = tick.add_gate(gate.clone());
-                        node_to_tick_gate.insert(node_id, (tick_idx, gate_idx));
 
                         // Copy gate attributes
                         if let Some(attrs) = dag.gate_attrs(node_id) {
@@ -1568,18 +1812,6 @@ impl From<&DagCircuit> for TickCircuit {
                         }
                     }
                 }
-            }
-        }
-
-        // Copy classical bit mappings
-        for (&node_id, &cbit) in dag.measurement_targets() {
-            if let Some(&(tick_idx, gate_idx)) = node_to_tick_gate.get(&node_id) {
-                tc.set_measurement_target(tick_idx, gate_idx, cbit);
-            }
-        }
-        for (&node_id, &(cbit, value)) in dag.conditions() {
-            if let Some(&(tick_idx, gate_idx)) = node_to_tick_gate.get(&node_id) {
-                tc.set_condition(tick_idx, gate_idx, cbit, value);
             }
         }
 
@@ -1635,7 +1867,6 @@ impl From<&TickCircuit> for DagCircuit {
     /// ```
     fn from(tc: &TickCircuit) -> Self {
         let mut dag = DagCircuit::new();
-        dag.set_num_cbits(tc.num_cbits());
 
         // Track the last node for each qubit to connect wires
         let mut last_node: BTreeMap<QubitId, usize> = BTreeMap::new();
@@ -1656,14 +1887,6 @@ impl From<&TickCircuit> for DagCircuit {
                 // Copy gate attributes
                 for (key, value) in tick.gate_attrs(gate_idx) {
                     dag.set_gate_attr(node, key, value.clone());
-                }
-
-                // Copy classical bit mappings
-                if let Some(cbit) = tc.measurement_target(tick_idx, gate_idx) {
-                    dag.set_measurement_target(node, cbit);
-                }
-                if let Some((cbit, value)) = tc.condition(tick_idx, gate_idx) {
-                    dag.set_condition(node, cbit, value);
                 }
             }
 
@@ -2201,7 +2424,7 @@ mod tests {
         let counts = tc.gate_counts_by_type();
         assert_eq!(counts.get(&GateType::H), Some(&1));
         assert_eq!(counts.get(&GateType::CX), Some(&1));
-        assert_eq!(counts.get(&GateType::Measure), Some(&1));
+        assert_eq!(counts.get(&GateType::MZ), Some(&1));
     }
 
     #[test]
@@ -2452,72 +2675,6 @@ mod tests {
         assert_eq!(tc.get_tick(0).unwrap().len(), 1);
     }
 
-    // ==================== Classical bit tests ====================
-
-    #[test]
-    fn test_tick_circuit_classical_defaults() {
-        let tc = TickCircuit::new();
-        assert_eq!(tc.num_cbits(), 0);
-        assert_eq!(tc.measurement_target(0, 0), None);
-        assert_eq!(tc.condition(0, 0), None);
-    }
-
-    #[test]
-    fn test_tick_circuit_classical_bits() {
-        let mut tc = TickCircuit::new();
-        tc.set_num_cbits(2);
-        assert_eq!(tc.num_cbits(), 2);
-
-        tc.tick().h(&[0]);
-        tc.tick().mz(&[0]);
-        tc.set_measurement_target(1, 0, ClassicalBitId::new(0));
-        assert_eq!(tc.measurement_target(1, 0), Some(ClassicalBitId::new(0)));
-
-        tc.tick().x(&[1]);
-        tc.set_condition(2, 0, ClassicalBitId::new(0), true);
-        assert_eq!(tc.condition(2, 0), Some((ClassicalBitId::new(0), true)));
-    }
-
-    #[test]
-    fn test_tick_circuit_reset_clears_classical() {
-        let mut tc = TickCircuit::new();
-        tc.set_num_cbits(2);
-        tc.tick().h(&[0]);
-        tc.tick().mz(&[0]);
-        tc.set_measurement_target(1, 0, ClassicalBitId::new(0));
-
-        tc.reset();
-        assert_eq!(tc.num_cbits(), 0);
-        assert!(tc.measurement_targets().is_empty());
-        assert!(tc.conditions().is_empty());
-    }
-
-    #[test]
-    fn test_roundtrip_dag_tick_classical_bits() {
-        // Build a DagCircuit with classical bits
-        let mut dag1 = DagCircuit::new();
-        dag1.set_num_cbits(2);
-        dag1.h(0);
-        dag1.cx(0, 1);
-        dag1.mz_to(0, ClassicalBitId::new(0));
-        dag1.mz_to(1, ClassicalBitId::new(1));
-        dag1.if_bit(ClassicalBitId::new(0), true).x(1);
-        dag1.if_bit(ClassicalBitId::new(1), false).z(0);
-
-        // Convert to TickCircuit
-        let tc = TickCircuit::from(&dag1);
-        assert_eq!(tc.num_cbits(), 2);
-        assert_eq!(tc.measurement_targets().len(), 2);
-        assert_eq!(tc.conditions().len(), 2);
-
-        // Convert back to DagCircuit
-        let dag2 = DagCircuit::from(&tc);
-        assert_eq!(dag2.num_cbits(), 2);
-        assert_eq!(dag2.measurement_targets().len(), 2);
-        assert_eq!(dag2.conditions().len(), 2);
-        assert_eq!(dag2.gate_count(), dag1.gate_count());
-    }
-
     #[test]
     fn test_circuit_discard_invalid_tick() {
         let mut tc = TickCircuit::new();
@@ -2525,5 +2682,141 @@ mod tests {
 
         let removed = tc.discard(&[0], 5);
         assert_eq!(removed, None);
+    }
+
+    // =========================================================================
+    // Gate signature validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_custom_gate_jit_registration() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use should succeed");
+
+        assert!(tc.gate_signatures().contains_key("MY_GATE"));
+        let sig = &tc.gate_signatures()["MY_GATE"];
+        assert_eq!(sig.quantum_arity, 2);
+        assert_eq!(sig.angle_arity, 0);
+    }
+
+    #[test]
+    fn test_custom_gate_consistent_use_ok() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use");
+        tc.tick()
+            .custom_gate("MY_GATE", &[2, 3], &[])
+            .expect("consistent use should succeed");
+    }
+
+    #[test]
+    fn test_custom_gate_mismatch_quantum_arity() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use");
+        let mut handle = tc.tick();
+        let result = handle.custom_gate("MY_GATE", &[0, 1, 2], &[]);
+        if let Err(CustomGateError::SignatureMismatch(e)) = result {
+            assert_eq!(e.expected_quantum_arity, 2);
+            assert_eq!(e.actual_quantum_arity, 3);
+        } else {
+            panic!("expected SignatureMismatch error");
+        }
+    }
+
+    #[test]
+    fn test_custom_gate_mismatch_angle_arity() {
+        let mut tc = TickCircuit::new();
+        let angle = Angle64::from_radians(1.0);
+        tc.tick()
+            .custom_gate("PARAM_GATE", &[0], &[angle])
+            .expect("first use");
+        let mut handle = tc.tick();
+        let result = handle.custom_gate("PARAM_GATE", &[0], &[]);
+        if let Err(CustomGateError::SignatureMismatch(e)) = result {
+            assert_eq!(e.expected_angle_arity, 1);
+            assert_eq!(e.actual_angle_arity, 0);
+        } else {
+            panic!("expected SignatureMismatch error");
+        }
+    }
+
+    #[test]
+    fn test_custom_gate_stores_symbol_metadata() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("FOOBAR", &[0], &[])
+            .expect("should succeed");
+
+        let tick = tc.get_tick(0).unwrap();
+        let symbol = tick.get_gate_attr(0, "_symbol");
+        assert_eq!(symbol, Some(&Attribute::String("FOOBAR".to_string())));
+    }
+
+    #[test]
+    fn test_custom_gate_with_angles() {
+        let mut tc = TickCircuit::new();
+        let a1 = Angle64::from_radians(0.5);
+        let a2 = Angle64::from_radians(1.0);
+        tc.tick()
+            .custom_gate("PARAM2", &[0], &[a1, a2])
+            .expect("should succeed");
+
+        let tick = tc.get_tick(0).unwrap();
+        let gate = &tick.gates()[0];
+        assert_eq!(gate.gate_type, GateType::Custom);
+        assert_eq!(gate.angles.len(), 2);
+        assert_eq!(gate.angles[0], a1);
+        assert_eq!(gate.angles[1], a2);
+    }
+
+    #[test]
+    fn test_custom_gate_qubit_conflict() {
+        let mut tc = TickCircuit::new();
+        let mut handle = tc.tick();
+        handle.h(&[0]);
+        let result = handle.custom_gate("MY_GATE", &[0], &[]);
+        assert!(matches!(result, Err(CustomGateError::QubitConflict(_))));
+    }
+
+    #[test]
+    fn test_import_signatures() {
+        let mut tc = TickCircuit::new();
+        let mut sigs = HashMap::new();
+        sigs.insert(
+            "AOT_GATE".to_string(),
+            GateSignature {
+                quantum_arity: 2,
+                angle_arity: 1,
+            },
+        );
+        tc.import_signatures(&sigs);
+
+        // Now using AOT_GATE with correct arity succeeds
+        let angle = Angle64::from_radians(0.5);
+        tc.tick()
+            .custom_gate("AOT_GATE", &[0, 1], &[angle])
+            .expect("correct arity");
+
+        // Wrong arity fails
+        let mut handle = tc.tick();
+        let result = handle.custom_gate("AOT_GATE", &[0], &[angle]);
+        assert!(matches!(result, Err(CustomGateError::SignatureMismatch(_))));
+    }
+
+    #[test]
+    fn test_reset_clears_signatures() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .custom_gate("MY_GATE", &[0, 1], &[])
+            .expect("first use");
+        assert!(!tc.gate_signatures().is_empty());
+
+        tc.reset();
+        assert!(tc.gate_signatures().is_empty());
     }
 }

@@ -230,7 +230,7 @@ jobs:
           ls -la *.tar.gz
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: julia-binary-${{ matrix.os }}-${{ matrix.architecture }}
           path: pecos_julia-*.tar.gz
@@ -269,7 +269,7 @@ jobs:
           version: ${{ matrix.julia-version }}
 
       - name: Download binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: julia-binary-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./julia-binary
@@ -353,7 +353,7 @@ jobs:
 
       # Download artifacts into temp directory first
       - name: Download all binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: temp-artifacts/
 
@@ -453,7 +453,7 @@ jobs:
           EOF
 
       - name: Upload distribution bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pecos-julia-distribution
           path: dist/
@@ -476,7 +476,7 @@ jobs:
 
       # Download artifacts
       - name: Download all binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: temp-artifacts/
 
@@ -602,7 +602,7 @@ jobs:
           ls -lh pecos-julia-release-bundle-*.tar.gz
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pecos-julia-release-bundle
           path: pecos-julia-release-bundle-*.tar.gz

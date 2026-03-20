@@ -30,10 +30,10 @@
 //! # Usage
 //!
 //! ```
-//! use pecos_qec::{StabilizerCode, StabilizerFlipChecker, ErrorClass};
+//! use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker, ErrorClass};
 //! use pecos_core::{Xs, Zs, PauliString, QuarterPhase};
 //!
-//! let code = StabilizerCode::builder(3)
+//! let code = StabilizerCodeSpec::builder(3)
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))
@@ -49,7 +49,7 @@
 //! assert!(matches!(result, ErrorClass::DetectableLogical { .. }));
 //! ```
 
-use crate::StabilizerCode;
+use crate::StabilizerCodeSpec;
 use pecos_core::{PauliOperator, PauliString, QuarterPhase};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -306,7 +306,7 @@ impl ColumnIndex {
 /// - **Efficient**: O(weight) per stabilizer for anti-commutation check
 pub struct StabilizerFlipChecker<'a> {
     /// The stabilizer code definition.
-    code: &'a StabilizerCode,
+    code: &'a StabilizerCodeSpec,
     /// Column index for efficient stabilizer anti-commutation.
     stab_index: ColumnIndex,
     /// Column index for logical Z operators.
@@ -318,7 +318,7 @@ pub struct StabilizerFlipChecker<'a> {
 impl<'a> StabilizerFlipChecker<'a> {
     /// Creates a new stabilizer flip checker for the given code.
     #[must_use]
-    pub fn new(code: &'a StabilizerCode) -> Self {
+    pub fn new(code: &'a StabilizerCodeSpec) -> Self {
         let n = code.num_qubits();
         let stab_index = ColumnIndex::from_paulis(n, code.stabilizers());
         let logical_z_index = ColumnIndex::from_paulis(n, code.logical_zs());
@@ -334,7 +334,7 @@ impl<'a> StabilizerFlipChecker<'a> {
 
     /// Returns the underlying stabilizer code.
     #[must_use]
-    pub fn code(&self) -> &StabilizerCode {
+    pub fn code(&self) -> &StabilizerCodeSpec {
         self.code
     }
 
@@ -644,8 +644,8 @@ mod tests {
     use super::*;
     use pecos_core::{Xs, Zs};
 
-    fn three_qubit_code() -> StabilizerCode {
-        StabilizerCode::builder(3)
+    fn three_qubit_code() -> StabilizerCodeSpec {
+        StabilizerCodeSpec::builder(3)
             .check(Zs([0, 1]))
             .check(Zs([1, 2]))
             .logical_z(Zs([0, 1, 2]))
@@ -861,11 +861,11 @@ mod tests {
     // ========================================================================
 
     /// The [[5,1,3]] perfect code - smallest distance-3 code, non-CSS
-    fn five_qubit_code() -> StabilizerCode {
+    fn five_qubit_code() -> StabilizerCodeSpec {
         use pecos_core::{X, Z};
         // Stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ (cyclic)
         // These have both X and Z components so it's non-CSS
-        StabilizerCode::builder(5)
+        StabilizerCodeSpec::builder(5)
             .check(X(0) & Z(1) & Z(2) & X(3)) // XZZXI
             .check(X(1) & Z(2) & Z(3) & X(4)) // IXZZX
             .check(X(0) & X(2) & Z(3) & Z(4)) // XIXZZ
@@ -934,8 +934,8 @@ mod tests {
     // Steane [[7,1,3]] code tests - verifies known theoretical results
     // ========================================================================
 
-    fn steane_code() -> StabilizerCode {
-        StabilizerCode::builder(7)
+    fn steane_code() -> StabilizerCodeSpec {
+        StabilizerCodeSpec::builder(7)
             .check(Xs([0, 2, 4, 6]))
             .check(Xs([1, 2, 5, 6]))
             .check(Xs([3, 4, 5, 6]))

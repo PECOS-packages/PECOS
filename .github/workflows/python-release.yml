@@ -265,7 +265,7 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse/*.whl
@@ -304,7 +304,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Download abi3 wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: wheel-pecos-rslib-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-wheel
@@ -366,7 +366,7 @@ jobs:
           python-version: '3.10'
 
       - name: Download pecos-rslib wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
@@ -388,7 +388,7 @@ jobs:
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos SDist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist-quantum-pecos
           path: python/quantum-pecos/dist/*.tar.gz
@@ -411,7 +411,7 @@ jobs:
           python-version: '3.10'
 
       - name: Download pecos-rslib wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
@@ -433,7 +433,7 @@ jobs:
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-quantum-pecos
           path: python/quantum-pecos/dist/*.whl
@@ -454,7 +454,7 @@ jobs:
 
       # Download artifacts into temp directory first
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: temp-artifacts/
 
@@ -498,7 +498,7 @@ jobs:
 
 
       - name: Upload distribution bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pecos-distribution
           path: dist/

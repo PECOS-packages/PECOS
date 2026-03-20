@@ -29,8 +29,12 @@ public:
         std::lock_guard<std::mutex> lock(init_mutex);
 
         if (!is_initialized.load()) {
-            // Initialize QuEST environment only once per process
-            initQuESTEnv();
+            // Initialize QuEST environment in CPU-only mode.
+            // GPU acceleration is handled separately via the CUDA engine builder
+            // (QuestCudaStateVecEngine) which loads a dedicated GPU backend at
+            // runtime via dlopen, allowing a single binary to work on systems
+            // with and without CUDA.
+            initCustomQuESTEnv(/*useDistrib=*/0, /*useGpuAccel=*/0, /*useMultithread=*/0);
             global_env_ptr = new QuESTEnv(getQuESTEnv());
             is_initialized = true;
         }

@@ -43,11 +43,11 @@
 //! # Quick Example
 //!
 //! ```
-//! use pecos_qec::{StabilizerCode, StabilizerFlipChecker};
+//! use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
 //! use pecos_core::{Xs, Zs};
 //!
 //! // Define a 3-qubit bit flip code
-//! let code = StabilizerCode::builder(3)
+//! let code = StabilizerCodeSpec::builder(3)
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))
@@ -68,6 +68,7 @@ pub mod fault_tolerance;
 pub mod geometry;
 pub mod logical_discovery;
 pub mod stabilizer_code;
+pub mod stabilizer_code_spec;
 pub mod surface;
 
 pub use distance::{
@@ -93,5 +94,8 @@ pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, Sta
 pub use logical_discovery::{
     LogicalDiscoveryError, LogicalDiscoveryResult, discover_logical_operators,
 };
-pub use stabilizer_code::{StabilizerCode, StabilizerCodeBuilder, StabilizerCodeError};
+pub use stabilizer_code::StabilizerCode;
+pub use stabilizer_code_spec::{
+    StabilizerCodeSpec, StabilizerCodeSpecBuilder, StabilizerCodeSpecError,
+};
 pub use surface::{SurfaceCode, SurfaceCodeBuilder};

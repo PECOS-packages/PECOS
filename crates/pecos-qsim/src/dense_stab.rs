@@ -49,7 +49,7 @@
 //! assert_eq!(results[0].outcome, results[1].outcome);
 //! ```
 
-use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
 use pecos_rng::rng_ext::RngProbabilityExt;
@@ -704,8 +704,28 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
             }
         }
 
-        // Cache pivot sign lookup
-        let pivot_sign = get_sign(&self.stab_signs_minus, pivot_id);
+        // Cache pivot sign lookups
+        let pivot_sign_minus = get_sign(&self.stab_signs_minus, pivot_id);
+        let pivot_sign_i = get_sign(&self.stab_signs_i, pivot_id);
+
+        // Handle pivot's i-phase contribution (bulk operation before per-generator loop)
+        // When multiplying by a Pauli with i phase:
+        //   If target g also has i: i*i = -1, so toggle g's minus and clear g's i
+        //   If target g doesn't have i: 1*i = i, so set g's i
+        //   Net effect: toggle minus for anticom stabs WITH i, then toggle i for all anticom stabs
+        if pivot_sign_i {
+            clear_sign(&mut self.stab_signs_i, pivot_id);
+            for w in 0..words_per_col {
+                let mut anticom = self.stab_col_x[col_base + w];
+                if w == pivot_id / 64 {
+                    anticom &= !(1u64 << (pivot_id % 64));
+                }
+                // Toggle minus for anticom stabs that have i (i * i = -1)
+                self.stab_signs_minus[w] ^= anticom & self.stab_signs_i[w];
+                // Toggle i for all anticom stabs
+                self.stab_signs_i[w] ^= anticom;
+            }
+        }
 
         // XOR pivot into other anti-commuting stabilizers
         for w in 0..words_per_col {
@@ -717,7 +737,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
             while mask != 0 {
                 let g = w * 64 + mask.trailing_zeros() as usize;
 
-                // Phase calculation
+                // Phase calculation: count Z(pivot) & X(g) overlaps
                 let base_p = pivot_id * words_per_row;
                 let base_g = g * words_per_row;
                 let mut count = 0;
@@ -729,7 +749,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
                     toggle_sign(&mut self.stab_signs_minus, g);
                 }
 
-                if pivot_sign {
+                if pivot_sign_minus {
                     toggle_sign(&mut self.stab_signs_minus, g);
                 }
 
@@ -788,6 +808,66 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
                 self.stab_col_z[q * words_per_col + w] ^= anticom_mask;
             }
             clear_bit_col(&mut self.stab_col_z, words_per_col, q, pivot_id);
+        }
+
+        // Step 2b (Aaronson-Gottesman): XOR pivot into anti-commuting destabilizers
+        // Find destabilizers that anti-commute with Z_q (have X on measured qubit)
+        // Reuse scratch_row for the destab anticom mask
+        for w in 0..words_per_col {
+            self.scratch_row[w] = self.destab_col_x[col_base + w];
+        }
+        // Exclude pivot from the anticom mask
+        self.scratch_row[pivot_id / 64] &= !(1u64 << (pivot_id % 64));
+
+        // XOR pivot's stab rows into anti-commuting destabilizer rows
+        let pivot_row_base = pivot_id * words_per_row;
+        for w in 0..words_per_col {
+            let mut mask = self.scratch_row[w];
+            while mask != 0 {
+                let g = w * 64 + mask.trailing_zeros() as usize;
+                let base_g = g * words_per_row;
+                for ww in 0..words_per_row {
+                    self.destab_row_x[base_g + ww] ^= self.stab_row_x[pivot_row_base + ww];
+                    self.destab_row_z[base_g + ww] ^= self.stab_row_z[pivot_row_base + ww];
+                }
+                mask &= mask - 1;
+            }
+        }
+
+        // Update destab columns for qubits where pivot has X
+        self.scratch_qubits.clear();
+        {
+            for w in 0..words_per_row {
+                let mut word = self.stab_row_x[pivot_row_base + w];
+                while word != 0 {
+                    let bit = word.trailing_zeros() as usize;
+                    self.scratch_qubits.push(w * 64 + bit);
+                    word &= word - 1;
+                }
+            }
+        }
+        for &q in &self.scratch_qubits {
+            for w in 0..words_per_col {
+                self.destab_col_x[q * words_per_col + w] ^= self.scratch_row[w];
+            }
+        }
+
+        // Update destab columns for qubits where pivot has Z
+        self.scratch_qubits.clear();
+        {
+            for w in 0..words_per_row {
+                let mut word = self.stab_row_z[pivot_row_base + w];
+                while word != 0 {
+                    let bit = word.trailing_zeros() as usize;
+                    self.scratch_qubits.push(w * 64 + bit);
+                    word &= word - 1;
+                }
+            }
+        }
+        for &q in &self.scratch_qubits {
+            for w in 0..words_per_col {
+                self.destab_col_z[q * words_per_col + w] ^= self.scratch_row[w];
+            }
         }
 
         // Copy old pivot stabilizer to destabilizer BEFORE replacing it
@@ -1210,6 +1290,139 @@ impl<R: SeedableRng + Rng + Debug> RngManageable for DenseStab<R> {
     }
 }
 
+impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseStab<R> {
+    fn stab_tableau(&self) -> String {
+        Self::gen_tableau_string(
+            self.num_qubits,
+            self.words_per_row,
+            &self.stab_row_x,
+            &self.stab_row_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        )
+    }
+
+    fn destab_tableau(&self) -> String {
+        Self::gen_tableau_string(
+            self.num_qubits,
+            self.words_per_row,
+            &self.destab_row_x,
+            &self.destab_row_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        )
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
+impl<R: Rng> DenseStab<R> {
+    /// Produces a tableau string from dense bit arrays.
+    fn gen_tableau_string(
+        num_qubits: usize,
+        words_per_row: usize,
+        row_x: &[u64],
+        row_z: &[u64],
+        signs_minus: &[u64],
+        signs_i: &[u64],
+    ) -> String {
+        let mut result = String::with_capacity(num_qubits * num_qubits + num_qubits + 2);
+        for g in 0..num_qubits {
+            if get_sign(signs_minus, g) {
+                result.push('-');
+            } else {
+                result.push('+');
+            }
+            if get_sign(signs_i, g) {
+                result.push('i');
+            }
+
+            let base = g * words_per_row;
+            for qubit in 0..num_qubits {
+                let word_idx = base + qubit / 64;
+                let bit_mask = 1u64 << (qubit % 64);
+                let in_x = row_x[word_idx] & bit_mask != 0;
+                let in_z = row_z[word_idx] & bit_mask != 0;
+                let ch = match (in_x, in_z) {
+                    (false, false) => 'I',
+                    (true, false) => 'X',
+                    (false, true) => 'Z',
+                    (true, true) => 'Y',
+                };
+                result.push(ch);
+            }
+            result.push('\n');
+        }
+        result
+    }
+
+    /// Returns generator data as sparse index vectors, matching the format used by `PySparseSim::_gens_data()`.
+    ///
+    /// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+    pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
+        let (row_x, row_z, col_x, col_z) = if is_stab {
+            (
+                &self.stab_row_x,
+                &self.stab_row_z,
+                &self.stab_col_x,
+                &self.stab_col_z,
+            )
+        } else {
+            (
+                &self.destab_row_x,
+                &self.destab_row_z,
+                &self.destab_col_x,
+                &self.destab_col_z,
+            )
+        };
+
+        let extract_rows = |data: &[u64]| -> Vec<Vec<usize>> {
+            (0..self.num_qubits)
+                .map(|row| {
+                    let base = row * self.words_per_row;
+                    let mut indices = Vec::new();
+                    for w in 0..self.words_per_row {
+                        let mut word = data[base + w];
+                        while word != 0 {
+                            let bit = word.trailing_zeros() as usize;
+                            indices.push(w * 64 + bit);
+                            word &= word - 1;
+                        }
+                    }
+                    indices
+                })
+                .collect()
+        };
+
+        let extract_cols = |data: &[u64]| -> Vec<Vec<usize>> {
+            (0..self.num_qubits)
+                .map(|col| {
+                    let base = col * self.words_per_col;
+                    let mut indices = Vec::new();
+                    for w in 0..self.words_per_col {
+                        let mut word = data[base + w];
+                        while word != 0 {
+                            let bit = word.trailing_zeros() as usize;
+                            indices.push(w * 64 + bit);
+                            word &= word - 1;
+                        }
+                    }
+                    indices
+                })
+                .collect()
+        };
+
+        (
+            extract_cols(col_x),
+            extract_cols(col_z),
+            extract_rows(row_x),
+            extract_rows(row_z),
+        )
+    }
+}
+
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
 impl<R: SeedableRng + Rng + Debug + Clone> ForcedMeasurement for DenseStab<R> {
@@ -1366,5 +1579,153 @@ mod tests {
         use crate::stabilizer_test_utils::run_full_stabilizer_test_suite;
         let mut sim: DenseStab = DenseStab::with_seed(8, 42);
         run_full_stabilizer_test_suite(&mut sim, 8);
+    }
+
+    #[test]
+    fn test_forced_meas_then_remeasure() {
+        // Regression test: after a forced measurement, re-measuring the same qubit
+        // should deterministically give the same result.
+        let mut dense: DenseStab = DenseStab::new(2);
+        dense.h(&[QubitId(0)]);
+        dense.cx(&[QubitId(0), QubitId(1)]);
+        dense.h(&[QubitId(0)]);
+        dense.sz(&[QubitId(0)]);
+
+        // First forced measurement on qubit 1
+        let r1 = dense.mz_forced(1, false);
+        assert!(!r1.outcome, "Forced to 0 should return 0");
+
+        // Second measurement should be deterministic and return 0
+        let r2 = dense.mz_forced(1, false);
+        assert!(
+            r2.is_deterministic,
+            "After measurement, qubit should be deterministic"
+        );
+        assert!(!r2.outcome, "After forced-0, re-measuring should give 0");
+    }
+
+    #[test]
+    fn test_mid_circuit_meas_dense_vs_sparse() {
+        // Compare DenseStab and SparseStab on random circuits with mid-circuit
+        // measurements and init |0> operations (mz_forced + conditional X).
+        // This catches bugs in nondeterministic_meas that pure Clifford tests miss.
+        use crate::SparseStab;
+        use pecos_rng::{PecosRng, RngExt};
+
+        let num_qubits = 10;
+        let num_circuits = 200;
+        let num_gates = 50;
+
+        for circuit_idx in 0..num_circuits {
+            let seed = 42_000 + circuit_idx;
+            let mut rng = PecosRng::seed_from_u64(seed);
+
+            let mut dense = DenseStab::<PecosRng>::new(num_qubits);
+            let mut sparse = SparseStab::new(num_qubits);
+
+            for gate_idx in 0..num_gates {
+                let gate_type: u8 = rng.random_range(0..16);
+                let q0 = rng.random_range(0..num_qubits);
+
+                match gate_type {
+                    0 => {
+                        dense.h(&[QubitId(q0)]);
+                        sparse.h(&[QubitId(q0)]);
+                    }
+                    1 => {
+                        dense.sz(&[QubitId(q0)]);
+                        sparse.sz(&[QubitId(q0)]);
+                    }
+                    2 => {
+                        dense.szdg(&[QubitId(q0)]);
+                        sparse.szdg(&[QubitId(q0)]);
+                    }
+                    3 => {
+                        dense.x(&[QubitId(q0)]);
+                        sparse.x(&[QubitId(q0)]);
+                    }
+                    4 => {
+                        dense.y(&[QubitId(q0)]);
+                        sparse.y(&[QubitId(q0)]);
+                    }
+                    5 => {
+                        dense.z(&[QubitId(q0)]);
+                        sparse.z(&[QubitId(q0)]);
+                    }
+                    6..=9 if num_qubits >= 2 => {
+                        let mut q1 = rng.random_range(0..num_qubits);
+                        while q1 == q0 {
+                            q1 = rng.random_range(0..num_qubits);
+                        }
+                        let pair = &[QubitId(q0), QubitId(q1)];
+                        match gate_type {
+                            6 => {
+                                dense.cx(pair);
+                                sparse.cx(pair);
+                            }
+                            7 => {
+                                dense.cz(pair);
+                                sparse.cz(pair);
+                            }
+                            8 => {
+                                dense.cy(pair);
+                                sparse.cy(pair);
+                            }
+                            _ => {
+                                dense.swap(pair);
+                                sparse.swap(pair);
+                            }
+                        }
+                    }
+                    10..=12 => {
+                        // Forced measurement (mid-circuit)
+                        let forced: bool = rng.random();
+                        let rd = dense.mz_forced(q0, forced);
+                        let rs = sparse.mz_forced(q0, forced);
+                        assert_eq!(
+                            rd.outcome, rs.outcome,
+                            "circuit {seed} gate {gate_idx}: mz_forced({q0}, {forced}) outcome mismatch"
+                        );
+                        assert_eq!(
+                            rd.is_deterministic, rs.is_deterministic,
+                            "circuit {seed} gate {gate_idx}: mz_forced({q0}, {forced}) determinism mismatch"
+                        );
+                    }
+                    13..=14 => {
+                        // Init |0> = mz_forced + conditional X
+                        let rd = dense.mz_forced(q0, false);
+                        let rs = sparse.mz_forced(q0, false);
+                        assert_eq!(
+                            rd.outcome, rs.outcome,
+                            "circuit {seed} gate {gate_idx}: init|0> mz_forced({q0}) outcome mismatch"
+                        );
+                        if rd.outcome {
+                            dense.x(&[QubitId(q0)]);
+                            sparse.x(&[QubitId(q0)]);
+                        }
+                    }
+                    _ => {
+                        // SX gate
+                        dense.sx(&[QubitId(q0)]);
+                        sparse.sx(&[QubitId(q0)]);
+                    }
+                }
+            }
+
+            // Final measurement of all qubits
+            for q in 0..num_qubits {
+                let forced: bool = PecosRng::seed_from_u64(seed + 1000 + q as u64).random();
+                let rd = dense.mz_forced(q, forced);
+                let rs = sparse.mz_forced(q, forced);
+                assert_eq!(
+                    rd.outcome, rs.outcome,
+                    "circuit {seed}: final mz_forced({q}, {forced}) outcome mismatch"
+                );
+                assert_eq!(
+                    rd.is_deterministic, rs.is_deterministic,
+                    "circuit {seed}: final mz_forced({q}, {forced}) determinism mismatch"
+                );
+            }
+        }
     }
 }

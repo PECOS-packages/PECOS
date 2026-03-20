@@ -16,20 +16,20 @@ import pecos as pc
 class TestCompareAnyCorrectness:
     """Test compare_any correctness against numpy."""
 
-    def test_compare_any_always_true(self):
+    def test_compare_any_always_true(self) -> None:
         """With threshold=1.0, should always be True."""
         # Numpy version
         pc.random.seed(42)
         result = pc.random.compare_any(100, 1.0)
         assert result is True
 
-    def test_compare_any_always_false(self):
+    def test_compare_any_always_false(self) -> None:
         """With threshold=0.0, should always be False."""
         pc.random.seed(42)
         result = pc.random.compare_any(100, 0.0)
         assert result is False
 
-    def test_compare_any_reproducibility(self):
+    def test_compare_any_reproducibility(self) -> None:
         """Same seed should produce same result."""
         pc.random.seed(12345)
         result1 = pc.random.compare_any(1000, 0.05)
@@ -39,7 +39,7 @@ class TestCompareAnyCorrectness:
 
         assert result1 == result2
 
-    def test_compare_any_vs_unfused(self):
+    def test_compare_any_vs_unfused(self) -> None:
         """Verify compare_any matches unfused pecos behavior."""
         seed_val = 999
         n = 1000
@@ -56,7 +56,7 @@ class TestCompareAnyCorrectness:
         # Results should match with same seed
         assert pecos_result == unfused_result
 
-    def test_compare_any_statistical_properties(self):
+    def test_compare_any_statistical_properties(self) -> None:
         """Test statistical properties match expected probabilities."""
         # For p=0.5, n=1000, P(at least one) ≈ 1.0
         pc.random.seed(777)
@@ -73,19 +73,19 @@ class TestCompareAnyCorrectness:
 class TestCompareIndicesCorrectness:
     """Test compare_indices correctness against numpy."""
 
-    def test_compare_indices_all(self):
+    def test_compare_indices_all(self) -> None:
         """With threshold=1.0, should return all indices."""
         pc.random.seed(42)
         result = pc.random.compare_indices(10, 1.0)
         assert result == list(range(10))
 
-    def test_compare_indices_none(self):
+    def test_compare_indices_none(self) -> None:
         """With threshold=0.0, should return empty."""
         pc.random.seed(42)
         result = pc.random.compare_indices(10, 0.0)
         assert result == []
 
-    def test_compare_indices_reproducibility(self):
+    def test_compare_indices_reproducibility(self) -> None:
         """Same seed should produce same indices."""
         pc.random.seed(54321)
         result1 = pc.random.compare_indices(100, 0.1)
@@ -95,7 +95,7 @@ class TestCompareIndicesCorrectness:
 
         assert result1 == result2
 
-    def test_compare_indices_vs_unfused(self):
+    def test_compare_indices_vs_unfused(self) -> None:
         """Verify compare_indices matches unfused pecos behavior."""
         seed_val = 888
         n = 100
@@ -112,7 +112,7 @@ class TestCompareIndicesCorrectness:
         # Results should match with same seed
         assert pecos_result == unfused_result
 
-    def test_compare_indices_statistical_properties(self):
+    def test_compare_indices_statistical_properties(self) -> None:
         """Test statistical properties match expected probabilities."""
         # For p=0.5, n=10000, expect ~5000 indices
         pc.random.seed(555)
@@ -133,7 +133,7 @@ class TestCompareIndicesCorrectness:
 class TestCompareConsistency:
     """Test consistency between compare_any and compare_indices."""
 
-    def test_consistency_with_seed(self):
+    def test_consistency_with_seed(self) -> None:
         """If compare_indices returns non-empty, compare_any should be True."""
         for seed_val in [111, 222, 333, 444, 555]:
             pc.random.seed(seed_val)
@@ -152,7 +152,7 @@ class TestComparePerformance:
     """Benchmark fused operations against numpy unfused versions."""
 
     @pytest.mark.performance
-    def test_compare_any_performance(self):
+    def test_compare_any_performance(self) -> None:
         """Benchmark compare_any vs numpy unfused version."""
         n = 100000
         threshold = 0.01
@@ -188,7 +188,7 @@ class TestComparePerformance:
         assert speedup > 1.5, f"Expected >1.5x speedup, got {speedup:.2f}x"
 
     @pytest.mark.performance
-    def test_compare_indices_performance(self):
+    def test_compare_indices_performance(self) -> None:
         """Benchmark compare_indices vs numpy unfused version."""
         n = 100000
         threshold = 0.01
@@ -229,7 +229,7 @@ class TestComparePerformance:
 class TestErrorModelUsage:
     """Test realistic error model usage patterns."""
 
-    def test_error_model_pattern_compare_any(self):
+    def test_error_model_pattern_compare_any(self) -> None:
         """Test pattern: if compare_any(n, p) then generate full error mask."""
         n_qubits = 1000
         error_rate = 0.01
@@ -252,7 +252,7 @@ class TestErrorModelUsage:
             abs(trials_with_errors - expected_count) < tolerance
         ), f"Expected ~{expected_count:.0f} trials with errors (±{tolerance:.0f}), got {trials_with_errors}"
 
-    def test_error_model_pattern_compare_indices(self):
+    def test_error_model_pattern_compare_indices(self) -> None:
         """Test pattern: get error indices and apply errors."""
         n_qubits = 1000
         error_rate = 0.01

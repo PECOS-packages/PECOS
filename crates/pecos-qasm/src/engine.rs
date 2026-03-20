@@ -493,7 +493,7 @@ impl QASMEngine {
                 GateType::Y => self.message_builder.add_y(&[qubit]),
                 GateType::Z => self.message_builder.add_z(&[qubit]),
                 GateType::H => self.message_builder.add_h(&[qubit]),
-                GateType::Prep => self.message_builder.add_prep(&[qubit]),
+                GateType::PZ => self.message_builder.add_prep(&[qubit]),
                 _ => {
                     return Err(PecosError::Processing(format!(
                         "Gate type {gate_type:?} is not a single-qubit gate"
@@ -627,7 +627,8 @@ impl QASMEngine {
             | GateType::Idle
             | GateType::MeasCrosstalkLocalPayload
             | GateType::MeasCrosstalkGlobalPayload
-            | GateType::QFree => Ok(()), // No-op gates (QFree is just a marker)
+            | GateType::QFree
+            | GateType::Custom => Ok(()), // No-op gates (QFree is just a marker, Custom is a placeholder)
             GateType::X
             | GateType::Z
             | GateType::Y
@@ -638,13 +639,21 @@ impl QASMEngine {
             | GateType::SZ
             | GateType::SZdg
             | GateType::H
+            | GateType::F
+            | GateType::Fdg
             | GateType::T
             | GateType::Tdg
-            | GateType::Prep
+            | GateType::PZ
             | GateType::QAlloc => self.process_single_qubit_gate(gate.gate_type, &qubits),
-            GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ | GateType::SZZdg => {
-                self.process_two_qubit_gate(gate.gate_type, &qubits)
-            }
+            GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg => self.process_two_qubit_gate(gate.gate_type, &qubits),
             // Gates not yet supported in QASM engine
             GateType::SWAP | GateType::CCX | GateType::CRZ | GateType::CH => {
                 Err(PecosError::Processing(format!(
@@ -658,6 +667,8 @@ impl QASMEngine {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RXXRYYRZZ
+            | GateType::U2q
             | GateType::R1XY
             | GateType::U => {
                 // Convert angles to radians for process_parameterized_gate
@@ -665,7 +676,7 @@ impl QASMEngine {
                     gate.angles.iter().map(pecos_core::Angle::to_radians).collect();
                 self.process_parameterized_gate(gate.gate_type, &qubits, &angles_as_radians)
             }
-            GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 Err(PecosError::Processing(
                     "Measure, MeasureLeaked, and MeasureFree gates should be handled by MeasureWithMapping operation"
                         .to_string(),

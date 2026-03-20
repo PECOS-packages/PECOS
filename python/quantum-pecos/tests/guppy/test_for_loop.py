@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Test for-loop behavior."""
+
 import os
 
 from guppylang.decorator import guppy

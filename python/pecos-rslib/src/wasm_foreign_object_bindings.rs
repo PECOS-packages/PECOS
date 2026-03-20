@@ -333,9 +333,10 @@ impl PyWasmForeignObject {
     ///     `RuntimeError`: If function not found or execution fails
     #[allow(clippy::needless_pass_by_value)] // PyO3 extracts Python sequences as Vec
     fn exec(&mut self, py: Python<'_>, func_name: &str, args: Vec<i64>) -> PyResult<Py<PyAny>> {
-        let results = self.inner.exec(func_name, &args).map_err(|e| {
-            PyErr::new::<WasmError, _>(format!("Failed to execute '{func_name}': {e}"))
-        })?;
+        let results = self
+            .inner
+            .exec(func_name, &args)
+            .map_err(|e| PyErr::new::<WasmError, _>(e.to_string()))?;
 
         // Convert Vec<i64> to Python - single value as int, multiple as tuple
         if results.len() == 1 {

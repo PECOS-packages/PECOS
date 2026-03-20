@@ -27,7 +27,7 @@ pytestmark = pytest.mark.numpy
 class TestBrentqComparison:
     """Compare brentq implementations."""
 
-    def test_sqrt2(self):
+    def test_sqrt2(self) -> None:
         """Find sqrt(2) by solving x^2 - 2 = 0."""
 
         def f(x):
@@ -39,7 +39,7 @@ class TestBrentqComparison:
         assert abs(pecos_root - scipy_root) < 1e-10
         assert abs(pecos_root - np.sqrt(2)) < 1e-10
 
-    def test_cubic(self):
+    def test_cubic(self) -> None:
         """Find root of x^3 - x - 2 = 0."""
 
         def f(x):
@@ -53,7 +53,7 @@ class TestBrentqComparison:
         assert abs(f(pecos_root)) < 1e-10
         assert abs(f(scipy_root)) < 1e-10
 
-    def test_transcendental(self):
+    def test_transcendental(self) -> None:
         """Find root of cos(x) = x."""
 
         def f(x):
@@ -64,7 +64,7 @@ class TestBrentqComparison:
 
         assert abs(pecos_root - scipy_root) < 1e-10
 
-    def test_exponential(self):
+    def test_exponential(self) -> None:
         """Find root of e^x = 3."""
 
         def f(x):
@@ -76,7 +76,7 @@ class TestBrentqComparison:
         assert abs(pecos_root - scipy_root) < 1e-10
         assert abs(pecos_root - np.log(3)) < 1e-10
 
-    def test_polynomial_near_zero(self):
+    def test_polynomial_near_zero(self) -> None:
         """Test with polynomial that has root near zero."""
 
         def f(x):
@@ -87,7 +87,7 @@ class TestBrentqComparison:
 
         assert abs(pecos_root - scipy_root) < 1e-10
 
-    def test_steep_function(self):
+    def test_steep_function(self) -> None:
         """Test with steep function."""
 
         def f(x):
@@ -98,7 +98,7 @@ class TestBrentqComparison:
 
         assert abs(pecos_root - scipy_root) < 1e-10
 
-    def test_same_sign_error(self):
+    def test_same_sign_error(self) -> None:
         """Verify both implementations raise error for same-sign endpoints."""
 
         def f(x):
@@ -114,7 +114,7 @@ class TestBrentqComparison:
 class TestNewtonComparison:
     """Compare newton implementations."""
 
-    def test_sqrt2_with_derivative(self):
+    def test_sqrt2_with_derivative(self) -> None:
         """Find sqrt(2) with analytical derivative."""
 
         def f(x):
@@ -129,7 +129,7 @@ class TestNewtonComparison:
         assert abs(pecos_root - scipy_root) < 1e-8
         assert abs(pecos_root - np.sqrt(2)) < 1e-8
 
-    def test_sqrt2_numerical_derivative(self):
+    def test_sqrt2_numerical_derivative(self) -> None:
         """Find sqrt(2) with numerical derivative."""
 
         def f(x):
@@ -142,7 +142,7 @@ class TestNewtonComparison:
         assert abs(pecos_root - scipy_root) < 1e-6
         assert abs(pecos_root - np.sqrt(2)) < 1e-6
 
-    def test_cubic_polynomial(self):
+    def test_cubic_polynomial(self) -> None:
         """Find root of x^3 - x - 2 = 0."""
 
         def f(x):
@@ -156,7 +156,7 @@ class TestNewtonComparison:
 
         assert abs(pecos_root - scipy_root) < 1e-8
 
-    def test_exponential_function(self):
+    def test_exponential_function(self) -> None:
         """Find root of e^x - 3 = 0."""
 
         def f(x):
@@ -171,7 +171,7 @@ class TestNewtonComparison:
         assert abs(pecos_root - scipy_root) < 1e-8
         assert abs(pecos_root - np.log(3)) < 1e-8
 
-    def test_transcendental(self):
+    def test_transcendental(self) -> None:
         """Find root of cos(x) = x."""
 
         def f(x):
@@ -185,7 +185,7 @@ class TestNewtonComparison:
 
         assert abs(pecos_root - scipy_root) < 1e-8
 
-    def test_difficult_initial_guess(self):
+    def test_difficult_initial_guess(self) -> None:
         """Test convergence from a non-ideal starting point."""
 
         def f(x):
@@ -204,7 +204,7 @@ class TestNewtonComparison:
 class TestCurveFitComparison:
     """Compare curve_fit implementations."""
 
-    def test_linear_fit(self):
+    def test_linear_fit(self) -> None:
         """Fit y = a*x + b."""
 
         def linear(x, a, b):
@@ -222,7 +222,7 @@ class TestCurveFitComparison:
         # Covariances should match (may have small numerical differences)
         np.testing.assert_allclose(pecos_pcov, scipy_pcov, rtol=1e-4, atol=1e-8)
 
-    def test_exponential_fit(self):
+    def test_exponential_fit(self) -> None:
         """Fit y = a * exp(b * x)."""
 
         def exponential(x, a, b):
@@ -238,7 +238,7 @@ class TestCurveFitComparison:
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-3, atol=1e-4)
         np.testing.assert_allclose(pecos_pcov, scipy_pcov, rtol=0.1, atol=1e-6)
 
-    def test_quadratic_fit(self):
+    def test_quadratic_fit(self) -> None:
         """Fit y = a*x^2 + b*x + c."""
 
         def quadratic(x, a, b, c):
@@ -254,7 +254,7 @@ class TestCurveFitComparison:
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-6, atol=1e-8)
         np.testing.assert_allclose(pecos_pcov, scipy_pcov, rtol=1e-4, atol=1e-8)
 
-    def test_gaussian_fit(self):
+    def test_gaussian_fit(self) -> None:
         """Fit Gaussian function."""
 
         def gaussian(x, amp, mu, sigma):
@@ -274,7 +274,7 @@ class TestCurveFitComparison:
         # Parameters should be close (some variation due to optimization differences)
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=0.1, atol=0.1)
 
-    def test_tuple_xdata_quantum_pecos_pattern(self):
+    def test_tuple_xdata_quantum_pecos_pattern(self) -> None:
         """Test curve_fit with tuple xdata (quantum-pecos pattern)."""
 
         def func(x, a, b, c):
@@ -309,7 +309,7 @@ class TestCurveFitComparison:
         # And similar fit quality
         assert abs(pecos_rmse - scipy_rmse) < 0.005, "Fit quality differs too much"
 
-    def test_sine_fit(self):
+    def test_sine_fit(self) -> None:
         """Fit sine wave."""
 
         def sine(x, amp, freq, phase):
@@ -326,7 +326,7 @@ class TestCurveFitComparison:
         # Parameters should be similar
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=0.1, atol=0.1)
 
-    def test_power_law_fit(self):
+    def test_power_law_fit(self) -> None:
         """Fit power law y = a * x^b."""
 
         def power_law(x, a, b):
@@ -341,7 +341,7 @@ class TestCurveFitComparison:
 
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-3, atol=1e-4)
 
-    def test_noisy_data(self):
+    def test_noisy_data(self) -> None:
         """Test with noisy data."""
 
         def linear(x, a, b):
@@ -359,7 +359,7 @@ class TestCurveFitComparison:
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-4, atol=1e-6)
         np.testing.assert_allclose(pecos_pcov, scipy_pcov, rtol=0.01, atol=1e-8)
 
-    def test_p0_accepts_sequence_types(self):
+    def test_p0_accepts_sequence_types(self) -> None:
         """Test that p0 accepts tuple, list, and array (scipy compatibility)."""
 
         def quadratic(x, a, b, c):
@@ -391,7 +391,7 @@ class TestCurveFitComparison:
 class TestPolyfitComparison:
     """Compare polyfit implementations."""
 
-    def test_linear_fit(self):
+    def test_linear_fit(self) -> None:
         """Fit degree 1 polynomial (line)."""
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2*x + 1
@@ -401,7 +401,7 @@ class TestPolyfitComparison:
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-10, atol=1e-12)
 
-    def test_quadratic_fit(self):
+    def test_quadratic_fit(self) -> None:
         """Fit degree 2 polynomial."""
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([3.0, 6.0, 11.0, 18.0, 27.0])  # y = x^2 + 2*x + 3
@@ -411,7 +411,7 @@ class TestPolyfitComparison:
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-10, atol=1e-12)
 
-    def test_cubic_fit(self):
+    def test_cubic_fit(self) -> None:
         """Fit degree 3 polynomial."""
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
         y = np.array([1.0, 3.0, 17.0, 55.0, 129.0, 251.0])  # y = x^3 + 2*x^2 + 3*x + 1
@@ -421,7 +421,7 @@ class TestPolyfitComparison:
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-9, atol=1e-10)
 
-    def test_high_degree(self):
+    def test_high_degree(self) -> None:
         """Test higher degree polynomial."""
         np.random.seed(42)
         x = np.linspace(0, 1, 20)
@@ -436,7 +436,7 @@ class TestPolyfitComparison:
         # Verify we recovered the original coefficients
         np.testing.assert_allclose(pecos_coeffs, true_coeffs, rtol=1e-8, atol=1e-10)
 
-    def test_noisy_data(self):
+    def test_noisy_data(self) -> None:
         """Test polyfit with noisy data."""
         np.random.seed(456)
         x = np.linspace(0, 5, 30)
@@ -448,7 +448,7 @@ class TestPolyfitComparison:
         # Should get similar coefficients
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-8, atol=1e-10)
 
-    def test_overdetermined_system(self):
+    def test_overdetermined_system(self) -> None:
         """Test with many more data points than parameters."""
         np.random.seed(789)
         x = np.linspace(-2, 2, 100)
@@ -463,7 +463,7 @@ class TestPolyfitComparison:
 class TestPoly1dComparison:
     """Compare Poly1d implementations."""
 
-    def test_evaluation(self):
+    def test_evaluation(self) -> None:
         """Test polynomial evaluation."""
         coeffs = np.array([2.0, 3.0, 1.0])  # 2*x^2 + 3*x + 1
 
@@ -476,7 +476,7 @@ class TestPoly1dComparison:
             scipy_val = scipy_poly(x)
             assert abs(pecos_val - scipy_val) < 1e-12
 
-    def test_degree(self):
+    def test_degree(self) -> None:
         """Test degree calculation."""
         coeffs = np.array([1.0, 2.0, 3.0, 4.0])  # degree 3
 
@@ -486,7 +486,7 @@ class TestPoly1dComparison:
         assert pecos_poly.degree() == len(coeffs) - 1
         assert pecos_poly.degree() == scipy_poly.order
 
-    def test_fit_and_evaluate(self):
+    def test_fit_and_evaluate(self) -> None:
         """Test fitting then evaluating."""
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])
@@ -504,7 +504,7 @@ class TestPoly1dComparison:
             assert abs(pecos_val - scipy_val) < 1e-10
             assert abs(pecos_val - yi) < 1e-10
 
-    def test_complex_polynomial(self):
+    def test_complex_polynomial(self) -> None:
         """Test with complex polynomial."""
         coeffs = np.array([1.0, -2.5, 3.7, -1.2, 0.5])
 
@@ -521,7 +521,7 @@ class TestPoly1dComparison:
 class TestEdgeCases:
     """Test edge cases and error handling."""
 
-    def test_brentq_narrow_interval(self):
+    def test_brentq_narrow_interval(self) -> None:
         """Test brentq with very narrow interval."""
 
         def f(x):
@@ -532,7 +532,7 @@ class TestEdgeCases:
 
         assert abs(pecos_root - scipy_root) < 1e-10
 
-    def test_newton_near_zero_derivative(self):
+    def test_newton_near_zero_derivative(self) -> None:
         """Test newton with function that has small derivative.
 
         Note: This is a pathological case where x^3 has a triple root at 0.
@@ -557,7 +557,7 @@ class TestEdgeCases:
         assert abs(pecos_root) < 0.01, f"PECOS root too far from 0: {pecos_root}"
         assert abs(scipy_root) < 0.01, f"Scipy root too far from 0: {scipy_root}"
 
-    def test_curve_fit_exact_fit(self):
+    def test_curve_fit_exact_fit(self) -> None:
         """Test curve_fit with data that fits model exactly."""
 
         def linear(x, a, b):
@@ -574,7 +574,7 @@ class TestEdgeCases:
         np.testing.assert_allclose(pecos_popt, [2.0, 1.0], rtol=1e-10, atol=1e-12)
         np.testing.assert_allclose(scipy_popt, [2.0, 1.0], rtol=1e-10, atol=1e-12)
 
-    def test_polyfit_exact_degree(self):
+    def test_polyfit_exact_degree(self) -> None:
         """Test polyfit when data is exact polynomial."""
         # Generate data from exact polynomial
         x = np.array([0.0, 1.0, 2.0, 3.0])

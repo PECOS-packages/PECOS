@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng, resolve_seed};
 
 use core::fmt::Debug;
 
@@ -122,16 +122,7 @@ impl CoinToss<PecosRng> {
             "Probability must be between 0.0 and 1.0, got {prob}"
         );
 
-        let rng = if let Some(s) = seed {
-            PecosRng::seed_from_u64(s)
-        } else {
-            // Use a default seed when none provided
-            let default_seed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            PecosRng::seed_from_u64(default_seed)
-        };
+        let rng = PecosRng::seed_from_u64(resolve_seed(seed));
 
         Self {
             num_qubits,

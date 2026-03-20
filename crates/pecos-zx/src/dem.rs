@@ -113,7 +113,7 @@ fn build_zx_body_circuit(body: &DagCircuit, num_rounds: usize) -> DagCircuit {
     // Identify ancilla qubits: those with Prep/QAlloc gates in the body
     let ancilla_qubits: BTreeSet<QubitId> = body
         .iter_gates_topo()
-        .filter(|(_, gate)| matches!(gate.gate_type, GateType::Prep | GateType::QAlloc))
+        .filter(|(_, gate)| matches!(gate.gate_type, GateType::PZ | GateType::QAlloc))
         .flat_map(|(_, gate)| gate.qubits.iter().copied())
         .collect();
 

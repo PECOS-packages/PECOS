@@ -12,7 +12,7 @@ use crate::circuit_compiler::{CircuitCompiler, Gate as CompiledGate};
 use crate::clifford_fusion::CliffordFuser;
 use pecos_core::QubitId;
 use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
-use rand_core::{Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -160,7 +160,7 @@ const GATE_QUEUE_BUFFER_SIZE: usize = 256 * 1024; // 256K gates
 /// When subgroup operations are available (most modern GPUs), uses optimized
 /// subgroup-based measurement reduction for improved performance.
 #[allow(clippy::struct_excessive_bools)]
-pub struct GpuStab<R: Rng + SeedableRng = rand::rngs::StdRng> {
+pub struct GpuStab<R: Rng + SeedableRng = PecosRng> {
     num_qubits: u32,
     gen_words: u32,
     rng: R,
@@ -248,7 +248,7 @@ pub struct GpuStab<R: Rng + SeedableRng = rand::rngs::StdRng> {
     parallel_enabled: bool,
 }
 
-impl GpuStab<rand::rngs::StdRng> {
+impl GpuStab<PecosRng> {
     /// Create a new GPU stabilizer simulator with the given number of qubits.
     ///
     /// # Errors
@@ -4130,8 +4130,8 @@ mod tests {
         let seed = 12345;
 
         // Run same circuit with sequential and parallel processing
-        let mut gpu_seq = GpuStab::<rand::rngs::StdRng>::with_seed(num_qubits, seed).unwrap();
-        let mut gpu_par = GpuStab::<rand::rngs::StdRng>::with_seed(num_qubits, seed).unwrap();
+        let mut gpu_seq = GpuStab::<PecosRng>::with_seed(num_qubits, seed).unwrap();
+        let mut gpu_par = GpuStab::<PecosRng>::with_seed(num_qubits, seed).unwrap();
 
         gpu_par.enable_parallel();
 

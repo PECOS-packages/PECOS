@@ -32,6 +32,10 @@
 //! - `BpOsdDecoder` - Belief Propagation + Ordered Statistics Decoding
 //! - `BpLsdDecoder` - Belief Propagation + Localized Statistics Decoding
 //! - `UnionFindDecoder` - Union-Find based decoder
+//!
+//! ## Relay BP Decoders (qLDPC Belief Propagation)
+//! - `RelayBpDecoder` - Relay BP ensemble decoder
+//! - `MinSumBpDecoder` - Plain min-sum BP decoder
 
 use ndarray::{Array1, Array2};
 use pyo3::prelude::*;
@@ -946,36 +950,152 @@ impl PySparseMatrix {
     }
 }
 
-/// BP+OSD decoder for LDPC codes.
+/// Parse a BP method string into the Rust enum.
+fn parse_bp_method(s: &str) -> PyResult<RustBpMethod> {
+    match s {
+        "product_sum" | "ps" => Ok(RustBpMethod::ProductSum),
+        "minimum_sum" | "ms" => Ok(RustBpMethod::MinimumSum),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "bp_method must be 'product_sum' or 'minimum_sum'",
+        )),
+    }
+}
+
+/// Parse a BP schedule string into the Rust enum.
+fn parse_bp_schedule(s: &str) -> PyResult<RustBpSchedule> {
+    match s {
+        "parallel" => Ok(RustBpSchedule::Parallel),
+        "serial" => Ok(RustBpSchedule::Serial),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "schedule must be 'parallel' or 'serial'",
+        )),
+    }
+}
+
+/// Parse an OSD method string into the Rust enum.
+fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
+    match s {
+        "off" => Ok(RustOsdMethod::Off),
+        "osd0" => Ok(RustOsdMethod::Osd0),
+        "osd_e" => Ok(RustOsdMethod::OsdE),
+        "osd_cs" => Ok(RustOsdMethod::OsdCs),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "osd_method must be 'off', 'osd0', 'osd_e', or 'osd_cs'",
+        )),
+    }
+}
+
+/// Builder for BP+OSD decoder.
 ///
 /// Belief Propagation with Ordered Statistics Decoding post-processing.
-/// This mirrors the ldpc library's `BpOsdDecoder`.
 ///
-/// # Construction
+/// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import BpOsdDecoder, SparseMatrix
+/// from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-///
-/// # Like ldpc's BpOsdDecoder(H, error_rate=0.1, bp_method='product_sum', ...)
-/// decoder = BpOsdDecoder(
-///     H,
-///     error_rate=0.1,
-///     bp_method="product_sum",
-///     max_iter=100,
-///     osd_method="osd0",
-///     osd_order=0
-/// )
-/// ```
-///
-/// # Decoding
-///
-/// ```python
+/// decoder = BpOsdBuilder(H, error_rate=0.1).osd_method("osd_cs").osd_order(7).build()
 /// result = decoder.decode(syndrome)
-/// if result.converged:
-///     error_estimate = result.decoding
 /// ```
+#[pyclass(name = "BpOsdBuilder", module = "pecos_rslib.decoders")]
+pub struct PyBpOsdBuilder {
+    pcm: RustSparseMatrix,
+    error_rate: f64,
+    max_iter: usize,
+    bp_method: String,
+    schedule: String,
+    osd_method: String,
+    osd_order: usize,
+}
+
+#[pymethods]
+impl PyBpOsdBuilder {
+    /// Create a new BP+OSD builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `pcm` - Parity check matrix
+    /// * `error_rate` - Channel error probability
+    #[new]
+    fn new(pcm: &PySparseMatrix, error_rate: f64) -> Self {
+        Self {
+            pcm: pcm.inner.clone(),
+            error_rate,
+            max_iter: 100,
+            bp_method: "product_sum".to_string(),
+            schedule: "parallel".to_string(),
+            osd_method: "osd0".to_string(),
+            osd_order: 0,
+        }
+    }
+
+    /// Set maximum BP iterations (default: 100).
+    fn max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.max_iter = val;
+        slf
+    }
+
+    /// Set BP algorithm: "`product_sum`" or "`minimum_sum`" (default: "`product_sum`").
+    fn bp_method(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.bp_method = val;
+        slf
+    }
+
+    /// Set update schedule: "parallel" or "serial" (default: "parallel").
+    fn schedule(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.schedule = val;
+        slf
+    }
+
+    /// Set OSD variant: "off", "osd0", "`osd_e`", "`osd_cs`" (default: "osd0").
+    fn osd_method(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.osd_method = val;
+        slf
+    }
+
+    /// Set OSD order parameter (default: 0).
+    fn osd_order(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.osd_order = val;
+        slf
+    }
+
+    /// Build the BP+OSD decoder.
+    fn build(&self) -> PyResult<PyBpOsdDecoder> {
+        let bp = parse_bp_method(&self.bp_method)?;
+        let bp_schedule = parse_bp_schedule(&self.schedule)?;
+        let osd = parse_osd_method(&self.osd_method)?;
+
+        RustBpOsdDecoder::new(
+            &self.pcm,
+            Some(self.error_rate),
+            None,
+            self.max_iter,
+            bp,
+            bp_schedule,
+            1.0,
+            osd,
+            self.osd_order,
+            RustInputVectorType::Syndrome,
+            None,
+            None,
+            None,
+        )
+        .map(|inner| PyBpOsdDecoder { inner })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BpOsdBuilder(rows={}, cols={})",
+            self.pcm.rows, self.pcm.cols
+        )
+    }
+}
+
+/// BP+OSD decoder for LDPC codes.
+///
+/// Created via `BpOsdBuilder(...).build()`.
 // Note: unsendable because contains FFI pointers
 #[pyclass(name = "BpOsdDecoder", module = "pecos_rslib.decoders", unsendable)]
 pub struct PyBpOsdDecoder {
@@ -984,79 +1104,6 @@ pub struct PyBpOsdDecoder {
 
 #[pymethods]
 impl PyBpOsdDecoder {
-    /// Create a BP+OSD decoder.
-    ///
-    /// # Arguments
-    ///
-    /// * `pcm` - Parity check matrix
-    /// * `error_rate` - Channel error probability (or use `channel_probs` for per-qubit rates)
-    /// * `max_iter` - Maximum BP iterations (default: 100, 0 = use n)
-    /// * `bp_method` - BP algorithm: "`product_sum`" or "`minimum_sum`" (default: "`product_sum`")
-    /// * `schedule` - Update schedule: "parallel" or "serial" (default: "parallel")
-    /// * `osd_method` - OSD variant: "off", "osd0", "`osd_e`", "`osd_cs`" (default: "osd0")
-    /// * `osd_order` - OSD order parameter (default: 0)
-    #[new]
-    #[pyo3(signature = (pcm, error_rate, max_iter=100, bp_method="product_sum", schedule="parallel", osd_method="osd0", osd_order=0))]
-    fn new(
-        pcm: &PySparseMatrix,
-        error_rate: f64,
-        max_iter: usize,
-        bp_method: &str,
-        schedule: &str,
-        osd_method: &str,
-        osd_order: usize,
-    ) -> PyResult<Self> {
-        let bp = match bp_method {
-            "product_sum" | "ps" => RustBpMethod::ProductSum,
-            "minimum_sum" | "ms" => RustBpMethod::MinimumSum,
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "bp_method must be 'product_sum' or 'minimum_sum'",
-                ));
-            }
-        };
-
-        let bp_schedule = match schedule {
-            "parallel" => RustBpSchedule::Parallel,
-            "serial" => RustBpSchedule::Serial,
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "schedule must be 'parallel' or 'serial'",
-                ));
-            }
-        };
-
-        let osd = match osd_method {
-            "off" => RustOsdMethod::Off,
-            "osd0" => RustOsdMethod::Osd0,
-            "osd_e" => RustOsdMethod::OsdE,
-            "osd_cs" => RustOsdMethod::OsdCs,
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "osd_method must be 'off', 'osd0', 'osd_e', or 'osd_cs'",
-                ));
-            }
-        };
-
-        RustBpOsdDecoder::new(
-            &pcm.inner,
-            Some(error_rate),
-            None,
-            max_iter,
-            bp,
-            bp_schedule,
-            1.0,
-            osd,
-            osd_order,
-            RustInputVectorType::Syndrome,
-            None,
-            None,
-            None,
-        )
-        .map(|inner| Self { inner })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
-    }
-
     /// Decode a syndrome.
     ///
     /// # Arguments
@@ -1083,27 +1130,110 @@ impl PyBpOsdDecoder {
     }
 }
 
-/// BP+LSD decoder for LDPC codes.
+/// Builder for BP+LSD decoder.
 ///
 /// Belief Propagation with Localized Statistics Decoding.
 /// Often faster than OSD for similar accuracy.
 ///
-/// # Construction
+/// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import BpLsdDecoder, SparseMatrix
+/// from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-///
-/// # Like ldpc's BpLsdDecoder
-/// decoder = BpLsdDecoder(
-///     H,
-///     error_rate=0.1,
-///     bp_method="product_sum",
-///     max_iter=100,
-///     lsd_order=0
-/// )
+/// decoder = BpLsdBuilder(H, error_rate=0.1).lsd_order(2).build()
+/// result = decoder.decode(syndrome)
 /// ```
+#[pyclass(name = "BpLsdBuilder", module = "pecos_rslib.decoders")]
+pub struct PyBpLsdBuilder {
+    pcm: RustSparseMatrix,
+    error_rate: f64,
+    max_iter: usize,
+    bp_method: String,
+    schedule: String,
+    lsd_order: usize,
+}
+
+#[pymethods]
+impl PyBpLsdBuilder {
+    /// Create a new BP+LSD builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `pcm` - Parity check matrix
+    /// * `error_rate` - Channel error probability
+    #[new]
+    fn new(pcm: &PySparseMatrix, error_rate: f64) -> Self {
+        Self {
+            pcm: pcm.inner.clone(),
+            error_rate,
+            max_iter: 100,
+            bp_method: "product_sum".to_string(),
+            schedule: "parallel".to_string(),
+            lsd_order: 0,
+        }
+    }
+
+    /// Set maximum BP iterations (default: 100).
+    fn max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.max_iter = val;
+        slf
+    }
+
+    /// Set BP algorithm: "`product_sum`" or "`minimum_sum`" (default: "`product_sum`").
+    fn bp_method(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.bp_method = val;
+        slf
+    }
+
+    /// Set update schedule: "parallel" or "serial" (default: "parallel").
+    fn schedule(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.schedule = val;
+        slf
+    }
+
+    /// Set LSD order parameter (default: 0).
+    fn lsd_order(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.lsd_order = val;
+        slf
+    }
+
+    /// Build the BP+LSD decoder.
+    fn build(&self) -> PyResult<PyBpLsdDecoder> {
+        let bp = parse_bp_method(&self.bp_method)?;
+        let bp_schedule = parse_bp_schedule(&self.schedule)?;
+
+        RustBpLsdDecoder::new(
+            &self.pcm,
+            Some(self.error_rate),
+            None,
+            self.max_iter,
+            bp,
+            bp_schedule,
+            1.0,
+            RustOsdMethod::Osd0,
+            self.lsd_order,
+            0,
+            RustInputVectorType::Syndrome,
+            None,
+            None,
+            None,
+        )
+        .map(|inner| PyBpLsdDecoder { inner })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BpLsdBuilder(rows={}, cols={})",
+            self.pcm.rows, self.pcm.cols
+        )
+    }
+}
+
+/// BP+LSD decoder for LDPC codes.
+///
+/// Created via `BpLsdBuilder(...).build()`.
 // Note: unsendable because contains FFI pointers
 #[pyclass(name = "BpLsdDecoder", module = "pecos_rslib.decoders", unsendable)]
 pub struct PyBpLsdDecoder {
@@ -1112,66 +1242,6 @@ pub struct PyBpLsdDecoder {
 
 #[pymethods]
 impl PyBpLsdDecoder {
-    /// Create a BP+LSD decoder.
-    ///
-    /// # Arguments
-    ///
-    /// * `pcm` - Parity check matrix
-    /// * `error_rate` - Channel error probability
-    /// * `max_iter` - Maximum BP iterations (default: 100)
-    /// * `bp_method` - "`product_sum`" or "`minimum_sum`" (default: "`product_sum`")
-    /// * `schedule` - "parallel" or "serial" (default: "parallel")
-    /// * `lsd_order` - LSD order parameter (default: 0, recommended starting point)
-    #[new]
-    #[pyo3(signature = (pcm, error_rate, max_iter=100, bp_method="product_sum", schedule="parallel", lsd_order=0))]
-    fn new(
-        pcm: &PySparseMatrix,
-        error_rate: f64,
-        max_iter: usize,
-        bp_method: &str,
-        schedule: &str,
-        lsd_order: usize,
-    ) -> PyResult<Self> {
-        let bp = match bp_method {
-            "product_sum" | "ps" => RustBpMethod::ProductSum,
-            "minimum_sum" | "ms" => RustBpMethod::MinimumSum,
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "bp_method must be 'product_sum' or 'minimum_sum'",
-                ));
-            }
-        };
-
-        let bp_schedule = match schedule {
-            "parallel" => RustBpSchedule::Parallel,
-            "serial" => RustBpSchedule::Serial,
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "schedule must be 'parallel' or 'serial'",
-                ));
-            }
-        };
-
-        RustBpLsdDecoder::new(
-            &pcm.inner,
-            Some(error_rate),
-            None,
-            max_iter,
-            bp,
-            bp_schedule,
-            1.0,
-            RustOsdMethod::Osd0,
-            lsd_order,
-            0,
-            RustInputVectorType::Syndrome,
-            None,
-            None,
-            None,
-        )
-        .map(|inner| Self { inner })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
-    }
-
     /// Decode a syndrome.
     fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpResult> {
         let arr = Array1::from_vec(syndrome);
@@ -1190,37 +1260,50 @@ impl PyBpLsdDecoder {
     }
 }
 
-/// Union-Find decoder for LDPC codes.
+/// Builder for Union-Find decoder.
 ///
 /// Cluster-based decoder using the Union-Find data structure.
 /// Fast O(n * alpha(n)) complexity per syndrome.
 ///
-/// # Construction
+/// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import UnionFindDecoder, SparseMatrix
+/// from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-/// decoder = UnionFindDecoder(H, method="inversion")
+/// decoder = UnionFindBuilder(H).method("peeling").build()
+/// result = decoder.decode(syndrome)
 /// ```
-// Note: unsendable because contains FFI pointers
-#[pyclass(name = "UnionFindDecoder", module = "pecos_rslib.decoders", unsendable)]
-pub struct PyUnionFindDecoder {
-    inner: RustUnionFindDecoder,
+#[pyclass(name = "UnionFindBuilder", module = "pecos_rslib.decoders")]
+pub struct PyUnionFindBuilder {
+    pcm: RustSparseMatrix,
+    method: String,
 }
 
 #[pymethods]
-impl PyUnionFindDecoder {
-    /// Create a Union-Find decoder.
+impl PyUnionFindBuilder {
+    /// Create a new Union-Find builder.
     ///
     /// # Arguments
     ///
     /// * `pcm` - Parity check matrix
-    /// * `method` - Decoding method: "inversion" (general) or "peeling" (LDPC only)
     #[new]
-    #[pyo3(signature = (pcm, method="inversion"))]
-    fn new(pcm: &PySparseMatrix, method: &str) -> PyResult<Self> {
-        let uf_method = match method {
+    fn new(pcm: &PySparseMatrix) -> Self {
+        Self {
+            pcm: pcm.inner.clone(),
+            method: "inversion".to_string(),
+        }
+    }
+
+    /// Set decoding method: "inversion" (general) or "peeling" (LDPC only).
+    fn method(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.method = val;
+        slf
+    }
+
+    /// Build the Union-Find decoder.
+    fn build(&self) -> PyResult<PyUnionFindDecoder> {
+        let uf_method = match self.method.as_str() {
             "inversion" => RustUfMethod::Inversion,
             "peeling" => RustUfMethod::Peeling,
             _ => {
@@ -1230,11 +1313,30 @@ impl PyUnionFindDecoder {
             }
         };
 
-        RustUnionFindDecoder::new(&pcm.inner, uf_method)
-            .map(|inner| Self { inner })
+        RustUnionFindDecoder::new(&self.pcm, uf_method)
+            .map(|inner| PyUnionFindDecoder { inner })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
+    fn __repr__(&self) -> String {
+        format!(
+            "UnionFindBuilder(rows={}, cols={})",
+            self.pcm.rows, self.pcm.cols
+        )
+    }
+}
+
+/// Union-Find decoder for LDPC codes.
+///
+/// Created via `UnionFindBuilder(...).build()`.
+// Note: unsendable because contains FFI pointers
+#[pyclass(name = "UnionFindDecoder", module = "pecos_rslib.decoders", unsendable)]
+pub struct PyUnionFindDecoder {
+    inner: RustUnionFindDecoder,
+}
+
+#[pymethods]
+impl PyUnionFindDecoder {
     /// Decode a syndrome.
     ///
     /// # Arguments
@@ -1477,6 +1579,461 @@ impl PyTesseractDecoder {
 }
 
 // =============================================================================
+// Relay BP Decoders
+// =============================================================================
+
+use pecos::decoders::{
+    MinSumBpBuilder as RustMinSumBpBuilder, MinSumBpDecoder as RustMinSumBpDecoder,
+    RelayBpBuilder as RustRelayBpBuilder, RelayBpDecoder as RustRelayBpDecoder,
+    StoppingCriterion as RustStoppingCriterion,
+};
+
+/// Parse a stopping criterion string into the Rust enum.
+///
+/// Supported values:
+/// - `"pre_iter"` -> `StoppingCriterion::PreIter`
+/// - `"all"` -> `StoppingCriterion::All`
+/// - `"n_conv_1"` -> `StoppingCriterion::NConv { stop_after: 1 }` (default)
+/// - `"n_conv_N"` (e.g., `"n_conv_5"`) -> `StoppingCriterion::NConv { stop_after: N }`
+fn parse_stopping_criterion(s: &str) -> PyResult<RustStoppingCriterion> {
+    match s {
+        "pre_iter" => Ok(RustStoppingCriterion::PreIter),
+        "all" => Ok(RustStoppingCriterion::All),
+        _ if s.starts_with("n_conv_") => {
+            let n_str = &s["n_conv_".len()..];
+            let n: usize = n_str.parse().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Invalid stopping criterion '{s}': expected 'n_conv_N' where N is a positive integer"
+                ))
+            })?;
+            Ok(RustStoppingCriterion::NConv { stop_after: n })
+        }
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Unknown stopping criterion '{s}'. Valid: 'pre_iter', 'all', 'n_conv_1', 'n_conv_N'"
+        ))),
+    }
+}
+
+/// Convert a dense check matrix from Python lists to an ndarray `Array2`.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the rows have inconsistent lengths.
+fn dense_check_matrix_to_array2(check_matrix: &[Vec<u8>]) -> PyResult<Array2<u8>> {
+    let rows = check_matrix.len();
+    let cols = if rows > 0 { check_matrix[0].len() } else { 0 };
+    for (i, row) in check_matrix.iter().enumerate() {
+        if row.len() != cols {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "check_matrix row {i} has length {} but row 0 has length {cols}",
+                row.len()
+            )));
+        }
+    }
+    let mut arr = Array2::<u8>::zeros((rows, cols));
+    for (i, row) in check_matrix.iter().enumerate() {
+        for (j, &val) in row.iter().enumerate() {
+            arr[[i, j]] = val;
+        }
+    }
+    Ok(arr)
+}
+
+/// Builder for Relay BP ensemble decoder.
+///
+/// Configures and constructs a `RelayBpDecoder` for qLDPC codes. Uses an
+/// ensemble of min-sum BP decoders with randomized damping parameters (relay
+/// strategy) to improve convergence on codes where standard BP fails.
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib.decoders import RelayBpBuilder
+///
+/// H = [[1, 1, 0], [0, 1, 1]]
+/// decoder = (
+///     RelayBpBuilder(H, [0.003, 0.003, 0.003])
+///     .seed(42)
+///     .num_sets(100)
+///     .build()
+/// )
+/// result = decoder.decode([1, 0])
+/// ```
+#[pyclass(name = "RelayBpBuilder", module = "pecos_rslib.decoders")]
+pub struct PyRelayBpBuilder {
+    check_matrix: Vec<Vec<u8>>,
+    error_priors: Vec<f64>,
+    max_iter: usize,
+    alpha: Option<f64>,
+    gamma0: Option<f64>,
+    pre_iter: usize,
+    num_sets: usize,
+    set_max_iter: usize,
+    seed: u64,
+    stopping: String,
+}
+
+#[pymethods]
+impl PyRelayBpBuilder {
+    /// Create a new Relay BP builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `check_matrix` - Parity check matrix as list of lists
+    /// * `error_priors` - Prior error probabilities for each bit
+    #[new]
+    fn new(check_matrix: Vec<Vec<u8>>, error_priors: Vec<f64>) -> Self {
+        Self {
+            check_matrix,
+            error_priors,
+            max_iter: 200,
+            alpha: None,
+            gamma0: None,
+            pre_iter: 80,
+            num_sets: 300,
+            set_max_iter: 60,
+            seed: 0,
+            stopping: "n_conv_1".to_string(),
+        }
+    }
+
+    /// Set maximum BP iterations (default: 200).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.max_iter = val;
+        slf
+    }
+
+    /// Set min-sum scaling factor (None = no scaling).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn alpha(mut slf: PyRefMut<'_, Self>, val: Option<f64>) -> PyRefMut<'_, Self> {
+        slf.alpha = val;
+        slf
+    }
+
+    /// Set initial damping factor (None = disabled).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn gamma0(mut slf: PyRefMut<'_, Self>, val: Option<f64>) -> PyRefMut<'_, Self> {
+        slf.gamma0 = val;
+        slf
+    }
+
+    /// Set number of pre-relay BP iterations (default: 80).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn pre_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.pre_iter = val;
+        slf
+    }
+
+    /// Set number of relay sets/legs (default: 300).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn num_sets(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.num_sets = val;
+        slf
+    }
+
+    /// Set max iterations per relay set (default: 60).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn set_max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.set_max_iter = val;
+        slf
+    }
+
+    /// Set random seed for relay parameter sampling (default: 0).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn seed(mut slf: PyRefMut<'_, Self>, val: u64) -> PyRefMut<'_, Self> {
+        slf.seed = val;
+        slf
+    }
+
+    /// Set stopping criterion (default: `"n_conv_1"`).
+    ///
+    /// Valid values: `"pre_iter"`, `"all"`, `"n_conv_1"`, `"n_conv_N"`.
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn stopping(mut slf: PyRefMut<'_, Self>, val: String) -> PyRefMut<'_, Self> {
+        slf.stopping = val;
+        slf
+    }
+
+    /// Build the Relay BP decoder.
+    ///
+    /// Returns:
+    ///     A `RelayBpDecoder` ready for decoding.
+    ///
+    /// Raises:
+    ///     `RuntimeError`: If the configuration is invalid.
+    fn build(&self) -> PyResult<PyRelayBpDecoder> {
+        let stopping_criterion = parse_stopping_criterion(&self.stopping)?;
+        let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
+
+        RustRelayBpBuilder::new(&arr.view())
+            .error_priors(&self.error_priors)
+            .max_iter(self.max_iter)
+            .alpha(self.alpha)
+            .gamma0(self.gamma0)
+            .pre_iter(self.pre_iter)
+            .num_sets(self.num_sets)
+            .set_max_iter(self.set_max_iter)
+            .seed(self.seed)
+            .stopping_criterion(stopping_criterion)
+            .build()
+            .map(|inner| PyRelayBpDecoder { inner })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        let rows = self.check_matrix.len();
+        let cols = if rows > 0 {
+            self.check_matrix[0].len()
+        } else {
+            0
+        };
+        format!("RelayBpBuilder(checks={rows}, bits={cols})")
+    }
+}
+
+/// Relay BP ensemble decoder for qLDPC codes.
+///
+/// Created via `RelayBpBuilder(...).build()`.
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib.decoders import RelayBpBuilder
+///
+/// decoder = RelayBpBuilder([[1,1,0],[0,1,1]], [0.003]*3).seed(42).build()
+/// result = decoder.decode([1, 0])
+/// assert result.converged
+/// ```
+#[pyclass(name = "RelayBpDecoder", module = "pecos_rslib.decoders")]
+pub struct PyRelayBpDecoder {
+    inner: RustRelayBpDecoder,
+}
+
+#[pymethods]
+impl PyRelayBpDecoder {
+    /// Decode a syndrome.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndrome` - Syndrome vector (length = number of checks)
+    ///
+    /// # Returns
+    ///
+    /// `BpResult` with decoding, convergence status, and iteration count.
+    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpResult> {
+        let arr = Array1::from_vec(syndrome);
+        self.inner
+            .decode(&arr.view())
+            .map(|result| PyBpResult {
+                decoding_data: result.decoding.to_vec(),
+                converged: result.converged,
+                iterations: result.iterations,
+            })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Number of checks (rows in check matrix).
+    #[getter]
+    fn check_count(&self) -> usize {
+        self.inner.check_count()
+    }
+
+    /// Number of bits (columns in check matrix).
+    #[getter]
+    fn bit_count(&self) -> usize {
+        self.inner.bit_count()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RelayBpDecoder(checks={}, bits={})",
+            self.inner.check_count(),
+            self.inner.bit_count()
+        )
+    }
+}
+
+/// Builder for min-sum BP decoder.
+///
+/// Configures and constructs a `MinSumBpDecoder` for qLDPC codes. Standard
+/// min-sum belief propagation -- simpler and faster than `RelayBpDecoder`
+/// for codes where plain BP converges.
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib.decoders import MinSumBpBuilder
+///
+/// H = [[1, 1, 0], [0, 1, 1]]
+/// decoder = MinSumBpBuilder(H, [0.003, 0.003, 0.003]).max_iter(100).build()
+/// result = decoder.decode([1, 0])
+/// ```
+#[pyclass(name = "MinSumBpBuilder", module = "pecos_rslib.decoders")]
+pub struct PyMinSumBpBuilder {
+    check_matrix: Vec<Vec<u8>>,
+    error_priors: Vec<f64>,
+    max_iter: usize,
+    alpha: Option<f64>,
+    gamma0: Option<f64>,
+}
+
+#[pymethods]
+impl PyMinSumBpBuilder {
+    /// Create a new min-sum BP builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `check_matrix` - Parity check matrix as list of lists
+    /// * `error_priors` - Prior error probabilities for each bit
+    #[new]
+    fn new(check_matrix: Vec<Vec<u8>>, error_priors: Vec<f64>) -> Self {
+        Self {
+            check_matrix,
+            error_priors,
+            max_iter: 200,
+            alpha: None,
+            gamma0: None,
+        }
+    }
+
+    /// Set maximum BP iterations (default: 200).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn max_iter(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.max_iter = val;
+        slf
+    }
+
+    /// Set min-sum scaling factor (None = no scaling).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn alpha(mut slf: PyRefMut<'_, Self>, val: Option<f64>) -> PyRefMut<'_, Self> {
+        slf.alpha = val;
+        slf
+    }
+
+    /// Set initial damping factor (None = disabled).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    fn gamma0(mut slf: PyRefMut<'_, Self>, val: Option<f64>) -> PyRefMut<'_, Self> {
+        slf.gamma0 = val;
+        slf
+    }
+
+    /// Build the min-sum BP decoder.
+    ///
+    /// Returns:
+    ///     A `MinSumBpDecoder` ready for decoding.
+    ///
+    /// Raises:
+    ///     `RuntimeError`: If the configuration is invalid.
+    fn build(&self) -> PyResult<PyMinSumBpDecoder> {
+        let arr = dense_check_matrix_to_array2(&self.check_matrix)?;
+
+        RustMinSumBpBuilder::new(&arr.view())
+            .error_priors(&self.error_priors)
+            .max_iter(self.max_iter)
+            .alpha(self.alpha)
+            .gamma0(self.gamma0)
+            .build()
+            .map(|inner| PyMinSumBpDecoder { inner })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        let rows = self.check_matrix.len();
+        let cols = if rows > 0 {
+            self.check_matrix[0].len()
+        } else {
+            0
+        };
+        format!("MinSumBpBuilder(checks={rows}, bits={cols})")
+    }
+}
+
+/// Min-sum BP decoder for qLDPC codes.
+///
+/// Created via `MinSumBpBuilder(...).build()`.
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib.decoders import MinSumBpBuilder
+///
+/// decoder = MinSumBpBuilder([[1,1,0],[0,1,1]], [0.003]*3).build()
+/// result = decoder.decode([1, 0])
+/// assert result.converged
+/// ```
+#[pyclass(name = "MinSumBpDecoder", module = "pecos_rslib.decoders")]
+pub struct PyMinSumBpDecoder {
+    inner: RustMinSumBpDecoder,
+}
+
+#[pymethods]
+impl PyMinSumBpDecoder {
+    /// Decode a syndrome.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndrome` - Syndrome vector (length = number of checks)
+    ///
+    /// # Returns
+    ///
+    /// `BpResult` with decoding, convergence status, and iteration count.
+    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpResult> {
+        let arr = Array1::from_vec(syndrome);
+        self.inner
+            .decode(&arr.view())
+            .map(|result| PyBpResult {
+                decoding_data: result.decoding.to_vec(),
+                converged: result.converged,
+                iterations: result.iterations,
+            })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Number of checks (rows in check matrix).
+    #[getter]
+    fn check_count(&self) -> usize {
+        self.inner.check_count()
+    }
+
+    /// Number of bits (columns in check matrix).
+    #[getter]
+    fn bit_count(&self) -> usize {
+        self.inner.bit_count()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MinSumBpDecoder(checks={}, bits={})",
+            self.inner.check_count(),
+            self.inner.bit_count()
+        )
+    }
+}
+
+// =============================================================================
 // Module Registration
 // =============================================================================
 
@@ -1498,13 +2055,22 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     decoders_module.add_class::<PyFusionBlossomDecoder>()?;
 
     // LDPC decoders
+    decoders_module.add_class::<PyBpOsdBuilder>()?;
     decoders_module.add_class::<PyBpOsdDecoder>()?;
+    decoders_module.add_class::<PyBpLsdBuilder>()?;
     decoders_module.add_class::<PyBpLsdDecoder>()?;
+    decoders_module.add_class::<PyUnionFindBuilder>()?;
     decoders_module.add_class::<PyUnionFindDecoder>()?;
 
     // Search-based decoders
     decoders_module.add_class::<PyTesseractResult>()?;
     decoders_module.add_class::<PyTesseractDecoder>()?;
+
+    // Relay BP decoders
+    decoders_module.add_class::<PyRelayBpBuilder>()?;
+    decoders_module.add_class::<PyRelayBpDecoder>()?;
+    decoders_module.add_class::<PyMinSumBpBuilder>()?;
+    decoders_module.add_class::<PyMinSumBpDecoder>()?;
 
     // Add submodule to parent
     parent_module.add_submodule(&decoders_module)?;

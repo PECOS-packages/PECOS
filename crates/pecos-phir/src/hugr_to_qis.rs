@@ -13,10 +13,115 @@ The conversion maps high-level quantum gates to hardware-native gates:
 */
 
 use crate::error::Result;
-use crate::ops::{CustomOp, Operation};
+use crate::ops::{ClassicalOp, CustomOp, Operation};
 use crate::phir::{Block, Instruction, Module, Region, SSAValue};
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
+
+// ========================================================================
+// Reusable decomposition helpers
+//
+// These functions emit QIS CustomOp instructions for standard gate
+// decompositions.  They are used by both this module and `qis_parser`.
+// ========================================================================
+
+/// Helper: create a `ConstFloat` instruction that defines `result` = `value`.
+#[must_use]
+pub fn emit_const_float(result: SSAValue, value: f64) -> Instruction {
+    Instruction {
+        results: vec![result],
+        operation: Operation::Classical(ClassicalOp::ConstFloat(value)),
+        operands: vec![],
+        result_types: vec![crate::types::Type::Float(crate::types::FloatPrecision::F64)],
+        regions: vec![],
+        attributes: BTreeMap::new(),
+        location: None,
+    }
+}
+
+/// Helper: emit a `qis.rz(qubit, angle)` instruction.
+#[must_use]
+pub fn emit_qis_rz(qubit: SSAValue, angle: SSAValue) -> Instruction {
+    Instruction {
+        results: vec![],
+        operation: Operation::Custom(CustomOp::new("qis", "rz", vec![], BTreeMap::new())),
+        operands: vec![qubit, angle],
+        result_types: vec![],
+        regions: vec![],
+        attributes: BTreeMap::new(),
+        location: None,
+    }
+}
+
+/// Helper: emit a `qis.rxy(qubit, theta, phi)` instruction.
+#[must_use]
+pub fn emit_qis_rxy(qubit: SSAValue, theta: SSAValue, phi: SSAValue) -> Instruction {
+    Instruction {
+        results: vec![],
+        operation: Operation::Custom(CustomOp::new("qis", "rxy", vec![], BTreeMap::new())),
+        operands: vec![qubit, theta, phi],
+        result_types: vec![],
+        regions: vec![],
+        attributes: BTreeMap::new(),
+        location: None,
+    }
+}
+
+/// Helper: emit a `qis.rzz(qubit1, qubit2, angle)` instruction.
+#[must_use]
+pub fn emit_qis_rzz(qubit1: SSAValue, qubit2: SSAValue, angle: SSAValue) -> Instruction {
+    Instruction {
+        results: vec![],
+        operation: Operation::Custom(CustomOp::new("qis", "rzz", vec![], BTreeMap::new())),
+        operands: vec![qubit1, qubit2, angle],
+        result_types: vec![],
+        regions: vec![],
+        attributes: BTreeMap::new(),
+        location: None,
+    }
+}
+
+/// Decompose Hadamard: H = RZ(-pi/2) . RXY(pi/2, 0) . RZ(-pi/2)
+///
+/// Appends instructions and constants to `out`. The caller provides
+/// `fresh_id`, a closure that returns a fresh `SSAValue` each call.
+pub fn decompose_h(
+    qubit: SSAValue,
+    out: &mut Vec<Instruction>,
+    fresh_id: &mut impl FnMut() -> SSAValue,
+) {
+    let neg_half_pi = fresh_id();
+    out.push(emit_const_float(neg_half_pi, -PI / 2.0));
+    let half_pi = fresh_id();
+    out.push(emit_const_float(half_pi, PI / 2.0));
+    let zero = fresh_id();
+    out.push(emit_const_float(zero, 0.0));
+
+    out.push(emit_qis_rz(qubit, neg_half_pi));
+    out.push(emit_qis_rxy(qubit, half_pi, zero));
+    // Reuse neg_half_pi SSA value for second RZ (same constant)
+    out.push(emit_qis_rz(qubit, neg_half_pi));
+}
+
+/// Decompose CX: RXY(pi/2,0) target, RZZ(pi/2) ctrl+tgt, RZ(-pi/2) ctrl, RXY(-pi/2,0) target
+pub fn decompose_cx(
+    control: SSAValue,
+    target: SSAValue,
+    out: &mut Vec<Instruction>,
+    fresh_id: &mut impl FnMut() -> SSAValue,
+) {
+    let half_pi = fresh_id();
+    out.push(emit_const_float(half_pi, PI / 2.0));
+    let zero = fresh_id();
+    out.push(emit_const_float(zero, 0.0));
+    let neg_half_pi = fresh_id();
+    out.push(emit_const_float(neg_half_pi, -PI / 2.0));
+
+    out.push(emit_qis_rxy(target, half_pi, zero));
+    out.push(emit_qis_rzz(control, target, half_pi));
+    out.push(emit_qis_rz(control, neg_half_pi));
+    out.push(emit_qis_rxy(target, neg_half_pi, zero));
+}
 
 /// Convert a HUGR module to use QIS operations
 ///
@@ -124,161 +229,32 @@ impl HugrToQisConverter {
             }
 
             "h" => {
-                // Hadamard decomposition: H = RZ(-π/2) · RXY(π/2, 0) · RZ(-π/2)
-                let qubit = &operands[0];
-
-                // RZ(-π/2)
-                let rz1 = CustomOp::new("qis", "rz", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rz1),
-                    operands: vec![*qubit, self.make_float_constant(-PI / 2.0)],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
-
-                // RXY(π/2, 0)
-                let rxy = CustomOp::new("qis", "rxy", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rxy),
-                    operands: vec![
-                        *qubit,
-                        self.make_float_constant(PI / 2.0),
-                        self.make_float_constant(0.0),
-                    ],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
-
-                // RZ(-π/2)
-                let rz2 = CustomOp::new("qis", "rz", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rz2),
-                    operands: vec![*qubit, self.make_float_constant(-PI / 2.0)],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
+                decompose_h(operands[0], &mut instructions, &mut || self.fresh_value());
             }
 
             "cx" => {
-                // CNOT decomposition using RXY and RZZ
-                let control = &operands[0];
-                let target = &operands[1];
-
-                // RXY(π/2, 0) on target
-                let rxy1 = CustomOp::new("qis", "rxy", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rxy1),
-                    operands: vec![
-                        *target,
-                        self.make_float_constant(PI / 2.0),
-                        self.make_float_constant(0.0),
-                    ],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
-
-                // RZZ(π/2) on control and target
-                let rzz = CustomOp::new("qis", "rzz", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rzz),
-                    operands: vec![*control, *target, self.make_float_constant(PI / 2.0)],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
-
-                // RZ(-π/2) on control
-                let rz = CustomOp::new("qis", "rz", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rz),
-                    operands: vec![*control, self.make_float_constant(-PI / 2.0)],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
-
-                // RXY(-π/2, 0) on target
-                let rxy2 = CustomOp::new("qis", "rxy", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rxy2),
-                    operands: vec![
-                        *target,
-                        self.make_float_constant(-PI / 2.0),
-                        self.make_float_constant(0.0),
-                    ],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
+                decompose_cx(operands[0], operands[1], &mut instructions, &mut || {
+                    self.fresh_value()
                 });
             }
 
             "rx" => {
                 // RX(θ) → RXY(θ, 0)
-                let qubit = &operands[0];
-                let angle = &operands[1];
-
-                let rxy = CustomOp::new("qis", "rxy", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rxy),
-                    operands: vec![*qubit, *angle, self.make_float_constant(0.0)],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
+                let zero = self.fresh_value();
+                instructions.push(emit_const_float(zero, 0.0));
+                instructions.push(emit_qis_rxy(operands[0], operands[1], zero));
             }
 
             "ry" => {
                 // RY(θ) → RXY(θ, π/2)
-                let qubit = &operands[0];
-                let angle = &operands[1];
-
-                let rxy = CustomOp::new("qis", "rxy", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(rxy),
-                    operands: vec![*qubit, *angle, self.make_float_constant(PI / 2.0)],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
+                let half_pi = self.fresh_value();
+                instructions.push(emit_const_float(half_pi, PI / 2.0));
+                instructions.push(emit_qis_rxy(operands[0], operands[1], half_pi));
             }
 
             "rz" => {
                 // RZ(θ) → QIS RZ(θ) (direct mapping)
-                let qubit = &operands[0];
-                let angle = &operands[1];
-
-                let qis_rz = CustomOp::new("qis", "rz", vec![], BTreeMap::new());
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(qis_rz),
-                    operands: vec![*qubit, *angle],
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
+                instructions.push(emit_qis_rz(operands[0], operands[1]));
             }
 
             "measure" => {
@@ -328,14 +304,6 @@ impl HugrToQisConverter {
 
         instructions
     }
-
-    fn make_float_constant(&mut self, _value: f64) -> SSAValue {
-        // In a real implementation, this would create a proper constant
-        // For now, we just create a placeholder SSA value
-
-        // This would normally emit a constant operation
-        self.fresh_value()
-    }
 }
 
 #[cfg(test)]
@@ -379,16 +347,22 @@ mod tests {
         let mut converter = HugrToQisConverter::new();
         converter.convert_module(&mut module);
 
-        // Check that we have 3 QIS operations (RZ, RXY, RZ)
-        assert_eq!(module.body.blocks[0].operations.len(), 3);
+        // 3 ConstFloat + 3 gate ops (RZ, RXY, RZ) = 6 total
+        assert_eq!(module.body.blocks[0].operations.len(), 6);
 
-        // Verify the operations are correct QIS ops
-        for op in &module.body.blocks[0].operations {
-            if let Operation::Custom(custom_op) = &op.operation {
-                assert_eq!(custom_op.dialect(), "qis");
-                assert!(custom_op.name() == "rz" || custom_op.name() == "rxy");
-            }
-        }
+        // Verify the QIS gate operations are correct
+        let qis_ops: Vec<_> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter_map(|instr| {
+                if let Operation::Custom(custom_op) = &instr.operation {
+                    Some(custom_op.name().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(qis_ops, vec!["rz", "rxy", "rz"]);
     }
 
     #[test]
@@ -427,22 +401,21 @@ mod tests {
         let mut converter = HugrToQisConverter::new();
         converter.convert_module(&mut module);
 
-        // Check that we have 4 QIS operations (RXY, RZZ, RZ, RXY)
-        assert_eq!(module.body.blocks[0].operations.len(), 4);
+        // 3 ConstFloat + 4 gate ops (RXY, RZZ, RZ, RXY) = 7 total
+        assert_eq!(module.body.blocks[0].operations.len(), 7);
 
-        // Verify the sequence of operations
-        let ops: Vec<_> = module.body.blocks[0]
+        // Verify the sequence of QIS gate operations
+        let qis_ops: Vec<_> = module.body.blocks[0]
             .operations
             .iter()
             .filter_map(|instr| {
                 if let Operation::Custom(custom_op) = &instr.operation {
-                    Some(custom_op.name())
+                    Some(custom_op.name().to_string())
                 } else {
                     None
                 }
             })
             .collect();
-
-        assert_eq!(ops, vec!["rxy", "rzz", "rz", "rxy"]);
+        assert_eq!(qis_ops, vec!["rxy", "rzz", "rz", "rxy"]);
     }
 }

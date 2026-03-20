@@ -14,7 +14,7 @@
 //!
 //! This module provides drop-in replacements for numpy.linalg functions.
 
-use ndarray::{ArrayBase, Data, Dimension};
+use ndarray::{Array2, ArrayBase, Data, Dimension, LinalgScalar};
 use num_complex::Complex64;
 
 /// Compute the norm of a vector or matrix.
@@ -176,6 +176,133 @@ where
 }
 
 // ============================================================================
+// Kronecker product
+// ============================================================================
+
+/// Compute the Kronecker product of two 2D arrays.
+///
+/// Generic over element type -- works for both `f64` and `Complex64`.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::array;
+/// use pecos_num::linalg::kron;
+///
+/// let a = array![[1.0, 2.0], [3.0, 4.0]];
+/// let b = array![[0.0, 5.0], [6.0, 7.0]];
+/// let result = kron(&a, &b);
+/// assert_eq!(result.shape(), &[4, 4]);
+/// ```
+#[must_use]
+pub fn kron<T: LinalgScalar>(a: &Array2<T>, b: &Array2<T>) -> Array2<T> {
+    let (m, n) = (a.nrows(), a.ncols());
+    let (p, q) = (b.nrows(), b.ncols());
+    let mut result = Array2::<T>::zeros((m * p, n * q));
+    for i in 0..m {
+        for j in 0..n {
+            let a_ij = a[(i, j)];
+            for k in 0..p {
+                for l in 0..q {
+                    result[(i * p + k, j * q + l)] = a_ij * b[(k, l)];
+                }
+            }
+        }
+    }
+    result
+}
+
+// ============================================================================
+// Matrix power
+// ============================================================================
+
+/// Raise a square f64 matrix to a non-negative integer power using binary exponentiation.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::array;
+/// use pecos_num::linalg::matrix_power_f64;
+///
+/// let a = array![[1.0, 2.0], [3.0, 4.0]];
+/// let result = matrix_power_f64(&a, 2);
+/// assert!((result[(0, 0)] - 7.0).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn matrix_power_f64(a: &Array2<f64>, n: u32) -> Array2<f64> {
+    let size = a.nrows();
+    if n == 0 {
+        let mut id = Array2::<f64>::zeros((size, size));
+        for i in 0..size {
+            id[(i, i)] = 1.0;
+        }
+        return id;
+    }
+    let mut exp = n;
+    let mut base = a.clone();
+    let mut result = {
+        let mut id = Array2::<f64>::zeros((size, size));
+        for i in 0..size {
+            id[(i, i)] = 1.0;
+        }
+        id
+    };
+    while exp > 0 {
+        if exp % 2 == 1 {
+            result = result.dot(&base);
+        }
+        base = base.dot(&base);
+        exp /= 2;
+    }
+    result
+}
+
+/// Raise a square complex matrix to a non-negative integer power using binary exponentiation.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::array;
+/// use num_complex::Complex64;
+/// use pecos_num::linalg::matrix_power_c64;
+///
+/// let a = array![
+///     [Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
+///     [Complex64::new(3.0, 0.0), Complex64::new(4.0, 0.0)]
+/// ];
+/// let result = matrix_power_c64(&a, 2);
+/// assert!((result[(0, 0)] - Complex64::new(7.0, 0.0)).norm() < 1e-10);
+/// ```
+#[must_use]
+pub fn matrix_power_c64(a: &Array2<Complex64>, n: u32) -> Array2<Complex64> {
+    let size = a.nrows();
+    if n == 0 {
+        let mut id = Array2::<Complex64>::zeros((size, size));
+        for i in 0..size {
+            id[(i, i)] = Complex64::new(1.0, 0.0);
+        }
+        return id;
+    }
+    let mut exp = n;
+    let mut base = a.clone();
+    let mut result = {
+        let mut id = Array2::<Complex64>::zeros((size, size));
+        for i in 0..size {
+            id[(i, i)] = Complex64::new(1.0, 0.0);
+        }
+        id
+    };
+    while exp > 0 {
+        if exp % 2 == 1 {
+            result = result.dot(&base);
+        }
+        base = base.dot(&base);
+        exp /= 2;
+    }
+    result
+}
+
+// ============================================================================
 // Matrix exponential and logarithm
 // ============================================================================
 
@@ -292,6 +419,101 @@ pub fn matrix_log(m: &DMatrix<Complex64>) -> Option<DMatrix<Complex64>> {
     // Scaling: log(M) = 2^s * log(M^(1/2^s))
     let scale = Complex64::new(2.0_f64.powi(s), 0.0);
     Some(log_scaled * scale)
+}
+
+// ============================================================================
+// ndarray convenience wrappers for expm / logm
+// ============================================================================
+
+/// Compute the matrix exponential of a complex 2D array.
+///
+/// Convenience wrapper around [`matrix_exp`] that accepts and returns `ndarray::Array2`
+/// instead of `nalgebra::DMatrix`, so callers don't need the nalgebra dependency.
+///
+/// Uses the scipy naming convention (`expm`) to match the project's goal of being
+/// numpy/scipy drop-in replacements.
+///
+/// # Arguments
+///
+/// * `m` - A square complex 2D array
+///
+/// # Returns
+///
+/// The matrix exponential exp(M), or an error if the matrix is not square.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::Array2;
+/// use num_complex::Complex64;
+/// use pecos_num::linalg::expm;
+///
+/// let zero = Array2::from_elem((2, 2), Complex64::new(0.0, 0.0));
+/// let result = expm(&zero).unwrap();
+/// assert!((result[(0, 0)] - Complex64::new(1.0, 0.0)).norm() < 1e-10);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the matrix is not square.
+pub fn expm(m: &Array2<Complex64>) -> Result<Array2<Complex64>, String> {
+    let (rows, cols) = (m.nrows(), m.ncols());
+    if rows != cols {
+        return Err(format!("expm requires a square matrix, got {rows}x{cols}"));
+    }
+    let dmat = DMatrix::from_fn(rows, cols, |i, j| m[(i, j)]);
+    let result_dmat = matrix_exp(&dmat);
+    Ok(Array2::from_shape_fn((rows, cols), |(i, j)| {
+        result_dmat[(i, j)]
+    }))
+}
+
+/// Compute the matrix logarithm of a complex 2D array.
+///
+/// Convenience wrapper around [`matrix_log`] that accepts and returns `ndarray::Array2`
+/// instead of `nalgebra::DMatrix`.
+///
+/// Uses the scipy naming convention (`logm`) to match the project's goal of being
+/// numpy/scipy drop-in replacements.
+///
+/// # Arguments
+///
+/// * `m` - A square complex 2D array
+///
+/// # Returns
+///
+/// The matrix logarithm log(M), or an error if the matrix is not square or is singular.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::Array2;
+/// use num_complex::Complex64;
+/// use pecos_num::linalg::logm;
+///
+/// // log(I) = 0
+/// let mut eye = Array2::zeros((2, 2));
+/// eye[(0, 0)] = Complex64::new(1.0, 0.0);
+/// eye[(1, 1)] = Complex64::new(1.0, 0.0);
+/// let result = logm(&eye).unwrap();
+/// assert!(result[(0, 0)].norm() < 1e-10);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the matrix is not square or if the computation fails
+/// (e.g., singular matrix).
+pub fn logm(m: &Array2<Complex64>) -> Result<Array2<Complex64>, String> {
+    let (rows, cols) = (m.nrows(), m.ncols());
+    if rows != cols {
+        return Err(format!("logm requires a square matrix, got {rows}x{cols}"));
+    }
+    let dmat = DMatrix::from_fn(rows, cols, |i, j| m[(i, j)]);
+    let result_dmat =
+        matrix_log(&dmat).ok_or_else(|| "logm failed: matrix may be singular".to_string())?;
+    Ok(Array2::from_shape_fn((rows, cols), |(i, j)| {
+        result_dmat[(i, j)]
+    }))
 }
 
 /// Computes the principal square root of a complex matrix.
@@ -466,5 +688,173 @@ mod tests {
         // (3+4i) has magnitude 5
         let v = array![Complex64::new(3.0, 4.0)];
         assert!((norm_complex(&v, None) - 5.0).abs() < 1e-10);
+    }
+
+    // ---- kron tests ----
+
+    #[test]
+    fn test_kron_identity() {
+        let a = array![[1.0, 0.0], [0.0, 1.0]];
+        let b = array![[1.0, 0.0], [0.0, 1.0]];
+        let result = kron(&a, &b);
+        let expected = array![
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ];
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_kron_known_value() {
+        let a = array![[1.0, 2.0], [3.0, 4.0]];
+        let b = array![[0.0, 5.0], [6.0, 7.0]];
+        let result = kron(&a, &b);
+        let expected = array![
+            [0.0, 5.0, 0.0, 10.0],
+            [6.0, 7.0, 12.0, 14.0],
+            [0.0, 15.0, 0.0, 20.0],
+            [18.0, 21.0, 24.0, 28.0]
+        ];
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_kron_not_commutative() {
+        let a = array![[1.0, 2.0], [0.0, 1.0]];
+        let b = array![[0.0, 1.0], [1.0, 0.0]];
+        let ab = kron(&a, &b);
+        let ba = kron(&b, &a);
+        assert_ne!(ab, ba);
+    }
+
+    #[test]
+    fn test_kron_complex() {
+        let i = Complex64::new(0.0, 1.0);
+        let one = Complex64::new(1.0, 0.0);
+        let zero = Complex64::new(0.0, 0.0);
+        let a = array![[one, zero], [zero, i]];
+        let b = array![[one, zero], [zero, one]];
+        let result = kron(&a, &b);
+        assert_eq!(result[(0, 0)], one);
+        assert_eq!(result[(2, 2)], i);
+        assert_eq!(result[(3, 3)], i);
+    }
+
+    // ---- matrix_power tests ----
+
+    #[test]
+    fn test_matrix_power_f64_zero() {
+        let a = array![[2.0, 3.0], [4.0, 5.0]];
+        let result = matrix_power_f64(&a, 0);
+        let expected = array![[1.0, 0.0], [0.0, 1.0]];
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_matrix_power_f64_one() {
+        let a = array![[2.0, 3.0], [4.0, 5.0]];
+        let result = matrix_power_f64(&a, 1);
+        assert_eq!(result, a);
+    }
+
+    #[test]
+    fn test_matrix_power_f64_two() {
+        let a = array![[1.0, 2.0], [3.0, 4.0]];
+        let result = matrix_power_f64(&a, 2);
+        let expected = a.dot(&a);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_matrix_power_c64() {
+        let one = Complex64::new(1.0, 0.0);
+        let two = Complex64::new(2.0, 0.0);
+        let three = Complex64::new(3.0, 0.0);
+        let four = Complex64::new(4.0, 0.0);
+        let a = array![[one, two], [three, four]];
+        let result = matrix_power_c64(&a, 2);
+        let expected = a.dot(&a);
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!((result[(i, j)] - expected[(i, j)]).norm() < 1e-10);
+            }
+        }
+    }
+
+    // ---- expm / logm tests ----
+
+    #[test]
+    fn test_expm_zero_is_identity() {
+        let zero = Array2::from_elem((2, 2), Complex64::new(0.0, 0.0));
+        let result = expm(&zero).unwrap();
+        let one = Complex64::new(1.0, 0.0);
+        assert!((result[(0, 0)] - one).norm() < 1e-10);
+        assert!((result[(1, 1)] - one).norm() < 1e-10);
+        assert!(result[(0, 1)].norm() < 1e-10);
+        assert!(result[(1, 0)].norm() < 1e-10);
+    }
+
+    #[test]
+    fn test_expm_known_2x2() {
+        // exp([[0, 1], [0, 0]]) = [[1, 1], [0, 1]]
+        let zero = Complex64::new(0.0, 0.0);
+        let one = Complex64::new(1.0, 0.0);
+        let m = array![[zero, one], [zero, zero]];
+        let result = expm(&m).unwrap();
+        assert!((result[(0, 0)] - one).norm() < 1e-10);
+        assert!((result[(0, 1)] - one).norm() < 1e-10);
+        assert!(result[(1, 0)].norm() < 1e-10);
+        assert!((result[(1, 1)] - one).norm() < 1e-10);
+    }
+
+    #[test]
+    fn test_expm_non_square_error() {
+        let m = Array2::from_elem((2, 3), Complex64::new(0.0, 0.0));
+        let result = expm(&m);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("square"));
+    }
+
+    #[test]
+    fn test_logm_identity_is_zero() {
+        let one = Complex64::new(1.0, 0.0);
+        let zero = Complex64::new(0.0, 0.0);
+        let eye = array![[one, zero], [zero, one]];
+        let result = logm(&eye).unwrap();
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!(result[(i, j)].norm() < 1e-10);
+            }
+        }
+    }
+
+    #[test]
+    fn test_logm_non_square_error() {
+        let m = Array2::from_elem((2, 3), Complex64::new(0.0, 0.0));
+        let result = logm(&m);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("square"));
+    }
+
+    #[test]
+    fn test_logm_expm_roundtrip() {
+        let zero = Complex64::new(0.0, 0.0);
+        let a = Complex64::new(0.1, 0.2);
+        let b = Complex64::new(0.3, 0.0);
+        let m = array![[a, b], [zero, a]];
+        let exp_m = expm(&m).unwrap();
+        let log_exp_m = logm(&exp_m).unwrap();
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!(
+                    (log_exp_m[(i, j)] - m[(i, j)]).norm() < 1e-6,
+                    "mismatch at ({i},{j}): got {:?}, expected {:?}",
+                    log_exp_m[(i, j)],
+                    m[(i, j)]
+                );
+            }
+        }
     }
 }

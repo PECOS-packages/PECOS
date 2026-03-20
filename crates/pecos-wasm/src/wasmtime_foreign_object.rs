@@ -575,10 +575,14 @@ impl ForeignObject for WasmForeignObject {
                     if trap_str.contains("integer divide by zero") {
                         return Err(PecosError::RuntimeDivisionByZero);
                     }
+                    // Return the trap code/type without the verbose backtrace
+                    return Err(PecosError::Generic(format!(
+                        "WebAssembly function '{func_name}' trapped: {trap}"
+                    )));
                 }
 
-                Err(PecosError::Processing(format!(
-                    "WebAssembly function '{func_name}' trapped: {e}"
+                Err(PecosError::Generic(format!(
+                    "WebAssembly function '{func_name}' failed: {e}"
                 )))
             }
         }

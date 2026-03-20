@@ -23,4 +23,4 @@ Wraps the Tesseract search-based decoder for quantum error correction. Uses A* s
 This crate wraps [Tesseract](https://github.com/quantumlib/tesseract-decoder), a search-based decoder developed at Google Quantum AI.
 
 **Paper:**
-- Beni, N., Higgott, O., & Shutty, N. (2025). "Tesseract: A Search-Based Decoder for Quantum Error Correction." [arXiv:2503.10988](https://arxiv.org/abs/2503.10988)
+- Aghababaie Beni, L., Higgott, O., & Shutty, N. (2025). "Tesseract: A Search-Based Decoder for Quantum Error Correction." [arXiv:2503.10988](https://arxiv.org/abs/2503.10988)

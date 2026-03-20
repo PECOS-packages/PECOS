@@ -70,7 +70,7 @@ pub enum Operation {
 
     /// Measurement with classical register mapping
     MeasureWithMapping {
-        gate: Gate, // Gate with GateType::Measure
+        gate: Gate, // Gate with GateType::MZ
         c_reg: String,
         c_index: usize,
     },
@@ -216,7 +216,7 @@ impl fmt::Display for OperationDisplay<'_> {
             }
             Operation::NativeGate(gate) => {
                 // Display gate type in QASM format
-                let gate_name = if gate.gate_type == GateType::Prep {
+                let gate_name = if gate.gate_type == GateType::PZ {
                     "reset".to_string() // PECOS Prep -> QASM reset
                 } else {
                     // Use lowercase for QASM display

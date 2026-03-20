@@ -29,14 +29,14 @@
 //!
 //! ## Level 1: Stabilizer Flip Analysis ([`StabilizerFlipChecker`])
 //!
-//! Works directly from a [`StabilizerCode`](crate::StabilizerCode) definition using
+//! Works directly from a [`StabilizerCodeSpec`](crate::StabilizerCodeSpec) definition using
 //! anti-commutation checks. No circuit needed.
 //!
 //! ```
-//! use pecos_qec::{StabilizerCode, StabilizerFlipChecker};
+//! use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
 //! use pecos_core::{Xs, Zs};
 //!
-//! let code = StabilizerCode::builder(3)
+//! let code = StabilizerCodeSpec::builder(3)
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))
@@ -221,7 +221,7 @@ impl SpacetimeLocation {
     /// Returns true if this is a measurement location.
     #[must_use]
     pub fn is_measurement(&self) -> bool {
-        matches!(self.gate_type, GateType::Measure | GateType::MeasureFree)
+        matches!(self.gate_type, GateType::MZ | GateType::MeasureFree)
     }
 }
 
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn test_fault_configuration_by_tick() {
         let loc1 = SpacetimeLocation::new(0, vec![QubitId(0)], false, GateType::H, 0);
-        let loc2 = SpacetimeLocation::new(1, vec![QubitId(0)], true, GateType::Measure, 0);
+        let loc2 = SpacetimeLocation::new(1, vec![QubitId(0)], true, GateType::MZ, 0);
 
         let mut config = FaultConfiguration::new();
         config.add_fault(PauliFault::new(loc1, vec![1]));

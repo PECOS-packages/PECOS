@@ -1430,7 +1430,7 @@ impl<'a> DemSamplerBuilder<'a> {
         // Process each fault location
         for (loc_idx, loc) in self.influence_map.locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     // Prep errors: only "after" locations (X error for Z-basis prep)
                     if self.p_init > 0.0 && !loc.before {
                         self.process_single_pauli_fault(
@@ -1443,7 +1443,7 @@ impl<'a> DemSamplerBuilder<'a> {
                         );
                     }
                 }
-                GateType::Measure | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree => {
                     // Measurement errors: only "before" locations (X error = bit flip)
                     if self.p_meas > 0.0 && loc.before {
                         self.process_single_pauli_fault(

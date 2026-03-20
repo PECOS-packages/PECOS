@@ -14,8 +14,7 @@
 
 use core::fmt::Debug;
 use num_complex::Complex64;
-use pecos_rng::PecosRng;
-use rand_core::{Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng, time_seed};
 use std::f64::consts::FRAC_PI_4;
 use thiserror::Error;
 
@@ -148,15 +147,7 @@ impl QuestStateVec {
     /// allocation fails.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        // Generate a random seed using system time and a counter
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_nanos()
-            .try_into()
-            .unwrap_or(0);
-        Self::with_seed(num_qubits, seed)
+        Self::with_seed(num_qubits, time_seed())
     }
 }
 
@@ -608,15 +599,7 @@ impl QuestDensityMatrix {
     /// allocation fails.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
-        // Generate a random seed using system time and a counter
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_nanos()
-            .try_into()
-            .unwrap_or(0);
-        Self::with_seed(num_qubits, seed)
+        Self::with_seed(num_qubits, time_seed())
     }
 }
 

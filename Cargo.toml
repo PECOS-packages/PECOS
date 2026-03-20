@@ -3,14 +3,13 @@ resolver = "2"
 members = [
   "python/pecos-rslib",
   "python/pecos-rslib-cuda",
-  "python/selene-plugins/pecos-selene-sparsestab",
+  "python/selene-plugins/pecos-selene-stab",
   "python/selene-plugins/pecos-selene-statevec",
-  "python/selene-plugins/pecos-selene-quest",
-  "python/selene-plugins/pecos-selene-qulacs",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",
   "crates/pecos*",
   "crates/benchmarks",
+  "exp/pecos*",
 ]
 
 [workspace.package]
@@ -43,7 +42,7 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "41", default-features = false, features = [
+wasmtime = { version = "42", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",
@@ -53,6 +52,12 @@ wat = "1"
 ron = "0.12"
 tket = { version = "0.17", default-features = false }
 tket-qsystem = { version = "0.23", default-features = false }
+# Pin hugr-core to 0.25.6: hugr-core 0.25.7 widened strum to >=0.27.2,<0.29 which lets the
+# resolver pick strum 0.28, conflicting with tket 0.17 (requires strum ^0.27).
+# hugr-core 0.25.6 uses strum ^0.27.2 so there's no conflict.
+# Remove this pin once tket updates to strum 0.28+.
+hugr-core = "=0.25.6"
+bindgen = "0.72"
 cc = "1"
 cxx = "1"
 cxx-build = "1"
@@ -103,6 +108,7 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
 
 # RNG
+fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
@@ -133,7 +139,7 @@ pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
 pecos-qasm = { version = "0.1.1", path = "crates/pecos-qasm" }
 pecos-phir-json = { version = "0.1.1", path = "crates/pecos-phir-json" }
 pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
-pecos-experimental = { version = "0.1.1", path = "crates/pecos-experimental" }
+pecos-experimental = { version = "0.1.1", path = "exp/pecos-experimental" }
 pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
@@ -151,6 +157,8 @@ pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 pecos-zx = { version = "0.1.1", path = "crates/pecos-zx" }
 pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
 pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
+pecos-neo = { version = "0.1.1", path = "exp/pecos-neo" }
+pecos-cuquantum-sys = { version = "0.1.1", path = "crates/pecos-cuquantum-sys" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }
@@ -171,8 +179,20 @@ pecos-chromobius = { version = "0.1.1", path = "crates/pecos-chromobius" }
 # Fusion Blossom decoder wrapper (pure Rust MWPM)
 pecos-fusion-blossom = { version = "0.1.1", path = "crates/pecos-fusion-blossom" }
 
+# Relay BP decoder wrapper (pure Rust BP for qLDPC codes)
+pecos-relay-bp = { version = "0.1.1", path = "crates/pecos-relay-bp" }
+
 # Fusion Blossom library (pure Rust MWPM decoder)
 fusion-blossom = "0.2"
+
+# Relay BP library (pure Rust belief propagation decoder)
+relay-bp = "0.2"
+
+# ndarray 0.16 for relay-bp compatibility (relay-bp uses ndarray 0.16, PECOS uses 0.17)
+ndarray-016 = { package = "ndarray", version = "0.16" }
+
+# sprs for sparse matrix construction (pinned to 0.11.3 for ndarray 0.16 compat with relay-bp)
+sprs = "=0.11.3"
 
 # petgraph for graph algorithms (used by pymatching)
 petgraph = "0.8"

@@ -21,7 +21,6 @@ cannot be imported by spawned children.
 
 import multiprocessing
 import pickle
-import sys
 
 import pytest
 from pecos._mp_workers import (
@@ -32,9 +31,11 @@ from pecos._mp_workers import (
 from pecos.engines.hybrid_engine_multiprocessing import worker_wrapper
 from pecos_rslib import CoinToss, PauliProp, SparseSim, StateVec
 
-# Use fork context on Linux (fast, avoids spawn serialization issues with test files).
-# On macOS/Windows where fork is unavailable or unsafe, use spawn.
-_MP_CONTEXT = "fork" if sys.platform == "linux" else "spawn"
+# Use spawn context everywhere. All worker functions live in installed modules
+# (pecos._mp_workers, pecos.engines.hybrid_engine_multiprocessing), so they are
+# importable by spawned child processes. Using fork in a multi-threaded process
+# (e.g. pytest) can deadlock and triggers DeprecationWarning in Python 3.12+.
+_MP_CONTEXT = "spawn"
 _POOL_TIMEOUT = 60  # seconds -- fail fast instead of hanging CI
 
 

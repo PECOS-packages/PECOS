@@ -19,7 +19,7 @@ import pecos as pc
 class TestWeightedMean:
     """Test weighted_mean function."""
 
-    def test_weighted_mean_basic(self):
+    def test_weighted_mean_basic(self) -> None:
         """Basic weighted mean calculation."""
         data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
         result = pc.stats.weighted_mean(data)
@@ -29,31 +29,31 @@ class TestWeightedMean:
         expected = 0.95
         assert abs(result - expected) < 1e-10
 
-    def test_weighted_mean_uniform_weights(self):
+    def test_weighted_mean_uniform_weights(self) -> None:
         """With uniform weights, should match unweighted mean."""
         data = [(1.0, 1.0), (2.0, 1.0), (3.0, 1.0), (4.0, 1.0), (5.0, 1.0)]
         result = pc.stats.weighted_mean(data)
         assert abs(result - 3.0) < 1e-10
 
-    def test_weighted_mean_single_value(self):
+    def test_weighted_mean_single_value(self) -> None:
         """Single value should return that value."""
         data = [(0.95, 1000.0)]
         result = pc.stats.weighted_mean(data)
         assert abs(result - 0.95) < 1e-10
 
-    def test_weighted_mean_empty(self):
+    def test_weighted_mean_empty(self) -> None:
         """Empty data should return NaN."""
         data = []
         result = pc.stats.weighted_mean(data)
         assert pc.isnan(result)
 
-    def test_weighted_mean_zero_total_weight(self):
+    def test_weighted_mean_zero_total_weight(self) -> None:
         """Zero total weight should return NaN."""
         data = [(0.5, 0.0), (0.7, 0.0)]
         result = pc.stats.weighted_mean(data)
         assert pc.isnan(result)
 
-    def test_weighted_mean_heavy_weight(self):
+    def test_weighted_mean_heavy_weight(self) -> None:
         """One measurement with much higher weight."""
         data = [(0.5, 10.0), (0.9, 1000.0)]
         result = pc.stats.weighted_mean(data)
@@ -66,7 +66,7 @@ class TestWeightedMean:
 class TestJackknifeResamples:
     """Test jackknife_resamples function."""
 
-    def test_jackknife_resamples_basic(self):
+    def test_jackknife_resamples_basic(self) -> None:
         """Basic jackknife resample generation."""
         data = [1.0, 2.0, 3.0, 4.0, 5.0]
         resamples = pc.stats.jackknife_resamples(data)
@@ -81,7 +81,7 @@ class TestJackknifeResamples:
         assert pc.array_equal(resamples[3], pc.array([1.0, 2.0, 3.0, 5.0]))  # removed 4.0
         assert pc.array_equal(resamples[4], pc.array([1.0, 2.0, 3.0, 4.0]))  # removed 5.0
 
-    def test_jackknife_resamples_two_elements(self):
+    def test_jackknife_resamples_two_elements(self) -> None:
         """Edge case with two elements."""
         data = [10.0, 20.0]
         resamples = pc.stats.jackknife_resamples(data)
@@ -90,14 +90,14 @@ class TestJackknifeResamples:
         assert pc.array_equal(resamples[0], pc.array([20.0]))
         assert pc.array_equal(resamples[1], pc.array([10.0]))
 
-    def test_jackknife_resamples_single_element(self):
+    def test_jackknife_resamples_single_element(self) -> None:
         """Edge case with single element."""
         data = [42.0]
         resamples = pc.stats.jackknife_resamples(data)
 
         assert resamples.shape == (1, 0)
 
-    def test_jackknife_resamples_negative_values(self):
+    def test_jackknife_resamples_negative_values(self) -> None:
         """Jackknife should work with negative values."""
         data = [-3.0, -1.0, 1.0, 3.0]
         resamples = pc.stats.jackknife_resamples(data)
@@ -112,7 +112,7 @@ class TestJackknifeResamples:
 class TestJackknifeStats:
     """Test jackknife_stats function."""
 
-    def test_jackknife_stats_basic(self):
+    def test_jackknife_stats_basic(self) -> None:
         """Basic jackknife statistics calculation."""
         estimates = [1.5, 1.6, 1.4, 1.5, 1.7]
         jack_mean, jack_se = pc.stats.jackknife_stats(estimates)
@@ -125,7 +125,7 @@ class TestJackknifeStats:
         assert jack_se > 0.0
         assert jack_se < 1.0
 
-    def test_jackknife_stats_uniform_estimates(self):
+    def test_jackknife_stats_uniform_estimates(self) -> None:
         """All estimates the same → SE should be 0."""
         estimates = [2.5, 2.5, 2.5, 2.5]
         jack_mean, jack_se = pc.stats.jackknife_stats(estimates)
@@ -133,7 +133,7 @@ class TestJackknifeStats:
         assert abs(jack_mean - 2.5) < 1e-10
         assert abs(jack_se - 0.0) < 1e-10
 
-    def test_jackknife_stats_two_estimates(self):
+    def test_jackknife_stats_two_estimates(self) -> None:
         """Edge case with two estimates."""
         estimates = [1.0, 3.0]
         jack_mean, jack_se = pc.stats.jackknife_stats(estimates)
@@ -148,7 +148,7 @@ class TestJackknifeStats:
 class TestJackknifeWeighted:
     """Test jackknife_weighted function."""
 
-    def test_jackknife_weighted_single_measurement(self):
+    def test_jackknife_weighted_single_measurement(self) -> None:
         """Single measurement should use binomial error."""
         data = [(0.95, 1000.0)]
         estimate, error = pc.stats.jackknife_weighted(data)
@@ -161,7 +161,7 @@ class TestJackknifeWeighted:
         expected_error = pc.sqrt(0.05 * 0.95 / 1000.0)
         assert abs(error - expected_error) < 1e-10
 
-    def test_jackknife_weighted_multiple_measurements(self):
+    def test_jackknife_weighted_multiple_measurements(self) -> None:
         """Multiple measurements with different weights."""
         data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
         corrected, std_err = pc.stats.jackknife_weighted(data)
@@ -174,7 +174,7 @@ class TestJackknifeWeighted:
         assert std_err > 0.0
         assert std_err < 1.0
 
-    def test_jackknife_weighted_uniform_weights(self):
+    def test_jackknife_weighted_uniform_weights(self) -> None:
         """With uniform weights, behavior should match unweighted jackknife."""
         data = [(1.0, 1.0), (2.0, 1.0), (3.0, 1.0), (4.0, 1.0), (5.0, 1.0)]
         corrected, std_err = pc.stats.jackknife_weighted(data)
@@ -185,7 +185,7 @@ class TestJackknifeWeighted:
         # SE should be reasonable
         assert std_err > 0.0
 
-    def test_jackknife_weighted_two_measurements(self):
+    def test_jackknife_weighted_two_measurements(self) -> None:
         """Edge case with two measurements."""
         data = [(0.9, 100.0), (0.8, 200.0)]
         corrected, std_err = pc.stats.jackknife_weighted(data)
@@ -205,7 +205,7 @@ class TestJackknifeWeighted:
 class TestJackknifeIntegration:
     """Integration tests combining multiple jackknife functions."""
 
-    def test_jackknife_resamples_and_stats_integration(self):
+    def test_jackknife_resamples_and_stats_integration(self) -> None:
         """Full jackknife workflow: resample → estimate → stats."""
         data = [1.5, 1.6, 1.4, 1.5, 1.7]
 
@@ -226,7 +226,7 @@ class TestJackknifeIntegration:
         assert jack_se > 0.0
         assert jack_se < 1.0
 
-    def test_jackknife_weighted_vs_manual_calculation(self):
+    def test_jackknife_weighted_vs_manual_calculation(self) -> None:
         """Verify jackknife_weighted matches manual calculation."""
         data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
         corrected, std_err = pc.stats.jackknife_weighted(data)
@@ -258,7 +258,7 @@ class TestJackknifeIntegration:
 class TestJackknifeQuantumComputing:
     """Test jackknife with quantum computing use cases."""
 
-    def test_fidelity_estimation(self):
+    def test_fidelity_estimation(self) -> None:
         """Typical quantum fidelity estimation scenario."""
         # Simulated fidelity measurements from repeated experiments
         data = [
@@ -280,7 +280,7 @@ class TestJackknifeQuantumComputing:
         # Error should be small (high confidence with many shots)
         assert std_err < 0.05
 
-    def test_low_shot_count_scenario(self):
+    def test_low_shot_count_scenario(self) -> None:
         """Scenario with very few shots (higher uncertainty)."""
         data = [(0.95, 10)]  # Single run with only 10 shots
         estimate, error = pc.stats.jackknife_weighted(data)

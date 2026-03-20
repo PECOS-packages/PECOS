@@ -150,6 +150,8 @@ pub mod engines {
     pub use pecos_qis::{QisEngine, QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
     #[cfg(feature = "phir")]
+    pub use pecos_phir::{PhirEngine, PhirEngineBuilder, phir_engine};
+    #[cfg(feature = "phir")]
     pub use pecos_phir_json::{PhirJsonEngine, PhirJsonEngineBuilder, phir_json_engine};
 
     #[cfg(feature = "hugr")]
@@ -191,9 +193,12 @@ pub mod engines {
 pub mod quantum {
     // Circuit representation from pecos-quantum
     pub use pecos_quantum::{
-        Attribute, Circuit, CircuitMut, DagCircuit, DagWouldCycleError, Gate, GateHandle, GateType,
-        GateView, QubitId, Tick, TickCircuit,
+        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagWouldCycleError, Gate,
+        GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
     };
+
+    // Pauli algebra and stabilizer types from pecos-quantum
+    pub use pecos_quantum::{F2Matrix, PauliSequence, PauliSet, PauliStabilizerGroup};
 
     // HUGR conversion (requires hugr feature)
     #[cfg(feature = "hugr")]
@@ -390,6 +395,12 @@ pub mod wasm {
 #[cfg(feature = "num")]
 pub mod linalg {
     pub use pecos_num::linalg::*;
+}
+
+/// Array operations (numpy replacements).
+#[cfg(feature = "num")]
+pub mod array {
+    pub use pecos_num::array::*;
 }
 
 /// Random number generation
@@ -660,6 +671,7 @@ pub mod dag {
     feature = "fusion-blossom",
     feature = "tesseract",
     feature = "chromobius",
+    feature = "relay-bp",
     feature = "all-decoders"
 ))]
 pub mod decoders {
@@ -745,7 +757,7 @@ pub use pecos_qasm::{QasmEngineBuilder, qasm_engine, run_qasm};
 pub use pecos_qis::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
 #[cfg(feature = "phir")]
-pub use pecos_phir::PhirConfig;
+pub use pecos_phir::{PhirConfig, PhirEngineBuilder, phir_engine};
 #[cfg(feature = "phir")]
 pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
 

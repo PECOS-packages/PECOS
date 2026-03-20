@@ -15,7 +15,7 @@
 //! This module provides algorithms for computing the distance of a stabilizer code
 //! by exhaustively searching for minimum weight logical operators.
 
-use crate::StabilizerCode;
+use crate::StabilizerCodeSpec;
 use pecos_core::{Pauli, PauliString, QubitId};
 
 /// Result of a distance calculation, including the minimum weight logical operator found.
@@ -263,7 +263,7 @@ impl Iterator for WeightedPauliIterator {
 /// a very long time to complete. Use `config.max_weight` to limit the search.
 #[must_use]
 pub fn calculate_distance(
-    code: &StabilizerCode,
+    code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
 ) -> Option<DistanceResult> {
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
@@ -296,7 +296,7 @@ pub fn calculate_distance(
 /// not just one.
 #[must_use]
 pub fn find_min_weight_logicals(
-    code: &StabilizerCode,
+    code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
 ) -> Vec<PauliString> {
     find_min_weight_logicals_with_info(code, config)
@@ -313,7 +313,7 @@ pub fn find_min_weight_logicals(
 /// # Example
 ///
 /// ```
-/// use pecos_qec::{StabilizerCode, DistanceSearchConfig, find_min_weight_logicals_with_info};
+/// use pecos_qec::{StabilizerCodeSpec, DistanceSearchConfig, find_min_weight_logicals_with_info};
 /// use pecos_core::{Pauli, PauliString, QubitId, QuarterPhase};
 ///
 /// fn pauli_string(paulis: &[(Pauli, usize)]) -> PauliString {
@@ -329,7 +329,7 @@ pub fn find_min_weight_logicals(
 /// let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
 /// let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 ///
-/// let code = StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+/// let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
 ///
 /// let config = DistanceSearchConfig::with_max_weight(2);
 /// let logicals = find_min_weight_logicals_with_info(&code, &config);
@@ -342,7 +342,7 @@ pub fn find_min_weight_logicals(
 /// ```
 #[must_use]
 pub fn find_min_weight_logicals_with_info(
-    code: &StabilizerCode,
+    code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
 ) -> Vec<LogicalOperatorInfo> {
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
@@ -399,7 +399,7 @@ pub fn find_min_weight_logicals_with_info(
 /// - If the operator anticommutes with logical Z[i], it contains X[i]
 /// - If the operator anticommutes with logical X[i], it contains Z[i]
 fn classify_logical_equivalence_indexed(
-    log_index: &crate::stabilizer_code::LogicalIndex,
+    log_index: &crate::stabilizer_code_spec::LogicalIndex,
     num_logical_qubits: usize,
     pauli: &PauliString,
 ) -> Vec<(char, usize)> {
@@ -518,8 +518,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         let config = DistanceSearchConfig::default();
         let result = calculate_distance(&code, &config);
@@ -556,7 +556,7 @@ mod tests {
             (Pauli::X, 4),
         ]);
 
-        let code = StabilizerCode::new(
+        let code = StabilizerCodeSpec::new(
             5,
             vec![stab1, stab2, stab3, stab4],
             vec![logical_z],
@@ -584,8 +584,8 @@ mod tests {
         let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
         let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
 
-        let code =
-            StabilizerCode::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
+        let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
+            .unwrap();
 
         let config = DistanceSearchConfig::with_max_weight(2);
         let logicals = find_min_weight_logicals_with_info(&code, &config);

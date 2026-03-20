@@ -17,10 +17,12 @@
 // the License.
 
 mod array_buffer;
+mod bit_conversion;
 mod bit_int_bindings;
+mod bit_uint_bindings;
 mod byte_message_bindings;
+mod clifford_rep_bindings;
 mod coin_toss_bindings;
-mod cpp_sparse_sim_bindings;
 mod dag_circuit_bindings;
 mod decoder_bindings;
 mod dtypes;
@@ -33,6 +35,9 @@ mod noise_helpers;
 mod num_bindings;
 mod pauli_bindings;
 mod pauli_prop_bindings;
+mod pauli_sequence_bindings;
+mod stabilizer_code_bindings;
+mod stabilizer_group_bindings;
 // mod pcg_bindings;
 mod hugr_compilation_bindings;
 mod namespace_modules;
@@ -41,6 +46,7 @@ mod pecos_rng_bindings;
 mod phir_json_bridge;
 // mod qir_bindings;  // Removed - replaced by llvm_bindings
 mod engines_module;
+mod gate_registry_bindings;
 mod llvm_bindings;
 mod programs_module;
 mod quest_bindings;
@@ -52,6 +58,7 @@ mod simulators_module;
 mod sparse_sim;
 mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
+mod stab_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
 mod types_module;
@@ -62,9 +69,9 @@ mod wasm_program_bindings;
 // Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
 
 use bit_int_bindings::PyBitInt;
+use bit_uint_bindings::PyBitUInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
-use cpp_sparse_sim_bindings::PySparseSimCpp;
 use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
 use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
@@ -74,6 +81,7 @@ use quest_bindings::{QuestDensityMatrix, QuestStateVec};
 use qulacs_bindings::PyQulacs;
 use sparse_stab_bindings::PySparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
+use stab_bindings::PyStab;
 use state_vec_bindings::PyStateVec;
 use state_vec_engine_bindings::PyStateVecEngine;
 #[cfg(feature = "wasm")]
@@ -199,8 +207,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
 
     m.add_class::<PySparseSim>()?;
+    m.add_class::<PyStab>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
-    m.add_class::<PySparseSimCpp>()?;
     m.add_class::<PyStateVec>()?;
     m.add_class::<PyQulacs>()?;
     m.add_class::<PyCoinToss>()?;
@@ -216,6 +224,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QuestDensityMatrix>()?;
     m.add_class::<Array>()?;
     m.add_class::<PyBitInt>()?;
+    m.add_class::<PyBitUInt>()?;
 
     // Register simulator utilities (GateBindingsDict, TableauWrapper)
     simulator_utils::register_simulator_utils(m)?;
@@ -259,6 +268,12 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register Pauli types (quantum operators)
     pauli_bindings::register_pauli_types(m)?;
 
+    // Register stabilizer group, Pauli sequence, and Clifford types
+    stabilizer_group_bindings::register_stabilizer_group_types(m)?;
+    stabilizer_code_bindings::register_stabilizer_code_types(m)?;
+    pauli_sequence_bindings::register_pauli_sequence_types(m)?;
+    clifford_rep_bindings::register_clifford_types(m)?;
+
     // Register graph module (graph algorithms for MWPM)
     graph_bindings::register_graph_module(m)?;
 
@@ -267,6 +282,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;
+
+    // Register gate registry types (GateRegistry, GateDefBuilder, AngleSource)
+    gate_registry_bindings::register_gate_registry_types(m)?;
 
     // Register time unit types at top level (Nanoseconds, TimeUnits)
     dag_circuit_bindings::register_time_unit_types(m)?;
@@ -283,6 +301,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(engine_builders::qis_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::selene_runtime, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::phir_json_engine, m)?)?;
+    m.add_function(wrap_pyfunction!(engine_builders::phir_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::sim_builder, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::general_noise, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::depolarizing_noise, m)?)?;
@@ -400,6 +419,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("zeros", num.getattr("zeros")?)?;
     m.add("ones", num.getattr("ones")?)?;
     m.add("delete", num.getattr("delete")?)?;
+    m.add("kron", num.getattr("kron")?)?;
 
     // Constants
     m.add("inf", num.getattr("inf")?)?;

@@ -16,8 +16,7 @@ use crate::monte_carlo::engine::MonteCarloEngine;
 use crate::noise::{DepolarizingNoiseModel, NoiseModel};
 use crate::quantum::QuantumEngine;
 use crate::quantum_system::QuantumSystem;
-use pecos_rng::PecosRng;
-use std::time::{SystemTime, UNIX_EPOCH};
+use pecos_rng::{PecosRng, resolve_seed};
 
 /// Builder for creating a `MonteCarloEngine` with customizable configuration
 ///
@@ -363,16 +362,8 @@ impl MonteCarloEngineBuilder {
         };
 
         // Create a new Monte Carlo engine with the hybrid engine
-        let (rng, seed) = if let Some(seed) = self.seed {
-            (PecosRng::seed_from_u64(seed), seed)
-        } else {
-            // Create a random seed
-            let seed = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Failed to get system time")
-                .as_secs();
-            (PecosRng::seed_from_u64(seed), seed)
-        };
+        let seed = resolve_seed(self.seed);
+        let rng = PecosRng::seed_from_u64(seed);
 
         MonteCarloEngine {
             hybrid_engine_template: hybrid_engine,

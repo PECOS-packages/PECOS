@@ -147,7 +147,7 @@ impl<'a> InfluenceBuilder<'a> {
                         sim.cx(qubits[0], qubits[1]);
                         sim.h(qubits[1]);
                     }
-                    pecos_quantum::GateType::Measure | pecos_quantum::GateType::MeasureFree => {
+                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
                         sim.mz(qubits[0]);
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
@@ -289,11 +289,11 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::Measure | pecos_quantum::GateType::MeasureFree
+                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
                 );
                 let is_prep = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::Prep | pecos_quantum::GateType::QAlloc
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
                 );
 
                 if is_measurement {
@@ -337,7 +337,7 @@ impl<'a> InfluenceBuilder<'a> {
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
                 let basis = match gate.gate_type {
-                    pecos_quantum::GateType::Measure | pecos_quantum::GateType::MeasureFree => 0,
+                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => 0,
                     _ => continue,
                 };
 
@@ -546,11 +546,11 @@ impl<'a> InfluenceBuilder<'a> {
             if let Some(gate) = propagator.gate(node) {
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::Measure | pecos_quantum::GateType::MeasureFree
+                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
                 );
                 let is_prep = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::Prep | pecos_quantum::GateType::QAlloc
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
                 );
 
                 if is_measurement {

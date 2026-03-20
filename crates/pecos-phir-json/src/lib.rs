@@ -118,6 +118,30 @@ pub fn convert_phir_json_file_to_module(path: &Path) -> Result<pecos_phir::Modul
     }
 }
 
+/// Convert a PHIR-JSON string to RON format
+///
+/// Parses the JSON into a PHIR Module, then serializes that Module to RON.
+///
+/// # Errors
+///
+/// Returns an error if JSON parsing, conversion, or RON serialization fails
+#[cfg(feature = "v0_1")]
+pub fn phir_json_to_ron(json_str: &str) -> Result<String, PecosError> {
+    let module = phir_json_to_module(json_str)?;
+    pecos_phir::to_ron(&module).map_err(|e| PecosError::Input(format!("RON serialization: {e}")))
+}
+
+/// Convert a PHIR-JSON file to RON format
+///
+/// # Errors
+///
+/// Returns an error if file reading, JSON parsing, conversion, or RON serialization fails
+#[cfg(feature = "v0_1")]
+pub fn convert_phir_json_file_to_ron(path: &Path) -> Result<String, PecosError> {
+    let content = std::fs::read_to_string(path).map_err(PecosError::IO)?;
+    phir_json_to_ron(&content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +372,255 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[cfg(feature = "v0_1")]
+    const SIMPLE_PHIR_JSON: &str = r#"{
+    "format": "PHIR/JSON",
+    "version": "0.1.0",
+    "metadata": {},
+    "ops": [
+        {
+            "data": "qvar_define",
+            "data_type": "qubits",
+            "variable": "q",
+            "size": 1
+        },
+        {
+            "data": "cvar_define",
+            "data_type": "i64",
+            "variable": "m",
+            "size": 1
+        },
+        {
+            "qop": "H",
+            "args": [["q", 0]]
+        },
+        {
+            "qop": "Measure",
+            "args": [["q", 0]],
+            "returns": [["m", 0]]
+        }
+    ]
+}"#;
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_phir_json_to_ron() {
+        let ron_string = phir_json_to_ron(SIMPLE_PHIR_JSON).expect("should convert JSON to RON");
+        assert!(!ron_string.is_empty());
+        // RON should contain newlines (pretty-printed)
+        assert!(ron_string.contains('\n'));
+        // RON should contain the quantum operations from the JSON
+        assert!(ron_string.contains('H'), "RON should contain H gate");
+        assert!(ron_string.contains("Measure"), "RON should contain Measure");
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_phir_json_to_ron_roundtrip() {
+        let ron_string = phir_json_to_ron(SIMPLE_PHIR_JSON).expect("should convert JSON to RON");
+
+        // Deserialize the RON back to a Module
+        let module = pecos_phir::from_ron(&ron_string).expect("should deserialize RON");
+        assert!(!module.name.is_empty());
+        // Verify the module has operations (not just a name)
+        assert!(!module.body.blocks.is_empty(), "module should have blocks");
+        assert!(
+            !module.body.blocks[0].operations.is_empty(),
+            "module should have operations"
+        );
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_phir_json_to_ron_invalid_json() {
+        let result = phir_json_to_ron("not valid json");
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_convert_phir_json_file_to_ron() {
+        let dir = tempdir().expect("should create temp dir");
+        let path = dir.path().join("test.json");
+        std::fs::write(&path, SIMPLE_PHIR_JSON).expect("should write file");
+
+        let ron_string = convert_phir_json_file_to_ron(&path).expect("should convert file to RON");
+        assert!(!ron_string.is_empty());
+
+        // Verify it round-trips
+        let module = pecos_phir::from_ron(&ron_string).expect("should deserialize RON");
+        assert!(!module.name.is_empty());
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_convert_phir_json_file_to_ron_missing_file() {
+        let result = convert_phir_json_file_to_ron(Path::new("/nonexistent/file.json"));
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_convert_phir_json_file_to_module() {
+        let dir = tempdir().expect("should create temp dir");
+        let path = dir.path().join("test_module.json");
+        std::fs::write(&path, SIMPLE_PHIR_JSON).expect("should write file");
+
+        let module =
+            convert_phir_json_file_to_module(&path).expect("should convert file to module");
+        assert!(!module.name.is_empty());
+        assert!(!module.body.blocks.is_empty());
+        assert!(!module.body.blocks[0].operations.is_empty());
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_convert_phir_json_file_to_module_missing_file() {
+        let result = convert_phir_json_file_to_module(Path::new("/nonexistent/file.json"));
+        assert!(result.is_err());
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Cross-engine comparison tests: PhirJsonEngine vs JSON->RON->PhirEngine
+    // ──────────────────────────────────────────────────────────────────────
+
+    // Note: Result cop uses bare string args ("m") not array-format (["m", 0]),
+    // because the converter's Result handler only supports bare variable names.
+    #[cfg(feature = "v0_1")]
+    const MEASURE_ZERO_JSON: &str = r#"{
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "metadata": {},
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"data": "cvar_define", "data_type": "i64", "variable": "m", "size": 1},
+            {"data": "cvar_define", "data_type": "i64", "variable": "c", "size": 1},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+            {"cop": "Result", "args": ["m"], "returns": ["c"]}
+        ]
+    }"#;
+
+    #[cfg(feature = "v0_1")]
+    const H_MEASURE_JSON: &str = r#"{
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "metadata": {},
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"data": "cvar_define", "data_type": "i64", "variable": "m", "size": 1},
+            {"data": "cvar_define", "data_type": "i64", "variable": "c", "size": 1},
+            {"qop": "H", "args": [["q", 0]]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+            {"cop": "Result", "args": ["m"], "returns": ["c"]}
+        ]
+    }"#;
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_cross_engine_deterministic_measure_zero() {
+        use pecos_engines::ClassicalControlEngineBuilder;
+        use pecos_engines::quantum_engine_builder::StateVectorEngineBuilder;
+
+        // Path 1: PhirJsonEngine
+        let result1 = phir_json_engine()
+            .json(MEASURE_ZERO_JSON)
+            .expect("json parse")
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(10);
+        assert!(
+            result1.is_ok(),
+            "PhirJsonEngine failed: {:?}",
+            result1.err()
+        );
+        let shots1 = result1.unwrap();
+
+        // Path 2: JSON -> Module -> RON -> Module -> PhirEngine
+        let ron_string = phir_json_to_ron(MEASURE_ZERO_JSON).expect("convert to RON");
+        let result2 = pecos_phir::phir_engine()
+            .from_ron(&ron_string)
+            .expect("parse RON")
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(10);
+        assert!(
+            result2.is_ok(),
+            "PhirEngine (RON) failed: {:?}",
+            result2.err()
+        );
+        let shots2 = result2.unwrap();
+
+        assert_eq!(
+            shots1.shots.len(),
+            shots2.shots.len(),
+            "shot counts should match"
+        );
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn test_cross_engine_h_gate_same_seed() {
+        use pecos_engines::ClassicalControlEngineBuilder;
+        use pecos_engines::quantum_engine_builder::StateVectorEngineBuilder;
+
+        // Path 1: PhirJsonEngine
+        let result1 = phir_json_engine()
+            .json(H_MEASURE_JSON)
+            .expect("json parse")
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(100);
+        assert!(
+            result1.is_ok(),
+            "PhirJsonEngine failed: {:?}",
+            result1.err()
+        );
+        let shots1 = result1.unwrap();
+
+        // Path 2: JSON -> Module -> RON -> Module -> PhirEngine
+        let ron_string = phir_json_to_ron(H_MEASURE_JSON).expect("convert to RON");
+        let result2 = pecos_phir::phir_engine()
+            .from_ron(&ron_string)
+            .expect("parse RON")
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(100);
+        assert!(
+            result2.is_ok(),
+            "PhirEngine (RON) failed: {:?}",
+            result2.err()
+        );
+        let shots2 = result2.unwrap();
+
+        assert_eq!(
+            shots1.shots.len(),
+            shots2.shots.len(),
+            "shot counts should match"
+        );
+
+        // Compare shared register values between engines
+        let mut compared = 0;
+        for (i, (s1, s2)) in shots1.shots.iter().zip(shots2.shots.iter()).enumerate() {
+            for (name, val1) in &s1.data {
+                if let Some(val2) = s2.data.get(name) {
+                    assert_eq!(
+                        val1, val2,
+                        "shot {i}: register '{name}' differs between engines"
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        // Ensure we actually compared something
+        assert!(
+            compared > 0,
+            "no shared registers found between engines to compare"
+        );
     }
 }

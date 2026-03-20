@@ -14,6 +14,7 @@ type RustQasmEngineBuilder = pecos::QasmEngineBuilder;
 type RustQisEngineBuilder = pecos::QisEngineBuilder;
 type RustPhirJsonEngineBuilder = pecos::PhirJsonEngineBuilder;
 type RustGuppyHugrEngineBuilder = pecos::GuppyHugrEngineBuilder;
+type RustPhirEngineBuilder = pecos::PhirEngineBuilder;
 type RustSparseStabilizerEngineBuilder = SparseStabilizerEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
@@ -399,6 +400,97 @@ pub struct PyPhirJsonSimBuilder {
     pub(crate) explicit_num_qubits: Option<usize>,
 }
 
+/// Python wrapper for PHIR engine builder (PHIR Module execution)
+#[pyclass(name = "PhirEngineBuilder", from_py_object)]
+#[derive(Clone)]
+pub struct PyPhirEngineBuilder {
+    pub(crate) inner: RustPhirEngineBuilder,
+}
+
+#[pymethods]
+impl PyPhirEngineBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: pecos::phir_engine(),
+        }
+    }
+
+    /// Set the program from QIS LLVM IR text
+    #[pyo3(signature = (llvm_ir))]
+    fn qis_llvm_ir(&self, llvm_ir: &str) -> PyResult<Self> {
+        let builder =
+            self.inner.clone().from_qis_llvm_ir(llvm_ir).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to parse QIS LLVM IR: {e}"))
+            })?;
+        Ok(Self { inner: builder })
+    }
+
+    /// Convert to simulation builder
+    fn to_sim(&self) -> PyResult<PySimBuilder> {
+        Ok(PySimBuilder {
+            inner: SimBuilderInner::Phir(PyPhirSimBuilder {
+                engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
+                seed: None,
+                workers: None,
+                quantum_engine_builder: None,
+                noise_builder: None,
+                explicit_num_qubits: None,
+            }),
+        })
+    }
+}
+
+/// Internal PHIR simulation builder state
+pub struct PyPhirSimBuilder {
+    pub(crate) engine_builder: Arc<Mutex<Option<RustPhirEngineBuilder>>>,
+    pub(crate) seed: Option<u64>,
+    pub(crate) workers: Option<usize>,
+    pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
+    pub(crate) noise_builder: Option<Py<PyAny>>,
+    pub(crate) explicit_num_qubits: Option<usize>,
+}
+
+/// Python wrapper for built PHIR simulation
+#[pyclass(name = "PhirSimulation")]
+pub struct PyPhirSimulation {
+    pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
+}
+
+#[pymethods]
+impl PyPhirSimulation {
+    /// Run the simulation
+    pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
+        let mut engine = self.inner.lock().unwrap();
+        match engine.run(shots) {
+            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        }
+    }
+
+    /// Run the simulation with specified number of workers
+    fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
+        let mut engine = self.inner.lock().unwrap();
+        match engine.run_with_workers(shots, workers) {
+            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        }
+    }
+
+    /// Reset the simulation to its initial state (quantum state back to |0>).
+    ///
+    /// Returns the simulation object for method chaining.
+    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        {
+            let mut engine = slf.inner.lock().unwrap();
+            engine
+                .reset()
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+        }
+        Ok(slf)
+    }
+}
+
 /// Python wrapper for HUGR engine builder (direct HUGR interpreter)
 ///
 /// This engine directly interprets HUGR programs without LLVM compilation,
@@ -656,6 +748,14 @@ pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
     }
 }
 
+/// Create a PHIR engine builder (PHIR Module execution)
+#[pyfunction]
+pub fn phir_engine() -> PyPhirEngineBuilder {
+    PyPhirEngineBuilder {
+        inner: pecos::phir_engine(),
+    }
+}
+
 /// Create a HUGR engine builder (direct HUGR interpreter)
 ///
 /// This creates a builder for the direct HUGR interpreter engine,
@@ -848,8 +948,8 @@ impl PyGeneralNoiseModelBuilder {
             "SZZ" => GateType::SZZ,
             "SZZDG" => GateType::SZZdg,
             "RZZ" => GateType::RZZ,
-            "MEASURE" => GateType::Measure,
-            "PREP" => GateType::Prep,
+            "MEASURE" => GateType::MZ,
+            "PREP" => GateType::PZ,
             "IDLE" => GateType::Idle,
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -1326,6 +1426,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQasmEngineBuilder>()?;
     m.add_class::<PyQisEngineBuilder>()?;
     m.add_class::<PyPhirJsonEngineBuilder>()?;
+    m.add_class::<PyPhirEngineBuilder>()?;
     m.add_class::<PyGuppyHugrEngineBuilder>()?;
 
     // Simulation builders are now handled by the unified PySimBuilder in sim.rs
@@ -1333,6 +1434,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Built simulations
     m.add_class::<PyQasmSimulation>()?;
     m.add_class::<PyPhirJsonSimulation>()?;
+    m.add_class::<PyPhirSimulation>()?;
     m.add_class::<PyQisControlSimulation>()?;
     m.add_class::<PyGuppyHugrSimulation>()?;
 

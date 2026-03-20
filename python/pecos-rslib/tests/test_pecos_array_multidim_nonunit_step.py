@@ -13,7 +13,7 @@ from pecos_rslib import Array
 class TestNonUnitStep2D:
     """Test non-unit step slicing for 2D arrays."""
 
-    def test_step_on_first_dimension(self):
+    def test_step_on_first_dimension(self) -> None:
         """Test arr[::2, :] - step on first dimension."""
         np_arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
@@ -25,7 +25,7 @@ class TestNonUnitStep2D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_on_second_dimension(self):
+    def test_step_on_second_dimension(self) -> None:
         """Test arr[:, ::2] - step on second dimension."""
         np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
@@ -37,7 +37,7 @@ class TestNonUnitStep2D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_on_both_dimensions(self):
+    def test_step_on_both_dimensions(self) -> None:
         """Test arr[::2, ::2] - step on both dimensions."""
         np_arr = np.array(
             [
@@ -56,7 +56,7 @@ class TestNonUnitStep2D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_reverse_first_dimension(self):
+    def test_reverse_first_dimension(self) -> None:
         """Test arr[::-1, :] - reverse first dimension."""
         np_arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
         pa_arr = Array(np_arr.copy())
@@ -68,7 +68,7 @@ class TestNonUnitStep2D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_reverse_second_dimension(self):
+    def test_reverse_second_dimension(self) -> None:
         """Test arr[:, ::-1] - reverse second dimension."""
         np_arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
         pa_arr = Array(np_arr.copy())
@@ -80,7 +80,7 @@ class TestNonUnitStep2D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_with_start_and_stop(self):
+    def test_step_with_start_and_stop(self) -> None:
         """Test arr[0:3:2, 1:4:2] - step with start and stop on both dimensions."""
         np_arr = np.arange(20).reshape(4, 5).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -96,7 +96,7 @@ class TestNonUnitStep2D:
 class TestNonUnitStep2DArrayAssignment:
     """Test array assignment with non-unit step slicing for 2D arrays."""
 
-    def test_array_assignment_with_step(self):
+    def test_array_assignment_with_step(self) -> None:
         """Test assigning an array to a 2D non-unit step slice."""
         np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
@@ -110,7 +110,7 @@ class TestNonUnitStep2DArrayAssignment:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_array_assignment_both_dimensions_step(self):
+    def test_array_assignment_both_dimensions_step(self) -> None:
         """Test assigning an array to a 2D slice with steps on both dimensions."""
         np_arr = np.array(
             [
@@ -135,7 +135,7 @@ class TestNonUnitStep2DArrayAssignment:
 class TestNonUnitStep3D:
     """Test non-unit step slicing for 3D arrays."""
 
-    def test_step_on_first_dimension(self):
+    def test_step_on_first_dimension(self) -> None:
         """Test arr[::2, :, :] - step on first dimension."""
         np_arr = np.arange(24).reshape(4, 3, 2).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -147,7 +147,7 @@ class TestNonUnitStep3D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_on_all_dimensions(self):
+    def test_step_on_all_dimensions(self) -> None:
         """Test arr[::2, ::2, ::2] - step on all dimensions."""
         np_arr = np.arange(64).reshape(4, 4, 4).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -161,7 +161,7 @@ class TestNonUnitStep3D:
         # Should affect 8 elements (2x2x2 subset)
         assert np.sum(np.asarray(pa_arr) == 88.0) == 8
 
-    def test_reverse_first_dimension(self):
+    def test_reverse_first_dimension(self) -> None:
         """Test arr[::-1, :, :] - reverse first dimension."""
         np_arr = np.arange(8).reshape(2, 2, 2).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -173,7 +173,7 @@ class TestNonUnitStep3D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_on_second_dimension(self):
+    def test_step_on_second_dimension(self) -> None:
         """Test arr[:, ::2, :] - step on second dimension."""
         np_arr = np.arange(24).reshape(2, 6, 2).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -185,7 +185,7 @@ class TestNonUnitStep3D:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_step_on_third_dimension(self):
+    def test_step_on_third_dimension(self) -> None:
         """Test arr[:, :, ::2] - step on third dimension."""
         np_arr = np.arange(24).reshape(2, 3, 4).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -201,7 +201,7 @@ class TestNonUnitStep3D:
 class TestNonUnitStepDifferentDtypes:
     """Test non-unit step slicing with different data types on multi-dimensional arrays."""
 
-    def test_int64_2d_non_unit_step(self):
+    def test_int64_2d_non_unit_step(self) -> None:
         """Test non-unit step slicing with int64 2D array."""
         np_arr = np.array([[10, 20, 30], [40, 50, 60], [70, 80, 90]], dtype=np.int64)
         pa_arr = Array(np_arr.copy())
@@ -214,7 +214,7 @@ class TestNonUnitStepDifferentDtypes:
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
         assert np.asarray(pa_arr).dtype == np.int64
 
-    def test_complex128_2d_non_unit_step(self):
+    def test_complex128_2d_non_unit_step(self) -> None:
         """Test non-unit step slicing with complex128 2D array."""
         np_arr = np.array([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j], [9 + 10j, 11 + 12j]])
         pa_arr = Array(np_arr.copy())
@@ -245,7 +245,7 @@ class TestNonUnitStepDifferentDtypes:
 class TestNonUnitStepEdgeCases:
     """Test edge cases for multi-dimensional non-unit step slicing."""
 
-    def test_step_larger_than_dimension(self):
+    def test_step_larger_than_dimension(self) -> None:
         """Test edge case - step larger than array dimension."""
         np_arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         pa_arr = Array(np_arr.copy())
@@ -257,7 +257,7 @@ class TestNonUnitStepEdgeCases:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_empty_slice_result(self):
+    def test_empty_slice_result(self) -> None:
         """Test when slice produces empty result."""
         np_arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         pa_arr = Array(np_arr.copy())
@@ -269,7 +269,7 @@ class TestNonUnitStepEdgeCases:
         # Verify results match (should be unchanged)
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_negative_indices_with_step(self):
+    def test_negative_indices_with_step(self) -> None:
         """Test negative indices combined with non-unit step."""
         np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
@@ -285,7 +285,7 @@ class TestNonUnitStepEdgeCases:
 class TestNonUnitStepReproducibility:
     """Test that multi-dimensional non-unit step operations are reproducible and consistent."""
 
-    def test_multiple_operations_2d(self):
+    def test_multiple_operations_2d(self) -> None:
         """Test multiple non-unit step operations on same 2D array."""
         np_arr = np.arange(24).reshape(4, 6).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -305,7 +305,7 @@ class TestNonUnitStepReproducibility:
         np_arr[::-1, :] = 30.0
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_unit_step_still_works_after_nonunit(self):
+    def test_unit_step_still_works_after_nonunit(self) -> None:
         """Verify that unit-step slicing still works after non-unit implementation."""
         np_arr = np.arange(20).reshape(4, 5).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -320,7 +320,7 @@ class TestNonUnitStepReproducibility:
         np_arr[1:3, 1:4] = 99.0
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_conversion_to_numpy_preserves_values(self):
+    def test_conversion_to_numpy_preserves_values(self) -> None:
         """Test that conversion to NumPy preserves values after non-unit step operations."""
         np_arr = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]])
         pa_arr = Array(np_arr.copy())
@@ -338,7 +338,7 @@ class TestNonUnitStepReproducibility:
 class TestNonUnitStepCombinations:
     """Test combinations of unit and non-unit step slicing across different dimensions."""
 
-    def test_unit_step_first_nonunit_second(self):
+    def test_unit_step_first_nonunit_second(self) -> None:
         """Test arr[1:3, ::2] - unit step on first, non-unit on second dimension."""
         np_arr = np.arange(24).reshape(4, 6).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -350,7 +350,7 @@ class TestNonUnitStepCombinations:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_nonunit_step_first_unit_second(self):
+    def test_nonunit_step_first_unit_second(self) -> None:
         """Test arr[::2, 1:5] - non-unit step on first, unit on second dimension."""
         np_arr = np.arange(24).reshape(4, 6).astype(np.float64)
         pa_arr = Array(np_arr.copy())
@@ -362,7 +362,7 @@ class TestNonUnitStepCombinations:
         # Verify results match
         np.testing.assert_array_equal(np.asarray(pa_arr), np_arr)
 
-    def test_3d_mixed_steps(self):
+    def test_3d_mixed_steps(self) -> None:
         """Test 3D array with mix of unit and non-unit steps."""
         np_arr = np.arange(48).reshape(4, 4, 3).astype(np.float64)
         pa_arr = Array(np_arr.copy())

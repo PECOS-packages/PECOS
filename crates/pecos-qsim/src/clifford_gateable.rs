@@ -705,8 +705,8 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Pauli Transformation
     /// ```text
     /// X → Z
-    /// Y → -Z
-    /// Z → -X
+    /// Y → -X
+    /// Z → -Y
     /// ```
     ///
     /// # Matrix Representation
@@ -732,8 +732,8 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Pauli Transformation
     /// ```text
     /// X → -Y
-    /// Y → Z
-    /// Z → -X
+    /// Y → -Z
+    /// Z → X
     /// ```
     ///
     /// # Matrix Representation
@@ -793,7 +793,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Pauli Transformation
     /// ```text
     /// XI → XY
-    /// IX → IX
+    /// IX → ZX
     /// ZI → ZI
     /// IZ → ZZ
     /// ```
@@ -801,9 +801,9 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Matrix Representation
     /// ```text
     /// CY = [[1,  0,  0,  0],
-    ///       [0,  1,  0,  0],
     ///       [0,  0,  0, -i],
-    ///       [0,  0, +i,  0]]
+    ///       [0,  0,  1,  0],
+    ///       [0, +i,  0,  0]]
     /// ```
     ///
     /// # Returns
@@ -1122,7 +1122,7 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Pauli Transformation
     /// ```text
-    /// XI → -ZY
+    /// XI → ZY
     /// IX → YZ
     /// ZI → IZ
     /// IZ → ZI
@@ -1189,6 +1189,41 @@ pub trait CliffordGateable: QuantumSimulator {
         let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
         let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
         self.cz(qubits).h(&q1s).h(&q2s).cz(qubits)
+    }
+
+    /// Applies the inverse (dagger) of the iSWAP gate.
+    ///
+    /// # Pauli Transformation
+    /// ```text
+    /// XI → -ZY    (vs iSWAP: XI → +ZY)
+    /// IX → -YZ    (vs iSWAP: IX → +YZ)
+    /// ZI → IZ     (same as iSWAP)
+    /// IZ → ZI     (same as iSWAP)
+    /// ```
+    #[inline]
+    fn iswapdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "iSWAPdg requires pairs of qubits"
+        );
+        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        let reversed: QubitBuf = qubits
+            .chunks_exact(2)
+            .flat_map(|pair| [pair[1], pair[0]])
+            .collect();
+        self.h(&q2s)
+            .cx(&reversed)
+            .cx(qubits)
+            .h(&q1s)
+            .szdg(&q2s)
+            .szdg(&q1s)
+    }
+
+    /// Applies the dagger of the G gate. G is Hermitian (self-inverse), so Gdg = G.
+    #[inline]
+    fn gdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.g(qubits)
     }
 
     /// Measures the +X Pauli operator, projecting to the measured eigenstate.

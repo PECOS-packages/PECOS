@@ -180,6 +180,23 @@ impl ImprovedConverter {
 
                 // Update the variable's SSA mapping to point to the combined value
                 self.variable_map.insert(var_name.clone(), combined_ssa.id);
+            } else if writes.len() == 1 {
+                // Single bit write - cast the measurement Bool to int and update mapping
+                let bit_as_int = SSAValue {
+                    id: self.new_ssa_id(),
+                    version: 0,
+                };
+                let cast_instruction = Instruction {
+                    operation: Operation::Classical(ClassicalOp::Bitcast),
+                    operands: vec![writes[0].ssa_value],
+                    results: vec![bit_as_int],
+                    result_types: vec![Type::UInt(IntWidth::I32)],
+                    regions: vec![],
+                    attributes: BTreeMap::new(),
+                    location: None,
+                };
+                instructions.push(cast_instruction);
+                self.variable_map.insert(var_name.clone(), bit_as_int.id);
             }
         }
 
@@ -562,6 +579,123 @@ impl ImprovedConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_missing_format_field() {
+        let json = r#"{"version": "0.1.0", "ops": []}"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("format"));
+    }
+
+    #[test]
+    fn test_invalid_format_value() {
+        let json = r#"{"format": "WRONG", "version": "0.1.0", "ops": []}"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("PHIR/JSON"));
+    }
+
+    #[test]
+    fn test_missing_version_field() {
+        let json = r#"{"format": "PHIR/JSON", "ops": []}"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("version"));
+    }
+
+    #[test]
+    fn test_unsupported_version() {
+        let json = r#"{"format": "PHIR/JSON", "version": "99.0.0", "ops": []}"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("99.0.0"));
+    }
+
+    #[test]
+    fn test_missing_ops_array() {
+        let json = r#"{"format": "PHIR/JSON", "version": "0.1.0"}"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ops"));
+    }
+
+    #[test]
+    fn test_root_not_object() {
+        let result = phir_json_to_module("[1, 2, 3]");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("object"));
+    }
+
+    #[test]
+    fn test_invalid_json() {
+        let result = phir_json_to_module("not json at all");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unknown_quantum_op() {
+        let json = r#"{
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+                {"qop": "UnknownGate", "args": [["q", 0]]}
+            ]
+        }"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("UnknownGate"));
+    }
+
+    #[test]
+    fn test_operation_not_object() {
+        let json = r#"{
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": ["not_an_object"]
+        }"#;
+        let result = phir_json_to_module(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("object"));
+    }
+
+    #[test]
+    fn test_empty_ops() {
+        let json = r#"{"format": "PHIR/JSON", "version": "0.1.0", "ops": []}"#;
+        let module = phir_json_to_module(json).unwrap();
+        assert!(module.body.blocks[0].operations.is_empty());
+    }
+
+    #[test]
+    fn test_unknown_classical_op_skipped() {
+        let json = r#"{
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {"data": "cvar_define", "data_type": "i64", "variable": "x", "size": 1},
+                {"cop": "=", "args": [1], "returns": [["x", 0]]}
+            ]
+        }"#;
+        // Unknown classical ops should be silently skipped, not error
+        let module = phir_json_to_module(json).unwrap();
+        // Should have the variable definition but the cop="=" should be skipped
+        assert_eq!(module.body.blocks[0].operations.len(), 1);
+    }
+
+    #[test]
+    fn test_unknown_data_type_skipped() {
+        let json = r#"{
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {"data": "unknown_define", "data_type": "qubits", "variable": "x", "size": 1}
+            ]
+        }"#;
+        // Unknown data definitions should be skipped
+        let module = phir_json_to_module(json).unwrap();
+        assert!(module.body.blocks[0].operations.is_empty());
+    }
 
     #[test]
     fn test_bell_state_conversion() {

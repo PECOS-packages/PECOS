@@ -9,8 +9,7 @@ use pecos_qec::fault_tolerance::noisy_sampler::{
     FastNoisySampler, NoisySampler, UniformNoiseModel,
 };
 use pecos_quantum::DagCircuit;
-use rand::rngs::StdRng;
-use rand_core::{Rng, SeedableRng};
+use pecos_rng::PecosRng;
 use std::time::Instant;
 use wgpu::util::DeviceExt;
 
@@ -146,7 +145,7 @@ fn profile_gpu_sampler(
     seed: u64,
     num_shots: u32,
 ) -> GpuProfile {
-    let mut rng = StdRng::seed_from_u64(seed);
+    let mut rng = PecosRng::seed_from_u64(seed);
 
     // Phase 1: GPU initialization (done once, amortized)
     let init_start = Instant::now();

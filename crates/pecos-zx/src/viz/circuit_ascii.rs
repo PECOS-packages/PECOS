@@ -197,8 +197,8 @@ fn cell_label(gate_type: GateType, label: &str) -> String {
         GateType::CX => "*".to_string(),   // control dot
         GateType::CZ => "*".to_string(),   // control dot (symmetric)
         GateType::SWAP => "X".to_string(), // swap cross
-        GateType::Measure | GateType::MeasureFree => "[M]".to_string(),
-        GateType::Prep => "[0]".to_string(),
+        GateType::MZ | GateType::MeasureFree => "[M]".to_string(),
+        GateType::PZ => "[0]".to_string(),
         _ => format!("[{label}]"),
     }
 }
@@ -297,16 +297,14 @@ mod tests {
     #[test]
     fn test_ascii_with_measurement() {
         let mut dag = DagCircuit::new();
-        dag.set_num_cbits(1);
         dag.h(0);
-        dag.mz_to(0, pecos_core::ClassicalBitId::new(0));
+        dag.mz(0);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let ascii = render_circuit_ascii(&layout, &CircuitAsciiOptions::default());
 
         assert!(ascii.contains("[H]"));
         assert!(ascii.contains("[M]"));
-        assert!(ascii.contains("c0"));
     }
 
     #[test]

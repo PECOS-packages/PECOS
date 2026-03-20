@@ -38,7 +38,7 @@
 use pecos_core::clifford_rep::CliffordRep;
 use pecos_core::gate_type::GateType;
 use pecos_core::{ClassicalBitId, PauliString, QuarterPhase};
-use pecos_quantum::DagCircuit;
+use pecos_quantum::{Circuit, DagCircuit};
 use quizx::linalg::Mat2;
 
 use crate::symplectic::{padded_clifford, SymplecticMatrix, SymplecticVector};
@@ -163,12 +163,12 @@ impl CliffordTableau {
 
     /// Apply an S gate on qubit `q`.
     pub fn apply_s(&mut self, q: usize) {
-        self.apply_gate(CliffordRep::s(q));
+        self.apply_gate(CliffordRep::sz(q));
     }
 
     /// Apply an S-dagger gate on qubit `q`.
     pub fn apply_sdg(&mut self, q: usize) {
-        self.apply_gate(CliffordRep::sdg(q));
+        self.apply_gate(CliffordRep::szdg(q));
     }
 
     /// Apply a Pauli X gate on qubit `q`.
@@ -266,12 +266,12 @@ impl CliffordTableau {
 
                 match gate.gate_type {
                     // Preparation
-                    GateType::Prep | GateType::QAlloc => {
+                    GateType::PZ | GateType::QAlloc => {
                         self.prepare(qs[0]);
                     }
 
                     // Measurement
-                    GateType::Measure | GateType::MeasureFree => {
+                    GateType::MZ | GateType::MeasureFree => {
                         let cbit = dag.measurement_target(node_id);
                         self.measure(qs[0], cbit);
                     }
@@ -1083,7 +1083,7 @@ mod tests {
         // Build same via direct CliffordRep composition
         let n = 3;
         let h = padded_clifford(CliffordRep::h(0), n);
-        let s = padded_clifford(CliffordRep::s(1), n);
+        let s = padded_clifford(CliffordRep::sz(1), n);
         let cx = padded_clifford(CliffordRep::cx(0, 1), n);
         let cz = padded_clifford(CliffordRep::cz(1, 2), n);
 

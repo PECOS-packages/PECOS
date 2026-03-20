@@ -15,7 +15,7 @@ Wraps the Fusion Blossom minimum-weight perfect matching decoder for quantum err
 
 ## Acknowledgements
 
-This crate wraps [Fusion Blossom](https://github.com/yuewuo/fusion-blossom), a fast MWPM decoder developed by Yue Wu, Namitha Liyanage, and Lin Zhong at Yale University.
+This crate wraps [Fusion Blossom](https://github.com/yuewuo/fusion-blossom), a fast MWPM decoder developed by Yue Wu and Lin Zhong at Yale University.
 
 **Paper:**
-- Wu, Y., Liyanage, N., & Zhong, L. (2023). "Fusion Blossom: Fast MWPM Decoders for QEC." [arXiv:2305.08307](https://arxiv.org/abs/2305.08307)
+- Wu, Y. & Zhong, L. (2023). "Fusion Blossom: Fast MWPM Decoders for QEC." [arXiv:2305.08307](https://arxiv.org/abs/2305.08307)

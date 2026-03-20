@@ -60,10 +60,10 @@ def test_byte_message_bell_state() -> None:
     assert ops[0]["qubits"] == [0]
     assert ops[1]["gate_type"] == "CX"
     assert ops[1]["qubits"] == [0, 1]
-    assert ops[2]["gate_type"] == "Measure"
+    assert ops[2]["gate_type"] == "MZ"
     assert ops[2]["qubits"] == [0]
     # result_id is no longer included in parsed operations (measurements tracked by order)
-    assert ops[3]["gate_type"] == "Measure"
+    assert ops[3]["gate_type"] == "MZ"
     assert ops[3]["qubits"] == [1]
     # result_id is no longer included in parsed operations (measurements tracked by order)
 
@@ -71,7 +71,7 @@ def test_byte_message_bell_state() -> None:
     batch_dump = message.dump_batch()
     assert "H" in batch_dump
     assert "CX" in batch_dump
-    assert "Measure" in batch_dump
+    assert "MZ" in batch_dump
 
 
 def test_byte_message_parameterized_gates() -> None:
@@ -165,7 +165,7 @@ def test_byte_message_with_measurements() -> None:
     # Verify the operations
     assert len(ops) == 2
     assert ops[0]["gate_type"] == "H"
-    assert ops[1]["gate_type"] == "Measure"
+    assert ops[1]["gate_type"] == "MZ"
     assert ops[1]["qubits"] == [0]
     # result_id is no longer included in parsed operations (measurements tracked by order)
 

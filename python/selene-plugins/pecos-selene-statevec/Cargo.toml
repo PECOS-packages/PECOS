@@ -17,7 +17,6 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 pecos-core = { workspace = true }
 pecos-qsim = { workspace = true }
-pecos-rng = { workspace = true }
 # selene-core is a git dependency since it's not published to crates.io
 # Use the same revision as pecos-qis for consistency
 selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "1794e8d1dba26120a18e904940c014f4e034bed6" }

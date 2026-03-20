@@ -15,7 +15,7 @@
 //! This crate provides Rust bindings to the Qulacs quantum simulator C++ library,
 //! enabling high-performance quantum circuit simulation.
 
-mod bridge;
+pub mod bridge;
 
 use bridge::ffi;
 use num_complex::Complex64;

@@ -281,6 +281,20 @@ where
         self
     }
 
+    /// Returns generator data as sparse index vectors.
+    ///
+    /// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.
+    pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
+        let gens = if is_stab { &self.stabs } else { &self.destabs };
+
+        let col_x: Vec<Vec<usize>> = gens.col_x.iter().map(|s| s.iter().collect()).collect();
+        let col_z: Vec<Vec<usize>> = gens.col_z.iter().map(|s| s.iter().collect()).collect();
+        let row_x: Vec<Vec<usize>> = gens.row_x.iter().map(|s| s.iter().collect()).collect();
+        let row_z: Vec<Vec<usize>> = gens.row_z.iter().map(|s| s.iter().collect()).collect();
+
+        (col_x, col_z, row_x, row_z)
+    }
+
     #[inline]
     pub fn verify_matrix(&self) {
         Self::check_row_eq_col(&self.stabs);
@@ -693,6 +707,580 @@ where
         self
     }
 
+    /// Adjoint sqrt of Z gate. X -> -Y, Z -> Z, W -> X
+    #[inline]
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu]:
+            //   signs_minus ^= col_x[qu]  (toggle minus first)
+            //   signs_minus ^= signs_i & col_x[qu]  (carry from existing i)
+            //   signs_i ^= col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of X gate. X -> X, Z -> -Y, W -> -Z
+    #[inline]
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of X gate. X -> X, Z -> +Y, W -> Z
+    #[inline]
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu]
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of Y gate. X -> -Z, Z -> X, W -> W
+    #[inline]
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu]:
+            //   signs_minus ^= col_x[qu]; signs_minus ^= (col_x[qu] ∩ col_z[qu])
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of Y gate. X -> Z, Z -> -X, W -> W
+    #[inline]
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu]:
+            //   signs_minus ^= col_z[qu]; signs_minus ^= (col_x[qu] ∩ col_z[qu])
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H2 gate. X -> -Z, Z -> -X, W -> -W
+    #[inline]
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] ∪ col_z[qu]:
+            //   signs_minus ^= col_x[qu]; signs_minus ^= col_z[qu];
+            //   then undo the double-toggle on intersection: signs_minus ^= (col_x ∩ col_z)
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H3 gate. X -> Y, Z -> -Z, W -> -X
+    #[inline]
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H4 gate. X -> -Y, Z -> -Z, W -> X
+    #[inline]
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_minus_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H5 gate. X -> -X, Z -> Y, W -> -Z
+    #[inline]
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H6 gate. X -> -X, Z -> -Y, W -> Z
+    #[inline]
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_minus_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// F gate. X -> Y, Z -> X, W -> Z
+    #[inline]
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap col_x <-> col_z
+            // Row updates: (1,0)->(1,1): insert row_z; (0,1)->(1,0): move row_z->row_x; (1,1)->(0,1): remove row_x
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        // (1,1) -> (0,1): remove from row_x
+                        g.row_x[i].remove(qu);
+                    } else {
+                        // (1,0) -> (1,1): insert into row_z
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        // (0,1) -> (1,0): move from row_z to row_x
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Fdg gate. X -> Z, Z -> Y, W -> X
+    #[inline]
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap col_x <-> col_z
+            // Row updates: (1,0)->(0,1): move row_x->row_z; (0,1)->(1,1): insert row_x; (1,1)->(1,0): remove row_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        // (1,1) -> (1,0): remove from row_z
+                        g.row_z[i].remove(qu);
+                    } else {
+                        // (1,0) -> (0,1): move from row_x to row_z
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        // (0,1) -> (1,1): insert into row_x
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2 gate. X -> -Z, Z -> Y, W -> -X
+    #[inline]
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2dg gate. X -> -Y, Z -> -X, W -> Z
+    #[inline]
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_minus_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3 gate. X -> Y, Z -> -X, W -> -Z
+    #[inline]
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_i for col_x[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3dg gate. X -> -Z, Z -> -Y, W -> X
+    #[inline]
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_minus_i for col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4 gate. X -> Z, Z -> -Y, W -> -X
+    #[inline]
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4dg gate. X -> -Y, Z -> X, W -> -Z
+    #[inline]
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs
+                .signs_i
+                .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
+            self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            self.stabs.col_x[qu]
+                .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
     /// Applies a CX or CNOT (Controlled-X) gate between two qubits.
     ///
     /// The CX performs the transformation:
@@ -727,7 +1315,7 @@ where
                     for i in col_x_q1.iter() {
                         g.row_x.get_unchecked_mut(i).toggle(q2);
                     }
-                    let col_x_q1 = g.col_x.get_unchecked(q1) as *const S;
+                    let col_x_q1 = std::ptr::from_ref::<S>(g.col_x.get_unchecked(q1));
                     let col_x_q2 = g.col_x.get_unchecked_mut(q2);
                     col_x_q2.xor_assign(&*col_x_q1);
 
@@ -736,13 +1324,394 @@ where
                     for i in col_z_q2.iter() {
                         g.row_z.get_unchecked_mut(i).toggle(q1);
                     }
-                    let col_z_q2 = g.col_z.get_unchecked(q2) as *const S;
+                    let col_z_q2 = std::ptr::from_ref::<S>(g.col_z.get_unchecked(q2));
                     let col_z_q1 = g.col_z.get_unchecked_mut(q1);
                     col_z_q1.xor_assign(&*col_z_q2);
                 }
             }
         }
         self
+    }
+
+    /// Square root of XX gate. SXX = exp(+iπ/4·XX).
+    ///
+    /// Generators with odd Z-count on {q1,q2} get phase * -i and X toggled on both qubits.
+    ///
+    /// Derivation: for anticommuting Q, Q → i·Q·(XX).
+    /// Per-qubit phase from right-multiplying (X^x Z^z)·X = (-1)^z · X^{x⊕1} Z^z.
+    /// For odd Z-count: total = i·(-1) = -i (uniform).
+    ///
+    /// ```text
+    /// XI -> XI      IX -> IX
+    /// ZI -> -YX     IZ -> -XY
+    /// ```
+    #[inline]
+    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXX requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
+            for g in self.stabs.col_z[q1].iter() {
+                if !self.stabs.col_z[q2].contains(g) {
+                    // multiply by -i: toggle minus, then toggle i (with carry)
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_z[q2].iter() {
+                if !self.stabs.col_z[q1].contains(g) {
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle X on q1,q2 for odd-Z generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                unsafe {
+                    let col_z_q1 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q1));
+                    let col_z_q2 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q2));
+                    let col_x_q1 = tab.col_x.get_unchecked_mut(q1);
+                    let old_col_x_q1 = col_x_q1.clone();
+                    col_x_q1.xor_assign(&*col_z_q1);
+                    col_x_q1.xor_assign(&*col_z_q2);
+                    for i in old_col_x_q1.iter() {
+                        if !tab.col_x.get_unchecked(q1).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q1).iter() {
+                        if !old_col_x_q1.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let col_z_q1 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q1));
+                    let col_z_q2 = std::ptr::from_ref::<S>(tab.col_z.get_unchecked(q2));
+                    let col_x_q2 = tab.col_x.get_unchecked_mut(q2);
+                    let old_col_x_q2 = col_x_q2.clone();
+                    col_x_q2.xor_assign(&*col_z_q1);
+                    col_x_q2.xor_assign(&*col_z_q2);
+                    for i in old_col_x_q2.iter() {
+                        if !tab.col_x.get_unchecked(q2).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q2).iter() {
+                        if !old_col_x_q2.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
+    #[inline]
+    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXXdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.x(&q1s).x(&q2s).sxx(qubits)
+    }
+
+    /// Square root of ZZ gate. SZZ = exp(+iπ/4·ZZ).
+    ///
+    /// Generators with odd X-count on {q1,q2} get phase * +i and Z toggled on both qubits.
+    ///
+    /// Derivation: for anticommuting Q, Q → i·Q·(ZZ).
+    /// Per-qubit phase from right-multiplying (X^x Z^z)·Z = X^x Z^{z⊕1} (no extra phase).
+    /// Total: i·1 = +i (uniform).
+    ///
+    /// ```text
+    /// XI -> YZ      IX -> ZY
+    /// ZI -> ZI      IZ -> IZ
+    /// ```
+    #[inline]
+    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZ requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by +i for odd X-count generators.
+            for g in self.stabs.col_x[q1].iter() {
+                if !self.stabs.col_x[q2].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_x[q2].iter() {
+                if !self.stabs.col_x[q1].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle Z on q1,q2 for odd-X generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                unsafe {
+                    let col_x_q1 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q1));
+                    let col_x_q2 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q2));
+                    let col_z_q1 = tab.col_z.get_unchecked_mut(q1);
+                    let old_col_z_q1 = col_z_q1.clone();
+                    col_z_q1.xor_assign(&*col_x_q1);
+                    col_z_q1.xor_assign(&*col_x_q2);
+                    for i in old_col_z_q1.iter() {
+                        if !tab.col_z.get_unchecked(q1).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q1).iter() {
+                        if !old_col_z_q1.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let col_x_q1 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q1));
+                    let col_x_q2 = std::ptr::from_ref::<S>(tab.col_x.get_unchecked(q2));
+                    let col_z_q2 = tab.col_z.get_unchecked_mut(q2);
+                    let old_col_z_q2 = col_z_q2.clone();
+                    col_z_q2.xor_assign(&*col_x_q1);
+                    col_z_q2.xor_assign(&*col_x_q2);
+                    for i in old_col_z_q2.iter() {
+                        if !tab.col_z.get_unchecked(q2).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q2).iter() {
+                        if !old_col_z_q2.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
+    #[inline]
+    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.z(&q1s).z(&q2s).szz(qubits)
+    }
+
+    /// Square root of YY gate. SYY = exp(+iπ/4·YY).
+    ///
+    /// Generators where odd number of {q1,q2} have x!=z (anticommute with Y)
+    /// get phase update and both X,Z toggled on both qubits.
+    ///
+    /// Derivation: for anticommuting Q, Q → i·Q·(YY). Y = i·(XZ) in stored form.
+    /// Per-qubit phase from (X^x Z^z)·Y = i·(-1)^z · X^{x⊕1} Z^{z⊕1}.
+    /// Two-qubit product: -(-1)^{z1+z2}.
+    /// Total: i·(-1)^{z1+z2+1}.
+    ///   z1+z2 even: -i
+    ///   z1+z2 odd:  +i
+    ///
+    /// ```text
+    /// XI -> -ZY     IX -> -YZ
+    /// ZI -> XY      IZ -> YX
+    /// ```
+    #[inline]
+    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYY requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): for affected generators ((x1^z1)^(x2^z2)=1),
+            // multiply by -i when z1+z2 even, +i when z1+z2 odd.
+            {
+                let signs_minus = &mut self.stabs.signs_minus;
+                let signs_i = &mut self.stabs.signs_i;
+                let col_x = &self.stabs.col_x;
+                let col_z = &self.stabs.col_z;
+
+                macro_rules! mul_i {
+                    (plus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        if $signs_i.contains($g) {
+                            $signs_minus.toggle($g);
+                            $signs_i.remove($g);
+                        } else {
+                            $signs_i.insert($g);
+                        }
+                    };
+                    (minus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        $signs_minus.toggle($g);
+                        mul_i!(plus, $g, $signs_i, $signs_minus);
+                    };
+                }
+
+                macro_rules! apply_syy_sign {
+                    ($g:expr, $x1:expr, $z1:expr, $x2:expr, $z2:expr) => {
+                        if ($x1 != $z1) != ($x2 != $z2) {
+                            if $z1 == $z2 {
+                                mul_i!(minus, $g, signs_i, signs_minus);
+                            } else {
+                                mul_i!(plus, $g, signs_i, signs_minus);
+                            }
+                        }
+                    };
+                }
+
+                // Visit generators reachable from q1 columns
+                for g in col_x[q1].iter() {
+                    let x1 = true;
+                    let z1 = col_z[q1].contains(g);
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                for g in col_z[q1].iter() {
+                    if col_x[q1].contains(g) {
+                        continue;
+                    }
+                    let x1 = false;
+                    let z1 = true;
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                // Generators with identity at q1, non-identity at q2
+                for g in col_x[q2].iter() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) {
+                        continue;
+                    }
+                    let x2 = true;
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, false, false, x2, z2);
+                }
+                for g in col_z[q2].iter() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) || col_x[q2].contains(g) {
+                        continue;
+                    }
+                    apply_syy_sign!(g, false, false, false, true);
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle both X and Z on q1,q2
+            // for generators where (x1^z1) XOR (x2^z2) = 1.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                unsafe {
+                    // Compute the affected set: anti_y[q] = col_x[q] ^ col_z[q]
+                    let mut anti_y_q1 = tab.col_x.get_unchecked(q1).clone();
+                    anti_y_q1.xor_assign(tab.col_z.get_unchecked(q1));
+                    let mut anti_y_q2 = tab.col_x.get_unchecked(q2).clone();
+                    anti_y_q2.xor_assign(tab.col_z.get_unchecked(q2));
+                    let mut affected = anti_y_q1;
+                    affected.xor_assign(&anti_y_q2);
+
+                    // Toggle X bits at q1 and q2
+                    let old_col_x_q1 = tab.col_x.get_unchecked(q1).clone();
+                    tab.col_x.get_unchecked_mut(q1).xor_assign(&affected);
+                    for i in old_col_x_q1.iter() {
+                        if !tab.col_x.get_unchecked(q1).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q1).iter() {
+                        if !old_col_x_q1.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let old_col_x_q2 = tab.col_x.get_unchecked(q2).clone();
+                    tab.col_x.get_unchecked_mut(q2).xor_assign(&affected);
+                    for i in old_col_x_q2.iter() {
+                        if !tab.col_x.get_unchecked(q2).contains(i) {
+                            tab.row_x.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_x.get_unchecked(q2).iter() {
+                        if !old_col_x_q2.contains(i) {
+                            tab.row_x.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+
+                    // Toggle Z bits at q1 and q2
+                    let old_col_z_q1 = tab.col_z.get_unchecked(q1).clone();
+                    tab.col_z.get_unchecked_mut(q1).xor_assign(&affected);
+                    for i in old_col_z_q1.iter() {
+                        if !tab.col_z.get_unchecked(q1).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q1);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q1).iter() {
+                        if !old_col_z_q1.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q1);
+                        }
+                    }
+
+                    let old_col_z_q2 = tab.col_z.get_unchecked(q2).clone();
+                    tab.col_z.get_unchecked_mut(q2).xor_assign(&affected);
+                    for i in old_col_z_q2.iter() {
+                        if !tab.col_z.get_unchecked(q2).contains(i) {
+                            tab.row_z.get_unchecked_mut(i).remove(q2);
+                        }
+                    }
+                    for i in tab.col_z.get_unchecked(q2).iter() {
+                        if !old_col_z_q2.contains(i) {
+                            tab.row_z.get_unchecked_mut(i).insert(q2);
+                        }
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
+    #[inline]
+    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYYdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.y(&q1s).y(&q2s).syy(qubits)
     }
 
     /// Measures qubits in the Z basis.
@@ -907,6 +1876,40 @@ where
         self.stabs.init_all_z();
         self.destabs.init_all_x();
         self
+    }
+
+    /// Extracts the stabilizer generators as a [`PauliStabilizerGroup`].
+    ///
+    /// Converts the simulator's internal tableau into the algebraic
+    /// representation, enabling rank analysis, distance calculation,
+    /// logical operator computation, and other GF(2) operations.
+    ///
+    /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    #[must_use]
+    pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
+        let generators = self.stabs.generators();
+        pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
+    }
+
+    /// Extracts the destabilizer generators as a [`PauliSequence`].
+    ///
+    /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    #[must_use]
+    pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
+        let generators = self.destabs.generators();
+        pecos_quantum::PauliSequence::new(generators)
+    }
+
+    /// Returns a reference to the stabilizer generators.
+    #[inline]
+    pub fn stabs(&self) -> &GensHybrid {
+        &self.stabs
+    }
+
+    /// Returns a reference to the destabilizer generators.
+    #[inline]
+    pub fn destabs(&self) -> &GensHybrid {
+        &self.destabs
     }
 
     /// Negate the sign of a stabilizer generator.
@@ -1310,6 +2313,638 @@ where
         self
     }
 
+    /// Adjoint sqrt of Z gate. X -> -Y, Z -> Z, W -> X
+    #[inline]
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of X gate. X -> X, Z -> -Y, W -> -Z
+    #[inline]
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of X gate. X -> X, Z -> +Y, W -> Z
+    #[inline]
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// Sqrt of Y gate. X -> -Z, Z -> X, W -> W
+    #[inline]
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu]:
+            //   signs_minus ^= col_x; signs_minus ^= (col_x ∩ col_z)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Adjoint sqrt of Y gate. X -> Z, Z -> -X, W -> W
+    #[inline]
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu]:
+            //   signs_minus ^= col_z; signs_minus ^= (col_x ∩ col_z)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H2 gate. X -> -Z, Z -> -X, W -> -W
+    #[inline]
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x ∪ col_z:
+            //   signs_minus ^= col_x; signs_minus ^= col_z; signs_minus ^= (col_x ∩ col_z)
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: swap col_x <-> col_z (same as H)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if !g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// H3 gate. X -> Y, Z -> -Z, W -> -X
+    #[inline]
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H4 gate. X -> -Y, Z -> -Z, W -> X
+    #[inline]
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu], then mul_minus_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x (same as SZ)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                for i in g.col_x[qu].iter().copied() {
+                    g.row_z[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H5 gate. X -> -X, Z -> Y, W -> -Z
+    #[inline]
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// H6 gate. X -> -X, Z -> -Y, W -> Z
+    #[inline]
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu], then mul_minus_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z (same as SX)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                for i in g.col_z[qu].iter().copied() {
+                    g.row_x[i].toggle(qu);
+                }
+            }
+        }
+        self
+    }
+
+    /// F gate. X -> Y, Z -> X, W -> Z
+    #[inline]
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// Fdg gate. X -> Z, Z -> Y, W -> X
+    #[inline]
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2 gate. X -> -Z, Z -> Y, W -> -X
+    #[inline]
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F2dg gate. X -> -Y, Z -> -X, W -> Z
+    #[inline]
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_minus_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3 gate. X -> Y, Z -> -X, W -> -Z
+    #[inline]
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_z[qu] \ col_x[qu], then mul_i for col_x[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F3dg gate. X -> -Z, Z -> -Y, W -> X
+    #[inline]
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // toggle minus for col_x[qu] \ col_z[qu], then mul_minus_i for col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4 gate. X -> Z, Z -> -Y, W -> -X
+    #[inline]
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_z[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_z[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_z[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_x ^= col_z, then swap (same as Fdg)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                    } else {
+                        g.row_x[i].remove(qu);
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_x[qu].xor_assign(&g.col_z[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
+    /// F4dg gate. X -> -Y, Z -> X, W -> -Z
+    #[inline]
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+
+            // mul_minus_i for col_x[qu], then toggle minus for col_x[qu] ∩ col_z[qu]
+            self.stabs
+                .signs_minus
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs
+                .signs_minus
+                .xor_intersection_slice(self.stabs.col_x[qu].as_slice(), &self.stabs.signs_i);
+            self.stabs
+                .signs_i
+                .xor_assign_slice(self.stabs.col_x[qu].as_slice());
+            self.stabs.col_x[qu]
+                .xor_intersection_into_bitset(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+
+            // Data: col_z ^= col_x, then swap (same as F)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[qu].iter().copied() {
+                    if g.col_z[qu].contains(i) {
+                        g.row_x[i].remove(qu);
+                    } else {
+                        g.row_z[i].insert(qu);
+                    }
+                }
+                for i in g.col_z[qu].iter().copied() {
+                    if !g.col_x[qu].contains(i) {
+                        g.row_z[i].remove(qu);
+                        g.row_x[i].insert(qu);
+                    }
+                }
+                g.col_z[qu].xor_assign(&g.col_x[qu]);
+                mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
+            }
+        }
+        self
+    }
+
     /// Controlled-X (CNOT) gate.
     #[inline]
     fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -1365,6 +3000,344 @@ where
             }
         }
         self
+    }
+
+    /// Square root of XX gate. SXX = exp(+iπ/4·XX).
+    ///
+    /// Generators with odd Z-count on {q1,q2} get phase * -i and X toggled on both qubits.
+    #[inline]
+    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXX requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
+            for g in self.stabs.col_z[q1].iter().copied() {
+                if !self.stabs.col_z[q2].contains(g) {
+                    // multiply by -i: toggle minus, then toggle i (with carry)
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_z[q2].iter().copied() {
+                if !self.stabs.col_z[q1].contains(g) {
+                    self.stabs.signs_minus.toggle(g);
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle X on q1,q2 for odd-Z generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                let col_z_q1_clone = tab.col_z[q1].clone();
+                let col_z_q2_clone = tab.col_z[q2].clone();
+
+                let old_col_x_q1 = tab.col_x[q1].clone();
+                tab.col_x[q1].xor_assign(&col_z_q1_clone);
+                tab.col_x[q1].xor_assign(&col_z_q2_clone);
+                for i in old_col_x_q1.iter().copied() {
+                    if !tab.col_x[q1].contains(i) {
+                        tab.row_x[i].remove(q1);
+                    }
+                }
+                for i in tab.col_x[q1].iter().copied() {
+                    if !old_col_x_q1.contains(i) {
+                        tab.row_x[i].insert(q1);
+                    }
+                }
+
+                let old_col_x_q2 = tab.col_x[q2].clone();
+                tab.col_x[q2].xor_assign(&col_z_q1_clone);
+                tab.col_x[q2].xor_assign(&col_z_q2_clone);
+                for i in old_col_x_q2.iter().copied() {
+                    if !tab.col_x[q2].contains(i) {
+                        tab.row_x[i].remove(q2);
+                    }
+                }
+                for i in tab.col_x[q2].iter().copied() {
+                    if !old_col_x_q2.contains(i) {
+                        tab.row_x[i].insert(q2);
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
+    #[inline]
+    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SXXdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.x(&q1s).x(&q2s).sxx(qubits)
+    }
+
+    /// Square root of ZZ gate. SZZ = exp(+iπ/4·ZZ).
+    ///
+    /// Generators with odd X-count on {q1,q2} get phase * +i and Z toggled on both qubits.
+    #[inline]
+    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZ requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only): multiply phase by +i for odd X-count generators.
+            for g in self.stabs.col_x[q1].iter().copied() {
+                if !self.stabs.col_x[q2].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            for g in self.stabs.col_x[q2].iter().copied() {
+                if !self.stabs.col_x[q1].contains(g) {
+                    if self.stabs.signs_i.contains(g) {
+                        self.stabs.signs_minus.toggle(g);
+                        self.stabs.signs_i.remove(g);
+                    } else {
+                        self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle Z on q1,q2 for odd-X generators.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                let col_x_q1_clone = tab.col_x[q1].clone();
+                let col_x_q2_clone = tab.col_x[q2].clone();
+
+                let old_col_z_q1 = tab.col_z[q1].clone();
+                tab.col_z[q1].xor_assign(&col_x_q1_clone);
+                tab.col_z[q1].xor_assign(&col_x_q2_clone);
+                for i in old_col_z_q1.iter().copied() {
+                    if !tab.col_z[q1].contains(i) {
+                        tab.row_z[i].remove(q1);
+                    }
+                }
+                for i in tab.col_z[q1].iter().copied() {
+                    if !old_col_z_q1.contains(i) {
+                        tab.row_z[i].insert(q1);
+                    }
+                }
+
+                let old_col_z_q2 = tab.col_z[q2].clone();
+                tab.col_z[q2].xor_assign(&col_x_q1_clone);
+                tab.col_z[q2].xor_assign(&col_x_q2_clone);
+                for i in old_col_z_q2.iter().copied() {
+                    if !tab.col_z[q2].contains(i) {
+                        tab.row_z[i].remove(q2);
+                    }
+                }
+                for i in tab.col_z[q2].iter().copied() {
+                    if !old_col_z_q2.contains(i) {
+                        tab.row_z[i].insert(q2);
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
+    #[inline]
+    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SZZdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.z(&q1s).z(&q2s).szz(qubits)
+    }
+
+    /// Square root of YY gate. SYY = exp(+iπ/4·YY).
+    ///
+    /// Generators where odd number of {q1,q2} anticommute with Y get phase update
+    /// and both X,Z toggled on both qubits. Sign is z-parity dependent.
+    #[inline]
+    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYY requires pairs of qubits"
+        );
+
+        for pair in qubits.chunks_exact(2) {
+            let q1 = pair[0].index();
+            let q2 = pair[1].index();
+
+            // Sign update (stabs only)
+            {
+                let signs_minus = &mut self.stabs.signs_minus;
+                let signs_i = &mut self.stabs.signs_i;
+                let col_x = &self.stabs.col_x;
+                let col_z = &self.stabs.col_z;
+
+                macro_rules! mul_i {
+                    (plus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        if $signs_i.contains($g) {
+                            $signs_minus.toggle($g);
+                            $signs_i.remove($g);
+                        } else {
+                            $signs_i.insert($g);
+                        }
+                    };
+                    (minus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        $signs_minus.toggle($g);
+                        mul_i!(plus, $g, $signs_i, $signs_minus);
+                    };
+                }
+
+                macro_rules! apply_syy_sign {
+                    ($g:expr, $x1:expr, $z1:expr, $x2:expr, $z2:expr) => {
+                        if ($x1 != $z1) != ($x2 != $z2) {
+                            if $z1 == $z2 {
+                                mul_i!(minus, $g, signs_i, signs_minus);
+                            } else {
+                                mul_i!(plus, $g, signs_i, signs_minus);
+                            }
+                        }
+                    };
+                }
+
+                // Visit generators reachable from q1 columns
+                for g in col_x[q1].iter().copied() {
+                    let x1 = true;
+                    let z1 = col_z[q1].contains(g);
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                for g in col_z[q1].iter().copied() {
+                    if col_x[q1].contains(g) {
+                        continue;
+                    }
+                    let x1 = false;
+                    let z1 = true;
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                // Generators with identity at q1, non-identity at q2
+                for g in col_x[q2].iter().copied() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) {
+                        continue;
+                    }
+                    let x2 = true;
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, false, false, x2, z2);
+                }
+                for g in col_z[q2].iter().copied() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) || col_x[q2].contains(g) {
+                        continue;
+                    }
+                    apply_syy_sign!(g, false, false, false, true);
+                }
+            }
+
+            // Pauli update (both stabs and destabs): toggle both X and Z on q1,q2
+            // for generators where (x1^z1) XOR (x2^z2) = 1.
+            for tab in [&mut self.stabs, &mut self.destabs] {
+                // Compute the affected set: anti_y[q] = col_x[q] ^ col_z[q]
+                let mut anti_y_q1 = tab.col_x[q1].clone();
+                anti_y_q1.xor_assign(&tab.col_z[q1]);
+                let mut anti_y_q2 = tab.col_x[q2].clone();
+                anti_y_q2.xor_assign(&tab.col_z[q2]);
+                let mut affected = anti_y_q1;
+                affected.xor_assign(&anti_y_q2);
+
+                // Toggle X bits at q1 and q2
+                let old_col_x_q1 = tab.col_x[q1].clone();
+                tab.col_x[q1].xor_assign(&affected);
+                for i in old_col_x_q1.iter().copied() {
+                    if !tab.col_x[q1].contains(i) {
+                        tab.row_x[i].remove(q1);
+                    }
+                }
+                for i in tab.col_x[q1].iter().copied() {
+                    if !old_col_x_q1.contains(i) {
+                        tab.row_x[i].insert(q1);
+                    }
+                }
+
+                let old_col_x_q2 = tab.col_x[q2].clone();
+                tab.col_x[q2].xor_assign(&affected);
+                for i in old_col_x_q2.iter().copied() {
+                    if !tab.col_x[q2].contains(i) {
+                        tab.row_x[i].remove(q2);
+                    }
+                }
+                for i in tab.col_x[q2].iter().copied() {
+                    if !old_col_x_q2.contains(i) {
+                        tab.row_x[i].insert(q2);
+                    }
+                }
+
+                // Toggle Z bits at q1 and q2
+                let old_col_z_q1 = tab.col_z[q1].clone();
+                tab.col_z[q1].xor_assign(&affected);
+                for i in old_col_z_q1.iter().copied() {
+                    if !tab.col_z[q1].contains(i) {
+                        tab.row_z[i].remove(q1);
+                    }
+                }
+                for i in tab.col_z[q1].iter().copied() {
+                    if !old_col_z_q1.contains(i) {
+                        tab.row_z[i].insert(q1);
+                    }
+                }
+
+                let old_col_z_q2 = tab.col_z[q2].clone();
+                tab.col_z[q2].xor_assign(&affected);
+                for i in old_col_z_q2.iter().copied() {
+                    if !tab.col_z[q2].contains(i) {
+                        tab.row_z[i].remove(q2);
+                    }
+                }
+                for i in tab.col_z[q2].iter().copied() {
+                    if !old_col_z_q2.contains(i) {
+                        tab.row_z[i].insert(q2);
+                    }
+                }
+            }
+        }
+        self
+    }
+
+    /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
+    #[inline]
+    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        debug_assert!(
+            qubits.len().is_multiple_of(2),
+            "SYYdg requires pairs of qubits"
+        );
+        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
+        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+        self.y(&q1s).y(&q2s).syy(qubits)
     }
 
     /// Measures qubits in the Z basis.
@@ -2559,8 +4532,6 @@ mod tests {
     fn test_cx() {
         // CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI;
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
         // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.cx(&q2(0, 1));
@@ -2580,14 +4551,34 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.cx(&q2(0, 1));
         check_state(&state, &["ZI"], &["XX"]);
+
+        // Signed inputs: -IX -> -IX
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["-IX"], &["ZZ"]);
+
+        // -ZI -> -ZI
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["-ZI"], &["XX"]);
+
+        // Y input: +IY -> +ZY (Y1 = iX1Z1 -> i*(IX)*(ZZ) = i*ZX*Z = i*Z*(XZ) = ZY)
+        // In W notation: iIW -> iZW
+        let mut state = prep_state(&["iIW"], &["IX"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IX"]);
+
+        // Entangled stabilizer: +XX -> +XI, destab +ZI -> +ZI
+        // (ZZ is not a valid destab for XX since they commute; ZI anti-commutes with XX)
+        let mut state = prep_state(&["XX"], &["ZI"]);
+        state.cx(&q2(0, 1));
+        check_state(&state, &["XI"], &["ZI"]);
     }
 
     #[test]
+    #[expect(clippy::shadow_unrelated)]
     fn test_cy() {
         // CY: +IX -> +ZX; +IZ -> +ZZ; +XI -> +XY; +ZI -> +ZI;
-        // Note: CY = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Y (standard convention)
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
 
         // +IX -> +ZX
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2599,7 +4590,7 @@ mod tests {
         state.cy(&q2(0, 1));
         check_state(&state, &["ZZ"], &["ZX"]);
 
-        // +XI -> +XY = +iXW (Y = iXZ = iW)
+        // +XI -> +XY = +iXW
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.cy(&q2(0, 1));
         check_state(&state, &["+iXW"], &["ZI"]);
@@ -2608,14 +4599,26 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.cy(&q2(0, 1));
         check_state(&state, &["ZI"], &["XW"]);
+
+        // Signed: -IX -> -ZX
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.cy(&q2(0, 1));
+        check_state(&state, &["-ZX"], &["ZZ"]);
+
+        // Y input: +IY -> +ZY (iIW -> i*(ZX)*(ZZ) = i*IXZ = i*IW = IY)
+        // Actually: Y1 = iX1Z1, X1->ZX, Z1->ZZ. So Y1 -> i*(ZX)*(ZZ) = i*Z*Z*X*Z = i*I*XZ = i*IW = IY
+        // Wait, let me recalculate in 2q notation:
+        // IY = i*(IX)*(IZ) -> i*(ZX)*(ZZ) = i*ZX*ZZ
+        // ZX*ZZ: (Z*Z)(X*Z) = I*(XZ) = IW. So i*IW = IY.
+        let mut state = prep_state(&["iIW"], &["IX"]);
+        state.cy(&q2(0, 1));
+        check_state(&state, &["iIW"], &["ZX"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_cz() {
         // CZ: +IX -> +ZX; +IZ -> +IZ; +XI -> +XZ; +ZI -> +ZI;
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
 
         // +IX -> +ZX
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2636,24 +4639,24 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.cz(&q2(0, 1));
         check_state(&state, &["ZI"], &["XZ"]);
+
+        // Signed: -XI -> -XZ
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.cz(&q2(0, 1));
+        check_state(&state, &["-XZ"], &["ZI"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_sxx() {
-        // SXX: XI -> XI
-        //      IX -> IX
-        //      ZI -> -YX
-        //      IZ -> -XY
+        // SXX: XI -> XI; IX -> IX; ZI -> -YX; IZ -> -XY
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> +XI
+        // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.sxx(&q2(0, 1));
         check_state(&state, &["IX"], &["XW"]);
 
-        // +IZ -> -XY
+        // +IZ -> -XY = -iXW
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.sxx(&q2(0, 1));
         check_state(&state, &["-iXW"], &["IX"]);
@@ -2663,28 +4666,33 @@ mod tests {
         state.sxx(&q2(0, 1));
         check_state(&state, &["XI"], &["WX"]);
 
-        // +ZI -> -YX
+        // +ZI -> -YX = -iWX
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.sxx(&q2(0, 1));
         check_state(&state, &["-iWX"], &["XI"]);
+
+        // Signed: -ZI -> +YX = iWX
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.sxx(&q2(0, 1));
+        check_state(&state, &["iWX"], &["XI"]);
+
+        // Signed: -IZ -> +XY = iXW
+        let mut state = prep_state(&["-IZ"], &["IX"]);
+        state.sxx(&q2(0, 1));
+        check_state(&state, &["iXW"], &["IX"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_sxxdg() {
-        // SXXdg: XI -> XI
-        //        IX -> IX
-        //        ZI -> YX
-        //        IZ -> XY
+        // SXXdg: XI -> XI; IX -> IX; ZI -> YX; IZ -> XY
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> +XI
+        // +IX -> +IX
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["IX"], &["XW"]);
 
-        // +IZ -> +XY
+        // +IZ -> +XY = iXW
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["iXW"], &["IX"]);
@@ -2694,144 +4702,145 @@ mod tests {
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["XI"], &["WX"]);
 
-        // +ZI -> +YX
+        // +ZI -> +YX = iWX
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.sxxdg(&q2(0, 1));
         check_state(&state, &["iWX"], &["XI"]);
+
+        // Signed: -ZI -> -YX = -iWX
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.sxxdg(&q2(0, 1));
+        check_state(&state, &["-iWX"], &["XI"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_syy() {
-        // SYY: XI -> -ZY
-        //      IX -> -YZ
-        //      ZI -> XY
-        //      IZ -> YX
+        // SYY: XI -> -ZY; IX -> -YZ; ZI -> XY; IZ -> YX
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> -YZ
+        // +IX -> -YZ = -iWZ
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["-iWZ"], &["WX"]);
 
-        // +IZ -> +YX
+        // +IZ -> +YX = iWX
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["iWX"], &["WZ"]);
 
-        // +XI -> -ZY
+        // +XI -> -ZY = -iZW
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["-iZW"], &["XW"]);
 
-        // +ZI -> +XY
+        // +ZI -> +XY = iXW
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.syy(&q2(0, 1));
         check_state(&state, &["iXW"], &["ZW"]);
+
+        // Signed: -XI -> +ZY = iZW
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.syy(&q2(0, 1));
+        check_state(&state, &["iZW"], &["XW"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_syydg() {
-        // SYYdg: XI -> ZY
-        //        IX -> YZ
-        //        ZI -> -XY
-        //        IZ -> -YX
+        // SYYdg: XI -> ZY; IX -> YZ; ZI -> -XY; IZ -> -YX
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> YZ
+        // +IX -> +YZ = iWZ
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["iWZ"], &["WX"]);
 
-        // +IZ -> -YX
+        // +IZ -> -YX = -iWX
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["-iWX"], &["WZ"]);
 
-        // +XI -> ZY
+        // +XI -> +ZY = iZW
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["iZW"], &["XW"]);
-        // +ZI -> +XY
+
+        // +ZI -> -XY = -iXW
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.syydg(&q2(0, 1));
         check_state(&state, &["-iXW"], &["ZW"]);
+
+        // Signed: -IX -> -YZ = -iWZ
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.syydg(&q2(0, 1));
+        check_state(&state, &["-iWZ"], &["WX"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_szz() {
-        // SZZ: +IX -> +ZY;
-        //      +IZ -> +IZ;
-        //      +XI -> +ZY;
-        //      +ZI -> +ZI;
+        // SZZ: IX -> ZY; IZ -> IZ; XI -> YZ; ZI -> ZI
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> ZY
+        // +IX -> +ZY = iZW
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["iZW"], &["IZ"]);
 
-        // +IZ -> IZ
+        // +IZ -> +IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZW"]);
 
-        // +XI -> YZ
+        // +XI -> +YZ = iWZ
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["iWZ"], &["ZI"]);
 
-        // +ZI -> ZI
+        // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.szz(&q2(0, 1));
         check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -IX -> -ZY = -iZW
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.szz(&q2(0, 1));
+        check_state(&state, &["-iZW"], &["IZ"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_szzdg() {
-        // SZZ: +IX -> -ZY;
-        //      +IZ -> +IZ;
-        //      +XI -> -ZY;
-        //      +ZI -> +ZI;
+        // SZZdg: IX -> -ZY; IZ -> IZ; XI -> -YZ; ZI -> ZI
 
-        // TODO: Expand the set of stabilizer transformations evaluated.
-
-        // +IX -> -ZY
+        // +IX -> -ZY = -iZW
         let mut state = prep_state(&["IX"], &["IZ"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["-iZW"], &["IZ"]);
 
-        // +IZ -> IZ
+        // +IZ -> +IZ
         let mut state = prep_state(&["IZ"], &["IX"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["IZ"], &["ZW"]);
 
-        // +XI -> -YZ
+        // +XI -> -YZ = -iWZ
         let mut state = prep_state(&["XI"], &["ZI"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["-iWZ"], &["ZI"]);
 
-        // +ZI -> ZI
+        // +ZI -> +ZI
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.szzdg(&q2(0, 1));
         check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -IX -> +ZY = iZW
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.szzdg(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IZ"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
     fn test_swap() {
-        // SWAP: +IX -> +XI;
-        //       +IZ -> +ZI;
-        //       +XI -> +IX;
-        //       +ZI -> +IZ;
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
+        // SWAP: IX -> XI; IZ -> ZI; XI -> IX; ZI -> IZ
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2852,17 +4861,17 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.swap(&q2(0, 1));
         check_state(&state, &["IZ"], &["IX"]);
+
+        // Signed: -IX -> -XI
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.swap(&q2(0, 1));
+        check_state(&state, &["-XI"], &["ZI"]);
     }
 
     #[test]
     #[expect(clippy::shadow_unrelated)]
-    fn test_g2() {
-        // G2: +XI -> +IX
-        //     +IX -> +XI
-        //     +ZI -> +XZ
-        //     +IZ -> +ZX
-
-        // TODO: Expand the set of stabilizer transformations evaluated.
+    fn test_g() {
+        // G: XI -> IX; IX -> XI; ZI -> XZ; IZ -> ZX
 
         // +IX -> +XI
         let mut state = prep_state(&["IX"], &["IZ"]);
@@ -2883,6 +4892,512 @@ mod tests {
         let mut state = prep_state(&["ZI"], &["XI"]);
         state.g(&q2(0, 1));
         check_state(&state, &["XZ"], &["IX"]);
+
+        // Signed: -ZI -> -XZ
+        let mut state = prep_state(&["-ZI"], &["XI"]);
+        state.g(&q2(0, 1));
+        check_state(&state, &["-XZ"], &["IX"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_iswap() {
+        // ISWAP: XI -> ZY; IX -> YZ; ZI -> IZ; IZ -> ZI
+
+        // +XI -> +ZY = iZW
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IZ"]);
+
+        // +IX -> +YZ = iWZ
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["iWZ"], &["ZI"]);
+
+        // +ZI -> +IZ, destab +XI -> ZW (Pauli part of ZY=iZW, but destab phases not tracked)
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["IZ"], &["ZW"]);
+
+        // +IZ -> +ZI, destab +IX -> WZ (Pauli part of YZ=iWZ, but destab phases not tracked)
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -XI -> -ZY = -iZW
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["-iZW"], &["IZ"]);
+
+        // Signed: -IX -> -YZ = -iWZ
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.iswap(&q2(0, 1));
+        check_state(&state, &["-iWZ"], &["ZI"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_iswapdg() {
+        // ISWAPdg: XI -> -ZY; IX -> -YZ; ZI -> IZ; IZ -> ZI
+
+        // +XI -> -ZY = -iZW
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["-iZW"], &["IZ"]);
+
+        // +IX -> -YZ = -iWZ
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["-iWZ"], &["ZI"]);
+
+        // +ZI -> +IZ (destab phases not tracked)
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["IZ"], &["ZW"]);
+
+        // +IZ -> +ZI (destab phases not tracked)
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["ZI"], &["WZ"]);
+
+        // Signed: -XI -> +ZY = iZW
+        let mut state = prep_state(&["-XI"], &["ZI"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["iZW"], &["IZ"]);
+
+        // Signed: -IX -> +YZ = iWZ
+        let mut state = prep_state(&["-IX"], &["IZ"]);
+        state.iswapdg(&q2(0, 1));
+        check_state(&state, &["iWZ"], &["ZI"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_g_self_inverse() {
+        // G is Hermitian: G * G = I. Verify on SparseStab.
+
+        // Start with +XI, apply G twice -> should return to +XI
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["XI"], &["ZI"]);
+
+        // Start with +IX, apply G twice -> should return to +IX
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["IX"], &["IZ"]);
+
+        // Start with +ZI, apply G twice -> should return to +ZI
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["ZI"], &["XI"]);
+
+        // Start with +IZ, apply G twice -> should return to +IZ
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.g(&q2(0, 1)).g(&q2(0, 1));
+        check_state(&state, &["IZ"], &["IX"]);
+    }
+
+    #[test]
+    #[expect(clippy::shadow_unrelated)]
+    fn test_iswap_iswapdg_inverse() {
+        // ISWAP * ISWAPdg = I. Verify on SparseStab.
+
+        let mut state = prep_state(&["XI"], &["ZI"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["XI"], &["ZI"]);
+
+        let mut state = prep_state(&["IX"], &["IZ"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["IX"], &["IZ"]);
+
+        let mut state = prep_state(&["ZI"], &["XI"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["ZI"], &["XI"]);
+
+        let mut state = prep_state(&["IZ"], &["IX"]);
+        state.iswap(&q2(0, 1)).iswapdg(&q2(0, 1));
+        check_state(&state, &["IZ"], &["IX"]);
+    }
+
+    /// Apply a 2q Clifford gate on qubits (0, 1) to a `SparseStab`.
+    fn apply_2q_cliff(state: &mut SparseStab, cliff: pecos_core::clifford::Clifford) {
+        use pecos_core::clifford::Clifford;
+        match cliff {
+            Clifford::CX => {
+                state.cx(&q2(0, 1));
+            }
+            Clifford::CY => {
+                state.cy(&q2(0, 1));
+            }
+            Clifford::CZ => {
+                state.cz(&q2(0, 1));
+            }
+            Clifford::SWAP => {
+                state.swap(&q2(0, 1));
+            }
+            Clifford::SXX => {
+                state.sxx(&q2(0, 1));
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(&q2(0, 1));
+            }
+            Clifford::SYY => {
+                state.syy(&q2(0, 1));
+            }
+            Clifford::SYYdg => {
+                state.syydg(&q2(0, 1));
+            }
+            Clifford::SZZ => {
+                state.szz(&q2(0, 1));
+            }
+            Clifford::SZZdg => {
+                state.szzdg(&q2(0, 1));
+            }
+            Clifford::ISWAP => {
+                state.iswap(&q2(0, 1));
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(&q2(0, 1));
+            }
+            Clifford::G => {
+                state.g(&q2(0, 1));
+            }
+            Clifford::Gdg => {
+                state.gdg(&q2(0, 1));
+            }
+            _ => panic!("not a 2q gate: {cliff:?}"),
+        }
+    }
+
+    /// Apply a 2q Clifford gate on reversed qubits (1, 0) to a `SparseStab`.
+    fn apply_2q_cliff_reversed(state: &mut SparseStab, cliff: pecos_core::clifford::Clifford) {
+        use pecos_core::clifford::Clifford;
+        match cliff {
+            Clifford::CX => {
+                state.cx(&q2(1, 0));
+            }
+            Clifford::CY => {
+                state.cy(&q2(1, 0));
+            }
+            Clifford::CZ => {
+                state.cz(&q2(1, 0));
+            }
+            Clifford::SWAP => {
+                state.swap(&q2(1, 0));
+            }
+            Clifford::SXX => {
+                state.sxx(&q2(1, 0));
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(&q2(1, 0));
+            }
+            Clifford::SYY => {
+                state.syy(&q2(1, 0));
+            }
+            Clifford::SYYdg => {
+                state.syydg(&q2(1, 0));
+            }
+            Clifford::SZZ => {
+                state.szz(&q2(1, 0));
+            }
+            Clifford::SZZdg => {
+                state.szzdg(&q2(1, 0));
+            }
+            Clifford::ISWAP => {
+                state.iswap(&q2(1, 0));
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(&q2(1, 0));
+            }
+            Clifford::G => {
+                state.g(&q2(1, 0));
+            }
+            Clifford::Gdg => {
+                state.gdg(&q2(1, 0));
+            }
+            _ => panic!("not a 2q gate: {cliff:?}"),
+        }
+    }
+
+    /// Convert a `CliffordRep` `PauliString` image to `SparseStab`'s W-notation representation.
+    ///
+    /// Returns (`x_bits`, `z_bits`, `signs_minus`, `signs_i`) where:
+    /// - `x_bits`[q] / `z_bits`[q]: whether qubit q has X/Z component
+    /// - Y in the `PauliString` becomes W (x=1,z=1) with an extra i factor absorbed into the phase
+    fn pauli_image_to_w_notation(
+        image: &pecos_core::PauliString,
+        num_qubits: usize,
+    ) -> (Vec<bool>, Vec<bool>, bool, bool) {
+        use pecos_core::Pauli;
+
+        let mut x_bits = vec![false; num_qubits];
+        let mut z_bits = vec![false; num_qubits];
+        let mut num_ys = 0u32;
+
+        for (p, qid) in image.iter_pairs() {
+            let q = usize::from(qid);
+            match p {
+                Pauli::I => {}
+                Pauli::X => {
+                    x_bits[q] = true;
+                }
+                Pauli::Z => {
+                    z_bits[q] = true;
+                }
+                Pauli::Y => {
+                    x_bits[q] = true;
+                    z_bits[q] = true;
+                    num_ys += 1;
+                }
+            }
+        }
+
+        // W-notation phase = PauliString phase * i^num_ys
+        // i^0 = +1, i^1 = +i, i^2 = -1, i^3 = -i
+        // QuarterPhase encodes: PlusOne=0, MinusOne=1, PlusI=2, MinusI=3
+        // Multiplying by i adds 2 to the encoding (mod 4)
+        let base = image.phase() as u8;
+        let w_phase = (base + 2 * (num_ys as u8 % 4)) % 4;
+
+        let signs_minus = w_phase & 1 != 0; // bit 0 = minus
+        let signs_i = w_phase & 2 != 0; // bit 1 = i
+
+        (x_bits, z_bits, signs_minus, signs_i)
+    }
+
+    /// Automated cross-check: `CliffordRep` Pauli images match `SparseStab` for ALL 2q gates.
+    ///
+    /// For each gate and each input generator (XI, ZI, IX, IZ), the `CliffordRep` predicts
+    /// the output Pauli string. We verify the `SparseStab` simulator produces exactly the
+    /// same result (same Pauli bits and same phase on the stabilizer).
+    #[test]
+    fn clifford_rep_matches_sparse_stab_all_2q_gates() {
+        use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
+
+        let inputs: [(&str, PauliString, &[&str], &[&str]); 4] = [
+            ("X0", PauliString::x(0), &["XI"], &["ZI"]),
+            ("Z0", PauliString::z(0), &["ZI"], &["XI"]),
+            ("X1", PauliString::x(1), &["IX"], &["IZ"]),
+            ("Z1", PauliString::z(1), &["IZ"], &["IX"]),
+        ];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+
+            for (name, input_ps, stab_str, destab_str) in &inputs {
+                let image = rep.apply(input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 2);
+
+                let mut state = prep_state(stab_str, destab_str);
+                apply_2q_cliff(&mut state, cliff);
+
+                // Check Pauli bits
+                for qq in 0..2 {
+                    assert_eq!(
+                        state.stabs.col_x[qq].contains(0),
+                        exp_x[qq],
+                        "{cliff:?} on {name}: qubit {qq} X bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                    assert_eq!(
+                        state.stabs.col_z[qq].contains(0),
+                        exp_z[qq],
+                        "{cliff:?} on {name}: qubit {qq} Z bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                }
+
+                // Check phase (stabilizer phases ARE tracked)
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
+                    "{cliff:?} on {name}: signs_minus mismatch \
+                     (expected image: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
+                    "{cliff:?} on {name}: signs_i mismatch \
+                     (expected image: {image:?})"
+                );
+            }
+        }
+    }
+
+    /// Same cross-check but with reversed qubit ordering: gate applied to (1, 0).
+    /// `CliffordRep` uses `on_qubits(1`, 0), `SparseStab` uses gate(&[q1, q0]).
+    /// This catches bugs in asymmetric gates (CX, CY) with swapped control/target.
+    #[test]
+    fn clifford_rep_matches_sparse_stab_reversed_qubits() {
+        use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
+
+        let inputs: [(&str, PauliString, &[&str], &[&str]); 4] = [
+            ("X0", PauliString::x(0), &["XI"], &["ZI"]),
+            ("Z0", PauliString::z(0), &["ZI"], &["XI"]),
+            ("X1", PauliString::x(1), &["IX"], &["IZ"]),
+            ("Z1", PauliString::z(1), &["IZ"], &["IX"]),
+        ];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(1, 0);
+
+            for (name, input_ps, stab_str, destab_str) in &inputs {
+                let image = rep.apply(input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 2);
+
+                let mut state = prep_state(stab_str, destab_str);
+                apply_2q_cliff_reversed(&mut state, cliff);
+
+                for qq in 0..2 {
+                    assert_eq!(
+                        state.stabs.col_x[qq].contains(0),
+                        exp_x[qq],
+                        "{cliff:?} reversed on {name}: qubit {qq} X bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                    assert_eq!(
+                        state.stabs.col_z[qq].contains(0),
+                        exp_z[qq],
+                        "{cliff:?} reversed on {name}: qubit {qq} Z bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                }
+
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
+                    "{cliff:?} reversed on {name}: signs_minus mismatch \
+                     (expected image: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
+                    "{cliff:?} reversed on {name}: signs_i mismatch \
+                     (expected image: {image:?})"
+                );
+            }
+        }
+    }
+
+    /// Same cross-check for all 1q Clifford gates.
+    #[test]
+    fn clifford_rep_matches_sparse_stab_all_1q_gates() {
+        use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
+
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+
+            // Test X -> ? and Z -> ?
+            for (name, input_ps, stab_str, destab_str) in [
+                ("X", PauliString::x(0), &["XII"][..], &["ZII"][..]),
+                ("Z", PauliString::z(0), &["ZII"][..], &["XII"][..]),
+            ] {
+                let image = rep.apply(&input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 1);
+
+                // Use a 3-qubit SparseStab (prep_state always creates 3 qubits)
+                let mut state = prep_state(stab_str, destab_str);
+
+                // Apply the 1q gate on qubit 0
+                match cliff {
+                    Clifford::I => {}
+                    Clifford::X => {
+                        state.x(&q(0));
+                    }
+                    Clifford::Y => {
+                        state.y(&q(0));
+                    }
+                    Clifford::Z => {
+                        state.z(&q(0));
+                    }
+                    Clifford::H => {
+                        state.h(&q(0));
+                    }
+                    Clifford::SX => {
+                        state.sx(&q(0));
+                    }
+                    Clifford::SXdg => {
+                        state.sxdg(&q(0));
+                    }
+                    Clifford::SY => {
+                        state.sy(&q(0));
+                    }
+                    Clifford::SYdg => {
+                        state.sydg(&q(0));
+                    }
+                    Clifford::SZ => {
+                        state.sz(&q(0));
+                    }
+                    Clifford::SZdg => {
+                        state.szdg(&q(0));
+                    }
+                    Clifford::H2 => {
+                        state.h2(&q(0));
+                    }
+                    Clifford::H3 => {
+                        state.h3(&q(0));
+                    }
+                    Clifford::H4 => {
+                        state.h4(&q(0));
+                    }
+                    Clifford::H5 => {
+                        state.h5(&q(0));
+                    }
+                    Clifford::H6 => {
+                        state.h6(&q(0));
+                    }
+                    Clifford::F => {
+                        state.f(&q(0));
+                    }
+                    Clifford::Fdg => {
+                        state.fdg(&q(0));
+                    }
+                    Clifford::F2 => {
+                        state.f2(&q(0));
+                    }
+                    Clifford::F2dg => {
+                        state.f2dg(&q(0));
+                    }
+                    Clifford::F3 => {
+                        state.f3(&q(0));
+                    }
+                    Clifford::F3dg => {
+                        state.f3dg(&q(0));
+                    }
+                    Clifford::F4 => {
+                        state.f4(&q(0));
+                    }
+                    Clifford::F4dg => {
+                        state.f4dg(&q(0));
+                    }
+                    _ => panic!("not a 1q gate: {cliff:?}"),
+                }
+
+                assert_eq!(
+                    state.stabs.col_x[0].contains(0),
+                    exp_x[0],
+                    "{cliff:?} on {name}: X bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.col_z[0].contains(0),
+                    exp_z[0],
+                    "{cliff:?} on {name}: Z bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
+                    "{cliff:?} on {name}: signs_minus mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
+                    "{cliff:?} on {name}: signs_i mismatch (expected: {image:?})"
+                );
+            }
+        }
     }
 
     fn one_bit_z_teleport(mut state: SparseStab) -> (SparseStab, bool) {
@@ -3199,5 +5714,271 @@ mod tests {
     fn test_hybrid_full_stabilizer_suite() {
         let mut sim = SparseStabHybrid::new(3);
         stabilizer_test_utils::run_full_stabilizer_test_suite(&mut sim, 3);
+    }
+
+    // ========================================================================
+    // Stabilizer group bridge tests
+    // ========================================================================
+
+    #[test]
+    fn test_to_stabilizer_group_initial_state() {
+        // |000> state: stabilizers are Z0, Z1, Z2
+        let sim = SparseStabHybrid::new(3);
+        let group = sim.to_stabilizer_group();
+        assert_eq!(group.num_qubits(), 3);
+        assert_eq!(group.num_generators(), 3);
+        assert_eq!(group.rank(), 3);
+    }
+
+    #[test]
+    fn test_to_stabilizer_group_after_gates() {
+        use crate::CliffordGateable;
+        use pecos_core::QubitId;
+        // Create Bell state: H(0), CX(0,1)
+        let mut sim = SparseStabHybrid::new(2);
+        sim.h(&[QubitId::new(0)]);
+        sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+
+        let group = sim.to_stabilizer_group();
+        assert_eq!(group.num_qubits(), 2);
+        assert_eq!(group.rank(), 2);
+        // Bell state stabilizers: XX and ZZ (or -XX and -ZZ depending on convention)
+    }
+
+    #[test]
+    fn test_to_destabilizer_sequence() {
+        let sim = SparseStabHybrid::new(3);
+        let destabs = sim.to_destabilizer_sequence();
+        // Default state: destabilizers are X0, X1, X2
+        assert_eq!(destabs.len(), 3);
+        assert_eq!(destabs.num_qubits(), 3);
+    }
+
+    /// Apply a 2q Clifford gate on qubits (0, 1) to a `SparseStabHybrid`.
+    fn apply_2q_cliff_hybrid(state: &mut SparseStabHybrid, cliff: pecos_core::clifford::Clifford) {
+        use pecos_core::clifford::Clifford;
+        match cliff {
+            Clifford::CX => {
+                state.cx(&q2(0, 1));
+            }
+            Clifford::CY => {
+                state.cy(&q2(0, 1));
+            }
+            Clifford::CZ => {
+                state.cz(&q2(0, 1));
+            }
+            Clifford::SWAP => {
+                state.swap(&q2(0, 1));
+            }
+            Clifford::SXX => {
+                state.sxx(&q2(0, 1));
+            }
+            Clifford::SXXdg => {
+                state.sxxdg(&q2(0, 1));
+            }
+            Clifford::SYY => {
+                state.syy(&q2(0, 1));
+            }
+            Clifford::SYYdg => {
+                state.syydg(&q2(0, 1));
+            }
+            Clifford::SZZ => {
+                state.szz(&q2(0, 1));
+            }
+            Clifford::SZZdg => {
+                state.szzdg(&q2(0, 1));
+            }
+            Clifford::ISWAP => {
+                state.iswap(&q2(0, 1));
+            }
+            Clifford::ISWAPdg => {
+                state.iswapdg(&q2(0, 1));
+            }
+            Clifford::G => {
+                state.g(&q2(0, 1));
+            }
+            Clifford::Gdg => {
+                state.gdg(&q2(0, 1));
+            }
+            _ => panic!("not a 2q gate: {cliff:?}"),
+        }
+    }
+
+    /// `CliffordRep` Pauli images match `SparseStabHybrid` for all 2q gates (bits + signs).
+    #[test]
+    fn clifford_rep_matches_sparse_stab_hybrid_all_2q_gates() {
+        use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
+
+        let inputs: [(&str, PauliString, usize, bool); 4] = [
+            ("X0", PauliString::x(0), 0, true),
+            ("Z0", PauliString::z(0), 0, false),
+            ("X1", PauliString::x(1), 1, true),
+            ("Z1", PauliString::z(1), 1, false),
+        ];
+
+        for &cliff in Clifford::all_2q() {
+            let rep = cliff.on_qubits(0, 1);
+
+            for (name, input_ps, input_q, init_x) in &inputs {
+                let image = rep.apply(input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 2);
+
+                // Prepare SparseStabHybrid with a single known generator
+                let mut state = SparseStabHybrid::new(2);
+                if *init_x {
+                    state.h(&q(*input_q));
+                }
+                apply_2q_cliff_hybrid(&mut state, cliff);
+
+                let gen_id = *input_q;
+                for qq in 0..2 {
+                    assert_eq!(
+                        state.stabs.col_x[qq].contains(gen_id),
+                        exp_x[qq],
+                        "{cliff:?} on {name}: SparseStabHybrid qubit {qq} X bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                    assert_eq!(
+                        state.stabs.col_z[qq].contains(gen_id),
+                        exp_z[qq],
+                        "{cliff:?} on {name}: SparseStabHybrid qubit {qq} Z bit mismatch \
+                         (expected image: {image:?})"
+                    );
+                }
+
+                assert_eq!(
+                    state.stabs.signs_minus.contains(gen_id),
+                    exp_minus,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_minus mismatch \
+                     (expected image: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(gen_id),
+                    exp_i,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch \
+                     (expected image: {image:?})"
+                );
+            }
+        }
+    }
+
+    /// `CliffordRep` Pauli images match `SparseStabHybrid` for all 1q gates (bits + signs).
+    #[test]
+    fn clifford_rep_matches_sparse_stab_hybrid_all_1q_gates() {
+        use pecos_core::PauliString;
+        use pecos_core::clifford::Clifford;
+
+        for &cliff in Clifford::all_1q() {
+            let rep = cliff.on_qubit(0);
+
+            for (name, input_ps, init_x) in [
+                ("X", PauliString::x(0), true),
+                ("Z", PauliString::z(0), false),
+            ] {
+                let image = rep.apply(&input_ps);
+                let (exp_x, exp_z, exp_minus, exp_i) = pauli_image_to_w_notation(&image, 1);
+
+                let mut state = SparseStabHybrid::new(3);
+                if init_x {
+                    state.h(&q(0));
+                }
+
+                match cliff {
+                    Clifford::I => {}
+                    Clifford::X => {
+                        state.x(&q(0));
+                    }
+                    Clifford::Y => {
+                        state.y(&q(0));
+                    }
+                    Clifford::Z => {
+                        state.z(&q(0));
+                    }
+                    Clifford::H => {
+                        state.h(&q(0));
+                    }
+                    Clifford::SX => {
+                        state.sx(&q(0));
+                    }
+                    Clifford::SXdg => {
+                        state.sxdg(&q(0));
+                    }
+                    Clifford::SY => {
+                        state.sy(&q(0));
+                    }
+                    Clifford::SYdg => {
+                        state.sydg(&q(0));
+                    }
+                    Clifford::SZ => {
+                        state.sz(&q(0));
+                    }
+                    Clifford::SZdg => {
+                        state.szdg(&q(0));
+                    }
+                    Clifford::H2 => {
+                        state.h2(&q(0));
+                    }
+                    Clifford::H3 => {
+                        state.h3(&q(0));
+                    }
+                    Clifford::H4 => {
+                        state.h4(&q(0));
+                    }
+                    Clifford::H5 => {
+                        state.h5(&q(0));
+                    }
+                    Clifford::H6 => {
+                        state.h6(&q(0));
+                    }
+                    Clifford::F => {
+                        state.f(&q(0));
+                    }
+                    Clifford::Fdg => {
+                        state.fdg(&q(0));
+                    }
+                    Clifford::F2 => {
+                        state.f2(&q(0));
+                    }
+                    Clifford::F2dg => {
+                        state.f2dg(&q(0));
+                    }
+                    Clifford::F3 => {
+                        state.f3(&q(0));
+                    }
+                    Clifford::F3dg => {
+                        state.f3dg(&q(0));
+                    }
+                    Clifford::F4 => {
+                        state.f4(&q(0));
+                    }
+                    Clifford::F4dg => {
+                        state.f4dg(&q(0));
+                    }
+                    _ => panic!("not a 1q gate: {cliff:?}"),
+                }
+
+                assert_eq!(
+                    state.stabs.col_x[0].contains(0),
+                    exp_x[0],
+                    "{cliff:?} on {name}: SparseStabHybrid X bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.col_z[0].contains(0),
+                    exp_z[0],
+                    "{cliff:?} on {name}: SparseStabHybrid Z bit mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_minus.contains(0),
+                    exp_minus,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_minus mismatch (expected: {image:?})"
+                );
+                assert_eq!(
+                    state.stabs.signs_i.contains(0),
+                    exp_i,
+                    "{cliff:?} on {name}: SparseStabHybrid signs_i mismatch (expected: {image:?})"
+                );
+            }
+        }
     }
 }

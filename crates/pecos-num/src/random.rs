@@ -39,14 +39,15 @@
 //! ```
 
 use ndarray::Array1;
+use pecos_rng::PecosRng;
+use rand::RngExt;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::SliceRandom;
-use rand::{RngExt, SeedableRng};
 use std::cell::RefCell;
 
 // Thread-local seeded RNG for reproducibility
 thread_local! {
-    static SEEDED_RNG: RefCell<Option<rand::rngs::StdRng>> = const { RefCell::new(None) };
+    static SEEDED_RNG: RefCell<Option<PecosRng>> = const { RefCell::new(None) };
 }
 
 /// Execute a closure with the appropriate RNG.
@@ -55,7 +56,7 @@ thread_local! {
 /// Otherwise, uses a fresh entropy-based RNG.
 fn with_rng<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut rand::rngs::StdRng) -> R,
+    F: FnOnce(&mut PecosRng) -> R,
 {
     SEEDED_RNG.with(|cell| {
         let mut rng_opt = cell.borrow_mut();
@@ -66,7 +67,7 @@ where
             // Use fresh RNG seeded from thread_rng
             let mut thread_rng = rand::rng();
             let seed = thread_rng.random();
-            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut rng = PecosRng::seed_from_u64(seed);
             f(&mut rng)
         }
     })
@@ -103,7 +104,7 @@ where
 /// affect random number generation in other threads.
 pub fn seed(seed_value: u64) {
     SEEDED_RNG.with(|cell| {
-        *cell.borrow_mut() = Some(rand::rngs::StdRng::seed_from_u64(seed_value));
+        *cell.borrow_mut() = Some(PecosRng::seed_from_u64(seed_value));
     });
 }
 

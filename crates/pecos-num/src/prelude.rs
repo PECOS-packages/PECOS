@@ -18,7 +18,7 @@
 pub use crate::curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
 
 // Re-export linear algebra
-pub use crate::linalg::{norm, norm_complex};
+pub use crate::linalg::{expm, kron, logm, matrix_power_c64, matrix_power_f64, norm, norm_complex};
 
 // Re-export optimization algorithms
 pub use crate::optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
@@ -51,7 +51,9 @@ pub use crate::math::{
 pub use crate::math::{atan2, ceil, floor};
 
 // Re-export comparison functions and traits
-pub use crate::compare::{IsClose, IsNan, Where, allclose, array_equal, assert_allclose, where_};
+pub use crate::compare::{
+    IsClose, IsNan, Where, all_axis, allclose, any_axis, array_equal, assert_allclose, where_,
+};
 
 // Re-export ndarray for convenience (expanded for better ergonomics)
 // Core array types
@@ -96,7 +98,10 @@ pub use num_complex::{Complex, Complex32, Complex64};
 
 // Re-export array operations
 // Note: sum() for slices removed - use .iter().sum() directly (idiomatic Rust)
-pub use crate::array::{arange, delete, diag, linspace, ones, sum_axis, zeros};
+pub use crate::array::{
+    arange, broadcast_shapes, broadcast_to, delete, diag, diag_matrix, linspace, ones, sum_axis,
+    zeros,
+};
 
 // Re-export graph types and algorithms
 pub use crate::dag::{DAG, DAGHasCycleError, DagWouldCycleError};

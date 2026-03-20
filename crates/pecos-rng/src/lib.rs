@@ -10,7 +10,7 @@ pub mod scalar_rng;
 pub use quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus};
 pub use rng::{ParallelRapidRng, PecosRng};
 pub use rng_ext::{RngBulkExt, RngProbabilityExt};
-pub use rng_manageable::{RngManageable, derive_seed};
+pub use rng_manageable::{RngManageable, derive_seed, resolve_seed, time_seed};
 pub use rng_pcg::{PCG64Fast, PCGRandom};
 pub use scalar_rng::PecosScalarRng;
 
@@ -18,10 +18,5 @@ pub use scalar_rng::PecosScalarRng;
 // Note: In rand 0.10, RngCore was renamed to Rng, and TryRngCore to TryRng
 pub use rand_core::{Rng, SeedableRng, TryRng};
 
-// Backwards compatibility alias (RngCore was renamed to Rng in rand_core 0.10)
-#[allow(deprecated)]
-pub use rand_core::RngCore;
-
 // Re-export RngExt trait from rand for convenience (provides .random(), .random_range(), etc.)
-// Note: In rand 0.10, the old Rng trait was renamed to RngExt
 pub use rand::RngExt;

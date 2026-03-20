@@ -452,13 +452,13 @@ impl SymplecticMatrix {
     /// S gate on the given qubit.
     #[must_use]
     pub fn s(qubit: usize, n: usize) -> Self {
-        Self::from_clifford_rep(&padded_clifford(CliffordRep::s(qubit), n))
+        Self::from_clifford_rep(&padded_clifford(CliffordRep::sz(qubit), n))
     }
 
     /// S-dagger gate on the given qubit.
     #[must_use]
     pub fn sdg(qubit: usize, n: usize) -> Self {
-        Self::from_clifford_rep(&padded_clifford(CliffordRep::sdg(qubit), n))
+        Self::from_clifford_rep(&padded_clifford(CliffordRep::szdg(qubit), n))
     }
 
     /// Pauli X gate on the given qubit.
@@ -787,11 +787,11 @@ mod tests {
             ),
             (
                 SymplecticMatrix::s(0, n),
-                padded_clifford(CliffordRep::s(0), n),
+                padded_clifford(CliffordRep::sz(0), n),
             ),
             (
                 SymplecticMatrix::sdg(0, n),
-                padded_clifford(CliffordRep::sdg(0), n),
+                padded_clifford(CliffordRep::szdg(0), n),
             ),
             (
                 SymplecticMatrix::cx(0, 1, n),
@@ -874,7 +874,7 @@ mod tests {
         let sym_composed = cx.compose(&s.compose(&h));
 
         let h_c = padded_clifford(CliffordRep::h(0), n);
-        let s_c = padded_clifford(CliffordRep::s(1), n);
+        let s_c = padded_clifford(CliffordRep::sz(1), n);
         let cx_c = padded_clifford(CliffordRep::cx(0, 1), n);
 
         let cliff_composed = cx_c.compose(&s_c.compose(&h_c));

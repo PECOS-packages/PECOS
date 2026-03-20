@@ -18,7 +18,7 @@ pub fn parse_integer_to_bitvec(s: &str) -> Result<BitVec<u8, Lsb0>, PecosError> 
     bitvec::parse_decimal_string(s).map_err(PecosError::ParseInvalidNumber)
 }
 
-/// Operator precedence table (higher number = higher precedence)
+/// `UnitaryRep` precedence table (higher number = higher precedence)
 fn get_precedence(op: &str) -> Option<i32> {
     match op {
         "|" => Some(1),

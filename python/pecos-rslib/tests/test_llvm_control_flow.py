@@ -4,7 +4,7 @@ import pytest
 
 
 @pytest.fixture
-def module_with_function():
+def module_with_function() -> tuple:
     """Create a module with a test function."""
     from pecos_rslib import ir
 
@@ -21,7 +21,7 @@ def module_with_function():
     return module, test_func, builder, i32
 
 
-def test_if_then_context_manager(module_with_function):
+def test_if_then_context_manager(module_with_function) -> None:
     """Test if_then context manager."""
     from pecos_rslib import ir
 
@@ -45,7 +45,7 @@ def test_if_then_context_manager(module_with_function):
     assert "br i1" in llvm_ir  # Branch instruction
 
 
-def test_if_else_context_manager(module_with_function):
+def test_if_else_context_manager(module_with_function) -> None:
     """Test if_else context manager."""
     from pecos_rslib import ir
 
@@ -73,7 +73,7 @@ def test_if_else_context_manager(module_with_function):
     assert "br i1" in llvm_ir  # Branch instruction
 
 
-def test_nested_if_then(module_with_function):
+def test_nested_if_then(module_with_function) -> None:
     """Test nested if_then blocks."""
     from pecos_rslib import ir
 
@@ -103,7 +103,7 @@ def test_nested_if_then(module_with_function):
     assert llvm_ir.count("if.merge") >= 2 or "if.merge2" in llvm_ir
 
 
-def test_control_flow_generates_valid_ir():
+def test_control_flow_generates_valid_ir() -> None:
     """Test that control flow generates valid LLVM IR."""
     from pecos_rslib import ir
 

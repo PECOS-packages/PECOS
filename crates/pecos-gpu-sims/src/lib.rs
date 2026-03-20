@@ -32,6 +32,7 @@ mod gpu;
 mod gpu_influence_sampler;
 mod gpu_noisy_sampler;
 mod gpu_pauli_prop;
+pub mod gpu_probe;
 mod gpu_sampler;
 mod gpu_stab;
 mod gpu_stab_multi;
@@ -52,11 +53,11 @@ pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};
 pub use gpu_stab::GpuStab;
 pub use gpu_stab_multi::GpuStabMulti;
 
-/// Default GPU stabilizer simulator using `StdRng`
-pub type DefaultGpuStab = GpuStab<rand::rngs::StdRng>;
+/// Default GPU stabilizer simulator using `PecosRng`
+pub type DefaultGpuStab = GpuStab<pecos_rng::PecosRng>;
 
-/// Default multi-shot GPU stabilizer simulator using `StdRng`
-pub type DefaultGpuStabMulti = GpuStabMulti<rand::rngs::StdRng>;
+/// Default multi-shot GPU stabilizer simulator using `PecosRng`
+pub type DefaultGpuStabMulti = GpuStabMulti<pecos_rng::PecosRng>;
 
 use std::f64::consts::FRAC_1_SQRT_2;
 

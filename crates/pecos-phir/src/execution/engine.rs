@@ -6,6 +6,7 @@ and can execute PHIR modules directly, integrating with the PECOS quantum simula
 infrastructure.
 */
 
+use super::environment::TypedValue;
 use super::processor::PhirProcessor;
 use crate::error::Result;
 use crate::phir::Module;
@@ -256,8 +257,14 @@ impl ClassicalEngine for PhirEngine {
         // Convert u32 outcomes to u8 for the processor
         let outcomes_u8: Vec<u8> = outcomes
             .iter()
-            .map(|&x| u8::try_from(x).expect("Measurement outcome should fit in u8"))
-            .collect();
+            .map(|&x| {
+                u8::try_from(x).map_err(|_| {
+                    PecosError::Input(format!(
+                        "Measurement outcome {x} does not fit in u8 (must be 0-255)"
+                    ))
+                })
+            })
+            .collect::<std::result::Result<Vec<u8>, PecosError>>()?;
 
         // Process the measurement results
         self.processor
@@ -280,24 +287,38 @@ impl ClassicalEngine for PhirEngine {
 
         for (export_name, value) in export_results {
             let data = match value {
-                super::environment::TypedValue::I8(v) => Data::I32(i32::from(v)),
-                super::environment::TypedValue::I16(v) => Data::I32(i32::from(v)),
-                super::environment::TypedValue::I32(v) => Data::I32(v),
-                super::environment::TypedValue::I64(v) => Data::I64(v),
-                super::environment::TypedValue::U8(v) => Data::U32(u32::from(v)),
-                super::environment::TypedValue::U16(v) => Data::U32(u32::from(v)),
-                super::environment::TypedValue::U32(v) => Data::U32(v),
-                super::environment::TypedValue::U64(v) => Data::U64(v),
-                super::environment::TypedValue::Bool(v) => Data::U32(u32::from(v)),
-                super::environment::TypedValue::BitVec(v) => {
-                    // Convert bit vector to u32 (sum of bits as a number)
-                    let mut result = 0u32;
-                    for (i, bit) in v.iter().enumerate() {
-                        if *bit {
-                            result |= 1 << i;
+                TypedValue::I8(v) => Data::I32(i32::from(v)),
+                TypedValue::I16(v) => Data::I32(i32::from(v)),
+                TypedValue::I32(v) => Data::I32(v),
+                TypedValue::I64(v) => Data::I64(v),
+                TypedValue::U8(v) => Data::U32(u32::from(v)),
+                TypedValue::U16(v) => Data::U32(u32::from(v)),
+                TypedValue::U32(v) => Data::U32(v),
+                TypedValue::U64(v) => Data::U64(v),
+                TypedValue::F64(v) => {
+                    // Convert f64 to i64 bits for transport
+                    Data::I64(v.to_bits() as i64)
+                }
+                TypedValue::Bool(v) => Data::U32(u32::from(v)),
+                TypedValue::BitVec(v) => {
+                    // Convert bit vector to integer (bits packed as a number)
+                    if v.len() > 32 {
+                        let mut result = 0u64;
+                        for (i, bit) in v.iter().enumerate().take(64) {
+                            if *bit {
+                                result |= 1u64 << i;
+                            }
                         }
+                        Data::U64(result)
+                    } else {
+                        let mut result = 0u32;
+                        for (i, bit) in v.iter().enumerate() {
+                            if *bit {
+                                result |= 1u32 << i;
+                            }
+                        }
+                        Data::U32(result)
                     }
-                    Data::U32(result)
                 }
             };
 
@@ -449,5 +470,397 @@ mod tests {
 
         let engine = PhirEngine::new(module).unwrap();
         assert!(engine.compile().is_ok());
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // ControlEngine start() / continue_processing() tests
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_control_engine_start_empty() {
+        let module = Module {
+            name: "empty_control".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        let result = ControlEngine::start(&mut engine, ());
+        // start() should succeed on empty module
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_control_engine_start_with_quantum_ops() {
+        use crate::ops::{Operation, QuantumOp};
+        use crate::phir::{Instruction, SSAValue};
+        use crate::types::Type;
+
+        let h_instr = Instruction {
+            operation: Operation::Quantum(QuantumOp::H),
+            operands: vec![SSAValue { id: 0, version: 0 }],
+            results: vec![SSAValue { id: 1, version: 0 }],
+            result_types: vec![Type::Qubit],
+            regions: vec![],
+            attributes: std::collections::BTreeMap::new(),
+            location: None,
+        };
+
+        let module = Module {
+            name: "quantum_control".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![h_instr],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        let result = ControlEngine::start(&mut engine, ()).unwrap();
+        // Should need processing (quantum ops need to be sent to quantum engine)
+        assert!(matches!(result, EngineStage::NeedsProcessing(_)));
+    }
+
+    #[test]
+    fn test_control_engine_continue_processing() {
+        use crate::ops::{Operation, QuantumOp};
+        use crate::phir::{Instruction, SSAValue};
+        use crate::types::Type;
+        use pecos_engines::byte_message::builder::ByteMessageBuilder;
+
+        let measure_instr = Instruction {
+            operation: Operation::Quantum(QuantumOp::Measure),
+            operands: vec![SSAValue { id: 0, version: 0 }],
+            results: vec![SSAValue { id: 1, version: 0 }],
+            result_types: vec![Type::Bit],
+            regions: vec![],
+            attributes: std::collections::BTreeMap::new(),
+            location: None,
+        };
+
+        let module = Module {
+            name: "measure_control".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![measure_instr],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        let stage = ControlEngine::start(&mut engine, ()).unwrap();
+
+        if let EngineStage::NeedsProcessing(_commands) = stage {
+            // Provide measurement results
+            let mut builder = ByteMessageBuilder::new();
+            let _ = builder.for_outcomes();
+            builder.add_outcomes(&[0]);
+            let measurements = builder.build();
+
+            let result = engine.continue_processing(measurements).unwrap();
+            // After processing measurements, should be complete
+            assert!(matches!(result, EngineStage::Complete(_)));
+        }
+    }
+
+    #[test]
+    fn test_control_engine_reset() {
+        let module = Module {
+            name: "reset_control".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        // Run start
+        let _ = ControlEngine::start(&mut engine, ()).unwrap();
+        // Reset
+        ControlEngine::reset(&mut engine).unwrap();
+        assert!(!engine.finished);
+        assert_eq!(engine.current_op, 0);
+        // Should be able to start again
+        let result = ControlEngine::start(&mut engine, ());
+        assert!(result.is_ok());
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // get_results() data type conversion tests
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_results_bool_export() {
+        let module = Module {
+            name: "bool_export".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        engine
+            .processor
+            .final_exports
+            .insert("bool_val".to_string(), TypedValue::Bool(true));
+
+        let shot = engine.get_results().unwrap();
+        assert_eq!(shot.data.get("bool_val"), Some(&Data::U32(1)));
+    }
+
+    #[test]
+    fn test_get_results_f64_export() {
+        let module = Module {
+            name: "f64_export".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        let f64_val = 3.5_f64;
+        engine
+            .processor
+            .final_exports
+            .insert("float_val".to_string(), TypedValue::F64(f64_val));
+
+        let shot = engine.get_results().unwrap();
+        // F64 is transported as I64 via to_bits
+        assert_eq!(
+            shot.data.get("float_val"),
+            Some(&Data::I64(f64_val.to_bits() as i64))
+        );
+    }
+
+    #[test]
+    fn test_get_results_bitvec_export() {
+        let module = Module {
+            name: "bitvec_export".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        // BitVec [true, false, true] = 0b101 = 5
+        engine.processor.final_exports.insert(
+            "bits".to_string(),
+            TypedValue::BitVec(vec![true, false, true]),
+        );
+
+        let shot = engine.get_results().unwrap();
+        assert_eq!(shot.data.get("bits"), Some(&Data::U32(5)));
+    }
+
+    #[test]
+    fn test_get_results_bitvec_32_bits() {
+        let module = Module {
+            name: "bitvec_32".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        // 32 bits: bit 0 and bit 31 set = 0x8000_0001
+        let mut bits = vec![false; 32];
+        bits[0] = true;
+        bits[31] = true;
+        engine
+            .processor
+            .final_exports
+            .insert("bits32".to_string(), TypedValue::BitVec(bits));
+
+        let shot = engine.get_results().unwrap();
+        assert_eq!(shot.data.get("bits32"), Some(&Data::U32(0x8000_0001)));
+    }
+
+    #[test]
+    fn test_get_results_bitvec_more_than_32_bits() {
+        let module = Module {
+            name: "bitvec_large".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+        // 40 bits: bit 0 and bit 35 set
+        let mut bits = vec![false; 40];
+        bits[0] = true;
+        bits[35] = true;
+        engine
+            .processor
+            .final_exports
+            .insert("bits40".to_string(), TypedValue::BitVec(bits));
+
+        let shot = engine.get_results().unwrap();
+        // Should use U64 for >32 bits
+        assert_eq!(shot.data.get("bits40"), Some(&Data::U64(1 | (1u64 << 35))));
+    }
+
+    #[test]
+    fn test_get_results_narrow_int_exports() {
+        let module = Module {
+            name: "narrow_int_export".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+
+        engine
+            .processor
+            .final_exports
+            .insert("i8_val".to_string(), TypedValue::I8(42));
+        engine
+            .processor
+            .final_exports
+            .insert("i16_val".to_string(), TypedValue::I16(-100));
+        engine
+            .processor
+            .final_exports
+            .insert("u8_val".to_string(), TypedValue::U8(255));
+        engine
+            .processor
+            .final_exports
+            .insert("u16_val".to_string(), TypedValue::U16(1000));
+
+        let shot = engine.get_results().unwrap();
+        assert_eq!(shot.data.get("i8_val"), Some(&Data::I32(42)));
+        assert_eq!(shot.data.get("i16_val"), Some(&Data::I32(-100)));
+        assert_eq!(shot.data.get("u8_val"), Some(&Data::U32(255)));
+        assert_eq!(shot.data.get("u16_val"), Some(&Data::U32(1000)));
+    }
+
+    #[test]
+    fn test_get_results_i32_i64_u32_u64_exports() {
+        let module = Module {
+            name: "int_export".to_string(),
+            attributes: std::collections::BTreeMap::new(),
+            body: Region {
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    operations: vec![],
+                    terminator: None,
+                    attributes: std::collections::BTreeMap::new(),
+                }],
+                kind: RegionKind::SSACFG,
+                attributes: std::collections::BTreeMap::new(),
+            },
+        };
+
+        let mut engine = PhirEngine::new(module).unwrap();
+
+        engine
+            .processor
+            .final_exports
+            .insert("i32_val".to_string(), TypedValue::I32(-7));
+        engine
+            .processor
+            .final_exports
+            .insert("i64_val".to_string(), TypedValue::I64(-99));
+        engine
+            .processor
+            .final_exports
+            .insert("u32_val".to_string(), TypedValue::U32(12345));
+        engine
+            .processor
+            .final_exports
+            .insert("u64_val".to_string(), TypedValue::U64(999_999));
+
+        let shot = engine.get_results().unwrap();
+        assert_eq!(shot.data.get("i32_val"), Some(&Data::I32(-7)));
+        assert_eq!(shot.data.get("i64_val"), Some(&Data::I64(-99)));
+        assert_eq!(shot.data.get("u32_val"), Some(&Data::U32(12345)));
+        assert_eq!(shot.data.get("u64_val"), Some(&Data::U64(999_999)));
     }
 }

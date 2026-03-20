@@ -331,10 +331,10 @@ impl QuestStateVec {
         self.inner.r1xy(theta.0, phi.0, &[QubitId(location)]);
     }
 
-    /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
+    /// Applies RXXRYYRZZ gate (combination of RXX, RYY, RZZ) to two qubits
     /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
     /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
-    fn rzzryyrxx_gate(
+    fn rxxryyrzz_gate(
         &mut self,
         theta: AngleParam,
         phi: AngleParam,
@@ -343,10 +343,10 @@ impl QuestStateVec {
         q2: usize,
     ) {
         // Use the trait implementation directly
-        // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
+        // Note: The trait's rxxryyrzz has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner
-            .rzzryyrxx(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
+            .rxxryyrzz(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
     }
 
     /// Applies a SWAP gate to two qubits
@@ -733,10 +733,10 @@ impl QuestDensityMatrix {
         self.inner.r1xy(theta.0, phi.0, &[QubitId(location)]);
     }
 
-    /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
+    /// Applies RXXRYYRZZ gate (combination of RXX, RYY, RZZ) to two qubits
     /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
     /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
-    fn rzzryyrxx_gate(
+    fn rxxryyrzz_gate(
         &mut self,
         theta: AngleParam,
         phi: AngleParam,
@@ -745,10 +745,10 @@ impl QuestDensityMatrix {
         q2: usize,
     ) {
         // Use the trait implementation directly
-        // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
+        // Note: The trait's rxxryyrzz has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner
-            .rzzryyrxx(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
+            .rxxryyrzz(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
     }
 
     /// Applies a SWAP gate to two qubits

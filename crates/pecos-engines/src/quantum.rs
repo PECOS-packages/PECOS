@@ -7,6 +7,7 @@ use pecos_core::Angle64;
 use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
+use pecos_qsim::clifford_rotation::CliffordRotation;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, CoinToss, QuantumSimulator, SparseStab, StateVec,
     StateVecAoS, StateVecSoA,
@@ -369,6 +370,62 @@ where
                     debug!("Processing SZZdg gate on qubits {:?}", cmd.qubits);
                     self.simulator.szzdg(&cmd.qubits);
                 }
+                GateType::F => {
+                    debug!("Processing F gate on qubits {:?}", cmd.qubits);
+                    self.simulator.f(&cmd.qubits);
+                }
+                GateType::Fdg => {
+                    debug!("Processing Fdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.fdg(&cmd.qubits);
+                }
+                GateType::SY => {
+                    debug!("Processing SY gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sy(&cmd.qubits);
+                }
+                GateType::SYdg => {
+                    debug!("Processing SYdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sydg(&cmd.qubits);
+                }
+                GateType::SXX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SXX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SXX gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sxx(&cmd.qubits);
+                }
+                GateType::SXXdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SXXdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SXXdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.sxxdg(&cmd.qubits);
+                }
+                GateType::SYY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SYY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SYY gate on qubits {:?}", cmd.qubits);
+                    self.simulator.syy(&cmd.qubits);
+                }
+                GateType::SYYdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SYYdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    debug!("Processing SYYdg gate on qubits {:?}", cmd.qubits);
+                    self.simulator.syydg(&cmd.qubits);
+                }
                 GateType::SWAP => {
                     if cmd.qubits.len() % 2 != 0 {
                         return Err(quantum_error(format!(
@@ -480,7 +537,7 @@ where
                 }
 
                 // TODO: Fix it so we have multiple result_ids or get rid of result ids...
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureLeaked => {
                     debug!("Processing measurement on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
@@ -488,7 +545,7 @@ where
                         measurements.push(usize::from(meas_result.outcome));
                     }
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);
                     self.simulator.pz(&cmd.qubits);
                 }
@@ -496,16 +553,40 @@ where
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {
+                | GateType::QFree
+                | GateType::Custom => {
                     // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
+                    // Custom is a no-op placeholder (actual gate name is in metadata)
                 }
-                GateType::SY | GateType::SYdg | GateType::RXX | GateType::RYY => {
-                    return Err(quantum_error(format!(
-                        "Gate type {:?} is not yet supported by StateVecEngine",
-                        cmd.gate_type
-                    )));
+                GateType::RXX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.is_empty() {
+                        return Err(quantum_error("RXX gate requires at least one angle"));
+                    }
+                    let angle = cmd.angles[0];
+                    debug!("Processing RXX gate on qubits {:?}", cmd.qubits);
+                    self.simulator.rxx(angle, &cmd.qubits);
+                }
+                GateType::RYY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RYY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.is_empty() {
+                        return Err(quantum_error("RYY gate requires at least one angle"));
+                    }
+                    let angle = cmd.angles[0];
+                    debug!("Processing RYY gate on qubits {:?}", cmd.qubits);
+                    self.simulator.ryy(angle, &cmd.qubits);
                 }
                 GateType::QAlloc => {
                     // Allocate qubits in |0⟩ state - for state vector sim, same as Prep
@@ -531,6 +612,46 @@ where
                         );
                         self.simulator.u(theta, phi, lambda, &cmd.qubits);
                     }
+                }
+                GateType::RXXRYYRZZ => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXXRYYRZZ gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.len() < 3 {
+                        return Err(quantum_error(
+                            "RXXRYYRZZ gate requires 3 angles (alpha, beta, gamma)",
+                        ));
+                    }
+                    let alpha = cmd.angles[0];
+                    let beta = cmd.angles[1];
+                    let gamma = cmd.angles[2];
+                    debug!("Processing RXXRYYRZZ gate on qubits {:?}", cmd.qubits);
+                    self.simulator.rxxryyrzz(alpha, beta, gamma, &cmd.qubits);
+                }
+                GateType::U2q => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "U2q gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.angles.len() < 15 {
+                        return Err(quantum_error("U2q gate requires 15 angles"));
+                    }
+                    let before = [
+                        [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                        [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                    ];
+                    let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                    let after = [
+                        [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                        [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                    ];
+                    debug!("Processing U2q gate on qubits {:?}", cmd.qubits);
+                    self.simulator.u2q(before, interaction, after, &cmd.qubits);
                 }
             }
         }
@@ -615,11 +736,7 @@ impl SparseStabEngine {
 }
 
 impl SparseStabEngine {
-    fn process_single_qubit_gate(
-        &mut self,
-        gate_type: GateType,
-        qubits: &[QubitId],
-    ) -> Result<(), PecosError> {
+    fn process_single_qubit_gate(&mut self, gate_type: GateType, qubits: &[QubitId]) {
         match gate_type {
             GateType::X => {
                 debug!("Processing X gate on qubits {qubits:?}");
@@ -645,24 +762,24 @@ impl SparseStabEngine {
                 debug!("Processing SZdg gate on qubits {qubits:?}");
                 self.simulator.szdg(qubits);
             }
-            GateType::T => {
-                return Err(quantum_error(
-                    "T gate is not supported by stabilizer simulator",
-                ));
+            GateType::SX => {
+                debug!("Processing SX gate on qubits {qubits:?}");
+                self.simulator.sx(qubits);
             }
-            GateType::Tdg => {
-                return Err(quantum_error(
-                    "Tdg gate is not supported by stabilizer simulator",
-                ));
+            GateType::SXdg => {
+                debug!("Processing SXdg gate on qubits {qubits:?}");
+                self.simulator.sxdg(qubits);
             }
-            GateType::RX | GateType::RY => {
-                return Err(quantum_error(
-                    "RX/RY gates are not supported by stabilizer simulator",
-                ));
+            GateType::SY => {
+                debug!("Processing SY gate on qubits {qubits:?}");
+                self.simulator.sy(qubits);
+            }
+            GateType::SYdg => {
+                debug!("Processing SYdg gate on qubits {qubits:?}");
+                self.simulator.sydg(qubits);
             }
             _ => {} // Handled elsewhere
         }
-        Ok(())
     }
 
     fn process_two_qubit_gate(&mut self, gate_type: GateType, qubits: &[QubitId]) {
@@ -689,6 +806,22 @@ impl SparseStabEngine {
                 debug!("Processing SZZdg gate on qubits {qubits:?}");
                 self.simulator.szzdg(qubits);
             }
+            GateType::SXX => {
+                debug!("Processing SXX gate on qubits {qubits:?}");
+                self.simulator.sxx(qubits);
+            }
+            GateType::SXXdg => {
+                debug!("Processing SXXdg gate on qubits {qubits:?}");
+                self.simulator.sxxdg(qubits);
+            }
+            GateType::SYY => {
+                debug!("Processing SYY gate on qubits {qubits:?}");
+                self.simulator.syy(qubits);
+            }
+            GateType::SYYdg => {
+                debug!("Processing SYYdg gate on qubits {qubits:?}");
+                self.simulator.syydg(qubits);
+            }
             _ => {} // Not a two-qubit gate
         }
     }
@@ -704,25 +837,31 @@ impl Engine for SparseStabEngine {
 
         for cmd in &batch {
             match cmd.gate_type {
-                // Single-qubit gates
+                // Single-qubit Clifford gates
                 GateType::X
                 | GateType::Y
                 | GateType::Z
                 | GateType::H
                 | GateType::SZ
                 | GateType::SZdg
-                | GateType::T
-                | GateType::Tdg
-                | GateType::RX
-                | GateType::RY => {
-                    self.process_single_qubit_gate(cmd.gate_type, &cmd.qubits)?;
+                | GateType::SX
+                | GateType::SXdg
+                | GateType::SY
+                | GateType::SYdg => {
+                    self.process_single_qubit_gate(cmd.gate_type, &cmd.qubits);
                 }
-                // Two-qubit gates
-                GateType::CX | GateType::SZZ | GateType::SZZdg => {
+                // Two-qubit Clifford gates
+                GateType::CX
+                | GateType::SZZ
+                | GateType::SZZdg
+                | GateType::SXX
+                | GateType::SXXdg
+                | GateType::SYY
+                | GateType::SYYdg => {
                     self.process_two_qubit_gate(cmd.gate_type, &cmd.qubits);
                 }
                 // Special operations
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::MZ | GateType::MeasureLeaked => {
                     debug!("Processing measurement on qubits {:?}", cmd.qubits);
                     let meas_results = self.simulator.mz(&cmd.qubits);
                     for meas_result in meas_results {
@@ -730,13 +869,79 @@ impl Engine for SparseStabEngine {
                         measurements.push(usize::from(meas_result.outcome));
                     }
                 }
-                GateType::Prep => {
+                GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);
                     self.simulator.pz(&cmd.qubits);
                 }
                 GateType::Idle => {
                     // For idle gates, just let the system naturally evolve
                     // No active operation needed in the simulator
+                }
+                // Rotation gates: delegate to CliffordRotation trait
+                GateType::RZ
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZZ
+                | GateType::RXX
+                | GateType::RYY => {
+                    if !cmd.angles.is_empty() {
+                        let angle = cmd.angles[0];
+                        let qubits = &cmd.qubits;
+                        let result = match cmd.gate_type {
+                            GateType::RZ => self.simulator.try_rz(angle, qubits),
+                            GateType::RX => self.simulator.try_rx(angle, qubits),
+                            GateType::RY => self.simulator.try_ry(angle, qubits),
+                            GateType::RZZ => self.simulator.try_rzz(angle, qubits),
+                            GateType::RXX => self.simulator.try_rxx(angle, qubits),
+                            GateType::RYY => self.simulator.try_ryy(angle, qubits),
+                            _ => unreachable!(),
+                        };
+                        result.map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::R1XY => {
+                    if cmd.angles.len() >= 2 {
+                        self.simulator
+                            .try_r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::CRZ => {
+                    if !cmd.angles.is_empty() {
+                        self.simulator
+                            .try_crz(cmd.angles[0], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::U => {
+                    if cmd.angles.len() >= 3 {
+                        self.simulator
+                            .try_u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::RXXRYYRZZ => {
+                    if cmd.angles.len() >= 3 {
+                        self.simulator
+                            .try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
+                }
+                GateType::U2q => {
+                    if cmd.angles.len() >= 15 {
+                        let before = [
+                            [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                            [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                        ];
+                        let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                        let after = [
+                            [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                            [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                        ];
+                        self.simulator
+                            .try_u2q(before, interaction, after, &cmd.qubits)
+                            .map_err(PecosError::Processing)?;
+                    }
                 }
                 _ => {
                     return Err(PecosError::Processing(format!(
@@ -860,7 +1065,7 @@ impl Engine for CoinTossEngine {
         for cmd in &batch {
             match cmd.gate_type {
                 // All gates are no-ops for CoinToss - only measurements matter
-                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         debug!("CoinToss: Processing measurement on qubit {q:?}");
                         let meas_results = self.simulator.mz(&[*q]);

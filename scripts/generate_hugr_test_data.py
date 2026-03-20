@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
     from guppylang import guppy
     from guppylang.std.builtins import owned
-    from guppylang.std.quantum import cx, h, measure, qubit, x
+    from guppylang.std.quantum import cx, h, measure, pi, qubit, rz, x
 except ImportError as e:
     print(f"Error: Could not import guppylang: {e}")
     print("Please install guppylang: uv pip install guppylang")
@@ -96,6 +96,32 @@ def generate_ghz_state_hugr() -> str:
     compiled = ghz_state.compile()
 
     # Use to_str() for text envelope format
+    return compiled.to_str()
+
+
+def generate_rz_x_hugr() -> str:
+    """Generate HUGR for Rz(pi) + measure circuit.
+
+    Rz(pi) on |0> applies a phase but keeps the state in |0>,
+    so measuring always returns 0. This lets us test that rotation
+    gate angle extraction works end-to-end without introducing
+    non-determinism.
+
+    To make the result non-trivial, we also apply X to a second
+    qubit so we get a deterministic result of 0b10 = 2 (bit 0 = 0,
+    bit 1 = 1).
+    """
+
+    @guppy
+    def rz_x_circuit() -> tuple[bool, bool]:
+        """Rz(pi) on q0 (stays |0>), X on q1 (flips to |1>)."""
+        q0 = qubit()
+        q1 = qubit()
+        rz(q0, pi)
+        x(q1)
+        return measure(q0), measure(q1)
+
+    compiled = rz_x_circuit.compile()
     return compiled.to_str()
 
 
@@ -393,6 +419,7 @@ def main() -> int:
         "bell_state.hugr",
         "single_hadamard.hugr",
         "ghz_state.hugr",
+        "rz_x.hugr",
         "simple_conditional.hugr",
         "conditional_h.hugr",
         "conditional_branch.hugr",
@@ -461,6 +488,22 @@ def main() -> int:
     except Exception as e:
         # Broad exception catch is intentional - we want to handle any compilation/serialization error
         print(f"  Error generating GHZ state: {e}")
+        return 1
+
+    # Generate Rz + X rotation test
+    print("\nGenerating rz_x.hugr...")
+    try:
+        hugr_str = generate_rz_x_hugr()
+        output_file = output_dir / "rz_x.hugr"
+        output_file.write_text(hugr_str)
+        print(f"  Created: {output_file} ({len(hugr_str)} chars)")
+
+        if hugr_str.startswith(("HUGR", "{")):
+            print("  Valid HUGR format")
+        else:
+            print(f"  Warning: Unexpected format (starts with: {hugr_str[:20]}...)")
+    except Exception as e:
+        print(f"  Error generating rz_x: {e}")
         return 1
 
     # Generate simple conditional (if measure=1, apply X)

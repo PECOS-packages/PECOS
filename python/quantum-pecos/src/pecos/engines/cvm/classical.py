@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos import BitInt
+from pecos import BitInt, BitUInt
 
 if TYPE_CHECKING:
     from typing import Any
@@ -96,7 +96,7 @@ def eval_op(
         a = BitInt(width, a)
 
     if op == "=":
-        if b:
+        if b is not None:
             msg = "Assignment can only have one argument (only `a`)."
             raise Exception(msg)
 
@@ -121,24 +121,24 @@ def eval_op(
     elif op == "/":
         expr_eval = a // b
     elif op == "==":
-        expr_eval = a == b
+        expr_eval = BitInt(width, int(a == b))
     elif op == "!=":
-        expr_eval = a != b
+        expr_eval = BitInt(width, int(a != b))
     elif op == "<=":
-        expr_eval = a <= b
+        expr_eval = BitInt(width, int(a <= b))
     elif op == ">=":
-        expr_eval = a >= b
+        expr_eval = BitInt(width, int(a >= b))
     elif op == "<":
-        expr_eval = a < b
+        expr_eval = BitInt(width, int(a < b))
     elif op == ">":
-        expr_eval = a > b
+        expr_eval = BitInt(width, int(a > b))
     elif op == "%":
         expr_eval = a % b
 
     elif op == "~":
         expr_eval = ~a
 
-        if b:
+        if b is not None:
             msg = "Unary operation but got another argument!!!."
             raise Exception(msg)
 
@@ -175,7 +175,7 @@ def get_val(
     Raises:
         TypeError: If the input type is not supported.
     """
-    if isinstance(a, BitInt):
+    if isinstance(a, (BitInt, BitUInt)):
         return a
 
     if isinstance(a, tuple | list):
@@ -223,7 +223,7 @@ def recur_eval_op(
     if isinstance(a, dict):
         a = recur_eval_op(a, output, width, shot_id=shot_id)
 
-    elif c:  # c => unary operation
+    elif c is not None:  # c => unary operation
         c = (
             recur_eval_op(c, output, width, shot_id=shot_id)
             if isinstance(c, dict)
@@ -235,7 +235,7 @@ def recur_eval_op(
     else:
         a = get_val(a, output, width, shot_id)
 
-    if b:
+    if b is not None:
         b = (
             recur_eval_op(b, output, width, shot_id=shot_id)
             if isinstance(b, dict)
@@ -319,6 +319,31 @@ def eval_tick_conds(
     return conds
 
 
+def _resolve_condition_operand(
+    operand: str | tuple[str, int] | list[str | int] | int,
+    output: dict[str, BitInt],
+    name: str,
+) -> BitInt | int:
+    """Resolve a condition operand to a value.
+
+    Args:
+        operand: The operand value - str (variable name), tuple/list (indexed variable), or int literal.
+        output: Dictionary containing variable values.
+        name: Operand name for error messages ('a' or 'b').
+
+    Returns:
+        Resolved value as BitInt or int.
+    """
+    if isinstance(operand, str):
+        return output[operand]
+    if isinstance(operand, tuple | list) and len(operand) == 2:
+        return output[operand[0]][operand[1]]
+    if isinstance(operand, int):
+        return operand
+    msg = f"`{name}` should be `str`, `Tuple[str, int]`, or `int`!"
+    raise TypeError(msg)
+
+
 def eval_condition(
     conditional_expr: dict[str, Any] | tuple[Any, ...] | list[Any] | None,
     output: dict[str, BitInt],
@@ -350,55 +375,13 @@ def eval_condition(
             msg = "Expecting the second conditional element to be bool."
             raise TypeError(msg)
 
-        return eval_condition(conditional_expr[0], output) == eval_condition(
-            conditional_expr[1],
-            output,
-        )
+        return eval_condition(conditional_expr[0], output) == conditional_expr[1]
 
     if conditional_expr:
-        a = conditional_expr["a"]
-        b = conditional_expr["b"]
         op = conditional_expr["op"]
-        if isinstance(a, str):
-            a = output[a]  # str -> BitInt
-        elif isinstance(a, tuple | list) and len(a) == 2:
-            a = output[a[0]][a[1]]  # (str, int) -> int (1 or 0)
-        else:
-            msg = "`a` should be `str` or `Tuple[str, int]`!"
-            raise Exception(msg)
+        a = _resolve_condition_operand(conditional_expr["a"], output, "a")
+        b = _resolve_condition_operand(conditional_expr["b"], output, "b")
 
-        if isinstance(b, str):
-            b = output[b]  # str -> BitInt
-        elif isinstance(b, tuple | list) and len(b) == 2:
-            b = output[b[0]][b[1]]  # (str, int) -> int (1 or 0)
-        elif isinstance(b, int):
-            pass
-        else:
-            msg = "`b` should be `str` or `Tuple[str, int]` or `int`!"
-            raise Exception(msg)
-
-        # Map of operators to their evaluation functions
-        ops = {
-            "==": lambda a, b: bool(a == b),
-            "!=": lambda a, b: bool(a != b),
-            "^": lambda a, b: bool(int(a ^ b)),
-            "|": lambda a, b: bool(int(a | b)),
-            "&": lambda a, b: bool(int(a & b)),
-            "<": lambda a, b: a < b,
-            ">": lambda a, b: a > b,
-            "<=": lambda a, b: a <= b,
-            ">=": lambda a, b: a >= b,
-            ">>": lambda a, b: a >> b,
-            "<<": lambda a, b: a << b,
-            "~": lambda a, _: ~a,
-            "*": lambda a, b: a * b,
-            "/": lambda a, b: a // b,
-        }
-
-        if op in ops:
-            return ops[op](a, b)
-
-        msg = "Comparison operator not recognized!"
-        raise Exception(msg)
+        return bool(eval_op(op, a, b))
 
     return True

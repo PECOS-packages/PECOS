@@ -166,6 +166,8 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::SZ
                 | GateType::SZdg
                 | GateType::H
+                | GateType::F
+                | GateType::Fdg
                 | GateType::RX
                 | GateType::RY
                 | GateType::RZ
@@ -181,13 +183,19 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::CY
                 | GateType::CZ
                 | GateType::CH
+                | GateType::SXX
+                | GateType::SXXdg
+                | GateType::SYY
+                | GateType::SYYdg
                 | GateType::SZZ
                 | GateType::SZZdg
                 | GateType::SWAP
                 | GateType::CRZ
                 | GateType::RXX
                 | GateType::RYY
-                | GateType::RZZ => {
+                | GateType::RZZ
+                | GateType::RXXRYYRZZ
+                | GateType::U2q => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying two-qubit gate with possible fault");
                     self.apply_tq_faults(&mut builder, gate);
@@ -198,13 +206,13 @@ impl BiasedDepolarizingNoiseModel {
                     // Apply fault to each qubit pair (treat as three two-qubit interactions)
                     self.apply_tq_faults(&mut builder, gate);
                 }
-                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     trace!("Applying measurement. Will apply bias after engine returns results.");
                     // we apply biased measurement after the engine
                     // returns the results, rather than before measurement
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::Prep | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying preparation with possible fault");
                     self.apply_prep_faults(&mut builder, gate);
@@ -213,7 +221,8 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree => {}
+                | GateType::QFree
+                | GateType::Custom => {}
             }
         }
 

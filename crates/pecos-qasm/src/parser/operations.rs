@@ -244,9 +244,9 @@ pub fn parse_measure(pair: Pair<Rule>, program: &Program) -> Result<Option<Opera
             let (c_reg, c_idx) = parse_indexed_id(&dst.clone())?;
             let qubit = resolve_qubit_index(&q_reg, q_idx, program)?;
 
-            // Create a Gate with GateType::Measure
+            // Create a Gate with GateType::MZ
             let gate = Gate::new(
-                GateType::Measure,
+                GateType::MZ,
                 vec![], // No angles
                 vec![], // No parameters
                 vec![QubitId(qubit)],
@@ -285,7 +285,7 @@ pub fn parse_reset(pair: Pair<Rule>, program: &Program) -> Result<Option<Operati
             let (reg_name, idx) = parse_indexed_id(&inner)?;
             let qubit = resolve_qubit_index(&reg_name, idx, program)?;
             let gate = Gate::new(
-                GateType::Prep,
+                GateType::PZ,
                 vec![], // No angles
                 vec![], // No parameters
                 vec![QubitId(qubit)],

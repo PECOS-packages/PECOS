@@ -1180,13 +1180,13 @@ impl TickCircuitSoABuilder {
     /// Prepare qubit(s) in |0⟩.
     pub fn pz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
         let qs: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
-        self.add_gate(GateType::Prep, &qs, &[], &[])
+        self.add_gate(GateType::PZ, &qs, &[], &[])
     }
 
     /// Measure qubit(s) in Z basis.
     pub fn mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
         let qs: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
-        self.add_gate(GateType::Measure, &qs, &[], &[])
+        self.add_gate(GateType::MZ, &qs, &[], &[])
     }
 }
 
@@ -1406,7 +1406,7 @@ mod tests {
         // Check tick 0: preps batched together
         let tick0 = circuit.tick_batched(0).unwrap();
         assert_eq!(tick0.batch_count(), 1);
-        let prep_batch = tick0.batch_for_type(GateType::Prep).unwrap();
+        let prep_batch = tick0.batch_for_type(GateType::PZ).unwrap();
         assert_eq!(prep_batch.qubits().len(), 4);
         assert_eq!(prep_batch.gate_count(), 4);
 
@@ -1428,7 +1428,7 @@ mod tests {
         // Check tick 3: measurements batched
         let tick3 = circuit.tick_batched(3).unwrap();
         assert_eq!(tick3.batch_count(), 1);
-        let mz_batch = tick3.batch_for_type(GateType::Measure).unwrap();
+        let mz_batch = tick3.batch_for_type(GateType::MZ).unwrap();
         assert_eq!(mz_batch.qubits().len(), 4);
         assert_eq!(mz_batch.gate_count(), 4);
     }

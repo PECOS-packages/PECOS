@@ -49,7 +49,7 @@ use std::fmt;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, ClassicalBitId, Gate, QubitId};
-use pecos_quantum::DagCircuit;
+use pecos_quantum::{Circuit, DagCircuit};
 
 use crate::ast::{Expression, Operation};
 use crate::parser::Program;
@@ -378,7 +378,7 @@ fn resolve_gate(
             }
         }
         "measure" => Gate::measure(qubits),
-        "reset" => Gate::simple(GateType::Prep, qubits.to_vec()),
+        "reset" => Gate::simple(GateType::PZ, qubits.to_vec()),
         _ => {
             return Err(QasmBridgeError::UnknownGate(name.to_string()));
         }
@@ -441,7 +441,7 @@ fn format_gate_stmt(
     }
 
     // Handle measurement with target
-    if gate.gate_type == GateType::Measure
+    if gate.gate_type == GateType::MZ
         && let Some(cbit) = meas_target
     {
         let qubit_strs: Vec<String> = gate.qubits.iter().map(|q| format!("q[{}]", q.0)).collect();
@@ -505,8 +505,8 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::RYY => "ryy",
         GateType::RZZ => "rzz",
         GateType::CCX => "ccx",
-        GateType::Measure | GateType::MeasureFree => "measure",
-        GateType::Prep => "reset",
+        GateType::MZ | GateType::MeasureFree => "measure",
+        GateType::PZ => "reset",
         GateType::QAlloc => "qalloc",
         GateType::QFree => "qfree",
         GateType::Idle => "idle",

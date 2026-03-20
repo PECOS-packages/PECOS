@@ -22,7 +22,7 @@ import struct
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos import BitInt
+from pecos import BitInt, BitUInt
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
@@ -269,8 +269,10 @@ class HybridEngine:
 
                         if isinstance(val, str):
                             output_export[sym] = val
-                        elif isinstance(val, BitInt):
-                            output_export[sym] = BitInt(str(val))
+                        elif isinstance(val, (BitInt, BitUInt)):
+                            output_export[sym] = (
+                                BitInt(val.size, int(val)) if isinstance(val, BitInt) else BitUInt(val.size, int(val))
+                            )
                         else:
                             msg = f"This output type `{type(val)}` not handled at export!"
                             raise Exception(msg)

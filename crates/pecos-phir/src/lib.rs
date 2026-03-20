@@ -34,6 +34,8 @@ pub mod ops; // Core operations
 pub mod parsing_ops; // Operations for parsing directly to PHIR
 pub mod phir; // Core PHIR structures (Region, Block, Instruction)
 pub mod qis_dialect; // QIS dialect operations
+pub mod qis_parser; // QIS LLVM IR parser
+pub mod qis_to_quantum; // QIS dialect -> standard QuantumOps lowering
 pub mod region_kinds; // Region execution semantics
 pub mod ron_support; // RON serialization/deserialization for debugging
 pub mod slr_helpers; // Helper functions for translating from SLR/qeclib patterns
@@ -42,7 +44,7 @@ pub mod types; // Type system // MLIR to LLVM-IR compilation
 
 // Re-export key types
 pub use error::{PhirError, Result};
-pub use execution::PhirEngine;
+pub use execution::{PhirEngine, PhirEngineBuilder, phir_engine};
 pub use ops::Operation;
 pub use phir::Module;
 pub use ron_support::{ModuleRonExt, from_ron, from_ron_file, to_ron, to_ron_file};
@@ -259,6 +261,17 @@ pub fn hugr_to_phir_mlir(hugr_json: &str, config: &PhirConfig) -> Result<String>
 
     // Convert PHIR to MLIR text
     mlir_lowering::phir_to_mlir(&module, config)
+}
+
+/// Parse QIS LLVM IR and lower QIS dialect ops to standard `QuantumOps` in one step.
+///
+/// # Errors
+///
+/// Returns an error if parsing or lowering fails.
+pub fn parse_qis_to_quantum(llvm_ir: &str) -> Result<Module> {
+    let mut module = qis_parser::parse_qis_llvm_ir(llvm_ir)?;
+    qis_to_quantum::convert_qis_to_quantum(&mut module)?;
+    Ok(module)
 }
 
 #[cfg(test)]

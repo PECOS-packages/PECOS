@@ -146,10 +146,10 @@ pub fn render_circuit_svg(layout: &CircuitLayout, options: &CircuitSvgOptions) -
                 let cy = wire_y(q, options);
 
                 match slot.gate_type {
-                    GateType::Measure | GateType::MeasureFree => {
+                    GateType::MZ | GateType::MeasureFree => {
                         render_measurement(&mut svg, cx, cy, options);
                     }
-                    GateType::Prep => {
+                    GateType::PZ => {
                         render_gate_box(&mut svg, cx, cy, "|0>", options);
                     }
                     GateType::CX => {
@@ -400,18 +400,17 @@ mod tests {
     }
 
     #[test]
-    fn test_svg_measurement_with_classical() {
+    fn test_svg_measurement() {
         let mut dag = DagCircuit::new();
-        dag.set_num_cbits(1);
         dag.h(0);
-        dag.mz_to(0, pecos_core::ClassicalBitId::new(0));
+        dag.mz(0);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let options = CircuitSvgOptions::default();
         let svg = render_circuit_svg(&layout, &options);
 
-        assert!(svg.contains("c0")); // Classical wire label
-        assert!(svg.contains("stroke-dasharray")); // Measurement arrow
+        // Measurement renders a meter symbol with an arc path, not text
+        assert!(svg.contains("<path d=\"M"));
     }
 
     #[test]

@@ -54,7 +54,8 @@ class RNGModel:
         The number after from the stream will be the idx of interest.
         """
         if self.count > index:
-            raise ValueError(f"Invalid start index: index {index} is before the current stream index: {self.count}")
+            error_msg = f"RNGindex({index}) cannot move backward: current stream index is {self.count}"
+            raise ValueError(error_msg)
         while self.count < index:
             self.rng_random()
 
@@ -96,5 +97,5 @@ class RNGModel:
             binary_val = BitUInt(creg.size, rng)
             creg.set(binary_val)
         else:
-            error_msg = f"Invalid RNG Function Encountered {func_name}"
+            error_msg = f"Unknown RNG Function '{func_name}'"
             raise ValueError(error_msg)

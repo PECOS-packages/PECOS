@@ -33,6 +33,19 @@ def test_bounded_random() -> None:
     assert 0 <= random_number < bound
 
 
+def test_set_idx_raises_for_backwards_index() -> None:
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+
+    rng.set_index(4)
+
+    try:
+        rng.set_index(3)
+    except ValueError as exc:
+        expected_error_msg = "RNGindex(3) cannot move backward: current stream index is 4"
+        assert str(exc) == expected_error_msg
+
+
 def test_set_idx() -> None:
     """Verifies that the idx is set properly for our model."""
     rng = RNGModel(shot_id=0)

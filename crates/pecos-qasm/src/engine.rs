@@ -1247,7 +1247,7 @@ impl QASMEngine {
                     Expression::Integer(bit_vec) => bit_vec.load(),
                     _ => {
                         return Err(PecosError::ParseInvalidExpression(
-                            "RNGseed expects argument 1 to be a u64 integer seed".to_string(),
+                            "RNGseed expects a u64 as its argument".to_string(),
                         ));
                     }
                 };
@@ -1266,7 +1266,7 @@ impl QASMEngine {
                     Expression::Integer(bit_vec) => bit_vec.load(),
                     _ => {
                         return Err(PecosError::ParseInvalidExpression(
-                            "RNGindex expects argument 1 to be a u64 integer index".to_string(),
+                            "RNGindex expects a u64 as its argument".to_string(),
                         ));
                     }
                 };
@@ -1284,7 +1284,7 @@ impl QASMEngine {
                     Expression::Integer(bit_vec) => bit_vec.load(),
                     _ => {
                         return Err(PecosError::ParseInvalidExpression(
-                            "RNGbound expects argument 1 to be a u32 integer bound".to_string(),
+                            "RNGbound expects a u32 as its argument".to_string(),
                         ));
                     }
                 };
@@ -1309,8 +1309,7 @@ impl QASMEngine {
                 Ok(ExpressionValue::BitVec(bitvec))
             }
             _ => Err(PecosError::ParseInvalidExpression(format!(
-                "Unknown RNG function '{}'",
-                name
+                "Unknown RNG function '{name}'"
             ))),
         }
     }

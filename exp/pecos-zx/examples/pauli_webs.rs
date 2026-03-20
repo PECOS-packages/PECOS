@@ -12,49 +12,60 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Full DEM extraction pipeline on a repetition code.
+//! Pauli web computation on a simple QEC circuit.
 //!
 //! Demonstrates:
-//! - Building a 2-round repetition code syndrome extraction circuit
+//! - Building a repetition code syndrome extraction circuit
 //! - Converting to ZX
-//! - Computing and classifying Pauli webs
-//! - Applying uniform depolarizing noise
-//! - Extracting a Detector Error Model (DEM)
-//! - Printing the DEM in Stim format
+//! - Computing Pauli webs
+//! - Classifying webs as detectors/stabilizers
+//! - Rendering with web overlay
 
 use pecos_quantum::DagCircuit;
 use pecos_zx::convert::dag_to_zx;
-use pecos_zx::dem::Dem;
-use pecos_zx::noise::NoiseModel;
 use pecos_zx::pauli_web::{WebClassification, classify_webs, compute_pauli_webs};
-use pecos_zx::viz::Renderer;
+use pecos_zx::viz::{Renderer, SvgOptions, WebOverlay, render_html_with_rewrites};
 
 fn main() {
-    println!("=== DEM Extraction Pipeline ===\n");
+    println!("=== Pauli Webs ===\n");
 
     // Build a repetition code with 2 rounds of syndrome extraction:
     //   data qubits: 0, 1, 2
     //   round 1 ancillas: 3, 4
     //   round 2 ancillas: 5, 6
+    //
+    // Two rounds are needed so that detection_webs can find non-trivial
+    // nullspace vectors. With only one round, every data-qubit spider is
+    // boundary-adjacent and the no_output constraint zeros them all out.
+    // Fresh qubit indices are used for round 2 because QuiZX's Measure
+    // removes the qubit from the active map.
     let mut dag = DagCircuit::new();
 
     // --- Round 1 ---
     dag.pz(3);
     dag.pz(4);
+
+    // Check Z0*Z1 via ancilla 3
     dag.cx(0, 3);
     dag.cx(1, 3);
+    // Check Z1*Z2 via ancilla 4
     dag.cx(1, 4);
     dag.cx(2, 4);
+
     dag.mz(3);
     dag.mz(4);
 
     // --- Round 2 (fresh ancilla indices) ---
     dag.pz(5);
     dag.pz(6);
+
+    // Check Z0*Z1 via ancilla 5
     dag.cx(0, 5);
     dag.cx(1, 5);
+    // Check Z1*Z2 via ancilla 6
     dag.cx(1, 6);
     dag.cx(2, 6);
+
     dag.mz(5);
     dag.mz(6);
 
@@ -69,13 +80,16 @@ fn main() {
 
     // Render the base circuit
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
-    r.render(&graph, "dem_circuit");
+    r.set_output_dir("exp/pecos-zx/examples/output");
+    r.render(&graph, "pauli_webs_circuit");
 
     // Compute Pauli webs
     let result = compute_pauli_webs(&graph);
-    let classifications = classify_webs(&result);
+    println!("\nPauli web computation:");
+    println!("  Found {} webs", result.webs.len());
 
+    // Classify webs
+    let classifications = classify_webs(&result);
     let num_detectors = classifications
         .iter()
         .filter(|c| **c == WebClassification::Detector)
@@ -93,27 +107,27 @@ fn main() {
         .filter(|c| **c == WebClassification::Propagated)
         .count();
 
-    println!("Pauli web classification:");
-    println!("  Detectors:          {num_detectors}");
-    println!("  Input stabilizers:  {num_input_stab}");
+    println!("  Detectors: {num_detectors}");
+    println!("  Input stabilizers: {num_input_stab}");
     println!("  Output stabilizers: {num_output_stab}");
-    println!("  Propagated:         {num_propagated}\n");
+    println!("  Propagated: {num_propagated}\n");
 
-    // Apply uniform depolarizing noise
-    let p = 0.001;
-    let noise = NoiseModel::uniform_depolarizing(&graph, p);
-    println!("Noise model:");
-    println!("  Depolarizing rate: {p}");
-    println!("  Noisy edges: {}\n", noise.edge_errors.len());
+    // Render one SVG per web for clarity
+    let overlay = WebOverlay::from_result(&result);
+    for i in 0..overlay.len() {
+        r.svg.web_overlay = Some(overlay.single(i));
+        r.render(&graph, &format!("pauli_webs_web_{i}"));
+    }
 
-    // Build DEM
-    let dem = Dem::from_webs(&result, &noise);
-    println!("DEM statistics:");
-    println!("  Detectors:   {}", dem.detectors.len());
-    println!("  Observables: {}", dem.observables.len());
-    println!("  Errors:      {}\n", dem.errors.len());
+    // Also render combined overlay
+    r.svg.web_overlay = Some(overlay.clone());
+    r.render(&graph, "pauli_webs_overlay");
 
-    // Print in Stim format
-    println!("--- Stim DEM ---");
-    println!("{}", dem.to_stim_string());
+    // Render interactive HTML viewer with rewrite exploration
+    let mut html_opts = SvgOptions::default();
+    html_opts.web_overlay = Some(overlay);
+    let html = render_html_with_rewrites(&graph, &html_opts);
+    let html_path = std::path::Path::new("exp/pecos-zx/examples/output").join("pauli_webs.html");
+    std::fs::write(&html_path, &html).expect("failed to write HTML");
+    println!("  Wrote {}", html_path.display());
 }

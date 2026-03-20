@@ -49,7 +49,7 @@ fn main() {
 
     // Render before
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&graph, "simplify_before");
 
     // Simplify

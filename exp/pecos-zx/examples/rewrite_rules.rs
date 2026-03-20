@@ -57,7 +57,7 @@ fn demo_spider_fusion() {
     );
 
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&g, "rewrite_fusion_before");
 
     // Apply spider fusion
@@ -97,7 +97,7 @@ fn demo_identity_removal() {
     );
 
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&g, "rewrite_id_before");
 
     // Apply identity removal

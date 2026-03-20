@@ -28,7 +28,7 @@ fn main() {
     // The default FromGraph layout places all Z-spiders in a single column,
     // making different topologies look nearly identical.
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.set_layout(LayoutAlgorithm::ForceDirected);
 
     // Linear cluster state: 0-1-2-3

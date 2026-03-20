@@ -51,7 +51,7 @@ fn bell_state_ascii() {
     let graph = dag_to_zx(&dag).expect("conversion failed");
 
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&graph, "bell_state");
 }
 
@@ -67,7 +67,7 @@ fn graph_state_ascii() {
     let graph = from_adjacency_matrix(&linear, 4);
 
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&graph, "graph_state_linear");
 }
 
@@ -83,7 +83,7 @@ fn simplification_ascii() {
     let mut graph = dag_to_zx(&dag).expect("conversion failed");
 
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&graph, "simplify_before");
 
     simplify::clifford_simp(&mut graph);

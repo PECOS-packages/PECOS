@@ -39,7 +39,7 @@ python/quantum-pecos/tests/docs/generated/
 *.tikz
 /*.svg
 crates/**/*.svg
-crates/pecos-zx/examples/output/
+exp/pecos-zx/examples/output/
 
 ### Add custom ignores above this line ###
 ## Copied over from https://github.com/github/gitignore/blob/main/Python.gitignore

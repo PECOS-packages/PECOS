@@ -52,7 +52,7 @@ fn main() {
 
     // 3. Render before simplification
     let mut r = Renderer::default();
-    r.set_output_dir("crates/pecos-zx/examples/output");
+    r.set_output_dir("exp/pecos-zx/examples/output");
     r.render(&graph, "bell_before");
 
     // 4. Apply Clifford simplification

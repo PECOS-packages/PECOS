@@ -889,8 +889,10 @@ mod tests {
     #[test]
     fn test_web_overlay_with_labels() {
         let (g, overlay) = graph_with_web();
-        let mut opts = SvgOptions::default();
-        opts.web_overlay = Some(overlay);
+        let opts = SvgOptions {
+            web_overlay: Some(overlay),
+            ..SvgOptions::default()
+        };
         let svg = render_svg(&g, &opts);
 
         // Pauli label text elements should be present
@@ -902,9 +904,11 @@ mod tests {
     #[test]
     fn test_web_overlay_labels_disabled() {
         let (g, overlay) = graph_with_web();
-        let mut opts = SvgOptions::default();
-        opts.web_overlay = Some(overlay);
-        opts.show_web_labels = false;
+        let opts = SvgOptions {
+            web_overlay: Some(overlay),
+            show_web_labels: false,
+            ..SvgOptions::default()
+        };
         let svg = render_svg(&g, &opts);
 
         // Overlay lines should be present (thick stroke-linecap="round")
@@ -930,8 +934,10 @@ mod tests {
     #[test]
     fn test_legend_rendering() {
         let (g, overlay) = graph_with_web();
-        let mut opts = SvgOptions::default();
-        opts.web_overlay = Some(overlay);
+        let opts = SvgOptions {
+            web_overlay: Some(overlay),
+            ..SvgOptions::default()
+        };
         let svg = render_svg(&g, &opts);
 
         assert!(

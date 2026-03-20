@@ -285,7 +285,7 @@ pub fn layout_from_tick_circuit(tc: &TickCircuit) -> CircuitLayout {
         if tick_idx >= num_steps {
             break;
         }
-        for (_gate_idx, gate) in tick.gates().iter().enumerate() {
+        for gate in tick.gates().iter() {
             let qubit_indices: Vec<usize> = gate.qubits.iter().map(|q| q.index()).collect();
 
             // TODO: TickCircuit classical bit/condition support

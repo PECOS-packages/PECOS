@@ -35,7 +35,7 @@ The existing `pecos-zx` crate remains the computation backend. The editor is a s
 ### Phase 1: HTML Viewer (current)
 
 Generate a self-contained HTML file with:
-- All webs as togglable SVG overlays (`<g>` groups with checkbox controls)
+- All webs as toggleable SVG overlays (`<g>` groups with checkbox controls)
 - Pauli labels on edges
 - Legend synced with toggle state
 - Pan and zoom via mouse/trackpad

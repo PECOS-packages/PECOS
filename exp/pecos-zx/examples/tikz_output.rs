@@ -71,8 +71,10 @@ fn graph_state_tikz() {
         ..TikzOptions::default()
     };
     let tikz = render_tikz(&graph, &opts);
-    let tikz_path = std::path::Path::new("exp/pecos-zx/examples/output").join("graph_state_linear.tikz");
-    std::fs::create_dir_all("exp/pecos-zx/examples/output").expect("failed to create output directory");
+    let tikz_path =
+        std::path::Path::new("exp/pecos-zx/examples/output").join("graph_state_linear.tikz");
+    std::fs::create_dir_all("exp/pecos-zx/examples/output")
+        .expect("failed to create output directory");
     std::fs::write(&tikz_path, &tikz).expect("failed to write .tikz");
     println!("  Wrote {} (raw TikZ snippet)", tikz_path.display());
 

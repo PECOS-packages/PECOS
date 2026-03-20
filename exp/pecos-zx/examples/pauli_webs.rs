@@ -124,8 +124,10 @@ fn main() {
     r.render(&graph, "pauli_webs_overlay");
 
     // Render interactive HTML viewer with rewrite exploration
-    let mut html_opts = SvgOptions::default();
-    html_opts.web_overlay = Some(overlay);
+    let html_opts = SvgOptions {
+        web_overlay: Some(overlay),
+        ..SvgOptions::default()
+    };
     let html = render_html_with_rewrites(&graph, &html_opts);
     let html_path = std::path::Path::new("exp/pecos-zx/examples/output").join("pauli_webs.html");
     std::fs::write(&html_path, &html).expect("failed to write HTML");

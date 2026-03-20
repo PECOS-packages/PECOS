@@ -31,8 +31,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use pecos_core::gate_type::GateType;
 use pecos_core::QubitId;
+use pecos_core::gate_type::GateType;
 use pecos_quantum::DagCircuit;
 use quizx::detection_webs::Pauli;
 
@@ -621,13 +621,9 @@ mod tests {
     #[test]
     fn test_periodic_dem_repetition_code() {
         let (_init, body, _finalize) = rep_code_segments();
-        let dem = periodic_dem(&body, 3, 0.001)
-            .expect("periodic_dem should succeed");
+        let dem = periodic_dem(&body, 3, 0.001).expect("periodic_dem should succeed");
 
-        assert!(
-            !dem.detectors.is_empty(),
-            "DEM should have detectors"
-        );
+        assert!(!dem.detectors.is_empty(), "DEM should have detectors");
         assert!(
             !dem.errors.is_empty(),
             "DEM should have error mechanisms with nonzero noise"
@@ -666,8 +662,8 @@ mod tests {
         let num_rounds = 3;
         let noise_rate = 0.001;
 
-        let dem_periodic = periodic_dem(&body, num_rounds, noise_rate)
-            .expect("periodic_dem should succeed");
+        let dem_periodic =
+            periodic_dem(&body, num_rounds, noise_rate).expect("periodic_dem should succeed");
 
         // Manual pipeline using the same body-only ZX circuit construction
         let zx_circuit = build_zx_body_circuit(&body, num_rounds);
@@ -695,8 +691,7 @@ mod tests {
     #[test]
     fn test_periodic_dem_zero_noise() {
         let (_init, body, _finalize) = rep_code_segments();
-        let dem = periodic_dem(&body, 3, 0.0)
-            .expect("periodic_dem with zero noise should succeed");
+        let dem = periodic_dem(&body, 3, 0.0).expect("periodic_dem with zero noise should succeed");
 
         assert!(
             !dem.detectors.is_empty(),
@@ -718,13 +713,13 @@ mod tests {
 
         // Detector count from unrolled circuit via tableau
         let unrolled = build_unrolled_circuit(&init, &body, &finalize, num_rounds);
-        let tab = CliffordTableau::from_dag(&unrolled)
-            .expect("unrolled circuit should be Clifford");
+        let tab =
+            CliffordTableau::from_dag(&unrolled).expect("unrolled circuit should be Clifford");
         let unrolled_detectors = tab.extract_detectors();
 
         // Detector count from periodic analysis + compose
-        let analysis = analyze_periodic(&init, &body, &finalize)
-            .expect("periodic analysis should succeed");
+        let analysis =
+            analyze_periodic(&init, &body, &finalize).expect("periodic analysis should succeed");
         let periodic_detectors = analysis.compose(num_rounds);
 
         assert_eq!(

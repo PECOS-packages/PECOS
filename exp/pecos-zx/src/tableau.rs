@@ -41,7 +41,7 @@ use pecos_core::{ClassicalBitId, PauliString, QuarterPhase};
 use pecos_quantum::{Circuit, DagCircuit};
 use quizx::linalg::Mat2;
 
-use crate::symplectic::{padded_clifford, SymplecticMatrix, SymplecticVector};
+use crate::symplectic::{SymplecticMatrix, SymplecticVector, padded_clifford};
 
 // ============================================================================
 // Types
@@ -683,8 +683,7 @@ fn classify_detectors(
             } else {
                 // Intra-round: only round 0 measurements, no init/round1/final
                 // Check if these are single-round detectors
-                let offsets: Vec<usize> =
-                    det.iter().map(|&m| m - round0_start).collect();
+                let offsets: Vec<usize> = det.iter().map(|&m| m - round0_start).collect();
                 // Verify it also appears in round 1 by checking if the same
                 // pattern exists as an intra-round detector
                 intra_round.push(PeriodicDetector {
@@ -954,7 +953,7 @@ mod tests {
     #[test]
     fn cross_validate_with_pauli_webs() {
         use crate::convert::dag_to_zx;
-        use crate::pauli_web::{classify_webs, compute_pauli_webs, WebClassification};
+        use crate::pauli_web::{WebClassification, classify_webs, compute_pauli_webs};
 
         // Build the repetition code circuit
         let mut dag = DagCircuit::new();
@@ -1150,10 +1149,13 @@ mod tests {
     #[test]
     fn periodic_repetition_code() {
         let (init, body, finalize) = rep_code_segments();
-        let analysis = analyze_periodic(&init, &body, &finalize)
-            .expect("repetition code should analyze");
+        let analysis =
+            analyze_periodic(&init, &body, &finalize).expect("repetition code should analyze");
 
-        assert_eq!(analysis.measurements_per_round, 2, "2 ancilla measurements per round");
+        assert_eq!(
+            analysis.measurements_per_round, 2,
+            "2 ancilla measurements per round"
+        );
         assert_eq!(analysis.num_total_qubits, 5);
 
         // 2 inter-round detectors (round-0 ancilla XOR round-1 ancilla)
@@ -1173,7 +1175,11 @@ mod tests {
 
         // compose(2) should reproduce the same count as the 2-round analysis
         let result = analysis.compose(2);
-        assert_eq!(result.detectors.len(), 7, "compose(2) should give 7 detectors");
+        assert_eq!(
+            result.detectors.len(),
+            7,
+            "compose(2) should give 7 detectors"
+        );
     }
 
     // ====================================================================
@@ -1183,8 +1189,8 @@ mod tests {
     #[test]
     fn compose_scaling() {
         let (init, body, finalize) = rep_code_segments();
-        let analysis = analyze_periodic(&init, &body, &finalize)
-            .expect("repetition code should analyze");
+        let analysis =
+            analyze_periodic(&init, &body, &finalize).expect("repetition code should analyze");
 
         // For N rounds: 2 init + 2*(N-1) inter-round + 3 final
         // (plus any intra-round * N)
@@ -1212,8 +1218,8 @@ mod tests {
     #[test]
     fn transfer_map_is_symplectic() {
         let (init, body, finalize) = rep_code_segments();
-        let analysis = analyze_periodic(&init, &body, &finalize)
-            .expect("repetition code should analyze");
+        let analysis =
+            analyze_periodic(&init, &body, &finalize).expect("repetition code should analyze");
 
         assert!(
             analysis.transfer_map.is_valid(),
@@ -1247,8 +1253,8 @@ mod tests {
         let mut finalize = DagCircuit::new();
         finalize.measure(0);
 
-        let analysis = analyze_periodic(&init, &body, &finalize)
-            .expect("trivial circuit should analyze");
+        let analysis =
+            analyze_periodic(&init, &body, &finalize).expect("trivial circuit should analyze");
 
         assert_eq!(analysis.measurements_per_round, 1);
 
@@ -1310,8 +1316,8 @@ mod tests {
 
         // Periodic analysis + compose(3)
         let (init, body, finalize) = rep_code_segments();
-        let analysis = analyze_periodic(&init, &body, &finalize)
-            .expect("repetition code should analyze");
+        let analysis =
+            analyze_periodic(&init, &body, &finalize).expect("repetition code should analyze");
         let periodic_result = analysis.compose(3);
 
         assert_eq!(

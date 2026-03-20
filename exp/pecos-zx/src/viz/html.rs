@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Interactive HTML viewer for ZX diagrams with togglable Pauli web overlays.
+//! Interactive HTML viewer for ZX diagrams with toggleable Pauli web overlays.
 //!
 //! Generates a self-contained HTML file embedding an SVG diagram where each
 //! Pauli web is a separate `<g>` group that can be toggled via checkboxes.
@@ -47,7 +47,7 @@ struct VertexJsInfo {
     neighbors: Vec<V>,
 }
 
-/// Render a ZX graph as an interactive HTML file with togglable web overlays.
+/// Render a ZX graph as an interactive HTML file with toggleable web overlays.
 ///
 /// Returns a self-contained HTML string. Each web in the overlay gets its own
 /// SVG `<g>` group and a checkbox in the control panel. Pan and zoom are
@@ -205,23 +205,9 @@ fn render_svg_body(
 
             if options.show_boundary_labels && vtype == VType::B {
                 if let Some(&idx) = input_set.get(&v) {
-                    write_boundary_label(
-                        &mut body,
-                        x,
-                        y,
-                        &format!("in[{idx}]"),
-                        palette,
-                        options,
-                    );
+                    write_boundary_label(&mut body, x, y, &format!("in[{idx}]"), palette, options);
                 } else if let Some(&idx) = output_set.get(&v) {
-                    write_boundary_label(
-                        &mut body,
-                        x,
-                        y,
-                        &format!("out[{idx}]"),
-                        palette,
-                        options,
-                    );
+                    write_boundary_label(&mut body, x, y, &format!("out[{idx}]"), palette, options);
                 }
             }
 
@@ -477,10 +463,7 @@ fn write_script(
     tikz: &str,
     vertex_infos: &[(V, VertexJsInfo)],
 ) {
-    let n = options
-        .web_overlay
-        .as_ref()
-        .map_or(0, |o| o.webs.len());
+    let n = options.web_overlay.as_ref().map_or(0, |o| o.webs.len());
     let tikz_escaped = escape_js_string(tikz);
 
     // Emit palette data for both schemes
@@ -794,11 +777,7 @@ fn write_script(
 /// Emit a JS palette object definition for the given palette.
 fn write_palette_js(html: &mut String, name: &str, p: &Palette) {
     // Capitalize first letter for the JS variable name
-    let var_name = format!(
-        "palette{}{}",
-        &name[..1].to_uppercase(),
-        &name[1..]
-    );
+    let var_name = format!("palette{}{}", &name[..1].to_uppercase(), &name[1..]);
     let _ = writeln!(
         html,
         "const {var_name} = {{\n\
@@ -1164,18 +1143,9 @@ pub fn render_html_with_rewrites(graph: &ZxGraph, options: &SvgOptions) -> Strin
     let render_options_js = emit_render_options_js(options);
 
     // Pre-compute simplification states
-    let clifford_state = compute_simplify_state(
-        graph,
-        "Clifford Simplify",
-        simplify::clifford_simp,
-        options,
-    );
-    let full_state = compute_simplify_state(
-        graph,
-        "Full Simplify",
-        simplify::full_simp,
-        options,
-    );
+    let clifford_state =
+        compute_simplify_state(graph, "Clifford Simplify", simplify::clifford_simp, options);
+    let full_state = compute_simplify_state(graph, "Full Simplify", simplify::full_simp, options);
 
     // Build HTML
     let mut html = String::new();
@@ -1332,10 +1302,7 @@ fn write_rewrite_script(
     clifford_state: &SimplifyState,
     full_state: &SimplifyState,
 ) {
-    let n = options
-        .web_overlay
-        .as_ref()
-        .map_or(0, |o| o.webs.len());
+    let n = options.web_overlay.as_ref().map_or(0, |o| o.webs.len());
     let tikz_escaped = escape_js_string(tikz);
     let pecos = colors::ColorScheme::Pecos.palette();
     let zx = colors::ColorScheme::ZxCanonical.palette();
@@ -2250,12 +2217,14 @@ mod tests {
         let mut web = PauliWeb::new();
         web.set_edge(b0, z, QPauli::X);
 
-        let mut opts = SvgOptions::default();
-        opts.web_overlay = Some(WebOverlay {
-            webs: vec![web],
-            classifications: vec![WebClassification::Detector],
-            indices: None,
-        });
+        let opts = SvgOptions {
+            web_overlay: Some(WebOverlay {
+                webs: vec![web],
+                classifications: vec![WebClassification::Detector],
+                indices: None,
+            }),
+            ..SvgOptions::default()
+        };
 
         let html = render_html(&g, &opts);
         assert!(html.contains("id=\"web-0\""), "should have web group");
@@ -2289,12 +2258,14 @@ mod tests {
         let mut web = PauliWeb::new();
         web.set_edge(b0, z, QPauli::Z);
 
-        let mut opts = SvgOptions::default();
-        opts.web_overlay = Some(WebOverlay {
-            webs: vec![web],
-            classifications: vec![WebClassification::Detector],
-            indices: None,
-        });
+        let opts = SvgOptions {
+            web_overlay: Some(WebOverlay {
+                webs: vec![web],
+                classifications: vec![WebClassification::Detector],
+                indices: None,
+            }),
+            ..SvgOptions::default()
+        };
 
         let html = render_html(&g, &opts);
         assert!(
@@ -2360,19 +2331,10 @@ mod tests {
         assert!(html.contains("saveSvg()"), "should have SVG save button");
         assert!(html.contains("saveTikz()"), "should have TikZ save button");
         assert!(html.contains("Save SVG"), "should have SVG button label");
-        assert!(
-            html.contains("Save TikZ"),
-            "should have TikZ button label"
-        );
+        assert!(html.contains("Save TikZ"), "should have TikZ button label");
         // Embedded TikZ data should contain tikzpicture
-        assert!(
-            html.contains("tikzpicture"),
-            "should embed TikZ content"
-        );
-        assert!(
-            html.contains("downloadBlob"),
-            "should have download helper"
-        );
+        assert!(html.contains("tikzpicture"), "should embed TikZ content");
+        assert!(html.contains("downloadBlob"), "should have download helper");
     }
 
     #[test]
@@ -2467,10 +2429,7 @@ mod tests {
 
         let g = Graph::new();
         let html = render_html(&g, &SvgOptions::default());
-        assert!(
-            html.contains("id=\"tooltip\""),
-            "should have tooltip div"
-        );
+        assert!(html.contains("id=\"tooltip\""), "should have tooltip div");
         assert!(
             html.contains("id=\"selection-panel\""),
             "should have selection panel"
@@ -2580,14 +2539,8 @@ mod tests {
         let html = render_html_with_rewrites(&g, &SvgOptions::default());
         assert!(html.contains("function undo"), "should have undo function");
         assert!(html.contains("function redo"), "should have redo function");
-        assert!(
-            html.contains("id=\"undo-btn\""),
-            "should have undo button"
-        );
-        assert!(
-            html.contains("id=\"redo-btn\""),
-            "should have redo button"
-        );
+        assert!(html.contains("id=\"undo-btn\""), "should have undo button");
+        assert!(html.contains("id=\"redo-btn\""), "should have redo button");
     }
 
     #[test]

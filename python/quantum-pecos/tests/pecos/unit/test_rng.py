@@ -34,6 +34,7 @@ def test_bounded_random() -> None:
 
 
 def test_set_idx_raises_for_backwards_index() -> None:
+    """Verifies that an error is raised when specifying an index that was already consumed in the RNG stream."""
     rng = RNGModel(shot_id=0)
     rng.set_seed(42)
 

@@ -56,7 +56,8 @@ fn demo_spider_fusion() {
         stats_before.num_vertices, stats_before.num_edges
     );
 
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&g, "rewrite_fusion_before");
 
     // Apply spider fusion
@@ -95,7 +96,8 @@ fn demo_identity_removal() {
         stats_before.num_vertices, stats_before.num_edges
     );
 
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&g, "rewrite_id_before");
 
     // Apply identity removal

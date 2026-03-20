@@ -27,11 +27,70 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use num_traits::Zero;
-use quizx::detection_webs::PauliWeb;
+use quizx::detection_webs::{Pauli, PauliWeb};
 use quizx::graph::{EType, GraphLike, V, VType};
 
 use super::colors::{self, ColorScheme, Palette};
 use super::layout::{LayoutAlgorithm, LayoutOptions, compute_layout};
+use crate::pauli_web::{PauliWebResult, WebClassification, classify_webs};
+
+/// Pauli web overlay data bundling webs with their classifications.
+#[derive(Debug, Clone)]
+pub struct WebOverlay {
+    /// The Pauli webs to render.
+    pub webs: Vec<PauliWeb>,
+    /// Classification for each web (same length as `webs`).
+    pub classifications: Vec<WebClassification>,
+    /// Original indices for color and legend numbering.
+    /// When `None`, indices are `0..webs.len()`.
+    pub indices: Option<Vec<usize>>,
+}
+
+impl WebOverlay {
+    /// Build from a [`PauliWebResult`], classifying each web automatically.
+    #[must_use]
+    pub fn from_result(result: &PauliWebResult) -> Self {
+        let classifications = classify_webs(result);
+        Self {
+            webs: result.webs.clone(),
+            classifications,
+            indices: None,
+        }
+    }
+
+    /// Extract a single web by index, preserving its original color and label.
+    ///
+    /// The returned overlay contains one web whose color index matches the
+    /// original position, so "Web 2" rendered alone still uses color slot 2
+    /// and is labeled "Web 2: ...".
+    #[must_use]
+    pub fn single(&self, index: usize) -> Self {
+        let orig_idx = self.original_index(index);
+        Self {
+            webs: vec![self.webs[index].clone()],
+            classifications: vec![self.classifications[index].clone()],
+            indices: Some(vec![orig_idx]),
+        }
+    }
+
+    /// Number of webs in this overlay.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.webs.len()
+    }
+
+    /// Whether this overlay has no webs.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.webs.is_empty()
+    }
+
+    /// The original index for internal position `i` (for color and legend numbering).
+    #[must_use]
+    pub fn original_index(&self, i: usize) -> usize {
+        self.indices.as_ref().map_or(i, |idx| idx[i])
+    }
+}
 
 /// Options for SVG rendering.
 #[derive(Debug, Clone)]
@@ -55,7 +114,9 @@ pub struct SvgOptions {
     /// Layout options.
     pub layout_options: LayoutOptions,
     /// Pauli web overlay data (optional).
-    pub web_overlay: Option<Vec<PauliWeb>>,
+    pub web_overlay: Option<WebOverlay>,
+    /// Whether to show Pauli operator labels (X/Y/Z) on web overlay edges.
+    pub show_web_labels: bool,
     /// Edge stroke width.
     pub edge_width: f64,
     /// Size of the Hadamard midpoint square (half side length).
@@ -91,6 +152,7 @@ impl Default for SvgOptions {
             layout: LayoutAlgorithm::default(),
             layout_options: LayoutOptions::default(),
             web_overlay: None,
+            show_web_labels: true,
             edge_width: 2.0,
             hadamard_square_size: 5.0,
             color_scheme: ColorScheme::default(),
@@ -161,8 +223,8 @@ pub fn render_svg(graph: &impl GraphLike, options: &SvgOptions) -> String {
     }
 
     // Draw Pauli web overlay
-    if let Some(ref webs) = options.web_overlay {
-        draw_web_overlay(&mut svg, webs, &positions, options);
+    if let Some(ref overlay) = options.web_overlay {
+        draw_web_overlay(&mut svg, overlay, &positions, options);
     }
 
     // Draw vertices (drawn after edges so they appear on top)
@@ -206,6 +268,11 @@ pub fn render_svg(graph: &impl GraphLike, options: &SvgOptions) -> String {
         }
     }
 
+    // Draw web legend (on top of everything)
+    if let Some(ref overlay) = options.web_overlay {
+        draw_legend(&mut svg, overlay, width, options);
+    }
+
     svg.push_str("</svg>");
     svg
 }
@@ -233,7 +300,13 @@ fn compute_dimensions(positions: &HashMap<V, (f64, f64)>, options: &SvgOptions) 
     let pad =
         options.layout_options.padding + options.spider_radius * 2.0 + quad_max.max(cubic_max);
 
-    (max_x + pad, max_y + pad)
+    // Reserve extra width for the legend so it doesn't overlap graph content
+    let legend_extra = options
+        .web_overlay
+        .as_ref()
+        .map_or(0.0, |o| legend_width(o, options));
+
+    (max_x + pad + legend_extra, max_y + pad)
 }
 
 /// The resolved curve geometry for an edge.
@@ -538,21 +611,188 @@ fn draw_boundary_label(
 
 fn draw_web_overlay(
     svg: &mut String,
-    webs: &[PauliWeb],
+    overlay: &WebOverlay,
     positions: &HashMap<V, (f64, f64)>,
     options: &SvgOptions,
 ) {
-    for (web_idx, web) in webs.iter().enumerate() {
-        let color = colors::WEB_COLORS[web_idx % colors::WEB_COLORS.len()];
+    let n = overlay.webs.len();
+    if n == 0 {
+        return;
+    }
+
+    // Each web gets a decreasing stroke width so on shared edges the thinner
+    // (later-drawn, higher z-order) web is visible nested inside the thicker one.
+    let max_width = options.edge_width * 4.0;
+    let min_width = options.edge_width * 1.5;
+    let step = if n > 1 {
+        (max_width - min_width) / (n - 1) as f64
+    } else {
+        0.0
+    };
+
+    // Pass 1: draw all web lines (thickest first = lowest z-order)
+    for (web_idx, web) in overlay.webs.iter().enumerate() {
+        let orig = overlay.original_index(web_idx);
+        let color = colors::WEB_COLORS[orig % colors::WEB_COLORS.len()];
+        let width = max_width - web_idx as f64 * step;
+
         for &(from, to) in web.edge_operators.keys() {
             if let (Some(&(x1, y1)), Some(&(x2, y2))) = (positions.get(&from), positions.get(&to)) {
                 let _ = write!(
                     svg,
-                    r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="{}" stroke-linecap="round"/>"#,
-                    options.edge_width * 3.0,
+                    r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="{width}" stroke-linecap="round"/>"#,
                 );
             }
         }
+    }
+
+    // Pass 2: draw all Pauli labels on top of all lines
+    if options.show_web_labels {
+        let label_size = options.font_size * 0.85;
+        let pad = 2.0;
+
+        for (web_idx, web) in overlay.webs.iter().enumerate() {
+            let orig = overlay.original_index(web_idx);
+            let opaque = colors::WEB_COLORS_OPAQUE[orig % colors::WEB_COLORS_OPAQUE.len()];
+
+            for (&(from, to), &pauli) in &web.edge_operators {
+                if let (Some(&(x1, y1)), Some(&(x2, y2))) =
+                    (positions.get(&from), positions.get(&to))
+                {
+                    let mx = (x1 + x2) / 2.0;
+                    let my = (y1 + y2) / 2.0;
+                    let label = match pauli {
+                        Pauli::X => "X",
+                        Pauli::Y => "Y",
+                        Pauli::Z => "Z",
+                    };
+
+                    // White background rect for readability
+                    let _ = write!(
+                        svg,
+                        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="2" fill="white" opacity="0.85"/>"#,
+                        mx - label_size / 2.0 - pad,
+                        my - label_size / 2.0 - pad,
+                        label_size + pad * 2.0,
+                        label_size + pad * 2.0,
+                    );
+                    let _ = write!(
+                        svg,
+                        r#"<text x="{mx}" y="{}" font-size="{label_size}" fill="{opaque}" text-anchor="middle" font-family="monospace" font-weight="bold">{label}</text>"#,
+                        my + label_size / 3.0,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn classification_label(c: &WebClassification) -> &'static str {
+    match c {
+        WebClassification::Detector => "Detector",
+        WebClassification::InputStabilizer => "Input Stabilizer",
+        WebClassification::OutputStabilizer => "Output Stabilizer",
+        WebClassification::Propagated => "Propagated",
+    }
+}
+
+/// Compute the width of the legend box (including margin), or 0.0 if no legend.
+fn legend_width(overlay: &WebOverlay, options: &SvgOptions) -> f64 {
+    if overlay.webs.is_empty() {
+        return 0.0;
+    }
+    let font_size = options.font_size;
+    let swatch_size = font_size;
+    let padding = 8.0;
+    let swatch_text_gap = 4.0;
+    let char_width = font_size * 0.6;
+    let max_label_len = overlay
+        .webs
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let orig = overlay.original_index(i);
+            let class_label = overlay
+                .classifications
+                .get(i)
+                .map_or("", classification_label);
+            format!("Web {orig}: {class_label}").len()
+        })
+        .max()
+        .unwrap_or(0);
+    let text_width = max_label_len as f64 * char_width;
+    // box_width + left margin + right margin
+    padding + swatch_size + swatch_text_gap + text_width + padding + 20.0
+}
+
+fn draw_legend(svg: &mut String, overlay: &WebOverlay, svg_width: f64, options: &SvgOptions) {
+    if overlay.webs.is_empty() {
+        return;
+    }
+
+    let font_size = options.font_size;
+    let row_height = font_size + 6.0;
+    let swatch_size = font_size;
+    let padding = 8.0;
+    let swatch_text_gap = 4.0;
+
+    let char_width = font_size * 0.6;
+    let max_label_len = overlay
+        .webs
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let orig = overlay.original_index(i);
+            let class_label = overlay
+                .classifications
+                .get(i)
+                .map_or("", classification_label);
+            format!("Web {orig}: {class_label}").len()
+        })
+        .max()
+        .unwrap_or(0);
+    let text_width = max_label_len as f64 * char_width;
+    let box_width = padding + swatch_size + swatch_text_gap + text_width + padding;
+    let box_height = padding + overlay.webs.len() as f64 * row_height + padding;
+
+    let box_x = svg_width - box_width - 10.0;
+    let box_y = 10.0;
+
+    let stroke_color = "#999";
+    let text_color = "#333";
+    let font = "sans-serif";
+
+    // Legend background
+    let _ = write!(
+        svg,
+        r#"<rect x="{box_x}" y="{box_y}" width="{box_width}" height="{box_height}" rx="4" fill="white" stroke="{stroke_color}" stroke-width="1" opacity="0.95"/>"#,
+    );
+
+    for (i, _web) in overlay.webs.iter().enumerate() {
+        let orig = overlay.original_index(i);
+        let opaque = colors::WEB_COLORS_OPAQUE[orig % colors::WEB_COLORS_OPAQUE.len()];
+        let class_label = overlay
+            .classifications
+            .get(i)
+            .map_or("", classification_label);
+
+        let row_y = box_y + padding + i as f64 * row_height;
+
+        // Color swatch
+        let _ = write!(
+            svg,
+            r#"<rect x="{}" y="{}" width="{swatch_size}" height="{swatch_size}" rx="2" fill="{opaque}"/>"#,
+            box_x + padding,
+            row_y,
+        );
+
+        // Label text
+        let text_x = box_x + padding + swatch_size + swatch_text_gap;
+        let text_y = row_y + swatch_size - 2.0;
+        let _ = write!(
+            svg,
+            r#"<text x="{text_x}" y="{text_y}" font-size="{font_size}" fill="{text_color}" font-family="{font}">Web {orig}: {class_label}</text>"#,
+        );
     }
 }
 
@@ -560,7 +800,7 @@ fn draw_web_overlay(
 ///
 /// Displays common phases as rational multiples of pi:
 /// 0 -> "" (empty), 1 -> "pi", 1/2 -> "pi/2", -1/2 -> "-pi/2", etc.
-fn format_phase(phase: quizx::phase::Phase) -> String {
+pub(crate) fn format_phase(phase: quizx::phase::Phase) -> String {
     let r = phase.to_rational();
     let (numer, denom) = (*r.numer(), *r.denom());
 
@@ -615,5 +855,100 @@ mod tests {
         assert_eq!(format_phase(Phase::new((-1, 2))), "-pi/2");
         assert_eq!(format_phase(Phase::new((1, 4))), "pi/4");
         assert_eq!(format_phase(Phase::new((3, 4))), "3pi/4");
+    }
+
+    /// Build a small graph (B -- Z -- X -- B) with a single web for overlay tests.
+    fn graph_with_web() -> (quizx::vec_graph::Graph, WebOverlay) {
+        use quizx::graph::GraphLike;
+        use quizx::vec_graph::Graph;
+
+        let mut g = Graph::new();
+        let b0 = g.add_vertex(VType::B);
+        let z = g.add_vertex(VType::Z);
+        let x = g.add_vertex(VType::X);
+        let b1 = g.add_vertex(VType::B);
+        g.add_edge(b0, z);
+        g.add_edge(z, x);
+        g.add_edge(x, b1);
+        g.set_inputs(vec![b0]);
+        g.set_outputs(vec![b1]);
+
+        let mut web = PauliWeb::new();
+        web.set_edge(b0, z, Pauli::Z);
+        web.set_edge(z, x, Pauli::X);
+        web.set_edge(x, b1, Pauli::Y);
+
+        let overlay = WebOverlay {
+            webs: vec![web],
+            classifications: vec![WebClassification::Propagated],
+            indices: None,
+        };
+        (g, overlay)
+    }
+
+    #[test]
+    fn test_web_overlay_with_labels() {
+        let (g, overlay) = graph_with_web();
+        let mut opts = SvgOptions::default();
+        opts.web_overlay = Some(overlay);
+        let svg = render_svg(&g, &opts);
+
+        // Pauli label text elements should be present
+        assert!(svg.contains(">X</text>"), "expected X label in SVG");
+        assert!(svg.contains(">Y</text>"), "expected Y label in SVG");
+        assert!(svg.contains(">Z</text>"), "expected Z label in SVG");
+    }
+
+    #[test]
+    fn test_web_overlay_labels_disabled() {
+        let (g, overlay) = graph_with_web();
+        let mut opts = SvgOptions::default();
+        opts.web_overlay = Some(overlay);
+        opts.show_web_labels = false;
+        let svg = render_svg(&g, &opts);
+
+        // Overlay lines should be present (thick stroke-linecap="round")
+        assert!(
+            svg.contains("stroke-linecap=\"round\""),
+            "expected overlay lines in SVG"
+        );
+        // But no Pauli label text
+        assert!(
+            !svg.contains(">X</text>"),
+            "X label should not appear when labels disabled"
+        );
+        assert!(
+            !svg.contains(">Y</text>"),
+            "Y label should not appear when labels disabled"
+        );
+        assert!(
+            !svg.contains(">Z</text>"),
+            "Z label should not appear when labels disabled"
+        );
+    }
+
+    #[test]
+    fn test_legend_rendering() {
+        let (g, overlay) = graph_with_web();
+        let mut opts = SvgOptions::default();
+        opts.web_overlay = Some(overlay);
+        let svg = render_svg(&g, &opts);
+
+        assert!(
+            svg.contains("Web 0: Propagated"),
+            "legend should contain web classification"
+        );
+    }
+
+    #[test]
+    fn test_web_overlay_from_result_round_trip() {
+        let result = crate::pauli_web::PauliWebResult {
+            webs: vec![PauliWeb::new(), PauliWeb::new()],
+            input_ids: vec![0],
+            output_ids: vec![1],
+        };
+        let overlay = WebOverlay::from_result(&result);
+        assert_eq!(overlay.webs.len(), result.webs.len());
+        assert_eq!(overlay.classifications.len(), result.webs.len());
     }
 }

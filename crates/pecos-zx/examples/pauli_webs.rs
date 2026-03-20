@@ -24,7 +24,7 @@
 use pecos_quantum::DagCircuit;
 use pecos_zx::convert::dag_to_zx;
 use pecos_zx::pauli_web::{WebClassification, classify_webs, compute_pauli_webs};
-use pecos_zx::viz::Renderer;
+use pecos_zx::viz::{Renderer, SvgOptions, WebOverlay, render_html_with_rewrites};
 
 fn main() {
     println!("=== Pauli Webs ===\n");
@@ -80,6 +80,7 @@ fn main() {
 
     // Render the base circuit
     let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&graph, "pauli_webs_circuit");
 
     // Compute Pauli webs
@@ -111,7 +112,22 @@ fn main() {
     println!("  Output stabilizers: {num_output_stab}");
     println!("  Propagated: {num_propagated}\n");
 
-    // Render with web overlay (SVG-only feature; ASCII and TikZ show the base graph)
-    r.svg.web_overlay = Some(result.webs.clone());
+    // Render one SVG per web for clarity
+    let overlay = WebOverlay::from_result(&result);
+    for i in 0..overlay.len() {
+        r.svg.web_overlay = Some(overlay.single(i));
+        r.render(&graph, &format!("pauli_webs_web_{i}"));
+    }
+
+    // Also render combined overlay
+    r.svg.web_overlay = Some(overlay.clone());
     r.render(&graph, "pauli_webs_overlay");
+
+    // Render interactive HTML viewer with rewrite exploration
+    let mut html_opts = SvgOptions::default();
+    html_opts.web_overlay = Some(overlay);
+    let html = render_html_with_rewrites(&graph, &html_opts);
+    let html_path = std::path::Path::new("crates/pecos-zx/examples/output").join("pauli_webs.html");
+    std::fs::write(&html_path, &html).expect("failed to write HTML");
+    println!("  Wrote {}", html_path.display());
 }

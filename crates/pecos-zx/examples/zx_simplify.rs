@@ -48,7 +48,8 @@ fn main() {
     let mut graph = dag_to_zx(&dag).expect("conversion failed");
 
     // Render before
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&graph, "simplify_before");
 
     // Simplify

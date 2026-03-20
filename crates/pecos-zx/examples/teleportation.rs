@@ -151,6 +151,7 @@ fn main() {
     println!("=== Teleportation: Cups, Caps, and the Snake Equation ===\n");
 
     let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
 
     // Cup (Bell state)
     let (cup_graph, cup_curves) = build_cup();

@@ -47,7 +47,8 @@ fn bell_state_tikz() {
 
     let graph = dag_to_zx(&dag).expect("conversion failed");
 
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&graph, "bell_state");
 }
 
@@ -70,11 +71,14 @@ fn graph_state_tikz() {
         ..TikzOptions::default()
     };
     let tikz = render_tikz(&graph, &opts);
-    std::fs::write("graph_state_linear.tikz", &tikz).expect("failed to write .tikz");
-    println!("  Wrote graph_state_linear.tikz (raw TikZ snippet)");
+    let tikz_path = std::path::Path::new("crates/pecos-zx/examples/output").join("graph_state_linear.tikz");
+    std::fs::create_dir_all("crates/pecos-zx/examples/output").expect("failed to create output directory");
+    std::fs::write(&tikz_path, &tikz).expect("failed to write .tikz");
+    println!("  Wrote {} (raw TikZ snippet)", tikz_path.display());
 
     // Full render (ASCII + SVG + TikZ standalone)
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&graph, "graph_state_linear");
 }
 
@@ -90,7 +94,8 @@ fn simplification_tikz() {
 
     let mut graph = dag_to_zx(&dag).expect("conversion failed");
 
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&graph, "simplify_before");
 
     // Simplify

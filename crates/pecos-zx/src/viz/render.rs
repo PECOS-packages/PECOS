@@ -18,6 +18,8 @@
 //! and provides a single [`render()`](Renderer::render) method that produces
 //! all three formats from one call.
 
+use std::path::{Path, PathBuf};
+
 use quizx::graph::GraphLike;
 
 use super::ascii::{AsciiOptions, render_ascii};
@@ -34,6 +36,9 @@ pub struct Renderer {
     pub svg: SvgOptions,
     /// Options for TikZ rendering.
     pub tikz: TikzOptions,
+    /// Directory for output files. If set, files are written under this
+    /// directory (created automatically). Defaults to the current directory.
+    pub output_dir: Option<PathBuf>,
 }
 
 impl Renderer {
@@ -42,6 +47,22 @@ impl Renderer {
         self.ascii.layout = layout;
         self.svg.layout = layout;
         self.tikz.layout = layout;
+    }
+
+    /// Return the path for an output file, creating the output directory if needed.
+    fn output_path(&self, filename: &str) -> PathBuf {
+        match &self.output_dir {
+            Some(dir) => {
+                std::fs::create_dir_all(dir).expect("failed to create output directory");
+                dir.join(filename)
+            }
+            None => PathBuf::from(filename),
+        }
+    }
+
+    /// Convenience setter for `output_dir`.
+    pub fn set_output_dir(&mut self, dir: impl AsRef<Path>) {
+        self.output_dir = Some(dir.as_ref().to_path_buf());
     }
 
     /// Render the graph in all three formats.
@@ -55,14 +76,14 @@ impl Renderer {
         println!("{ascii}\n");
 
         let svg = render_svg(graph, &self.svg);
-        let svg_path = format!("{name}.svg");
+        let svg_path = self.output_path(&format!("{name}.svg"));
         std::fs::write(&svg_path, &svg).expect("failed to write SVG");
-        println!("  Wrote {svg_path}");
+        println!("  Wrote {}", svg_path.display());
 
         let tikz = render_tikz(graph, &self.tikz);
         let doc = standalone_document(&tikz, self.tikz.color_scheme);
-        let tex_path = format!("{name}.tex");
+        let tex_path = self.output_path(&format!("{name}.tex"));
         std::fs::write(&tex_path, &doc).expect("failed to write .tex");
-        println!("  Wrote {tex_path}");
+        println!("  Wrote {}", tex_path.display());
     }
 }

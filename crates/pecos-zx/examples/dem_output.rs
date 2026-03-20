@@ -68,7 +68,8 @@ fn main() {
     let graph = dag_to_zx(&dag).expect("conversion failed");
 
     // Render the base circuit
-    let r = Renderer::default();
+    let mut r = Renderer::default();
+    r.set_output_dir("crates/pecos-zx/examples/output");
     r.render(&graph, "dem_circuit");
 
     // Compute Pauli webs

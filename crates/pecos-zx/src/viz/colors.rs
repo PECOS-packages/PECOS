@@ -320,3 +320,8 @@ pub const WEB_COLORS: &[&str] = &[
     "rgba(255, 20, 147, 0.4)",
     "rgba(128, 128, 0, 0.4)",
 ];
+
+/// Opaque versions of `WEB_COLORS` for text labels and legend swatches.
+pub const WEB_COLORS_OPAQUE: &[&str] = &[
+    "#FF0000", "#0000FF", "#00B400", "#FFA500", "#9400D3", "#00CED1", "#FF1493", "#808000",
+];

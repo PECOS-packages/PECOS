@@ -24,9 +24,13 @@ pub struct PyStab {
 #[pymethods]
 impl PyStab {
     #[new]
-    fn new(num_qubits: usize) -> Self {
+    #[pyo3(signature = (num_qubits, seed=None))]
+    fn new(num_qubits: usize, seed: Option<u64>) -> Self {
         PyStab {
-            inner: Stab::new(num_qubits),
+            inner: match seed {
+                Some(s) => Stab::with_seed(num_qubits, s),
+                None => Stab::new(num_qubits),
+            },
         }
     }
 
@@ -38,6 +42,10 @@ impl PyStab {
     #[getter]
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.inner.set_seed(seed);
     }
 
     #[allow(clippy::too_many_lines)]

@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.quantum import commute, gate_groups
 from pecos.typing import INTEGER_TYPES
 
 if TYPE_CHECKING:
@@ -193,21 +194,12 @@ def pauli_string(
     raise TypeError(msg)
 
 
-# Submodules moved here from pecos.misc
-from pecos.quantum import commute, gate_groups
-
 __all__ = [
-    # Submodules
-    "commute",
-    # Circuit representation
     "DagCircuit",
     "DagCircuitWouldCycleError",
     "Gate",
     "GateType",
-    "gate_groups",
-    # HUGR conversion utilities
     "HugrConversionError",
-    # Pauli operators
     "Pauli",
     "PauliString",
     "QubitConflictError",
@@ -217,6 +209,8 @@ __all__ = [
     "TickHandle",
     "TickMeasureHandle",
     "TickPrepHandle",
+    "commute",
+    "gate_groups",
     "gate_type_to_hugr_op",
     "hugr_op_to_gate_type",
     "hugr_to_dag_circuit",

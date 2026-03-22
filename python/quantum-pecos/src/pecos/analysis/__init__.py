@@ -29,13 +29,13 @@ from pecos.analysis import fault_tolerance_checks as fault_tolerance
 from pecos.analysis import pseudo_threshold_tools as pseudo_threshold
 from pecos.analysis import threshold_tools as threshold
 from pecos.analysis.stabilizer_verification import VerifyStabilizers
+from pecos.analysis.threshold_curve import threshold_fit
 from pecos.analysis.threshold_tools import (
     codecapacity_logical_rate,
     codecapacity_logical_rate2,
     codecapacity_logical_rate3,
     threshold_code_capacity,
 )
-from pecos.analysis.threshold_curve import threshold_fit
 from pecos.analysis.tool_anticommute import anticommute
 from pecos.analysis.tool_collection import fault_tolerance_check
 

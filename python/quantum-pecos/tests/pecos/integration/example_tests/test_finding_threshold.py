@@ -35,7 +35,7 @@ def test_finding_threshold() -> None:
             surface = pc.qeccs.Surface4444(distance=d)
             mwpm2d = pc.decoders.MWPM2D(surface)
             plog.append(
-                pc.tools.codecapacity_logical_rate(
+                pc.analysis.codecapacity_logical_rate(
                     10,
                     surface,
                     d,

@@ -210,7 +210,19 @@ from pecos import (
 
 # pecos.tools is deprecated (renamed to pecos.analysis).
 # Not eagerly imported to avoid triggering the deprecation warning on every `import pecos`.
-# Users who `import pecos.tools` or `from pecos import tools` will still get the warning.
+# Lazy import via __getattr__ so `pc.tools.X` still works but emits a warning.
+
+
+def __getattr__(name: str):  # noqa: N807
+    if name == "tools":
+        # Lazy import -- tools/__init__.py emits the deprecation warning
+        import importlib
+
+        return importlib.import_module("pecos.tools")
+    msg = f"module 'pecos' has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
 # Deprecated APIs
 from pecos._deprecated import BinArray
 

@@ -42,6 +42,8 @@ pecos-qasm.workspace = true
 pecos-guppy-hugr.workspace = true
 criterion.workspace = true
 proptest = "1.4"
+# Enable our own features for doctests and integration tests
+pecos-neo = { path = ".", features = ["qasm", "hugr"] }
 
 [[bench]]
 name = "hot_path"

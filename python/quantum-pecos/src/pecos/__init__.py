@@ -197,7 +197,6 @@ from pecos import (
     exceptions,  # Exception classes
     graph,
     guppy,  # Direct Guppy code generation for QEC - bypasses SLR
-    misc,
     noise,
     programs,
     protocols,
@@ -376,7 +375,6 @@ __all__ = [
     "max",
     "mean",
     "min",
-    "misc",  # Kept for backwards compatibility
     "newton",
     "noise",
     "num",

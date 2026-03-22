@@ -24,7 +24,7 @@ import struct
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.misc.std_output import StdOutput
+from pecos.engines.std_output import StdOutput
 
 if TYPE_CHECKING:
     from typing import Any

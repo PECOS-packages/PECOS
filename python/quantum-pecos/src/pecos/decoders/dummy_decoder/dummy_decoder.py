@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
-    from pecos.misc.std_output import StdOutput
+    from pecos.engines.std_output import StdOutput
 
 
 class DummyDecoder:

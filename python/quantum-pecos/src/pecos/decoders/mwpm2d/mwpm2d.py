@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from pecos.misc.std_output import StdOutput
+    from pecos.engines.std_output import StdOutput
     from pecos.protocols import QECCProtocol
 
 

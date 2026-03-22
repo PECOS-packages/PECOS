@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pecos.circuits import LocationSet, QuantumCircuit
-    from pecos.misc.symbol_library import JSONDict
+    from pecos.typing import JSONDict
     from pecos.protocols import QECCProtocol
     from pecos.typing import QECCInstrParams
 

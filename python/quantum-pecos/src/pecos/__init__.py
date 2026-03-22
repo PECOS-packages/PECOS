@@ -212,12 +212,20 @@ from pecos import (
 # Lazy import via __getattr__ so `pc.tools.X` still works but emits a warning.
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str):
     if name == "tools":
         # Lazy import -- tools/__init__.py emits the deprecation warning
         import importlib
 
         return importlib.import_module("pecos.tools")
+    if name == "misc":
+        msg = (
+            "pecos.misc has been removed. Its contents have been moved to:\n"
+            "  - pecos.analysis (threshold_curve, stabilizer_funcs)\n"
+            "  - pecos.quantum (commute, gate_groups)\n"
+            "  - pecos.engines (std_output)"
+        )
+        raise AttributeError(msg)
     msg = f"module 'pecos' has no attribute {name!r}"
     raise AttributeError(msg)
 

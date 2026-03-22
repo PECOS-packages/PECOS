@@ -23,9 +23,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pecos as pc
+from pecos.analysis.threshold_curve import func
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
-from pecos.analysis.threshold_curve import func
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
 from pecos.tools.threshold_tools import (

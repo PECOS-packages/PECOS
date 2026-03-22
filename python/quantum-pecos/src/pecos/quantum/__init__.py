@@ -193,12 +193,18 @@ def pauli_string(
     raise TypeError(msg)
 
 
+# Submodules moved here from pecos.misc
+from pecos.quantum import commute, gate_groups
+
 __all__ = [
+    # Submodules
+    "commute",
     # Circuit representation
     "DagCircuit",
     "DagCircuitWouldCycleError",
     "Gate",
     "GateType",
+    "gate_groups",
     # HUGR conversion utilities
     "HugrConversionError",
     # Pauli operators

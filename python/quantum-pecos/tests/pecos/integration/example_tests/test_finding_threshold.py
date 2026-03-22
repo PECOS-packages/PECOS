@@ -52,6 +52,6 @@ def test_finding_threshold() -> None:
 
     try:
         p0 = (0.1, 1.5, 1, 1, 1)
-        pc.misc.threshold_fit(plist, dlist, plog, func, p0, maxfev=1000)
+        pc.analysis.threshold_fit(plist, dlist, plog, func, p0, maxfev=1000)
     except RuntimeError:
         pass

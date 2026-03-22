@@ -35,6 +35,7 @@ from pecos.analysis.threshold_tools import (
     codecapacity_logical_rate3,
     threshold_code_capacity,
 )
+from pecos.analysis.threshold_curve import threshold_fit
 from pecos.analysis.tool_anticommute import anticommute
 from pecos.analysis.tool_collection import fault_tolerance_check
 
@@ -49,4 +50,5 @@ __all__ = [
     "pseudo_threshold",
     "threshold",
     "threshold_code_capacity",
+    "threshold_fit",
 ]

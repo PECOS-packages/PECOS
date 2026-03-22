@@ -1410,7 +1410,7 @@ impl SimNeoBuilder {
     /// This follows "everything is data" - we collect configuration, then wire
     /// it all together when building the Tool.
     ///
-/// ```no_run
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_qasm::qasm_engine;
     ///
@@ -1425,7 +1425,7 @@ impl SimNeoBuilder {
     ///
     /// For pre-configured engine builders, use `.with_engine()` instead:
     ///
-/// ```no_run
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo_builder;
     /// use pecos_qasm::qasm_engine;
     ///
@@ -2104,7 +2104,7 @@ impl SimNeoBuilder {
     ///
     /// # Example
     ///
-/// ```no_run
+    /// ```no_run
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_qasm::qasm_engine;
     ///

@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pecos as pc
+from pecos.analysis.threshold_curve import func
 from pecos.analysis.threshold_tools import (
     codecapacity_logical_rate,
     codecapacity_logical_rate2,
@@ -30,7 +31,6 @@ from pecos.analysis.threshold_tools import (
 )
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
-from pecos.analysis.threshold_curve import func
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
 

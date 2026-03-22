@@ -158,10 +158,10 @@ pub mod engines {
     pub use pecos_guppy_hugr::{GuppyHugrEngine, GuppyHugrEngineBuilder, hugr_engine, hugr_sim};
 }
 
-/// Quantum simulation backends and circuit representation
+/// Quantum circuit representation and Pauli algebra
 ///
-/// This module provides builders and types for quantum state simulation backends
-/// as well as quantum circuit representation types.
+/// This module provides types for representing quantum circuits, gates, and
+/// Pauli algebra. For simulation backends, see [`simulators`].
 ///
 /// # Circuit Representation
 ///
@@ -170,24 +170,15 @@ pub mod engines {
 /// - **`GateType`**: Enum of supported gate types
 /// - **`QubitId`**: Qubit identifier
 ///
-/// # Simulation Backends
-///
-/// - **State Vector**: Full quantum state simulation via [`state_vector()`](state_vector)
-/// - **Sparse Stabilizer**: Efficient Clifford simulation via [`sparse_stabilizer()`](sparse_stabilizer)
-///
 /// # Example
 ///
 /// ```rust
 /// use pecos::quantum::{DagCircuit, Gate, QubitId};
 ///
-/// // Build a Bell state circuit
 /// let mut circuit = DagCircuit::new();
 /// let h = circuit.add_gate(Gate::h(&[0]));
 /// let cx = circuit.add_gate(Gate::cx(&[(0, 1)]));
 /// circuit.connect(h, cx, QubitId::from(0)).unwrap();
-///
-/// // Or use simulation backends
-/// let qengine = pecos::quantum::state_vector();
 /// ```
 #[cfg(feature = "quantum")]
 pub mod quantum {
@@ -210,27 +201,68 @@ pub mod quantum {
     // Re-export read_hugr_envelope for parsing HUGR bytes
     #[cfg(feature = "hugr")]
     pub use pecos_hugr_qis::read_hugr_envelope;
+}
 
-    // Simulation backends (require sim feature)
-    #[cfg(feature = "sim")]
+/// Quantum simulators
+///
+/// This module provides quantum simulator backends and their builders.
+/// It mirrors `pecos.simulators` on the Python side.
+///
+/// # Simulator Types (from pecos-qsim)
+///
+/// - **`SparseStab`**: Sparse stabilizer simulator (Clifford circuits)
+/// - **`StateVec`**: State vector simulator (arbitrary gates)
+/// - **`SymbolicSparseStab`**: Symbolic stabilizer simulator
+/// - **`DenseStab`**: Dense stabilizer simulator
+///
+/// # Engine Wrappers (from pecos-engines)
+///
+/// - **`SparseStabEngine`**: Engine wrapping sparse stabilizer simulation
+/// - **`StateVecEngine`**: Engine wrapping state vector simulation
+///
+/// # Builders
+///
+/// - **`sparse_stabilizer()`**: Builder for sparse stabilizer engines
+/// - **`state_vector()`**: Builder for state vector engines
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::simulators::SparseStab;
+/// use pecos::prelude::*;
+///
+/// let mut sim = SparseStab::new(2);
+/// sim.h(0).cx(0, 1);
+/// ```
+#[cfg(feature = "sim")]
+pub mod simulators {
+    // Core simulator types from pecos-qsim
+    pub use pecos_qsim::{
+        CliffordGateable, ArbitraryRotationGateable,
+        SparseStab, StateVec,
+        SymbolicSparseStab,
+    };
+
+    // Engine wrappers
     pub use pecos_engines::quantum::{
         QuantumEngine, SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
     };
-    #[cfg(feature = "sim")]
+
+    // Engine builders
     pub use pecos_engines::quantum_engine_builder::{
         IntoQuantumEngineBuilder, SparseStabilizerEngineBuilder, StateVectorEngineBuilder,
         sparse_stabilizer, state_vector,
     };
 
-    // Re-export feature-gated backends
+    // Feature-gated backends
     #[cfg(feature = "cppsparsesim")]
     pub use pecos_cppsparsesim::CppSparseStab;
 
     #[cfg(feature = "quest")]
     pub use pecos_quest::{
         QuestDensityMatrix, QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder,
-        QuestStateVec, QuestStateVecEngine, QuestStateVectorEngineBuilder, quest_density_matrix,
-        quest_state_vec,
+        QuestStateVec, QuestStateVecEngine, QuestStateVectorEngineBuilder,
+        quest_density_matrix, quest_state_vec,
     };
 
     #[cfg(feature = "qulacs")]

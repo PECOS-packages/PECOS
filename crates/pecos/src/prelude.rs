@@ -61,7 +61,8 @@
 //! For organized access to specific functionality, use the namespace modules:
 //!
 //! - [`crate::engines`] - Classical control engines
-//! - [`crate::quantum`] - Quantum simulation backends
+//! - [`crate::quantum`] - Quantum circuit representation and Pauli algebra
+//! - [`crate::simulators`] - Quantum simulation backends
 //! - [`crate::noise`] - Noise models
 //! - [`crate::runtime`] - QIS runtimes
 

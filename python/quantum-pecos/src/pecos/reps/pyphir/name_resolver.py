@@ -16,8 +16,8 @@ simulators in the PECOS framework.
 """
 
 import pecos as pc
-from pecos.reps.pyphir.op_types import QOp
 from pecos.analysis.find_cliffs import r1xy2cliff, rz2cliff
+from pecos.reps.pyphir.op_types import QOp
 
 
 def sim_name_resolver(qop: QOp) -> str:

@@ -23,16 +23,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.decoders import MWPM2D
-from pecos.engines import circuit_runners
-from pecos.misc.threshold_curve import func
-from pecos.noise import XModel
-from pecos.qeccs import Surface4444
 from pecos.analysis.threshold_tools import (
     codecapacity_logical_rate,
     codecapacity_logical_rate2,
     codecapacity_logical_rate3,
 )
+from pecos.decoders import MWPM2D
+from pecos.engines import circuit_runners
+from pecos.misc.threshold_curve import func
+from pecos.noise import XModel
+from pecos.qeccs import Surface4444
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -323,7 +323,7 @@ def plot(
         p_start(float): Starting point for the plot axes. If None, automatically determined.
         p_end(float): Ending point for the plot axes. If None, automatically determined.
     """
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # noqa: PLC0415
 
     if p_start is None:
         p_start = min(plog) * 0.9

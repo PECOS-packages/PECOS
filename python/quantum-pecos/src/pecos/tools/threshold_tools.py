@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import pecos as pc
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
-from pecos.error_models import XModel
+from pecos.noise import XModel
 from pecos.misc.threshold_curve import func as default_func
 from pecos.misc.threshold_curve import threshold_fit as default_fit
 from pecos.qeccs import Surface4444

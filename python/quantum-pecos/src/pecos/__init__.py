@@ -194,7 +194,7 @@ from pecos import (
     circuits,
     decoders,
     engines,
-    error_models,
+    noise,
     exceptions,  # Exception classes
     graph,
     guppy,  # Direct Guppy code generation for QEC - bypasses SLR
@@ -337,7 +337,7 @@ __all__ = [
     # Data types
     "dtypes",
     "engines",
-    "error_models",
+    "noise",
     "exceptions",  # Exception classes
     "exp",
     "f32",

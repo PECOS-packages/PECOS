@@ -24,7 +24,7 @@ from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
 )
 from pecos.engines import hybrid_engine_multiprocessing
-from pecos.error_models.error_model import NoErrorModel
+from pecos.noise.error_model import NoErrorModel
 from pecos.machines.generic_machine import GenericMachine
 from pecos.op_processors.generic_op_processor import GenericOpProc
 from pecos.simulators.quantum_simulator import QuantumSimulator

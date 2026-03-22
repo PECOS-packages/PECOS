@@ -18,7 +18,7 @@ from pecos.misc.threshold_curve import func
 
 def test_finding_threshold() -> None:
     """Test threshold finding for quantum error correction codes."""
-    depolar = pc.error_models.DepolarModel(
+    depolar = pc.noise.DepolarModel(
         model_level="code_capacity",
         perp_errors=True,
     )

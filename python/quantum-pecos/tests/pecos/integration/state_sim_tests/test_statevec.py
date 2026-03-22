@@ -27,7 +27,7 @@ import pecos as pc
 import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine
-from pecos.error_models.generic_error_model import GenericErrorModel
+from pecos.noise.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
     CuStateVec,

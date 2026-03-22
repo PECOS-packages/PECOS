@@ -34,7 +34,7 @@ def test_surface() -> None:
     logic2 = pc.circuits.LogicalCircuit(suppress_warning=True)
     logic2.append(surface.gate("I", num_syn_extract=1))
 
-    depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+    depolar = pc.noise.DepolarModel(model_level="code_capacity")
 
     sim = pc.circuit_runners.Standard()
 

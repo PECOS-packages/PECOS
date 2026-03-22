@@ -1,7 +1,7 @@
 """Integration tests for hybrid engine with old error model."""
 
 import pecos as pc
-from pecos.error_models.error_depolar import DepolarizingErrorModel
+from pecos.noise.error_depolar import DepolarizingErrorModel
 from pecos.simulators import SparseSim
 
 

@@ -26,14 +26,14 @@ from pecos import BitInt, BitUInt
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
-from pecos.error_models.fake_error_model import FakeErrorModel
+from pecos.noise.fake_error_model import FakeErrorModel
 from pecos.exceptions import NotSupportedGateError
 
 if TYPE_CHECKING:
     from typing import Protocol
 
     from pecos.circuits import QuantumCircuit
-    from pecos.error_models.parent_class_error_gen import ParentErrorModel
+    from pecos.noise.parent_class_error_gen import ParentErrorModel
     from pecos.protocols import SimulatorProtocol
     from pecos.typing import GateParams
 

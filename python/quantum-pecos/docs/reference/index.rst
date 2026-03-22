@@ -20,7 +20,7 @@ Modules
    pecos.classical_interpreters
    pecos.decoders
    pecos.engines
-   pecos.error_models
+   pecos.noise
    pecos.errors
    pecos.foreign_objects
    pecos.machines

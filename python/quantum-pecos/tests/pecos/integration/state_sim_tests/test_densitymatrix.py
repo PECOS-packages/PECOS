@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 import pytest
 from pecos.circuits import QuantumCircuit
-from pecos.error_models.generic_error_model import GenericErrorModel
+from pecos.noise.generic_error_model import GenericErrorModel
 from pecos.simulators import QuestDensityMatrix
 
 # Dictionary mapping simulator names to classes

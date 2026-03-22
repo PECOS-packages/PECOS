@@ -23,7 +23,7 @@ The test uses a Bell state circuit with error models to verify that:
 
 import pytest
 from pecos.engines.hybrid_engine import HybridEngine
-from pecos.error_models.generic_error_model import GenericErrorModel
+from pecos.noise.generic_error_model import GenericErrorModel
 
 # PHIR circuit for creating a Bell state with measurements
 PHIR_BELL_STATE = """{

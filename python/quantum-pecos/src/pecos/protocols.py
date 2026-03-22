@@ -20,8 +20,8 @@ if TYPE_CHECKING:
     from typing import Any
 
     from pecos.circuits import LogicalCircuit, QuantumCircuit
-    from pecos.error_models.class_errors_circuit import ErrorCircuits
-    from pecos.error_models.parent_class_error_gen import ParentErrorModel
+    from pecos.noise.class_errors_circuit import ErrorCircuits
+    from pecos.noise.parent_class_error_gen import ParentErrorModel
     from pecos.misc.symbol_library import JSONDict
     from pecos.typing import (
         ErrorParams,

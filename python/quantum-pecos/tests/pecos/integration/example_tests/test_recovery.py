@@ -53,7 +53,7 @@ def recovery_tester(qecc: pc.protocols.QECCProtocol) -> None:
 
     # Error Generator
     # ---------------
-    depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+    depolar = pc.noise.DepolarModel(model_level="code_capacity")
 
     # Circuit simulator
     # -----------------

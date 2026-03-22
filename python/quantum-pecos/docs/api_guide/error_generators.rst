@@ -3,7 +3,7 @@
 Error Generators
 ================
 
-Error models are represented by classes called "error generators" that are in the ``error_models`` namespace. They are
+Error models are represented by classes called "error generators" that are in the ``noise`` namespace. They are
 called upon by ``circuit_runners`` to apply noise to ideal quantum circuits.
 
 In this section I will discuss ``GatewiseGen`` and ``DepolarModel`` classes. Both represent ``stochastic error models``.
@@ -15,7 +15,7 @@ GatewiseGen
 The ``GatewiseGen`` class allow one to define custom stochastic error-models where for each ideal gate-type the errors
 applied to the ideal gate and the classical probability distribution for applying errors can be specified.
 
-The follow section provides examples of how ``error_models`` are used in practice
+The follow section provides examples of how ``noise`` are used in practice
 
 .. _DepolarModel:
 
@@ -31,27 +31,27 @@ measurements. In which case, the errors are applied before.
 An example of creating an instance of ``DepolarModel`` is seen here:
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The ``model_level`` keyword is used to specify to what set of gates the ``DepolarModel`` is applied to. If ``model_level``
 is set to the value of ``'code\_capacity'``, then the error model is applied before each ``LogicalInstruction`` to each
@@ -73,7 +73,7 @@ measurements are errors that do not include the Pauli-basis of the initializatio
 An example of applying an error model using ``DepolarModel`` to a ``LogicalCircuit`` is seen in the following:
 
 
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
@@ -85,7 +85,7 @@ An example of applying an error model using ``DepolarModel`` to a ``LogicalCircu
 Note that the keyword argument
 
 
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
@@ -97,7 +97,7 @@ Note that the keyword argument
 Note that the keyword argument
 
 
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
@@ -109,7 +109,7 @@ Note that the keyword argument
 Note that the keyword argument
 
 
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
@@ -121,7 +121,7 @@ Note that the keyword argument
 Note that the keyword argument
 
 
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.noise.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))

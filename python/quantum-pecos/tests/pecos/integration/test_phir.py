@@ -20,7 +20,7 @@ from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
 )
 from pecos.engines.hybrid_engine import HybridEngine
-from pecos.error_models.generic_error_model import GenericErrorModel
+from pecos.noise.generic_error_model import GenericErrorModel
 from phir.model import PHIRModel
 from pydantic import ValidationError
 

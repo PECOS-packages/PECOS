@@ -206,8 +206,11 @@ from pecos import (
     quantum,  # Quantum types (DagCircuit, Gate, Pauli, etc.)
     simulators,
     testing,  # Testing utilities (like numpy.testing)
-    tools,
 )
+
+# pecos.tools is deprecated (renamed to pecos.analysis).
+# Not eagerly imported to avoid triggering the deprecation warning on every `import pecos`.
+# Users who `import pecos.tools` or `from pecos import tools` will still get the warning.
 
 # Deprecated APIs
 from pecos._deprecated import BinArray

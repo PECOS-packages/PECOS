@@ -1,8 +1,4 @@
-"""Analysis and utility tools for PECOS.
-
-This package provides various tools for quantum error correction analysis,
-fault tolerance checking, threshold estimation, and performance evaluation.
-"""
+"""Deprecated: use pecos.analysis instead."""
 
 # Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
 # DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
@@ -16,30 +12,14 @@ fault tolerance checking, threshold estimation, and performance evaluation.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.tools import fault_tolerance_checks, pseudo_threshold_tools
-from pecos.tools.pseudo_threshold_tools import plot as plot_pseudo
-from pecos.tools.stabilizer_verification import VerifyStabilizers
-from pecos.tools.threshold_tools import (
-    codecapacity_logical_rate,
-    codecapacity_logical_rate2,
-    codecapacity_logical_rate3,
-    threshold_code_capacity,
-)
-from pecos.tools.tool_anticommute import anticommute
-from pecos.tools.tool_collection import fault_tolerance_check
+import warnings
 
-__all__ = [
-    # Classes
-    "VerifyStabilizers",
-    # Functions
-    "anticommute",
-    "codecapacity_logical_rate",
-    "codecapacity_logical_rate2",
-    "codecapacity_logical_rate3",
-    "fault_tolerance_check",
-    # Submodules
-    "fault_tolerance_checks",
-    "plot_pseudo",
-    "pseudo_threshold_tools",
-    "threshold_code_capacity",
-]
+warnings.warn(
+    "pecos.tools has been renamed to pecos.analysis. "
+    "Please update your imports. pecos.tools will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from pecos.analysis import *  # noqa: E402, F401, F403
+from pecos.analysis import __all__  # noqa: E402, F811

@@ -22,41 +22,31 @@ Submodules:
 
 Example:
     >>> from pecos.analysis import threshold, fault_tolerance
-    >>> from pecos.analysis.stabilizers import VerifyStabilizers
-    >>>
-    >>> # Threshold analysis
-    >>> result = threshold.code_capacity(
-    ...     qecc_class=Surface4444,
-    ...     error_gen=XModel,
-    ...     decoder_class=MWPM2D,
-    ...     ps=[0.01, 0.05, 0.10],
-    ...     ds=[3, 5, 7],
-    ...     runs=1000,
-    ... )
-    >>>
-    >>> # Fault tolerance verification
-    >>> passed, weight = fault_tolerance.t_errors_check(qecc)
+    >>> from pecos.analysis.stabilizer_verification import VerifyStabilizers
 """
 
-# Re-export from tools for backwards compatibility
-from pecos.tools import fault_tolerance_checks as fault_tolerance
-from pecos.tools import pseudo_threshold_tools as pseudo_threshold
-from pecos.tools import threshold_tools as threshold
-from pecos.tools.stabilizer_verification import VerifyStabilizers
-from pecos.tools.threshold_tools import (
+from pecos.analysis import fault_tolerance_checks as fault_tolerance
+from pecos.analysis import pseudo_threshold_tools as pseudo_threshold
+from pecos.analysis import threshold_tools as threshold
+from pecos.analysis.stabilizer_verification import VerifyStabilizers
+from pecos.analysis.threshold_tools import (
     codecapacity_logical_rate,
     codecapacity_logical_rate2,
     codecapacity_logical_rate3,
     threshold_code_capacity,
 )
+from pecos.analysis.tool_anticommute import anticommute
+from pecos.analysis.tool_collection import fault_tolerance_check
 
 __all__ = [
     # Classes
     "VerifyStabilizers",
-    # Threshold functions
+    # Functions
+    "anticommute",
     "codecapacity_logical_rate",
     "codecapacity_logical_rate2",
     "codecapacity_logical_rate3",
+    "fault_tolerance_check",
     # Submodules
     "fault_tolerance",
     "pseudo_threshold",

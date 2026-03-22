@@ -10,7 +10,7 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Tests for the error_models -> noise rename and deprecation shim."""
+"""Tests for module renames and deprecation shims (error_models -> noise, tools -> analysis)."""
 
 import warnings
 
@@ -54,3 +54,46 @@ def test_error_models_shim_exports_same_classes() -> None:
 
         assert hasattr(pecos.error_models, "DepolarModel")
         assert pecos.error_models.DepolarModel is pecos.noise.DepolarModel
+
+
+# ============================================================================
+# tools -> analysis rename
+# ============================================================================
+
+
+def test_analysis_module_accessible() -> None:
+    """pecos.analysis should be directly importable."""
+    from pecos.analysis import VerifyStabilizers
+
+    assert VerifyStabilizers is not None
+
+
+def test_analysis_accessible_via_attribute() -> None:
+    """pecos.analysis should be accessible as an attribute."""
+    assert hasattr(pecos, "analysis")
+    assert hasattr(pecos.analysis, "VerifyStabilizers")
+
+
+def test_tools_deprecation_warning() -> None:
+    """Importing pecos.tools should emit a DeprecationWarning."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        import importlib
+
+        import pecos.tools
+
+        importlib.reload(pecos.tools)
+
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) > 0, "Expected a DeprecationWarning from pecos.tools"
+        assert "pecos.analysis" in str(deprecation_warnings[0].message)
+
+
+def test_tools_shim_exports_same_classes() -> None:
+    """pecos.tools should re-export everything from pecos.analysis."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        import pecos.tools
+
+        assert hasattr(pecos.tools, "VerifyStabilizers")
+        assert pecos.tools.VerifyStabilizers is pecos.analysis.VerifyStabilizers

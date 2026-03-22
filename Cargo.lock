@@ -3828,6 +3828,7 @@ dependencies = [
  "num_cpus",
  "pecos-core",
  "pecos-engines",
+ "pecos-guppy-hugr",
  "pecos-programs",
  "pecos-qasm",
  "pecos-quantum",

@@ -566,6 +566,28 @@ impl SimNeoInput for pecos_programs::Qasm {
     }
 }
 
+/// Implementation for HUGR programs.
+///
+/// Use `.auto()` to automatically select the HUGR interpreter engine:
+///
+/// ```no_run
+/// use pecos_neo::tool::sim_neo;
+/// use pecos_programs::Hugr;
+///
+/// let hugr = Hugr::from_file("program.hugr").unwrap();
+/// sim_neo(hugr)
+///     .auto()
+///     .shots(1000)
+///     .build()
+///     .run();
+/// ```
+#[cfg(feature = "engines-adapter")]
+impl SimNeoInput for pecos_programs::Hugr {
+    fn into_sim_neo_builder(self) -> SimNeoBuilder {
+        SimNeoBuilder::with_typed_program(TypedProgram::Hugr(self))
+    }
+}
+
 /// Implementation for the unified `Program` enum.
 ///
 /// Use `.auto()` to automatically select the appropriate engine based on
@@ -587,7 +609,7 @@ impl SimNeoInput for pecos_programs::Program {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         let typed = match self {
             pecos_programs::Program::Qasm(p) => TypedProgram::Qasm(p),
-            // Add other program types as support is added
+            pecos_programs::Program::Hugr(p) => TypedProgram::Hugr(p),
             _ => TypedProgram::Unsupported(self.program_type().to_string()),
         };
         SimNeoBuilder::with_typed_program(typed)
@@ -1127,7 +1149,9 @@ pub enum PendingEngineBuilder {
     /// QASM engine builder (requires `qasm` feature)
     #[cfg(feature = "qasm")]
     Qasm(pecos_qasm::QasmEngineBuilder),
-    // Future: Add variants for Hugr, PhirJson, Qis as support is added
+    /// HUGR engine builder (requires `hugr` feature)
+    #[cfg(feature = "hugr")]
+    Hugr(pecos_guppy_hugr::GuppyHugrEngineBuilder),
 }
 
 #[cfg(feature = "engines-adapter")]
@@ -1144,6 +1168,13 @@ impl PendingEngineBuilder {
                     builder: configured,
                 })
             }
+            #[cfg(feature = "hugr")]
+            Self::Hugr(builder) => {
+                let configured = builder.hugr_bytes(source.into_bytes());
+                Box::new(EngineBuilderWrapper {
+                    builder: configured,
+                })
+            }
         }
     }
 }
@@ -1153,6 +1184,14 @@ impl PendingEngineBuilder {
 impl From<pecos_qasm::QasmEngineBuilder> for PendingEngineBuilder {
     fn from(builder: pecos_qasm::QasmEngineBuilder) -> Self {
         Self::Qasm(builder)
+    }
+}
+
+// Conversion from GuppyHugrEngineBuilder to PendingEngineBuilder
+#[cfg(feature = "hugr")]
+impl From<pecos_guppy_hugr::GuppyHugrEngineBuilder> for PendingEngineBuilder {
+    fn from(builder: pecos_guppy_hugr::GuppyHugrEngineBuilder) -> Self {
+        Self::Hugr(builder)
     }
 }
 
@@ -1179,9 +1218,10 @@ pub enum ProgramSource {
 pub enum TypedProgram {
     /// QASM program - uses `qasm_engine()`
     Qasm(pecos_programs::Qasm),
+    /// HUGR program - uses `hugr_engine()`
+    Hugr(pecos_programs::Hugr),
     /// Unsupported program type (for error messages)
     Unsupported(String),
-    // Future: Add Hugr, PhirJson, Qis as support is added
 }
 
 /// Resource to hold the program source.
@@ -1420,6 +1460,12 @@ impl SimNeoBuilder {
                 // Extract source from typed program
                 let source = match typed {
                     TypedProgram::Qasm(qasm) => qasm.source,
+                    TypedProgram::Hugr(_) => {
+                        panic!(
+                            "HUGR programs cannot be used with .classical(engine_builder). \
+                             Use .auto() or pass the HUGR bytes directly to the engine builder."
+                        );
+                    }
                     TypedProgram::Unsupported(name) => {
                         panic!("Unsupported program type: {name}");
                     }
@@ -1507,14 +1553,17 @@ impl SimNeoBuilder {
     /// - No typed program was provided (use `sim_neo(Qasm::from_string(...))`)
     /// - The program type is not yet supported for auto-selection
     ///
-    /// Note: `.auto()` also sets Monte Carlo orchestration with auto-detected workers
-    /// as the default execution strategy.
+    /// Note: `.auto()` also sets the orchestration strategy automatically:
+    /// - **Static circuits**: Monte Carlo with auto-detected parallel workers
+    /// - **Classical engines** (QASM, HUGR, etc.): single-worker Monte Carlo
+    ///   (classical engines maintain state across operations and cannot be parallelized)
     #[cfg(feature = "engines-adapter")]
     #[must_use]
     pub fn auto(mut self) -> Self {
-        match self.source.take() {
+        let is_classical = match self.source.take() {
             Some(ProgramSource::Typed(typed)) => {
                 match typed {
+                    #[cfg(feature = "qasm")]
                     TypedProgram::Qasm(qasm) => {
                         // Auto-select qasm_engine() and configure with the program
                         let builder = pecos_qasm::qasm_engine().qasm(qasm.source);
@@ -1522,6 +1571,31 @@ impl SimNeoBuilder {
                             Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
                                 builder,
                             })));
+                        true
+                    }
+                    #[cfg(not(feature = "qasm"))]
+                    TypedProgram::Qasm(_) => {
+                        panic!(
+                            "QASM auto-selection requires the 'qasm' feature. \
+                             Enable it with: features = [\"qasm\"]"
+                        );
+                    }
+                    #[cfg(feature = "hugr")]
+                    TypedProgram::Hugr(hugr) => {
+                        // Auto-select hugr_engine() and configure with the program
+                        let builder = pecos_guppy_hugr::hugr_engine().hugr_bytes(hugr.hugr);
+                        self.source =
+                            Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
+                                builder,
+                            })));
+                        true
+                    }
+                    #[cfg(not(feature = "hugr"))]
+                    TypedProgram::Hugr(_) => {
+                        panic!(
+                            "HUGR auto-selection requires the 'hugr' feature. \
+                             Enable it with: features = [\"hugr\"]"
+                        );
                     }
                     TypedProgram::Unsupported(type_name) => {
                         panic!(
@@ -1556,10 +1630,15 @@ impl SimNeoBuilder {
                      Use sim_neo(Qasm::from_string(...)).auto() or similar."
                 );
             }
-        }
+        };
 
-        // Auto mode defaults to Monte Carlo with auto-detected workers
-        self.orchestrator = Orchestrator::monte_carlo_auto();
+        // Classical engines are stateful and cannot be parallelized across workers.
+        // Static circuits can run in parallel since each worker gets its own simulator.
+        if is_classical {
+            self.orchestrator = Orchestrator::MonteCarlo { workers: 1 };
+        } else {
+            self.orchestrator = Orchestrator::monte_carlo_auto();
+        }
         self
     }
 
@@ -1897,6 +1976,7 @@ impl SimNeoBuilder {
                 (Some(ProgramSource::Typed(typed)), _) => {
                     let type_name = match &typed {
                         TypedProgram::Qasm(_) => "Qasm",
+                        TypedProgram::Hugr(_) => "Hugr",
                         TypedProgram::Unsupported(name) => name,
                     };
                     panic!(

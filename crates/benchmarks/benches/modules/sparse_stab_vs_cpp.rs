@@ -21,7 +21,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
-use pecos::qsim::{SparseStab, Stab};
+use pecos::simulators::{SparseStab, Stab};
 use pecos_cppsparsesim::CppSparseStab;
 use std::hint::black_box;
 

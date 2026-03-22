@@ -19,8 +19,10 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
-use pecos::qsim::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
-use pecos::qsim::{SparseStab, SparseStabVecSet, SymbolicSparseStab, SymbolicSparseStabVecSet};
+use pecos::simulators::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
+use pecos::simulators::{
+    SparseStab, SparseStabVecSet, SymbolicSparseStab, SymbolicSparseStabVecSet,
+};
 use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::{Engine, EngineSystem, QuantumSystem};
 use rand::RngExt;

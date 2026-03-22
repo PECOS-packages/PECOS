@@ -236,10 +236,8 @@ pub mod quantum {
 /// ```
 #[cfg(feature = "sim")]
 pub mod simulators {
-    // Core simulator types from pecos-simulators
-    pub use pecos_simulators::{
-        ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec, SymbolicSparseStab,
-    };
+    // All simulator types, traits, and utilities from pecos-simulators
+    pub use pecos_simulators::*;
 
     // Engine wrappers
     pub use pecos_engines::quantum::{
@@ -741,37 +739,6 @@ pub mod decoders {
 #[cfg(feature = "qec")]
 pub mod qec {
     pub use pecos_qec::*;
-}
-
-/// Quantum simulation implementations
-///
-/// This module provides low-level quantum simulation implementations and utilities
-/// from pecos-simulators, including stabilizer simulators, state vectors, and measurement
-/// samplers.
-///
-/// # Available Types
-///
-/// - **Simulators**: `SparseStab`, `StateVec`, `SymbolicSparseStab`
-/// - **Measurement Sampling**: `MeasurementSampler`
-/// - **Utilities**: `CliffordGateable`, `ArbitraryRotationGateable`
-///
-/// # Example
-///
-/// ```rust
-/// use pecos::qsim::measurement_sampler::MeasurementSampler;
-/// use pecos::prelude::*;
-///
-/// let mut sim = SymbolicSparseStab::new(2);
-/// sim.h(0).cx(0, 1);
-/// sim.mz(0);
-/// sim.mz(1);
-///
-/// let sampler = MeasurementSampler::new(sim.measurement_history());
-/// let samples = sampler.sample(1000);
-/// ```
-#[cfg(feature = "sim")]
-pub mod qsim {
-    pub use pecos_simulators::*;
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 // Copyright 2026 The PECOS Developers
 use pecos::prelude::*;
-use pecos::qsim::{ForcedMeasurement, Stab, StabilizerTableauSimulator};
+use pecos::simulators::{ForcedMeasurement, Stab, StabilizerTableauSimulator};
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -24,10 +24,18 @@ pub struct PyStab {
 #[pymethods]
 impl PyStab {
     #[new]
-    fn new(num_qubits: usize) -> Self {
+    #[pyo3(signature = (num_qubits, seed=None))]
+    fn new(num_qubits: usize, seed: Option<u64>) -> Self {
         PyStab {
-            inner: Stab::new(num_qubits),
+            inner: match seed {
+                Some(s) => Stab::with_seed(num_qubits, s),
+                None => Stab::new(num_qubits),
+            },
         }
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.inner.set_seed(seed);
     }
 
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {

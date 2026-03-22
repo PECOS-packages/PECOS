@@ -17,8 +17,8 @@
 //! 2. Get symbolic measurement dependencies (`MeasurementHistory`)
 //! 3. Sample efficiently using `MeasurementSampler`
 
-use pecos::qsim::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pecos::quantum::{Circuit, SimpleHugr, read_hugr_envelope};
+use pecos::simulators::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pecos_experimental::{
     DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
     NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler, execute_hugr,

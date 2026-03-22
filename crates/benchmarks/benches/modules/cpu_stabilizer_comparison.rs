@@ -29,7 +29,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
-use pecos::qsim::{
+use pecos::simulators::{
     DenseStab, DenseStabColOnly, DenseStabRowOnly, GpuStab, GpuStabOpt, GpuStabParallel,
     SparseColOnly, SparseRowOnly, SparseStab,
 };

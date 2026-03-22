@@ -12,7 +12,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
-use pecos::qsim::measurement_sampler::{
+use pecos::simulators::measurement_sampler::{
     MeasurementKind, MeasurementSampler, SequentialMeasurementSampler,
 };
 use std::hint::black_box;

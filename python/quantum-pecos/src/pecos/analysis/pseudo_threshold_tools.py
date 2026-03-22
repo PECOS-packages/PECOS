@@ -30,7 +30,7 @@ from pecos.analysis.threshold_tools import (
 )
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
-from pecos.misc.threshold_curve import func
+from pecos.analysis.threshold_curve import func
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
 

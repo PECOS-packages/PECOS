@@ -28,14 +28,14 @@ Internal modules (re-exports from misc for backwards compatibility):
 
 # Re-export internal modules from misc for backwards compatibility
 # These are internal APIs and subject to change
-from pecos.misc import commute
-from pecos.misc.gate_groups import (
+from pecos.quantum import commute
+from pecos.quantum.gate_groups import (
     error_one_paulis_collection,
     error_two_paulis_collection,
     one_qubits,
     two_qubits,
 )
-from pecos.misc.stabilizer_funcs import (
+from pecos.analysis.stabilizer_funcs import (
     circ2set,
     find_stab,
     op_commutes,
@@ -43,8 +43,8 @@ from pecos.misc.stabilizer_funcs import (
 )
 from pecos.misc.std_output import StdOutput
 from pecos.misc.symbol_library import SymbolLibrary
-from pecos.misc.threshold_curve import func as threshold_func
-from pecos.misc.threshold_curve import threshold_fit
+from pecos.analysis.threshold_curve import func as threshold_func
+from pecos.analysis.threshold_curve import threshold_fit
 
 __all__ = [
     # Output

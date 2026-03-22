@@ -13,7 +13,7 @@
 """Integration tests for quantum error correction threshold finding."""
 
 import pecos as pc
-from pecos.misc.threshold_curve import func
+from pecos.analysis.threshold_curve import func
 
 
 def test_finding_threshold() -> None:

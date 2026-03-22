@@ -1,6 +1,12 @@
 """Miscellaneous utilities for PECOS.
 
 This package provides various utility functions and tools.
+Some modules have been moved to more appropriate packages:
+
+- threshold_curve -> pecos.analysis.threshold_curve
+- stabilizer_funcs -> pecos.analysis.stabilizer_funcs
+- commute -> pecos.quantum.commute
+- gate_groups -> pecos.quantum.gate_groups
 """
 
 # Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
@@ -15,5 +21,6 @@ This package provides various utility functions and tools.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.misc import commute
-from pecos.misc.threshold_curve import threshold_fit
+# Backward compatibility re-exports for moved modules
+from pecos.analysis.threshold_curve import threshold_fit
+from pecos.quantum import commute

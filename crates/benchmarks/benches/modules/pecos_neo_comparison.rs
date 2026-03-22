@@ -27,7 +27,7 @@ use pecos_neo::prelude::{
 };
 use pecos_neo::runner::CircuitRunner;
 use pecos_neo::sampling::{MonteCarloConfig, MonteCarloRunner};
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

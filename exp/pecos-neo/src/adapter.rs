@@ -36,7 +36,7 @@
 //! use pecos_neo::prelude::*;
 //! use pecos_neo::program::ProgramRunner;
 //! use pecos_qasm::QASMEngine;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! // Load a QASM program
 //! let qasm = r#"

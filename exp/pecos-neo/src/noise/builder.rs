@@ -607,7 +607,7 @@ mod tests {
     use crate::noise::composite::prelude::*;
     use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_simple_depolarizing() {

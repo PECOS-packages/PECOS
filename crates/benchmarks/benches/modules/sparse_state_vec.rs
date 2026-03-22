@@ -14,7 +14,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use pecos_core::{Angle64, QubitId};
-use pecos_qsim::{
+use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, SparseStateVecSoA, StateVecSoA,
 };
 

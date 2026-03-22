@@ -23,7 +23,7 @@
 //!
 //! ```no_run
 //! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig, redistribute_by_weight};
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //! use pecos_rng::PecosRng;
 //! use rand_core::SeedableRng;
 //!
@@ -47,8 +47,8 @@ use super::coordinator::WorkerState;
 use super::entity::EntityId;
 use super::world::EntityTransfer;
 use crate::sampling::SampleWeight;
-use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
+use pecos_simulators::CliffordGateable;
 use rand::RngExt;
 
 /// Statistics from a redistribution operation.
@@ -287,7 +287,7 @@ pub fn balance_entity_counts<S: CliffordGateable + Clone>(workers: &mut [WorkerS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_collect_weights() {

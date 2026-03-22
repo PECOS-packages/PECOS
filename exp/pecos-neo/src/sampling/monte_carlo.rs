@@ -39,7 +39,7 @@
 //! use pecos_neo::sampling::MonteCarloRunner;
 //! use pecos_neo::sampling::monte_carlo::MonteCarloConfig;
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //! use pecos_core::QubitId;
 //!
 //! let commands = CommandBuilder::new()
@@ -67,8 +67,8 @@ use crate::runner::CircuitRunner;
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use crate::sampling::weight::WeightedStatistics;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
+use pecos_simulators::CliffordGateable;
 use rayon::prelude::*;
 
 /// Configuration for Monte Carlo simulation.
@@ -373,7 +373,7 @@ mod tests {
     use crate::command::CommandBuilder;
     use crate::noise::{ComposableNoiseModel, single_qubit::SingleQubitChannel};
     use pecos_core::QubitId;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_distribute_shots() {

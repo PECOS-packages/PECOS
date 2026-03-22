@@ -4,12 +4,12 @@
 
 use pecos_core::circuit_diagram::{AngleUnit, DiagramStyle, GraphStyle};
 use pecos_core::{Angle64, ColorPalette, ColorTriplet, CosetPatterns, FamilyPalette, FillPattern};
-use pecos_qsim::GraphState;
 use pecos_quantum::TickCircuit;
 use pecos_quantum::pass::{
     AbsorbBasisGates, CancelInverses, CircuitPass, CompactTicks, MergeAdjacentRotations,
     PassPipeline, PeepholeOptimize, RemoveIdentity, SimplifyRotations,
 };
+use pecos_simulators::GraphState;
 use std::fmt::Write as _;
 use std::fs;
 
@@ -560,7 +560,7 @@ fn main() {
                    the stroke encodes the gate family.</p>\n",
     );
     {
-        use pecos_qsim::clifford_frame::CliffordFrame;
+        use pecos_simulators::clifford_frame::CliffordFrame;
 
         let mut gs = GraphState::ring(6);
         gs.set_vop(0, CliffordFrame::H); // H-like, X<->Z coset
@@ -617,7 +617,7 @@ fn main() {
                    4 gate-family strokes.</p>\n",
     );
     {
-        use pecos_qsim::clifford_frame::CliffordFrame;
+        use pecos_simulators::clifford_frame::CliffordFrame;
 
         // Build a 24-vertex graph with each vertex having a unique Clifford VOP.
         // No edges -- just showcasing the VOP colors.
@@ -639,7 +639,7 @@ fn main() {
     // -- SVG style variations --
     html.push_str("<h2>Graph Style Variations</h2>\n<div class=\"grid\">\n");
     {
-        use pecos_qsim::clifford_frame::CliffordFrame;
+        use pecos_simulators::clifford_frame::CliffordFrame;
 
         let mut gs = GraphState::star(5);
         gs.set_vop(1, CliffordFrame::H);

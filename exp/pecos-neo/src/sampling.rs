@@ -30,7 +30,7 @@
 //! ```no_run
 //! use pecos_neo::sampling::path::{PathExplorer, PathEnumerator, PathStatistics};
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let n = 5;
 //! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();

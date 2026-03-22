@@ -21,7 +21,7 @@ cargo run --bin pecos run examples/llvm/bell.ll -s 10 -w 1
 cargo run --bin pecos run examples/phir/bell.phir.json -s 10 -w 10
 cargo run --bin pecos run examples/llvm/bell.ll -s 10 -w 10
 cargo run --example replaying_rng --package pecos-core
-cargo run --example bell_state_replay --package pecos-qsim
+cargo run --example bell_state_replay --package pecos-simulators
 cargo run --example run_noisy_circ
 cargo run --example biased_measurement_example
 cargo run --example compare_noise_models

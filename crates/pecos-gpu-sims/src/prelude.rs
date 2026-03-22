@@ -24,4 +24,4 @@
 
 pub use crate::{GpuError, GpuStateVec};
 pub use pecos_core::{QubitId, qid, qid2};
-pub use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
+pub use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};

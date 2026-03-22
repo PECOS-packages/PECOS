@@ -7,8 +7,8 @@
 //! # Usage
 //!
 //! ```
-//! use pecos_qsim::SymbolicSparseStab;
-//! use pecos_qsim::measurement_sampler::MeasurementKind;
+//! use pecos_simulators::SymbolicSparseStab;
+//! use pecos_simulators::measurement_sampler::MeasurementKind;
 //! use pecos_gpu_sims::GpuMeasurementSampler;
 //!
 //! // Run symbolic simulation
@@ -43,8 +43,8 @@
 // Converting probability (f64) to fixed-point threshold (u32) is intentional
 #![allow(clippy::cast_sign_loss)]
 
-use pecos_qsim::measurement_sampler::MeasurementKind;
 use pecos_rng::PecosRng;
+use pecos_simulators::measurement_sampler::MeasurementKind;
 
 /// Maximum number of dependencies per Computed measurement.
 /// This limit simplifies GPU buffer layout.

@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0-dev.0"
 edition = "2024"
 readme = "README.md"
 authors = ["The PECOS Developers", "Ciaran Ryan-Anderson<ciaranra@gmail.com>"]
@@ -131,56 +131,56 @@ paste = "1"
 # zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
 
 # Internal crates
-pecos-build = { version = "0.1.1", path = "crates/pecos-build", default-features = false }
-pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
-pecos = { version = "0.1.1", path = "crates/pecos", default-features = false }
-pecos-programs = { version = "0.1.1", path = "crates/pecos-programs" }
-pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
-pecos-qasm = { version = "0.1.1", path = "crates/pecos-qasm" }
-pecos-phir-json = { version = "0.1.1", path = "crates/pecos-phir-json" }
-pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
-pecos-experimental = { version = "0.1.1", path = "exp/pecos-experimental" }
-pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
-pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
-pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
-pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
-pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
-pecos-qis = { version = "0.1.1", path = "crates/pecos-qis" }
-pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
-pecos-hugr = { version = "0.1.1", path = "crates/pecos-hugr" }
-pecos-guppy-hugr = { version = "0.1.1", path = "crates/pecos-guppy-hugr" }
-pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
-pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
-pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
-pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
-pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
-pecos-zx = { version = "0.1.1", path = "exp/pecos-zx" }
-pecos-gpu-sims = { version = "0.1.1", path = "crates/pecos-gpu-sims" }
-pecos-cuquantum = { version = "0.1.1", path = "crates/pecos-cuquantum" }
-pecos-neo = { version = "0.1.1", path = "exp/pecos-neo" }
-pecos-cuquantum-sys = { version = "0.1.1", path = "crates/pecos-cuquantum-sys" }
+pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }
+pecos-core = { version = "0.2.0-dev.0", path = "crates/pecos-core" }
+pecos = { version = "0.2.0-dev.0", path = "crates/pecos", default-features = false }
+pecos-programs = { version = "0.2.0-dev.0", path = "crates/pecos-programs" }
+pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
+pecos-qasm = { version = "0.2.0-dev.0", path = "crates/pecos-qasm" }
+pecos-phir-json = { version = "0.2.0-dev.0", path = "crates/pecos-phir-json" }
+pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
+pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
+pecos-phir = { version = "0.2.0-dev.0", path = "crates/pecos-phir" }
+pecos-qec = { version = "0.2.0-dev.0", path = "crates/pecos-qec" }
+pecos-rng = { version = "0.2.0-dev.0", path = "crates/pecos-rng" }
+pecos-qis-ffi = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi" }
+pecos-qis-ffi-types = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi-types" }
+pecos-qis = { version = "0.2.0-dev.0", path = "crates/pecos-qis" }
+pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
+pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
+pecos-guppy-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-guppy-hugr" }
+pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
+pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
+pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
+pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }
+pecos-quantum = { version = "0.2.0-dev.0", path = "crates/pecos-quantum" }
+pecos-zx = { version = "0.2.0-dev.0", path = "exp/pecos-zx" }
+pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
+pecos-cuquantum = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum" }
+pecos-neo = { version = "0.2.0-dev.0", path = "exp/pecos-neo" }
+pecos-cuquantum-sys = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum-sys" }
 
 # Decoder crates
-pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }
-pecos-decoders = { version = "0.1.1", path = "crates/pecos-decoders" }
+pecos-decoder-core = { version = "0.2.0-dev.0", path = "crates/pecos-decoder-core" }
+pecos-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-decoders" }
 
 # ldpc decoder wrapper (https://github.com/quantumgizmos/ldpc)
-pecos-ldpc-decoders = { version = "0.1.1", path = "crates/pecos-ldpc-decoders" }
+pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
 
 # PyMatching decoder wrapper (https://github.com/oscarhiggott/PyMatching)
-pecos-pymatching = { version = "0.1.1", path = "crates/pecos-pymatching" }
+pecos-pymatching = { version = "0.2.0-dev.0", path = "crates/pecos-pymatching" }
 
 # Tesseract decoder wrapper (https://github.com/quantumlib/tesseract-decoder)
-pecos-tesseract = { version = "0.1.1", path = "crates/pecos-tesseract" }
+pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }
 
 # Chromobius decoder wrapper (https://github.com/quantumlib/chromobius)
-pecos-chromobius = { version = "0.1.1", path = "crates/pecos-chromobius" }
+pecos-chromobius = { version = "0.2.0-dev.0", path = "crates/pecos-chromobius" }
 
 # Fusion Blossom decoder wrapper (pure Rust MWPM)
-pecos-fusion-blossom = { version = "0.1.1", path = "crates/pecos-fusion-blossom" }
+pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 
 # Relay BP decoder wrapper (pure Rust BP for qLDPC codes)
-pecos-relay-bp = { version = "0.1.1", path = "crates/pecos-relay-bp" }
+pecos-relay-bp = { version = "0.2.0-dev.0", path = "crates/pecos-relay-bp" }
 
 # Fusion Blossom library (pure Rust MWPM decoder)
 fusion-blossom = "0.2"
@@ -198,13 +198,13 @@ sprs = "=0.11.3"
 petgraph = "0.8"
 
 # QuEST simulator wrapper (https://github.com/quest-kit/QuEST)
-pecos-quest = { version = "0.1.1", path = "crates/pecos-quest" }
+pecos-quest = { version = "0.2.0-dev.0", path = "crates/pecos-quest" }
 
 # Qulacs simulator wrapper (https://github.com/qulacs/qulacs)
-pecos-qulacs = { version = "0.1.1", path = "crates/pecos-qulacs" }
+pecos-qulacs = { version = "0.2.0-dev.0", path = "crates/pecos-qulacs" }
 
 # CppSparseSim simulator wrapper
-pecos-cppsparsesim = { version = "0.1.1", path = "crates/pecos-cppsparsesim" }
+pecos-cppsparsesim = { version = "0.2.0-dev.0", path = "crates/pecos-cppsparsesim" }
 
 # Optimize build times
 [profile.dev]

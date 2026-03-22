@@ -8,7 +8,7 @@ execution.
 
 ```rust
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 let circuit = CommandBuilder::new()
     .pz(0).pz(1)
@@ -52,7 +52,7 @@ let outcomes = runner.run(&mut state, &circuit)?;
 Use the `rotations()` constructor for T gates, RX, RY, RZ, etc.:
 
 ```rust
-use pecos_qsim::StateVec;
+use pecos_simulators::StateVec;
 
 let circuit = OpBuilder::new()
     .pz(QubitId(0))

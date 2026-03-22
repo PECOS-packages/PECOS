@@ -13,7 +13,7 @@
 //! Circuit runner with fault injection for fault tolerance checking.
 //!
 //! This module provides integration between the fault tolerance checking framework
-//! and `TickCircuit` / `pecos-qsim` simulators.
+//! and `TickCircuit` / `pecos-simulators` simulators.
 
 use super::pauli_prop_checker::{CircuitIO, FaultClass, classify_fault, propagate_faults};
 use super::{
@@ -21,8 +21,8 @@ use super::{
 };
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
-use pecos_qsim::CliffordGateable;
 use pecos_quantum::TickCircuit;
+use pecos_simulators::CliffordGateable;
 
 /// Extracts all spacetime locations from a `TickCircuit`.
 ///
@@ -304,7 +304,7 @@ impl FaultCategoryAnalysis {
 /// ```
 /// use pecos_qec::fault_tolerance::{FaultChecker, FaultCheckConfig};
 /// use pecos_quantum::TickCircuit;
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 ///
 /// // Build a simple circuit
 /// let mut circuit = TickCircuit::new();
@@ -745,7 +745,7 @@ impl<'a> FaultChecker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_extract_spacetime_locations_empty_circuit() {

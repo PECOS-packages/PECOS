@@ -20,7 +20,7 @@ test = false
 [dependencies]
 pecos-cuquantum = { workspace = true }
 pecos-core = { workspace = true }
-pecos-qsim = { workspace = true }
+pecos-simulators = { workspace = true }
 
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 log.workspace = true

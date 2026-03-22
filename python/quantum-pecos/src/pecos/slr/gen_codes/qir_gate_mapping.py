@@ -87,21 +87,21 @@ class QIRGateMetadata(Enum):
         ],
     )
 
-    # https://github.com/PECOS-packages/PECOS/blob/development/crates/pecos-qsim/src/clifford_gateable.rs#L681
+    # https://github.com/PECOS-packages/PECOS/blob/development/crates/pecos-simulators/src/clifford_gateable.rs#L681
     F = QG.decompose(
         lambda f: [
             q.SX(f.qargs[0]),
             q.SZ(f.qargs[0]),
         ],
     )
-    # https://github.com/PECOS-packages/PECOS/blob/development/crates/pecos-qsim/src/clifford_gateable.rs#L715
+    # https://github.com/PECOS-packages/PECOS/blob/development/crates/pecos-simulators/src/clifford_gateable.rs#L715
     Fdg = QG.decompose(
         lambda fdg: [
             q.SZdg(fdg.qargs[0]),
             q.SXdg(fdg.qargs[0]),
         ],
     )
-    # https://github.com/PECOS-packages/PECOS/blob/development/crates/pecos-qsim/src/clifford_gateable.rs#L885
+    # https://github.com/PECOS-packages/PECOS/blob/development/crates/pecos-simulators/src/clifford_gateable.rs#L885
     F4 = QG.decompose(
         lambda f4: [
             q.SZ(f4.qargs[0]),

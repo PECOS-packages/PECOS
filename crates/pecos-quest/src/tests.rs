@@ -9,7 +9,7 @@ use pecos_core::{Angle64, qid, qid2};
 #[cfg(test)]
 use pecos_num::assert_relative_eq;
 #[cfg(test)]
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 #[cfg(test)]
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 

@@ -21,7 +21,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput};
 use pecos_core::Angle64;
 use pecos_cuquantum::{CuStabilizer, CuStateVec, QubitId, TryClone, is_cuquantum_available};
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::f64::consts::PI;
 use std::hint::black_box;
 

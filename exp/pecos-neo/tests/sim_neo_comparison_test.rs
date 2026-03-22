@@ -434,7 +434,7 @@ fn test_sim_neo_vs_sim_conditional_x_correction() {
 
     // Run with pecos-neo ProgramRunner + ConditionalProgram
     use pecos_neo::program::{ConditionalProgram, ProgramRunner};
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
 
@@ -525,7 +525,7 @@ fn test_sim_neo_vs_sim_conditional_with_noise() {
 
     // Run with pecos-neo
     use pecos_neo::program::{ConditionalProgram, ProgramRunner};
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
 

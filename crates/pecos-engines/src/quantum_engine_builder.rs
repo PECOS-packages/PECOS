@@ -121,7 +121,7 @@ impl StateVectorEngineBuilder {
     /// - Fine-tune performance for specific hardware configurations
     ///
     /// Note: This only has effect when the `parallel` feature is enabled
-    /// on `pecos-qsim` and `.parallel(true)` is set on this builder.
+    /// on `pecos-simulators` and `.parallel(true)` is set on this builder.
     #[must_use]
     pub fn num_threads(mut self, num_threads: usize) -> Self {
         self.num_threads = Some(num_threads);

@@ -14,8 +14,8 @@
 
 use pecos_neo::ecs::{SplitDecision, SplitStats, SubsetLevel, World};
 use pecos_neo::sampling::SampleWeight;
-use pecos_qsim::SparseStab;
 use pecos_rng::PecosRng;
+use pecos_simulators::SparseStab;
 
 #[test]
 fn test_apply_split_decisions_prune() {
@@ -630,7 +630,7 @@ fn test_resampling_statistical_correctness() {
 #[test]
 fn test_entity_state_preservation_through_transfer() {
     use pecos_core::QubitId;
-    use pecos_qsim::CliffordGateable;
+    use pecos_simulators::CliffordGateable;
 
     let mut world1: World<SparseStab> = World::new(42);
 

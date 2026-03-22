@@ -35,7 +35,7 @@
 //! use pecos_neo::sampling::ImportanceSamplingRunner;
 //! use pecos_neo::sampling::weight::WeightedStatistics;
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 //!
@@ -63,8 +63,8 @@ use crate::sampling::importance::ImportanceConfig;
 use crate::sampling::weight::SampleWeight;
 use pecos_core::QubitId;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_qsim::{CliffordGateable, ForcedMeasurement};
 use pecos_rng::PecosRng;
+use pecos_simulators::{CliffordGateable, ForcedMeasurement};
 use rand::RngExt;
 use rand_core::SeedableRng;
 
@@ -156,7 +156,7 @@ pub struct ImportanceSampledShot {
 ///
 /// ```
 /// use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 ///
 /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
 ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
@@ -250,7 +250,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// ```
     /// use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
-    /// use pecos_qsim::SparseStab;
+    /// use pecos_simulators::SparseStab;
     ///
     /// // Bias toward measuring 1 (80% of the time for non-deterministic measurements)
     /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
@@ -726,7 +726,7 @@ where
     /// ```no_run
     /// use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
     /// use pecos_neo::prelude::*;
-    /// use pecos_qsim::SparseStab;
+    /// use pecos_simulators::SparseStab;
     ///
     /// let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
     /// let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
@@ -847,7 +847,7 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use crate::sampling::weight::WeightedStatistics;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_importance_runner_basic() {

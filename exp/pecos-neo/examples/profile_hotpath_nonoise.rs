@@ -15,7 +15,7 @@
 //! Run with: `cargo run --release --example profile_hotpath_nonoise -p pecos-neo`
 
 use pecos_neo::prelude::{CircuitRunner, CommandBuilder};
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::hint::black_box;
 
 fn main() {

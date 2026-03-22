@@ -26,8 +26,8 @@ use pecos_neo::noise::{
     ComposableNoiseModel, MeasurementChannel, NoiseEvent, SingleQubitChannel, TwoQubitChannel,
 };
 use pecos_neo::runner::CircuitRunner;
-use pecos_qsim::{CliffordGateable, SparseStab};
 use pecos_rng::PecosRng;
+use pecos_simulators::{CliffordGateable, SparseStab};
 use rand::RngExt;
 use std::hint::black_box;
 

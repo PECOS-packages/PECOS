@@ -1051,7 +1051,7 @@ impl GpuStateVec {
 // Trait implementations for PECOS integration
 
 use pecos_core::{Angle64, QubitId};
-use pecos_qsim::{
+use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 
@@ -1157,7 +1157,7 @@ impl ArbitraryRotationGateable for GpuStateVec {
 mod tests {
     use super::*;
     use pecos_core::{qid, qid2};
-    use pecos_qsim::CliffordGateable;
+    use pecos_simulators::CliffordGateable;
 
     // Compile-time assertions that GpuStateVec is Send + Sync.
     // This is required for parallel Monte Carlo simulations.
@@ -1278,7 +1278,7 @@ mod tests {
     // Comparison tests against StateVec (CPU reference implementation)
     // =========================================================================
 
-    use pecos_qsim::StateVec;
+    use pecos_simulators::StateVec;
 
     /// Compare GPU and CPU state vectors with tolerance for f32 vs f64 precision.
     /// Returns the maximum absolute difference found.

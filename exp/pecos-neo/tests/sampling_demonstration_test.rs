@@ -34,7 +34,7 @@ use pecos_neo::sampling::{
     BernoulliSubsetSimulation, ImportanceSamplingRunner, OutcomeBiasConfig, ProperSubsetSimulation,
     SubsetConfig,
 };
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 // ============================================================================
 // Part 1: Path Exploration on Static Circuits

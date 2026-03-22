@@ -20,7 +20,7 @@
 //! Run with: cargo run --example basic
 
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::collections::HashMap;
 
 fn main() {

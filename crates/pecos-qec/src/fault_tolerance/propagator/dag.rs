@@ -56,8 +56,8 @@ use super::{
 };
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
-use pecos_qsim::PauliProp;
 use pecos_quantum::DagCircuit;
+use pecos_simulators::PauliProp;
 use smallvec::SmallVec;
 use std::collections::BinaryHeap;
 

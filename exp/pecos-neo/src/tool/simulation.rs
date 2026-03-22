@@ -122,8 +122,8 @@ use crate::runner::{EventHandlers, GateOverrides};
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec};
 use pecos_rng::PecosRng;
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
@@ -345,7 +345,7 @@ impl From<CustomBackendBuilder> for QuantumBackend {
 /// ```no_run
 /// use pecos_neo::tool::{sim_neo, custom_backend};
 /// use pecos_neo::prelude::*;
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 ///
 /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
 ///
@@ -379,7 +379,7 @@ where
 /// ```no_run
 /// use pecos_neo::tool::{sim_neo, custom_backend_with_rotations};
 /// use pecos_neo::prelude::*;
-/// use pecos_qsim::StateVec;
+/// use pecos_simulators::StateVec;
 ///
 /// let circuit = CommandBuilder::new().pz(0).t(0).mz(0).build();
 ///
@@ -1785,7 +1785,7 @@ impl SimNeoBuilder {
     /// ```no_run
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_neo::prelude::*;
-    /// use pecos_qsim::SparseStab;
+    /// use pecos_simulators::SparseStab;
     ///
     /// let overrides = GateOverrides::<SparseStab>::new()
     ///     .register(gates::X, |_sim, _angles, _qubits| {
@@ -4332,7 +4332,7 @@ mod tests {
     fn test_sim_neo_gate_overrides_observable_effect() {
         use crate::extensible::gates;
         use crate::runner::GateOverrides;
-        use pecos_qsim::CliffordGateable;
+        use pecos_simulators::CliffordGateable;
 
         // Override X to apply Z instead. Z|0> = |0>, so measurement stays 0
         // (without override, X|0> = |1>)

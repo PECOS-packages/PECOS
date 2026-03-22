@@ -47,7 +47,7 @@
 //!
 //! ```no_run
 //! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig};
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let config = ParallelConfig::new()
 //!     .with_workers(4)
@@ -69,8 +69,8 @@
 use super::component::StatusComponent;
 use super::world::World;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
+use pecos_simulators::CliffordGateable;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -449,7 +449,7 @@ mod tests {
     use crate::command::CommandBuilder;
     use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_parallel_config_defaults() {

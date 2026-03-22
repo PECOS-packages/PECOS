@@ -142,7 +142,7 @@ CompositeNoiseModelBuilder::new()
 ```rust
 use pecos_neo::runner::CircuitRunner;
 use pecos_neo::command::CommandBuilder;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 // Build circuit
 let circuit = CommandBuilder::new()

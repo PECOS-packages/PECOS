@@ -24,7 +24,7 @@
 use pecos_neo::noise::prelude::*;
 use pecos_neo::prelude::*;
 use pecos_neo::tool::sim_neo;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 fn main() {
     println!("=== Noise Cookbook ===\n");

@@ -14,7 +14,7 @@ readme = "README.md"
 
 [features]
 default = []
-parallel = ["pecos-qsim/parallel"]
+parallel = ["pecos-simulators/parallel"]
 gpu-sims = ["dep:pecos-gpu-sims"]
 cuquantum = ["dep:pecos-cuquantum"]
 quest = ["dep:pecos-quest"]
@@ -31,7 +31,7 @@ pecos-quest = { workspace = true, optional = true }
 pecos-qulacs = { workspace = true, optional = true }
 pecos-cppsparsesim = { workspace = true, optional = true }
 pecos-core.workspace = true
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

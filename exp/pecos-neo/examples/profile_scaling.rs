@@ -18,7 +18,7 @@ use pecos_neo::prelude::{
     CircuitRunner, CommandBuilder, ComposableNoiseModel, CorePlugin, SingleQubitChannel,
     TwoQubitChannel,
 };
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::time::Instant;
 
 fn build_circuit(num_qubits: usize) -> pecos_neo::command::CommandQueue {

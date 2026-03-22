@@ -26,7 +26,7 @@ serde_json.workspace = true
 
 # PECOS integration
 pecos-core.workspace = true
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 pecos-rng.workspace = true
 
 [dev-dependencies]

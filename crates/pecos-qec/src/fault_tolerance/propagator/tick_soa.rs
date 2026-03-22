@@ -14,8 +14,8 @@
 use super::SpacetimeLocation;
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
 use pecos_core::gate_type::GateType;
-use pecos_qsim::PauliProp;
 use pecos_quantum::tick_circuit_soa::TickCircuitSoA;
+use pecos_simulators::PauliProp;
 
 // ============================================================================
 // Work Buffers for Reuse

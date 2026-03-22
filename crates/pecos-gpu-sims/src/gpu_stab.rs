@@ -11,8 +11,8 @@
 use crate::circuit_compiler::{CircuitCompiler, Gate as CompiledGate};
 use crate::clifford_fusion::CliffordFuser;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_simulators::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -2479,8 +2479,8 @@ impl<R: Rng + SeedableRng + Debug> Debug for GpuStab<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_qsim::SparseStab;
-    use pecos_qsim::stabilizer_test_utils::{
+    use pecos_simulators::SparseStab;
+    use pecos_simulators::stabilizer_test_utils::{
         ForcedMeasurement, compare_simulators_on_random_circuits_direct,
         run_basic_stabilizer_test_suite,
     };
@@ -2557,8 +2557,10 @@ mod tests {
     /// Debug test to understand the specific failing circuit
     #[test]
     fn test_gpu_vs_cpu_specific_circuit_debug() {
-        use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
+        use pecos_simulators::stabilizer_test_utils::{
+            apply_circuit, generate_random_clifford_circuit,
+        };
 
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;
@@ -2718,8 +2720,10 @@ mod tests {
     /// Test the specific failing circuit - check deterministic outcomes without prior measurements
     #[test]
     fn test_gpu_vs_cpu_failing_circuit_deterministic_only() {
-        use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
+        use pecos_simulators::stabilizer_test_utils::{
+            apply_circuit, generate_random_clifford_circuit,
+        };
 
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;
@@ -2784,8 +2788,10 @@ mod tests {
     /// Test the failing circuit exactly - gates 0-22
     #[test]
     fn test_gpu_vs_cpu_failing_circuit() {
-        use pecos_qsim::stabilizer_test_utils::{CliffordGate, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
+        use pecos_simulators::stabilizer_test_utils::{
+            CliffordGate, generate_random_clifford_circuit,
+        };
 
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;
@@ -3092,8 +3098,10 @@ mod tests {
     /// Test gate-by-gate to find where sign divergence occurs
     #[test]
     fn test_gpu_vs_cpu_gate_by_gate_debug() {
-        use pecos_qsim::stabilizer_test_utils::{CliffordGate, generate_random_clifford_circuit};
         use pecos_rng::PecosRng;
+        use pecos_simulators::stabilizer_test_utils::{
+            CliffordGate, generate_random_clifford_circuit,
+        };
 
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;
@@ -3241,8 +3249,10 @@ mod tests {
     /// Test sequential measurements to find where divergence occurs
     #[test]
     fn test_gpu_vs_cpu_sequential_measurement_debug() {
-        use pecos_qsim::stabilizer_test_utils::{apply_circuit, generate_random_clifford_circuit};
         use pecos_rng::{PecosRng, RngExt};
+        use pecos_simulators::stabilizer_test_utils::{
+            apply_circuit, generate_random_clifford_circuit,
+        };
 
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;

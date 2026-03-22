@@ -27,7 +27,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use num_complex::Complex64;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, StateVecAoS, StateVecSoA};
+use pecos_simulators::{CliffordGateable, StateVecAoS, StateVecSoA};
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

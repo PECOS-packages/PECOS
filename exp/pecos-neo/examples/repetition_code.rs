@@ -26,7 +26,7 @@
 //! Run with: cargo run --example `repetition_code`
 
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::collections::HashMap;
 
 /// A distance-3 repetition code.

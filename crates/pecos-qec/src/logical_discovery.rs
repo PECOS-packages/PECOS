@@ -47,7 +47,7 @@
 //! ```
 
 use pecos_core::{Pauli, PauliOperator, PauliString, QubitId};
-use pecos_qsim::{CliffordGateable, SparseStab};
+use pecos_simulators::{CliffordGateable, SparseStab};
 use std::collections::BTreeSet;
 
 /// Result of logical operator discovery.
@@ -230,7 +230,7 @@ pub fn discover_logical_operators(
             // Check if it's already in the group (dependent)
             let classification = state.stabs().classify_pauli_string(state.destabs(), stab);
             match classification {
-                pecos_qsim::PauliClassification::Stabilizer => {
+                pecos_simulators::PauliClassification::Stabilizer => {
                     return Err(LogicalDiscoveryError::StabilizersNotIndependent);
                 }
                 _ => {

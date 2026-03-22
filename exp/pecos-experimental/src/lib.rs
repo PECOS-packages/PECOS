@@ -21,7 +21,7 @@
 //! - Are not covered by semver guarantees
 //!
 //! Once APIs are stable and well-tested, they will be moved to the appropriate
-//! stable crates (`pecos-engines`, `pecos-qsim`, etc.).
+//! stable crates (`pecos-engines`, `pecos-simulators`, etc.).
 //!
 //! ## Current Experimental Features
 //!

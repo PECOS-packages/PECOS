@@ -35,7 +35,7 @@
 //! ```no_run
 //! use pecos_neo::sampling::path::{MeasurementPath, PathExplorer, PathEnumerator};
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 //! let mut explorer = PathExplorer::new(SparseStab::new(1));
@@ -55,8 +55,8 @@ use crate::command::{CommandQueue, GateCommand, GateType};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::weight::SampleWeight;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, ForcedMeasurement};
 use pecos_rng::PecosRng;
+use pecos_simulators::{CliffordGateable, ForcedMeasurement};
 use smallvec::SmallVec;
 
 /// A single measurement outcome in a path.
@@ -640,7 +640,7 @@ impl PathStatistics {
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_measurement_path_basic() {

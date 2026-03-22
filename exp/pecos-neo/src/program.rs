@@ -31,7 +31,7 @@
 //! ```no_run
 //! use pecos_neo::program::{CommandSource, ProgramRunner};
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! // A simple repeat-until-success program
 //! struct RepeatUntilSuccess {
@@ -83,8 +83,8 @@ use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::{CircuitRunner, EventHandlers, GateOverrides};
 use pecos_core::rng::RngManageable;
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 
 /// A source of quantum commands for program execution.
 ///
@@ -495,7 +495,7 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use pecos_core::QubitId;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_static_program() {

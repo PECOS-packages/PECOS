@@ -106,7 +106,7 @@ Runs full stabilizer simulation with fault injection. Most accurate but slowest.
 
 ```rust
 use pecos_qec::FaultChecker;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 let checker = FaultChecker::new(&circuit);
 let result = checker.check(
@@ -209,7 +209,7 @@ Example: 3-qubit bit flip code
 
 ## Connection to Symbolic Infrastructure
 
-### SymbolicSparseStab (pecos-qsim)
+### SymbolicSparseStab (pecos-simulators)
 
 Tracks measurement outcomes as functions of prior measurements:
 ```

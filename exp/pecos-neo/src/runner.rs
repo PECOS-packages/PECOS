@@ -31,7 +31,7 @@
 //!
 //! ```
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new()
 //!     .pz(0)
@@ -53,8 +53,8 @@ use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_rng::PecosRng;
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use rand_core::SeedableRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
@@ -519,8 +519,8 @@ type RotationExecutorFn<S> = fn(&mut S, GateId, &[Angle64], &[QubitId]) -> bool;
 /// # Example
 ///
 /// ```
-/// # use pecos_qsim::SparseStab;
-/// use pecos_qsim::CliffordGateable;
+/// # use pecos_simulators::SparseStab;
+/// use pecos_simulators::CliffordGateable;
 /// use pecos_neo::runner::GateOverrides;
 /// use pecos_neo::extensible::gates;
 ///
@@ -654,7 +654,7 @@ impl std::error::Error for ExecutionError {}
 ///
 /// ```
 /// use pecos_neo::prelude::*;
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 ///
 /// let commands = CommandBuilder::new()
 ///     .pz(0)
@@ -710,7 +710,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     ///
     /// ```
     /// use pecos_neo::prelude::*;
-    /// use pecos_qsim::SparseStab;
+    /// use pecos_simulators::SparseStab;
     ///
     /// let mut runner = CircuitRunner::<SparseStab>::new();
     /// ```
@@ -725,7 +725,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     ///
     /// ```
     /// use pecos_neo::prelude::*;
-    /// use pecos_qsim::SparseStab;
+    /// use pecos_simulators::SparseStab;
     ///
     /// let defs = GateDefinitions::new();
     /// let mut runner = CircuitRunner::<SparseStab>::with_definitions(defs);
@@ -2063,7 +2063,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         &mut self,
         gate_type: GateType,
         qubits: &[QubitId],
-        results: &[pecos_qsim::MeasurementResult],
+        results: &[pecos_simulators::MeasurementResult],
     ) {
         for (&qubit, result) in qubits.iter().zip(results.iter()) {
             let is_leaked = self
@@ -2343,7 +2343,7 @@ mod tests {
     use crate::command::CommandBuilder;
     use crate::extensible::{GateCategory, GateSpec, OpBuilder, gates};
     use crate::noise::single_qubit::SingleQubitChannel;
-    use pecos_qsim::{SparseStab, StateVec};
+    use pecos_simulators::{SparseStab, StateVec};
 
     // ================================================================
     // Basic execution tests

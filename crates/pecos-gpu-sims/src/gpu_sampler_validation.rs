@@ -7,8 +7,8 @@
 #[allow(clippy::cast_possible_truncation)] // Test shot counts are small and fit in u32
 mod tests {
     use crate::GpuMeasurementSampler;
-    use pecos_qsim::SymbolicSparseStab;
-    use pecos_qsim::measurement_sampler::{MeasurementKind, MeasurementSampler};
+    use pecos_simulators::SymbolicSparseStab;
+    use pecos_simulators::measurement_sampler::{MeasurementKind, MeasurementSampler};
 
     /// Helper to check if GPU is available, skip test if not.
     fn get_gpu_sampler(measurements: &[MeasurementKind]) -> Option<GpuMeasurementSampler> {

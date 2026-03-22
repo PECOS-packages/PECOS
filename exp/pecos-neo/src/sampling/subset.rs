@@ -41,7 +41,7 @@
 //! ```no_run
 //! use pecos_neo::sampling::subset::{SubsetSimulation, SubsetConfig};
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
 //!
@@ -68,8 +68,8 @@ use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::CircuitRunner;
 use crate::sampling::weight::SampleWeight;
-use pecos_qsim::{CliffordGateable, SparseStab};
 use pecos_rng::{PecosRng, resolve_seed};
+use pecos_simulators::{CliffordGateable, SparseStab};
 use rand::RngExt;
 
 /// Configuration for subset simulation.
@@ -770,7 +770,7 @@ pub struct RoundResult {
 /// ```no_run
 /// use pecos_neo::sampling::subset::{EcsSubsetSimulation, SubsetConfig};
 /// use pecos_neo::ecs::World;
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 ///
 /// // Create world with trajectories
 /// let mut world: World<SparseStab> = World::new(42);
@@ -791,7 +791,7 @@ pub struct RoundResult {
 ///     |score| score >= 5.0,  // Failure condition
 /// );
 /// ```
-pub struct EcsSubsetSimulation<S: pecos_qsim::CliffordGateable + Clone> {
+pub struct EcsSubsetSimulation<S: pecos_simulators::CliffordGateable + Clone> {
     /// The ECS World containing all trajectories.
     pub world: World<S>,
     /// Configuration for subset simulation.
@@ -804,7 +804,7 @@ pub struct EcsSubsetSimulation<S: pecos_qsim::CliffordGateable + Clone> {
     levels: Vec<RoundResult>,
 }
 
-impl<S: pecos_qsim::CliffordGateable + Clone> EcsSubsetSimulation<S> {
+impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
     /// Create a new ECS-based subset simulation.
     ///
     /// The World should already contain spawned entities (trajectories).
@@ -1736,7 +1736,7 @@ impl QecSubsetConfig {
 /// This stores the simulator state and syndrome score at a specific round,
 /// allowing proper Au & Beck restart from checkpoints.
 #[derive(Debug, Clone)]
-pub struct QecCheckpoint<S: pecos_qsim::CliffordGateable + Clone> {
+pub struct QecCheckpoint<S: pecos_simulators::CliffordGateable + Clone> {
     /// Round number when this checkpoint was taken.
     pub round: usize,
     /// Syndrome score at this checkpoint.
@@ -1772,7 +1772,7 @@ pub struct QecTrajectory {
 /// The current implementation uses `QecTrajectory` instead for simpler trajectory
 /// tracking without full checkpoint history.
 #[derive(Debug, Clone)]
-pub struct QecHistoryTrajectory<S: pecos_qsim::CliffordGateable + Clone> {
+pub struct QecHistoryTrajectory<S: pecos_simulators::CliffordGateable + Clone> {
     /// Unique trajectory ID.
     pub id: u64,
     /// Entity ID in the ECS World.
@@ -1790,7 +1790,7 @@ pub struct QecHistoryTrajectory<S: pecos_qsim::CliffordGateable + Clone> {
 }
 
 #[allow(dead_code)]
-impl<S: pecos_qsim::CliffordGateable + Clone> QecHistoryTrajectory<S> {
+impl<S: pecos_simulators::CliffordGateable + Clone> QecHistoryTrajectory<S> {
     /// Create a new trajectory with given ID, entity, and seed.
     #[must_use]
     pub fn new(id: u64, entity: EntityId, base_seed: u64) -> Self {
@@ -1843,7 +1843,7 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecHistoryTrajectory<S> {
 /// ```no_run
 /// use pecos_neo::sampling::subset::{QecSubsetSimulation, QecSubsetConfig};
 /// use pecos_neo::ecs::World;
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 /// use pecos_core::QubitId;
 ///
 /// // Configure QEC subset simulation
@@ -1872,7 +1872,7 @@ impl<S: pecos_qsim::CliffordGateable + Clone> QecHistoryTrajectory<S> {
 /// [`SubsetSimulation`]: struct.SubsetSimulation.html
 /// [`ComposableNoiseModel`]: crate::noise::ComposableNoiseModel
 /// [`with_noise_builder`]: SubsetSimulation::with_noise_builder
-pub struct QecSubsetSimulation<S: pecos_qsim::CliffordGateable + Clone> {
+pub struct QecSubsetSimulation<S: pecos_simulators::CliffordGateable + Clone> {
     /// The ECS World containing all trajectories.
     pub world: World<S>,
     /// QEC-specific configuration.
@@ -1885,7 +1885,7 @@ pub struct QecSubsetSimulation<S: pecos_qsim::CliffordGateable + Clone> {
     levels: Vec<RoundResult>,
 }
 
-impl<S: pecos_qsim::CliffordGateable + Clone> QecSubsetSimulation<S> {
+impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
     /// Create a new QEC subset simulation.
     #[must_use]
     pub fn new(world: World<S>, config: QecSubsetConfig) -> Self {
@@ -2850,7 +2850,7 @@ mod tests {
         // Test the proper Au & Beck implementation for QEC subset simulation
         use crate::ecs::World;
         use pecos_core::QubitId;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let num_qubits = 5; // 3 data + 2 ancilla
         let num_trajectories = 500;

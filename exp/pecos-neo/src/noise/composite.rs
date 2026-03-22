@@ -322,7 +322,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::ComposableNoiseModel;
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         // Build a simple Hadamard circuit
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
@@ -353,7 +353,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, MeasurementChannel};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         // Build circuit
         let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
@@ -544,7 +544,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::ComposableNoiseModel;
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         // Create a circuit that measures qubit 0
         let commands = CommandBuilder::new().pz(0).pz(1).pz(2).h(0).mz(0).build();
@@ -631,7 +631,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, PauliWeights, SingleQubitChannel};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p1 = 0.1; // 10% error rate for clear statistical signal
 
@@ -708,7 +708,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, MeasurementChannel};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p_meas = 0.1; // 10% measurement error
 
@@ -778,7 +778,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::{ComposableNoiseModel, GeneralNoiseModelBuilder};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p1 = 0.05;
         let p_meas = 0.02;

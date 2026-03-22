@@ -38,7 +38,7 @@ PECOS now consists of multiple interconnected components:
 - `/crates/`: Contains Rust crates
   - `/crates/pecos/`: Main Rust crate that collects the functionality of the other crates into one library
   - `/crates/pecos-core/`: Core Rust functionalities
-  - `/crates/pecos-qsims/`: A collection of quantum simulators
+  - `/crates/pecos-simulatorss/`: A collection of quantum simulators
   - `/crates/pecos-qec/`: Rust code for analyzing and exploring quantum error correction (QEC)
   - `/crates/pecos-qasm/`: Implementation of QASM parsing and execution
   - `/crates/pecos-llvm-runtime/`: Implementation of LLVM IR execution for hybrid quantum-classical programs

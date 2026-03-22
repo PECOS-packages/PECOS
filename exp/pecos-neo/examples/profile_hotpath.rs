@@ -18,7 +18,7 @@ use pecos_neo::prelude::{
     CircuitRunner, CommandBuilder, ComposableNoiseModel, CorePlugin, SingleQubitChannel,
     TwoQubitChannel,
 };
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::hint::black_box;
 
 fn main() {

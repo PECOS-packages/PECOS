@@ -52,8 +52,8 @@ use super::{
 };
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
-use pecos_qsim::{CliffordGateable, PauliProp};
 use pecos_quantum::TickCircuit;
+use pecos_simulators::{CliffordGateable, PauliProp};
 use std::collections::HashSet;
 
 /// Detects which qubits in a circuit are "input qubits" (used but never prepared).

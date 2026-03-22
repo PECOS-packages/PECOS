@@ -20,12 +20,12 @@ num-traits = { workspace = true }
 
 [dev-dependencies]
 pecos-decoder-core = { workspace = true }
-pecos-qsim = { workspace = true }
+pecos-simulators = { workspace = true }
 
 [features]
 default = []
-stabilizer = ["dep:pecos-qsim"]
+stabilizer = ["dep:pecos-simulators"]
 
-[dependencies.pecos-qsim]
+[dependencies.pecos-simulators]
 workspace = true
 optional = true

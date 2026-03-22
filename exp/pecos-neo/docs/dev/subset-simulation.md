@@ -208,7 +208,7 @@ Specialized for quantum error correction with synthetic syndrome generation:
 ```rust
 use pecos_neo::sampling::subset::{QecSubsetSimulation, QecSubsetConfig};
 use pecos_neo::ecs::World;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use pecos_core::QubitId;
 
 // Configure QEC simulation

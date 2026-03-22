@@ -11,7 +11,7 @@
 // the License.
 
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, MeasurementResult, QuantumSimulator};
+use pecos_simulators::{CliffordGateable, MeasurementResult, QuantumSimulator};
 
 // Include the cxx-generated bindings
 #[cxx::bridge]
@@ -545,7 +545,7 @@ impl CppSparseStab {
 }
 
 // Implement StabilizerTableauSimulator trait
-use pecos_qsim::StabilizerTableauSimulator;
+use pecos_simulators::StabilizerTableauSimulator;
 
 impl StabilizerTableauSimulator for CppSparseStab {
     fn stab_tableau(&self) -> String {

@@ -9,14 +9,14 @@ on:
     branches: [master, development, dev]
     paths:
       - 'python/selene-plugins/**'
-      - 'crates/pecos-qsim/**'
+      - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
       - '.github/workflows/selene-plugins.yml'
   pull_request:
     branches: [master, development, dev]
     paths:
       - 'python/selene-plugins/**'
-      - 'crates/pecos-qsim/**'
+      - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
       - '.github/workflows/selene-plugins.yml'
   workflow_dispatch:

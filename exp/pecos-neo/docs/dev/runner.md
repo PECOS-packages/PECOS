@@ -44,7 +44,7 @@ This is fail-fast: if a gate can't be handled, execution stops with an error.
 
 ```rust
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 let commands = CommandBuilder::new()
     .pz(0).pz(1)
@@ -61,7 +61,7 @@ let outcomes = runner.apply_circuit(&mut state, &commands)?;
 
 ```rust
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 let definitions = GateDefinitions::new();
 
@@ -82,7 +82,7 @@ let outcomes = runner.run(&mut state, &circuit)?;
 
 ```rust
 use pecos_neo::prelude::*;
-use pecos_qsim::StateVec;
+use pecos_simulators::StateVec;
 
 let circuit = OpBuilder::new()
     .pz(QubitId(0))
@@ -105,7 +105,7 @@ let outcomes = runner.run(&mut state, &circuit)?;  // Same run() method!
 
 ```rust
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 let definitions = GateDefinitions::new();
 

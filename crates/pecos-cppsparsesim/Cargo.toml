@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 cxx.workspace = true
 pecos-core.workspace = true
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 
 [build-dependencies]
 cxx-build.workspace = true

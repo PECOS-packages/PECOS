@@ -23,7 +23,7 @@ use pecos_neo::ecs::{ParallelConfig, ParallelCoordinator};
 use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
 use pecos_neo::runner::CircuitRunner;
 use pecos_neo::sampling::{MonteCarloConfig, MonteCarloRunner};
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::collections::BTreeMap;
 
 const NUM_SHOTS: usize = 1000;

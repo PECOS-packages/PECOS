@@ -10,7 +10,7 @@ use pecos_cuquantum_sys::{
     cudaMemcpyKind_cudaMemcpyHostToDevice, custatevecCollapseOp_t, custatevecComputeType_t,
     custatevecHandle_t, custatevecMatrixLayout_t,
 };
-use pecos_qsim::{
+use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 use std::ffi::c_void;
@@ -25,7 +25,7 @@ use std::ptr;
 ///
 /// ```no_run
 /// use pecos_cuquantum::CuStateVec;
-/// use pecos_qsim::{QuantumSimulator, CliffordGateable};
+/// use pecos_simulators::{QuantumSimulator, CliffordGateable};
 /// use pecos_core::QubitId;
 ///
 /// let mut sim = CuStateVec::new(4).unwrap(); // 4 qubits

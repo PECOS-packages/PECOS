@@ -123,7 +123,7 @@ pecos = { version = "0.1", features = ["qasm", "phir"] }
 
 Common features: `qasm` (OpenQASM support), `phir` (PHIR support), `llvm` (LLVM IR execution), `cli` (command-line tools). See [docs.rs/pecos](https://docs.rs/pecos) for the full list.
 
-Each crate also works standalone—use just `pecos-qsim` for simulation or `pecos-qec` for error correction without the full framework. Trait-based design makes it easy to swap implementations or integrate into your own tools.
+Each crate also works standalone—use just `pecos-simulators` for simulation or `pecos-qec` for error correction without the full framework. Trait-based design makes it easy to swap implementations or integrate into your own tools.
 
 ---
 

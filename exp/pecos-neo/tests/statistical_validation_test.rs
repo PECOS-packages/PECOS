@@ -24,7 +24,7 @@ use pecos_neo::noise::GeneralNoiseModelBuilder;
 use pecos_neo::runner::CircuitRunner;
 use pecos_neo::sampling::{MonteCarloConfig, MonteCarloRunner};
 use pecos_qasm::QASMEngine;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 

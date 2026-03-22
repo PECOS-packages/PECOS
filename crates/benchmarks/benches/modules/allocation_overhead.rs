@@ -16,7 +16,7 @@
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, SparseStab};
+use pecos_simulators::{CliffordGateable, SparseStab};
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

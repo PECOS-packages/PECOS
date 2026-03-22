@@ -15,7 +15,7 @@ mod qulacs_tests {
     use crate::QulacsStateVec;
     use num_complex::Complex64;
     use pecos_core::{Angle64, RngManageable, qid, qid2};
-    use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 
     /// Helper function to check if two states are equal within tolerance

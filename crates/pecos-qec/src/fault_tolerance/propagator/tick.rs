@@ -21,8 +21,8 @@
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
 use super::{SpacetimeLocation, extract_spacetime_locations};
 use pecos_core::gate_type::GateType;
-use pecos_qsim::PauliProp;
 use pecos_quantum::TickCircuit;
+use pecos_simulators::PauliProp;
 
 // ============================================================================
 // Tick-based Fault Analyzer

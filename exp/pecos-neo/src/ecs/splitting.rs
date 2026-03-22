@@ -36,7 +36,7 @@
 use super::entity::EntityId;
 use super::world::World;
 use crate::sampling::SampleWeight;
-use pecos_qsim::CliffordGateable;
+use pecos_simulators::CliffordGateable;
 
 /// Trait for splitting criteria that decide when to clone trajectories.
 ///

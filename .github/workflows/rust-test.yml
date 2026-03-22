@@ -136,8 +136,8 @@ jobs:
           echo "Testing pecos-engines..."
           cd crates/pecos-engines && cargo clippy --all-targets -- -D warnings && cd ../..
 
-          echo "Testing pecos-qsim..."
-          cd crates/pecos-qsim && cargo clippy --all-targets -- -D warnings && cd ../..
+          echo "Testing pecos-simulators..."
+          cd crates/pecos-simulators && cargo clippy --all-targets -- -D warnings && cd ../..
 
           echo "Testing pecos-programs..."
           cd crates/pecos-programs && cargo clippy --all-targets -- -D warnings && cd ../..

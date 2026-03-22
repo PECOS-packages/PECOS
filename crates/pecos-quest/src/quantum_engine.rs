@@ -14,8 +14,8 @@ use pecos_engines::{
     byte_message::{ByteMessage, GateType},
 };
 #[cfg(feature = "cuda")]
-use pecos_qsim::MeasurementResult;
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_simulators::MeasurementResult;
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::any::Any;
 use std::fmt::Debug;
 

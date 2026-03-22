@@ -65,8 +65,8 @@ use super::{
     extract_spacetime_locations, propagate_faults,
 };
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, PauliProp};
 use pecos_quantum::TickCircuit;
+use pecos_simulators::{CliffordGateable, PauliProp};
 use std::collections::{BTreeSet, HashMap};
 
 /// Configuration for gadget-level fault tolerance checking.

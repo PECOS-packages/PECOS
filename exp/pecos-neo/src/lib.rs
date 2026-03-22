@@ -71,7 +71,7 @@
 //!
 //! ```
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! // Build a Bell state circuit
 //! let commands = CommandBuilder::new()
@@ -98,7 +98,7 @@
 //!
 //! ```
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new()
 //!     .pz(0)
@@ -126,7 +126,7 @@
 //!
 //! ```
 //! use pecos_neo::prelude::*;
-//! use pecos_qsim::StateVec;
+//! use pecos_simulators::StateVec;
 //!
 //! let commands = CommandBuilder::new()
 //!     .pz(0)
@@ -325,7 +325,7 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use super::prelude::*;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_prelude_usage() {

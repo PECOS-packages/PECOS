@@ -31,7 +31,7 @@
 //! use pecos_qec::fault_tolerance::{
 //!     ErrorCorrectionConfig, LookupTableDecoder, extract_syndrome
 //! };
-//! use pecos_qsim::PauliProp;
+//! use pecos_simulators::PauliProp;
 //!
 //! // Create a simple config for 3-qubit code
 //! let config = ErrorCorrectionConfig {
@@ -62,7 +62,7 @@ use super::{
 };
 use ndarray::{Array1, ArrayView1};
 use pecos_decoder_core::{Decoder, DecodingResultTrait};
-use pecos_qsim::PauliProp;
+use pecos_simulators::PauliProp;
 
 /// Configuration for error correction checking.
 #[derive(Debug, Clone)]

@@ -37,8 +37,8 @@ use pecos_cuquantum_sys::{
     custabilizerDestroyFrameSimulator, custabilizerFrameSimulator_t,
     custabilizerFrameSimulatorApplyCircuit, custabilizerHandle_t,
 };
-use pecos_qsim::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
-use pecos_qsim::{
+use pecos_simulators::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
+use pecos_simulators::{
     CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator,
 };
 use std::ffi::CString;

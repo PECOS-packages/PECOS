@@ -43,7 +43,7 @@
 //! - `pecos_core::prelude` - Core types, traits, and error handling
 //! - `pecos_engines::prelude` - Simulation engines and builders
 //! - `pecos_qasm::prelude` - `OpenQASM` language support
-//! - `pecos_qsim::prelude` - Quantum simulation implementations
+//! - `pecos_simulators::prelude` - Quantum simulation implementations
 //! - `pecos_qis::prelude` - QIS control engine
 //! - `pecos_qis::prelude` - Selene-based QIS interface (when `selene` feature enabled)
 //! - `pecos_programs::prelude` - Program type definitions
@@ -74,7 +74,7 @@ pub use pecos_core::prelude::*;
 pub use pecos_engines::prelude::*;
 #[cfg(feature = "qasm")]
 pub use pecos_qasm::prelude::*;
-pub use pecos_qsim::prelude::*;
+pub use pecos_simulators::prelude::*;
 
 // Re-export pecos_qis prelude
 // Note: Shot and Value from pecos_qis are not included (removed from its prelude)

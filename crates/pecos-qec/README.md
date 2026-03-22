@@ -55,6 +55,6 @@ if analysis.is_fault_tolerant() {
 
 ## Related Crates
 
-- `pecos-qsim` - Quantum simulators
+- `pecos-simulators` - Quantum simulators
 - `pecos-quantum` - Circuit representation
 - `pecos-decoders` - Decoder implementations

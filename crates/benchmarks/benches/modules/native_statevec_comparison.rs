@@ -21,7 +21,7 @@
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use pecos_core::{Angle64, QubitId};
-use pecos_qsim::{
+use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVecAoS, StateVecSoA,
     StateVecSoA32,
 };

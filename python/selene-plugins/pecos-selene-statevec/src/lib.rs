@@ -18,7 +18,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use pecos_core::{Angle64, QubitId};
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;

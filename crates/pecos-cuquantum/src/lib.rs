@@ -28,7 +28,7 @@
 //!
 //! ```no_run
 //! use pecos_cuquantum::CuStateVec;
-//! use pecos_qsim::{QuantumSimulator, CliffordGateable};
+//! use pecos_simulators::{QuantumSimulator, CliffordGateable};
 //! use pecos_core::QubitId;
 //!
 //! fn main() -> pecos_cuquantum::Result<()> {
@@ -75,8 +75,8 @@ pub use tensornet::CuTensorNet;
 
 // Re-export PECOS traits for convenience
 pub use pecos_core::QubitId;
-pub use pecos_qsim::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
-pub use pecos_qsim::{
+pub use pecos_simulators::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
+pub use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 

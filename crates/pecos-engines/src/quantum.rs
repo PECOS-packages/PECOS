@@ -7,12 +7,12 @@ use pecos_core::Angle64;
 use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
-use pecos_qsim::clifford_rotation::CliffordRotation;
-use pecos_qsim::{
+use pecos_rng::{PecosRng, SeedableRng};
+use pecos_simulators::clifford_rotation::CliffordRotation;
+use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, CoinToss, QuantumSimulator, SparseStab, StateVec,
     StateVecAoS, StateVecSoA,
 };
-use pecos_rng::{PecosRng, SeedableRng};
 use std::any::Any;
 use std::fmt::Debug;
 

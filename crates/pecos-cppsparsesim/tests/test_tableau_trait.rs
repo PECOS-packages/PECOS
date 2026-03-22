@@ -2,7 +2,7 @@
 
 use pecos_core::{qid, qid2};
 use pecos_cppsparsesim::CppSparseStab;
-use pecos_qsim::{CliffordGateable, StabilizerTableauSimulator};
+use pecos_simulators::{CliffordGateable, StabilizerTableauSimulator};
 
 #[test]
 fn test_cpp_sparse_stab_tableau_trait() {

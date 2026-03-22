@@ -39,7 +39,7 @@
 //!
 //! ```
 //! use pecos_neo::ecs::{World, EntityId};
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! // Create a world with base seed for determinism
 //! let mut world: World<SparseStab> = World::new(42);

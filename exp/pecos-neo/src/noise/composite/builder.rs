@@ -1287,7 +1287,7 @@ mod tests {
     use crate::command::CommandBuilder;
     use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_empty_builder() {
@@ -1651,7 +1651,7 @@ mod tests {
         use crate::noise::two_qubit::AngleScaling;
         use crate::runner::CircuitRunner;
         use pecos_core::{Angle64, QubitId};
-        use pecos_qsim::StateVec;
+        use pecos_simulators::StateVec;
 
         // With linear scaling, half-turn (pi) should have full error rate
         // Zero angle should have zero error rate
@@ -1821,7 +1821,7 @@ mod tests {
     fn test_builder_comparison_depolarizing() {
         use crate::noise::GeneralNoiseModelBuilder;
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p1 = 0.1;
         let p2 = 0.15;
@@ -1897,7 +1897,7 @@ mod tests {
     fn test_builder_comparison_measurement() {
         use crate::noise::GeneralNoiseModelBuilder;
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p_meas_0 = 0.1;
         let p_meas_1 = 0.2;
@@ -1962,7 +1962,7 @@ mod tests {
     fn test_builder_comparison_preparation() {
         use crate::noise::GeneralNoiseModelBuilder;
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p_prep = 0.15;
 
@@ -2271,7 +2271,7 @@ mod tests {
     fn test_emission_model_statistical_behavior() {
         use crate::noise::SingleQubitEmissionWeights;
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         // Test that emission model affects behavior
         // With 100% emission ratio and pure leakage, qubits should leak
@@ -2370,7 +2370,7 @@ mod tests {
     fn test_emission_model_comparison_with_general_builder() {
         use crate::noise::{GeneralNoiseModelBuilder, SingleQubitEmissionWeights};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p1 = 0.3;
         let emission_ratio = 0.5;
@@ -2430,7 +2430,7 @@ mod tests {
     fn test_two_qubit_pauli_model_comparison() {
         use crate::noise::{GeneralNoiseModelBuilder, TwoQubitPauliWeights};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p2 = 0.3;
 

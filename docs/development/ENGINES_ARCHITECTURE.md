@@ -8,7 +8,7 @@ PECOS serves two complementary roles:
 
 **As a Framework** - A complete, extendable environment for studying QEC and hybrid quantum-classical computation. Users can plug in custom components (error models, decoders, machines) and run full simulations with the `sim()` API or `HybridEngine`.
 
-**As a Library** - A collection of well-designed, independent components that users can pick and choose for their own projects. Need just a fast stabilizer simulator? Use `pecos-qsim::SparseStab`. Need deterministic seeding? Use `pecos-core::derive_seed()`. The crates are designed to be useful standalone.
+**As a Library** - A collection of well-designed, independent components that users can pick and choose for their own projects. Need just a fast stabilizer simulator? Use `pecos-simulators::SparseStab`. Need deterministic seeding? Use `pecos-core::derive_seed()`. The crates are designed to be useful standalone.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -22,7 +22,7 @@ PECOS serves two complementary roles:
 │  PECOS as Library (pick what you need)                          │
 │                                                                 │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
-│  │  pecos-qsim  │ │  pecos-core  │ │  pecos-rng   │            │
+│  │  pecos-simulators  │ │  pecos-core  │ │  pecos-rng   │            │
 │  │  SparseStab  │ │  QubitId     │ │  PecosRng    │            │
 │  │  StateVec    │ │  derive_seed │ │              │            │
 │  │  Gateable    │ │  GateType    │ │              │            │
@@ -584,7 +584,7 @@ let map: HashMap<String, Vec<i64>> = results.to_map();
 ```
 pecos-engines (orchestration)
     │
-    ├── pecos-qsim
+    ├── pecos-simulators
     │   ├── StateVec (state vector simulator)
     │   ├── SparseStab (stabilizer simulator)
     │   └── CliffordGateable, ArbitraryRotationGateable traits

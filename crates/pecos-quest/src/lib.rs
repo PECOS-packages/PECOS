@@ -34,7 +34,7 @@ pub use quantum_engine::QuestCudaStateVecEngine;
 
 pub use pecos_core::rng::RngManageable;
 use pecos_core::{Angle64, QubitId};
-pub use pecos_qsim::{
+pub use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 

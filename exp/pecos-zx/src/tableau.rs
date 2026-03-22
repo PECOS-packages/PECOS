@@ -19,7 +19,7 @@
 //! Clifford unitary and tracks preparations and measurements, then extracts
 //! detectors via GF(2) nullspace computation.
 //!
-//! This is independent of `pecos-qsim` -- it uses only [`CliffordRep`] from
+//! This is independent of `pecos-simulators` -- it uses only [`CliffordRep`] from
 //! `pecos-core` and [`Mat2`] from `quizx` for GF(2) linear algebra.
 //!
 //! # Algorithm

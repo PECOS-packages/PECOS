@@ -17,8 +17,8 @@
 
 use super::PauliFault;
 use pecos_core::gate_type::GateType;
-use pecos_qsim::{CliffordGateable, PauliProp};
 use pecos_quantum::TickCircuit;
+use pecos_simulators::{CliffordGateable, PauliProp};
 
 // ============================================================================
 // Direction and Unified Propagation
@@ -226,7 +226,7 @@ pub fn propagate_tick_range(
 /// ```
 /// use pecos_qec::fault_tolerance::propagator::propagate_backward_from_tick;
 /// use pecos_quantum::TickCircuit;
-/// use pecos_qsim::PauliProp;
+/// use pecos_simulators::PauliProp;
 ///
 /// let mut circuit = TickCircuit::new();
 /// circuit.tick().pz(&[0]);

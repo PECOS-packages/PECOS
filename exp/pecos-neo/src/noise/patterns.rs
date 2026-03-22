@@ -574,7 +574,7 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use crate::runner::CircuitRunner;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_depolarizing_only() {

@@ -26,7 +26,7 @@
 //!    go, how stabilizers are arranged. Bridges abstract and circuit levels.
 //!
 //! 3. **Circuit level** ([`fault_tolerance`]): Syndrome extraction circuits, fault tolerance
-//!    testing. Integrates with pecos-qsim for simulation.
+//!    testing. Integrates with pecos-simulators for simulation.
 //!
 //! # Fault Tolerance Analysis
 //!

@@ -68,7 +68,7 @@ The main runner for importance-sampled circuit execution:
 ```rust
 use pecos_neo::sampling::{ImportanceSamplingRunner, OutcomeBiasConfig};
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 
 // Configure outcome biasing
 let bias_config = OutcomeBiasConfig::new()

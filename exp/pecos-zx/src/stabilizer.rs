@@ -14,12 +14,12 @@
 
 //! Stabilizer <-> ZX calculus connections.
 //!
-//! Provides conversions between stabilizer states (from `pecos-qsim`)
+//! Provides conversions between stabilizer states (from `pecos-simulators`)
 //! and ZX graph states.
 
 use pecos_core::pauli::Pauli;
 use pecos_core::{PauliString, QuarterPhase, QubitId};
-use pecos_qsim::{Gens, SparseStab};
+use pecos_simulators::{Gens, SparseStab};
 
 use crate::ZxGraph;
 
@@ -155,7 +155,7 @@ pub fn extract_graph_state(stab: &SparseStab) -> (Vec<bool>, Vec<String>) {
 mod tests {
     use super::*;
     use pecos_core::PauliOperator;
-    use pecos_qsim::CliffordGateable;
+    use pecos_simulators::CliffordGateable;
     use quizx::graph::GraphLike;
 
     fn qid(q: usize) -> QubitId {

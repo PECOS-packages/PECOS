@@ -639,7 +639,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::runner::CircuitRunner;
         use pecos_core::QubitId;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let commands = CommandBuilder::new().pz(0).z(0).mz(0).build();
 
@@ -805,7 +805,7 @@ mod tests {
         use crate::command::CommandBuilder;
         use crate::noise::composite::{CompositeChannelBuilder, prelude::*};
         use crate::runner::CircuitRunner;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         // Create a model with both channel types
         let model = GeneralNoiseModelBuilder::new()
@@ -845,7 +845,7 @@ mod tests {
         use crate::noise::composite::CompositeNoiseModelBuilder;
         use crate::runner::CircuitRunner;
         use pecos_core::QubitId;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p1 = 0.3; // High error rate for clear statistical signal
         let shots = 1000;
@@ -910,7 +910,7 @@ mod tests {
         use crate::noise::composite::CompositeNoiseModelBuilder;
         use crate::runner::CircuitRunner;
         use pecos_core::QubitId;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p2 = 0.3;
         let shots = 1000;
@@ -978,7 +978,7 @@ mod tests {
         use crate::noise::composite::CompositeNoiseModelBuilder;
         use crate::runner::CircuitRunner;
         use pecos_core::QubitId;
-        use pecos_qsim::SparseStab;
+        use pecos_simulators::SparseStab;
 
         let p_meas = 0.2;
         let shots = 1000;

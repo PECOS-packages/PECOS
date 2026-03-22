@@ -12,7 +12,7 @@
 
 use pecos_core::{QubitId, qid, qid2};
 use pecos_cppsparsesim::CppSparseStab;
-use pecos_qsim::{CliffordGateable, QuantumSimulator};
+use pecos_simulators::{CliffordGateable, QuantumSimulator};
 
 #[test]
 fn test_basic_gates() {

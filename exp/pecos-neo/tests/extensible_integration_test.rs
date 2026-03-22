@@ -29,7 +29,7 @@ use pecos_neo::extensible::{
 use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
 use pecos_neo::outcome::MeasurementOutcomes;
 use pecos_neo::program::{CommandSource, ConditionalProgram, ProgramRunner, StaticProgram};
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::any::TypeId;
 
 // ============================================================================

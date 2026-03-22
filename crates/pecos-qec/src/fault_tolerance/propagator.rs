@@ -113,8 +113,8 @@ pub use types::{
 // Internal imports
 use super::{PauliFault, SpacetimeLocation, extract_spacetime_locations};
 use pecos_core::gate_type::GateType;
-use pecos_qsim::PauliProp;
 use pecos_quantum::{DagCircuit, DagTraversalIndex};
+use pecos_simulators::PauliProp;
 use std::collections::{BTreeSet, BinaryHeap};
 
 // ============================================================================
@@ -373,7 +373,7 @@ impl InfluenceRecorder for CountingRecorder {
 /// ```
 /// use pecos_qec::fault_tolerance::propagator::{DagPropagator, Direction};
 /// use pecos_quantum::DagCircuit;
-/// use pecos_qsim::PauliProp;
+/// use pecos_simulators::PauliProp;
 ///
 /// let mut dag = DagCircuit::new();
 /// dag.h(0);

@@ -29,7 +29,7 @@ use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation};
 use super::propagator::types::{DetectorId, MeasurementId};
 use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate};
 use pecos_core::QubitId;
-use pecos_qsim::{PauliProp, SymbolicSparseStab};
+use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
 use std::collections::BinaryHeap;
 
@@ -619,7 +619,7 @@ impl<'a> InfluenceBuilder<'a> {
 
 /// Information about measurements from symbolic simulation.
 struct MeasurementInfo {
-    history: pecos_qsim::symbolic_sparse_stab::MeasurementHistory,
+    history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
     node_to_meas_idx: Vec<Option<usize>>,
     #[allow(dead_code)]
     num_measurements: usize,

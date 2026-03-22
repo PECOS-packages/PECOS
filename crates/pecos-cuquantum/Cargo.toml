@@ -15,7 +15,7 @@ readme = "README.md"
 pecos-cuquantum-sys.workspace = true
 pecos-build.workspace = true
 pecos-core.workspace = true
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 thiserror.workspace = true
 fastrand.workspace = true
 

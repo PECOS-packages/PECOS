@@ -17,7 +17,7 @@
 //! - `CuStateVec` (GPU via NVIDIA cuQuantum/CUDA)
 //! - `QuestStateVec` (`QuEST` - CPU or CUDA)
 //! - `QulacsStateVec` (Qulacs - CPU)
-//! - `StateVec` (pecos-qsim pure Rust CPU)
+//! - `StateVec` (pecos-simulators pure Rust CPU)
 //!
 //! Run with specific features:
 //! ```
@@ -29,7 +29,9 @@
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use pecos_core::{Angle64, QubitId};
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVecSoA};
+use pecos_simulators::{
+    ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVecSoA,
+};
 use std::hint::black_box;
 
 #[cfg(feature = "gpu-sims")]
@@ -239,7 +241,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Benchmark parallel vs sequential execution for large state vectors.
-/// Only runs when the `parallel` feature is enabled on pecos-qsim.
+/// Only runs when the `parallel` feature is enabled on pecos-simulators.
 #[cfg(feature = "parallel")]
 fn bench_parallel_execution<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Parallel Execution");
@@ -331,7 +333,7 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
     for (num_qubits, num_layers) in configs {
         let label = format!("{num_qubits}q_{num_layers}l");
 
-        // Benchmark pecos-qsim StateVec (CPU baseline)
+        // Benchmark pecos-simulators StateVec (CPU baseline)
         group.bench_with_input(
             BenchmarkId::new("StateVec_CPU", &label),
             &(num_qubits, num_layers),

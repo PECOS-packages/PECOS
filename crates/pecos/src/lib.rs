@@ -208,7 +208,7 @@ pub mod quantum {
 /// This module provides quantum simulator backends and their builders.
 /// It mirrors `pecos.simulators` on the Python side.
 ///
-/// # Simulator Types (from pecos-qsim)
+/// # Simulator Types (from pecos-simulators)
 ///
 /// - **`SparseStab`**: Sparse stabilizer simulator (Clifford circuits)
 /// - **`StateVec`**: State vector simulator (arbitrary gates)
@@ -228,19 +228,17 @@ pub mod quantum {
 /// # Example
 ///
 /// ```rust
-/// use pecos::simulators::SparseStab;
-/// use pecos::prelude::*;
+/// use pecos::simulators::{SparseStab, CliffordGateable};
+/// use pecos::QubitId;
 ///
 /// let mut sim = SparseStab::new(2);
-/// sim.h(0).cx(0, 1);
+/// sim.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
 /// ```
 #[cfg(feature = "sim")]
 pub mod simulators {
-    // Core simulator types from pecos-qsim
-    pub use pecos_qsim::{
-        CliffordGateable, ArbitraryRotationGateable,
-        SparseStab, StateVec,
-        SymbolicSparseStab,
+    // Core simulator types from pecos-simulators
+    pub use pecos_simulators::{
+        ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec, SymbolicSparseStab,
     };
 
     // Engine wrappers
@@ -261,8 +259,8 @@ pub mod simulators {
     #[cfg(feature = "quest")]
     pub use pecos_quest::{
         QuestDensityMatrix, QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder,
-        QuestStateVec, QuestStateVecEngine, QuestStateVectorEngineBuilder,
-        quest_density_matrix, quest_state_vec,
+        QuestStateVec, QuestStateVecEngine, QuestStateVectorEngineBuilder, quest_density_matrix,
+        quest_state_vec,
     };
 
     #[cfg(feature = "qulacs")]
@@ -748,7 +746,7 @@ pub mod qec {
 /// Quantum simulation implementations
 ///
 /// This module provides low-level quantum simulation implementations and utilities
-/// from pecos-qsim, including stabilizer simulators, state vectors, and measurement
+/// from pecos-simulators, including stabilizer simulators, state vectors, and measurement
 /// samplers.
 ///
 /// # Available Types
@@ -773,7 +771,7 @@ pub mod qec {
 /// ```
 #[cfg(feature = "sim")]
 pub mod qsim {
-    pub use pecos_qsim::*;
+    pub use pecos_simulators::*;
 }
 
 // ============================================================================

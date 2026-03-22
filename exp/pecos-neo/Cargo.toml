@@ -17,7 +17,7 @@ crate-type = ["rlib"]
 [dependencies]
 pecos-core.workspace = true
 pecos-quantum.workspace = true
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 pecos-rng.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

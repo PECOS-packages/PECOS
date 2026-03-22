@@ -19,7 +19,7 @@
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use pecos_core::QubitId;
-use pecos_qsim::{CliffordGateable, Stab};
+use pecos_simulators::{CliffordGateable, Stab};
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;

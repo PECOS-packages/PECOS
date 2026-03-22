@@ -13,7 +13,7 @@
 use pecos_cuquantum::{
     CuDensityMat, CuQuantumError, CuStabilizer, CuStateVec, CuTensorNet, is_cuquantum_available,
 };
-use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 
 /// Skip a test if cuQuantum is not available at runtime
 macro_rules! skip_if_no_cuquantum {

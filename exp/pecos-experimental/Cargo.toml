@@ -19,7 +19,7 @@ crate-type = ["rlib"]
 # Can depend on any internal crate - this is the staging area
 pecos-core.workspace = true
 pecos-rng.workspace = true
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 pecos-quantum.workspace = true
 rand.workspace = true
 wide.workspace = true

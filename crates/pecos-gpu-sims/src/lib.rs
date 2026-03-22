@@ -17,7 +17,7 @@
 //!
 //! ```
 //! use pecos_gpu_sims::GpuStateVec;
-//! use pecos_qsim::CliffordGateable;
+//! use pecos_simulators::CliffordGateable;
 //! use pecos_core::{qid, qid2};
 //!
 //! let mut sim = GpuStateVec::new(4).unwrap(); // 4 qubits

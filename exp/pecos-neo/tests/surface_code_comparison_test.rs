@@ -20,7 +20,7 @@ use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{Engine, QuantumSystem};
 use pecos_neo::prelude::*;
-use pecos_qsim::SparseStab;
+use pecos_simulators::SparseStab;
 use std::collections::HashMap;
 
 /// Configuration for a simple repetition code (distance-3).

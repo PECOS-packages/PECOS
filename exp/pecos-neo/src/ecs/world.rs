@@ -29,8 +29,8 @@ use super::resource::Resources;
 use crate::noise::NoiseContext;
 use crate::sampling::SampleWeight;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_qsim::CliffordGateable;
 use pecos_rng::PecosRng;
+use pecos_simulators::CliffordGateable;
 use std::collections::BTreeSet;
 
 /// Transferable entity state for moving entities between worlds.
@@ -64,7 +64,7 @@ pub struct EntityTransfer<S: CliffordGateable> {
 ///
 /// ```
 /// use pecos_neo::ecs::World;
-/// use pecos_qsim::SparseStab;
+/// use pecos_simulators::SparseStab;
 ///
 /// // Create world with base seed
 /// let mut world: World<SparseStab> = World::new(42);
@@ -576,7 +576,7 @@ where
 mod tests {
     use super::*;
     use crate::sampling::weight::SampleWeight;
-    use pecos_qsim::SparseStab;
+    use pecos_simulators::SparseStab;
 
     #[test]
     fn test_world_spawn() {

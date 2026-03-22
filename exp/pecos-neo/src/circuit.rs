@@ -20,7 +20,7 @@
 //! ```no_run
 //! use pecos_neo::prelude::*;
 //! use pecos_quantum::TickCircuit;
-//! use pecos_qsim::SparseStab;
+//! use pecos_simulators::SparseStab;
 //!
 //! // Build a circuit using TickCircuit
 //! let mut circuit = TickCircuit::new();

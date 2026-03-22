@@ -17,8 +17,8 @@
 // // wasm_bindgen_test_configure!(run_in_browser);
 //
 // use pecos::sets::{Set, VecSet};
-// use pecos_qsims::SparseStab;
-// // use pecos-qsim;
+// use pecos_simulatorss::SparseStab;
+// // use pecos-simulators;
 //
 // #[wasm_bindgen_test]
 // fn wasm_compatibility_test() {

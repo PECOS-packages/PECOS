@@ -21,7 +21,7 @@ tket = { workspace = true, optional = true }
 log.workspace = true
 
 [dev-dependencies]
-pecos-qsim.workspace = true
+pecos-simulators.workspace = true
 
 [features]
 default = []

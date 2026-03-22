@@ -34,7 +34,7 @@
 //! # Example
 //!
 //! ```rust
-//! use pecos_qsim::{SymbolicSparseStab, MeasurementSampler};
+//! use pecos_simulators::{SymbolicSparseStab, MeasurementSampler};
 //! use pecos_experimental::execute_hugr;
 //! use pecos_quantum::{DagCircuit, Gate};
 //!
@@ -58,13 +58,13 @@
 //! ```
 //!
 //! [`SimpleHugr`]: pecos_quantum::hugr_convert::SimpleHugr
-//! [`MeasurementSampler`]: pecos_qsim::MeasurementSampler
+//! [`MeasurementSampler`]: pecos_simulators::MeasurementSampler
 
 use std::fmt;
 
 use pecos_core::gate_type::GateType;
-use pecos_qsim::SymbolicSparseStab;
 use pecos_quantum::Circuit;
+use pecos_simulators::SymbolicSparseStab;
 
 /// Error type for HUGR execution failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,7 +167,7 @@ impl std::error::Error for HugrExecutionError {}
 /// # Example
 ///
 /// ```rust
-/// use pecos_qsim::SymbolicSparseStab;
+/// use pecos_simulators::SymbolicSparseStab;
 /// use pecos_experimental::execute_hugr;
 /// use pecos_quantum::{DagCircuit, Gate};
 ///
@@ -350,8 +350,8 @@ fn validate_qubit_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_qsim::SymbolicSparseStab;
     use pecos_quantum::DagCircuit;
+    use pecos_simulators::SymbolicSparseStab;
 
     #[test]
     fn test_bell_state_circuit() {

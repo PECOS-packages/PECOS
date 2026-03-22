@@ -26,8 +26,8 @@ from pecos import BitInt, BitUInt
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
-from pecos.noise.fake_error_model import FakeErrorModel
 from pecos.exceptions import NotSupportedGateError
+from pecos.noise.fake_error_model import FakeErrorModel
 
 if TYPE_CHECKING:
     from typing import Protocol

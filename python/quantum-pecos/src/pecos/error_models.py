@@ -21,5 +21,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from pecos.noise import *  # noqa: E402, F401, F403
-from pecos.noise import __all__  # noqa: E402, F811
+from pecos.noise import *  # noqa: E402, F403

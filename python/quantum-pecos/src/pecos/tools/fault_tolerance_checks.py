@@ -27,8 +27,8 @@ import pecos as pc
 from pecos.circuits import LogicalCircuit, QuantumCircuit
 from pecos.decoders import MWPM2D
 from pecos.engines.circuit_runners import Standard
-from pecos.noise.parent_class_error_gen import ErrorCircuits
 from pecos.misc.stabilizer_funcs import circ2set, find_stab, op_commutes, remove_stab
+from pecos.noise.parent_class_error_gen import ErrorCircuits
 from pecos.simulators import SparseSimPy
 
 if TYPE_CHECKING:

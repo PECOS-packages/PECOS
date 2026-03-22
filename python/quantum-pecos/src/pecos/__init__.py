@@ -194,11 +194,11 @@ from pecos import (
     circuits,
     decoders,
     engines,
-    noise,
     exceptions,  # Exception classes
     graph,
     guppy,  # Direct Guppy code generation for QEC - bypasses SLR
     misc,
+    noise,
     programs,
     protocols,
     qec,  # Pure QEC geometry (surface, color codes) - no SLR dependencies
@@ -337,7 +337,6 @@ __all__ = [
     # Data types
     "dtypes",
     "engines",
-    "noise",
     "exceptions",  # Exception classes
     "exp",
     "f32",
@@ -365,6 +364,7 @@ __all__ = [
     "min",
     "misc",  # Kept for backwards compatibility
     "newton",
+    "noise",
     "num",
     "ones",
     "optimize",

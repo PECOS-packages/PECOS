@@ -20,9 +20,9 @@
 use log::debug;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Handle `tket.guppy` operations.
     #[allow(clippy::unused_self)] // Consistent with other handler methods; may use self in future
     pub(crate) fn handle_guppy_op(&mut self, _hugr: &Hugr, node: Node, op_name: &str) -> bool {

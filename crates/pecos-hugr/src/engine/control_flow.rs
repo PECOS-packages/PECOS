@@ -14,14 +14,14 @@
 
 //! Control flow handling for the HUGR interpreter.
 //!
-//! This module organizes control flow methods for [`super::GuppyHugrEngine`]:
+//! This module organizes control flow methods for [`super::HugrEngine`]:
 //!
 //! - [`tailloop`]: `TailLoop` iteration and completion
 //! - [`conditional`]: Conditional branching
 //! - [`cfg`]: Control flow graph traversal
 //! - [`call`]: Function call handling
 //!
-//! Each submodule contains `impl GuppyHugrEngine` blocks with methods related to
+//! Each submodule contains `impl HugrEngine` blocks with methods related to
 //! that specific control flow construct.
 
 pub mod call;

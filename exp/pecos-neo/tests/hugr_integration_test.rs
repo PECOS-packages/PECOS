@@ -77,7 +77,7 @@ fn test_hugr_explicit_engine() {
     let hugr = load_hugr("bell_state.hugr");
     let source = String::from_utf8_lossy(&hugr.hugr).into_owned();
     let results = sim_neo(source)
-        .classical(pecos_guppy_hugr::hugr_engine())
+        .classical(pecos_hugr::hugr_engine())
         .seed(42)
         .shots(10)
         .build()

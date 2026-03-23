@@ -20,10 +20,10 @@
 use log::debug;
 use tket::hugr::{Hugr, Node};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 use crate::engine::types::ClassicalValue;
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Handle `tket.wasm` operations for WebAssembly integration.
     pub(crate) fn handle_wasm_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.wasm operation: {op_name} at {node:?}");

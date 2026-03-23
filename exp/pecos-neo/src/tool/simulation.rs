@@ -1150,7 +1150,7 @@ pub enum PendingEngineBuilder {
     Qasm(pecos_qasm::QasmEngineBuilder),
     /// HUGR engine builder (requires `hugr` feature)
     #[cfg(feature = "hugr")]
-    Hugr(pecos_guppy_hugr::GuppyHugrEngineBuilder),
+    Hugr(pecos_hugr::HugrEngineBuilder),
 }
 
 #[cfg(feature = "engines-adapter")]
@@ -1186,10 +1186,10 @@ impl From<pecos_qasm::QasmEngineBuilder> for PendingEngineBuilder {
     }
 }
 
-// Conversion from GuppyHugrEngineBuilder to PendingEngineBuilder
+// Conversion from HugrEngineBuilder to PendingEngineBuilder
 #[cfg(feature = "hugr")]
-impl From<pecos_guppy_hugr::GuppyHugrEngineBuilder> for PendingEngineBuilder {
-    fn from(builder: pecos_guppy_hugr::GuppyHugrEngineBuilder) -> Self {
+impl From<pecos_hugr::HugrEngineBuilder> for PendingEngineBuilder {
+    fn from(builder: pecos_hugr::HugrEngineBuilder) -> Self {
         Self::Hugr(builder)
     }
 }
@@ -1580,7 +1580,7 @@ impl SimNeoBuilder {
                     #[cfg(feature = "hugr")]
                     TypedProgram::Hugr(hugr) => {
                         // Auto-select hugr_engine() and configure with the program
-                        let builder = pecos_guppy_hugr::hugr_engine().hugr_bytes(hugr.hugr);
+                        let builder = pecos_hugr::hugr_engine().hugr_bytes(hugr.hugr);
                         self.source =
                             Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
                                 builder,

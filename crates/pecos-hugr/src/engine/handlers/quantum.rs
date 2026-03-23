@@ -26,10 +26,10 @@
 use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 use crate::engine::types::ClassicalValue;
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Handle `tket.quantum` non-gate operations (e.g., `symbolic_angle`).
     ///
     /// Note: Quantum gate operations from tket.quantum are handled via the

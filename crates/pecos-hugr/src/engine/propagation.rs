@@ -28,11 +28,11 @@ use pecos_core::gate_type::GateType;
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 use crate::engine::analysis::get_container_type;
 use crate::engine::types::{ClassicalValue, ContainerType, QuantumOp, WireKey};
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Trace through an Input node to find the actual source wire.
     ///
     /// When processing nodes inside containers (DFG, Case, `FuncDefn`, etc.),

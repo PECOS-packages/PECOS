@@ -13,7 +13,7 @@ Supports:
 - Qubit allocation via `VarDefine` (no explicit Alloc instructions)
 
 Scope: Straight-line quantum circuits (no classical control flow).
-For programs with control flow, use `GuppyHugrEngine` directly.
+For programs with control flow, use `HugrEngine` directly.
 */
 
 use crate::builtin_ops::{BuiltinOp, FuncOp, ModuleOp, VarDefineOp};

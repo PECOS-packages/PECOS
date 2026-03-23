@@ -40,7 +40,7 @@ Note: For Python wrappers that accept pecos.programs types, use:
 from pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
-    GuppyHugrEngineBuilder,
+    HugrEngineBuilder,
     HugrSimulation,
     PhirJsonSimulation,
     PhirSimulation,
@@ -75,7 +75,7 @@ from pecos_rslib.engines import (
 __all__ = [
     "ByteMessage",
     "ByteMessageBuilder",
-    "GuppyHugrEngineBuilder",
+    "HugrEngineBuilder",
     "HugrSimulation",
     "PhirEngineBuilder",
     "PhirJsonEngine",

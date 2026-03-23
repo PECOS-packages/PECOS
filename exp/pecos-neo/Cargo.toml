@@ -33,13 +33,13 @@ pecos-programs = { workspace = true, optional = true }
 # Optional: for QASM support
 pecos-qasm = { workspace = true, optional = true }
 # Optional: for direct HUGR interpreter support
-pecos-guppy-hugr = { workspace = true, optional = true }
+pecos-hugr = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true
 pecos-engines.workspace = true
 pecos-qasm.workspace = true
-pecos-guppy-hugr.workspace = true
+pecos-hugr.workspace = true
 criterion.workspace = true
 proptest = "1.4"
 # Enable our own features for doctests and integration tests
@@ -53,7 +53,7 @@ harness = false
 default = []
 engines-adapter = ["dep:pecos-engines", "dep:pecos-programs"]
 qasm = ["engines-adapter", "dep:pecos-qasm"]
-hugr = ["engines-adapter", "dep:pecos-guppy-hugr"]
+hugr = ["engines-adapter", "dep:pecos-hugr"]
 
 [lints]
 workspace = true

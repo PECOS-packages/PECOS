@@ -23,10 +23,10 @@ use log::debug;
 use tket::hugr::ops::OpTrait;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 use crate::engine::types::ClassicalValue;
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Handle `collections.array` operations.
     #[allow(
         clippy::too_many_lines,

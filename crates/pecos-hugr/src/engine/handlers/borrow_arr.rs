@@ -28,10 +28,10 @@ use log::debug;
 use tket::hugr::ops::OpTrait;
 use tket::hugr::{Hugr, HugrView, Node};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 use crate::engine::types::ClassicalValue;
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Handle `collections.borrow_arr` operations.
     #[allow(clippy::too_many_lines)]
     pub(crate) fn handle_borrow_arr_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {

@@ -32,11 +32,38 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tket::hugr::Hugr;
 
+#[cfg(feature = "wasm")]
+use pecos_wasm::ForeignObject;
+
+/// Wrapper for `ForeignObject` that implements Clone using `clone_box()`
+#[cfg(feature = "wasm")]
+struct CloneableForeignObject(Box<dyn ForeignObject>);
+
+#[cfg(feature = "wasm")]
+impl Clone for CloneableForeignObject {
+    fn clone(&self) -> Self {
+        CloneableForeignObject(self.0.clone_box())
+    }
+}
+
 /// Builder for HUGR engines that integrates with the unified simulation API
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct HugrEngineBuilder {
     /// The HUGR source (either bytes, file path, or direct Hugr)
     source: Option<HugrSource>,
+    /// Optional foreign object for WASM calls
+    #[cfg(feature = "wasm")]
+    foreign_object: Option<CloneableForeignObject>,
+}
+
+impl Clone for HugrEngineBuilder {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            #[cfg(feature = "wasm")]
+            foreign_object: self.foreign_object.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -82,6 +109,14 @@ impl HugrEngineBuilder {
     pub fn has_source(&self) -> bool {
         self.source.is_some()
     }
+
+    /// Set a foreign object for WASM function calls
+    #[cfg(feature = "wasm")]
+    #[must_use]
+    pub fn foreign_object(mut self, foreign_obj: Box<dyn ForeignObject>) -> Self {
+        self.foreign_object = Some(CloneableForeignObject(foreign_obj));
+        self
+    }
 }
 
 impl ClassicalControlEngineBuilder for HugrEngineBuilder {
@@ -96,17 +131,29 @@ impl ClassicalControlEngineBuilder for HugrEngineBuilder {
     /// - Failed to read HUGR file from disk
     /// - Failed to parse HUGR content
     fn build(self) -> Result<Self::Engine, PecosError> {
-        match self.source {
-            Some(HugrSource::Bytes(bytes)) => HugrEngine::from_bytes(&bytes),
-            Some(HugrSource::File(path)) => HugrEngine::from_file(&path),
+        #[allow(unused_mut)]
+        let mut engine = match self.source {
+            Some(HugrSource::Bytes(bytes)) => HugrEngine::from_bytes(&bytes)?,
+            Some(HugrSource::File(path)) => HugrEngine::from_file(&path)?,
             Some(HugrSource::Direct(hugr)) => {
                 // Clone the Hugr from the Arc
-                Ok(HugrEngine::from_hugr((*hugr).clone()))
+                HugrEngine::from_hugr((*hugr).clone())
             }
-            None => Err(PecosError::Input(
-                "No HUGR source specified. Use .hugr(), .hugr_bytes(), or .hugr_file()".to_string(),
-            )),
+            None => {
+                return Err(PecosError::Input(
+                    "No HUGR source specified. Use .hugr(), .hugr_bytes(), or .hugr_file()"
+                        .to_string(),
+                ));
+            }
+        };
+
+        // Set the foreign object if provided (WASM feature)
+        #[cfg(feature = "wasm")]
+        if let Some(foreign_obj) = self.foreign_object {
+            engine.set_foreign_object(foreign_obj.0);
         }
+
+        Ok(engine)
     }
 }
 
@@ -114,6 +161,7 @@ impl std::fmt::Debug for HugrEngineBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HugrEngineBuilder")
             .field("has_source", &self.source.is_some())
+            .field("has_foreign_object", &self.foreign_object.is_some())
             .finish()
     }
 }

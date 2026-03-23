@@ -14,12 +14,48 @@
 
 //! HUGR loading utilities.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Error, Result, anyhow};
 use std::path::Path;
+use tket::extension::rotation::ROTATION_EXTENSION;
+use tket::extension::{TKET_EXTENSION, TKET1_EXTENSION};
 use tket::hugr::Hugr;
-use tket::hugr::package::Package;
+use tket::hugr::envelope::read_envelope;
+use tket::hugr::extension::{ExtensionRegistry, prelude};
+use tket::hugr::std_extensions::arithmetic::{
+    conversions, float_ops, float_types, int_ops, int_types,
+};
+use tket::hugr::std_extensions::{collections, logic, ptr};
+use tket_qsystem::extension::{futures as qsystem_futures, qsystem, result as qsystem_result};
 
-/// Load a HUGR from bytes (binary envelope or JSON format).
+/// Extension registry matching the one used by pecos-hugr-qis and selene.
+static REGISTRY: std::sync::LazyLock<ExtensionRegistry> = std::sync::LazyLock::new(|| {
+    ExtensionRegistry::new([
+        prelude::PRELUDE.to_owned(),
+        int_types::EXTENSION.to_owned(),
+        int_ops::EXTENSION.to_owned(),
+        float_types::EXTENSION.to_owned(),
+        float_ops::EXTENSION.to_owned(),
+        conversions::EXTENSION.to_owned(),
+        logic::EXTENSION.to_owned(),
+        ptr::EXTENSION.to_owned(),
+        collections::list::EXTENSION.to_owned(),
+        collections::array::EXTENSION.to_owned(),
+        collections::static_array::EXTENSION.to_owned(),
+        collections::borrow_array::EXTENSION.to_owned(),
+        qsystem_futures::EXTENSION.to_owned(),
+        qsystem_result::EXTENSION.to_owned(),
+        qsystem::EXTENSION.to_owned(),
+        ROTATION_EXTENSION.to_owned(),
+        TKET_EXTENSION.to_owned(),
+        TKET1_EXTENSION.to_owned(),
+        tket::extension::bool::BOOL_EXTENSION.to_owned(),
+        tket::extension::debug::DEBUG_EXTENSION.to_owned(),
+        tket_qsystem::extension::gpu::EXTENSION.to_owned(),
+        tket_qsystem::extension::wasm::EXTENSION.to_owned(),
+    ])
+});
+
+/// Load a HUGR from bytes (binary envelope format).
 ///
 /// # Errors
 ///
@@ -32,60 +68,18 @@ pub fn load_hugr_from_bytes(bytes: &[u8]) -> Result<Hugr> {
         return Err(anyhow!("Empty HUGR input"));
     }
 
-    // Check if input is JSON format (starts with '{') vs binary envelope format
-    let (bytes_to_load, is_json) = if bytes[0] == b'{' {
-        // JSON format - wrap it in a binary envelope so HUGR can load it
-        let json_str =
-            std::str::from_utf8(bytes).map_err(|e| anyhow!("Invalid UTF-8 in JSON HUGR: {e}"))?;
+    let (_desc, package) = read_envelope(bytes, &REGISTRY)
+        .map_err(|e| Error::new(e).context("Failed to load HUGR"))?;
 
-        // Create a binary envelope with JSON content
-        let mut envelope = Vec::new();
-
-        // Magic header for HUGR envelope
-        envelope.extend_from_slice(b"HUGRiHJv");
-
-        // Format byte: 0x3F (63) for JSON format
-        envelope.push(0x3F);
-
-        // Compression byte: 0x40 (64)
-        envelope.push(0x40);
-
-        // Append the JSON content
-        envelope.extend_from_slice(json_str.as_bytes());
-
-        (envelope, true)
-    } else {
-        (bytes.to_vec(), false)
-    };
-
-    // Try to load as a Package first
-    let mut cursor = std::io::Cursor::new(&bytes_to_load);
-    match Package::load(&mut cursor, None) {
-        Ok(package) => {
-            if package.modules.is_empty() {
-                return Err(anyhow!("Package contains no modules"));
-            }
-
-            // Validate the package
-            package
-                .validate()
-                .map_err(|e| anyhow!("HUGR package validation failed: {e}"))?;
-
-            // Return the first module
-            Ok(package.modules[0].clone())
-        }
-        Err(_) if is_json => {
-            // Try loading as a direct HUGR
-            let mut cursor = std::io::Cursor::new(&bytes_to_load);
-            Hugr::load(&mut cursor, None).map_err(|e| anyhow!("Failed to load HUGR: {e}"))
-        }
-        Err(e) => {
-            // For binary format, try direct HUGR loading
-            log::debug!("Package::load failed: {e:?}");
-            let mut cursor = std::io::Cursor::new(&bytes_to_load);
-            Hugr::load(&mut cursor, None).map_err(|e| anyhow!("Failed to load HUGR: {e}"))
-        }
+    if package.modules.is_empty() {
+        return Err(anyhow!("Package contains no modules"));
     }
+
+    package
+        .validate()
+        .map_err(|e| Error::new(e).context("HUGR package validation failed"))?;
+
+    Ok(package.modules[0].clone())
 }
 
 /// Load a HUGR from a file path.

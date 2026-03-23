@@ -3561,7 +3561,7 @@ dependencies = [
  "pecos-cppsparsesim",
  "pecos-decoders",
  "pecos-engines",
- "pecos-guppy-hugr",
+ "pecos-hugr",
  "pecos-hugr-qis",
  "pecos-llvm",
  "pecos-num",
@@ -3762,7 +3762,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-guppy-hugr"
+name = "pecos-hugr"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
@@ -3779,22 +3779,6 @@ dependencies = [
  "tket",
  "tket-qsystem",
  "wat",
-]
-
-[[package]]
-name = "pecos-hugr"
-version = "0.2.0-dev.0"
-dependencies = [
- "anyhow",
- "log",
- "pecos-core",
- "pecos-engines",
- "pecos-quantum",
- "pecos-quest",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tket",
 ]
 
 [[package]]
@@ -3850,7 +3834,7 @@ dependencies = [
  "num_cpus",
  "pecos-core",
  "pecos-engines",
- "pecos-guppy-hugr",
+ "pecos-hugr",
  "pecos-neo",
  "pecos-programs",
  "pecos-qasm",

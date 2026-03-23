@@ -38,13 +38,13 @@ use log::debug;
 use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
-use crate::engine::GuppyHugrEngine;
+use crate::engine::HugrEngine;
 use crate::engine::analysis::{
     all_predecessors_ready, find_extension_ops_in_block, find_input_node, find_output_node,
 };
 use crate::engine::types::ClassicalValue;
 
-impl GuppyHugrEngine {
+impl HugrEngine {
     /// Try to resolve the branch value for a CFG `DataflowBlock`.
     /// Returns `Some(branch_index)` if the Sum tag value is known, None otherwise.
     #[allow(clippy::too_many_lines)]

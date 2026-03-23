@@ -270,6 +270,8 @@ from pecos.programs import Guppy, Hugr, PhirJson, ProgramWrapper, Qasm, Qis, Was
 
 # Re-export noise and quantum engine builders from pecos_rslib
 # These don't need wrappers since they don't take program types
+BiasedDepolarizingNoiseModelBuilder = pecos_rslib.BiasedDepolarizingNoiseModelBuilder
+DepolarizingNoiseModelBuilder = pecos_rslib.DepolarizingNoiseModelBuilder
 depolarizing_noise = pecos_rslib.depolarizing_noise
 biased_depolarizing_noise = pecos_rslib.biased_depolarizing_noise
 general_noise = pecos_rslib.general_noise
@@ -293,11 +295,13 @@ __all__ = [
     # Core types
     "Array",
     # Deprecated
+    "BiasedDepolarizingNoiseModelBuilder",
     "BinArray",  # Deprecated - use BitInt instead
     "BitInt",
     "BitUInt",
     # Type categories
     "Complex",
+    "DepolarizingNoiseModelBuilder",
     "Float",
     "GateRegistry",
     "GateSignatureMismatchError",

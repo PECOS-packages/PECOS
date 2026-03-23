@@ -215,14 +215,14 @@ When decomposing parameterized gates, `AngleSource` specifies where each angle c
 ### Python API
 
 ```python
-from pecos_rslib import GateRegistry, GateDefBuilder, AngleSource
+from pecos.quantum import GateRegistry
+from pecos import AngleSource
 
 registry = GateRegistry()
 
-# Define a custom gate
+# Define a custom gate via registry.define() which returns a GateDefBuilder
 (
-    GateDefBuilder()
-    .define("RZX", quantum_arity=2)
+    registry.define("RZX", quantum_arity=2)
     .angle_arity(1)
     .step("H", [1])
     .step("CX", [0, 1])

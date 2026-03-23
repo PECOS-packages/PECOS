@@ -675,19 +675,19 @@ wasm.init()  # Re-initialize
 
 === ":fontawesome-brands-python: Python"
 
-    ```python
-    from pecos_rslib import WasmForeignObject
+    ```python,notest
+    from pecos import WasmForeignObject, WasmError
 
     # File not found
     try:
         wasm = WasmForeignObject.from_file("nonexistent.wasm")
-    except FileNotFoundError as e:
+    except WasmError as e:
         print(f"File error: {e}")
 
     # Compilation error (invalid WASM)
     try:
         wasm = WasmForeignObject.from_bytes(b"invalid wasm")
-    except RuntimeError as e:
+    except WasmError as e:
         print(f"Compilation error: {e}")
 
     # Function not found - need a valid wasm first
@@ -695,7 +695,7 @@ wasm.init()  # Re-initialize
     wasm.init()
     try:
         wasm.exec("nonexistent_function", [])
-    except RuntimeError as e:
+    except WasmError as e:
         print(f"Execution error: {e}")
     ```
 

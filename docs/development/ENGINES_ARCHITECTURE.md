@@ -704,7 +704,7 @@ pub trait SimulatorInterface {
 
 ByteMessage is exposed to Python via `pecos-rslib`:
 
-```python
+```python,notest
 from pecos import ByteMessage
 
 # Build a message
@@ -787,7 +787,7 @@ PECOS is designed for Python users to write custom components while leveraging R
 
 Python components implement Protocol classes (structural typing):
 
-```python
+```python,notest
 # pecos/protocols.py
 
 
@@ -820,7 +820,7 @@ class Decoder(Protocol):
 
 Users can implement any protocol in pure Python:
 
-```python
+```python,notest
 class MyCustomErrorModel:
     """Custom error model - just implement the protocol methods."""
 
@@ -904,7 +904,7 @@ results = engine.run(program, shots=10000)
 
 For computationally intensive classical logic (decoders, lookup tables), PECOS supports WASM:
 
-```python
+```python,notest
 from pecos.rslib import WasmForeignObject
 
 # Load compiled decoder

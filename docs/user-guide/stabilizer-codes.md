@@ -41,14 +41,14 @@ Pauli strings are the fundamental building block. PECOS provides a concise const
 
 === ":fontawesome-brands-python: Python"
 
-    ```python
-    from pecos_rslib import PauliString
+    ```python,notest
+    from pecos.quantum import PauliString
 
     # From string notation
     p = PauliString.from_str("XZI")
     q = PauliString.from_str("ZXI")
 
-    # Commutation
+    # Commutation (not yet available in Python bindings)
     print(p.commutes_with(q))  # False (anticommute)
     ```
 

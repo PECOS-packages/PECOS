@@ -37,10 +37,10 @@ Note: For Python wrappers that accept pecos.programs types, use:
 # specific language governing permissions and limitations under the License.
 
 # Re-export Rust engines from pecos_rslib.engines submodule
+from pecos_rslib import ByteMessage, ByteMessageBuilder
 from pecos_rslib.engines import (
-    # Engine classes
+    PhirEngineBuilder,
     PhirJsonEngine,
-    # Builder classes
     PhirJsonEngineBuilder,
     QasmEngineBuilder,
     QisEngineBuilder,
@@ -48,25 +48,26 @@ from pecos_rslib.engines import (
     SparseStabilizerEngineBuilder,
     StateVecEngine,
     StateVectorEngineBuilder,
-    # Factory functions
+    phir_engine,
     phir_json_engine,
     qasm_engine,
     qis_engine,
 )
 
 __all__ = [
+    "ByteMessage",
+    "ByteMessageBuilder",
+    "PhirEngineBuilder",
     "PhirJsonEngine",
     "PhirJsonEngineBuilder",
     "QasmEngineBuilder",
     "QisEngineBuilder",
     "SparseStabEngine",
     "SparseStabilizerEngineBuilder",
-    # Engine classes
     "StateVecEngine",
-    # Builder classes
     "StateVectorEngineBuilder",
+    "phir_engine",
     "phir_json_engine",
-    # Factory functions
     "qasm_engine",
     "qis_engine",
 ]

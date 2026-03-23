@@ -74,7 +74,16 @@ if TYPE_CHECKING:
 
 # Import types from pecos_rslib
 try:
-    from pecos_rslib import Pauli, PauliString
+    from pecos_rslib import (
+        CliffordRep,
+        GateBindingsDict,
+        Pauli,
+        PauliSequence,
+        PauliStabilizerGroup,
+        PauliString,
+        StabilizerCode,
+        TableauWrapper,
+    )
 
     # Circuit representation types
     # HUGR conversion utilities
@@ -195,15 +204,21 @@ def pauli_string(
 
 
 __all__ = [
+    "CliffordRep",
     "DagCircuit",
     "DagCircuitWouldCycleError",
     "Gate",
+    "GateBindingsDict",
     "GateType",
     "HugrConversionError",
     "Pauli",
+    "PauliSequence",
+    "PauliStabilizerGroup",
     "PauliString",
     "QubitConflictError",
     "QubitId",
+    "StabilizerCode",
+    "TableauWrapper",
     "Tick",
     "TickCircuit",
     "TickHandle",

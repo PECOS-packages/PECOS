@@ -41,6 +41,8 @@ from pecos_rslib import (
     Nanoseconds,  # Time duration in nanoseconds
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
+    ShotMap,  # Simulation result: register name -> measurement outcomes
+    ShotVec,  # Simulation result: vector of shots
     TimeUnits,  # Abstract time duration in arbitrary units
     WasmForeignObject,  # WASM foreign object for classical coprocessor
     abs,  # Absolute value
@@ -312,6 +314,8 @@ __all__ = [
     "Qis",
     "QisEngineBuilder",
     "QuantumCircuit",
+    "ShotMap",
+    "ShotVec",
     "SignedInteger",
     "TimeUnits",  # Time unit type
     "UnsignedInteger",

@@ -46,12 +46,19 @@ from pecos_rslib import (
     TimeUnits,  # Abstract time duration in arbitrary units
     WasmForeignObject,  # WASM foreign object for classical coprocessor
     abs,  # Absolute value
+    acos,  # Inverse cosine
+    acosh,  # Inverse hyperbolic cosine
     all,  # All elements true
     allclose,  # Approximate equality (arrays)
     angle64,  # Fixed-point angle type with exact constants (pi, frac_pi_2, etc.)
     any,  # Any element true
     array,  # Array creation
     array_equal,  # Array equality
+    asin,  # Inverse sine
+    asinh,  # Inverse hyperbolic sine
+    atan,  # Inverse tangent
+    atan2,  # Two-argument inverse tangent
+    atanh,  # Inverse hyperbolic tangent
     complex64,
     complex128,
     cos,  # Cosine
@@ -64,6 +71,7 @@ from pecos_rslib import (
     i16,
     i32,
     i64,
+    inf,  # Infinity
     isclose,  # Approximate equality (element-wise)
     isnan,  # Check for NaN
     kron,  # Kronecker product
@@ -72,6 +80,7 @@ from pecos_rslib import (
     max,  # Maximum value
     mean,  # Mean/average
     min,  # Minimum value
+    nan,  # Not a number
     num,
     power,  # Power function
     sin,  # Sine
@@ -327,6 +336,8 @@ __all__ = [
     "__version__",
     # Mathematical functions
     "abs",
+    "acos",
+    "acosh",
     "all",
     "allclose",
     # Subpackages
@@ -338,6 +349,11 @@ __all__ = [
     "arange",
     "array",
     "array_equal",
+    "asin",
+    "asinh",
+    "atan",
+    "atan2",
+    "atanh",
     "benchmarks",  # Performance benchmarking
     # Noise model builders
     "biased_depolarizing_noise",
@@ -376,6 +392,7 @@ __all__ = [
     "i16",
     "i32",
     "i64",
+    "inf",
     "isclose",
     "isnan",
     "kron",
@@ -387,6 +404,7 @@ __all__ = [
     "max",
     "mean",
     "min",
+    "nan",
     "newton",
     "noise",
     "num",

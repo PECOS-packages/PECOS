@@ -16,7 +16,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use crate::command::{GateCommand, GateType};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
 /// Noise channel for state preparation operations.

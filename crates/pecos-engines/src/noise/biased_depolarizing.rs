@@ -16,7 +16,7 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::{NoiseModel, NoiseRng, NoiseUtils, ProbabilityValidator, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::any::Any;
 
 /// Implements general noise model for quantum simulations, combining

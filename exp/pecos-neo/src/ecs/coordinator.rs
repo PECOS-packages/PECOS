@@ -69,7 +69,7 @@
 use super::component::StatusComponent;
 use super::world::World;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};

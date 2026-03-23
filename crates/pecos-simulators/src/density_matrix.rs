@@ -15,7 +15,7 @@ use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use super::state_vec::StateVec;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
+use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 
 use core::fmt::{Debug, Display, Formatter, Write};
 use num_complex::Complex64;
@@ -127,7 +127,7 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_simulators::DensityMatrix;
-    /// use pecos_rng::{PecosRng, SeedableRng};
+    /// use pecos_random::{PecosRng, SeedableRng};
     ///
     /// let rng = PecosRng::seed_from_u64(42);
     /// let state = DensityMatrix::with_rng(2, rng);

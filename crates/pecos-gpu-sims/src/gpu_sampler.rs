@@ -43,7 +43,7 @@
 // Converting probability (f64) to fixed-point threshold (u32) is intentional
 #![allow(clippy::cast_sign_loss)]
 
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::measurement_sampler::MeasurementKind;
 
 /// Maximum number of dependencies per Computed measurement.

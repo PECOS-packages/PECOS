@@ -141,7 +141,7 @@ use crate::command::GateCommand;
 use crate::command::GateType;
 use crate::extensible::GateId;
 use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
 

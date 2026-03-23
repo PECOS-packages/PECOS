@@ -43,7 +43,7 @@ use super::{
 };
 use crate::command::{GateCommand, GateType};
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
 

@@ -38,7 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// # Example
 ///
 /// ```
-/// use pecos_rng::rng_manageable::derive_seed;
+/// use pecos_random::rng_manageable::derive_seed;
 ///
 /// let base = 42;
 /// let noise_seed = derive_seed(base, "noise");
@@ -74,8 +74,8 @@ pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
 /// # Example
 ///
 /// ```
-/// use pecos_rng::rng_manageable::time_seed;
-/// use pecos_rng::{PecosRng, SeedableRng};
+/// use pecos_random::rng_manageable::time_seed;
+/// use pecos_random::{PecosRng, SeedableRng};
 ///
 /// // Use time_seed when no explicit seed is provided
 /// let seed = time_seed();
@@ -102,7 +102,7 @@ pub fn time_seed() -> u64 {
 /// # Example
 ///
 /// ```
-/// use pecos_rng::rng_manageable::resolve_seed;
+/// use pecos_random::rng_manageable::resolve_seed;
 ///
 /// let explicit = resolve_seed(Some(42));
 /// assert_eq!(explicit, 42);
@@ -128,8 +128,8 @@ pub fn resolve_seed(seed: Option<u64>) -> u64 {
 /// # Usage
 ///
 /// ```
-/// use pecos_rng::{PecosRng, SeedableRng};
-/// use pecos_rng::rng_manageable::RngManageable;
+/// use pecos_random::{PecosRng, SeedableRng};
+/// use pecos_random::rng_manageable::RngManageable;
 ///
 /// struct MySimulator {
 ///     rng: PecosRng,

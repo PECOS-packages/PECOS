@@ -46,7 +46,7 @@ use crate::pecos_array::{Array, ArrayData};
 use crate::array_buffer;
 
 // Import RngPcg for the random submodule
-use crate::pecos_rng_bindings::RngPcg;
+use crate::pecos_random_bindings::RngPcg;
 
 // Import numerical computing types from pecos prelude
 // Functions are accessed via pecos::prelude module

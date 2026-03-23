@@ -37,7 +37,7 @@ use crate::noise::{
     NoiseContext, SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::smallvec;
 use std::sync::Arc;

@@ -29,7 +29,7 @@ use super::resource::Resources;
 use crate::noise::NoiseContext;
 use crate::sampling::SampleWeight;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
 use std::collections::BTreeSet;
 

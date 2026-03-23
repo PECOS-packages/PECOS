@@ -45,7 +45,7 @@ use pecos_core::BitSet;
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
 use pecos_quantum::Circuit;
-use pecos_rng::{PecosRng, Rng, RngBulkExt, RngExt};
+use pecos_random::{PecosRng, Rng, RngBulkExt, RngExt};
 use pecos_simulators::CliffordGateable;
 use pecos_simulators::measurement_sampler::SampleResult;
 use pecos_simulators::pauli_prop::PauliProp;

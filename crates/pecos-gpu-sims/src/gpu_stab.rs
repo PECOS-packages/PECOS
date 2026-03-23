@@ -11,7 +11,7 @@
 use crate::circuit_compiler::{CircuitCompiler, Gate as CompiledGate};
 use crate::clifford_fusion::CliffordFuser;
 use pecos_core::QubitId;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_random::{PecosRng, Rng, SeedableRng};
 use pecos_simulators::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -2557,7 +2557,7 @@ mod tests {
     /// Debug test to understand the specific failing circuit
     #[test]
     fn test_gpu_vs_cpu_specific_circuit_debug() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use pecos_simulators::stabilizer_test_utils::{
             apply_circuit, generate_random_clifford_circuit,
         };
@@ -2720,7 +2720,7 @@ mod tests {
     /// Test the specific failing circuit - check deterministic outcomes without prior measurements
     #[test]
     fn test_gpu_vs_cpu_failing_circuit_deterministic_only() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use pecos_simulators::stabilizer_test_utils::{
             apply_circuit, generate_random_clifford_circuit,
         };
@@ -2788,7 +2788,7 @@ mod tests {
     /// Test the failing circuit exactly - gates 0-22
     #[test]
     fn test_gpu_vs_cpu_failing_circuit() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use pecos_simulators::stabilizer_test_utils::{
             CliffordGate, generate_random_clifford_circuit,
         };
@@ -3098,7 +3098,7 @@ mod tests {
     /// Test gate-by-gate to find where sign divergence occurs
     #[test]
     fn test_gpu_vs_cpu_gate_by_gate_debug() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use pecos_simulators::stabilizer_test_utils::{
             CliffordGate, generate_random_clifford_circuit,
         };
@@ -3249,7 +3249,7 @@ mod tests {
     /// Test sequential measurements to find where divergence occurs
     #[test]
     fn test_gpu_vs_cpu_sequential_measurement_debug() {
-        use pecos_rng::{PecosRng, RngExt};
+        use pecos_random::{PecosRng, RngExt};
         use pecos_simulators::stabilizer_test_utils::{
             apply_circuit, generate_random_clifford_circuit,
         };

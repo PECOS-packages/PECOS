@@ -50,7 +50,7 @@
 //! assert!(result.equivalent);
 //! ```
 
-use pecos_rng::{PecosRng, Rng, RngExt};
+use pecos_random::{PecosRng, Rng, RngExt};
 use std::collections::{BTreeMap, BTreeSet};
 
 use std::fmt;

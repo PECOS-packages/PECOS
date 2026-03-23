@@ -23,7 +23,7 @@ use log::debug;
 use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rayon::{
     ThreadPoolBuilder,
     iter::{IntoParallelIterator, ParallelIterator},

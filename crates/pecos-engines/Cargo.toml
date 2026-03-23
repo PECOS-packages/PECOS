@@ -28,7 +28,7 @@ bitvec.workspace = true
 
 pecos-core.workspace = true
 pecos-simulators.workspace = true
-pecos-rng.workspace = true
+pecos-random.workspace = true
 
 [lints]
 workspace = true

@@ -18,8 +18,8 @@
 //! # Usage
 //!
 //! ```
-//! use pecos_rng::{PecosRng, SeedableRng};
-//! use pecos_rng::rng_ext::RngProbabilityExt;
+//! use pecos_random::{PecosRng, SeedableRng};
+//! use pecos_random::rng_ext::RngProbabilityExt;
 //!
 //! let mut rng = PecosRng::seed_from_u64(42);
 //!
@@ -57,8 +57,8 @@ use rand_core::Rng;
 /// # Example
 ///
 /// ```
-/// use pecos_rng::{PecosRng, SeedableRng};
-/// use pecos_rng::rng_ext::RngProbabilityExt;
+/// use pecos_random::{PecosRng, SeedableRng};
+/// use pecos_random::rng_ext::RngProbabilityExt;
 ///
 /// let mut rng = PecosRng::seed_from_u64(42);
 /// let threshold = rng.probability_threshold(0.01);
@@ -83,8 +83,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = rng.probability_threshold(0.001);
@@ -113,8 +113,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = rng.probability_threshold(0.1);
@@ -145,8 +145,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = rng.probability_threshold(0.001);
@@ -187,8 +187,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = rng.probability_threshold(0.001); // 0.1% error rate
@@ -237,8 +237,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let pauli = match rng.random_index_3() {
@@ -267,8 +267,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let gate = match rng.random_index_4() {
@@ -297,8 +297,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let fault_type = rng.random_index_15();
@@ -351,8 +351,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = rng.probability_threshold(0.001);
@@ -413,8 +413,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = rng.probability_threshold(0.001);
@@ -447,8 +447,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// if rng.coin_flip() {
@@ -481,8 +481,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let errors = rng.gen_bools(0.01, 100);
@@ -511,8 +511,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let mut data = vec![0u64; 1000];
@@ -537,8 +537,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let mut randoms = vec![0.0f64; 1000];
@@ -577,8 +577,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     ///
@@ -635,8 +635,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     ///
@@ -680,8 +680,8 @@ pub trait RngProbabilityExt: Rng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::{PecosRng, SeedableRng};
-    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    /// use pecos_random::{PecosRng, SeedableRng};
+    /// use pecos_random::rng_ext::RngProbabilityExt;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     ///
@@ -719,7 +719,7 @@ impl<T: Rng> RngProbabilityExt for T {}
 /// # Example
 ///
 /// ```
-/// use pecos_rng::{PecosRng, SeedableRng, RngBulkExt};
+/// use pecos_random::{PecosRng, SeedableRng, RngBulkExt};
 ///
 /// let mut rng = PecosRng::seed_from_u64(42);
 /// let mut data = vec![0u64; 1000];

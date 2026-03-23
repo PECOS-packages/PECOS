@@ -38,7 +38,7 @@
 //! let flips = prop.measure_z_flips(&[0, 1]);
 //! ```
 
-use pecos_rng::{PecosRng, time_seed};
+use pecos_random::{PecosRng, time_seed};
 use wgpu::util::DeviceExt;
 
 // Gate type constants (matching shader)

@@ -23,7 +23,7 @@ use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex;
 use pecos_core::{Angle64, QubitId};
-use pecos_rng::{PecosRng, Rng, RngExt};
+use pecos_random::{PecosRng, Rng, RngExt};
 use std::fmt::Debug;
 use wide::f32x8;
 

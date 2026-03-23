@@ -22,7 +22,7 @@ use super::condition::Condition;
 use super::response::CompositeResponse;
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 
 /// A noise primitive that can be composed into decision trees.

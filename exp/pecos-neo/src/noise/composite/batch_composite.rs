@@ -24,7 +24,7 @@
 //! use pecos_neo::noise::composite::batch_composite::*;
 //! use pecos_neo::noise::composite::prelude::*;
 //! use pecos_neo::noise::NoiseContext;
-//! use pecos_rng::PecosRng;
+//! use pecos_random::PecosRng;
 //!
 //! // Create optimized batch processor
 //! let processor = fast_depolarizing(1e-4, pauli());
@@ -42,7 +42,7 @@ use super::batch::GeometricSampler;
 use super::response::CompositeResponse;
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
 // ============================================================================

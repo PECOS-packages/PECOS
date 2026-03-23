@@ -14,7 +14,7 @@
 
 use pecos_neo::ecs::{SplitDecision, SplitStats, SubsetLevel, World};
 use pecos_neo::sampling::SampleWeight;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::SparseStab;
 
 #[test]

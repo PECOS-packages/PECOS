@@ -53,7 +53,7 @@ use crate::clifford_frame::{CliffordFrame, PauliAxis};
 use core::fmt::{self, Write as _};
 use pecos_core::circuit_diagram::{CellColor, FillPattern, GateFamily, GraphStyle, blend_hex};
 use pecos_core::{BitSet, Pauli, PauliString, Phase, QuarterPhase};
-use pecos_rng::{PecosRng, SeedableRng};
+use pecos_random::{PecosRng, SeedableRng};
 use std::collections::{BTreeSet, VecDeque};
 
 // ============================================================================
@@ -526,7 +526,7 @@ impl GraphState {
 impl GraphState {
     /// Convert into a simulator by providing an RNG.
     #[must_use]
-    pub fn into_sim<R: SeedableRng + pecos_rng::Rng + core::fmt::Debug>(
+    pub fn into_sim<R: SeedableRng + pecos_random::Rng + core::fmt::Debug>(
         self,
         rng: R,
     ) -> crate::graph_state::GraphStateSim<R> {
@@ -1453,7 +1453,7 @@ impl crate::graph_state::GraphStateSim<PecosRng> {
     }
 }
 
-impl<R: SeedableRng + pecos_rng::Rng + core::fmt::Debug> crate::graph_state::GraphStateSim<R> {
+impl<R: SeedableRng + pecos_random::Rng + core::fmt::Debug> crate::graph_state::GraphStateSim<R> {
     /// Create a simulator from a graph state representation.
     #[must_use]
     pub fn from_graph_state(gs: GraphState, rng: R) -> Self {

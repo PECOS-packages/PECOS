@@ -11,7 +11,7 @@
 // the License.
 
 use crate::rng::choices::Choices;
-use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_random::rng_ext::RngProbabilityExt;
 use rand::prelude::*;
 
 /// A utility struct that provides methods for common random operations

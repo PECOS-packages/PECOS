@@ -29,7 +29,7 @@
 //! # Example
 //!
 //! ```
-//! use pecos_rng::{PecosScalarRng, RngProbabilityExt};
+//! use pecos_random::{PecosScalarRng, RngProbabilityExt};
 //!
 //! let mut rng = PecosScalarRng::seed_from_u64(42);
 //!

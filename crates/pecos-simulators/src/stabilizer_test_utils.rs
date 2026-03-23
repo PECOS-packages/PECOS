@@ -41,7 +41,7 @@ use crate::{
     StabilizerTableauSimulator,
 };
 use pecos_core::QubitId;
-use pecos_rng::{Rng, RngExt};
+use pecos_random::{Rng, RngExt};
 
 /// Trait for stabilizer simulators that support forced measurement outcomes.
 ///
@@ -386,7 +386,7 @@ pub fn verify_swap_decomposition_direct<
     sim2: &mut S2,
     num_qubits: usize,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(98765);
 
@@ -435,7 +435,7 @@ pub fn verify_cz_decomposition_direct<
     sim2: &mut S2,
     num_qubits: usize,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(87654);
 
@@ -481,7 +481,7 @@ pub fn verify_cy_decomposition_direct<
     sim2: &mut S2,
     num_qubits: usize,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(76543);
 
@@ -527,7 +527,7 @@ pub fn verify_x_decomposition_direct<
     sim2: &mut S2,
     num_qubits: usize,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(65432);
 
@@ -573,7 +573,7 @@ pub fn verify_y_decomposition_direct<
     sim2: &mut S2,
     num_qubits: usize,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(54321);
 
@@ -1049,7 +1049,7 @@ pub fn verify_random_circuit_matches_density_matrix<
     num_gates: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
     let circuit = generate_random_clifford_circuit(&mut rng, num_qubits, num_gates);
@@ -1101,7 +1101,7 @@ pub fn compare_simulators_on_random_circuit_direct<
     num_gates: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
     let circuit = generate_random_clifford_circuit(&mut rng, num_qubits, num_gates);
@@ -1152,7 +1152,7 @@ pub fn compare_simulators_on_random_circuit<
     num_gates: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
     const TOLERANCE: f64 = 1e-10;
 
     let mut rng = PecosRng::seed_from_u64(seed);
@@ -1229,7 +1229,7 @@ pub fn verify_mid_circuit_measurement<
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
 
@@ -1288,7 +1288,7 @@ pub fn compare_mid_circuit_measurement<
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
 
@@ -1347,7 +1347,7 @@ pub fn verify_reset_mid_circuit<S: CliffordGateable + QuantumSimulator + ForcedM
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     assert!(num_qubits >= 2, "Need at least 2 qubits for reset test");
 
@@ -1395,7 +1395,7 @@ pub fn compare_reset_behavior<
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
 
@@ -1444,7 +1444,7 @@ pub fn verify_measurement_order_independence<
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
     const TOLERANCE: f64 = 1e-10;
 
     assert!(num_qubits >= 2, "Need at least 2 qubits");
@@ -1596,7 +1596,7 @@ pub fn verify_single_qubit_only_circuit<
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
     let circuit = generate_single_qubit_only_circuit(&mut rng, num_qubits, 30);
@@ -1618,7 +1618,7 @@ pub fn verify_two_qubit_only_circuit<
     num_qubits: usize,
     seed: u64,
 ) {
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut rng = PecosRng::seed_from_u64(seed);
     let circuit = generate_two_qubit_only_circuit(&mut rng, num_qubits, 20);
@@ -1910,7 +1910,7 @@ mod tests {
             DenseStab, DenseStabColOnly, DenseStabRowOnly, GpuStab, GpuStabOpt, GpuStabParallel,
             SparseColOnly, SparseRowOnly, Stab, StabilizerTableauSimulator,
         };
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
 
         let num_qubits = 6;
         let num_gates = 40;

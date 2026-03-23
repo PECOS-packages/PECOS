@@ -1,4 +1,4 @@
-# pecos-rng
+# pecos-random
 
 Random number generation for PECOS.
 

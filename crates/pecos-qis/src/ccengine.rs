@@ -24,7 +24,7 @@ use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, Engine, EngineStage,
 };
 use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};

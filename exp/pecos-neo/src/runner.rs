@@ -53,7 +53,7 @@ use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use rand_core::SeedableRng;
 use smallvec::SmallVec;

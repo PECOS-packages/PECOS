@@ -6,7 +6,7 @@ use pecos_core::Angle64;
 use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
-use pecos_rng::rng_pcg::RNGModel;
+use pecos_random::rng_pcg::RNGModel;
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::fmt;

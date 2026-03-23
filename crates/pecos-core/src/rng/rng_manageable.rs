@@ -10,9 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Re-export RNG management utilities from pecos-rng.
+//! Re-export RNG management utilities from pecos-random.
 //!
-//! This module re-exports [`RngManageable`] and [`derive_seed`] from the pecos-rng crate
+//! This module re-exports [`RngManageable`] and [`derive_seed`] from the pecos-random crate
 //! for backwards compatibility.
 
-pub use pecos_rng::rng_manageable::{RngManageable, derive_seed};
+pub use pecos_random::rng_manageable::{RngManageable, derive_seed};

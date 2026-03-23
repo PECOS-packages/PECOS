@@ -6,7 +6,7 @@
 
 use crate::gpu_probe::request_default_gpu_device;
 use pecos_core::QubitId;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_random::{PecosRng, Rng, SeedableRng};
 use std::fmt::Debug;
 
 /// Maximum gates in the queue before auto-flush
@@ -1011,7 +1011,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// ```
     /// use pecos_gpu_sims::GpuStabMulti;
     /// use pecos_core::QubitId;
-    /// use pecos_rng::PecosRng;
+    /// use pecos_random::PecosRng;
     ///
     /// let mut sim: GpuStabMulti<PecosRng> = GpuStabMulti::new(5, 2000).unwrap();
     ///
@@ -1640,7 +1640,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// ```
     /// use pecos_gpu_sims::GpuStabMulti;
     /// use pecos_core::QubitId;
-    /// use pecos_rng::PecosRng;
+    /// use pecos_random::PecosRng;
     ///
     /// let mut sim: GpuStabMulti<PecosRng> = GpuStabMulti::new(16, 100).unwrap();
     ///
@@ -1687,7 +1687,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// ```
     /// use pecos_gpu_sims::GpuStabMulti;
     /// use pecos_core::QubitId;
-    /// use pecos_rng::PecosRng;
+    /// use pecos_random::PecosRng;
     ///
     /// let mut sim: GpuStabMulti<PecosRng> = GpuStabMulti::new(5, 100).unwrap();
     /// sim.mz_queue(&[QubitId::new(0), QubitId::new(1)]);

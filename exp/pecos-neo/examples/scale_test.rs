@@ -3,7 +3,7 @@ use pecos_neo::GateType;
 use pecos_neo::noise::composite::channel::CompositeChannel;
 use pecos_neo::noise::composite::prelude::*;
 use pecos_neo::noise::{NoiseChannel, NoiseContext, NoiseEvent};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::time::Instant;
 
 fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {

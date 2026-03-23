@@ -22,7 +22,7 @@
 //! best-performing RNG implementation:
 //!
 //! ```
-//! use pecos_rng::quality_rng::PecosQualityRng;
+//! use pecos_random::quality_rng::PecosQualityRng;
 //!
 //! let mut rng = PecosQualityRng::seed_from_u64(42);
 //!
@@ -277,7 +277,7 @@ impl SimdXoshiro256PlusPlus {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::quality_rng::PecosQualityRng;
+    /// use pecos_random::quality_rng::PecosQualityRng;
     ///
     /// let mut rng = PecosQualityRng::seed_from_u64(42);
     /// let coin_flip = rng.next_bool_fast();
@@ -300,7 +300,7 @@ impl SimdXoshiro256PlusPlus {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::quality_rng::PecosQualityRng;
+    /// use pecos_random::quality_rng::PecosQualityRng;
     ///
     /// let mut rng = PecosQualityRng::seed_from_u64(42);
     /// let coin_flip = rng.random_bool(0.5);  // Uses optimized path
@@ -328,7 +328,7 @@ impl SimdXoshiro256PlusPlus {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::quality_rng::PecosQualityRng;
+    /// use pecos_random::quality_rng::PecosQualityRng;
     ///
     /// // Precompute threshold for 0.1% error rate
     /// let error_threshold = PecosQualityRng::probability_threshold(0.001);
@@ -362,7 +362,7 @@ impl SimdXoshiro256PlusPlus {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::quality_rng::PecosQualityRng;
+    /// use pecos_random::quality_rng::PecosQualityRng;
     ///
     /// let threshold = PecosQualityRng::probability_threshold(0.001);
     /// let mut rng = PecosQualityRng::seed_from_u64(42);
@@ -383,7 +383,7 @@ impl SimdXoshiro256PlusPlus {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::quality_rng::PecosQualityRng;
+    /// use pecos_random::quality_rng::PecosQualityRng;
     ///
     /// let mut rng = PecosQualityRng::seed_from_u64(42);
     /// let threshold = PecosQualityRng::probability_threshold(0.01);
@@ -411,7 +411,7 @@ impl SimdXoshiro256PlusPlus {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::quality_rng::PecosQualityRng;
+    /// use pecos_random::quality_rng::PecosQualityRng;
     ///
     /// let mut rng = PecosQualityRng::seed_from_u64(42);
     /// let threshold = PecosQualityRng::probability_threshold(0.001);
@@ -518,7 +518,7 @@ impl SeedableRng for SimdXoshiro256PlusPlus {
 /// # Example
 ///
 /// ```
-/// use pecos_rng::quality_rng::PecosQualityRng;
+/// use pecos_random::quality_rng::PecosQualityRng;
 ///
 /// let mut rng = PecosQualityRng::seed_from_u64(42);
 /// let mut buffer = vec![0u64; 1000];

@@ -20,7 +20,7 @@
 //! in future versions without breaking user code.
 
 use crate::state_vec_soa::StateVecSoA;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 
 /// The default state vector simulator.
 ///

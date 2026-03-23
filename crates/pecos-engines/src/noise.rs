@@ -40,7 +40,7 @@ use crate::byte_message::ByteMessage;
 use crate::engine_system::{ControlEngine, EngineStage};
 use dyn_clone::DynClone;
 use pecos_core::errors::PecosError;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::any::Any;
 
 // Re-export RngManageable to ensure consistent trait resolution

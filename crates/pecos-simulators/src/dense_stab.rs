@@ -52,8 +52,8 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_random::rng_ext::RngProbabilityExt;
+use pecos_random::{PecosRng, Rng, SeedableRng};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256};
@@ -1610,7 +1610,7 @@ mod tests {
         // measurements and init |0> operations (mz_forced + conditional X).
         // This catches bugs in nondeterministic_meas that pure Clifford tests miss.
         use crate::SparseStab;
-        use pecos_rng::{PecosRng, RngExt};
+        use pecos_random::{PecosRng, RngExt};
 
         let num_qubits = 10;
         let num_circuits = 200;

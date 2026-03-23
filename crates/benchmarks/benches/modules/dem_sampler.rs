@@ -27,7 +27,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos_qec::fault_tolerance::dem_builder::{DemSamplerBuilder, ParsedDem};
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

@@ -1,7 +1,7 @@
 //! wgpu-based state vector simulator implementation
 
 use bytemuck::{Pod, Zeroable};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 use std::borrow::Cow;
 

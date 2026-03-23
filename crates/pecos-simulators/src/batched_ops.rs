@@ -37,7 +37,7 @@
 use crate::gens::GensGeneric;
 use crate::sparse_stab::SparseStabGeneric;
 use pecos_core::{BitSet, IndexSet};
-use pecos_rng::{Rng, SeedableRng};
+use pecos_random::{Rng, SeedableRng};
 use std::fmt::Debug;
 use std::mem;
 

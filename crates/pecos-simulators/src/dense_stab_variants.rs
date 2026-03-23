@@ -34,7 +34,7 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
+use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 use smallvec::SmallVec;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
@@ -3201,7 +3201,7 @@ mod tests {
         num_gates: usize,
         seed: u64,
     ) {
-        use pecos_rng::{PecosRng, RngExt};
+        use pecos_random::{PecosRng, RngExt};
         let mut rng = PecosRng::seed_from_u64(seed);
 
         for gate_idx in 0..num_gates {
@@ -3280,7 +3280,7 @@ mod tests {
 
     #[test]
     fn test_col_only_mid_circuit_meas() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         let num_qubits = 10;
         for i in 0..200 {
             let seed = 50_000 + i;
@@ -3292,7 +3292,7 @@ mod tests {
 
     #[test]
     fn test_row_only_mid_circuit_meas() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         let num_qubits = 10;
         for i in 0..200 {
             let seed = 60_000 + i;

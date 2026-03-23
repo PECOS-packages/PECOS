@@ -15,7 +15,7 @@ use crate::byte_message::ByteMessage;
 use crate::engine_system::{ControlEngine, EngineStage};
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::any::Any;
 
 /// A noise model that passes through messages unchanged

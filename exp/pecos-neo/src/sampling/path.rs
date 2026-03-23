@@ -55,7 +55,7 @@ use crate::command::{CommandQueue, GateCommand, GateType};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::weight::SampleWeight;
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, ForcedMeasurement};
 use smallvec::SmallVec;
 

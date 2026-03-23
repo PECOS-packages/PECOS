@@ -454,7 +454,7 @@ impl CrosstalkWeightedSampler {
 mod tests {
     use super::*;
     use crate::noise::noise_rng::NoiseRng;
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     const SAMPLE_SIZE: usize = 100;
 

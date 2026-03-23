@@ -47,7 +47,7 @@
 
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::prelude::GateType;
-use pecos_rng::{PecosRng, RngProbabilityExt};
+use pecos_random::{PecosRng, RngProbabilityExt};
 use rand_core::Rng;
 use rayon::prelude::*;
 use smallvec::SmallVec;

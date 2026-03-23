@@ -213,7 +213,7 @@ mod tests {
     use super::prelude::*;
     use crate::noise::NoiseContext;
     use pecos_core::QubitId;
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     /// Test that we can build a realistic single-qubit noise model.
     #[test]

@@ -38,8 +38,8 @@
 
 use super::propagator::Pauli;
 use super::propagator::dag::DagFaultInfluenceMap;
-use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng};
+use pecos_random::rng_ext::RngProbabilityExt;
+use pecos_random::{PecosRng, Rng};
 use std::collections::BTreeSet;
 
 /// Result from a single shot of noisy sampling.

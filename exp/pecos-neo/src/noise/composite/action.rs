@@ -19,7 +19,7 @@ use super::response::CompositeResponse;
 use crate::command::{GateCommand, GateType};
 use crate::noise::NoiseContext;
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::smallvec;
 

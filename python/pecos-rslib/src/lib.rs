@@ -42,7 +42,7 @@ mod stabilizer_group_bindings;
 mod hugr_compilation_bindings;
 mod namespace_modules;
 mod pecos_array;
-mod pecos_rng_bindings;
+mod pecos_random_bindings;
 mod phir_json_bridge;
 // mod qir_bindings;  // Removed - replaced by llvm_bindings
 mod engines_module;
@@ -75,7 +75,7 @@ use coin_toss_bindings::PyCoinToss;
 use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
 use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
-use pecos_rng_bindings::RngPcg;
+use pecos_random_bindings::RngPcg;
 use pyo3::prelude::*;
 use quest_bindings::{QuestDensityMatrix, QuestStateVec};
 use qulacs_bindings::PyQulacs;

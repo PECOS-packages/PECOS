@@ -63,7 +63,7 @@ use crate::sampling::importance::ImportanceConfig;
 use crate::sampling::weight::SampleWeight;
 use pecos_core::QubitId;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, ForcedMeasurement};
 use rand::RngExt;
 use rand_core::SeedableRng;

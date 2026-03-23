@@ -51,7 +51,7 @@
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
 use pecos_core::{Bit, Bits};
-use pecos_rng::{PecosRng, Rng, RngBulkExt, RngExt};
+use pecos_random::{PecosRng, Rng, RngBulkExt, RngExt};
 use wide::u64x4;
 
 // ============================================================================

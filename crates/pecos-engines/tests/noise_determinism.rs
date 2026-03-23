@@ -17,8 +17,8 @@ use pecos_engines::quantum::{QuantumEngine, StateVecEngine};
 use pecos_engines::{
     Engine, GateType, QuantumSystem, byte_message::ByteMessage, engine_system::ControlEngine,
 };
-use pecos_rng::PecosRng;
-use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_random::PecosRng;
+use pecos_random::rng_ext::RngProbabilityExt;
 use std::collections::BTreeMap;
 
 /// Reset a noise model and set its seed in one operation

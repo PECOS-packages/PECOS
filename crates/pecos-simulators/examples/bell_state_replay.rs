@@ -3,7 +3,7 @@
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use pecos_core::{qid, qid2};
-use pecos_rng::{PecosRng, RngExt};
+use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::CliffordGateable;
 use pecos_simulators::StateVec;
 use std::fmt::Display;

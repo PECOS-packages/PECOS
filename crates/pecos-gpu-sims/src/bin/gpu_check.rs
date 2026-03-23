@@ -11,7 +11,7 @@
 use pecos_core::{QubitId, qid, qid2};
 use pecos_gpu_sims::GpuStabMulti;
 use pecos_gpu_sims::gpu_probe::{GpuAdapterInfo, GpuStartupError, request_default_gpu_device};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use serde_json::json;
 use std::process::ExitCode;
 

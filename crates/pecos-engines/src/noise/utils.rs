@@ -399,7 +399,7 @@ mod tests {
     use crate::byte_message::GateType;
     use crate::noise::noise_rng::NoiseRng;
     use crate::noise::weighted_sampler::SingleQubitWeightedSampler;
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
     use std::collections::BTreeMap;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 

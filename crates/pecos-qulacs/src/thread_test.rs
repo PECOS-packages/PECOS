@@ -4,7 +4,7 @@
 mod thread_safety_tests {
     use crate::QulacsStateVec;
     use pecos_core::{RngManageable, qid, qid2};
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
     use pecos_simulators::{CliffordGateable, QuantumSimulator};
     use std::sync::{Arc, Mutex};
     use std::thread;

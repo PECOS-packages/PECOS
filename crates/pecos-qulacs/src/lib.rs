@@ -20,7 +20,7 @@ pub mod bridge;
 use bridge::ffi;
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };

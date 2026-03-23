@@ -20,8 +20,8 @@ pub use recording_rng::RecordingRng;
 pub use replaying_rng::ReplayingRng;
 pub use rng_manageable::{RngManageable, derive_seed};
 
-// Re-export RngProbabilityExt from pecos-rng for convenience
-pub use pecos_rng::rng_ext::RngProbabilityExt;
+// Re-export RngProbabilityExt from pecos-random for convenience
+pub use pecos_random::rng_ext::RngProbabilityExt;
 
 // Export the utility functions from rng_utils
 pub use rng_utils::{choose_weighted, coin_flip, gen_bools};

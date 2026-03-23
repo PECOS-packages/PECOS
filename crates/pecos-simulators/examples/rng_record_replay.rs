@@ -7,7 +7,7 @@
 
 use pecos_core::RngManageable;
 use pecos_core::rng::{RecordingRng, ReplayingRng};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, StateVec, qid, qid2};
 
 fn main() {

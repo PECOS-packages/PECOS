@@ -36,7 +36,7 @@ pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
 pecos-guppy-hugr = { workspace = true, optional = true }
 pecos-phir = { workspace = true, optional = true, features = ["hugr"] }
-pecos-rng = { workspace = true, optional = true }
+pecos-random = { workspace = true, optional = true }
 pecos-num = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
@@ -84,7 +84,7 @@ core = ["dep:pecos-core"]
 quantum = ["core", "dep:pecos-quantum"]
 
 # Numerical computing utilities (scipy-like functions, random number generation)
-num = ["dep:pecos-num", "dep:pecos-rng"]
+num = ["dep:pecos-num", "dep:pecos-random"]
 
 # Quantum simulation library (includes core, quantum, and num)
 sim = [
@@ -143,7 +143,7 @@ pecos-engines.workspace = true
 pecos-qasm = { workspace = true, features = ["phir"] }
 pecos-phir = { workspace = true, features = ["hugr"] }
 pecos-phir-json.workspace = true
-pecos-rng.workspace = true
+pecos-random.workspace = true
 log.workspace = true
 serde_json.workspace = true
 

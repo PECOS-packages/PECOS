@@ -83,7 +83,7 @@ use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::{CircuitRunner, EventHandlers, GateOverrides};
 use pecos_core::rng::RngManageable;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 
 /// A source of quantum commands for program execution.

@@ -24,7 +24,7 @@
 //! ```no_run
 //! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig, redistribute_by_weight};
 //! use pecos_simulators::SparseStab;
-//! use pecos_rng::PecosRng;
+//! use pecos_random::PecosRng;
 //! use rand_core::SeedableRng;
 //!
 //! let config = ParallelConfig::new().with_workers(2).with_seed(42);
@@ -47,7 +47,7 @@ use super::coordinator::WorkerState;
 use super::entity::EntityId;
 use super::world::EntityTransfer;
 use crate::sampling::SampleWeight;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
 use rand::RngExt;
 

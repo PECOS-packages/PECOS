@@ -30,7 +30,7 @@
 //! Handles asymmetric measurement errors (readout errors).
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
 /// Noise channel for measurement operations.

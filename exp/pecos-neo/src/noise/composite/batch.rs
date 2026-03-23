@@ -51,7 +51,7 @@
 //!
 //! ```
 //! use pecos_neo::noise::composite::batch::GeometricSampler;
-//! use pecos_rng::PecosRng;
+//! use pecos_random::PecosRng;
 //!
 //! let mut rng = PecosRng::seed_from_u64(42);
 //!
@@ -68,8 +68,8 @@
 //! ```
 
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
-use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_random::PecosRng;
+use pecos_random::rng_ext::RngProbabilityExt;
 use rand::RngExt;
 
 // ============================================================================

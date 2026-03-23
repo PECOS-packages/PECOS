@@ -42,8 +42,8 @@
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::PecosRng;
-use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_random::PecosRng;
+use pecos_random::rng_ext::RngProbabilityExt;
 
 /// Optimized GPU stabilizer simulator with DOD/ECS architecture.
 #[derive(Clone)]

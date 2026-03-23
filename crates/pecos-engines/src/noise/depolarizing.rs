@@ -16,8 +16,8 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::{NoiseModel, NoiseRng, NoiseUtils, ProbabilityValidator, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
-use pecos_rng::PecosRng;
-use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_random::PecosRng;
+use pecos_random::rng_ext::RngProbabilityExt;
 use std::any::Any;
 
 /// Implements depolarizing channel noise for quantum simulations

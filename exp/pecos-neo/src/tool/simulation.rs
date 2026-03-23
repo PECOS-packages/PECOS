@@ -121,7 +121,7 @@ use crate::runner::{EventHandlers, GateOverrides};
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec};
 use rayon::prelude::*;
 use std::collections::BTreeMap;

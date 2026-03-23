@@ -27,7 +27,7 @@ use std::path::Path;
 ///
 /// ```
 /// use pecos_core::rng::{RecordingRng, ReplayingRng};
-/// use pecos_rng::{PecosRng, RngExt, SeedableRng};
+/// use pecos_random::{PecosRng, RngExt, SeedableRng};
 ///
 /// // Create a recording wrapper around PecosRng
 /// let rng = PecosRng::seed_from_u64(42);

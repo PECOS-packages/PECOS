@@ -67,7 +67,7 @@ use crate::runner::CircuitRunner;
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use crate::sampling::weight::WeightedStatistics;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
 use rayon::prelude::*;
 

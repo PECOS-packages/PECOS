@@ -1006,7 +1006,7 @@ impl PyMeasurementNoiseModel {
     ///     List of boolean measurement outcomes.
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> Vec<bool> {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let mut rng = match seed {
@@ -1027,7 +1027,7 @@ impl PyMeasurementNoiseModel {
     ///     List of lists, where each inner list contains boolean measurement outcomes.
     #[pyo3(signature = (num_shots, seed=None))]
     fn sample_batch(&self, num_shots: usize, seed: Option<u64>) -> Vec<Vec<bool>> {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let mut rng = match seed {
@@ -1100,7 +1100,7 @@ impl PyMeasurementNoiseModel {
         detectors_json: &str,
         seed: Option<u64>,
     ) -> PyResult<(Vec<bool>, Vec<bool>)> {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
@@ -1132,7 +1132,7 @@ impl PyMeasurementNoiseModel {
         detectors_json: &str,
         seed: Option<u64>,
     ) -> PyResult<Vec<(Vec<bool>, Vec<bool>)>> {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
@@ -1171,7 +1171,7 @@ impl PyMeasurementNoiseModel {
         observables_json: &str,
         seed: Option<u64>,
     ) -> PyResult<(Vec<bool>, Vec<bool>)> {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
@@ -1209,7 +1209,7 @@ impl PyMeasurementNoiseModel {
         observables_json: &str,
         seed: Option<u64>,
     ) -> PyResult<BatchSampleResult> {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let detector_records = parse_detector_records(detectors_json)?;
@@ -1861,7 +1861,7 @@ impl PyDemSampler {
     ///     Tuple of (`detection_events`, `observable_flips`) as boolean lists.
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> (Vec<bool>, Vec<bool>) {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let mut rng = match seed {
@@ -1886,7 +1886,7 @@ impl PyDemSampler {
         num_shots: usize,
         seed: Option<u64>,
     ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let mut rng = match seed {
@@ -2274,7 +2274,7 @@ impl PyParsedDem {
     ///     Tuple of (`detector_events`, `observable_flips`) as boolean lists.
     #[pyo3(signature = (seed=None))]
     fn sample(&self, seed: Option<u64>) -> (Vec<bool>, Vec<bool>) {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let mut rng = match seed {
@@ -2299,7 +2299,7 @@ impl PyParsedDem {
         num_shots: usize,
         seed: Option<u64>,
     ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
         use rand::RngExt;
 
         let mut rng = match seed {

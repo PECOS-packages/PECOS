@@ -21,7 +21,7 @@ use super::batch::GeometricSampler;
 use super::response::CompositeResponse;
 use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use smallvec::smallvec;
 
 /// Events that a composite channel can respond to.

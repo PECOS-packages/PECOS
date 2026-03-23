@@ -27,7 +27,7 @@ avx512 = []
 [dependencies]
 pecos-core.workspace = true
 pecos-quantum.workspace = true
-pecos-rng.workspace = true
+pecos-random.workspace = true
 rand.workspace = true
 num-complex.workspace = true
 smallvec.workspace = true

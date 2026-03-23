@@ -4,7 +4,7 @@
 //! This eliminates atomic contention since each shot has its own output region.
 
 use bytemuck::{Pod, Zeroable};
-use pecos_rng::{PecosRng, time_seed};
+use pecos_random::{PecosRng, time_seed};
 use wgpu::util::DeviceExt;
 
 /// Influence map data for GPU sampling.

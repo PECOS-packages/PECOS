@@ -426,7 +426,7 @@ Implement your own noise channels by implementing the `NoiseChannel` trait:
 
 ```rust
 use pecos_neo::noise::*;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 
 #[derive(Clone)]
 struct MyCustomChannel {

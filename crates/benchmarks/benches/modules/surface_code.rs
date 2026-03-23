@@ -504,7 +504,7 @@ fn bench_sparse_stab_bitset_vs_vecset<M: Measurement>(c: &mut Criterion<M>) {
                 |b, ()| {
                     b.iter_batched(
                         || {
-                            use pecos_rng::PecosRng;
+                            use pecos_random::PecosRng;
 
                             let rng: PecosRng = rand::make_rng();
                             let mut sim = SparseStabVecSet::with_rng(params.num_qubits, rng);

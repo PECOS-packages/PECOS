@@ -14,7 +14,7 @@
 
 #![allow(clippy::cast_precision_loss)]
 
-use pecos_rng::{PecosRng, Rng, RngBulkExt, RngProbabilityExt};
+use pecos_random::{PecosRng, Rng, RngBulkExt, RngProbabilityExt};
 use std::time::Instant;
 
 /// Simulates OLD `measurement_sampler` path (before `RngBulkExt`)
@@ -28,7 +28,7 @@ fn new_path<R: Rng + RngBulkExt>(rng: &mut R, dest: &mut [u64]) {
 }
 
 #[test]
-#[ignore = "Performance test - run explicitly with: cargo test -p pecos-rng -- --ignored"]
+#[ignore = "Performance test - run explicitly with: cargo test -p pecos-random -- --ignored"]
 fn compare_dispatch_paths() {
     const ITERATIONS: usize = 1000;
     const SIZE: usize = 10000;
@@ -61,7 +61,7 @@ fn compare_dispatch_paths() {
 
     // The new path should be faster
     // Note: This is a performance test - results vary with system load
-    // Run explicitly with: cargo test -p pecos-rng -- --ignored
+    // Run explicitly with: cargo test -p pecos-random -- --ignored
     assert!(
         new_elapsed < old_elapsed,
         "New path should be faster: new={new_elapsed:?}, old={old_elapsed:?}"

@@ -7,7 +7,7 @@
 
 use pecos_core::{Angle64, qid, qid2};
 use pecos_quest::QuestDensityMatrix;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QuantumSimulator,
 };

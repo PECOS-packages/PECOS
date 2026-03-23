@@ -3,7 +3,7 @@
 use pecos_core::{Angle64, qid, qid2};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 
 #[test]
 fn test_state_creation() {

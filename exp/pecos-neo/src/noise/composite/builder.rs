@@ -1533,7 +1533,7 @@ mod tests {
     #[test]
     fn test_p2_idle_primitive() {
         use crate::noise::NoiseChannel;
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
 
         // Test that the primitive applies idle noise correctly
         // Build the primitive directly

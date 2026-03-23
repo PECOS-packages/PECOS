@@ -142,8 +142,8 @@ jobs:
           echo "Testing pecos-programs..."
           cd crates/pecos-programs && cargo clippy --all-targets -- -D warnings && cd ../..
 
-          echo "Testing pecos-rng..."
-          cd crates/pecos-rng && cargo clippy --all-targets -- -D warnings && cd ../..
+          echo "Testing pecos-random..."
+          cd crates/pecos-random && cargo clippy --all-targets -- -D warnings && cd ../..
 
           echo "Testing pecos-qasm..."
           cd crates/pecos-qasm && cargo clippy --all-targets -- -D warnings && cd ../..

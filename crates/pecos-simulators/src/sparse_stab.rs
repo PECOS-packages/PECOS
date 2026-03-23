@@ -14,8 +14,8 @@ use crate::{CliffordGateable, GensGeneric, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
 use pecos_core::{BitSet, IndexSet, QubitId, RngManageable, SortedVecSet, VecSet};
-use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_random::rng_ext::RngProbabilityExt;
+use pecos_random::{PecosRng, Rng, SeedableRng};
 
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///

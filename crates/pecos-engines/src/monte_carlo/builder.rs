@@ -16,7 +16,7 @@ use crate::monte_carlo::engine::MonteCarloEngine;
 use crate::noise::{DepolarizingNoiseModel, NoiseModel};
 use crate::quantum::QuantumEngine;
 use crate::quantum_system::QuantumSystem;
-use pecos_rng::{PecosRng, resolve_seed};
+use pecos_random::{PecosRng, resolve_seed};
 
 /// Builder for creating a `MonteCarloEngine` with customizable configuration
 ///

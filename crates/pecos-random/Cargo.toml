@@ -1,5 +1,5 @@
 [package]
-name = "pecos-rng"
+name = "pecos-random"
 version.workspace = true
 edition.workspace = true
 readme = "README.md"

@@ -23,7 +23,7 @@ use super::EntityId;
 use crate::noise::NoiseContext;
 use crate::outcome::MeasurementOutcomes;
 use crate::sampling::weight::SampleWeight;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::collections::BTreeMap;
 
 /// Generic storage for a component type.

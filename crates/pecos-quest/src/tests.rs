@@ -402,7 +402,7 @@ fn test_rzz_gate() {
 #[test]
 fn test_rng_management() {
     use pecos_core::rng::RngManageable;
-    use pecos_rng::PecosRng;
+    use pecos_random::PecosRng;
 
     let mut sim = QuestStateVec::new(2);
 

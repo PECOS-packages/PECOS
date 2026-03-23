@@ -26,8 +26,8 @@ use crate::clifford_frame::{CliffordFrame, PauliAxis};
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{BitSet, QubitId, RngManageable};
-use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_random::rng_ext::RngProbabilityExt;
+use pecos_random::{PecosRng, Rng, SeedableRng};
 
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 

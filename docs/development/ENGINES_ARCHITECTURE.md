@@ -22,7 +22,7 @@ PECOS serves two complementary roles:
 │  PECOS as Library (pick what you need)                          │
 │                                                                 │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
-│  │  pecos-simulators  │ │  pecos-core  │ │  pecos-rng   │            │
+│  │  pecos-simulators  │ │  pecos-core  │ │  pecos-random   │            │
 │  │  SparseStab  │ │  QubitId     │ │  PecosRng    │            │
 │  │  StateVec    │ │  derive_seed │ │              │            │
 │  │  Gateable    │ │  GateType    │ │              │            │
@@ -595,7 +595,7 @@ pecos-engines (orchestration)
     │   ├── derive_seed() (deterministic seed derivation)
     │   └── PecosError (error handling)
     │
-    ├── pecos-rng
+    ├── pecos-random
     │   └── PecosRng (parallel-safe RNG)
     │
     └── byte_message/ (internal module)

@@ -142,7 +142,7 @@ pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-phir = { version = "0.2.0-dev.0", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.2.0-dev.0", path = "crates/pecos-qec" }
-pecos-rng = { version = "0.2.0-dev.0", path = "crates/pecos-rng" }
+pecos-random = { version = "0.2.0-dev.0", path = "crates/pecos-random" }
 pecos-qis-ffi = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi-types" }
 pecos-qis = { version = "0.2.0-dev.0", path = "crates/pecos-qis" }

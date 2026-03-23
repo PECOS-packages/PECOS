@@ -19,7 +19,7 @@
 //! # Usage
 //!
 //! ```
-//! use pecos_rng::rng::PecosRng;
+//! use pecos_random::rng::PecosRng;
 //!
 //! let mut rng = PecosRng::seed_from_u64(42);
 //!
@@ -217,7 +217,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let coin_flip = rng.next_bool_fast();
@@ -240,7 +240,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let coin_flip = rng.random_bool(0.5);  // Uses optimized path
@@ -268,7 +268,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// // Precompute threshold for 0.1% error rate
     /// let error_threshold = PecosRng::probability_threshold(0.001);
@@ -301,7 +301,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// let threshold = PecosRng::probability_threshold(0.001);
     /// let mut rng = PecosRng::seed_from_u64(42);
@@ -321,7 +321,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = PecosRng::probability_threshold(0.01);
@@ -348,7 +348,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = PecosRng::probability_threshold(0.001);
@@ -388,7 +388,7 @@ impl ParallelRapidRng {
     /// # Example
     ///
     /// ```
-    /// use pecos_rng::rng::PecosRng;
+    /// use pecos_random::rng::PecosRng;
     ///
     /// let mut rng = PecosRng::seed_from_u64(42);
     /// let threshold = PecosRng::probability_threshold(0.001);
@@ -521,7 +521,7 @@ impl SeedableRng for ParallelRapidRng {
 /// # Example
 ///
 /// ```
-/// use pecos_rng::PecosRng;
+/// use pecos_random::PecosRng;
 ///
 /// let mut rng = PecosRng::seed_from_u64(42);
 /// let mut buffer = vec![0u64; 1000];

@@ -16,8 +16,8 @@
 //! in noise models through the `NoiseRng` wrapper.
 
 use crate::Gate;
-use pecos_rng::rng_ext::RngProbabilityExt;
-use pecos_rng::{PecosRng, Rng, RngExt, SeedableRng};
+use pecos_random::rng_ext::RngProbabilityExt;
+use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 use rand::prelude::Distribution;
 use std::ops::Range;
 

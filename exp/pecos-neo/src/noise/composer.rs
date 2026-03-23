@@ -24,7 +24,7 @@ use super::idle::IdleChannel;
 use super::plugin::{ContextObserver, EventHandler, NoiseModelConfig, NoisePlugin};
 use super::{NoiseChannel, NoiseEvent, NoiseResponse};
 use pecos_core::{QubitId, TimeScale};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 
 /// A composable noise model that combines multiple noise channels.
 ///

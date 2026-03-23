@@ -39,7 +39,7 @@
 //! ```
 
 use ndarray::Array1;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::SliceRandom;

@@ -14,7 +14,7 @@
 
 use core::fmt::Debug;
 use num_complex::Complex64;
-use pecos_rng::{PecosRng, Rng, SeedableRng, time_seed};
+use pecos_random::{PecosRng, Rng, SeedableRng, time_seed};
 use std::f64::consts::FRAC_PI_4;
 use thiserror::Error;
 

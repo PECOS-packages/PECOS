@@ -308,7 +308,7 @@ mod qulacs_tests {
 
     #[test]
     fn test_rng_management() {
-        use pecos_rng::PecosRng;
+        use pecos_random::PecosRng;
 
         let mut sim = QulacsStateVec::new(1);
 

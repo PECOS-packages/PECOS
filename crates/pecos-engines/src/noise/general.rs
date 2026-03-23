@@ -92,7 +92,7 @@ use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
 use pecos_core::{Angle64, QubitId};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::any::Any;
 use std::collections::BTreeSet;
 

@@ -54,10 +54,10 @@ pub use gpu_stab::GpuStab;
 pub use gpu_stab_multi::GpuStabMulti;
 
 /// Default GPU stabilizer simulator using `PecosRng`
-pub type DefaultGpuStab = GpuStab<pecos_rng::PecosRng>;
+pub type DefaultGpuStab = GpuStab<pecos_random::PecosRng>;
 
 /// Default multi-shot GPU stabilizer simulator using `PecosRng`
-pub type DefaultGpuStabMulti = GpuStabMulti<pecos_rng::PecosRng>;
+pub type DefaultGpuStabMulti = GpuStabMulti<pecos_random::PecosRng>;
 
 use std::f64::consts::FRAC_1_SQRT_2;
 

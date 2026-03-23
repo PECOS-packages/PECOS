@@ -27,7 +27,7 @@ log.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
-pecos-rng.workspace = true
+pecos-random.workspace = true
 
 [lib]
 name = "pecos_pymatching"

@@ -14,7 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::{Angle64, QubitId, RngManageable};
-use pecos_rng::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
+use pecos_random::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
 use num_complex::Complex64;
@@ -125,7 +125,7 @@ where
     /// # Examples
     /// ```rust
     /// use pecos_simulators::StateVecAoS;
-    /// use pecos_rng::{PecosRng, SeedableRng};
+    /// use pecos_random::{PecosRng, SeedableRng};
     ///
     /// let rng = PecosRng::seed_from_u64(42);
     /// let state = StateVecAoS::with_rng(2, rng);
@@ -149,7 +149,7 @@ where
     /// ```rust
     /// use num_complex::Complex64;
     /// use pecos_simulators::StateVecAoS;
-    /// use pecos_rng::{PecosRng, SeedableRng};
+    /// use pecos_random::{PecosRng, SeedableRng};
     ///
     /// let custom_state = vec![
     ///     Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),

@@ -16,7 +16,7 @@ use pecos_core::QubitId;
 use pecos_neo::GateType;
 use pecos_neo::noise::{ComposableNoiseModel, NoiseEvent, SingleQubitChannel};
 use pecos_neo::prelude::CorePlugin;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use std::hint::black_box;
 
 fn main() {

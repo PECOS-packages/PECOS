@@ -68,7 +68,7 @@ use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::CircuitRunner;
 use crate::sampling::weight::SampleWeight;
-use pecos_rng::{PecosRng, resolve_seed};
+use pecos_random::{PecosRng, resolve_seed};
 use pecos_simulators::{CliffordGateable, SparseStab};
 use rand::RngExt;
 

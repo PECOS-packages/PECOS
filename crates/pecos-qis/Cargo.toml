@@ -33,7 +33,7 @@ selene-soft-rz-runtime = ["dep:selene-soft-rz-runtime"]
 pecos-core.workspace = true
 pecos-engines.workspace = true
 pecos-programs.workspace = true
-pecos-rng.workspace = true
+pecos-random.workspace = true
 
 # QIS FFI infrastructure
 pecos-qis-ffi-types.workspace = true

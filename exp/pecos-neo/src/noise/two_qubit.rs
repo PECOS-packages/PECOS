@@ -37,7 +37,7 @@ use super::{
 };
 use crate::command::{GateCommand, GateType};
 use pecos_core::Angle64;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
 

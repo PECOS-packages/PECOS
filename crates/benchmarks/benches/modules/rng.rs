@@ -32,7 +32,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::{PCG64Fast, PecosQualityRng, PecosRng};
-use pecos_rng::{PecosScalarRng, Rng, RngExt, SeedableRng};
+use pecos_random::{PecosScalarRng, Rng, RngExt, SeedableRng};
 use rand::rngs::SmallRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256PlusPlus, Xoshiro512PlusPlus};
 use rapidhash::rng::RapidRng;
@@ -1166,7 +1166,7 @@ fn bench_stabilizer_pattern<M: Measurement>(c: &mut Criterion<M>) {
 /// - Fused: `noise_sample_1q` (new combined method)
 #[allow(clippy::cast_possible_truncation)]
 fn bench_fused_noise_sampling<M: Measurement>(c: &mut Criterion<M>) {
-    use pecos_rng::rng_ext::RngProbabilityExt;
+    use pecos_random::rng_ext::RngProbabilityExt;
 
     let mut group = c.benchmark_group("RNG Optimization: Fused Noise Sampling");
 
@@ -1284,7 +1284,7 @@ fn bench_fused_noise_sampling<M: Measurement>(c: &mut Criterion<M>) {
 /// This simulates the noise model pattern: check many gates, get sparse error indices.
 #[allow(clippy::cast_possible_truncation)]
 fn bench_batched_probability<M: Measurement>(c: &mut Criterion<M>) {
-    use pecos_rng::rng_ext::RngProbabilityExt;
+    use pecos_random::rng_ext::RngProbabilityExt;
 
     let mut group = c.benchmark_group("RNG Optimization: Batched Probability");
 
@@ -1438,7 +1438,7 @@ pub fn bench_probability_optimizations<M: Measurement>(c: &mut Criterion<M>) {
 
     // Trait default: SmallRng using RngProbabilityExt trait
     group.bench_function("SmallRng (trait)", |b| {
-        use pecos_rng::RngProbabilityExt;
+        use pecos_random::RngProbabilityExt;
         let mut rng = SmallRng::seed_from_u64(42);
         b.iter(|| {
             let count = rng.count_occurrences(threshold, num_checks);

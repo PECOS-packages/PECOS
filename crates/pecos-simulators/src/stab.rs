@@ -44,7 +44,7 @@ use crate::{
     CliffordGateable, MeasurementResult, QuantumSimulator, SparseStab, StabilizerTableauSimulator,
 };
 use pecos_core::{QubitId, RngManageable};
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 
 /// Default stabilizer simulator with automatic implementation selection.
 ///

@@ -118,7 +118,7 @@ fn run_tests(name: &'static str, data: &[u8]) -> RngTestResults {
 
 /// Generate random bytes using `PCG64Fast`
 fn generate_pcg64fast_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::prelude::PCG64Fast;
+    use pecos_random::prelude::PCG64Fast;
     let mut rng = PCG64Fast::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);
@@ -127,7 +127,7 @@ fn generate_pcg64fast_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `PCGRandom`
 fn generate_pcgrandom_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::prelude::PCGRandom;
+    use pecos_random::prelude::PCGRandom;
     let mut rng = PCGRandom::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);
@@ -148,8 +148,8 @@ fn generate_rapidrng_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using Xoshiro256++
 fn generate_xoshiro_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::Rng;
-    use pecos_rng::SeedableRng;
+    use pecos_random::Rng;
+    use pecos_random::SeedableRng;
     use rand_xoshiro::Xoshiro256PlusPlus;
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
@@ -159,8 +159,8 @@ fn generate_xoshiro_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `PecosRng` (SIMD Xoshiro256++)
 fn generate_pecosrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::Rng;
-    use pecos_rng::prelude::PecosRng;
+    use pecos_random::Rng;
+    use pecos_random::prelude::PecosRng;
     let mut rng = PecosRng::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);
@@ -169,8 +169,8 @@ fn generate_pecosrng_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `PecosRng` (parallel `RapidRng`)
 fn generate_pecosfastrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use pecos_rng::Rng;
-    use pecos_rng::prelude::PecosRng;
+    use pecos_random::Rng;
+    use pecos_random::prelude::PecosRng;
     let mut rng = PecosRng::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);

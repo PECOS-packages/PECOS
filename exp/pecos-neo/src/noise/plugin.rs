@@ -36,7 +36,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use pecos_core::QubitId;
-use pecos_rng::PecosRng;
+use pecos_random::PecosRng;
 
 /// A plugin that bundles related noise model functionality.
 ///

@@ -40,8 +40,6 @@ Note: For Python wrappers that accept pecos.programs types, use:
 from pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
-    GateDefBuilder,
-    GateRegistry,
     GuppyHugrEngineBuilder,
     HugrSimulation,
     PhirJsonSimulation,
@@ -49,7 +47,6 @@ from pecos_rslib import (
     QasmSimulation,
     QisControlSimulation,
     QisInterfaceBuilder,
-    RngPcg,
     SimBuilder,
     compile_hugr_to_qis,
     find_llvm_tool,
@@ -78,8 +75,6 @@ from pecos_rslib.engines import (
 __all__ = [
     "ByteMessage",
     "ByteMessageBuilder",
-    "GateDefBuilder",
-    "GateRegistry",
     "GuppyHugrEngineBuilder",
     "HugrSimulation",
     "PhirEngineBuilder",
@@ -92,7 +87,6 @@ __all__ = [
     "QisControlSimulation",
     "QisEngineBuilder",
     "QisInterfaceBuilder",
-    "RngPcg",
     "SimBuilder",
     "SparseStabEngine",
     "SparseStabilizerEngineBuilder",

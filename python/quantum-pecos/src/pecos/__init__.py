@@ -174,6 +174,8 @@ linalg = num.linalg
 
 # Random number generation: pecos.random.randint(), pecos.random.normal()
 random = num.random
+# Make RngPcg accessible via pecos.random.RngPcg
+random.RngPcg = pecos_rslib.RngPcg
 
 # Optimization: pecos.optimize.brentq(), pecos.optimize.newton()
 optimize = num.optimize

@@ -331,13 +331,14 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 
     ```rust
     use pecos::simulators::{PauliProp, CliffordGateable};
+    use pecos::QubitId;
 
     // Track how an X error on qubit 0 propagates
     let mut prop = PauliProp::new();
     prop.add_x(0);  // Track an X error on qubit 0
 
     // Apply Hadamard - transforms X to Z
-    prop.h(0);
+    prop.h(&[QubitId(0)]);
 
     // Check resulting error pattern
     assert!(prop.contains_z(0));  // X transformed to Z
@@ -474,16 +475,19 @@ For fine-grained control, you can use simulators directly:
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
+    use pecos::simulators::{SparseStab, CliffordGateable};
+    use pecos::QubitId;
+
     // Create simulator with 5 qubits
     let mut state = SparseStab::new(5);
 
-    // Apply gates (methods are chainable)
-    state.h(0);
-    state.cx(0, 1);
+    // Apply gates
+    state.h(&[QubitId(0)]);
+    state.cx(&[QubitId(0), QubitId(1)]);
 
     // Measure
-    let result = state.mz(0);
-    println!("Qubit 0 measured: {}", result.outcome);
+    let results = state.mz(&[QubitId(0)]);
+    println!("Qubit 0 measured: {}", results[0].outcome);
 
     // Inspect stabilizers
     println!("{:?}", state);

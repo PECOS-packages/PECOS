@@ -2,7 +2,7 @@
 
 ```hidden-rust
 use pecos::prelude::*;
-use pecos::quantum::{sparse_stabilizer, state_vector};
+use pecos::simulators::{sparse_stabilizer, state_vector};
 use pecos::noise::GeneralNoiseModelBuilder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -340,7 +340,7 @@ PECOS provides different engines optimized for different types of circuits:
 
     ```rust
     use pecos::prelude::*;
-    use pecos::quantum::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stabilizer, state_vector};
 
     let qasm_code = r#"
         OPENQASM 2.0;

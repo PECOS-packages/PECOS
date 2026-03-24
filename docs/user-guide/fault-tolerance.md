@@ -79,6 +79,16 @@ assert!(matches!(result, ErrorClass::UndetectableLogical { .. }));
 For detailed information about which stabilizers and logicals are affected:
 
 ```rust
+use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
+use pecos_core::{Xs, Zs};
+use pecos_core::pauli::constructors::*;
+
+let code = StabilizerCodeSpec::builder(3)
+    .check(Zs([0, 1])).check(Zs([1, 2]))
+    .logical_z(Zs([0, 1, 2])).logical_x(Xs([0]))
+    .build().unwrap();
+let checker = StabilizerFlipChecker::new(&code);
+
 let flips = checker.compute_flips(&X(1));
 println!("Flipped stabilizers: {:?}", flips.stabilizers);  // {0, 1}
 println!("Flipped logical Zs: {:?}", flips.logical_zs);
@@ -91,6 +101,15 @@ println!("Syndrome: {:?}", flips.syndrome(2));  // [true, true]
 Enumerate all weight-t Pauli errors and classify each:
 
 ```rust
+use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
+use pecos_core::{Xs, Zs};
+
+let code = StabilizerCodeSpec::builder(3)
+    .check(Zs([0, 1])).check(Zs([1, 2]))
+    .logical_z(Zs([0, 1, 2])).logical_x(Xs([0]))
+    .build().unwrap();
+let checker = StabilizerFlipChecker::new(&code);
+
 // Analyze all weight-1 errors
 let analysis = checker.analyze_weight(1);
 
@@ -109,6 +128,15 @@ println!("Fault-tolerant: {}", analysis.is_fault_tolerant());
 For CSS codes, you can analyze X, Y, and Z errors separately:
 
 ```rust
+use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
+use pecos_core::{Xs, Zs};
+
+let code = StabilizerCodeSpec::builder(3)
+    .check(Zs([0, 1])).check(Zs([1, 2]))
+    .logical_z(Zs([0, 1, 2])).logical_x(Xs([0]))
+    .build().unwrap();
+let checker = StabilizerFlipChecker::new(&code);
+
 // Only X errors (bit-flip)
 let x_analysis = checker.analyze_weight_with_types(1, true, false, false);
 

@@ -50,7 +50,18 @@ let checker = StabilizerFlipChecker::new(&code);
 ### Classifying Individual Errors
 
 ```rust
+use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker, ErrorClass};
+use pecos_core::{Xs, Zs};
 use pecos_core::pauli::constructors::*;
+
+let code = StabilizerCodeSpec::builder(3)
+    .check(Zs([0, 1]))
+    .check(Zs([1, 2]))
+    .logical_z(Zs([0, 1, 2]))
+    .logical_x(Xs([0]))
+    .build()
+    .unwrap();
+let checker = StabilizerFlipChecker::new(&code);
 
 // X error on qubit 0 -- detectable (flips first stabilizer, also hits logical X)
 let result = checker.classify_error(&X(0));
@@ -209,10 +220,10 @@ println!("Excessive output: {}", analysis.excessive_output);
 
 The `DemBuilder` generates Stim-compatible detector error models from fault influence maps. This connects PECOS's fault analysis to external decoders.
 
-```rust
+```rust,ignore
 use pecos_qec::fault_tolerance::{DemBuilder};
 
-// Build DEM from a fault influence map
+// Build DEM from a fault influence map (requires influence_map from prior analysis)
 let dem = DemBuilder::new(&influence_map)
     .with_noise(0.01, 0.01, 0.01, 0.01)  // px, py, pz, pm
     .with_detectors_json(detectors_json)?
@@ -265,7 +276,20 @@ let result = calculate_distance(&code, &DistanceSearchConfig::with_max_weight(5)
 ### Finding All Minimum-Weight Logicals
 
 ```rust
-use pecos_qec::{find_min_weight_logicals_with_info, DistanceSearchConfig};
+use pecos_qec::{StabilizerCodeSpec, find_min_weight_logicals_with_info, DistanceSearchConfig};
+use pecos_core::{Xs, Zs};
+
+let code = StabilizerCodeSpec::builder(7)
+    .check(Xs([0, 2, 4, 6]))
+    .check(Xs([1, 2, 5, 6]))
+    .check(Xs([3, 4, 5, 6]))
+    .check(Zs([0, 2, 4, 6]))
+    .check(Zs([1, 2, 5, 6]))
+    .check(Zs([3, 4, 5, 6]))
+    .logical_z(Zs([0, 2, 4, 6]))
+    .logical_x(Xs([0, 2, 4, 6]))
+    .build()
+    .unwrap();
 
 let logicals = find_min_weight_logicals_with_info(&code, &DistanceSearchConfig::default());
 for op in &logicals {
@@ -325,7 +349,7 @@ spec.verify().unwrap();
 
 // 4. Compute distance
 let dist = calculate_distance(&spec, &DistanceSearchConfig::default());
-println!("Distance: {:?}", dist.map(|r| r.distance));
+println!("Distance: {:?}", dist.as_ref().map(|r| r.distance));
 
 // 5. Check fault tolerance at weight 1
 let checker = StabilizerFlipChecker::new(&spec);
@@ -333,7 +357,7 @@ let analysis = checker.analyze_weight(1);
 println!("Fault-tolerant at weight 1: {}", analysis.is_fault_tolerant());
 
 // 6. For a distance-3 code, also check weight 2
-if dist.is_some() && dist.as_ref().unwrap().distance >= 3 {
+if dist.as_ref().is_some_and(|r| r.distance >= 3) {
     let analysis_2 = checker.analyze_weight(2);
     println!("Fault-tolerant at weight 2: {}", analysis_2.is_fault_tolerant());
 }

@@ -63,7 +63,7 @@ A `StabilizerCode` is defined by its stabilizer generators and a qubit count:
     use pecos_core::pauli::constructors::*;
 
     // 3-qubit bit-flip repetition code: generators ZZI, IZZ
-    let group = pecos_quantum::PauliStabilizerGroup::from_generators(vec![
+    let group = pecos_quantum::PauliStabilizerGroup::new(vec![
         Zs([0, 1]),
         Zs([1, 2]),
     ]).unwrap();
@@ -202,7 +202,7 @@ use pecos_quantum::PauliStabilizerGroup;
 use pecos_core::pauli::constructors::Zs;
 
 // ZZ on qubits 0,1 -- but we declare 4 physical qubits
-let group = PauliStabilizerGroup::from_generators(vec![
+let group = PauliStabilizerGroup::new(vec![
     Zs([0, 1]),
 ]).unwrap();
 
@@ -225,7 +225,7 @@ let code = StabilizerCodeSpec::builder(3)
     .check(Zs([0, 1]))
     .check(Zs([1, 2]))
     .logical_z(Zs([0, 1, 2]))
-    .logical_x(Xs([0]))
+    .logical_x(Xs([0, 1, 2]))
     .build()
     .unwrap();
 

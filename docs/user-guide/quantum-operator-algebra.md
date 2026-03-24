@@ -80,7 +80,8 @@ let a = X(0) & Z(1);
 let b = Z(0) & X(1);
 
 // Commutation
-assert!(!a.commutes_with(&b));  // anticommute
+// X(0)Z(1) and Z(0)X(1) anticommute on each qubit, but 2 anticommutations = commute
+assert!(a.commutes_with(&b));
 assert!(a.commutes_with(&a));   // self-commutes
 
 // Weight (number of non-identity sites)
@@ -171,7 +172,7 @@ let parallel = H(0) & H(1);  // H on both qubits simultaneously
 let inv = circuit.dg();  // T^dag * CX^dag * H^dag
 
 // Rotation gates
-let rz = RZ(Angle64::PI_OVER_4, 0);  // Rz(pi/4) on qubit 0
+let rz = RZ(Angle64::HALF_TURN / 4, 0);  // Rz(pi/4) on qubit 0
 
 // Multi-qubit gate constructors
 let cx_pair = CXs([(0, 1), (2, 3)]);  // CX on two pairs
@@ -273,7 +274,7 @@ use pecos_core::op::*;
 
 let circuit = CX(0, 3) & H(5);
 assert_eq!(circuit.num_qubits(), 6);     // spans qubits 0..5
-assert_eq!(circuit.qubits(), vec![0, 3, 5]);
+assert_eq!(circuit.qubits(), vec![0, 1, 2, 3, 4, 5]);  // full range
 ```
 
 ---

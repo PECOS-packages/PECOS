@@ -42,11 +42,12 @@ q = 0
 q0, q1 = 0, 1
 ```
 
+<!--skip: Gate reference uses simplified calling convention (sim.h(q)) not the actual trait API (sim.h(&[QubitId(q)]))-->
 ```hidden-rust
 use pecos::prelude::*;
 
 fn main() {
-    let mut sim = StdSparseStab::new(5);
+    let mut sim = SparseStab::new(5);
     let q: usize = 0;
     let q0: usize = 0;
     let q1: usize = 1;

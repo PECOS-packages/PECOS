@@ -1,0 +1,28 @@
+[package]
+name = "pecos-doc-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Enable runtime and hugr features for full API access
+pecos = { path = "../../../../../crates/pecos", features = ["runtime", "hugr", "wasm"] }
+# Also include internal crates that docs may reference directly
+pecos-core = { path = "../../../../../crates/pecos-core" }
+pecos-hugr = { path = "../../../../../crates/pecos-hugr" }
+pecos-engines = { path = "../../../../../crates/pecos-engines" }
+pecos-simulators = { path = "../../../../../crates/pecos-simulators" }
+pecos-quantum = { path = "../../../../../crates/pecos-quantum" }
+pecos-num = { path = "../../../../../crates/pecos-num" }
+pecos-qec = { path = "../../../../../crates/pecos-qec" }
+pecos-decoders = { path = "../../../../../crates/pecos-decoders", features = ["ldpc"] }
+pecos-decoder-core = { path = "../../../../../crates/pecos-decoder-core" }
+pecos-random = { path = "../../../../../crates/pecos-random" }
+# Common external crates used in documentation examples
+serde_json = "1.0"
+
+[lib]
+path = "src/lib.rs"
+
+# Not part of the main workspace
+[workspace]

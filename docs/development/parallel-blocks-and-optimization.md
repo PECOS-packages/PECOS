@@ -83,12 +83,34 @@ prog = Main(
 
 The optimizer reorders operations to maximize parallelism by grouping compatible gates:
 
-<!--skip: conceptual output structure, not executable code-->
-```python
-Block(
-    Parallel(H(q[0]), H(q[2]), H(q[4])),  # All H gates run together
-    Parallel(CX(q[0], q[1]), CX(q[2], q[3]), CX(q[4], q[5])),  # All CX gates
+```hidden-python
+from pecos.slr import Main, Parallel, Block, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+
+prog = Main(
+    q := QReg("q", 6),
+    Parallel(
+        Block(qb.H(q[0]), qb.CX(q[0], q[1])),
+        Block(qb.H(q[2]), qb.CX(q[2], q[3])),
+        Block(qb.H(q[4]), qb.CX(q[4], q[5])),
+    ),
 )
+```
+
+```python
+from pecos.slr import SlrConverter
+
+# Convert to QASM (optimizer runs automatically)
+qasm = SlrConverter(prog).qasm()
+print(qasm)
+# All H gates are grouped in one parallel block,
+# all CX gates in the next:
+#   // parallel begin
+#   h q[0]; h q[2]; h q[4];
+#   // parallel end
+#   // parallel begin
+#   cx q[0], q[1]; cx q[2], q[3]; cx q[4], q[5];
+#   // parallel end
 ```
 
 ### Using the Optimizer

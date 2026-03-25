@@ -50,39 +50,40 @@ def _check_cuda_available() -> bool:
 
 def cuda_available() -> bool:
     """Return cached CUDA availability status."""
-    global _CUDA_AVAILABLE
+    global _CUDA_AVAILABLE  # noqa: PLW0603
     if _CUDA_AVAILABLE is None:
         _CUDA_AVAILABLE = _check_cuda_available()
     return _CUDA_AVAILABLE
 
 
 @pytest.fixture(scope="session")
-def cuda_check():
+def cuda_check() -> bool:
     """Fixture that returns CUDA availability."""
     return cuda_available()
 
 
 @pytest.fixture(autouse=True)
-def restore_cwd():
+def restore_cwd():  # noqa: ANN201
     """Restore the current working directory after each test.
 
     Some tests (e.g., WASM examples) change the working directory,
     which can interfere with other tests that rely on path resolution.
     """
-    import os
-    original_cwd = os.getcwd()
+    from pathlib import Path
+    original_cwd = Path.cwd()
     yield
+    import os
     os.chdir(original_cwd)
 
 
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers."""
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "gpu: marks tests as requiring GPU")
     config.addinivalue_line("markers", "cuda: marks tests as requiring CUDA")
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:  # noqa: ARG001
     """Print CUDA status at collection time."""
     cuda = cuda_available()
     print(f"\nCUDA available: {cuda}")

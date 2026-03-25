@@ -44,71 +44,65 @@ impl PyByteMessageBuilder {
         let _ = self.inner.for_outcomes();
     }
 
-    /// Add an X gate to the message
-    #[pyo3(text_signature = "($self, qubit)")]
-    fn add_x(&mut self, qubit: usize) {
-        self.inner.add_x(&[qubit]);
+    /// Add X gate(s): `add_x([0, 1, 2])`
+    fn add_x(&mut self, qubits: Vec<usize>) {
+        self.inner.add_x(&qubits);
     }
 
-    /// Add a Y gate to the message
-    #[pyo3(text_signature = "($self, qubit)")]
-    fn add_y(&mut self, qubit: usize) {
-        self.inner.add_y(&[qubit]);
+    /// Add Y gate(s): `add_y([0, 1, 2])`
+    fn add_y(&mut self, qubits: Vec<usize>) {
+        self.inner.add_y(&qubits);
     }
 
-    /// Add a Z gate to the message
-    #[pyo3(text_signature = "($self, qubit)")]
-    fn add_z(&mut self, qubit: usize) {
-        self.inner.add_z(&[qubit]);
+    /// Add Z gate(s): `add_z([0, 1, 2])`
+    fn add_z(&mut self, qubits: Vec<usize>) {
+        self.inner.add_z(&qubits);
     }
 
-    /// Add an H gate to the message
-    #[pyo3(text_signature = "($self, qubit)")]
-    fn add_h(&mut self, qubit: usize) {
-        self.inner.add_h(&[qubit]);
+    /// Add H gate(s): `add_h([0, 1, 2])`
+    fn add_h(&mut self, qubits: Vec<usize>) {
+        self.inner.add_h(&qubits);
     }
 
-    /// Add a CX (CNOT) gate to the message
-    #[pyo3(text_signature = "($self, control, target)")]
-    fn add_cx(&mut self, control: usize, target: usize) {
-        self.inner.add_cx(&[control], &[target]);
+    /// Add CX (CNOT) gate(s): `add_cx([(c0, t0), (c1, t1)])`
+    fn add_cx(&mut self, pairs: Vec<(usize, usize)>) {
+        let controls: Vec<usize> = pairs.iter().map(|(c, _)| *c).collect();
+        let targets: Vec<usize> = pairs.iter().map(|(_, t)| *t).collect();
+        self.inner.add_cx(&controls, &targets);
     }
 
-    /// Add an RZ gate to the message
-    #[pyo3(text_signature = "($self, theta, qubit)")]
-    fn add_rz(&mut self, theta: AngleParam, qubit: usize) {
-        self.inner.add_rz(theta.0, &[qubit]);
+    /// Add RZ gate(s): `add_rz(theta, [q0, q1])`
+    fn add_rz(&mut self, theta: AngleParam, qubits: Vec<usize>) {
+        self.inner.add_rz(theta.0, &qubits);
     }
 
-    /// Add an RZZ gate to the message
-    #[pyo3(text_signature = "($self, theta, qubit1, qubit2)")]
-    fn add_rzz(&mut self, theta: AngleParam, qubit1: usize, qubit2: usize) {
-        self.inner.add_rzz(theta.0, &[qubit1], &[qubit2]);
+    /// Add RZZ gate(s): `add_rzz(theta, [(q0, q1), (q2, q3)])`
+    fn add_rzz(&mut self, theta: AngleParam, pairs: Vec<(usize, usize)>) {
+        let q1s: Vec<usize> = pairs.iter().map(|(a, _)| *a).collect();
+        let q2s: Vec<usize> = pairs.iter().map(|(_, b)| *b).collect();
+        self.inner.add_rzz(theta.0, &q1s, &q2s);
     }
 
-    /// Add an SZZ gate to the message
-    #[pyo3(text_signature = "($self, qubit1, qubit2)")]
-    fn add_szz(&mut self, qubit1: usize, qubit2: usize) {
-        self.inner.add_szz(&[qubit1], &[qubit2]);
+    /// Add SZZ gate(s): `add_szz([(q0, q1), (q2, q3)])`
+    fn add_szz(&mut self, pairs: Vec<(usize, usize)>) {
+        let q1s: Vec<usize> = pairs.iter().map(|(a, _)| *a).collect();
+        let q2s: Vec<usize> = pairs.iter().map(|(_, b)| *b).collect();
+        self.inner.add_szz(&q1s, &q2s);
     }
 
-    /// Add an R1XY gate to the message
-    #[pyo3(text_signature = "($self, theta, phi, qubit)")]
-    fn add_r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubit: usize) {
-        self.inner.add_r1xy(theta.0, phi.0, &[qubit]);
+    /// Add R1XY gate(s): `add_r1xy(theta, phi, [q0, q1])`
+    fn add_r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
+        self.inner.add_r1xy(theta.0, phi.0, &qubits);
     }
 
-    /// Add a measurement gate to the message
-    #[pyo3(text_signature = "($self, qubit, result_id)")]
-    fn add_measurement(&mut self, qubit: usize, _result_id: usize) {
-        // result_id is no longer used, but kept in API for compatibility
-        self.inner.add_measurements(&[qubit]);
+    /// Add Z-basis measurement(s): `add_mz([0, 1, 2])`
+    fn add_mz(&mut self, qubits: Vec<usize>) {
+        self.inner.add_measurements(&qubits);
     }
 
-    /// Add a qubit preparation gate to the message
-    #[pyo3(text_signature = "($self, qubit)")]
-    fn add_prep(&mut self, qubit: usize) {
-        self.inner.add_prep(&[qubit]);
+    /// Add qubit preparation(s): `add_prep([0, 1, 2])`
+    fn add_prep(&mut self, qubits: Vec<usize>) {
+        self.inner.add_prep(&qubits);
     }
 
     // Removed add_flush since it's no longer needed

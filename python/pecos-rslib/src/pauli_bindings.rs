@@ -16,7 +16,9 @@
 //! to Python, allowing quantum error models to use native Pauli representations
 //! instead of string-based arrays.
 
-use pecos::prelude::{Pauli as RustPauli, PauliString as RustPauliString, QuarterPhase, QubitId};
+use pecos::prelude::{
+    Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
+};
 use pyo3::prelude::*;
 
 /// Single-qubit Pauli operator (I, X, Y, Z)
@@ -403,6 +405,19 @@ impl PauliString {
             })
             .collect();
         Ok(rows)
+    }
+
+    /// Check if this `PauliString` commutes with another.
+    ///
+    /// Two Pauli strings commute if they share an even number of
+    /// anticommuting single-qubit Pauli pairs.
+    fn commutes_with(&self, other: &PauliString) -> bool {
+        self.inner.commutes_with(&other.inner)
+    }
+
+    /// Check if this `PauliString` anticommutes with another.
+    fn anticommutes_with(&self, other: &PauliString) -> bool {
+        !self.inner.commutes_with(&other.inner)
     }
 }
 

@@ -1,25 +1,15 @@
 # Decoders
 
 ```hidden-rust
-use pecos_decoders::{
-    CssCode, SparseMatrix, Decoder, BpMethod, OsdMethod, UfMethod, BpSchedule,
-    BpOsdDecoder, BpLsdDecoder, BeliefFindDecoder, FlipDecoder, UnionFindDecoder,
-    SoftInfoBpDecoder, SoftDecoder, LdpcError,
-};
-
-fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
-    let hx_rows: Vec<u32> = vec![0, 1, 0, 1];
-    let hx_cols: Vec<u32> = vec![0, 2, 1, 3];
-    let hx = SparseMatrix::from_coo(2, 4, hx_rows, hx_cols)?;
-    let hz_rows: Vec<u32> = vec![0, 1, 0, 1];
-    let hz_cols: Vec<u32> = vec![0, 1, 2, 3];
-    let hz = SparseMatrix::from_coo(2, 4, hz_rows, hz_cols)?;
-    Ok(CssCode::new(hx, hz)?)
-}
+use pecos_decoders::{SparseMatrix, Decoder, BpMethod, OsdMethod, UfMethod, BpSchedule, BpOsdDecoder, BpLsdDecoder, BeliefFindDecoder, FlipDecoder, UnionFindDecoder, SoftInfoBpDecoder, LdpcError, InputVectorType};
+use ndarray::array;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let css_code = create_css_code()?;
-    let syndrome = vec![1u8, 0, 1, 0];
+    let rows: Vec<u32> = vec![0, 0, 1, 1];
+    let cols: Vec<u32> = vec![0, 1, 2, 3];
+    let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
+    let error_rate = 0.05;
+    let syndrome = array![1u8, 0];
     // CODE
     Ok(())
 }
@@ -138,23 +128,13 @@ decoder = DummyDecoder()
 
 Before using decoders, you need a quantum error correction code:
 
-<!--skip: standalone function definition - included in preamble-->
 ```rust
-use pecos_decoders::{CssCode, SparseMatrix};
+use pecos_decoders::SparseMatrix;
 
-// Create a CSS code from parity check matrices
-fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
-    // Define Hx and Hz matrices as COO format sparse matrices
-    let hx_rows: Vec<u32> = vec![0, 1, 0, 1];
-    let hx_cols: Vec<u32> = vec![0, 2, 1, 3];
-    let hx = SparseMatrix::from_coo(2, 4, hx_rows, hx_cols)?;
-
-    let hz_rows: Vec<u32> = vec![0, 1, 0, 1];
-    let hz_cols: Vec<u32> = vec![0, 1, 2, 3];
-    let hz = SparseMatrix::from_coo(2, 4, hz_rows, hz_cols)?;
-
-    Ok(CssCode::new(hx, hz)?)
-}
+// Create a parity check matrix in COO (coordinate) format
+let rows: Vec<u32> = vec![0, 0, 1, 1];
+let cols: Vec<u32> = vec![0, 1, 2, 3];
+let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
 ```
 
 ### LDPC Decoders
@@ -163,27 +143,22 @@ fn create_css_code() -> Result<CssCode, Box<dyn std::error::Error>> {
 
 Combines belief propagation with ordered statistics decoding post-processing.
 
-<!--skip: API illustration - actual implementation uses different constructor signature-->
 ```rust
-use pecos_decoders::{BpOsdDecoder, Decoder, OsdMethod};
+use pecos_decoders::{BpOsdDecoder, BpMethod, OsdMethod, BpSchedule};
 
-// Create CSS code
-let css_code = create_css_code()?;
-
-// Create decoder
-let mut decoder = BpOsdDecoder::new(css_code);
-
-// Configure parameters
-decoder.set_max_iterations(100);
-decoder.set_bp_method(BpMethod::MinSum);
-decoder.set_osd_method(OsdMethod::Exhaustive);
-decoder.set_osd_order(10);
+// Build decoder with configuration
+let mut decoder = BpOsdDecoder::builder(&pcm)
+    .error_rate(error_rate)
+    .max_iter(100)
+    .bp_method(BpMethod::MinimumSum)
+    .osd_method(OsdMethod::OsdE)
+    .osd_order(10)
+    .build()?;
 
 // Decode syndrome
-let syndrome = vec![1, 0, 1, 0];
-let result = decoder.decode(&syndrome)?;
+let result = decoder.decode(&syndrome.view())?;
 
-println!("Correction: {:?}", result.correction);
+println!("Decoding: {:?}", result.decoding);
 println!("Converged: {}", result.converged);
 ```
 
@@ -191,59 +166,62 @@ println!("Converged: {}", result.converged);
 
 Localized version of OSD for better scaling with large codes.
 
-<!--skip: API illustration-->
 ```rust
-use pecos_decoders::{BpLsdDecoder, Decoder};
+use pecos_decoders::BpLsdDecoder;
 
-let mut decoder = BpLsdDecoder::new(css_code);
-decoder.set_bits_per_step(1);
-decoder.set_lsd_order(10);
+let mut decoder = BpLsdDecoder::builder(&pcm)
+    .error_rate(error_rate)
+    .bits_per_step(1)
+    .lsd_order(10)
+    .build()?;
 
-let result = decoder.decode(&syndrome)?;
+let result = decoder.decode(&syndrome.view())?;
 ```
 
 #### Belief Find Decoder
 
 Combines belief propagation with union-find algorithm.
 
-<!--skip: API illustration-->
 ```rust
-use pecos_decoders::{BeliefFindDecoder, Decoder, UfMethod};
+use pecos_decoders::{BeliefFindDecoder, UfMethod};
 
-let mut decoder = BeliefFindDecoder::new(css_code);
-decoder.set_uf_method(UfMethod::Inversion);
-decoder.set_max_bp_iterations(10);
+let mut decoder = BeliefFindDecoder::builder(&pcm)
+    .error_rate(error_rate)
+    .uf_method(UfMethod::Inversion)
+    .max_iter(10)
+    .build()?;
 
-let result = decoder.decode(&syndrome)?;
+let result = decoder.decode(&syndrome.view())?;
 ```
 
 #### Flip Decoder
 
 Fast bit-flipping decoder suitable for real-time applications.
 
-<!--skip: API illustration-->
 ```rust
-use pecos_decoders::{FlipDecoder, Decoder, BpSchedule};
+use pecos_decoders::FlipDecoder;
 
-let mut decoder = FlipDecoder::new(css_code);
-decoder.set_max_iterations(100);
-decoder.set_schedule(BpSchedule::Parallel);
+let mut decoder = FlipDecoder::builder(&pcm)
+    .max_iter(100)
+    .build()?;
 
-let result = decoder.decode(&syndrome)?;
+let result = decoder.decode(&syndrome.view())?;
 ```
 
 #### Union Find Decoder
 
 Graph-based decoder using union-find data structure.
 
-<!--skip: API illustration-->
 ```rust
-use pecos_decoders::{UnionFindDecoder, Decoder, UfMethod};
+use pecos_decoders::{UnionFindDecoder, UfMethod};
 
-let mut decoder = UnionFindDecoder::new(css_code);
-decoder.set_uf_method(UfMethod::Inversion);
+let mut decoder = UnionFindDecoder::builder(&pcm)
+    .method(UfMethod::Inversion)
+    .build()?;
 
-let result = decoder.decode(&syndrome)?;
+// Union find decode takes syndrome, LLRs, and bits_per_step
+let llrs = vec![0.1; 4];  // one LLR per bit column
+let result = decoder.decode(&syndrome.view(), &llrs, 1)?;
 ```
 
 ### Advanced Features
@@ -252,62 +230,66 @@ let result = decoder.decode(&syndrome)?;
 
 Use log-likelihood ratios for improved decoding performance.
 
-<!--skip: API illustration-->
 ```rust
-use pecos_decoders::{SoftInfoBpDecoder, SoftDecoder};
+use pecos_decoders::SoftInfoBpDecoder;
 
-let mut decoder = SoftInfoBpDecoder::new(css_code);
+let mut decoder = SoftInfoBpDecoder::builder(&pcm)
+    .error_rate(error_rate)
+    .max_iter(50)
+    .build()?;
 
-// Provide soft information (LLRs)
-let llrs = vec![0.1, -0.5, 0.8, -0.2];
-let result = decoder.decode_with_llrs(&syndrome, &llrs)?;
+// Soft decode takes soft syndrome values, cutoff, and sigma
+let soft_syndrome = vec![0.9, 0.1];
+let result = decoder.decode(&soft_syndrome, 5.0, 0.5)?;
 ```
 
 #### Batch Decoding
 
 Decode multiple syndromes efficiently.
 
-<!--skip: API illustration-->
 ```rust
-use pecos_decoders::BatchDecoder;
+use pecos_decoders::BpOsdDecoder;
+use ndarray::array;
+
+let mut decoder = BpOsdDecoder::builder(&pcm).error_rate(error_rate).build()?;
 
 let syndromes = vec![
-    vec![1, 0, 1, 0],
-    vec![0, 1, 0, 1],
-    vec![1, 1, 0, 0],
+    array![1u8, 0],
+    array![0u8, 1],
 ];
 
-let results = decoder.decode_batch(&syndromes)?;
-for (i, result) in results.iter().enumerate() {
-    println!("Syndrome {}: {:?}", i, result.correction);
+for (i, syn) in syndromes.iter().enumerate() {
+    let result = decoder.decode(&syn.view())?;
+    println!("Syndrome {}: {:?}", i, result.decoding);
 }
 ```
 
 #### Performance Tuning
 
-<!--skip: API illustration-->
 ```rust
-let mut decoder = BpOsdDecoder::new(css_code);
-decoder.set_schedule(BpSchedule::Parallel);  // Use parallel BP updates
-decoder.set_num_threads(4);  // Set thread count
+use pecos_decoders::{BpOsdDecoder, BpSchedule};
+
+let mut decoder = BpOsdDecoder::builder(&pcm)
+    .error_rate(error_rate)
+    .bp_schedule(BpSchedule::Parallel)
+    .omp_threads(4)
+    .build()?;
 ```
 
 ### Error Handling
 
-<!--skip: API illustration-->
 ```rust
-match decoder.decode(&syndrome) {
+use pecos_decoders::{BpOsdDecoder, LdpcError};
+
+let mut decoder = BpOsdDecoder::builder(&pcm).error_rate(error_rate).build()?;
+
+match decoder.decode(&syndrome.view()) {
     Ok(result) => {
-        println!("Success: {:?}", result.correction);
-    }
-    Err(DecoderError::InvalidSyndrome(msg)) => {
-        eprintln!("Invalid syndrome: {}", msg);
-    }
-    Err(DecoderError::DecodingFailed(msg)) => {
-        eprintln!("Decoding failed: {}", msg);
+        println!("Decoding: {:?}", result.decoding);
+        println!("Converged: {}", result.converged);
     }
     Err(e) => {
-        eprintln!("Other error: {}", e);
+        eprintln!("Decoding error: {}", e);
     }
 }
 ```

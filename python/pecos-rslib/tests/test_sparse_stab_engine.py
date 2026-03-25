@@ -26,8 +26,8 @@ def test_x_gate() -> None:
     """Test applying an X gate and measuring."""
     # Create a circuit with X gate and measurement
     builder = ByteMessage.quantum_operations_builder()
-    builder.add_x(0)
-    builder.add_measurement(0, 0)
+    builder.add_x([0])
+    builder.add_mz([0])
     circuit = builder.build()
 
     # Create a simulator with 1 qubit
@@ -47,10 +47,10 @@ def test_bell_state_correlations() -> None:
     """Test that measurements in a Bell state are correlated."""
     # Create a Bell state circuit
     builder = ByteMessage.quantum_operations_builder()
-    builder.add_h(0)
-    builder.add_cx(0, 1)
-    builder.add_measurement(0, 0)
-    builder.add_measurement(1, 1)
+    builder.add_h([0])
+    builder.add_cx([(0, 1)])
+    builder.add_mz([0])
+    builder.add_mz([1])
     bell_circuit = builder.build()
 
     # Create a simulator with 2 qubits
@@ -96,12 +96,12 @@ def test_ghz_state_correlations() -> None:
     """Test that measurements in a GHZ state are correlated."""
     # Create a GHZ state circuit
     builder = ByteMessage.quantum_operations_builder()
-    builder.add_h(0)  # H on qubit 0
-    builder.add_cx(0, 1)  # CNOT from q0 to q1
-    builder.add_cx(1, 2)  # CNOT from q1 to q2
-    builder.add_measurement(0, 0)
-    builder.add_measurement(1, 1)
-    builder.add_measurement(2, 2)
+    builder.add_h([0])  # H on qubit 0
+    builder.add_cx([(0, 1)])  # CNOT from q0 to q1
+    builder.add_cx([(1, 2)])  # CNOT from q1 to q2
+    builder.add_mz([0])
+    builder.add_mz([1])
+    builder.add_mz([2])
     ghz_circuit = builder.build()
 
     # Create a simulator with 3 qubits
@@ -142,8 +142,8 @@ def test_simulator_reset() -> None:
     """Test resetting the simulator state."""
     # Create a simple circuit: X on qubit 0, measure qubit 0
     builder = ByteMessage.quantum_operations_builder()
-    builder.add_x(0)
-    builder.add_measurement(0, 0)
+    builder.add_x([0])
+    builder.add_mz([0])
     circuit = builder.build()
 
     # Create a simulator with 1 qubit
@@ -164,7 +164,7 @@ def test_simulator_reset() -> None:
 
     # Create a circuit with just measurement
     builder = ByteMessage.quantum_operations_builder()
-    builder.add_measurement(0, 0)
+    builder.add_mz([0])
     measure_circuit = builder.build()
 
     # Run the circuit
@@ -182,15 +182,15 @@ def test_clifford_specific_gate() -> None:
     # Create a circuit using SZZ gate
     builder = ByteMessage.quantum_operations_builder()
     # Prepare |+⟩|+⟩ state
-    builder.add_h(0)
-    builder.add_h(1)
+    builder.add_h([0])
+    builder.add_h([1])
     # Apply SZZ gate
-    builder.add_szz(0, 1)
+    builder.add_szz([(0, 1)])
     # Measure in X basis (apply H before measurement)
-    builder.add_h(0)
-    builder.add_h(1)
-    builder.add_measurement(0, 0)
-    builder.add_measurement(1, 1)
+    builder.add_h([0])
+    builder.add_h([1])
+    builder.add_mz([0])
+    builder.add_mz([1])
     circuit = builder.build()
 
     # Create a simulator with 2 qubits

@@ -244,26 +244,26 @@ Real quantum computers are noisy. PECOS helps you understand how noise affects y
 
 === ":fontawesome-brands-rust: Rust"
 
-    ```rust,skip
+    ```rust
     use pecos::prelude::*;
 
     // No noise (ideal simulation)
-    PassThroughNoiseModel::builder()
+    let _pass = PassThroughNoiseModel::builder();
 
     // Standard depolarizing
-    DepolarizingNoiseModel::builder()
-        .with_uniform_probability(0.01)
+    let _depol = DepolarizingNoiseModel::builder()
+        .with_uniform_probability(0.01);
 
     // Custom depolarizing per operation type
-    DepolarizingNoiseModel::builder()
+    let _custom = DepolarizingNoiseModel::builder()
         .with_prep_probability(0.001)  // State preparation error
         .with_meas_probability(0.002)  // Measurement error
         .with_p1_probability(0.003)    // Single-qubit gate error
-        .with_p2_probability(0.004)    // Two-qubit gate error
+        .with_p2_probability(0.004);   // Two-qubit gate error
 
     // Biased depolarizing (asymmetric error distribution)
-    BiasedDepolarizingNoiseModel::builder()
-        .with_uniform_probability(0.01)
+    let _biased = BiasedDepolarizingNoiseModel::builder()
+        .with_uniform_probability(0.01);
     ```
 
 ### Creating Custom Noise Models

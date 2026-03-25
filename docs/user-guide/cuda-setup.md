@@ -258,7 +258,7 @@ uv pip install cupy-cuda12x cuquantum-python-cu12
 
 **Solution**: GPU memory is limited. Use smaller circuits or the MPS simulator for larger systems.
 
-<!--skip: requires pytket-cutensornet-->
+<!--skip-if-no-cuda-->
 ```python
 # MPS can handle larger systems with less memory
 from pecos.simulators import MPS
@@ -468,7 +468,7 @@ To use GPU simulators in PECOS:
    ```
 
    If you also installed `pytket-cutensornet`:
-   <!--skip: requires pytket-cutensornet-->
+   <!--skip-if-no-cuda-->
    ```python
    from pecos.simulators import MPS
 

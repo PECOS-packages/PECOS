@@ -116,22 +116,28 @@ A repetition code encodes a single logical qubit across multiple physical qubits
 
     In Rust, we load pre-compiled **HUGR** (Hierarchical Unified Graph Representation) files:
 
-    <!--test-data: repetition_code.hugr-->
+    ```hidden-rust
+    use pecos_hugr::hugr_sim;
+    use std::path::PathBuf;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
+
+        // CODE
+        Ok(())
+    }
+    ```
+
     ```rust
     use pecos_hugr::hugr_sim;
 
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        // Load and run a pre-compiled repetition code circuit
-        let results = hugr_sim("repetition_code.hugr")
-            .seed(42)
-            .run(10)?;
+    // Load and run a pre-compiled HUGR circuit
+    let results = hugr_sim(&hugr_path)
+        .seed(42)
+        .run(10)?;
 
-        // View results
-        for shot in &results.shots {
-            println!("Syndrome: {:?}", shot.data);
-        }
-        Ok(())
-    }
+    println!("Got {} shots", results.shots.len());
     ```
 
     !!! note "HUGR Files"

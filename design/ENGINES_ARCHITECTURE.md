@@ -704,14 +704,14 @@ pub trait SimulatorInterface {
 
 ByteMessage is exposed to Python via `pecos-rslib`:
 
-```python,notest
+```python
 from pecos import ByteMessage
 
 # Build a message
 builder = ByteMessage.quantum_operations_builder()
-builder.add_h(0)
-builder.add_cx(0, 1)
-builder.add_mz(0)
+builder.add_h([0])
+builder.add_cx([(0, 1)])
+builder.add_mz([0])
 message = builder.build()
 
 # Parse operations
@@ -787,8 +787,22 @@ PECOS is designed for Python users to write custom components while leveraging R
 
 Python components implement Protocol classes (structural typing):
 
-```python,notest
-# pecos/protocols.py
+```python
+from __future__ import annotations
+
+from typing import Any, Callable, Protocol
+
+BitArray = Any  # placeholder for bit-array type
+Correction = Any  # placeholder for correction type
+
+
+class MachineProtocol(Protocol):
+    """Interface for hardware models (connectivity, leakage, etc.)."""
+
+    leaked_qubits: set[int]
+    lost_qubits: set[int]
+
+    def process(self, op_buffer: list) -> list: ...
 
 
 class ErrorModelProtocol(Protocol):
@@ -801,15 +815,6 @@ class ErrorModelProtocol(Protocol):
     def reset(self) -> None: ...
 
 
-class MachineProtocol(Protocol):
-    """Interface for hardware models (connectivity, leakage, etc.)."""
-
-    leaked_qubits: set[int]
-    lost_qubits: set[int]
-
-    def process(self, op_buffer: list) -> list: ...
-
-
 class Decoder(Protocol):
     """Interface for QEC decoders."""
 
@@ -820,7 +825,10 @@ class Decoder(Protocol):
 
 Users can implement any protocol in pure Python:
 
-```python,notest
+```python
+import random
+
+
 class MyCustomErrorModel:
     """Custom error model - just implement the protocol methods."""
 
@@ -836,20 +844,69 @@ class MyCustomErrorModel:
         for op in qops:
             noisy_ops.append(op)
             if random.random() < self.error_params["p"]:
-                # Add depolarizing noise
-                noisy_ops.append(random_pauli(op.qubits))
+                noisy_ops.append(("X", op))  # simplified noise
         return noisy_ops
 
     def reset(self) -> None:
         pass
 
 
+model = MyCustomErrorModel(0.01)
+model.init(num_qubits=5)
+```
+
+Usage with the hybrid engine:
+
+```hidden-python
+import random
+
+from pecos.engines import HybridEngine
+
+
+class MyCustomErrorModel:
+    def __init__(self, error_rate):
+        self.error_params = {"p": error_rate}
+        self.num_qubits = None
+
+    def init(self, num_qubits, machine=None):
+        self.num_qubits = num_qubits
+
+    def process(self, qops, call_back=None):
+        noisy_ops = []
+        for op in qops:
+            noisy_ops.append(op)
+        return noisy_ops
+
+    def reset(self):
+        pass
+
+    def shot_reinit(self):
+        pass
+
+
+program = {
+    "format": "PHIR/JSON",
+    "version": "0.1.0",
+    "metadata": {"num_qubits": 2},
+    "ops": [
+        {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+        {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 2},
+        {"qop": "H", "args": [["q", 0]]},
+        {"qop": "CX", "args": [[["q", 0], ["q", 1]]]},
+        {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+        {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
+    ],
+}
+```
+
+```python
+from pecos.engines import HybridEngine
+
 # Use with HybridEngine
 engine = HybridEngine(
-    qsim="sparse_stab",  # Rust simulator (fast)
     error_model=MyCustomErrorModel(0.01),  # Python error model (flexible)
 )
-results = engine.run(program, shots=10000)
+results = engine.run(program, shots=100)
 ```
 
 ### Two-Layer Architecture
@@ -904,15 +961,28 @@ results = engine.run(program, shots=10000)
 
 For computationally intensive classical logic (decoders, lookup tables), PECOS supports WASM:
 
-```python,notest
-from pecos.rslib import WasmForeignObject
+```python
+import tempfile
+from pathlib import Path
 
-# Load compiled decoder
-decoder_wasm = WasmForeignObject("my_decoder.wasm")
+from pecos import WasmForeignObject
+
+# Create a minimal WASM module with a decode function
+wat = """(module
+  (func $init)
+  (func $decode_syndrome (param i32) (result i32) (local.get 0))
+  (memory (;0;) 1)
+  (export "init" (func $init))
+  (export "decode_syndrome" (func $decode_syndrome))
+  (export "memory" (memory 0))
+)"""
+wat_path = Path(tempfile.mktemp(suffix=".wat"))
+wat_path.write_text(wat)
+
+# Load and use
+decoder_wasm = WasmForeignObject.from_file(str(wat_path))
 decoder_wasm.init()
-
-# Use in simulation
-result = decoder_wasm.exec("decode_syndrome", [(syndrome, len(syndrome))])
+result = decoder_wasm.exec("decode_syndrome", [42])
 ```
 
 This allows writing performance-critical classical code in Rust/C/C++ compiled to WASM, while keeping the orchestration in Python.

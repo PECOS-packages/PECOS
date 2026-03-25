@@ -72,11 +72,14 @@ from pecos_rslib.engines import (
     qis_engine,
 )
 
+from pecos.engines.hybrid_engine import HybridEngine
+
 __all__ = [
     "ByteMessage",
     "ByteMessageBuilder",
     "HugrEngineBuilder",
     "HugrSimulation",
+    "HybridEngine",
     "PhirEngineBuilder",
     "PhirJsonEngine",
     "PhirJsonEngineBuilder",

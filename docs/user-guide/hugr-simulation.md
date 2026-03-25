@@ -70,13 +70,25 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--test-data: bell_state.hugr-->
-    ```rust
+    ```hidden-rust
     use pecos_hugr::{hugr_engine, hugr_sim};
     use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
+    use std::path::PathBuf;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
+
+        // CODE
+        Ok(())
+    }
+    ```
+
+    ```rust
+    use pecos_hugr::{hugr_engine, hugr_sim};
 
     // Load a pre-compiled HUGR file
-    let results = hugr_sim("bell_state.hugr")
+    let results = hugr_sim(&hugr_path)
         .seed(42)
         .run(1000)?;
 
@@ -165,19 +177,31 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-rust: Rust"
 
-    <!--test-data: circuit.hugr-->
-    ```rust
+    ```hidden-rust
     use pecos_hugr::{hugr_engine, hugr_sim};
     use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
+    use std::path::PathBuf;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
+
+        // CODE
+        Ok(())
+    }
+    ```
+
+    ```rust
+    use pecos_hugr::{hugr_engine, hugr_sim};
 
     // Quick simulation from file
-    let results = hugr_sim("circuit.hugr")
+    let results = hugr_sim(&hugr_path)
         .seed(42)
         .run(1000)?;
 
     // Or use the builder for more control
     let engine = hugr_engine()
-        .hugr_file("circuit.hugr")
+        .hugr_file(&hugr_path)
         .build()?;
 
     println!("Circuit uses {} qubits", engine.num_qubits());

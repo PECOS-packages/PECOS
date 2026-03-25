@@ -17,13 +17,14 @@ The simplest phase: +1 or -1. Required for stabilizer group generators (every st
 
 ```rust
 use pecos_core::Sign;
+use pecos_core::Phase;
 
 let plus = Sign::PlusOne;
 let minus = Sign::MinusOne;
 
 // Multiplication is XOR (extremely fast)
-assert_eq!(plus * minus, Sign::MinusOne);
-assert_eq!(minus * minus, Sign::PlusOne);
+assert_eq!(plus.multiply(&minus), Sign::MinusOne);
+assert_eq!(minus.multiply(&minus), Sign::PlusOne);
 ```
 
 ### QuarterPhase
@@ -32,12 +33,13 @@ Fourth roots of unity: {+1, -1, +i, -i}. The natural closure of single-qubit Pau
 
 ```rust
 use pecos_core::QuarterPhase;
+use pecos_core::Phase;
 
 let phase = QuarterPhase::PlusI;
 assert!(!phase.is_real());
 
 // Multiplication
-assert_eq!(QuarterPhase::PlusI * QuarterPhase::PlusI, QuarterPhase::MinusOne);
+assert_eq!(QuarterPhase::PlusI.multiply(&QuarterPhase::PlusI), QuarterPhase::MinusOne);
 
 // Conjugation
 assert_eq!(QuarterPhase::PlusI.conjugate(), QuarterPhase::MinusI);
@@ -163,7 +165,7 @@ The `GateType` enum classifies quantum gates for circuit representation and simu
 ### Gate Introspection
 
 ```rust
-use pecos_core::GateType;
+use pecos_core::prelude::GateType;
 
 let gate = GateType::CX;
 assert_eq!(gate.quantum_arity(), 2);  // two-qubit gate
@@ -186,20 +188,21 @@ The `GateRegistry` allows defining custom gates as decompositions into base gate
 ### Defining Custom Gates
 
 ```rust
-use pecos_core::{GateRegistry, GateDefinitionBuilder, GateType, AngleSource, Angle64};
+use pecos_core::prelude::GateType;
+use pecos_core::{GateRegistry, GateDefinitionBuilder, AngleSource, Angle64};
 
 let mut registry = GateRegistry::new();
 
 // Define a custom "RZX" gate that decomposes to H-CX-RZ-CX-H
-GateDefinitionBuilder::new("RZX", 2)
+let def = GateDefinitionBuilder::new("RZX", 2)
     .angle_arity(1)
     .step(GateType::H, &[1])                              // H on target
     .step(GateType::CX, &[0, 1])                          // CX
     .step_with_angles(GateType::RZ, &[1], &[AngleSource::Input(0)])  // RZ(theta)
     .step(GateType::CX, &[0, 1])                          // CX
     .step(GateType::H, &[1])                              // H on target
-    .build()
-    .register_into(&mut registry);
+    .build();
+registry.register(def);
 
 assert!(registry.contains("RZX"));
 ```

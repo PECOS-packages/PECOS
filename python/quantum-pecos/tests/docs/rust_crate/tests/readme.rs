@@ -4,7 +4,7 @@
 
 
 #[test]
-fn test_README_rust_1() -> Result<(), Box<dyn std::error::Error>> {
+fn test_readme_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     // Define a Bell state circuit
     let circuit = Qasm::from_string(r#"
@@ -23,4 +23,4 @@ fn test_README_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     // 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
     Ok(())
 }
-
+    

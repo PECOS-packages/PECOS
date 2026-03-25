@@ -248,24 +248,47 @@ println!("Excessive output: {}", analysis.excessive_output);
 
 The `DemBuilder` generates Stim-compatible detector error models from fault influence maps. This connects PECOS's fault analysis to external decoders.
 
-```rust,ignore
-use pecos_qec::fault_tolerance::{DemBuilder};
+```hidden-rust
+use pecos_qec::DemBuilder;
+use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
+use pecos_quantum::DagCircuit;
 
-// Build DEM from a fault influence map (requires influence_map from prior analysis)
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Build a simple parity check circuit
+    let mut dag = DagCircuit::new();
+    dag.pz(2);       // prepare ancilla
+    dag.cx(0, 2);    // parity check
+    dag.cx(1, 2);
+    dag.mz(2);       // measure syndrome
+
+    // Analyze faults to build influence map
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence_map = analyzer.build_influence_map();
+
+    // Define detectors and observables
+    let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
+    let observables_json = r"[]";
+
+    // CODE
+    Ok(())
+}
+```
+
+```rust
+use pecos_qec::DemBuilder;
+
+// Build DEM from a fault influence map
 let dem = DemBuilder::new(&influence_map)
-    .with_noise(0.01, 0.01, 0.01, 0.01)  // px, py, pz, pm
+    .with_noise(0.01, 0.01, 0.01, 0.01)  // p1, p2, p_meas, p_init
     .with_detectors_json(detectors_json)?
     .with_observables_json(observables_json)?
     .build();
 
-// Output in Stim format
-println!("{}", dem.to_stim_format());
-
-// Decomposed format for MWPM decoders (breaks hyperedges into graphlike errors)
-println!("{}", dem.to_stim_format_decomposed());
+println!("DEM has {} detectors, {} contributions",
+    dem.num_detectors(), dem.num_contributions());
 ```
 
-**Decomposition:** MWPM decoders work on graphs, not hypergraphs. When an error mechanism affects 3+ detectors (a hyperedge), `to_stim_format_decomposed()` decomposes it into combinations of graphlike (1-2 detector) errors.
+**Decomposition:** MWPM decoders work on graphs, not hypergraphs. When an error mechanism affects 3+ detectors (a hyperedge), it can be decomposed into combinations of graphlike (1-2 detector) errors.
 
 ## Distance Calculation
 

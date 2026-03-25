@@ -36,6 +36,8 @@ from pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
     BitUInt,  # Unsigned fixed-width binary integer type
+    ByteMessage,  # Binary protocol for quantum commands and measurement results
+    ByteMessageBuilder,  # Builder for ByteMessage
     GateRegistry,  # Gate registration system for custom gate decomposition
     GateSignatureMismatchError,  # Raised when custom gate arity mismatches
     Nanoseconds,  # Time duration in nanoseconds

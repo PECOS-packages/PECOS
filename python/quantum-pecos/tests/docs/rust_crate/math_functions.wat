@@ -1,0 +1,13 @@
+(module
+      (global $accumulator (mut i32) (i32.const 0))
+      (func $init)
+      (func $shot_reinit (i32.const 0) (global.set $accumulator))
+      (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
+      (func $mul (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.mul))
+      (memory (;0;) 1)
+      (export "init" (func $init))
+      (export "shot_reinit" (func $shot_reinit))
+      (export "add" (func $add))
+      (export "mul" (func $mul))
+      (export "memory" (memory 0))
+    )

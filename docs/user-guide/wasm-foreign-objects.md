@@ -47,7 +47,7 @@ Use `from_file()` to load a WASM module from disk:
 
     # Copy test WAT file with various names used in examples
     for _name in ["math_functions.wasm", "math_functions.wat", "math.wasm", "math.wat",
-                  "compute.wasm", "simple.wasm", "stateful.wasm"]:
+                  "compute.wat", "simple.wasm", "stateful.wasm"]:
         shutil.copy(_test_wat_src, _name)
     ```
 
@@ -75,6 +75,8 @@ Use `from_file()` to load a WASM module from disk:
     use std::fs;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let tmpdir = tempfile::tempdir()?;
+        let wasm_path = tmpdir.path().join("math_functions.wasm");
         let wat = r#"(module
           (global $accumulator (mut i32) (i32.const 0))
           (func $init)
@@ -88,9 +90,7 @@ Use `from_file()` to load a WASM module from disk:
           (export "mul" (func $mul))
           (export "memory" (memory 0))
         )"#;
-        for name in &["math_functions.wasm", "math_functions.wat"] {
-            fs::write(name, wat)?;
-        }
+        fs::write(&wasm_path, wat)?;
 
         // CODE
         Ok(())
@@ -101,14 +101,14 @@ Use `from_file()` to load a WASM module from disk:
     use pecos::wasm::WasmForeignObject;
 
     // From a file path with default timeout (1 second)
-    let wasm = WasmForeignObject::new("math_functions.wasm")?;
+    let wasm = WasmForeignObject::new(&wasm_path)?;
 
     // With custom timeout
-    let wasm = WasmForeignObject::with_timeout("math_functions.wasm", 5.0)?;
+    let wasm = WasmForeignObject::with_timeout(&wasm_path, 5.0)?;
 
     // With custom timeout and memory limit
     let wasm = WasmForeignObject::with_limits(
-        "math_functions.wasm",
+        wasm_path.to_str().unwrap(),
         5.0,                      // timeout in seconds
         Some(10 * 1024 * 1024),   // memory limit in bytes
     )?;
@@ -299,6 +299,8 @@ You can execute WASM functions directly:
     use std::fs;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let tmpdir = tempfile::tempdir()?;
+        let wat_path = tmpdir.path().join("math.wat");
         let wat = r#"(module
           (func $init)
           (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
@@ -309,7 +311,7 @@ You can execute WASM functions directly:
           (export "mul" (func $mul))
           (export "memory" (memory 0))
         )"#;
-        fs::write("math.wasm", wat)?;
+        fs::write(&wat_path, wat)?;
 
         // CODE
         Ok(())
@@ -319,7 +321,7 @@ You can execute WASM functions directly:
     ```rust
     use pecos::wasm::{WasmForeignObject, ForeignObject};
 
-    let mut wasm = WasmForeignObject::new("math.wasm")?;
+    let mut wasm = WasmForeignObject::new(&wat_path)?;
     wasm.init()?;
 
     // Execute functions
@@ -372,6 +374,8 @@ WASM functions can be called from QASM programs using the foreign function synta
     use std::fs;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let tmpdir = tempfile::tempdir()?;
+        let wat_path = tmpdir.path().join("math_add.wat");
         let wat = r#"(module
           (func $init)
           (func $add (param i32 i32) (result i32) (local.get 0) (local.get 1) (i32.add))
@@ -380,7 +384,7 @@ WASM functions can be called from QASM programs using the foreign function synta
           (export "add" (func $add))
           (export "memory" (memory 0))
         )"#;
-        fs::write("math.wasm", wat)?;
+        fs::write(&wat_path, wat)?;
 
         // CODE
         Ok(())
@@ -408,7 +412,7 @@ WASM functions can be called from QASM programs using the foreign function synta
     // Build engine with WASM foreign functions
     let results = qasm_engine()
         .qasm(qasm_code)
-        .wasm("math.wasm")  // Load WASM module for foreign functions
+        .wasm(wat_path.to_str().unwrap())  // Load WASM module for foreign functions
         .to_sim()
         .run(100)?;
     ```
@@ -451,7 +455,7 @@ WASM execution has a configurable timeout (default: 1 second) to prevent infinit
 
     ```python
     # 5 second timeout
-    wasm = WasmForeignObject.from_file("compute.wasm", timeout=5.0)
+    wasm = WasmForeignObject.from_file("compute.wat", timeout=5.0)
 
     # Very short timeout for quick operations
     wasm = WasmForeignObject.from_file("simple.wasm", timeout=0.1)
@@ -464,13 +468,15 @@ WASM execution has a configurable timeout (default: 1 second) to prevent infinit
     use std::fs;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let tmpdir = tempfile::tempdir()?;
+        let wat_path = tmpdir.path().join("compute.wat");
         let wat = r#"(module
           (func $init)
           (memory (;0;) 1)
           (export "init" (func $init))
           (export "memory" (memory 0))
         )"#;
-        fs::write("compute.wasm", wat)?;
+        fs::write(&wat_path, wat)?;
 
         // CODE
         Ok(())
@@ -479,7 +485,7 @@ WASM execution has a configurable timeout (default: 1 second) to prevent infinit
 
     ```rust
     // 5 second timeout
-    let wasm = WasmForeignObject::with_timeout("compute.wasm", 5.0)?;
+    let wasm = WasmForeignObject::with_timeout(&wat_path, 5.0)?;
     ```
 
 If execution exceeds the timeout, a `RuntimeError` (Python) or `PecosError::Processing` (Rust) is raised.
@@ -492,10 +498,10 @@ You can limit the memory available to WASM modules:
 
     ```python
     # Limit to 10 MB
-    wasm = WasmForeignObject.from_file("compute.wasm", memory_size=10 * 1024 * 1024)
+    wasm = WasmForeignObject.from_file("compute.wat", memory_size=10 * 1024 * 1024)
 
     # No limit (default)
-    wasm = WasmForeignObject.from_file("compute.wasm", memory_size=None)
+    wasm = WasmForeignObject.from_file("compute.wat", memory_size=None)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -505,13 +511,15 @@ You can limit the memory available to WASM modules:
     use std::fs;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let tmpdir = tempfile::tempdir()?;
+        let wat_path = tmpdir.path().join("compute.wat");
         let wat = r#"(module
           (func $init)
           (memory (;0;) 1)
           (export "init" (func $init))
           (export "memory" (memory 0))
         )"#;
-        fs::write("compute.wasm", wat)?;
+        fs::write(&wat_path, wat)?;
 
         // CODE
         Ok(())
@@ -521,13 +529,13 @@ You can limit the memory available to WASM modules:
     ```rust
     // Limit to 10 MB
     let wasm = WasmForeignObject::with_limits(
-        "compute.wasm",
+        wat_path.to_str().unwrap(),
         1.0,                      // timeout
         Some(10 * 1024 * 1024),   // memory limit
     )?;
 
     // No limit
-    let wasm = WasmForeignObject::with_limits("compute.wasm", 1.0, None)?;
+    let wasm = WasmForeignObject::with_limits(wat_path.to_str().unwrap(), 1.0, None)?;
     ```
 
 ## Serialization and Pickling
@@ -609,13 +617,15 @@ You can retrieve the compiled WASM bytes from a foreign object:
     use std::fs;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let tmpdir = tempfile::tempdir()?;
+        let wat_path = tmpdir.path().join("clone_test.wat");
         let wat = r#"(module
           (func $init)
           (memory (;0;) 1)
           (export "init" (func $init))
           (export "memory" (memory 0))
         )"#;
-        fs::write("math.wat", wat)?;
+        fs::write(&wat_path, wat)?;
 
         // CODE
         Ok(())
@@ -623,7 +633,7 @@ You can retrieve the compiled WASM bytes from a foreign object:
     ```
 
     ```rust
-    let wasm = WasmForeignObject::new("math.wat")?;
+    let wasm = WasmForeignObject::new(&wat_path)?;
 
     // Get the WASM bytes
     let bytes = wasm.wasm_bytes();
@@ -675,28 +685,20 @@ wasm.init()  # Re-initialize
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,notest
-    from pecos import WasmForeignObject, WasmError
+    ```python
+    from pecos import WasmForeignObject
 
     # File not found
     try:
         wasm = WasmForeignObject.from_file("nonexistent.wasm")
-    except WasmError as e:
+    except FileNotFoundError as e:
         print(f"File error: {e}")
 
     # Compilation error (invalid WASM)
     try:
         wasm = WasmForeignObject.from_bytes(b"invalid wasm")
-    except WasmError as e:
+    except RuntimeError as e:
         print(f"Compilation error: {e}")
-
-    # Function not found - need a valid wasm first
-    wasm = WasmForeignObject.from_file("math.wasm")
-    wasm.init()
-    try:
-        wasm.exec("nonexistent_function", [])
-    except WasmError as e:
-        print(f"Execution error: {e}")
     ```
 
 === ":fontawesome-brands-rust: Rust"

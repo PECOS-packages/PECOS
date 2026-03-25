@@ -2687,6 +2687,7 @@ dependencies = [
 name = "pecos-doc-tests"
 version = "0.1.0"
 dependencies = [
+ "ndarray 0.17.2",
  "pecos",
  "pecos-core",
  "pecos-decoder-core",
@@ -2699,6 +2700,7 @@ dependencies = [
  "pecos-random",
  "pecos-simulators",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

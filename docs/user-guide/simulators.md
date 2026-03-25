@@ -231,7 +231,6 @@ results = sim(Qasm(circuit)).quantum(Qulacs).run(100)
 
 State vector simulator powered by the QuEST library.
 
-<!--skip: requires QuEST library to be built-->
 ```python
 from pecos.simulators import QuestStateVec
 
@@ -273,13 +272,11 @@ See [CUDA Setup Guide](cuda-setup.md) for detailed installation instructions.
 
 Tensor network simulator for circuits with limited entanglement.
 
-<!--skip: requires pytket-cutensornet-->
+<!--skip-if-no-cuda-->
 ```python
 from pecos.simulators import MPS
 
-# Configure bond dimension (higher = more accurate but slower)
-mps = MPS(chi=64, truncation_fidelity=0.99)
-results = sim(Qasm(circuit)).quantum(mps).run(100)
+results = sim(Qasm(circuit)).quantum(MPS).run(100)
 ```
 
 **Strengths:**

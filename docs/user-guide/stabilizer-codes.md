@@ -11,6 +11,15 @@ This guide covers working with Pauli strings and stabilizer codes in PECOS's Rus
 - Using standard code constructors
 - Converting between code types
 
+```hidden-rust
+use pecos_core::pauli::constructors::*;
+use pecos_core::PauliOperator;
+
+fn main() {
+    // CODE
+}
+```
+
 ## Building Pauli Strings
 
 Pauli strings are the fundamental building block. PECOS provides a concise constructor API:
@@ -41,14 +50,14 @@ Pauli strings are the fundamental building block. PECOS provides a concise const
 
 === ":fontawesome-brands-python: Python"
 
-    ```python,notest
+    ```python
     from pecos.quantum import PauliString
 
     # From string notation
     p = PauliString.from_str("XZI")
     q = PauliString.from_str("ZXI")
 
-    # Commutation (not yet available in Python bindings)
+    # Commutation check
     print(p.commutes_with(q))  # False (anticommute)
     ```
 

@@ -207,11 +207,16 @@ prog = make_surface_transversal_cnot(distance=5, num_rounds=2)
 
 ## Generated Code Structure
 
+```hidden-python
+from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.quantum import qubit, cx, h, measure
+```
+
 The `pecos.guppy` module generates Guppy source code with these components:
 
 ### Struct Definitions
 
-<!--skip: illustrative generated code, not executable-->
 ```python
 @guppy.struct
 class SurfaceCode_3x3:
@@ -230,7 +235,6 @@ class Syndrome_3x3:
 
 ### Stabilizer Measurements
 
-<!--skip: illustrative generated code, not executable-->
 ```python
 @guppy
 def measure_x_stab_0(ax: qubit, data: array[qubit, 9]) -> bool:
@@ -239,7 +243,7 @@ def measure_x_stab_0(ax: qubit, data: array[qubit, 9]) -> bool:
     cx(ax, data[0])
     cx(ax, data[1])
     h(ax)
-    return measure_and_reset(ax)
+    return measure(ax)
 
 
 @guppy
@@ -247,7 +251,7 @@ def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
     """Measure Z stabilizer 0 (boundary): [0, 3]."""
     cx(data[0], az)
     cx(data[3], az)
-    return measure_and_reset(az)
+    return measure(az)
 ```
 
 ### Syndrome Extraction

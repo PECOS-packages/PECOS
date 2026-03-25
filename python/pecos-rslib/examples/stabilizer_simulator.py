@@ -32,10 +32,10 @@ def run_bell_state_experiment() -> None:
 
     # Add gates to create a Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
     print("Building Bell state circuit...")
-    builder.add_h(0)  # Hadamard on qubit 0
-    builder.add_cx(0, 1)  # CNOT with control=0, target=1
-    builder.add_measurement(0, 0)  # Measure qubit 0
-    builder.add_measurement(1, 1)  # Measure qubit 1
+    builder.add_h([0])  # Hadamard on qubit 0
+    builder.add_cx([(0, 1)])  # CNOT with control=0, target=1
+    builder.add_mz([0])  # Measure qubit 0
+    builder.add_mz([1])  # Measure qubit 1
 
     bell_circuit = builder.build()
     print("Circuit built successfully")
@@ -124,18 +124,18 @@ def run_ghz_state_experiment() -> None:
 
     print("Building GHZ state circuit...")
     # Apply H to qubit 0
-    builder.add_h(0)
+    builder.add_h([0])
 
     # Apply CNOT from 0 to 1
-    builder.add_cx(0, 1)
+    builder.add_cx([(0, 1)])
 
     # Apply CNOT from 1 to 2
-    builder.add_cx(1, 2)
+    builder.add_cx([(1, 2)])
 
     # Measure all qubits
-    builder.add_measurement(0, 0)
-    builder.add_measurement(1, 1)
-    builder.add_measurement(2, 2)
+    builder.add_mz([0])
+    builder.add_mz([1])
+    builder.add_mz([2])
 
     ghz_circuit = builder.build()
 
@@ -186,19 +186,19 @@ def run_stabilizer_specific_circuit() -> None:
 
     print("Building stabilizer circuit with SZZ gate...")
     # Prepare |+⟩|+⟩ state (superposition of all computational basis states)
-    builder.add_h(0)
-    builder.add_h(1)
+    builder.add_h([0])
+    builder.add_h([1])
 
     # Apply SZZ (sqrt(Z⊗Z)) gate - efficient in stabilizer formalism
-    builder.add_szz(0, 1)
+    builder.add_szz([(0, 1)])
 
     # Apply H gates to move back to computational basis
-    builder.add_h(0)
-    builder.add_h(1)
+    builder.add_h([0])
+    builder.add_h([1])
 
     # Measure both qubits
-    builder.add_measurement(0, 0)
-    builder.add_measurement(1, 1)
+    builder.add_mz([0])
+    builder.add_mz([1])
 
     szz_circuit = builder.build()
 

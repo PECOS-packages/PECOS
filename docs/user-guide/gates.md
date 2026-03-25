@@ -24,11 +24,11 @@ All examples in this guide use the following setup:
     <!--skip-->
     ```rust
     use pecos::prelude::*;
+    use pecos::simulators::{SparseStab, CliffordGateable};
 
-    let mut sim = StdSparseStab::new(5);
-    let q: usize = 0;
-    let q0: usize = 0;
-    let q1: usize = 1;
+    let mut sim = SparseStab::new(5);
+    let q = QubitId(0);
+    let (q0, q1) = (QubitId(0), QubitId(1));
     ```
 
 ```hidden-python
@@ -42,18 +42,18 @@ q = 0
 q0, q1 = 0, 1
 ```
 
-<!--skip: Gate reference uses simplified calling convention (sim.h(q)) not the actual trait API (sim.h(&[QubitId(q)]))-->
 ```hidden-rust
 use pecos::prelude::*;
+use pecos::simulators::{SparseStab, CliffordGateable};
 
 fn main() {
     let mut sim = SparseStab::new(5);
-    let q: usize = 0;
-    let q0: usize = 0;
-    let q1: usize = 1;
-    let q2: usize = 2;
-    let control: usize = 0;
-    let target: usize = 1;
+    let q = QubitId(0);
+    let q0 = QubitId(0);
+    let q1 = QubitId(1);
+    let q2 = QubitId(2);
+    let control = QubitId(0);
+    let target = QubitId(1);
     // CODE
 }
 ```
@@ -127,10 +127,11 @@ The examples below use a simulator instance. Run this setup code first:
 
     ```rust
     use pecos::prelude::*;
+    use pecos::simulators::{SparseStab, CliffordGateable};
 
-    let mut sim = StdSparseStab::new(5);
-    let q: usize = 0;
-    let (q0, q1) = (0, 1);
+    let mut sim = SparseStab::new(5);
+    let q = QubitId(0);
+    let (q0, q1) = (QubitId(0), QubitId(1));
     ```
 
 ## Clifford Gates
@@ -169,7 +170,7 @@ I = [[1, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.identity(q);
+    sim.identity(&[q]);
     ```
 
 ---
@@ -198,7 +199,7 @@ X = [[0, 1],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.x(q);
+    sim.x(&[q]);
     ```
 
 ---
@@ -227,7 +228,7 @@ Y = [[ 0, -i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.y(q);
+    sim.y(&[q]);
     ```
 
 ---
@@ -256,7 +257,7 @@ Z = [[1,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.z(q);
+    sim.z(&[q]);
     ```
 
 ---
@@ -287,7 +288,7 @@ H = 1/√2 [[1,  1],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.h(q);
+    sim.h(&[q]);
     ```
 
 ---
@@ -306,11 +307,11 @@ PECOS provides additional Hadamard-like gates that perform basis transformations
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.h2(q);  // H2 variant
-    sim.h3(q);  // H3 variant
-    sim.h4(q);  // H4 variant
-    sim.h5(q);  // H5 variant
-    sim.h6(q);  // H6 variant
+    sim.h2(&[q]);  // H2 variant
+    sim.h3(&[q]);  // H3 variant
+    sim.h4(&[q]);  // H4 variant
+    sim.h5(&[q]);  // H5 variant
+    sim.h6(&[q]);  // H6 variant
     ```
 
 ---
@@ -341,8 +342,8 @@ SX = 1/2 [[1+i, 1-i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.sx(q);
-    sim.sxdg(q);  // Adjoint (inverse)
+    sim.sx(&[q]);
+    sim.sxdg(&[q]);  // Adjoint (inverse)
     ```
 
 ---
@@ -366,8 +367,8 @@ SY = 1/√2 [[1, -1],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.sy(q);
-    sim.sydg(q);  // Adjoint (inverse)
+    sim.sy(&[q]);
+    sim.sydg(&[q]);  // Adjoint (inverse)
     ```
 
 ---
@@ -396,8 +397,8 @@ SZ = [[1, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.sz(q);
-    sim.szdg(q);  // Adjoint (inverse): [[1, 0], [0, -i]]
+    sim.sz(&[q]);
+    sim.szdg(&[q]);  // Adjoint (inverse): [[1, 0], [0, -i]]
     ```
 
 ---
@@ -423,8 +424,8 @@ F = 1/√2 [[1, -i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.f(q);
-    sim.fdg(q);  // Adjoint: X→Z, Y→X, Z→Y
+    sim.f(&[q]);
+    sim.fdg(&[q]);  // Adjoint: X→Z, Y→X, Z→Y
     ```
 
 #### Face Gate Variants
@@ -440,9 +441,9 @@ F = 1/√2 [[1, -i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.f2(q);   sim.f2dg(q);
-    sim.f3(q);   sim.f3dg(q);
-    sim.f4(q);   sim.f4dg(q);
+    sim.f2(&[q]);   sim.f2dg(&[q]);
+    sim.f3(&[q]);   sim.f3dg(&[q]);
+    sim.f4(&[q]);   sim.f4dg(&[q]);
     ```
 
 ---
@@ -478,7 +479,7 @@ CX = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cx(control, target);
+    sim.cx(&[control, target]);
     ```
 
 ---
@@ -510,7 +511,7 @@ CY = [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cy(control, target);
+    sim.cy(&[control, target]);
     ```
 
 ---
@@ -542,7 +543,7 @@ CZ = [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cz(q1, q2);
+    sim.cz(&[q1, q2]);
     ```
 
 ---
@@ -574,7 +575,7 @@ SWAP = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.swap(q1, q2);
+    sim.swap(&[q1, q2]);
     ```
 
 ---
@@ -601,7 +602,7 @@ iSWAP = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.iswap(q1, q2);
+    sim.iswap(&[q1, q2]);
     ```
 
 ---
@@ -628,8 +629,8 @@ SXX = 1/√2 [[1,  0,  0, -i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.sxx(q1, q2);
-    sim.sxxdg(q1, q2);  // Adjoint
+    sim.sxx(&[q1, q2]);
+    sim.sxxdg(&[q1, q2]);  // Adjoint
     ```
 
 ---
@@ -648,8 +649,8 @@ IZ → YX
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.syy(q1, q2);
-    sim.syydg(q1, q2);  // Adjoint
+    sim.syy(&[q1, q2]);
+    sim.syydg(&[q1, q2]);  // Adjoint
     ```
 
 ---
@@ -681,8 +682,8 @@ SZZ = e^(-iπ/4) [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.szz(q1, q2);
-    sim.szzdg(q1, q2);  // Adjoint
+    sim.szz(&[q1, q2]);
+    sim.szzdg(&[q1, q2]);  // Adjoint
     ```
 
 ---
@@ -709,7 +710,7 @@ G = 1/2 [[ 1,  1,  1, -1],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.g(q1, q2);
+    sim.g(&[q1, q2]);
     ```
 
 ---
@@ -731,17 +732,18 @@ lam = pc.f64.pi / 6
 
 ```hidden-rust
 use pecos::prelude::*;
+use pecos::simulators::{StateVec, ArbitraryRotationGateable, CliffordGateable};
 use std::f64::consts::PI;
 
 fn main() {
     let mut sim = StateVec::new(5);
-    let q: usize = 0;
-    let q0: usize = 0;
-    let q1: usize = 1;
-    let q2: usize = 2;
-    let theta: f64 = PI / 4.0;
-    let phi: f64 = PI / 8.0;
-    let lam: f64 = PI / 6.0;
+    let q = QubitId(0);
+    let q0 = QubitId(0);
+    let q1 = QubitId(1);
+    let q2 = QubitId(2);
+    let theta = Angle64::from_radians(PI / 4.0);
+    let phi = Angle64::from_radians(PI / 8.0);
+    let lam = Angle64::from_radians(PI / 6.0);
     // CODE
 }
 ```
@@ -765,12 +767,13 @@ Non-Clifford gates include arbitrary rotation gates that cannot be efficiently s
 
     ```rust
     use pecos::prelude::*;
+    use pecos::simulators::{StateVec, ArbitraryRotationGateable, CliffordGateable};
     use std::f64::consts::PI;
 
     let mut sim = StateVec::new(5);
-    let q: usize = 0;
-    let (q0, q1) = (0, 1);
-    let theta: f64 = PI / 4.0;
+    let q = QubitId(0);
+    let (q0, q1) = (QubitId(0), QubitId(1));
+    let theta = Angle64::from_radians(PI / 4.0);
     ```
 
 ### Single-Qubit Rotations
@@ -796,7 +799,7 @@ RX(θ) = [[cos(θ/2),    -i·sin(θ/2)],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rx(theta, q);
+    sim.rx(theta, &[q]);
     ```
 
 ---
@@ -820,7 +823,7 @@ RY(θ) = [[cos(θ/2), -sin(θ/2)],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.ry(theta, q);
+    sim.ry(theta, &[q]);
     ```
 
 ---
@@ -844,7 +847,7 @@ RZ(θ) = [[e^(-iθ/2),     0     ],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rz(theta, q);
+    sim.rz(theta, &[q]);
     ```
 
 ---
@@ -867,8 +870,8 @@ T = [[1,        0     ],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.t(q);
-    sim.tdg(q);  // Adjoint (T†)
+    sim.t(&[q]);
+    sim.tdg(&[q]);  // Adjoint (T†)
     ```
 
 ---
@@ -892,7 +895,7 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.u(theta, phi, lam, q);
+    sim.u(theta, phi, lam, &[q]);
     ```
 
 ---
@@ -903,7 +906,7 @@ An X-Y plane rotation gate with a specified angle and axis.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.r1xy(theta, phi, q);
+    sim.r1xy(theta, phi, &[q]);
     ```
 
 ---
@@ -918,7 +921,7 @@ Two-qubit rotation implementing evolution under the XX interaction.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rxx(theta, q1, q2);
+    sim.rxx(theta, &[q1, q2]);
     ```
 
 ---
@@ -937,7 +940,7 @@ The YY coupling generates entanglement through the Y⊗Y interaction. For exampl
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.ryy(theta, q1, q2);
+    sim.ryy(theta, &[q1, q2]);
     ```
 
 ---
@@ -969,7 +972,7 @@ RZZ(θ) = [[e^(-iθ/2),     0,          0,          0       ],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rzz(theta, q1, q2);
+    sim.rzz(theta, &[q1, q2]);
     ```
 
 ---
@@ -991,9 +994,9 @@ Projects the state into either |0⟩ or |1⟩.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    let result = sim.mz(q);
-    // result.outcome: true if |1⟩, false if |0⟩
-    // result.is_deterministic: true if already in eigenstate
+    let results = sim.mz(&[q]);
+    // results[0].outcome: true if |1⟩, false if |0⟩
+    // results[0].is_deterministic: true if already in eigenstate
     ```
 
 ---
@@ -1004,8 +1007,8 @@ Projects the state into either |+⟩ or |-⟩, where |±⟩ = (|0⟩ ± |1⟩)/�
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    let result = sim.mx(q);   // Measure +X
-    let result = sim.mnx(q);  // Measure -X
+    let results = sim.mx(&[q]);   // Measure +X
+    let results = sim.mnx(&[q]);  // Measure -X
     ```
 
 ---
@@ -1016,8 +1019,8 @@ Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1�
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    let result = sim.my(q);   // Measure +Y
-    let result = sim.mny(q);  // Measure -Y
+    let results = sim.my(&[q]);   // Measure +Y
+    let results = sim.mny(&[q]);  // Measure -Y
     ```
 
 ---
@@ -1028,24 +1031,24 @@ Projects the state into either |+i⟩ or |-i⟩, where |±i⟩ = (|0⟩ ± i|1�
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.pz(q);   // Prepare |0⟩ (eigenstate of +Z)
-    sim.pnz(q);  // Prepare |1⟩ (eigenstate of -Z)
+    sim.pz(&[q]);   // Prepare |0⟩ (eigenstate of +Z)
+    sim.pnz(&[q]);  // Prepare |1⟩ (eigenstate of -Z)
     ```
 
 ### Prepare in X Eigenstates
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.px(q);   // Prepare |+⟩ = (|0⟩ + |1⟩)/√2
-    sim.pnx(q);  // Prepare |-⟩ = (|0⟩ - |1⟩)/√2
+    sim.px(&[q]);   // Prepare |+⟩ = (|0⟩ + |1⟩)/√2
+    sim.pnx(&[q]);  // Prepare |-⟩ = (|0⟩ - |1⟩)/√2
     ```
 
 ### Prepare in Y Eigenstates
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.py(q);   // Prepare |+i⟩ = (|0⟩ + i|1⟩)/√2
-    sim.pny(q);  // Prepare |-i⟩ = (|0⟩ - i|1⟩)/√2
+    sim.py(&[q]);   // Prepare |+i⟩ = (|0⟩ + i|1⟩)/√2
+    sim.pny(&[q]);  // Prepare |-i⟩ = (|0⟩ - i|1⟩)/√2
     ```
 
 ### Measure and Prepare (MP*)
@@ -1054,12 +1057,12 @@ These operations measure and then prepare the qubit in a specific eigenstate reg
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.mpz(q);   // Measure Z, prepare |0⟩
-    sim.mpnz(q);  // Measure -Z, prepare |1⟩
-    sim.mpx(q);   // Measure X, prepare |+⟩
-    sim.mpnx(q);  // Measure -X, prepare |-⟩
-    sim.mpy(q);   // Measure Y, prepare |+i⟩
-    sim.mpny(q);  // Measure -Y, prepare |-i⟩
+    sim.mpz(&[q]);   // Measure Z, prepare |0⟩
+    sim.mpnz(&[q]);  // Measure -Z, prepare |1⟩
+    sim.mpx(&[q]);   // Measure X, prepare |+⟩
+    sim.mpnx(&[q]);  // Measure -X, prepare |-⟩
+    sim.mpy(&[q]);   // Measure Y, prepare |+i⟩
+    sim.mpny(&[q]);  // Measure -Y, prepare |-i⟩
     ```
 
 ---

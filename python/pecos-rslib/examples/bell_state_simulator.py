@@ -32,10 +32,10 @@ def run_bell_state_experiment() -> None:
 
     # Add gates to create a Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
     print("Building Bell state circuit...")
-    builder.add_h([0])  # Hadamard on qubit 0
-    builder.add_cx([(0, 1)])  # CNOT with control=0, target=1
-    builder.add_mz([0])  # Measure qubit 0
-    builder.add_mz([1])  # Measure qubit 1
+    builder.h([0])  # Hadamard on qubit 0
+    builder.cx([(0, 1)])  # CNOT with control=0, target=1
+    builder.mz([0])  # Measure qubit 0
+    builder.mz([1])  # Measure qubit 1
 
     bell_circuit = builder.build()
     print("Circuit built successfully")
@@ -124,18 +124,18 @@ def run_custom_experiment() -> None:
 
     print("Building GHZ state circuit...")
     # Apply H to qubit 0
-    builder.add_h([0])
+    builder.h([0])
 
     # Apply CNOT from 0 to 1
-    builder.add_cx([(0, 1)])
+    builder.cx([(0, 1)])
 
     # Apply CNOT from 1 to 2
-    builder.add_cx([(1, 2)])
+    builder.cx([(1, 2)])
 
     # Measure all qubits
-    builder.add_mz([0])
-    builder.add_mz([1])
-    builder.add_mz([2])
+    builder.mz([0])
+    builder.mz([1])
+    builder.mz([2])
 
     ghz_circuit = builder.build()
 

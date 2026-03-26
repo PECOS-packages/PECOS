@@ -280,9 +280,9 @@ class TestPauliPropPickle:
     def test_roundtrip_with_faults(self) -> None:
         """Verify pickle roundtrip preserves PauliProp Pauli fault locations."""
         sim = PauliProp(num_qubits=4, track_sign=True)
-        sim.add_x(0)
-        sim.add_z(2)
-        sim.add_y(3)
+        sim.x(0)
+        sim.z(2)
+        sim.y(3)
 
         restored = pickle.loads(pickle.dumps(sim))
         assert restored.contains_x(0)
@@ -294,7 +294,7 @@ class TestPauliPropPickle:
     def test_roundtrip_preserves_sign(self) -> None:
         """Verify pickle roundtrip preserves the PauliProp sign flag."""
         sim = PauliProp(num_qubits=2, track_sign=True)
-        sim.add_x(0)
+        sim.x(0)
         sim.flip_sign()  # sign is now negative
 
         restored = pickle.loads(pickle.dumps(sim))
@@ -303,7 +303,7 @@ class TestPauliPropPickle:
     def test_roundtrip_preserves_img(self) -> None:
         """Verify pickle roundtrip preserves the PauliProp imaginary component."""
         sim = PauliProp(num_qubits=2, track_sign=True)
-        sim.add_x(0)
+        sim.x(0)
         sim.flip_img(1)  # imaginary component
 
         restored = pickle.loads(pickle.dumps(sim))
@@ -312,8 +312,8 @@ class TestPauliPropPickle:
     def test_roundtrip_no_sign_tracking(self) -> None:
         """Verify pickle roundtrip works for PauliProp without sign tracking."""
         sim = PauliProp()
-        sim.add_x(0)
-        sim.add_z(1)
+        sim.x(0)
+        sim.z(1)
 
         restored = pickle.loads(pickle.dumps(sim))
         assert restored.track_sign is False
@@ -323,8 +323,8 @@ class TestPauliPropPickle:
     def test_deepcopy(self) -> None:
         """Verify deepcopy produces an independent copy of PauliProp with matching faults."""
         sim = PauliProp(num_qubits=3, track_sign=True)
-        sim.add_x(0)
-        sim.add_z(1)
+        sim.x(0)
+        sim.z(1)
 
         copied = copy.deepcopy(sim)
         assert copied.contains_x(0)

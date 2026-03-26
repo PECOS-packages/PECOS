@@ -745,8 +745,8 @@ mod tests {
     fn test_bytemap_builder() {
         // Create a message with H and CX gates
         let mut builder = ByteMessage::quantum_operations_builder();
-        builder.add_h(&[0]);
-        builder.add_cx(&[(0, 1)]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
         let message = builder.build();
 
         // Parse the message
@@ -771,7 +771,7 @@ mod tests {
 
         // Create a quantum operations message
         let mut builder = ByteMessage::quantum_operations_builder();
-        builder.add_h(&[0]);
+        builder.h(&[0]);
         let quantum_message = builder.build();
 
         // Check that we can parse the gates
@@ -839,16 +839,16 @@ mod tests {
         let mut builder = ByteMessage::quantum_operations_builder();
 
         // Apply H to qubit 0
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Apply CX with control=0, target=1
-        builder.add_cx(&[(0, 1)]);
+        builder.cx(&[(0, 1)]);
 
         // Measure qubit 0 with result_id 0
-        builder.add_mz(&[0]);
+        builder.mz(&[0]);
 
         // Measure qubit 1 with result_id 1
-        builder.add_mz(&[1]);
+        builder.mz(&[1]);
 
         let bell_circuit = builder.build();
 
@@ -888,7 +888,7 @@ mod tests {
 
         // Create a non-empty message
         let non_empty_message = ByteMessage::quantum_operations_builder()
-            .add_h(&[0])
+            .h(&[0])
             .build();
         assert!(!non_empty_message.is_empty().unwrap());
     }
@@ -961,11 +961,11 @@ mod tests {
         let mut builder = ByteMessage::quantum_operations_builder();
 
         // Add measurements of different qubits in specific order
-        builder.add_mz(&[3]); // First: measure qubit 3
-        builder.add_mz(&[1]); // Second: measure qubit 1
-        builder.add_mz(&[4]); // Third: measure qubit 4
-        builder.add_mz(&[0]); // Fourth: measure qubit 0
-        builder.add_mz(&[2]); // Fifth: measure qubit 2
+        builder.mz(&[3]); // First: measure qubit 3
+        builder.mz(&[1]); // Second: measure qubit 1
+        builder.mz(&[4]); // Third: measure qubit 4
+        builder.mz(&[0]); // Fourth: measure qubit 0
+        builder.mz(&[2]); // Fifth: measure qubit 2
 
         let message = builder.build();
 

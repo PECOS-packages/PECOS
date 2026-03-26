@@ -22,8 +22,8 @@ def test_byte_message_builder_basic() -> None:
     builder.for_quantum_operations()
 
     # Add some gates
-    builder.add_h([0])
-    builder.add_cx([(0, 1)])
+    builder.h([0])
+    builder.cx([(0, 1)])
 
     # Build the message
     message = builder.build()
@@ -45,10 +45,10 @@ def test_byte_message_bell_state() -> None:
     # message = ByteMessage.create_bell_state()
     builder = ByteMessageBuilder()
     builder.for_quantum_operations()
-    builder.add_h([0])
-    builder.add_cx([(0, 1)])
-    builder.add_mz([0])
-    builder.add_mz([1])
+    builder.h([0])
+    builder.cx([(0, 1)])
+    builder.mz([0])
+    builder.mz([1])
     message = builder.build()
 
     # Parse the operations
@@ -80,9 +80,9 @@ def test_byte_message_parameterized_gates() -> None:
     builder = ByteMessage.quantum_operations_builder()
 
     # Add some parameterized gates
-    builder.add_rz(0.5, [0])
-    builder.add_rzz(0.25, [(0, 1)])
-    builder.add_r1xy(0.3, 0.4, [2])
+    builder.rz(0.5, [0])
+    builder.rzz(0.25, [(0, 1)])
+    builder.r1xy(0.3, 0.4, [2])
 
     # Build the message
     message = builder.build()
@@ -115,8 +115,8 @@ def test_byte_message_builder_reuse() -> None:
     builder = ByteMessage.quantum_operations_builder()
 
     # Add some gates
-    builder.add_h([0])
-    builder.add_cx([(0, 1)])
+    builder.h([0])
+    builder.cx([(0, 1)])
 
     # Build the message
     message1 = builder.build()
@@ -126,8 +126,8 @@ def test_byte_message_builder_reuse() -> None:
     builder.for_quantum_operations()
 
     # Add different gates
-    builder.add_x([0])
-    builder.add_y([1])
+    builder.x([0])
+    builder.y([1])
 
     # Build another message
     message2 = builder.build()
@@ -153,8 +153,8 @@ def test_byte_message_with_measurements() -> None:
     builder = ByteMessage.quantum_operations_builder()
 
     # Add gates and measurements
-    builder.add_h([0])
-    builder.add_mz([0])
+    builder.h([0])
+    builder.mz([0])
 
     # Build the message
     message = builder.build()
@@ -186,17 +186,17 @@ def example_bell_state_experiment() -> None:
 
     # Add gates to create a Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
     print("- Adding Hadamard gate on qubit 0")
-    builder.add_h([0])
+    builder.h([0])
 
     print("- Adding CNOT gate with control=0, target=1")
-    builder.add_cx([(0, 1)])
+    builder.cx([(0, 1)])
 
     # Add measurement operations
     print("- Adding measurement on qubit 0")
-    builder.add_mz([0])
+    builder.mz([0])
 
     print("- Adding measurement on qubit 1")
-    builder.add_mz([1])
+    builder.mz([1])
 
     # Build the message
     message = builder.build()

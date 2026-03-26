@@ -709,9 +709,9 @@ from pecos import ByteMessage
 
 # Build a message
 builder = ByteMessage.quantum_operations_builder()
-builder.add_h([0])
-builder.add_cx([(0, 1)])
-builder.add_mz([0])
+builder.h([0])
+builder.cx([(0, 1)])
+builder.mz([0])
 message = builder.build()
 
 # Parse operations

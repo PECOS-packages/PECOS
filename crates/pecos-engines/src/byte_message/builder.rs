@@ -321,28 +321,28 @@ impl ByteMessageBuilder {
     }
 
     /// Add an X gate
-    pub fn add_x(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::x(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a Y gate
-    pub fn add_y(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::y(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a Z gate
-    pub fn add_z(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::z(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an H gate
-    pub fn add_h(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::h(qubits);
         self.add_gate_command(&gate);
         self
@@ -351,7 +351,7 @@ impl ByteMessageBuilder {
     /// Add CX (controlled-X) gates between pairs of qubits.
     ///
     /// Each tuple is a (control, target) pair.
-    pub fn add_cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         let gate = Gate::cx(pairs);
         self.add_gate_command(&gate);
         self
@@ -360,7 +360,7 @@ impl ByteMessageBuilder {
     /// Add RZZ gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
-    pub fn add_rzz(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+    pub fn rzz(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
         let gate = Gate::rzz(theta, pairs);
         self.add_gate_command(&gate);
         self
@@ -369,7 +369,7 @@ impl ByteMessageBuilder {
     /// Add SZZ gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
-    pub fn add_szz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+    pub fn szz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         let gate = Gate::szz(pairs);
         self.add_gate_command(&gate);
         self
@@ -378,28 +378,28 @@ impl ByteMessageBuilder {
     /// Add `SZZdg` gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
-    pub fn add_szzdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+    pub fn szzdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         let gate = Gate::szzdg(pairs);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an RZ gate
-    pub fn add_rz(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn rz(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::rz(theta, qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an R1XY gate
-    pub fn add_r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::r1xy(theta, phi, qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a U gate
-    pub fn add_u(
+    pub fn u(
         &mut self,
         theta: Angle64,
         phi: Angle64,
@@ -416,7 +416,7 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn add_mz(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn mz(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
             // Add a measurement as a regular gate command
             let gate = Gate::measure(&[qubit]);
@@ -427,7 +427,7 @@ impl ByteMessageBuilder {
 
     /// Add measure leakage operations for multiple qubits
     ///
-    /// This behaves like `add_mz()` but is intended for measuring qubits
+    /// This behaves like `mz()` but is intended for measuring qubits
     /// that may be in a leaked state. In the future, this will output 0, 1, or 2
     /// (where 2 indicates the qubit is leaked).
     ///
@@ -457,46 +457,46 @@ impl ByteMessageBuilder {
         self
     }
 
-    /// Add a Prep gate
-    pub fn add_prep(&mut self, qubits: &[usize]) -> &mut Self {
+    /// Add a PZ (preparation/reset) gate
+    pub fn pz(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::prep(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an SZ (S) gate
-    pub fn add_sz(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
         // S gate is RZ(π/2)
-        self.add_rz(Angle64::QUARTER_TURN, qubits)
+        self.rz(Angle64::QUARTER_TURN, qubits)
     }
 
     /// Add an `SZdg` (S†) gate
-    pub fn add_szdg(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn szdg(&mut self, qubits: &[usize]) -> &mut Self {
         // S† gate is RZ(-π/2)
-        self.add_rz(-Angle64::QUARTER_TURN, qubits)
+        self.rz(-Angle64::QUARTER_TURN, qubits)
     }
 
     /// Add a T gate
-    pub fn add_t(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn t(&mut self, qubits: &[usize]) -> &mut Self {
         // T gate is RZ(π/4)
-        self.add_rz(Angle64::QUARTER_TURN / 2u64, qubits)
+        self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
     }
 
     /// Add a Tdg (T†) gate
-    pub fn add_tdg(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn tdg(&mut self, qubits: &[usize]) -> &mut Self {
         // T† gate is RZ(-π/4)
-        self.add_rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
+        self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Add an RX gate
-    pub fn add_rx(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn rx(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::rx(theta, qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an RY gate
-    pub fn add_ry(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn ry(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::ry(theta, qubits);
         self.add_gate_command(&gate);
         self
@@ -505,26 +505,18 @@ impl ByteMessageBuilder {
     /// Add CY gates between pairs of qubits.
     ///
     /// Each tuple is a (control, target) pair.
-    /// Decomposed as CY = (I x Sdg) CX (I x S).
-    pub fn add_cy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        for &(c, t) in pairs {
-            self.add_szdg(&[t]);
-            self.add_cx(&[(c, t)]);
-            self.add_sz(&[t]);
-        }
+    pub fn cy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::cy(pairs);
+        self.add_gate_command(&gate);
         self
     }
 
     /// Add CZ gates between pairs of qubits.
     ///
     /// Each tuple is a (control, target) pair.
-    /// Decomposed as CZ = H CX H.
-    pub fn add_cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        for &(c, t) in pairs {
-            self.add_h(&[t]);
-            self.add_cx(&[(c, t)]);
-            self.add_h(&[t]);
-        }
+    pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::cz(pairs);
+        self.add_gate_command(&gate);
         self
     }
 
@@ -566,13 +558,13 @@ impl ByteMessageBuilder {
     ///
     /// // Create first message
     /// let _ = builder.for_quantum_operations();
-    /// builder.add_h(&[0]);
+    /// builder.h(&[0]);
     /// let message1 = builder.build();
     ///
     /// // Reset and configure for next message
     /// builder.reset();
     /// let _ = builder.for_quantum_operations();
-    /// builder.add_h(&[1]);
+    /// builder.h(&[1]);
     /// let message2 = builder.build();
     /// ```
     ///
@@ -684,9 +676,9 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add some gates
-        builder.add_h(&[0]);
-        builder.add_cx(&[(0, 1)]);
-        builder.add_mz(&[2]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[2]);
 
         // Build the message
         let message = builder.build();
@@ -727,13 +719,13 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add various gates
-        builder.add_h(&[0]);
-        builder.add_x(&[1]);
-        builder.add_y(&[2]);
-        builder.add_z(&[3]);
-        builder.add_rz(Angle64::from_radians(0.5), &[4]);
-        builder.add_r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
-        builder.add_mz(&[6]);
+        builder.h(&[0]);
+        builder.x(&[1]);
+        builder.y(&[2]);
+        builder.z(&[3]);
+        builder.rz(Angle64::from_radians(0.5), &[4]);
+        builder.r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.mz(&[6]);
 
         // Build the message
         let message = builder.build();
@@ -771,7 +763,7 @@ mod tests {
         let _ = builder.for_outcomes();
 
         // Try to add a gate (should panic)
-        builder.add_h(&[0]);
+        builder.h(&[0]);
     }
 
     #[test]
@@ -795,7 +787,7 @@ mod tests {
 
         // Add measurements for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.add_mz(&qubits);
+        builder.mz(&qubits);
 
         // Build the message
         let message = builder.build();
@@ -842,7 +834,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add a gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Build the message
         let message = builder.build();
@@ -866,7 +858,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add a gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Build the message
         let message = builder.build();
@@ -886,8 +878,8 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add some gates
-        builder.add_h(&[0]);
-        builder.add_cx(&[(0, 1)]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
 
         // Check the message count
         assert_eq!(builder.message_count(), 2);
@@ -899,7 +891,7 @@ mod tests {
         assert_eq!(builder.message_count(), 0);
 
         // Add a new gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Check the message count again
         assert_eq!(builder.message_count(), 1);
@@ -912,8 +904,8 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add some gates
-        builder.add_h(&[0]);
-        builder.add_cx(&[(0, 1)]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
 
         // Check the message count
         assert_eq!(builder.message_count(), 2);
@@ -934,7 +926,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add a new gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Check the message count again
         assert_eq!(builder.message_count(), 1);
@@ -969,7 +961,7 @@ mod tests {
                     let _ = builder.for_quantum_operations();
 
                     // Add a gate
-                    builder.add_h(&[0]);
+                    builder.h(&[0]);
 
                     // Build the message
                     let _message = builder.build();
@@ -991,7 +983,7 @@ mod tests {
                     let _ = builder.for_quantum_operations();
 
                     // Add a gate
-                    builder.add_h(&[0]);
+                    builder.h(&[0]);
 
                     // Build the message
                     let _message = builder.build();

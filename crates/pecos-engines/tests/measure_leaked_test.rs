@@ -12,7 +12,7 @@ fn test_measure_leaked_basic_functionality() {
     // Test 1: MeasureLeaked behaves like Measure without leakage
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_h(&[0]); // Create superposition
+    builder.h(&[0]); // Create superposition
     builder.add_measure_leakages(&[0, 1]); // MeasureLeaked on both qubits
 
     let circuit = builder.build();
@@ -51,7 +51,7 @@ fn test_measure_leaked_with_general_noise_model() {
     let _ = builder.for_quantum_operations();
 
     // Mix of regular Measure and MeasureLeaked
-    builder.add_mz(&[0]); // Regular measure on leaked qubit 0
+    builder.mz(&[0]); // Regular measure on leaked qubit 0
     builder.add_measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
     builder.add_measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
 
@@ -83,8 +83,8 @@ fn test_measure_leaked_preserves_quantum_state() {
     // Create Bell state
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_h(&[0]);
-    builder.add_cx(&[(0, 1)]);
+    builder.h(&[0]);
+    builder.cx(&[(0, 1)]);
     builder.add_measure_leakages(&[0, 1]);
 
     let circuit = builder.build();
@@ -165,7 +165,7 @@ fn test_measure_leaked_sequential_measurements() {
     // Third circuit: regular measurement (should return 1)
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_mz(&[0]);
+    builder.mz(&[0]);
 
     let circuit3 = builder.build();
     let result3 = system.process(circuit3).unwrap();
@@ -210,7 +210,7 @@ fn test_measure_leaked_with_prep_unleaks() {
     // Second circuit: prep (unleak) and measure again
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_prep(&[0]); // Unleak the qubit
+    builder.pz(&[0]); // Unleak the qubit
     builder.add_measure_leakages(&[0]); // Should return 0 (back to |0⟩)
 
     let circuit2 = builder.build();

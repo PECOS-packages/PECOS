@@ -44,115 +44,115 @@ impl PyByteMessageBuilder {
         let _ = self.inner.for_outcomes();
     }
 
-    /// Add X gate(s): `add_x([0, 1, 2])`
-    fn add_x(&mut self, qubits: Vec<usize>) {
-        self.inner.add_x(&qubits);
+    /// Add X gate(s): `x([0, 1, 2])`
+    fn x(&mut self, qubits: Vec<usize>) {
+        self.inner.x(&qubits);
     }
 
-    /// Add Y gate(s): `add_y([0, 1, 2])`
-    fn add_y(&mut self, qubits: Vec<usize>) {
-        self.inner.add_y(&qubits);
+    /// Add Y gate(s): `y([0, 1, 2])`
+    fn y(&mut self, qubits: Vec<usize>) {
+        self.inner.y(&qubits);
     }
 
-    /// Add Z gate(s): `add_z([0, 1, 2])`
-    fn add_z(&mut self, qubits: Vec<usize>) {
-        self.inner.add_z(&qubits);
+    /// Add Z gate(s): `z([0, 1, 2])`
+    fn z(&mut self, qubits: Vec<usize>) {
+        self.inner.z(&qubits);
     }
 
-    /// Add H gate(s): `add_h([0, 1, 2])`
-    fn add_h(&mut self, qubits: Vec<usize>) {
-        self.inner.add_h(&qubits);
+    /// Add H gate(s): `h([0, 1, 2])`
+    fn h(&mut self, qubits: Vec<usize>) {
+        self.inner.h(&qubits);
     }
 
-    /// Add CX (CNOT) gate(s): `add_cx([(c0, t0), (c1, t1)])`
-    fn add_cx(&mut self, pairs: Vec<(usize, usize)>) {
-        self.inner.add_cx(&pairs);
+    /// Add CX (CNOT) gate(s): `cx([(c0, t0), (c1, t1)])`
+    fn cx(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.cx(&pairs);
     }
 
-    /// Add RZ gate(s): `add_rz(theta, [q0, q1])`
-    fn add_rz(&mut self, theta: AngleParam, qubits: Vec<usize>) {
-        self.inner.add_rz(theta.0, &qubits);
+    /// Add RZ gate(s): `rz(theta, [q0, q1])`
+    fn rz(&mut self, theta: AngleParam, qubits: Vec<usize>) {
+        self.inner.rz(theta.0, &qubits);
     }
 
-    /// Add RZZ gate(s): `add_rzz(theta, [(q0, q1), (q2, q3)])`
-    fn add_rzz(&mut self, theta: AngleParam, pairs: Vec<(usize, usize)>) {
-        self.inner.add_rzz(theta.0, &pairs);
+    /// Add RZZ gate(s): `rzz(theta, [(q0, q1), (q2, q3)])`
+    fn rzz(&mut self, theta: AngleParam, pairs: Vec<(usize, usize)>) {
+        self.inner.rzz(theta.0, &pairs);
     }
 
-    /// Add CY gate(s): `add_cy([(c0, t0), (c1, t1)])`
-    fn add_cy(&mut self, pairs: Vec<(usize, usize)>) {
-        self.inner.add_cy(&pairs);
+    /// Add CY gate(s): `cy([(c0, t0), (c1, t1)])`
+    fn cy(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.cy(&pairs);
     }
 
-    /// Add CZ gate(s): `add_cz([(c0, t0), (c1, t1)])`
-    fn add_cz(&mut self, pairs: Vec<(usize, usize)>) {
-        self.inner.add_cz(&pairs);
+    /// Add CZ gate(s): `cz([(c0, t0), (c1, t1)])`
+    fn cz(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.cz(&pairs);
     }
 
-    /// Add SZZ gate(s): `add_szz([(q0, q1), (q2, q3)])`
-    fn add_szz(&mut self, pairs: Vec<(usize, usize)>) {
-        self.inner.add_szz(&pairs);
+    /// Add SZZ gate(s): `szz([(q0, q1), (q2, q3)])`
+    fn szz(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.szz(&pairs);
     }
 
-    /// Add `SZZdg` gate(s): `add_szzdg([(q0, q1), (q2, q3)])`
-    fn add_szzdg(&mut self, pairs: Vec<(usize, usize)>) {
-        self.inner.add_szzdg(&pairs);
+    /// Add `SZZdg` gate(s): `szzdg([(q0, q1), (q2, q3)])`
+    fn szzdg(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.szzdg(&pairs);
     }
 
-    /// Add SZ gate(s): `add_sz([q0, q1])`
-    fn add_sz(&mut self, qubits: Vec<usize>) {
-        self.inner.add_sz(&qubits);
+    /// Add SZ gate(s): `sz([q0, q1])`
+    fn sz(&mut self, qubits: Vec<usize>) {
+        self.inner.sz(&qubits);
     }
 
-    /// Add `SZdg` gate(s): `add_szdg([q0, q1])`
-    fn add_szdg(&mut self, qubits: Vec<usize>) {
-        self.inner.add_szdg(&qubits);
+    /// Add `SZdg` gate(s): `szdg([q0, q1])`
+    fn szdg(&mut self, qubits: Vec<usize>) {
+        self.inner.szdg(&qubits);
     }
 
-    /// Add T gate(s): `add_t([q0, q1])`
-    fn add_t(&mut self, qubits: Vec<usize>) {
-        self.inner.add_t(&qubits);
+    /// Add T gate(s): `t([q0, q1])`
+    fn t(&mut self, qubits: Vec<usize>) {
+        self.inner.t(&qubits);
     }
 
-    /// Add Tdg gate(s): `add_tdg([q0, q1])`
-    fn add_tdg(&mut self, qubits: Vec<usize>) {
-        self.inner.add_tdg(&qubits);
+    /// Add Tdg gate(s): `tdg([q0, q1])`
+    fn tdg(&mut self, qubits: Vec<usize>) {
+        self.inner.tdg(&qubits);
     }
 
-    /// Add RX gate(s): `add_rx(theta, [q0, q1])`
-    fn add_rx(&mut self, theta: AngleParam, qubits: Vec<usize>) {
-        self.inner.add_rx(theta.0, &qubits);
+    /// Add RX gate(s): `rx(theta, [q0, q1])`
+    fn rx(&mut self, theta: AngleParam, qubits: Vec<usize>) {
+        self.inner.rx(theta.0, &qubits);
     }
 
-    /// Add RY gate(s): `add_ry(theta, [q0, q1])`
-    fn add_ry(&mut self, theta: AngleParam, qubits: Vec<usize>) {
-        self.inner.add_ry(theta.0, &qubits);
+    /// Add RY gate(s): `ry(theta, [q0, q1])`
+    fn ry(&mut self, theta: AngleParam, qubits: Vec<usize>) {
+        self.inner.ry(theta.0, &qubits);
     }
 
-    /// Add R1XY gate(s): `add_r1xy(theta, phi, [q0, q1])`
-    fn add_r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
-        self.inner.add_r1xy(theta.0, phi.0, &qubits);
+    /// Add R1XY gate(s): `r1xy(theta, phi, [q0, q1])`
+    fn r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
+        self.inner.r1xy(theta.0, phi.0, &qubits);
     }
 
-    /// Add U gate(s): `add_u(theta, phi, lambda_, [q0, q1])`
-    fn add_u(
+    /// Add U gate(s): `u(theta, phi, lambda_, [q0, q1])`
+    fn u(
         &mut self,
         theta: AngleParam,
         phi: AngleParam,
         lambda_: AngleParam,
         qubits: Vec<usize>,
     ) {
-        self.inner.add_u(theta.0, phi.0, lambda_.0, &qubits);
+        self.inner.u(theta.0, phi.0, lambda_.0, &qubits);
     }
 
-    /// Add Z-basis measurement(s): `add_mz([0, 1, 2])`
-    fn add_mz(&mut self, qubits: Vec<usize>) {
-        self.inner.add_mz(&qubits);
+    /// Add Z-basis measurement(s): `mz([0, 1, 2])`
+    fn mz(&mut self, qubits: Vec<usize>) {
+        self.inner.mz(&qubits);
     }
 
-    /// Add qubit preparation(s): `add_prep([0, 1, 2])`
-    fn add_prep(&mut self, qubits: Vec<usize>) {
-        self.inner.add_prep(&qubits);
+    /// Add PZ (preparation/reset) gate(s): `pz([0, 1, 2])`
+    fn pz(&mut self, qubits: Vec<usize>) {
+        self.inner.pz(&qubits);
     }
 
     /// Build the message and return a `PyByteMessage`

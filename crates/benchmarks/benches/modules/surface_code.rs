@@ -555,7 +555,7 @@ fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> Byte
 
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
-        builder.add_h(&[i]);
+        builder.h(&[i]);
     }
 
     // Perform syndrome extraction rounds
@@ -568,12 +568,12 @@ fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> Byte
             if a < params.num_ancillas / 2 {
                 // X-type: CNOT with ancilla as control
                 for &data in &neighbors {
-                    builder.add_cx(&[(ancilla, data)]);
+                    builder.cx(&[(ancilla, data)]);
                 }
             } else {
                 // Z-type: CNOT with ancilla as target
                 for &data in &neighbors {
-                    builder.add_cx(&[(data, ancilla)]);
+                    builder.cx(&[(data, ancilla)]);
                 }
             }
         }
@@ -581,7 +581,7 @@ fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> Byte
         // Measure all ancillas
         for a in 0..params.num_ancillas {
             let ancilla = params.ancilla_start + a;
-            builder.add_mz(&[ancilla]);
+            builder.mz(&[ancilla]);
         }
     }
 

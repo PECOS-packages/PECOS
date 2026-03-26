@@ -51,7 +51,7 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
                 let mut builder = ByteMessageBuilder::new();
                 let _ = builder.for_quantum_operations();
                 for i in 0..n {
-                    builder.add_h(&[i % 100]);
+                    builder.h(&[i % 100]);
                 }
                 let input = builder.build();
 
@@ -139,9 +139,9 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
             for _ in 0..100 {
                 let mut builder = ByteMessageBuilder::new();
                 let _ = builder.for_quantum_operations();
-                builder.add_h(&[0]);
-                builder.add_cx(&[(0, 1)]);
-                builder.add_mz(&[0, 1]);
+                builder.h(&[0]);
+                builder.cx(&[(0, 1)]);
+                builder.mz(&[0, 1]);
                 let circ = builder.build();
 
                 system.reset().unwrap();

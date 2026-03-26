@@ -89,18 +89,22 @@ Builder class for creating `ByteMessage` instances.
 
 #### Gate Methods
 
-- `add_x(qubit)`: Add an X gate
-- `add_y(qubit)`: Add a Y gate
-- `add_z(qubit)`: Add a Z gate
-- `add_h(qubit)`: Add an H gate
-- `add_cx(control, target)`: Add a CX (CNOT) gate
-- `add_rz(theta, qubit)`: Add an RZ gate
-- `add_rzz(theta, qubit1, qubit2)`: Add an RZZ gate
-- `add_szz(qubit1, qubit2)`: Add an SZZ gate
-- `add_r1xy(theta, phi, qubit)`: Add an R1XY gate
-- `add_measurement(qubit, result_id)`: Add a measurement operation
-- `add_prep(qubit)`: Add a qubit preparation operation
-- `add_flush(is_last=False)`: Add a flush command
+- `x([q0, q1, ...])`: Add X gate(s)
+- `y([q0, q1, ...])`: Add Y gate(s)
+- `z([q0, q1, ...])`: Add Z gate(s)
+- `h([q0, q1, ...])`: Add H gate(s)
+- `cx([(c0, t0), ...])`: Add CX (CNOT) gate(s)
+- `cy([(c0, t0), ...])`: Add CY gate(s)
+- `cz([(c0, t0), ...])`: Add CZ gate(s)
+- `rz(theta, [q0, q1, ...])`: Add RZ gate(s)
+- `rx(theta, [q0, q1, ...])`: Add RX gate(s)
+- `ry(theta, [q0, q1, ...])`: Add RY gate(s)
+- `rzz(theta, [(q0, q1), ...])`: Add RZZ gate(s)
+- `szz([(q0, q1), ...])`: Add SZZ gate(s)
+- `r1xy(theta, phi, [q0, q1, ...])`: Add R1XY gate(s)
+- `u(theta, phi, lambda_, [q0, q1, ...])`: Add U gate(s)
+- `mz([q0, q1, ...])`: Add Z-basis measurement(s)
+- `pz([q0, q1, ...])`: Add PZ (preparation/reset) gate(s)
 
 #### Builder Methods
 

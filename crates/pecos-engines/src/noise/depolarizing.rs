@@ -642,7 +642,7 @@ mod tests {
         // Create a simple message for testing
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
+        builder.x(&[0]);
         let input = builder.build();
 
         // Process using the ControlEngine API instead of the old apply_noise method
@@ -729,7 +729,7 @@ mod tests {
         // Create a simple quantum operations message for testing
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
+        builder.x(&[0]);
         let input = builder.build();
 
         // Process using the ControlEngine API instead of the old apply_noise method

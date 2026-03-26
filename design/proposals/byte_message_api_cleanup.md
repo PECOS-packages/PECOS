@@ -8,28 +8,28 @@ Two-qubit gates now take `&[(usize, usize)]` (slice of pairs) instead of separat
 
 ```rust
 // Before:
-builder.add_cx(&[0], &[1]);
-builder.add_rzz(theta, &[0], &[1]);
+builder.cx(&[0], &[1]);
+builder.rzz(theta, &[0], &[1]);
 
 // After:
-builder.add_cx(&[(0, 1)]);
-builder.add_rzz(theta, &[(0, 1)]);
+builder.cx(&[(0, 1)]);
+builder.rzz(theta, &[(0, 1)]);
 
 // Batch:
-builder.add_cx(&[(0, 1), (2, 3)]);
+builder.cx(&[(0, 1), (2, 3)]);
 ```
 
-Affected methods: `add_cx`, `add_cy`, `add_cz`, `add_szz`, `add_szzdg`, `add_rzz`
+Affected methods: `cx`, `cy`, `cz`, `szz`, `szzdg`, `rzz`
 
-### Rename: `add_measurements` -> `add_mz`
+### Rename: `mz` -> `mz`
 
 The method name now matches the gate name (MZ).
 
 ### Python API
 
-Single-qubit gates take lists: `add_h([0, 1, 2])`
-Two-qubit gates take lists of tuples: `add_cx([(0, 1), (2, 3)])`
-Measurements renamed: `add_mz([0, 1])`
+Single-qubit gates take lists: `h([0, 1, 2])`
+Two-qubit gates take lists of tuples: `cx([(0, 1), (2, 3)])`
+Measurements renamed: `mz([0, 1])`
 
 ## Status
 

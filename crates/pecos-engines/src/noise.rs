@@ -248,7 +248,7 @@ mod tests {
         // Create a quantum operation message
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
+        builder.x(&[0]);
         let quantum_message = builder.build();
 
         // Create a measurement result message
@@ -289,7 +289,7 @@ mod tests {
         // Create a quantum operation message
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
+        builder.x(&[0]);
         let quantum_message = builder.build();
 
         // Create a measurement result message

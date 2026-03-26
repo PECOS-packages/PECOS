@@ -156,8 +156,8 @@ fn test_single_qubit_depolarizing_comparison() {
     let general_counts = run_general_noise_model(
         general_model,
         |builder| {
-            builder.add_x(&[0]);
-            builder.add_mz(&[0]);
+            builder.x(&[0]);
+            builder.mz(&[0]);
         },
         1,
         NUM_SHOTS,
@@ -220,9 +220,9 @@ fn test_two_qubit_depolarizing_comparison() {
     let general_counts = run_general_noise_model(
         general_model,
         |builder| {
-            builder.add_x(&[0]);
-            builder.add_cx(&[(0, 1)]);
-            builder.add_mz(&[0, 1]);
+            builder.x(&[0]);
+            builder.cx(&[(0, 1)]);
+            builder.mz(&[0, 1]);
         },
         2,
         NUM_SHOTS,
@@ -288,7 +288,7 @@ fn test_measurement_error_comparison() {
     let general_counts = run_general_noise_model(
         general_model,
         |builder| {
-            builder.add_mz(&[0]);
+            builder.mz(&[0]);
         },
         1,
         NUM_SHOTS,
@@ -354,8 +354,8 @@ fn test_preparation_error_comparison() {
     let general_counts = run_general_noise_model(
         general_model,
         |builder| {
-            builder.add_prep(&[0]);
-            builder.add_mz(&[0]);
+            builder.pz(&[0]);
+            builder.mz(&[0]);
         },
         1,
         NUM_SHOTS,
@@ -416,11 +416,11 @@ fn test_combined_noise_comparison() {
     let general_counts = run_general_noise_model(
         general_model,
         |builder| {
-            builder.add_prep(&[0]);
-            builder.add_prep(&[1]);
-            builder.add_h(&[0]);
-            builder.add_cx(&[(0, 1)]);
-            builder.add_mz(&[0, 1]);
+            builder.pz(&[0]);
+            builder.pz(&[1]);
+            builder.h(&[0]);
+            builder.cx(&[(0, 1)]);
+            builder.mz(&[0, 1]);
         },
         2,
         NUM_SHOTS,
@@ -507,11 +507,11 @@ fn test_general_noise_model_builder_comparison() {
     let general_counts = run_general_noise_model(
         general_model,
         |builder| {
-            builder.add_prep(&[0]);
-            builder.add_prep(&[1]);
-            builder.add_x(&[0]);
-            builder.add_cx(&[(0, 1)]);
-            builder.add_mz(&[0, 1]);
+            builder.pz(&[0]);
+            builder.pz(&[1]);
+            builder.x(&[0]);
+            builder.cx(&[(0, 1)]);
+            builder.mz(&[0, 1]);
         },
         2,
         NUM_SHOTS,

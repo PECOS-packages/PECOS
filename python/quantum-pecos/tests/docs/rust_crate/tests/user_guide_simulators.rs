@@ -67,7 +67,7 @@ fn test_user_guide_simulators_rust_4() -> Result<(), Box<dyn std::error::Error>>
 
 // Track how an X error on qubit 0 propagates
 let mut prop = PauliProp::new();
-prop.add_x(0);  // Track an X error on qubit 0
+prop.x(0);  // Track an X error on qubit 0
 
 // Apply Hadamard - transforms X to Z
 prop.h(&[QubitId(0)]);

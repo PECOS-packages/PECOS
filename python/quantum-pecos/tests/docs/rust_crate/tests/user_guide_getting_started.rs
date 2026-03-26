@@ -9,7 +9,7 @@ fn test_user_guide_getting_started_rust_1() {
     let sim = SparseStab::new(1);
     println!("PECOS is working! Created a {}-qubit simulator", sim.num_qubits());
 }
-    
+
 
 
 #[test]
@@ -26,7 +26,7 @@ let results = hugr_sim(&hugr_path)
     .run(10)?;
 
 println!("Got {} shots", results.shots.len());
-    
+
     Ok(())
 }
-    
+

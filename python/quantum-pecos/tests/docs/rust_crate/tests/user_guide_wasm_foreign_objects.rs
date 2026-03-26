@@ -37,10 +37,10 @@ let wasm = WasmForeignObject::with_limits(
     5.0,                      // timeout in seconds
     Some(10 * 1024 * 1024),   // memory limit in bytes
 )?;
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -68,10 +68,10 @@ let wasm = WasmForeignObject::from_bytes_with_limits(
     5.0,
     Some(10 * 1024 * 1024),
 )?;
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -102,10 +102,10 @@ println!("5 + 3 = {:?}", result);  // Output: 5 + 3 = [8]
 
 // List available functions
 println!("{:?}", wasm.get_funcs());
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -146,10 +146,10 @@ let results = qasm_engine()
     .wasm(wat_path.to_str().unwrap())  // Load WASM module for foreign functions
     .to_sim()
     .run(100)?;
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -168,10 +168,10 @@ fn test_user_guide_wasm_foreign_objects_rust_5() -> Result<(), Box<dyn std::erro
 
     // 5 second timeout
 let wasm = WasmForeignObject::with_timeout(&wat_path, 5.0)?;
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -197,10 +197,10 @@ let wasm = WasmForeignObject::with_limits(
 
 // No limit
 let wasm = WasmForeignObject::with_limits(wat_path.to_str().unwrap(), 1.0, None)?;
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -224,10 +224,10 @@ let bytes = wasm.wasm_bytes();
 
 // Create a new instance from bytes
 let wasm2 = WasmForeignObject::from_bytes(bytes)?;
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -250,7 +250,7 @@ match WasmForeignObject::new("nonexistent.wasm") {
     Err(e) => println!("Expected error: {}", e),
     Ok(_) => println!("Unexpected success"),
 }
-    
+
     Ok(())
 }
-    
+

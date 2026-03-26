@@ -18,7 +18,7 @@ fn test_user_guide_gates_rust_2() {
 let mut sim = SparseStab::new(5);
 let q = QubitId(0);
 let (q0, q1) = (QubitId(0), QubitId(1));
-    
+
 }
 
 
@@ -34,7 +34,7 @@ fn test_user_guide_gates_rust_3() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.identity(&[q]);
-    
+
 }
 
 
@@ -50,7 +50,7 @@ fn test_user_guide_gates_rust_4() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.x(&[q]);
-    
+
 }
 
 
@@ -66,7 +66,7 @@ fn test_user_guide_gates_rust_5() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.y(&[q]);
-    
+
 }
 
 
@@ -82,7 +82,7 @@ fn test_user_guide_gates_rust_6() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.z(&[q]);
-    
+
 }
 
 
@@ -98,7 +98,7 @@ fn test_user_guide_gates_rust_7() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.h(&[q]);
-    
+
 }
 
 
@@ -118,7 +118,7 @@ sim.h3(&[q]);  // H3 variant
 sim.h4(&[q]);  // H4 variant
 sim.h5(&[q]);  // H5 variant
 sim.h6(&[q]);  // H6 variant
-    
+
 }
 
 
@@ -135,7 +135,7 @@ fn test_user_guide_gates_rust_9() {
     let target = QubitId(1);
     sim.sx(&[q]);
 sim.sxdg(&[q]);  // Adjoint (inverse)
-    
+
 }
 
 
@@ -152,7 +152,7 @@ fn test_user_guide_gates_rust_10() {
     let target = QubitId(1);
     sim.sy(&[q]);
 sim.sydg(&[q]);  // Adjoint (inverse)
-    
+
 }
 
 
@@ -169,7 +169,7 @@ fn test_user_guide_gates_rust_11() {
     let target = QubitId(1);
     sim.sz(&[q]);
 sim.szdg(&[q]);  // Adjoint (inverse): [[1, 0], [0, -i]]
-    
+
 }
 
 
@@ -186,7 +186,7 @@ fn test_user_guide_gates_rust_12() {
     let target = QubitId(1);
     sim.f(&[q]);
 sim.fdg(&[q]);  // Adjoint: X→Z, Y→X, Z→Y
-    
+
 }
 
 
@@ -204,7 +204,7 @@ fn test_user_guide_gates_rust_13() {
     sim.f2(&[q]);   sim.f2dg(&[q]);
 sim.f3(&[q]);   sim.f3dg(&[q]);
 sim.f4(&[q]);   sim.f4dg(&[q]);
-    
+
 }
 
 
@@ -220,7 +220,7 @@ fn test_user_guide_gates_rust_14() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.cx(&[control, target]);
-    
+
 }
 
 
@@ -236,7 +236,7 @@ fn test_user_guide_gates_rust_15() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.cy(&[control, target]);
-    
+
 }
 
 
@@ -252,7 +252,7 @@ fn test_user_guide_gates_rust_16() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.cz(&[q1, q2]);
-    
+
 }
 
 
@@ -268,7 +268,7 @@ fn test_user_guide_gates_rust_17() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.swap(&[q1, q2]);
-    
+
 }
 
 
@@ -284,7 +284,7 @@ fn test_user_guide_gates_rust_18() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.iswap(&[q1, q2]);
-    
+
 }
 
 
@@ -301,7 +301,7 @@ fn test_user_guide_gates_rust_19() {
     let target = QubitId(1);
     sim.sxx(&[q1, q2]);
 sim.sxxdg(&[q1, q2]);  // Adjoint
-    
+
 }
 
 
@@ -318,7 +318,7 @@ fn test_user_guide_gates_rust_20() {
     let target = QubitId(1);
     sim.syy(&[q1, q2]);
 sim.syydg(&[q1, q2]);  // Adjoint
-    
+
 }
 
 
@@ -335,7 +335,7 @@ fn test_user_guide_gates_rust_21() {
     let target = QubitId(1);
     sim.szz(&[q1, q2]);
 sim.szzdg(&[q1, q2]);  // Adjoint
-    
+
 }
 
 
@@ -351,7 +351,7 @@ fn test_user_guide_gates_rust_22() {
     let control = QubitId(0);
     let target = QubitId(1);
     sim.g(&[q1, q2]);
-    
+
 }
 
 
@@ -373,7 +373,7 @@ let mut sim = StateVec::new(5);
 let q = QubitId(0);
 let (q0, q1) = (QubitId(0), QubitId(1));
 let theta = Angle64::from_radians(PI / 4.0);
-    
+
 }
 
 
@@ -391,7 +391,7 @@ fn test_user_guide_gates_rust_24() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.rx(theta, &[q]);
-    
+
 }
 
 
@@ -409,7 +409,7 @@ fn test_user_guide_gates_rust_25() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.ry(theta, &[q]);
-    
+
 }
 
 
@@ -427,7 +427,7 @@ fn test_user_guide_gates_rust_26() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.rz(theta, &[q]);
-    
+
 }
 
 
@@ -446,7 +446,7 @@ fn test_user_guide_gates_rust_27() {
     let lam = Angle64::from_radians(PI / 6.0);
     sim.t(&[q]);
 sim.tdg(&[q]);  // Adjoint (T†)
-    
+
 }
 
 
@@ -464,7 +464,7 @@ fn test_user_guide_gates_rust_28() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.u(theta, phi, lam, &[q]);
-    
+
 }
 
 
@@ -482,7 +482,7 @@ fn test_user_guide_gates_rust_29() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.r1xy(theta, phi, &[q]);
-    
+
 }
 
 
@@ -500,7 +500,7 @@ fn test_user_guide_gates_rust_30() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.rxx(theta, &[q1, q2]);
-    
+
 }
 
 
@@ -518,7 +518,7 @@ fn test_user_guide_gates_rust_31() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.ryy(theta, &[q1, q2]);
-    
+
 }
 
 
@@ -536,7 +536,7 @@ fn test_user_guide_gates_rust_32() {
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
     sim.rzz(theta, &[q1, q2]);
-    
+
 }
 
 
@@ -556,7 +556,7 @@ fn test_user_guide_gates_rust_33() {
     let results = sim.mz(&[q]);
 // results[0].outcome: true if |1⟩, false if |0⟩
 // results[0].is_deterministic: true if already in eigenstate
-    
+
 }
 
 
@@ -575,7 +575,7 @@ fn test_user_guide_gates_rust_34() {
     let lam = Angle64::from_radians(PI / 6.0);
     let results = sim.mx(&[q]);   // Measure +X
 let results = sim.mnx(&[q]);  // Measure -X
-    
+
 }
 
 
@@ -594,7 +594,7 @@ fn test_user_guide_gates_rust_35() {
     let lam = Angle64::from_radians(PI / 6.0);
     let results = sim.my(&[q]);   // Measure +Y
 let results = sim.mny(&[q]);  // Measure -Y
-    
+
 }
 
 
@@ -613,7 +613,7 @@ fn test_user_guide_gates_rust_36() {
     let lam = Angle64::from_radians(PI / 6.0);
     sim.pz(&[q]);   // Prepare |0⟩ (eigenstate of +Z)
 sim.pnz(&[q]);  // Prepare |1⟩ (eigenstate of -Z)
-    
+
 }
 
 
@@ -632,7 +632,7 @@ fn test_user_guide_gates_rust_37() {
     let lam = Angle64::from_radians(PI / 6.0);
     sim.px(&[q]);   // Prepare |+⟩ = (|0⟩ + |1⟩)/√2
 sim.pnx(&[q]);  // Prepare |-⟩ = (|0⟩ - |1⟩)/√2
-    
+
 }
 
 
@@ -651,7 +651,7 @@ fn test_user_guide_gates_rust_38() {
     let lam = Angle64::from_radians(PI / 6.0);
     sim.py(&[q]);   // Prepare |+i⟩ = (|0⟩ + i|1⟩)/√2
 sim.pny(&[q]);  // Prepare |-i⟩ = (|0⟩ - i|1⟩)/√2
-    
+
 }
 
 
@@ -674,5 +674,5 @@ sim.mpx(&[q]);   // Measure X, prepare |+⟩
 sim.mpnx(&[q]);  // Measure -X, prepare |-⟩
 sim.mpy(&[q]);   // Measure Y, prepare |+i⟩
 sim.mpny(&[q]);  // Measure -Y, prepare |-i⟩
-    
+
 }

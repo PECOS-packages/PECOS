@@ -18,10 +18,10 @@ let results = hugr_sim(&hugr_path)
     .run(1000)?;
 
 println!("Results: {:?}", results);
-    
+
     Ok(())
 }
-    
+
 
 
 #[test]
@@ -44,7 +44,7 @@ let engine = hugr_engine()
     .build()?;
 
 println!("Circuit uses {} qubits", engine.num_qubits());
-    
+
     Ok(())
 }
-    
+

@@ -327,8 +327,8 @@ fn test_cuda_engine_builder() {
     // Create a Bell state circuit: H(0), CNOT(0,1), measure both
     let mut msg_builder = ByteMessage::quantum_operations_builder();
     msg_builder.add_h(&[0]);
-    msg_builder.add_cx(&[0], &[1]);
-    msg_builder.add_measurements(&[0, 1]);
+    msg_builder.add_cx(&[(0, 1)]);
+    msg_builder.add_mz(&[0, 1]);
     let msg = msg_builder.build();
 
     let result = cpu_engine.process(msg.clone()).expect("CPU process failed");
@@ -358,8 +358,8 @@ fn test_cuda_engine_builder() {
 
             let mut msg_builder = ByteMessage::quantum_operations_builder();
             msg_builder.add_h(&[0]);
-            msg_builder.add_cx(&[0], &[1]);
-            msg_builder.add_measurements(&[0, 1]);
+            msg_builder.add_cx(&[(0, 1)]);
+            msg_builder.add_mz(&[0, 1]);
             let msg = msg_builder.build();
 
             let result = gpu_engine.process(msg).expect("GPU process failed");

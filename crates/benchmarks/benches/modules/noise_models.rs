@@ -78,7 +78,7 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
                 for i in 0..n {
                     let q0 = (i * 2) % 100;
                     let q1 = (i * 2 + 1) % 100;
-                    builder.add_cx(&[q0], &[q1]);
+                    builder.add_cx(&[(q0, q1)]);
                 }
                 let input = builder.build();
 
@@ -118,10 +118,10 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
                     2 => {
                         let q0 = (i * 2) % 100;
                         let q1 = (i * 2 + 1) % 100;
-                        builder.add_cx(&[q0], &[q1]);
+                        builder.add_cx(&[(q0, q1)]);
                     }
                     _ => {
-                        builder.add_measurements(&[i % 100]);
+                        builder.add_mz(&[i % 100]);
                     }
                 }
             }

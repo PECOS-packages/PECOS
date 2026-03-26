@@ -33,7 +33,7 @@ fn rxxryyrzz_identity_is_noop() {
             &[(0usize, 1usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -51,7 +51,7 @@ fn rxxryyrzz_inverse_cancels() {
         let inv = Gate::rxxryyrzz(-a, -b, -c, &[(0usize, 1usize)]);
         builder.add_gate_command(&fwd);
         builder.add_gate_command(&inv);
-        builder.add_measurements(&[0, 1]);
+        builder.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 1]);
 }
@@ -67,7 +67,7 @@ fn rxxryyrzz_pure_xx_matches_rxx() {
             &[(0usize, 1usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -82,7 +82,7 @@ fn u2q_identity_is_noop() {
     let outcomes = run_state_vec(2, |b| {
         let gate = Gate::u2q(id, [Angle64::ZERO; 3], id, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -97,7 +97,7 @@ fn u2q_identity_preserves_input_state() {
         b.add_x(&[0]);
         let gate = Gate::u2q(id, [Angle64::ZERO; 3], id, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 0]);
 }
@@ -151,7 +151,7 @@ fn u2q_inverse_cancels() {
         let inv = Gate::u2q(inv_before, inv_interaction, inv_after, &[(0usize, 1usize)]);
         b.add_gate_command(&fwd);
         b.add_gate_command(&inv);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 1]);
 }
@@ -172,7 +172,7 @@ fn u2q_interaction_only_matches_rxxryyrzz() {
         let inv = Gate::rxxryyrzz(-a, -b, -c, &[(0usize, 1usize)]);
         builder.add_gate_command(&u2q_gate);
         builder.add_gate_command(&inv);
-        builder.add_measurements(&[0, 1]);
+        builder.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 1]);
 }
@@ -191,7 +191,7 @@ fn u2q_with_single_qubit_gates_affects_state() {
         // Start in |00>, after gate should give X|0> x I|0> = |10>
         let gate = Gate::u2q(before, interaction, after, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 0]);
 }
@@ -244,7 +244,7 @@ fn u2q_unitary_rep_to_gates_roundtrip() {
     let outcomes_via_rep = run_state_vec(2, |b| {
         b.add_x(&[1]); // |01>
         b.add_gate_command(&gates[0]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
 
     // Path 2: Gate::u2q() directly -> Engine
@@ -252,7 +252,7 @@ fn u2q_unitary_rep_to_gates_roundtrip() {
         b.add_x(&[1]); // |01>
         let gate = Gate::u2q(before, interaction, after, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
 
     assert_eq!(
@@ -274,7 +274,7 @@ fn rxxryyrzz_multi_pair_identity() {
             &[(0usize, 1usize), (2usize, 3usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1, 2, 3]);
+        b.add_mz(&[0, 1, 2, 3]);
     });
     assert_eq!(outcomes, vec![0, 0, 0, 0]);
 }
@@ -290,7 +290,7 @@ fn rxxryyrzz_multi_pair_pure_xx() {
             &[(0usize, 1usize), (2usize, 3usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1, 2, 3]);
+        b.add_mz(&[0, 1, 2, 3]);
     });
     assert_eq!(outcomes, vec![1, 1, 1, 1]);
 }
@@ -308,7 +308,7 @@ fn rxxryyrzz_multi_pair_inverse_cancels() {
         let inv = Gate::rxxryyrzz(-a, -b, -c, &[(0usize, 1usize), (2usize, 3usize)]);
         builder.add_gate_command(&fwd);
         builder.add_gate_command(&inv);
-        builder.add_measurements(&[0, 1, 2, 3]);
+        builder.add_mz(&[0, 1, 2, 3]);
     });
     assert_eq!(outcomes, vec![0, 1, 1, 0]);
 }
@@ -326,7 +326,7 @@ fn u2q_multi_pair_identity() {
             &[(0usize, 1usize), (2usize, 3usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1, 2, 3]);
+        b.add_mz(&[0, 1, 2, 3]);
     });
     assert_eq!(outcomes, vec![0, 0, 0, 0]);
 }
@@ -349,7 +349,7 @@ fn u2q_multi_pair_single_qubit_x_on_first() {
             &[(0usize, 1usize), (2usize, 3usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1, 2, 3]);
+        b.add_mz(&[0, 1, 2, 3]);
     });
     assert_eq!(outcomes, vec![1, 0, 1, 0]);
 }
@@ -412,7 +412,7 @@ fn u2q_multi_pair_inverse_cancels() {
         );
         b.add_gate_command(&fwd);
         b.add_gate_command(&inv);
-        b.add_measurements(&[0, 1, 2, 3]);
+        b.add_mz(&[0, 1, 2, 3]);
     });
     assert_eq!(outcomes, vec![0, 1, 1, 0]);
 }
@@ -433,14 +433,14 @@ fn rxxryyrzz_unitary_rep_to_gates_roundtrip() {
     let outcomes_via_rep = run_state_vec(2, |b| {
         b.add_x(&[1]); // |01>
         b.add_gate_command(&gates[0]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
 
     let outcomes_direct = run_state_vec(2, |b| {
         b.add_x(&[1]);
         let gate = Gate::rxxryyrzz(alpha, beta, gamma, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
 
     assert_eq!(outcomes_via_rep, outcomes_direct);

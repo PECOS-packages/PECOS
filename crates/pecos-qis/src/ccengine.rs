@@ -392,18 +392,18 @@ impl QisEngine {
                     );
                 }
                 QuantumOp::CX(control, target) => {
-                    builder.add_cx(&[control], &[target]);
+                    builder.add_cx(&[(control, target)]);
                 }
                 QuantumOp::Measure(qubit, result_id) => {
                     self.measurement_mapping.push(result_id);
-                    builder.add_measurements(&[qubit]);
+                    builder.add_mz(&[qubit]);
                 }
                 QuantumOp::ZZ(qubit1, qubit2) => {
                     // ZZ gate is the same as SZZ in PECOS
-                    builder.add_szz(&[qubit1], &[qubit2]);
+                    builder.add_szz(&[(qubit1, qubit2)]);
                 }
                 QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                    builder.add_rzz(Angle64::from_radians(angle), &[qubit1], &[qubit2]);
+                    builder.add_rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
                 }
                 QuantumOp::Reset(qubit) => {
                     builder.add_prep(&[qubit]);

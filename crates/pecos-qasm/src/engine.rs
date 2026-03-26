@@ -406,7 +406,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.add_cx(&[qubits[0]], &[qubits[1]]);
+        engine.message_builder.add_cx(&[(qubits[0], qubits[1])]);
         Ok(())
     }
 
@@ -421,7 +421,7 @@ impl QASMEngine {
             Angle64::from_radians(-std::f64::consts::PI / 2.0),
             &[qubits[1]],
         ); // S†
-        engine.message_builder.add_cx(&[qubits[0]], &[qubits[1]]);
+        engine.message_builder.add_cx(&[(qubits[0], qubits[1])]);
         engine.message_builder.add_rz(
             Angle64::from_radians(std::f64::consts::PI / 2.0),
             &[qubits[1]],
@@ -437,7 +437,7 @@ impl QASMEngine {
     ) -> Result<(), PecosError> {
         // CZ = H · CX · H
         engine.message_builder.add_h(&[qubits[1]]);
-        engine.message_builder.add_cx(&[qubits[0]], &[qubits[1]]);
+        engine.message_builder.add_cx(&[(qubits[0], qubits[1])]);
         engine.message_builder.add_h(&[qubits[1]]);
         Ok(())
     }
@@ -448,11 +448,9 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.add_rzz(
-            Angle64::from_radians(params[0]),
-            &[qubits[0]],
-            &[qubits[1]],
-        );
+        engine
+            .message_builder
+            .add_rzz(Angle64::from_radians(params[0]), &[(qubits[0], qubits[1])]);
         Ok(())
     }
 
@@ -462,7 +460,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.add_szz(&[qubits[0]], &[qubits[1]]);
+        engine.message_builder.add_szz(&[(qubits[0], qubits[1])]);
         Ok(())
     }
 
@@ -473,9 +471,9 @@ impl QASMEngine {
         _params: &[f64],
     ) -> Result<(), PecosError> {
         // SWAP = CX · CX · CX
-        engine.message_builder.add_cx(&[qubits[0]], &[qubits[1]]);
-        engine.message_builder.add_cx(&[qubits[1]], &[qubits[0]]);
-        engine.message_builder.add_cx(&[qubits[0]], &[qubits[1]]);
+        engine.message_builder.add_cx(&[(qubits[0], qubits[1])]);
+        engine.message_builder.add_cx(&[(qubits[1], qubits[0])]);
+        engine.message_builder.add_cx(&[(qubits[0], qubits[1])]);
         Ok(())
     }
 
@@ -515,11 +513,11 @@ impl QASMEngine {
         for chunk in qubits.chunks(2) {
             if chunk.len() == 2 {
                 match gate_type {
-                    GateType::CX => self.message_builder.add_cx(&[chunk[0]], &[chunk[1]]),
-                    GateType::CY => self.message_builder.add_cy(&[chunk[0]], &[chunk[1]]),
-                    GateType::CZ => self.message_builder.add_cz(&[chunk[0]], &[chunk[1]]),
-                    GateType::SZZ => self.message_builder.add_szz(&[chunk[0]], &[chunk[1]]),
-                    GateType::SZZdg => self.message_builder.add_szzdg(&[chunk[0]], &[chunk[1]]),
+                    GateType::CX => self.message_builder.add_cx(&[(chunk[0], chunk[1])]),
+                    GateType::CY => self.message_builder.add_cy(&[(chunk[0], chunk[1])]),
+                    GateType::CZ => self.message_builder.add_cz(&[(chunk[0], chunk[1])]),
+                    GateType::SZZ => self.message_builder.add_szz(&[(chunk[0], chunk[1])]),
+                    GateType::SZZdg => self.message_builder.add_szzdg(&[(chunk[0], chunk[1])]),
                     _ => {
                         return Err(PecosError::Processing(format!(
                             "Gate type {gate_type:?} is not a two-qubit gate"
@@ -569,11 +567,8 @@ impl QASMEngine {
                 if let Some(&angle) = params.first() {
                     for chunk in qubits.chunks(2) {
                         if chunk.len() == 2 {
-                            self.message_builder.add_rzz(
-                                Angle64::from_radians(angle),
-                                &[chunk[0]],
-                                &[chunk[1]],
-                            );
+                            self.message_builder
+                                .add_rzz(Angle64::from_radians(angle), &[(chunk[0], chunk[1])]);
                         }
                     }
                 }
@@ -894,7 +889,7 @@ impl QASMEngine {
         );
 
         // Add measurement to the command batch
-        self.message_builder.add_measurements(&[physical_qubit]);
+        self.message_builder.add_mz(&[physical_qubit]);
 
         Ok(())
     }

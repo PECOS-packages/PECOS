@@ -957,7 +957,7 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "CX" => {
                         if qubits.len() >= 2 {
-                            builder.add_cx(&[qubits[0]], &[qubits[1]]);
+                            builder.add_cx(&[(qubits[0], qubits[1])]);
                         }
                     }
                     "RZ" => {
@@ -976,7 +976,7 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "SZZ" => {
                         if qubits.len() >= 2 {
-                            builder.add_szz(&[qubits[0]], &[qubits[1]]);
+                            builder.add_szz(&[(qubits[0], qubits[1])]);
                         }
                     }
                     "Measure" => {
@@ -988,12 +988,12 @@ impl ClassicalEngine for PhirJsonEngine {
                             let result_id_f64 = params[0];
                             if result_id_f64 < 0.0 || result_id_f64 > f64::from(u32::MAX) {
                                 log::debug!("Warning: Invalid result_id {result_id_f64}, using 0");
-                                builder.add_measurements(&qubits);
+                                builder.add_mz(&qubits);
                             } else {
                                 // Safe to convert to u32 and then usize
                                 // We've already checked the bounds, so we can safely convert
                                 // result_id is no longer needed for measurements, just add the measurement
-                                builder.add_measurements(&qubits);
+                                builder.add_mz(&qubits);
                             }
                         }
                     }
@@ -1004,8 +1004,7 @@ impl ClassicalEngine for PhirJsonEngine {
                         if qubits.len() >= 2 && !params.is_empty() {
                             builder.add_rzz(
                                 Angle64::from_radians(params[0]),
-                                &[qubits[0]],
-                                &[qubits[1]],
+                                &[(qubits[0], qubits[1])],
                             );
                         }
                     }

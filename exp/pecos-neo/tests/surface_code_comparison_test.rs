@@ -191,21 +191,21 @@ fn run_general_noise_repetition(
 
             // CNOT gates for parity checks
             // Ancilla 3 checks Z0*Z1
-            builder.add_cx(&[0], &[3]);
-            builder.add_cx(&[1], &[3]);
+            builder.add_cx(&[(0, 3)]);
+            builder.add_cx(&[(1, 3)]);
             // Ancilla 4 checks Z1*Z2
-            builder.add_cx(&[1], &[4]);
-            builder.add_cx(&[2], &[4]);
+            builder.add_cx(&[(1, 4)]);
+            builder.add_cx(&[(2, 4)]);
 
             // Measure ancillas
             for &a in &code.z_ancillas {
-                builder.add_measurements(&[a]);
+                builder.add_mz(&[a]);
             }
         }
 
         // Final data measurements
         for &q in &code.data_qubits {
-            builder.add_measurements(&[q]);
+            builder.add_mz(&[q]);
         }
 
         let circ = builder.build();

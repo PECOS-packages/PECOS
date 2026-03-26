@@ -51,7 +51,7 @@ fn test_measure_leaked_with_general_noise_model() {
     let _ = builder.for_quantum_operations();
 
     // Mix of regular Measure and MeasureLeaked
-    builder.add_measurements(&[0]); // Regular measure on leaked qubit 0
+    builder.add_mz(&[0]); // Regular measure on leaked qubit 0
     builder.add_measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
     builder.add_measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
 
@@ -84,7 +84,7 @@ fn test_measure_leaked_preserves_quantum_state() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_h(&[0]);
-    builder.add_cx(&[0], &[1]);
+    builder.add_cx(&[(0, 1)]);
     builder.add_measure_leakages(&[0, 1]);
 
     let circuit = builder.build();
@@ -165,7 +165,7 @@ fn test_measure_leaked_sequential_measurements() {
     // Third circuit: regular measurement (should return 1)
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
 
     let circuit3 = builder.build();
     let result3 = system.process(circuit3).unwrap();

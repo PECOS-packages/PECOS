@@ -925,7 +925,7 @@ impl GeneralNoiseModel {
             }
         }
 
-        builder.add_measurements(&affected_qubits);
+        builder.add_mz(&affected_qubits);
         // We need to mark these measurements as being introduced by crosstalk rather
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
@@ -962,7 +962,7 @@ impl GeneralNoiseModel {
             }
         }
 
-        builder.add_measurements(&affected_qubits);
+        builder.add_mz(&affected_qubits);
         // We need to mark these measurements as being introduced by crosstalk rather
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
@@ -1798,7 +1798,7 @@ mod tests {
         // Process a measurement gate
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]);
+        builder.add_mz(&[0]);
         let measurement_command = builder.build();
         let _noisy_command = noise.start(measurement_command).unwrap();
 
@@ -1857,11 +1857,11 @@ mod tests {
         // Create measurement gates for different qubits in specific order
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[2]); // First: measure qubit 2
-        builder.add_measurements(&[0]); // Second: measure qubit 0
-        builder.add_measurements(&[3]); // Third: measure qubit 3
-        builder.add_measurements(&[1]); // Fourth: measure qubit 1
-        builder.add_measurements(&[2]); // Fifth: measure qubit 2 again
+        builder.add_mz(&[2]); // First: measure qubit 2
+        builder.add_mz(&[0]); // Second: measure qubit 0
+        builder.add_mz(&[3]); // Third: measure qubit 3
+        builder.add_mz(&[1]); // Fourth: measure qubit 1
+        builder.add_mz(&[2]); // Fifth: measure qubit 2 again
         let measurement_command = builder.build();
 
         // Process the measurement gates through the noise model
@@ -1928,11 +1928,11 @@ mod tests {
         // Create measurement gates in specific order
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]); // Non-leaked
-        builder.add_measurements(&[1]); // Leaked
-        builder.add_measurements(&[2]); // Non-leaked
-        builder.add_measurements(&[3]); // Leaked
-        builder.add_measurements(&[1]); // Leaked (repeated)
+        builder.add_mz(&[0]); // Non-leaked
+        builder.add_mz(&[1]); // Leaked
+        builder.add_mz(&[2]); // Non-leaked
+        builder.add_mz(&[3]); // Leaked
+        builder.add_mz(&[1]); // Leaked (repeated)
         let measurement_command = builder.build();
 
         // Process the measurement gates
@@ -2078,7 +2078,7 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         for i in 0..10 {
-            builder.add_measurements(&[i]);
+            builder.add_mz(&[i]);
         }
         let _cmd = noise.start(builder.build()).unwrap();
 
@@ -2117,7 +2117,7 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         for i in 0..10 {
-            builder.add_measurements(&[i]);
+            builder.add_mz(&[i]);
         }
         let _cmd = noise.start(builder.build()).unwrap();
 
@@ -2166,7 +2166,7 @@ mod tests {
         // Create measurement gates with both Measure and MeasureLeaked
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]); // Regular measure
+        builder.add_mz(&[0]); // Regular measure
         builder.add_measure_leakages(&[1]); // MeasureLeaked
 
         let measurement_command = builder.build();
@@ -2233,7 +2233,7 @@ mod tests {
         // Create measurement gates with both Measure and MeasureLeaked
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]); // Regular measure on leaked qubit
+        builder.add_mz(&[0]); // Regular measure on leaked qubit
         builder.add_measure_leakages(&[1]); // MeasureLeaked on leaked qubit
 
         let measurement_command = builder.build();
@@ -2286,10 +2286,10 @@ mod tests {
         // Create mixed measurement gates
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]); // Regular measure on leaked qubit 0
+        builder.add_mz(&[0]); // Regular measure on leaked qubit 0
         builder.add_measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
         builder.add_measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
-        builder.add_measurements(&[3]); // Regular measure on non-leaked qubit 3
+        builder.add_mz(&[3]); // Regular measure on non-leaked qubit 3
 
         let measurement_command = builder.build();
         let _noisy_command = noise.start(measurement_command).unwrap();
@@ -2343,7 +2343,7 @@ mod tests {
         // Process measurements
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0, 1, 2, 3]); // 0 and 2 are leaked
+        builder.add_mz(&[0, 1, 2, 3]); // 0 and 2 are leaked
         let _cmd = noise.start(builder.build()).unwrap();
 
         // All original results are 0
@@ -2363,7 +2363,7 @@ mod tests {
             // Re-process measurement gates each time
             let mut gate_builder = ByteMessageBuilder::new();
             let _ = gate_builder.for_quantum_operations();
-            gate_builder.add_measurements(&[0, 1, 2, 3]);
+            gate_builder.add_mz(&[0, 1, 2, 3]);
             let _cmd = noise.start(gate_builder.build()).unwrap();
 
             let state = noise.continue_processing(builder.build()).unwrap();
@@ -2420,7 +2420,7 @@ mod tests {
         // Prepare a bunch of |0> states
         builder.add_prep(&[0, 1, 2, 3, 4]);
         // Apply mid-circuit measurement and reset
-        builder.add_measurements(&[2]);
+        builder.add_mz(&[2]);
         builder.add_prep(&[2]);
         let _cmd = noise.start(builder.build()).unwrap();
 
@@ -2488,7 +2488,7 @@ mod tests {
         // Prepare a bunch of |0> states
         builder.add_prep(&[0, 1, 2, 3, 4]);
         // Apply mid-circuit measurement and reset
-        builder.add_measurements(&[2]);
+        builder.add_mz(&[2]);
         builder.add_meas_crosstalk_global_payload(&[2]);
         builder.add_prep(&[2]);
         let _cmd = noise.start(builder.build()).unwrap();

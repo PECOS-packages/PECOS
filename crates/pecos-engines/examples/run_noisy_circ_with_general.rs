@@ -21,9 +21,9 @@ fn main() {
 
     let circ = ByteMessage::quantum_operations_builder()
         .add_h(&[0])
-        .add_cx(&[0], &[1])
-        .add_measurements(&[0])
-        .add_measurements(&[1])
+        .add_cx(&[(0, 1)])
+        .add_mz(&[0])
+        .add_mz(&[1])
         .build();
 
     let quantum = Box::new(StateVecEngine::new(2));

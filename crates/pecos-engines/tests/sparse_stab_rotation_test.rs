@@ -43,7 +43,7 @@ fn rz_pi_acts_as_z_gate() {
         b.add_h(&[0]);
         b.add_rz(Angle64::HALF_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -53,7 +53,7 @@ fn rz_zero_is_identity() {
     // RZ(0) is identity: |0> stays |0>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_rz(Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -71,7 +71,7 @@ fn rz_quarter_turn_acts_as_s() {
         b.add_rz(Angle64::QUARTER_TURN, &[0]);
         b.add_rz(Angle64::QUARTER_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -85,7 +85,7 @@ fn rz_three_quarter_turn_acts_as_sdg() {
         b.add_rz(Angle64::THREE_QUARTERS_TURN, &[0]);
         b.add_rz(Angle64::QUARTER_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -97,7 +97,7 @@ fn rx_pi_acts_as_x_gate() {
     // RX(pi) = X: |0> -> |1>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_rx(Angle64::HALF_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -106,7 +106,7 @@ fn rx_pi_acts_as_x_gate() {
 fn rx_zero_is_identity() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_rx(Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -118,7 +118,7 @@ fn ry_pi_acts_as_y_gate() {
     // RY(pi) = Y: Y|0> = i|1>, measurement outcome is 1
     let outcomes = run_sparse_stab(1, |b| {
         b.add_ry(Angle64::HALF_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -127,7 +127,7 @@ fn ry_pi_acts_as_y_gate() {
 fn ry_zero_is_identity() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_ry(Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -143,11 +143,11 @@ fn rzz_quarter_turn_acts_as_szz() {
     let outcomes = run_sparse_stab(2, |b| {
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_rzz(Angle64::QUARTER_TURN, &[0], &[1]);
-        b.add_rzz(Angle64::QUARTER_TURN, &[0], &[1]);
+        b.add_rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
+        b.add_rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -159,10 +159,10 @@ fn rzz_half_turn_decomposes_to_z_tensor_z() {
     let outcomes = run_sparse_stab(2, |b| {
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_rzz(Angle64::HALF_TURN, &[0], &[1]);
+        b.add_rzz(Angle64::HALF_TURN, &[(0, 1)]);
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -170,8 +170,8 @@ fn rzz_half_turn_decomposes_to_z_tensor_z() {
 #[test]
 fn rzz_zero_is_identity() {
     let outcomes = run_sparse_stab(2, |b| {
-        b.add_rzz(Angle64::ZERO, &[0], &[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_rzz(Angle64::ZERO, &[(0, 1)]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -184,7 +184,7 @@ fn rxx_half_turn_decomposes_to_x_tensor_x() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::rxx(Angle64::HALF_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -198,7 +198,7 @@ fn ryy_half_turn_decomposes_to_y_tensor_y() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::ryy(Angle64::HALF_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -210,7 +210,7 @@ fn r1xy_pi_zero_acts_as_x() {
     // R1XY(pi, 0) = X: |0> -> |1>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::HALF_TURN, Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -220,7 +220,7 @@ fn r1xy_pi_quarter_acts_as_y() {
     // R1XY(pi, pi/2) = Y: |0> -> i|1>, outcome 1
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -230,7 +230,7 @@ fn r1xy_zero_is_identity() {
     // R1XY(0, anything) = I
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::ZERO, Angle64::QUARTER_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -241,7 +241,7 @@ fn r1xy_quarter_turn_zero_acts_as_sx() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]);
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -252,7 +252,7 @@ fn r1xy_three_quarter_turn_zero_acts_as_sxdg() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::ZERO, &[0]);
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -263,7 +263,7 @@ fn r1xy_quarter_turn_quarter_acts_as_sy() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &[0]);
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -274,7 +274,7 @@ fn r1xy_three_quarter_turn_quarter_acts_as_sydg() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN, &[0]);
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -285,7 +285,7 @@ fn r1xy_negated_x_axis_acts_as_x() {
     // X|0> = |1>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::HALF_TURN, Angle64::HALF_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -296,7 +296,7 @@ fn r1xy_negated_y_axis_acts_as_y() {
     // Y|0> -> outcome 1
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -308,7 +308,7 @@ fn u_identity() {
     // U(0, 0, 0) = I: |0> -> |0>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_u(Angle64::ZERO, Angle64::ZERO, Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -319,7 +319,7 @@ fn u_x_gate() {
     // iX|0> = i|1>, outcome 1
     let outcomes = run_sparse_stab(1, |b| {
         b.add_u(Angle64::HALF_TURN, Angle64::ZERO, Angle64::HALF_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -332,7 +332,7 @@ fn u_z_gate() {
         b.add_h(&[0]);
         b.add_u(Angle64::ZERO, Angle64::ZERO, Angle64::HALF_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -346,7 +346,7 @@ fn u_s_gate() {
         b.add_u(Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN, &[0]);
         b.add_u(Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -369,7 +369,7 @@ fn u_hadamard_like() {
             Angle64::HALF_TURN,
             &[0],
         );
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     // (SY*Z)^2 |0> -- both are Clifford so result is deterministic
     // SY*Z|0> = SY|0> = some state, then SY*Z again.
@@ -387,7 +387,7 @@ fn u_non_clifford_fails_with_useful_message() {
             Angle64::ZERO,
             &[0],
         );
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("U("), "error should name the gate: {msg}");
     assert!(
@@ -406,7 +406,7 @@ fn u_mixed_non_clifford_lambda_fails() {
             Angle64::from_radians(0.5),
             &[0],
         );
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("not a Clifford"), "error: {msg}");
 }
@@ -419,7 +419,7 @@ fn crz_zero_is_identity() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::crz(Angle64::ZERO, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -433,7 +433,7 @@ fn crz_pi_does_nothing_when_control_is_zero() {
         let gate = Gate::crz(Angle64::HALF_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
         b.add_h(&[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -447,7 +447,7 @@ fn crz_pi_applies_rz_pi_when_control_is_one() {
         b.add_x(&[0]); // control = |1>
         let gate = Gate::crz(Angle64::HALF_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 0]);
 }
@@ -470,7 +470,7 @@ fn crz_pi_twice_gives_cz() {
         b.add_gate_command(&gate);
         b.add_gate_command(&gate);
         b.add_h(&[0]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -480,7 +480,7 @@ fn crz_non_clifford_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(2, |b| {
         let gate = Gate::crz(Angle64::from_radians(0.5), &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert!(msg.contains("CRZ"), "error should name the gate: {msg}");
     assert!(
@@ -495,7 +495,7 @@ fn crz_quarter_turn_fails() {
     let msg = expect_sparse_stab_error(2, |b| {
         let gate = Gate::crz(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert!(msg.contains("not a Clifford"), "error: {msg}");
 }
@@ -506,7 +506,7 @@ fn crz_quarter_turn_fails() {
 fn rz_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_rz(Angle64::from_radians(0.123), &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("RZ"), "error should name the gate: {msg}");
     assert!(
@@ -519,7 +519,7 @@ fn rz_non_clifford_angle_fails_with_useful_message() {
 fn rx_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_rx(Angle64::from_radians(0.5), &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("RX"), "error should name the gate: {msg}");
     assert!(
@@ -532,7 +532,7 @@ fn rx_non_clifford_angle_fails_with_useful_message() {
 fn ry_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_ry(Angle64::from_radians(0.5), &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("RY"), "error should name the gate: {msg}");
     assert!(
@@ -544,8 +544,8 @@ fn ry_non_clifford_angle_fails_with_useful_message() {
 #[test]
 fn rzz_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(2, |b| {
-        b.add_rzz(Angle64::from_radians(0.5), &[0], &[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_rzz(Angle64::from_radians(0.5), &[(0, 1)]);
+        b.add_mz(&[0, 1]);
     });
     assert!(msg.contains("RZZ"), "error should name the gate: {msg}");
     assert!(
@@ -559,7 +559,7 @@ fn r1xy_non_clifford_angle_fails_with_useful_message() {
     // Non-Clifford theta
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_r1xy(Angle64::from_radians(0.123), Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("R1XY"), "error should name the gate: {msg}");
     assert!(
@@ -573,7 +573,7 @@ fn r1xy_non_axis_phi_fails_with_useful_message() {
     // Clifford theta but non-axis phi (pi/4 is not along X or Y)
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(msg.contains("R1XY"), "error should name the gate: {msg}");
     assert!(
@@ -593,7 +593,7 @@ fn rz_negative_quarter_turn_acts_as_szdg() {
         b.add_rz(-Angle64::QUARTER_TURN, &[0]);
         b.add_rz(Angle64::QUARTER_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -607,7 +607,7 @@ fn rz_negative_quarter_turn_differs_from_positive() {
         b.add_rz(-Angle64::QUARTER_TURN, &[0]);
         b.add_rz(-Angle64::QUARTER_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -620,7 +620,7 @@ fn rz_negative_half_turn_acts_as_z() {
         b.add_h(&[0]);
         b.add_rz(-Angle64::HALF_TURN, &[0]);
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -630,7 +630,7 @@ fn rx_negative_half_turn_acts_as_x() {
     // RX(-pi) = X (up to global phase). X|0> = |1>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_rx(-Angle64::HALF_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -640,7 +640,7 @@ fn ry_negative_half_turn_acts_as_y() {
     // RY(-pi) = Y (up to global phase). Y|0> = i|1>, outcome 1
     let outcomes = run_sparse_stab(1, |b| {
         b.add_ry(-Angle64::HALF_TURN, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -652,10 +652,10 @@ fn rzz_negative_half_turn_decomposes_to_z_tensor_z() {
     let outcomes = run_sparse_stab(2, |b| {
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_rzz(-Angle64::HALF_TURN, &[0], &[1]);
+        b.add_rzz(-Angle64::HALF_TURN, &[(0, 1)]);
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -670,7 +670,7 @@ fn rxx_quarter_turn_acts_as_sxx() {
         let sxx = Gate::rxx(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&sxx);
         b.add_gate_command(&sxx);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -683,7 +683,7 @@ fn rxx_three_quarter_turn_acts_as_sxxdg() {
         let sxx = Gate::rxx(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&sxxdg);
         b.add_gate_command(&sxx);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -696,7 +696,7 @@ fn ryy_quarter_turn_acts_as_syy() {
         let syy = Gate::ryy(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&syy);
         b.add_gate_command(&syy);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -709,7 +709,7 @@ fn ryy_three_quarter_turn_acts_as_syydg() {
         let syy = Gate::ryy(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&syydg);
         b.add_gate_command(&syy);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -719,7 +719,7 @@ fn rxx_zero_is_identity() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::rxx(Angle64::ZERO, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -729,7 +729,7 @@ fn ryy_zero_is_identity() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::ryy(Angle64::ZERO, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -741,7 +741,7 @@ fn rz_pi_over_4_rejected_as_non_clifford() {
     // RZ(pi/4) = T gate, which is not Clifford -- should fail on stabilizer engine
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_rz(Angle64::QUARTER_TURN / 2u64, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(
         msg.contains("not a Clifford"),
@@ -754,7 +754,7 @@ fn rz_neg_pi_over_4_rejected_as_non_clifford() {
     // RZ(-pi/4) = Tdg gate, also not Clifford
     let msg = expect_sparse_stab_error(1, |b| {
         b.add_rz(-(Angle64::QUARTER_TURN / 2u64), &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert!(
         msg.contains("not a Clifford"),
@@ -772,7 +772,7 @@ fn rxx_negative_quarter_turn_acts_as_sxxdg() {
         let sxx = Gate::rxx(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&sxxdg);
         b.add_gate_command(&sxx);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -785,7 +785,7 @@ fn ryy_negative_quarter_turn_acts_as_syydg() {
         let syy = Gate::ryy(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&syydg);
         b.add_gate_command(&syy);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -797,11 +797,11 @@ fn rzz_negative_quarter_turn_acts_as_szzdg() {
     let outcomes = run_sparse_stab(2, |b| {
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_rzz(-Angle64::QUARTER_TURN, &[0], &[1]);
-        b.add_rzz(Angle64::QUARTER_TURN, &[0], &[1]);
+        b.add_rzz(-Angle64::QUARTER_TURN, &[(0, 1)]);
+        b.add_rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
         b.add_h(&[0]);
         b.add_h(&[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -814,7 +814,7 @@ fn r1xy_negative_theta_acts_as_sxdg() {
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(-Angle64::QUARTER_TURN, Angle64::ZERO, &[0]);
         b.add_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -824,7 +824,7 @@ fn r1xy_negative_half_turn_acts_as_x() {
     // R1XY(-pi, 0) = X. |0> -> |1>
     let outcomes = run_sparse_stab(1, |b| {
         b.add_r1xy(-Angle64::HALF_TURN, Angle64::ZERO, &[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![1]);
 }
@@ -841,7 +841,7 @@ fn rz_rotations_compose_correctly() {
             b.add_rz(Angle64::QUARTER_TURN, &[0]);
         }
         b.add_h(&[0]);
-        b.add_measurements(&[0]);
+        b.add_mz(&[0]);
     });
     assert_eq!(outcomes, vec![0]);
 }
@@ -855,7 +855,7 @@ fn mixed_clifford_rotations_in_circuit() {
         b.add_x(&[0]);
         b.add_rz(Angle64::HALF_TURN, &[0]);
         b.add_rx(Angle64::HALF_TURN, &[1]);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -873,7 +873,7 @@ fn rxxryyrzz_identity_on_sparse_stab() {
             &[(0usize, 1usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -889,7 +889,7 @@ fn rxxryyrzz_clifford_angles_on_sparse_stab() {
             &[(0usize, 1usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -904,7 +904,7 @@ fn rxxryyrzz_inverse_clifford_on_sparse_stab() {
         let inv = Gate::rxxryyrzz(-q, -q, -q, &[(0usize, 1usize)]);
         b.add_gate_command(&fwd);
         b.add_gate_command(&inv);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 1]);
 }
@@ -919,7 +919,7 @@ fn rxxryyrzz_non_clifford_fails_on_sparse_stab() {
             &[(0usize, 1usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert!(msg.contains("not a Clifford"), "error: {msg}");
 }
@@ -933,7 +933,7 @@ fn u2q_identity_on_sparse_stab() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::u2q(id, [Angle64::ZERO; 3], id, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 0]);
 }
@@ -951,7 +951,7 @@ fn u2q_clifford_single_qubit_only() {
             &[(0usize, 1usize)],
         );
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     // X on q0, I on q1: |00> -> |10>
     assert_eq!(outcomes, vec![1, 0]);
@@ -968,7 +968,7 @@ fn u2q_clifford_interaction_rxx_pi() {
     let outcomes = run_sparse_stab(2, |b| {
         let gate = Gate::u2q(id, interaction, id, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![1, 1]);
 }
@@ -987,7 +987,7 @@ fn u2q_clifford_interaction_quarter_turn() {
         let inv = Gate::u2q(id, [-q, -q, -q], id, &[(0usize, 1usize)]);
         b.add_gate_command(&fwd);
         b.add_gate_command(&inv);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 1]);
 }
@@ -1025,7 +1025,7 @@ fn u2q_clifford_interaction_with_single_qubit_gates() {
         let inv = Gate::u2q(inv_before, inv_interaction, inv_after, &[(0usize, 1usize)]);
         b.add_gate_command(&fwd);
         b.add_gate_command(&inv);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert_eq!(outcomes, vec![0, 1]);
 }
@@ -1037,7 +1037,7 @@ fn u2q_non_clifford_fails_on_sparse_stab() {
     let msg = expect_sparse_stab_error(2, |b| {
         let gate = Gate::u2q([zero; 2], non_clifford, [zero; 2], &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
-        b.add_measurements(&[0, 1]);
+        b.add_mz(&[0, 1]);
     });
     assert!(msg.contains("not a Clifford"), "error: {msg}");
 }

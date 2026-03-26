@@ -1611,10 +1611,10 @@ impl OperationProcessor {
                 builder.add_gate_command(&gate);
             }
             "SZZ" => {
-                builder.add_szz(&[qubit_args[0]], &[qubit_args[1]]);
+                builder.add_szz(&[(qubit_args[0], qubit_args[1])]);
             }
             "CX" => {
-                builder.add_cx(&[qubit_args[0]], &[qubit_args[1]]);
+                builder.add_cx(&[(qubit_args[0], qubit_args[1])]);
             }
             "H" => {
                 builder.add_h(&[qubit_args[0]]);
@@ -1629,7 +1629,7 @@ impl OperationProcessor {
                 builder.add_z(&[qubit_args[0]]);
             }
             "Measure" => {
-                builder.add_measurements(&[qubit_args[0]]);
+                builder.add_mz(&[qubit_args[0]]);
             }
             "Init" => {
                 // Initialize qubit to |0⟩ state using the Prep gate

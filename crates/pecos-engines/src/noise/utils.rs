@@ -198,13 +198,13 @@ impl NoiseUtils {
 
             // Two-qubit gates that need qubit validation
             GateType::CX if gate.qubits.len() >= 2 => {
-                builder.add_cx(&[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.add_cx(&[(*gate.qubits[0], *gate.qubits[1])]);
             }
             GateType::SZZ if gate.qubits.len() >= 2 => {
-                builder.add_szz(&[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.add_szz(&[(*gate.qubits[0], *gate.qubits[1])]);
             }
             GateType::SZZdg if gate.qubits.len() >= 2 => {
-                builder.add_szzdg(&[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.add_szzdg(&[(*gate.qubits[0], *gate.qubits[1])]);
             }
 
             // Rotation gates - angles are now stored in gate.angles field
@@ -221,7 +221,7 @@ impl NoiseUtils {
                 builder.add_rz(gate.angles[0], &qubits_usize);
             }
             GateType::RZZ if gate.qubits.len() >= 2 && !gate.angles.is_empty() => {
-                builder.add_rzz(gate.angles[0], &[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.add_rzz(gate.angles[0], &[(*gate.qubits[0], *gate.qubits[1])]);
             }
             GateType::R1XY if gate.angles.len() >= 2 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
@@ -240,7 +240,7 @@ impl NoiseUtils {
             // Measurement gates
             GateType::MZ if !gate.qubits.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_measurements(&qubits_usize);
+                builder.add_mz(&qubits_usize);
             }
 
             // Idle gates need special handling for qubit lists

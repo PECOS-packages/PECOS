@@ -41,7 +41,7 @@ fn test_biased_depolarizing_noise() {
     // Create a simple H-gate circuit with measurement
     let circ = ByteMessage::quantum_operations_builder()
         .add_h(&[0])
-        .add_measurements(&[0])
+        .add_mz(&[0])
         .build();
 
     // Test with uniform depolarizing probability
@@ -71,9 +71,9 @@ fn test_depolarizing_noise() {
     // Create a Bell state circuit
     let bell_circ = ByteMessage::quantum_operations_builder()
         .add_h(&[0])
-        .add_cx(&[0], &[1])
-        .add_measurements(&[0])
-        .add_measurements(&[1])
+        .add_cx(&[(0, 1)])
+        .add_mz(&[0])
+        .add_mz(&[1])
         .build();
 
     // Test with no noise - should get ideal Bell state (00 and 11)
@@ -122,7 +122,7 @@ fn test_pass_through_noise() {
     // Create a simple H-gate circuit with measurement
     let circ = ByteMessage::quantum_operations_builder()
         .add_h(&[0])
-        .add_measurements(&[0])
+        .add_mz(&[0])
         .build();
 
     // Create pass-through noise model (no noise)

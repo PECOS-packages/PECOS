@@ -265,10 +265,10 @@ fn test_two_qubit_gate_determinism() {
     let mut builder = ByteMessage::quantum_operations_builder();
     for _ in 0..20 {
         // Repeat pattern multiple times
-        builder.add_cx(&[0], &[1]);
-        builder.add_cx(&[1], &[2]);
-        builder.add_cx(&[2], &[3]);
-        builder.add_cx(&[3], &[0]);
+        builder.add_cx(&[(0, 1)]);
+        builder.add_cx(&[(1, 2)]);
+        builder.add_cx(&[(2, 3)]);
+        builder.add_cx(&[(3, 0)]);
     }
     let msg = builder.build();
 
@@ -309,9 +309,9 @@ fn test_measurement_determinism() {
     let mut builder = ByteMessage::quantum_operations_builder();
     builder.add_h(&[0]);
     builder.add_h(&[1]);
-    builder.add_cx(&[0], &[1]);
-    builder.add_measurements(&[0]);
-    builder.add_measurements(&[1]);
+    builder.add_cx(&[(0, 1)]);
+    builder.add_mz(&[0]);
+    builder.add_mz(&[1]);
     let msg = builder.build();
 
     // Apply noise multiple times
@@ -340,9 +340,9 @@ fn test_different_seeds_produce_different_results() {
     for _ in 0..15 {
         // Repeat pattern to create a longer circuit
         builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
+        builder.add_cx(&[(0, 1)]);
         builder.add_h(&[1]);
-        builder.add_cx(&[1], &[2]);
+        builder.add_cx(&[(1, 2)]);
         builder.add_h(&[2]);
     }
     let msg = builder.build();
@@ -424,9 +424,9 @@ fn test_complete_measurement_determinism() {
     let mut builder = ByteMessage::quantum_operations_builder();
     // Create a Bell state
     builder.add_h(&[0]);
-    builder.add_cx(&[0], &[1]);
+    builder.add_cx(&[(0, 1)]);
     // Add measurements for both qubits
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circuit = builder.build();
 
     // Create two identical quantum engines
@@ -485,7 +485,7 @@ fn test_deterministic_measurement() {
     // Create a circuit that puts a qubit in superposition and measures it
     let mut builder = ByteMessage::quantum_operations_builder();
     builder.add_h(&[0]); // Put qubit 0 in superposition
-    builder.add_measurements(&[0]); // Measure qubit 0
+    builder.add_mz(&[0]); // Measure qubit 0
     let circuit = builder.build();
 
     info!("Running first measurement with seed {seed}");
@@ -628,9 +628,9 @@ fn test_comprehensive_noise_determinism() {
     // Apply a variety of single and two-qubit gates
     builder.add_h(&[0]); // Apply Hadamard to qubit 0
     builder.add_rz(Angle64::from_radians(0.5), &[1]); // Apply RZ to qubit 1
-    builder.add_cx(&[0], &[1]); // Apply CNOT from qubit 0 to qubit 1
+    builder.add_cx(&[(0, 1)]); // Apply CNOT from qubit 0 to qubit 1
     builder.add_h(&[2]); // Apply Hadamard to qubit 2
-    builder.add_cx(&[1], &[2]); // Apply CNOT from qubit 1 to qubit 2
+    builder.add_cx(&[(1, 2)]); // Apply CNOT from qubit 1 to qubit 2
 
     // RX and RY gates can be implemented using H-RZ-H and other combinations
     builder.add_h(&[0]); // Start of RX implementation
@@ -646,11 +646,11 @@ fn test_comprehensive_noise_determinism() {
     builder.add_x(&[2]); // Apply X to qubit 2
     builder.add_y(&[0]); // Apply Y to qubit 0
     builder.add_z(&[1]); // Apply Z to qubit 1
-    builder.add_rzz(Angle64::from_radians(0.75), &[0], &[2]); // Apply RZZ to qubits 0 and 2
-    builder.add_cx(&[2], &[0]); // Apply CNOT from qubit 2 to qubit 0
+    builder.add_rzz(Angle64::from_radians(0.75), &[(0, 2)]); // Apply RZZ to qubits 0 and 2
+    builder.add_cx(&[(2, 0)]); // Apply CNOT from qubit 2 to qubit 0
 
     // Add measurements for all qubits
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
 
     let circuit = builder.build();
 
@@ -751,10 +751,10 @@ fn test_long_running_determinism() {
 
     // First create a GHZ state across 5 qubits
     builder.add_h(&[0]);
-    builder.add_cx(&[0], &[1]);
-    builder.add_cx(&[0], &[2]);
-    builder.add_cx(&[0], &[3]);
-    builder.add_cx(&[0], &[4]);
+    builder.add_cx(&[(0, 1)]);
+    builder.add_cx(&[(0, 2)]);
+    builder.add_cx(&[(0, 3)]);
+    builder.add_cx(&[(0, 4)]);
 
     // Now apply a repeated pattern of gates to create a long sequence
     // This gives the RNG many opportunities to diverge if there are issues
@@ -787,11 +787,11 @@ fn test_long_running_determinism() {
         // Add entangling operations that change with iteration
         let q1 = i % 5;
         let q2 = (i + 1) % 5;
-        builder.add_cx(&[q1], &[q2]);
+        builder.add_cx(&[(q1, q2)]);
     }
 
     // Add measurements for all qubits
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
 
     let circuit = builder.build();
 

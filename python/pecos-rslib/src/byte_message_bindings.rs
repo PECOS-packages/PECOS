@@ -66,9 +66,7 @@ impl PyByteMessageBuilder {
 
     /// Add CX (CNOT) gate(s): `add_cx([(c0, t0), (c1, t1)])`
     fn add_cx(&mut self, pairs: Vec<(usize, usize)>) {
-        let controls: Vec<usize> = pairs.iter().map(|(c, _)| *c).collect();
-        let targets: Vec<usize> = pairs.iter().map(|(_, t)| *t).collect();
-        self.inner.add_cx(&controls, &targets);
+        self.inner.add_cx(&pairs);
     }
 
     /// Add RZ gate(s): `add_rz(theta, [q0, q1])`
@@ -78,16 +76,57 @@ impl PyByteMessageBuilder {
 
     /// Add RZZ gate(s): `add_rzz(theta, [(q0, q1), (q2, q3)])`
     fn add_rzz(&mut self, theta: AngleParam, pairs: Vec<(usize, usize)>) {
-        let q1s: Vec<usize> = pairs.iter().map(|(a, _)| *a).collect();
-        let q2s: Vec<usize> = pairs.iter().map(|(_, b)| *b).collect();
-        self.inner.add_rzz(theta.0, &q1s, &q2s);
+        self.inner.add_rzz(theta.0, &pairs);
+    }
+
+    /// Add CY gate(s): `add_cy([(c0, t0), (c1, t1)])`
+    fn add_cy(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.add_cy(&pairs);
+    }
+
+    /// Add CZ gate(s): `add_cz([(c0, t0), (c1, t1)])`
+    fn add_cz(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.add_cz(&pairs);
     }
 
     /// Add SZZ gate(s): `add_szz([(q0, q1), (q2, q3)])`
     fn add_szz(&mut self, pairs: Vec<(usize, usize)>) {
-        let q1s: Vec<usize> = pairs.iter().map(|(a, _)| *a).collect();
-        let q2s: Vec<usize> = pairs.iter().map(|(_, b)| *b).collect();
-        self.inner.add_szz(&q1s, &q2s);
+        self.inner.add_szz(&pairs);
+    }
+
+    /// Add `SZZdg` gate(s): `add_szzdg([(q0, q1), (q2, q3)])`
+    fn add_szzdg(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.add_szzdg(&pairs);
+    }
+
+    /// Add SZ gate(s): `add_sz([q0, q1])`
+    fn add_sz(&mut self, qubits: Vec<usize>) {
+        self.inner.add_sz(&qubits);
+    }
+
+    /// Add `SZdg` gate(s): `add_szdg([q0, q1])`
+    fn add_szdg(&mut self, qubits: Vec<usize>) {
+        self.inner.add_szdg(&qubits);
+    }
+
+    /// Add T gate(s): `add_t([q0, q1])`
+    fn add_t(&mut self, qubits: Vec<usize>) {
+        self.inner.add_t(&qubits);
+    }
+
+    /// Add Tdg gate(s): `add_tdg([q0, q1])`
+    fn add_tdg(&mut self, qubits: Vec<usize>) {
+        self.inner.add_tdg(&qubits);
+    }
+
+    /// Add RX gate(s): `add_rx(theta, [q0, q1])`
+    fn add_rx(&mut self, theta: AngleParam, qubits: Vec<usize>) {
+        self.inner.add_rx(theta.0, &qubits);
+    }
+
+    /// Add RY gate(s): `add_ry(theta, [q0, q1])`
+    fn add_ry(&mut self, theta: AngleParam, qubits: Vec<usize>) {
+        self.inner.add_ry(theta.0, &qubits);
     }
 
     /// Add R1XY gate(s): `add_r1xy(theta, phi, [q0, q1])`
@@ -95,17 +134,26 @@ impl PyByteMessageBuilder {
         self.inner.add_r1xy(theta.0, phi.0, &qubits);
     }
 
+    /// Add U gate(s): `add_u(theta, phi, lambda_, [q0, q1])`
+    fn add_u(
+        &mut self,
+        theta: AngleParam,
+        phi: AngleParam,
+        lambda_: AngleParam,
+        qubits: Vec<usize>,
+    ) {
+        self.inner.add_u(theta.0, phi.0, lambda_.0, &qubits);
+    }
+
     /// Add Z-basis measurement(s): `add_mz([0, 1, 2])`
     fn add_mz(&mut self, qubits: Vec<usize>) {
-        self.inner.add_measurements(&qubits);
+        self.inner.add_mz(&qubits);
     }
 
     /// Add qubit preparation(s): `add_prep([0, 1, 2])`
     fn add_prep(&mut self, qubits: Vec<usize>) {
         self.inner.add_prep(&qubits);
     }
-
-    // Removed add_flush since it's no longer needed
 
     /// Build the message and return a `PyByteMessage`
     #[pyo3(text_signature = "($self)")]

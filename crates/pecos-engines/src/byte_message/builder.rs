@@ -348,95 +348,38 @@ impl ByteMessageBuilder {
         self
     }
 
-    /// Add CX (controlled-X) gates between pairs of qubits
+    /// Add CX (controlled-X) gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the controls and targets arrays do not have the same length.
-    pub fn add_cx(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "Controls and targets arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = controls
-            .iter()
-            .zip(targets.iter())
-            .map(|(&c, &t)| (c, t))
-            .collect();
-        let gate = Gate::cx(&pairs);
+    /// Each tuple is a (control, target) pair.
+    pub fn add_cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::cx(pairs);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add RZZ gates between pairs of qubits
+    /// Add RZZ gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the qubits1 and qubits2 arrays do not have the same length.
-    pub fn add_rzz(&mut self, theta: Angle64, qubits1: &[usize], qubits2: &[usize]) -> &mut Self {
-        assert_eq!(
-            qubits1.len(),
-            qubits2.len(),
-            "Qubit1 and qubit2 arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = qubits1
-            .iter()
-            .zip(qubits2.iter())
-            .map(|(&q1, &q2)| (q1, q2))
-            .collect();
-        let gate = Gate::rzz(theta, &pairs);
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn add_rzz(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::rzz(theta, pairs);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add SZZ gates between pairs of qubits
+    /// Add SZZ gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the qubits1 and qubits2 arrays do not have the same length.
-    pub fn add_szz(&mut self, qubits1: &[usize], qubits2: &[usize]) -> &mut Self {
-        assert_eq!(
-            qubits1.len(),
-            qubits2.len(),
-            "Qubit1 and qubit2 arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = qubits1
-            .iter()
-            .zip(qubits2.iter())
-            .map(|(&q1, &q2)| (q1, q2))
-            .collect();
-        let gate = Gate::szz(&pairs);
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn add_szz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::szz(pairs);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add an `SZZdg` gate
+    /// Add `SZZdg` gates between pairs of qubits.
     ///
-    /// # Arguments
-    ///
-    /// * `qubits1` - First set of qubits
-    /// * `qubits2` - Second set of qubits
-    ///
-    /// # Returns
-    ///
-    /// * `&mut Self` - Returns self for method chaining
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if the qubits1 and qubits2 arrays do not have the same length.
-    pub fn add_szzdg(&mut self, qubits1: &[usize], qubits2: &[usize]) -> &mut Self {
-        assert_eq!(
-            qubits1.len(),
-            qubits2.len(),
-            "Qubit1 and qubit2 arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = qubits1
-            .iter()
-            .zip(qubits2.iter())
-            .map(|(&q1, &q2)| (q1, q2))
-            .collect();
-        let gate = Gate::szzdg(&pairs);
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn add_szzdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::szzdg(pairs);
         self.add_gate_command(&gate);
         self
     }
@@ -473,7 +416,7 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn add_measurements(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn add_mz(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
             // Add a measurement as a regular gate command
             let gate = Gate::measure(&[qubit]);
@@ -484,7 +427,7 @@ impl ByteMessageBuilder {
 
     /// Add measure leakage operations for multiple qubits
     ///
-    /// This behaves like `add_measurements()` but is intended for measuring qubits
+    /// This behaves like `add_mz()` but is intended for measuring qubits
     /// that may be in a leaked state. In the future, this will output 0, 1, or 2
     /// (where 2 indicates the qubit is leaked).
     ///
@@ -559,41 +502,27 @@ impl ByteMessageBuilder {
         self
     }
 
-    /// Add a CY gate
+    /// Add CY gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// Panics if the length of `controls` and `targets` are not equal.
-    pub fn add_cy(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
-        // CY = (I ⊗ Sdg) CX (I ⊗ S)
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "Controls and targets must have same length"
-        );
-        for (&c, &t) in controls.iter().zip(targets.iter()) {
+    /// Each tuple is a (control, target) pair.
+    /// Decomposed as CY = (I x Sdg) CX (I x S).
+    pub fn add_cy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(c, t) in pairs {
             self.add_szdg(&[t]);
-            self.add_cx(&[c], &[t]);
+            self.add_cx(&[(c, t)]);
             self.add_sz(&[t]);
         }
         self
     }
 
-    /// Add a CZ gate
+    /// Add CZ gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// Panics if the length of `controls` and `targets` are not equal.
-    pub fn add_cz(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
-        // CZ = H CX H
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "Controls and targets must have same length"
-        );
-        for (&c, &t) in controls.iter().zip(targets.iter()) {
+    /// Each tuple is a (control, target) pair.
+    /// Decomposed as CZ = H CX H.
+    pub fn add_cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(c, t) in pairs {
             self.add_h(&[t]);
-            self.add_cx(&[c], &[t]);
+            self.add_cx(&[(c, t)]);
             self.add_h(&[t]);
         }
         self
@@ -756,8 +685,8 @@ mod tests {
 
         // Add some gates
         builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
-        builder.add_measurements(&[2]);
+        builder.add_cx(&[(0, 1)]);
+        builder.add_mz(&[2]);
 
         // Build the message
         let message = builder.build();
@@ -804,7 +733,7 @@ mod tests {
         builder.add_z(&[3]);
         builder.add_rz(Angle64::from_radians(0.5), &[4]);
         builder.add_r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
-        builder.add_measurements(&[6]);
+        builder.add_mz(&[6]);
 
         // Build the message
         let message = builder.build();
@@ -866,7 +795,7 @@ mod tests {
 
         // Add measurements for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.add_measurements(&qubits);
+        builder.add_mz(&qubits);
 
         // Build the message
         let message = builder.build();
@@ -958,7 +887,7 @@ mod tests {
 
         // Add some gates
         builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
+        builder.add_cx(&[(0, 1)]);
 
         // Check the message count
         assert_eq!(builder.message_count(), 2);
@@ -984,7 +913,7 @@ mod tests {
 
         // Add some gates
         builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
+        builder.add_cx(&[(0, 1)]);
 
         // Check the message count
         assert_eq!(builder.message_count(), 2);

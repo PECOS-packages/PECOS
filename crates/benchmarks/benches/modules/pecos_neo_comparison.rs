@@ -140,8 +140,8 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
                 let mut builder = ByteMessageBuilder::new();
                 let _ = builder.for_quantum_operations();
                 builder.add_h(&[0]);
-                builder.add_cx(&[0], &[1]);
-                builder.add_measurements(&[0, 1]);
+                builder.add_cx(&[(0, 1)]);
+                builder.add_mz(&[0, 1]);
                 let circ = builder.build();
 
                 system.reset().unwrap();

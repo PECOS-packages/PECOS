@@ -11,7 +11,7 @@ fn main() {
     // Create a simple quantum circuit that prepares a superposition and measures it
     let circ = ByteMessage::quantum_operations_builder()
         .add_h(&[0])
-        .add_measurements(&[0])
+        .add_mz(&[0])
         .build();
 
     // Create a quantum engine with 1 qubit
@@ -139,9 +139,9 @@ fn bell_state_comparison() {
     // Create a Bell state circuit
     let bell_circ = ByteMessage::quantum_operations_builder()
         .add_h(&[0])
-        .add_cx(&[0], &[1])
-        .add_measurements(&[0])
-        .add_measurements(&[1])
+        .add_cx(&[(0, 1)])
+        .add_mz(&[0])
+        .add_mz(&[1])
         .build();
 
     // Parameters for the test

@@ -115,7 +115,7 @@ fn test_single_qubit_gate_noise_distributions() {
             builder.add_h(&[0]);
         }
 
-        builder.add_measurements(&[0]);
+        builder.add_mz(&[0]);
         let circ = builder.build();
 
         println!("Testing {desc}...");
@@ -183,7 +183,7 @@ fn test_rotation_gate_with_different_angles() {
         builder.add_h(&[0]);
         builder.add_rz(Angle64::from_radians(angle), &[0]);
         builder.add_h(&[0]);
-        builder.add_measurements(&[0]);
+        builder.add_mz(&[0]);
         let circ = builder.build();
 
         println!("======= Testing {desc}: angle={angle} =======");
@@ -259,7 +259,7 @@ fn test_rotation_gate_with_different_angles() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]); // Just a simple X gate
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     println!("======= Testing X gate =======");
@@ -312,8 +312,8 @@ fn test_two_qubit_gate_noise_distributions() {
     {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_cx(&[0], &[1]);
-        builder.add_measurements(&[0, 1]);
+        builder.add_cx(&[(0, 1)]);
+        builder.add_mz(&[0, 1]);
         let circ = builder.build();
 
         let counts = count_results(noise_model.clone(), &circ, NUM_SHOTS, 2);
@@ -342,8 +342,8 @@ fn test_two_qubit_gate_noise_distributions() {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.add_x(&[0]); // Prepare |10⟩
-        builder.add_cx(&[0], &[1]);
-        builder.add_measurements(&[0, 1]);
+        builder.add_cx(&[(0, 1)]);
+        builder.add_mz(&[0, 1]);
         let circ = builder.build();
 
         let counts = count_results(noise_model.clone(), &circ, NUM_SHOTS, 2);
@@ -372,8 +372,8 @@ fn test_two_qubit_gate_noise_distributions() {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.add_x(&[1]); // Prepare |01⟩
-        builder.add_cx(&[0], &[1]);
-        builder.add_measurements(&[0, 1]);
+        builder.add_cx(&[(0, 1)]);
+        builder.add_mz(&[0, 1]);
         let circ = builder.build();
 
         let counts = count_results(noise_model.clone(), &circ, NUM_SHOTS, 2);
@@ -403,8 +403,8 @@ fn test_two_qubit_gate_noise_distributions() {
         let _ = builder.for_quantum_operations();
         builder.add_x(&[0]); // Prepare |11⟩
         builder.add_x(&[1]);
-        builder.add_cx(&[0], &[1]);
-        builder.add_measurements(&[0, 1]);
+        builder.add_cx(&[(0, 1)]);
+        builder.add_mz(&[0, 1]);
         let circ = builder.build();
 
         let counts = count_results(noise_model.clone(), &circ, NUM_SHOTS, 2);
@@ -467,14 +467,14 @@ fn test_rzz_angle_dependent_error_model() {
         builder.add_h(&[1]);
 
         // Apply RZZ with the specified angle
-        builder.add_rzz(Angle64::from_radians(angle), &[0], &[1]);
+        builder.add_rzz(Angle64::from_radians(angle), &[(0, 1)]);
 
         // Apply H gates again to convert phase to population
         builder.add_h(&[0]);
         builder.add_h(&[1]);
 
         // Measure both qubits
-        builder.add_measurements(&[0, 1]);
+        builder.add_mz(&[0, 1]);
         let circ = builder.build();
 
         // Run with noise model and count results
@@ -539,7 +539,7 @@ fn test_leakage_model() {
     }
 
     // Measure the qubit
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     // Run with noise model and count results
@@ -577,7 +577,7 @@ fn test_software_gates_not_affected_by_noise() {
     let mut builder1 = ByteMessageBuilder::new();
     let _ = builder1.for_quantum_operations();
     builder1.add_rz(Angle64::from_radians(PI), &[0]);
-    builder1.add_measurements(&[0]);
+    builder1.add_mz(&[0]);
     let circ_rz = builder1.build();
 
     // Circuit 2: |0⟩ → H→RZ(π)→H → |1⟩ (population flip via H-RZ-H)
@@ -586,7 +586,7 @@ fn test_software_gates_not_affected_by_noise() {
     builder2.add_h(&[0]);
     builder2.add_rz(Angle64::from_radians(PI), &[0]);
     builder2.add_h(&[0]);
-    builder2.add_measurements(&[0]);
+    builder2.add_mz(&[0]);
     let circ_hardware = builder2.build();
 
     // Run both circuits with noise model
@@ -663,7 +663,7 @@ fn test_coherent_vs_incoherent_dephasing() {
     builder.add_h(&[0]);
 
     // Measure
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     // Run with both noise models
@@ -690,7 +690,7 @@ fn test_parameter_scaling_impact() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]);
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     // Create a set of noise models with different scaling factors
@@ -773,7 +773,7 @@ fn test_debug_x_gate_noise() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]);
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     // Run many shots and collect statistics
@@ -824,7 +824,7 @@ fn test_seed_effect() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]);
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     println!("Testing with different seeds:");
@@ -858,7 +858,7 @@ fn test_seed_effect() {
     let mut builder2 = ByteMessageBuilder::new();
     let _ = builder2.for_quantum_operations();
     builder2.add_x(&[0]);
-    builder2.add_measurements(&[0]);
+    builder2.add_mz(&[0]);
     let circ2 = builder2.build();
 
     let debug_counts = count_results(debug_model.clone(), &circ2, NUM_SHOTS, 1);
@@ -944,7 +944,7 @@ fn test_combined_comparison() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]);
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     // Run tests with simple model
@@ -1057,7 +1057,7 @@ fn test_pauli_model_effect() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]);
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     let counts1 = count_results(noise_model1.clone(), &circ, NUM_SHOTS, 1);
@@ -1155,7 +1155,7 @@ fn test_pauli_model_behavior() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.add_x(&[0]);
-    builder.add_measurements(&[0]);
+    builder.add_mz(&[0]);
     let circ = builder.build();
 
     // ====== Model 1: Default model (equal distribution of X, Y, Z errors) ======

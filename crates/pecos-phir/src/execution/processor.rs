@@ -242,7 +242,7 @@ impl PhirProcessor {
             }
             QuantumOp::RZZ(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "RZZ")?;
-                message_builder.add_rzz(*angle, &[q1], &[q2]);
+                message_builder.add_rzz(*angle, &[(q1, q2)]);
                 Ok(true)
             }
             QuantumOp::CPhase(angle) => {
@@ -389,10 +389,10 @@ impl PhirProcessor {
 
         match gate_name {
             "CX" => {
-                message_builder.add_cx(&[q1], &[q2]);
+                message_builder.add_cx(&[(q1, q2)]);
             }
             "CZ" => {
-                message_builder.add_cz(&[q1], &[q2]);
+                message_builder.add_cz(&[(q1, q2)]);
             }
             _ => {
                 return Err(PhirError::internal(format!(
@@ -423,7 +423,7 @@ impl PhirProcessor {
         // Track maximum qubit index
         self.qubit_count = self.qubit_count.max(qubit_id + 1);
 
-        message_builder.add_measurements(&[qubit_id]);
+        message_builder.add_mz(&[qubit_id]);
 
         // Track measurement mapping for later processing
         // The measurement index maps to which variable should receive the result

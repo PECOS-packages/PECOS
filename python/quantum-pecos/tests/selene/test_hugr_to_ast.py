@@ -179,7 +179,7 @@ class TestProgramMetadata:
             return measure(q)
 
         ast = guppy_to_ast(my_quantum_circuit)
-        assert ast.name == "my_quantum_circuit"
+        assert ast.name.endswith("my_quantum_circuit")
 
     def test_custom_allocator_name(self) -> None:
         """Test custom allocator name."""

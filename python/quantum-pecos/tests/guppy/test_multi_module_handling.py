@@ -100,7 +100,7 @@ def test_single_module_baseline() -> None:
 
     print(f"Single module test - Modules: {module_count}, Functions: {function_names}")
     assert module_count >= 1, "Should have at least one module"
-    assert "single_hadamard" in function_names, "Should contain the main function"
+    assert any(fn.endswith("single_hadamard") for fn in function_names), "Should contain the main function"
 
 
 def test_multiple_functions_compilation() -> None:
@@ -143,8 +143,10 @@ def test_multiple_functions_compilation() -> None:
     assert bell_modules >= 1, "Bell pair should have at least one module"
     assert single_modules >= 1, "Single qubit should have at least one module"
 
-    assert "create_bell_pair" in bell_functions, "Bell HUGR should contain create_bell_pair"
-    assert "single_qubit_test" in single_functions, "Single HUGR should contain single_qubit_test"
+    assert any(fn.endswith("create_bell_pair") for fn in bell_functions), "Bell HUGR should contain create_bell_pair"
+    assert any(
+        fn.endswith("single_qubit_test") for fn in single_functions
+    ), "Single HUGR should contain single_qubit_test"
 
 
 def test_compiler_comparison_simple() -> None:

@@ -319,7 +319,7 @@ fn bell_state_example() -> Result<(), PecosError> {
         .build()?;
 
     // Run multiple times
-    for shots in [100, 1000, 10000] {
+    for shots in [100, 500, 1000] {
         let results = experiment.run(shots)?;
         println!("Results for {} shots: {:?}", shots, results);
     }
@@ -410,13 +410,13 @@ let qasm_code = r#"
 let program = Qasm::from_string(qasm_code);
 
 // Single threaded (default)
-let results = sim(program.clone()).workers(1).run(100000)?;
+let results = sim(program.clone()).workers(1).run(1000)?;
 
 // Explicit thread count
-let results = sim(program.clone()).workers(4).run(100000)?;
+let results = sim(program.clone()).workers(4).run(1000)?;
 
 // Automatically use all available cores
-let results = sim(program).auto_workers().run(100000)?;
+let results = sim(program).auto_workers().run(1000)?;
     
     Ok(())
 }

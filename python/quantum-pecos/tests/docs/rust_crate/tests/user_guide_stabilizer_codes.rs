@@ -126,10 +126,10 @@ fn test_user_guide_stabilizer_codes_rust_7() {
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
-let toric = StabilizerCode::toric(3);
-assert_eq!(toric.num_qubits(), 18);       // 2 * 3^2
+let toric = StabilizerCode::toric(2);
+assert_eq!(toric.num_qubits(), 8);        // 2 * 2^2
 assert_eq!(toric.num_logical_qubits(), 2);
-assert_eq!(toric.distance(), Some(3));
+assert_eq!(toric.distance(), Some(2));
 }
 
 

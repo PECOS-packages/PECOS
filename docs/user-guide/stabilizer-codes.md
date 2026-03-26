@@ -195,10 +195,10 @@ PECOS includes constructors for well-known codes:
 ```rust
 use pecos_qec::StabilizerCode;
 
-let toric = StabilizerCode::toric(3);
-assert_eq!(toric.num_qubits(), 18);       // 2 * 3^2
+let toric = StabilizerCode::toric(2);
+assert_eq!(toric.num_qubits(), 8);        // 2 * 2^2
 assert_eq!(toric.num_logical_qubits(), 2);
-assert_eq!(toric.distance(), Some(3));
+assert_eq!(toric.distance(), Some(2));
 ```
 
 ## Explicit Qubit Count

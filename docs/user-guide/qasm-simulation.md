@@ -460,7 +460,7 @@ This example shows how noise affects quantum entanglement:
     )
 
     # Run multiple times
-    for shots in [100, 1000, 10000]:
+    for shots in [100, 500, 1000]:
         results = experiment.run(shots)
         data = results.to_dict()
         print(f"Results for {shots} shots:")
@@ -493,7 +493,7 @@ This example shows how noise affects quantum entanglement:
             .build()?;
 
         // Run multiple times
-        for shots in [100, 1000, 10000] {
+        for shots in [100, 500, 1000] {
             let results = experiment.run(shots)?;
             println!("Results for {} shots: {:?}", shots, results);
         }
@@ -597,13 +597,13 @@ For many shots, you can use multiple CPU cores to speed up simulation:
     """
 
     # Single-threaded (default)
-    results = sim(Qasm(qasm_code)).run(100000)
+    results = sim(Qasm(qasm_code)).run(1000)
 
     # Use 4 worker threads
-    results = sim(Qasm(qasm_code)).workers(4).run(100000)
+    results = sim(Qasm(qasm_code)).workers(4).run(1000)
 
     # Automatically use all available cores
-    results = sim(Qasm(qasm_code)).auto_workers().run(100000)
+    results = sim(Qasm(qasm_code)).auto_workers().run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -624,13 +624,13 @@ For many shots, you can use multiple CPU cores to speed up simulation:
     let program = Qasm::from_string(qasm_code);
 
     // Single threaded (default)
-    let results = sim(program.clone()).workers(1).run(100000)?;
+    let results = sim(program.clone()).workers(1).run(1000)?;
 
     // Explicit thread count
-    let results = sim(program.clone()).workers(4).run(100000)?;
+    let results = sim(program.clone()).workers(4).run(1000)?;
 
     // Automatically use all available cores
-    let results = sim(program).auto_workers().run(100000)?;
+    let results = sim(program).auto_workers().run(1000)?;
     ```
 
 ### Choosing the Right Engine

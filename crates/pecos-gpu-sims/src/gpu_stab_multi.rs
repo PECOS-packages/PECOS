@@ -83,10 +83,6 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
     meas_queue: Vec<usize>,                    // Qubits queued for measurement
     meas_queue_random_bits: Vec<Vec<u32>>,     // Pre-generated random bits per queued measurement
     meas_pending_results: Vec<Vec<Vec<bool>>>, // Accumulated results not yet fetched
-
-    // Accumulated measurement results (GPU -> CPU transfer pending)
-    accumulated_measurements: Vec<Vec<bool>>, // results[shot][meas_idx] for current batch
-    total_measurements_in_batch: usize,       // Count of measurements since last fetch
 }
 
 impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
@@ -627,9 +623,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             meas_queue: Vec::new(),
             meas_queue_random_bits: Vec::new(),
             meas_pending_results: Vec::new(),
-            // Accumulated results
-            accumulated_measurements: Vec::new(),
-            total_measurements_in_batch: 0,
         };
 
         sim.reset();
@@ -710,8 +703,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         self.meas_queue.clear();
         self.meas_queue_random_bits.clear();
         self.meas_pending_results.clear();
-        self.accumulated_measurements.clear();
-        self.total_measurements_in_batch = 0;
     }
 
     /// Queue a single-qubit gate
@@ -778,7 +769,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Flush all pending operations (gates and measurements) to the GPU.
     ///
     /// This sends all buffered gates and measurements to the GPU for processing.
-    /// After flushing, measurement results are available via `fetch_measurements()`.
+    /// After flushing, measurement results are available via `mz_fetch()`.
     ///
     /// The quantum state persists after flushing, allowing you to queue
     /// more operations and call `flush()` again.
@@ -791,8 +782,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             return;
         }
 
-        let batch_shots = self.shots_per_batch as usize;
-
         // Take ownership of queue data
         let qubits = std::mem::take(&mut self.meas_queue);
         let all_random_bits = std::mem::take(&mut self.meas_queue_random_bits);
@@ -800,17 +789,8 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         // Process measurements using the GPU implementation
         let results = self.mz_gpu_sequential(&qubits, all_random_bits);
 
-        // Initialize accumulated measurements if needed
-        if self.accumulated_measurements.is_empty() {
-            self.accumulated_measurements = vec![vec![]; batch_shots];
-        }
-
-        // Append results to accumulated measurements
-        for (shot_id, shot_outcomes) in results.into_iter().enumerate() {
-            self.accumulated_measurements[shot_id].extend(shot_outcomes);
-        }
-
-        self.total_measurements_in_batch += qubits.len();
+        // Store results for later retrieval via mz_fetch()
+        self.meas_pending_results.push(results);
     }
 
     /// Wait for GPU operations to complete
@@ -1020,7 +1000,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     ///     for q in 0..5 {
     ///         s.h(&[QubitId::new(q)]);
     ///     }
-    ///     s.cx(&[QubitId::new(0), QubitId::new(1)]);
+    ///     s.cx(&[(QubitId::new(0), QubitId::new(1))]);
     ///     // Return measurements
     ///     s.mz(&[QubitId::new(0), QubitId::new(1)])
     /// });
@@ -1266,6 +1246,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     /// Measure qubits in the Z basis for all shots (GPU-accelerated version).
     ///
+    /// This is an internal implementation detail. Use `mz()` for immediate
+    /// measurement or `mz_queue()`/`mz_fetch()` for deferred measurement.
+    ///
     /// This version runs the entire measurement process on the GPU without
     /// intermediate CPU roundtrips for non-deterministic measurements,
     /// providing better performance especially when many shots have
@@ -1276,7 +1259,8 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
-    pub fn mz_gpu(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+    #[cfg(test)]
+    fn mz_gpu(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
         if qubits.is_empty() {
             return vec![vec![]; self.shots_per_batch as usize];
         }
@@ -1649,7 +1633,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     ///
     /// // Continue with more gates while measurements are pending
     /// sim.h(&[QubitId::new(0)]);
-    /// sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+    /// sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
     ///
     /// // Queue more measurements
     /// sim.mz_queue(&[QubitId::new(14), QubitId::new(15)]);
@@ -1757,87 +1741,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     pub fn mz_clear_queue(&mut self) {
         self.meas_queue.clear();
         self.meas_queue_random_bits.clear();
-    }
-
-    // ========================================================================
-    // Batched Execution API (cuQuantum-style)
-    // ========================================================================
-    //
-    // This API provides an execution model similar to cuQuantum's FrameSimulator:
-    //
-    // 1. Build up operations: gates and measurements are queued
-    // 2. Execute: send all queued operations to GPU
-    // 3. Fetch results: retrieve accumulated measurement results
-    // 4. Repeat: state persists, can queue more operations
-    // 5. Finish: explicit cleanup when done
-    //
-    // Example:
-    // ```
-    // let mut sim = GpuStabMulti::new(100, 1000, 42)?;
-    //
-    // // Round 1
-    // sim.h(&qid(0));
-    // sim.cx(&qid2(0, 1));
-    // sim.measure(&[QubitId(0), QubitId(1)]);
-    // sim.flush();
-    // let round1 = sim.fetch_measurements();
-    //
-    // // Round 2 - state persists
-    // sim.h(&qid(2));
-    // sim.measure(&[QubitId(2)]);
-    // sim.flush();
-    // let round2 = sim.fetch_measurements();
-    //
-    // sim.finish();
-    // ```
-
-    /// Queue measurements for execution.
-    ///
-    /// Measurements are queued along with gates. Call `execute()` to process
-    /// all queued operations, then `fetch_measurements()` to retrieve results.
-    ///
-    /// This is the batched-execution version of measurement. For immediate
-    /// execution, use `mz()` or `mz_gpu()` instead.
-    pub fn measure(&mut self, qubits: &[QubitId]) {
-        let batch_shots = self.shots_per_batch;
-
-        for &qubit in qubits {
-            let random_bits: Vec<u32> = (0..batch_shots)
-                .map(|_| self.master_rng.next_u32())
-                .collect();
-            self.meas_queue.push(qubit.index());
-            self.meas_queue_random_bits.push(random_bits);
-        }
-    }
-
-    /// Fetch accumulated measurement results.
-    ///
-    /// Returns all measurement results accumulated since the last fetch,
-    /// organized as `results[shot_id][measurement_index]`.
-    ///
-    /// After fetching, the internal results buffer is cleared, ready for
-    /// the next batch of measurements.
-    ///
-    /// If noise is enabled, measurement errors have already been applied.
-    pub fn fetch_measurements(&mut self) -> Vec<Vec<bool>> {
-        // Flush any pending operations first
-        if !self.meas_queue.is_empty() || !self.gate_queue.is_empty() {
-            self.flush();
-        }
-
-        let results = std::mem::take(&mut self.accumulated_measurements);
-        self.total_measurements_in_batch = 0;
-
-        if results.is_empty() {
-            vec![vec![]; self.shots_per_batch as usize]
-        } else {
-            results
-        }
-    }
-
-    /// Get the number of measurements accumulated since last fetch.
-    pub fn pending_measurement_count(&self) -> usize {
-        self.total_measurements_in_batch + self.meas_queue.len()
     }
 
     /// Check if there are any pending operations (gates or measurements).
@@ -1970,25 +1873,25 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// CNOT gate on pairs of qubits (control, target)
-    pub fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.queue_cx(pair[0].index(), pair[1].index());
+    pub fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.queue_cx(q0.index(), q1.index());
         }
         self
     }
 
     /// CZ gate on pairs of qubits
-    pub fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.queue_cz(pair[0].index(), pair[1].index());
+    pub fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.queue_cz(q0.index(), q1.index());
         }
         self
     }
 
     /// SWAP gate on pairs of qubits
-    pub fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.queue_swap(pair[0].index(), pair[1].index());
+    pub fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.queue_swap(q0.index(), q1.index());
         }
         self
     }
@@ -2302,7 +2205,7 @@ fn compute_deterministic_outcome_multi(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{QubitId, qid, qid2};
+    use pecos_core::{QubitId, qid};
 
     #[test]
     fn test_multi_shot_creation() {
@@ -2343,7 +2246,7 @@ mod tests {
 
         // Apply some gates
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.sz(&qid(2));
 
         // Flush and sync
@@ -2371,7 +2274,7 @@ mod tests {
         // Reset and do the same with swap
         sim.reset();
         sim.x(&qid(0));
-        sim.swap(&qid2(0, 1));
+        sim.swap(&[(QubitId(0), QubitId(1))]);
 
         // After swap, qubit 0 should be |0> and qubit 1 should be |1>
         let results_after = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -2503,9 +2406,9 @@ mod tests {
 
         // Apply same circuit
         sim_noiseless.h(&qid(0));
-        sim_noiseless.cx(&qid2(0, 1));
+        sim_noiseless.cx(&[(QubitId(0), QubitId(1))]);
         sim_disabled.h(&qid(0));
-        sim_disabled.cx(&qid2(0, 1));
+        sim_disabled.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure qubit 2 (should be |0> in both)
         let results1 = sim_noiseless.mz(&[QubitId(2)]);
@@ -2530,7 +2433,7 @@ mod tests {
 
         // Create Bell state: |00> + |11>
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure both qubits - first measurement is non-deterministic, second should correlate
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -2567,8 +2470,8 @@ mod tests {
 
         // Create GHZ state
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
-        sim.cx(&qid2(1, 2));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
+        sim.cx(&[(QubitId(1), QubitId(2))]);
 
         // Measure all three qubits
         let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2)]);
@@ -2675,7 +2578,7 @@ mod tests {
 
         // Prepare Bell state without noise so correlation loss comes only from 2Q noise.
         sim_z.h(&qid(0));
-        sim_z.cx(&qid2(0, 1));
+        sim_z.cx(&[(QubitId(0), QubitId(1))]);
         sim_z.sync();
         sim_z.enable_noise(0.0, p2 as f32, 0.0);
 
@@ -2713,8 +2616,8 @@ mod tests {
 
         // Apply noisy CX pairs to the Bell state.
         for _ in 0..num_cx_pairs {
-            sim_z.cx(&qid2(0, 1));
-            sim_z.cx(&qid2(0, 1));
+            sim_z.cx(&[(QubitId(0), QubitId(1))]);
+            sim_z.cx(&[(QubitId(0), QubitId(1))]);
         }
 
         // Disable noise before basis changes used for readout so we only probe the
@@ -2728,12 +2631,12 @@ mod tests {
         // Repeat with identical setup and seed for X-basis Bell correlation checks.
         let mut sim_x = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
         sim_x.h(&qid(0));
-        sim_x.cx(&qid2(0, 1));
+        sim_x.cx(&[(QubitId(0), QubitId(1))]);
         sim_x.sync();
         sim_x.enable_noise(0.0, p2 as f32, 0.0);
         for _ in 0..num_cx_pairs {
-            sim_x.cx(&qid2(0, 1));
-            sim_x.cx(&qid2(0, 1));
+            sim_x.cx(&[(QubitId(0), QubitId(1))]);
+            sim_x.cx(&[(QubitId(0), QubitId(1))]);
         }
         sim_x.sync();
         sim_x.disable_noise();
@@ -2943,8 +2846,8 @@ mod tests {
         // Apply some gates
         sim.h(&qid(0));
         sim.h(&qid(0)); // Should be identity without noise
-        sim.cx(&qid2(0, 1));
-        sim.cx(&qid2(0, 1)); // Should be identity without noise
+        sim.cx(&[(QubitId(0), QubitId(1))]);
+        sim.cx(&[(QubitId(0), QubitId(1))]); // Should be identity without noise
 
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
 
@@ -2992,7 +2895,7 @@ mod tests {
         let results = sim.run_batched(|s| {
             // Create Bell state
             s.h(&qid(0));
-            s.cx(&qid2(0, 1));
+            s.cx(&[(QubitId(0), QubitId(1))]);
             s.mz(&[QubitId(0), QubitId(1)])
         });
 
@@ -3078,7 +2981,7 @@ mod tests {
 
         // Create Bell state: |00> + |11>
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure both qubits
         let results = sim.mz_gpu(&[QubitId(0), QubitId(1)]);
@@ -3114,8 +3017,8 @@ mod tests {
 
         // Create GHZ state
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
-        sim.cx(&qid2(1, 2));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
+        sim.cx(&[(QubitId(1), QubitId(2))]);
 
         // Measure all three qubits
         let results = sim.mz_gpu(&[QubitId(0), QubitId(1), QubitId(2)]);
@@ -3268,12 +3171,12 @@ mod tests {
 
         // Round 1: Setup and measure
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.mz_queue(&[QubitId(0), QubitId(1)]); // Measure Bell pair
 
         // Round 2: Apply more gates and measure
         sim.h(&qid(2));
-        sim.cx(&qid2(2, 3));
+        sim.cx(&[(QubitId(2), QubitId(3))]);
         sim.mz_queue(&[QubitId(2), QubitId(3)]); // Measure second Bell pair
 
         // Fetch all measurements
@@ -3364,24 +3267,22 @@ mod tests {
     }
 
     // ========================================================================
-    // Batched Execution API Tests (cuQuantum-style)
+    // Flush + mz_fetch Workflow Tests
     // ========================================================================
 
     #[test]
-    fn test_batched_basic() {
+    fn test_flush_fetch_basic() {
         let num_shots = 64;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
         // Queue gates and measurements
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
-        sim.measure(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
+        sim.mz_queue(&[QubitId(0), QubitId(1)]);
 
-        // Flush to GPU
+        // Flush to GPU, then fetch results
         sim.flush();
-
-        // Fetch results
-        let results = sim.fetch_measurements();
+        let results = sim.mz_fetch();
 
         assert_eq!(results.len(), num_shots);
         for shot_result in &results {
@@ -3392,22 +3293,22 @@ mod tests {
     }
 
     #[test]
-    fn test_batched_multiple_rounds() {
+    fn test_flush_fetch_multiple_rounds() {
         let num_shots = 64;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(4, num_shots, 42).unwrap();
 
         // Round 1
         sim.h(&qid(0));
-        sim.measure(&[QubitId(0)]);
+        sim.mz_queue(&[QubitId(0)]);
         sim.flush();
-        let round1 = sim.fetch_measurements();
+        let round1 = sim.mz_fetch();
 
         // State persists - qubit 0 is now in computational basis
         // Round 2: different qubit
         sim.h(&qid(1));
-        sim.measure(&[QubitId(1)]);
+        sim.mz_queue(&[QubitId(1)]);
         sim.flush();
-        let round2 = sim.fetch_measurements();
+        let round2 = sim.mz_fetch();
 
         // Both rounds should have results
         assert_eq!(round1.len(), num_shots);
@@ -3421,7 +3322,7 @@ mod tests {
     }
 
     #[test]
-    fn test_batched_state_persistence() {
+    fn test_flush_state_persistence() {
         // Verify that state persists between flush() calls
         let num_shots = 64;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
@@ -3431,9 +3332,9 @@ mod tests {
         sim.flush(); // Flush gates (no measurements)
 
         // Now measure - should still be |1>
-        sim.measure(&[QubitId(0)]);
+        sim.mz_queue(&[QubitId(0)]);
         sim.flush();
-        let results = sim.fetch_measurements();
+        let results = sim.mz_fetch();
 
         for shot_result in &results {
             assert!(
@@ -3444,15 +3345,15 @@ mod tests {
     }
 
     #[test]
-    fn test_batched_fetch_auto_flushes() {
-        // Verify that fetch_measurements() auto-flushes pending operations
+    fn test_mz_fetch_auto_flushes() {
+        // Verify that mz_fetch() auto-flushes pending operations
         let num_shots = 32;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 42).unwrap();
 
         sim.x(&qid(0));
-        sim.measure(&[QubitId(0)]);
-        // Don't call flush() - fetch should do it automatically
-        let results = sim.fetch_measurements();
+        sim.mz_queue(&[QubitId(0)]);
+        // Don't call flush() - mz_fetch should handle it automatically
+        let results = sim.mz_fetch();
 
         for shot_result in &results {
             assert!(
@@ -3463,35 +3364,36 @@ mod tests {
     }
 
     #[test]
-    fn test_batched_pending_count() {
+    fn test_queued_measurement_count() {
         let num_shots = 32;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(3, num_shots, 42).unwrap();
 
-        assert_eq!(sim.pending_measurement_count(), 0);
+        assert_eq!(sim.queued_measurement_count(), 0);
 
-        sim.measure(&[QubitId(0), QubitId(1)]);
-        assert_eq!(sim.pending_measurement_count(), 2);
+        sim.mz_queue(&[QubitId(0), QubitId(1)]);
+        assert_eq!(sim.queued_measurement_count(), 2);
 
+        // flush() drains the queue
         sim.flush();
-        assert_eq!(sim.pending_measurement_count(), 2); // Still pending fetch
+        assert_eq!(sim.queued_measurement_count(), 0);
 
-        let _ = sim.fetch_measurements();
-        assert_eq!(sim.pending_measurement_count(), 0);
+        // mz_fetch returns the flushed results
+        let _ = sim.mz_fetch();
     }
 
     #[test]
-    fn test_batched_vs_mz_gpu() {
-        // Verify batched API produces same results as mz_gpu
+    fn test_flush_fetch_vs_mz_gpu() {
+        // Verify flush+fetch produces same results as mz_gpu
         let num_shots = 64;
         let seed = 12345u64;
 
-        // Using batched API
+        // Using flush+fetch
         let mut sim_batched = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
         sim_batched.x(&qid(1));
         sim_batched.x(&qid(3));
-        sim_batched.measure(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
+        sim_batched.mz_queue(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
         sim_batched.flush();
-        let results_batched = sim_batched.fetch_measurements();
+        let results_batched = sim_batched.mz_fetch();
 
         // Using mz_gpu directly
         let mut sim_direct = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, seed).unwrap();
@@ -3503,12 +3405,12 @@ mod tests {
         // Results should be identical
         assert_eq!(results_batched.len(), results_direct.len());
         for (batched, direct) in results_batched.iter().zip(results_direct.iter()) {
-            assert_eq!(batched, direct, "Batched API should match mz_gpu");
+            assert_eq!(batched, direct, "Flush+fetch should match mz_gpu");
         }
     }
 
     #[test]
-    fn test_batched_surface_code_style() {
+    fn test_surface_code_style_workflow() {
         // Simulate a surface code-style workflow:
         // 1. Initialize data qubits
         // 2. Measure ancillas (syndrome extraction)
@@ -3534,7 +3436,7 @@ mod tests {
         // Simplified: just CNOT each ancilla with one data qubit
         for (i, &a) in ancilla_qubits.iter().enumerate() {
             if i < data_qubits.len() {
-                sim.cx(&[a, data_qubits[i]]);
+                sim.cx(&[(a, data_qubits[i])]);
             }
         }
         for &a in &ancilla_qubits {
@@ -3542,9 +3444,8 @@ mod tests {
         }
 
         // Measure ancillas
-        sim.measure(&ancilla_qubits);
-        sim.flush();
-        let syndromes = sim.fetch_measurements();
+        sim.mz_queue(&ancilla_qubits);
+        let syndromes = sim.mz_fetch();
 
         // Verify we got syndrome measurements
         assert_eq!(syndromes.len(), num_shots);
@@ -3793,7 +3694,7 @@ mod tests {
         let num_shots = 10000;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, 23456).unwrap();
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
 
         let mut ones_q0 = 0;
@@ -3832,7 +3733,7 @@ mod tests {
         // Create GHZ state
         sim.h(&qid(0));
         for i in 0..(num_qubits - 1) {
-            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
         }
 
         let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
@@ -3951,12 +3852,12 @@ mod tests {
 
         let mut sim1 = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, seed).unwrap();
         sim1.h(&qid(0));
-        sim1.cx(&qid2(0, 1));
+        sim1.cx(&[(QubitId(0), QubitId(1))]);
         let results1 = sim1.mz(&[QubitId(0), QubitId(1)]);
 
         let mut sim2 = GpuStabMulti::<PecosRng>::with_seed(2, num_shots, seed).unwrap();
         sim2.h(&qid(0));
-        sim2.cx(&qid2(0, 1));
+        sim2.cx(&[(QubitId(0), QubitId(1))]);
         let results2 = sim2.mz(&[QubitId(0), QubitId(1)]);
 
         assert_eq!(

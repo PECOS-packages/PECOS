@@ -26,7 +26,7 @@ use crate::stabilizer_group_bindings::PyPauliStabilizerGroup;
 ///
 /// Examples:
 ///     >>> from pecos_rslib import CliffordRep
-///     >>> h = CliffordRep.h(0)  # Hadamard on qubit 0
+///     >>> h = CliffordRep.h(&[0])  # Hadamard on qubit 0
 ///     >>> s = CliffordRep.s(0)  # S gate on qubit 0
 ///     >>> hs = h.compose(s)     # HS composition
 ///     >>> inv = h.inverse()     # H† = H

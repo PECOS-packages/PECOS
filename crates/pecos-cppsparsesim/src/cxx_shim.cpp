@@ -163,7 +163,7 @@ void StateWrapper::sxxdg(std::uint64_t qubit1, std::uint64_t qubit2) {
     sxx(qubit1, qubit2);  // Call the wrapper's sxx implementation
 }
 
-std::uint32_t StateWrapper::measure(std::uint64_t qubit, std::int32_t forced_outcome, bool collapse) {
+std::uint32_t StateWrapper::mz(std::uint64_t qubit, std::int32_t forced_outcome, bool collapse) {
     // Simple wrapper - just return the measurement outcome
     unsigned int outcome = state.measure(static_cast<int_num>(qubit), static_cast<int>(forced_outcome), collapse);
     return static_cast<std::uint32_t>(outcome);

@@ -577,14 +577,10 @@ where
     /// See [`CliffordGateable::cx`] for mathematical details and gate properties.
     /// Uses bit manipulation for fast controlled operations.
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
             for i in 0..self.state.len() {
                 let control_val = (i >> q1) & 1;
                 let target_val = (i >> q2) & 1;
@@ -602,14 +598,10 @@ where
     /// See [`CliffordGateable::cy`] for mathematical details and gate properties.
     /// Combines bit manipulation with phase updates for controlled-Y operation.
     #[inline]
-    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CY requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
             // Only process when control bit is 1 and target bit is 0
             for i in 0..self.state.len() {
                 let control_val = (i >> q1) & 1;
@@ -634,14 +626,10 @@ where
     /// See [`CliffordGateable::cz`] for mathematical details and gate properties.
     /// Takes advantage of diagonal structure for optimal performance.
     #[inline]
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
             // CZ is simpler - just add phase when both control and target are 1
             for i in 0..self.state.len() {
                 let control_val = (i >> q1) & 1;
@@ -660,14 +648,10 @@ where
     /// See [`CliffordGateable::swap`] for mathematical details and gate properties.
     /// Uses bit manipulation for efficient state vector updates.
     #[inline]
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
             let step1 = 1 << q1;
             let step2 = 1 << q2;
 
@@ -699,7 +683,7 @@ where
     /// let mut state = StateVecAoS::new(2);
     ///
     /// // Create Bell state and measure first qubit
-    /// state.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
+    /// state.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
     /// let results = state.mz(&[QubitId(0), QubitId(1)]);
     /// // Both qubits will have the same outcome due to entanglement
     /// assert_eq!(results[0].outcome, results[1].outcome);
@@ -976,7 +960,7 @@ where
     /// let mut state = StateVecAoS::new(2);
     ///
     /// // Create maximally entangled state
-    /// state.rxx(Angle64::from_radians(FRAC_PI_2), &[QubitId(0), QubitId(1)]);  // Creates (|00> - i|11>)/sqrt(2)
+    /// state.rxx(Angle64::from_radians(FRAC_PI_2), &[(QubitId(0), QubitId(1))]);  // Creates (|00> - i|11>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -985,19 +969,15 @@ where
     /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RXX requires pairs of qubits"
-        );
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
         let neg_i_sin = Complex64::new(0.0, -sin); // -i*sin
 
-        for pair in qubits.chunks_exact(2) {
-            let first = pair[0].index();
-            let second = pair[1].index();
+        for &(q0, q1) in pairs {
+            let first = q0.index();
+            let second = q1.index();
 
             // Make sure q1 < q2 for consistent ordering
             let (q1, q2) = if first < second {
@@ -1046,10 +1026,10 @@ where
     ///
     /// // Create entangled state
     /// state.h(&[QubitId(0)])
-    ///      .cx(&[QubitId(0), QubitId(1)]);
+    ///      .cx(&[(QubitId(0), QubitId(1))]);
     ///
     /// // Apply RYY rotation
-    /// state.ryy(Angle64::from_radians(FRAC_PI_2), &[QubitId(0), QubitId(1)]);
+    /// state.ryy(Angle64::from_radians(FRAC_PI_2), &[(QubitId(0), QubitId(1))]);
     /// ```
     ///
     /// # Safety
@@ -1058,18 +1038,14 @@ where
     /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RYY requires pairs of qubits"
-        );
         let cos = (theta / 2.0).cos();
         let i_sin = Complex64::new(0.0, 1.0) * (theta / 2.0).sin();
 
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // No need to reorder q1 and q2 since we're using explicit masks
             let mask1 = 1 << q1;
@@ -1113,11 +1089,11 @@ where
     ///
     /// // Create GHZ state
     /// state.h(&[QubitId(0)])
-    ///      .cx(&[QubitId(0), QubitId(1)])
-    ///      .cx(&[QubitId(1), QubitId(2)]);
+    ///      .cx(&[(QubitId(0), QubitId(1))])
+    ///      .cx(&[(QubitId(1), QubitId(2))]);
     ///
     /// // Apply phase rotation between first and last qubit
-    /// state.rzz(Angle64::from_radians(PI/4.0), &[QubitId(0), QubitId(2)]);
+    /// state.rzz(Angle64::from_radians(PI/4.0), &[(QubitId(0), QubitId(2))]);
     /// ```
     ///
     /// # Safety
@@ -1125,16 +1101,12 @@ where
     /// - `qubits.len() % 2 == 0` (pairs of qubits).
     /// - All qubit indices are valid and distinct within each pair.
     /// - These conditions must be ensured by the caller or a higher-level component.
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
 
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // RZZ is diagonal in computational basis - just add phases
             for i in 0..self.state.len() {
@@ -1242,11 +1214,6 @@ mod tests {
         [QubitId(n)]
     }
 
-    // Helper to create qubit slice for two qubits
-    fn qid2(a: usize, b: usize) -> [QubitId; 2] {
-        [QubitId(a), QubitId(b)]
-    }
-
     /// Compare two quantum states up to global phase.
     ///
     /// This function ensures that two state vectors represent the same quantum state,
@@ -1307,7 +1274,7 @@ mod tests {
     fn test_reset() {
         let mut state_vec = StateVecAoS::new(2);
 
-        state_vec.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
+        state_vec.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Create Bell state
         state_vec.reset(); // Reset to |00⟩
 
         assert!((state_vec.probability(0) - 1.0).abs() < 1e-10);
@@ -1449,7 +1416,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         // Prep |+>
         q.h(&qid(0));
-        q.cx(&qid2(0, 1));
+        q.cx(&[(QubitId(0), QubitId(1))]);
 
         // Should be in Bell state (|00> + |11>)/sqrt(2)
         let expected = 1.0 / 2.0_f64.sqrt();
@@ -1467,7 +1434,7 @@ mod tests {
         q.h(&qid(0));
 
         // Apply CY to get entangled state
-        q.cy(&qid2(0, 1));
+        q.cy(&[(QubitId(0), QubitId(1))]);
 
         // Should be (|00⟩ + i|11⟩)/√2
         let expected = FRAC_1_SQRT_2;
@@ -1486,7 +1453,7 @@ mod tests {
         q.h(&qid(1));
 
         // Apply CZ
-        q.cz(&qid2(0, 1));
+        q.cz(&[(QubitId(0), QubitId(1))]);
 
         // Should be (|00⟩ + |01⟩ + |10⟩ - |11⟩)/2
         let expected = 0.5;
@@ -1500,7 +1467,7 @@ mod tests {
     fn test_swap() {
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0));
-        q.swap(&qid2(0, 1));
+        q.swap(&[(QubitId(0), QubitId(1))]);
 
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[2].re - 1.0).abs() < 1e-10);
@@ -1546,7 +1513,7 @@ mod tests {
         // Test 4: Measuring one qubit of a Bell state
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0));
-        q.cx(&qid2(0, 1));
+        q.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure first qubit
         let result1 = q.mz(&qid(0)).into_iter().next().unwrap();
@@ -1609,7 +1576,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
 
         q.h(&qid(0));
-        q.cx(&qid2(0, 1));
+        q.cx(&[(QubitId(0), QubitId(1))]);
 
         q.pz(&qid(0));
 
@@ -1731,7 +1698,10 @@ mod tests {
     fn test_rxx() {
         // Test 1: RXX(π/2) on |00⟩ should give (|00⟩ - i|11⟩)/√2
         let mut q = StateVecAoS::new(2);
-        q.rxx(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q.rxx(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
 
         let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].re - expected).abs() < 1e-10);
@@ -1743,7 +1713,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0)); // Create some initial state
         let initial = q.state.clone();
-        q.rxx(Angle64::from_radians(TAU), &qid2(0, 1));
+        q.rxx(Angle64::from_radians(TAU), &[(QubitId(0), QubitId(1))]);
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1755,7 +1725,7 @@ mod tests {
 
         // Test 3: RXX(π) should flip |00⟩ to |11⟩ up to phase
         let mut q = StateVecAoS::new(2);
-        q.rxx(Angle64::from_radians(PI), &qid2(0, 1));
+        q.rxx(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
 
         // Should get -i|11⟩
         assert!(q.state[0].norm() < 1e-10);
@@ -1771,7 +1741,10 @@ mod tests {
         // Test all basis states for RYY(π/2)
         // |00⟩ -> (1/√2)|00⟩ - i(1/√2)|11⟩
         let mut q = StateVecAoS::new(2);
-        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q.ryy(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
         assert!((q.state[0].re - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1780,7 +1753,10 @@ mod tests {
         // |11⟩ -> i(1/√2)|00⟩ + (1/√2)|11⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0)).x(&qid(1)); // Prepare |11⟩
-        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q.ryy(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
         assert!((q.state[0].im - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1789,7 +1765,10 @@ mod tests {
         // |01⟩ -> (1/√2)|01⟩ + i(1/√2)|10⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(1)); // Prepare |01⟩
-        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q.ryy(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
         assert!(q.state[0].norm() < 1e-10);
         assert!(q.state[1].re.abs() < 1e-10);
         assert!((q.state[1].im + expected).abs() < 1e-10);
@@ -1800,7 +1779,10 @@ mod tests {
         // |10⟩ -> (1/√2)|10⟩ + i(1/√2)|01⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0)); // Prepare |10⟩
-        q.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q.ryy(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - expected).abs() < 1e-10);
         assert!(q.state[1].im.abs() < 1e-10);
@@ -1814,7 +1796,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0)); // Create non-trivial initial state
         let initial = q.state.clone();
-        q.ryy(Angle64::from_radians(TAU), &qid2(0, 1));
+        q.ryy(Angle64::from_radians(TAU), &[(QubitId(0), QubitId(1))]);
         // Need to account for potential global phase
         if q.state[0].norm() > 1e-10 {
             let phase = q.state[0] / initial[0];
@@ -1831,9 +1813,18 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)); // Create non-trivial initial state
         q2.h(&qid(0)); // Same initial state
-        q1.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1))
-            .ryy(Angle64::from_radians(FRAC_PI_6), &qid2(0, 1));
-        q2.ryy(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q1.ryy(
+            Angle64::from_radians(FRAC_PI_3),
+            &[(QubitId(0), QubitId(1))],
+        )
+        .ryy(
+            Angle64::from_radians(FRAC_PI_6),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.ryy(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
         // Compare up to global phase
         if q1.state[0].norm() > 1e-10 {
             let phase = q1.state[0] / q2.state[0];
@@ -1850,8 +1841,14 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)).h(&qid(1)); // Create non-trivial initial state
         q2.h(&qid(0)).h(&qid(1)); // Same initial state
-        q1.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1));
-        q2.ryy(Angle64::from_radians(FRAC_PI_3), &qid2(1, 0));
+        q1.ryy(
+            Angle64::from_radians(FRAC_PI_3),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.ryy(
+            Angle64::from_radians(FRAC_PI_3),
+            &[(QubitId(1), QubitId(0))],
+        );
         // States should be exactly equal (no phase difference)
         for (a, b) in q1.state.iter().zip(q2.state.iter()) {
             assert!((a - b).norm() < 1e-10, "Symmetry test failed: a={a}, b={b}");
@@ -1864,10 +1861,10 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         // Create Bell state
         q.h(&qid(0));
-        q.cx(&qid2(0, 1));
+        q.cx(&[(QubitId(0), QubitId(1))]);
         let initial = q.state.clone();
 
-        q.rzz(Angle64::from_radians(PI), &qid2(0, 1));
+        q.rzz(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1881,7 +1878,10 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0));
         q.h(&qid(1));
-        q.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q.rzz(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
 
         // e^(-iπ/4) = (1-i)/√2
         // e^(iπ/4) = (1+i)/√2
@@ -2064,7 +2064,7 @@ mod tests {
 
         // Create Bell state using both methods
         q1.h(&qid(0));
-        q1.cx(&qid2(0, 1));
+        q1.cx(&[(QubitId(0), QubitId(1))]);
 
         q2.h(&qid(0));
         q2.two_qubit_unitary(0, 1, cnot);

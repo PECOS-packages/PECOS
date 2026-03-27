@@ -38,7 +38,7 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 ///
 /// # Examples
 /// ```rust
-/// use pecos_core::{qid, qid2};
+/// use pecos_core::{QubitId, qid};
 /// use pecos_simulators::{QuantumSimulator, CliffordGateable, SparseStab};
 ///
 /// // Create a new 2-qubit stabilizer state
@@ -46,7 +46,7 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 ///
 /// // Create Bell state |Φ+> = (|00> + |11>)/√2
 /// sim.h(&qid(0))
-///    .cx(&qid2(0, 1));
+///    .cx(&[(QubitId(0), QubitId(1))]);
 ///
 /// // Measure the two qubits in the Z basis
 /// let r0 = sim.mz(&qid(0)).into_iter().next().unwrap();
@@ -1295,18 +1295,13 @@ where
     ///
     /// CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            let q1 = control.index();
+            let q2 = target.index();
 
             for g in &mut [&mut self.stabs, &mut self.destabs] {
-                // SAFETY: q1 != q2 is guaranteed by the debug_assert at the start of cx.
+                // SAFETY: q1 != q2 is guaranteed by the caller.
                 // We need mutable access to two different column entries simultaneously.
                 // Using unsafe to avoid the split_at_mut overhead.
                 unsafe {
@@ -1346,15 +1341,10 @@ where
     /// ZI -> -YX     IZ -> -XY
     /// ```
     #[inline]
-    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXX requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
             for g in self.stabs.col_z[q1].iter() {
@@ -1425,14 +1415,10 @@ where
 
     /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
-    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXXdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.x(&q1s).x(&q2s).sxx(qubits)
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.x(&q1s).x(&q2s).sxx(pairs)
     }
 
     /// Square root of ZZ gate. SZZ = exp(+iπ/4·ZZ).
@@ -1448,15 +1434,10 @@ where
     /// ZI -> ZI      IZ -> IZ
     /// ```
     #[inline]
-    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZ requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // Sign update (stabs only): multiply phase by +i for odd X-count generators.
             for g in self.stabs.col_x[q1].iter() {
@@ -1524,14 +1505,10 @@ where
 
     /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
-    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.z(&q1s).z(&q2s).szz(qubits)
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.z(&q1s).z(&q2s).szz(pairs)
     }
 
     /// Square root of YY gate. SYY = exp(+iπ/4·YY).
@@ -1551,15 +1528,10 @@ where
     /// ZI -> XY      IZ -> YX
     /// ```
     #[inline]
-    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYY requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // Sign update (stabs only): for affected generators ((x1^z1)^(x2^z2)=1),
             // multiply by -i when z1+z2 even, +i when z1+z2 odd.
@@ -1704,14 +1676,10 @@ where
 
     /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
-    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYYdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.y(&q1s).y(&q2s).syy(qubits)
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.y(&q1s).y(&q2s).syy(pairs)
     }
 
     /// Measures qubits in the Z basis.
@@ -2947,15 +2915,10 @@ where
 
     /// Controlled-X (CNOT) gate.
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            let q1 = control.index();
+            let q2 = target.index();
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -3006,15 +2969,10 @@ where
     ///
     /// Generators with odd Z-count on {q1,q2} get phase * -i and X toggled on both qubits.
     #[inline]
-    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXX requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
             for g in self.stabs.col_z[q1].iter().copied() {
@@ -3080,29 +3038,20 @@ where
 
     /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
-    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXXdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.x(&q1s).x(&q2s).sxx(qubits)
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.x(&q1s).x(&q2s).sxx(pairs)
     }
 
     /// Square root of ZZ gate. SZZ = exp(+iπ/4·ZZ).
     ///
     /// Generators with odd X-count on {q1,q2} get phase * +i and Z toggled on both qubits.
     #[inline]
-    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZ requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // Sign update (stabs only): multiply phase by +i for odd X-count generators.
             for g in self.stabs.col_x[q1].iter().copied() {
@@ -3165,14 +3114,10 @@ where
 
     /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
-    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.z(&q1s).z(&q2s).szz(qubits)
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.z(&q1s).z(&q2s).szz(pairs)
     }
 
     /// Square root of YY gate. SYY = exp(+iπ/4·YY).
@@ -3180,15 +3125,10 @@ where
     /// Generators where odd number of {q1,q2} anticommute with Y get phase update
     /// and both X,Z toggled on both qubits. Sign is z-parity dependent.
     #[inline]
-    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYY requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             // Sign update (stabs only)
             {
@@ -3330,14 +3270,10 @@ where
 
     /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
-    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYYdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.y(&q1s).y(&q2s).syy(qubits)
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.y(&q1s).y(&q2s).syy(pairs)
     }
 
     /// Measures qubits in the Z basis.
@@ -3464,9 +3400,9 @@ mod tests {
         [QubitId(n)]
     }
 
-    // Helper to create qubit slice for two qubits
-    fn q2(a: usize, b: usize) -> [QubitId; 2] {
-        [QubitId(a), QubitId(b)]
+    // Helper to create qubit pair slice for two-qubit gates
+    fn q2(a: usize, b: usize) -> [(QubitId, QubitId); 1] {
+        [(QubitId(a), QubitId(b))]
     }
 
     fn check_matrix(m: &[&str], gens: &Gens) {
@@ -5737,7 +5673,7 @@ mod tests {
         // Create Bell state: H(0), CX(0,1)
         let mut sim = SparseStabHybrid::new(2);
         sim.h(&[QubitId::new(0)]);
-        sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+        sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
         let group = sim.to_stabilizer_group();
         assert_eq!(group.num_qubits(), 2);

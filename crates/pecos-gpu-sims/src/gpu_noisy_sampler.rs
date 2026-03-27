@@ -19,12 +19,11 @@
 //! let mut sampler = GpuNoisySampler::new(5, noise);
 //!
 //! let results = sampler.sample(1000, |c: &mut CircuitBuilder| {
-//!     c.h(0);
-//!     c.noise_1q(0);  // Inject noise on qubit 0
-//!     c.cx(0, 1);
-//!     c.noise_2q(0, 1);  // Inject noise on both qubits
-//!     c.mz(0);
-//!     c.mz(1);
+//!     c.h(&[0]);
+//!     c.noise_1q(&[0]);  // Inject noise on qubit 0
+//!     c.cx(&[(0, 1)]);
+//!     c.noise_2q(&[(0, 1)]);  // Inject noise on both qubits
+//!     c.mz(&[0, 1]);
 //! });
 //! ```
 
@@ -353,74 +352,98 @@ impl CircuitBuilder {
     }
 
     /// Hadamard gate.
-    pub fn h(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::H(qubit));
+    pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::H(q));
+        }
         self
     }
 
     /// S gate (sqrt Z).
-    pub fn s(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::S(qubit));
+    pub fn s(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::S(q));
+        }
         self
     }
 
     /// S-dagger gate.
-    pub fn sdg(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Sdg(qubit));
+    pub fn sdg(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::Sdg(q));
+        }
         self
     }
 
     /// Pauli X gate.
-    pub fn x(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::X(qubit));
+    pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::X(q));
+        }
         self
     }
 
     /// Pauli Y gate.
-    pub fn y(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Y(qubit));
+    pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::Y(q));
+        }
         self
     }
 
     /// Pauli Z gate.
-    pub fn z(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Z(qubit));
+    pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::Z(q));
+        }
         self
     }
 
     /// CNOT gate.
-    pub fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Cx(control, target));
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(control, target) in pairs {
+            self.ops.push(CircuitOp::Cx(control, target));
+        }
         self
     }
 
     /// CZ gate.
-    pub fn cz(&mut self, qubit_a: usize, qubit_b: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Cz(qubit_a, qubit_b));
+    pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.ops.push(CircuitOp::Cz(a, b));
+        }
         self
     }
 
     /// SWAP gate.
-    pub fn swap(&mut self, qubit_a: usize, qubit_b: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Swap(qubit_a, qubit_b));
+    pub fn swap(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.ops.push(CircuitOp::Swap(a, b));
+        }
         self
     }
 
-    /// Measure qubit in Z basis.
-    pub fn mz(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Mz(qubit));
+    /// Measure qubit(s) in Z basis.
+    pub fn mz(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::Mz(q));
+        }
         self
     }
 
     /// Mark a noise injection point for single-qubit noise.
-    pub fn noise_1q(&mut self, qubit: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Noise1Q(qubit));
+    pub fn noise_1q(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.ops.push(CircuitOp::Noise1Q(q));
+        }
         self
     }
 
     /// Mark a noise injection point for two-qubit noise.
-    pub fn noise_2q(&mut self, qubit_a: usize, qubit_b: usize) -> &mut Self {
-        self.ops.push(CircuitOp::Noise2Q(qubit_a, qubit_b));
+    pub fn noise_2q(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.ops.push(CircuitOp::Noise2Q(a, b));
+        }
         self
     }
 
@@ -525,13 +548,13 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
                         sim.z(&[QubitId(*q)]);
                     }
                     CircuitOp::Cx(ctrl, tgt) => {
-                        sim.cx(&[QubitId(*ctrl), QubitId(*tgt)]);
+                        sim.cx(&[(QubitId(*ctrl), QubitId(*tgt))]);
                     }
                     CircuitOp::Cz(a, b) => {
-                        sim.cz(&[QubitId(*a), QubitId(*b)]);
+                        sim.cz(&[(QubitId(*a), QubitId(*b))]);
                     }
                     CircuitOp::Swap(a, b) => {
-                        sim.swap(&[QubitId(*a), QubitId(*b)]);
+                        sim.swap(&[(QubitId(*a), QubitId(*b))]);
                     }
                     CircuitOp::Mz(q) => {
                         let results = sim.mz(&[QubitId(*q)]);
@@ -643,7 +666,12 @@ mod tests {
     #[test]
     fn test_circuit_builder() {
         let mut builder = CircuitBuilder::new();
-        builder.h(0).noise_1q(0).cx(0, 1).noise_2q(0, 1).mz(0).mz(1);
+        builder
+            .h(&[0])
+            .noise_1q(&[0])
+            .cx(&[(0, 1)])
+            .noise_2q(&[(0, 1)])
+            .mz(&[0, 1]);
 
         assert_eq!(builder.ops().len(), 6);
         assert!(matches!(builder.ops()[0], CircuitOp::H(0)));
@@ -659,18 +687,18 @@ mod tests {
         // Test all gate types in CircuitBuilder
         let mut builder = CircuitBuilder::new();
         builder
-            .h(0)
-            .s(0)
-            .sdg(0)
-            .x(0)
-            .y(0)
-            .z(0)
-            .cx(0, 1)
-            .cz(0, 1)
-            .swap(0, 1)
-            .noise_1q(0)
-            .noise_2q(0, 1)
-            .mz(0);
+            .h(&[0])
+            .s(&[0])
+            .sdg(&[0])
+            .x(&[0])
+            .y(&[0])
+            .z(&[0])
+            .cx(&[(0, 1)])
+            .cz(&[(0, 1)])
+            .swap(&[(0, 1)])
+            .noise_1q(&[0])
+            .noise_2q(&[(0, 1)])
+            .mz(&[0]);
 
         assert_eq!(builder.ops().len(), 12);
         assert!(matches!(builder.ops()[0], CircuitOp::H(0)));
@@ -700,10 +728,9 @@ mod tests {
         // Test swap gate: put qubit 0 in |1>, swap with qubit 1, measure both
         let results = sampler
             .sample(10, |c| {
-                c.x(0); // qubit 0 = |1>
-                c.swap(0, 1); // now qubit 0 = |0>, qubit 1 = |1>
-                c.mz(0);
-                c.mz(1);
+                c.x(&[0]); // qubit 0 = |1>
+                c.swap(&[(0, 1)]); // now qubit 0 = |0>, qubit 1 = |1>
+                c.mz(&[0, 1]);
             })
             .unwrap();
 
@@ -715,11 +742,10 @@ mod tests {
         // Test cz gate: creates phase, no bit flip effect on computational basis
         let results = sampler
             .sample(10, |c| {
-                c.x(0); // qubit 0 = |1>
-                c.x(1); // qubit 1 = |1>
-                c.cz(0, 1); // applies phase, no change to |11>
-                c.mz(0);
-                c.mz(1);
+                c.x(&[0]); // qubit 0 = |1>
+                c.x(&[1]); // qubit 1 = |1>
+                c.cz(&[(0, 1)]); // applies phase, no change to |11>
+                c.mz(&[0, 1]);
             })
             .unwrap();
 
@@ -733,11 +759,11 @@ mod tests {
         // Measuring |-> in Z basis gives random results, but in X basis (H then Z) gives 1
         let results = sampler
             .sample(10, |c| {
-                c.h(0); // |+>
-                c.s(0);
-                c.s(0); // S*S = Z, so now |->
-                c.h(0); // H|-> = |1>
-                c.mz(0);
+                c.h(&[0]); // |+>
+                c.s(&[0]);
+                c.s(&[0]); // S*S = Z, so now |->
+                c.h(&[0]); // H|-> = |1>
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -748,11 +774,11 @@ mod tests {
         // Test Sdg gate: Sdg*Sdg = Z
         let results = sampler
             .sample(10, |c| {
-                c.h(0);
-                c.sdg(0);
-                c.sdg(0);
-                c.h(0);
-                c.mz(0);
+                c.h(&[0]);
+                c.sdg(&[0]);
+                c.sdg(&[0]);
+                c.h(&[0]);
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -763,8 +789,8 @@ mod tests {
         // Test Y gate: Y|0> = i|1>, measuring gives 1
         let results = sampler
             .sample(10, |c| {
-                c.y(0);
-                c.mz(0);
+                c.y(&[0]);
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -775,8 +801,8 @@ mod tests {
         // Test Z gate: Z|0> = |0>
         let results = sampler
             .sample(10, |c| {
-                c.z(0);
-                c.mz(0);
+                c.z(&[0]);
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -795,8 +821,7 @@ mod tests {
             .sample(100, |c| {
                 // Qubit 0 starts in |0>, qubit 1 starts in |0>
                 // No gates, just measure - should always give 0
-                c.mz(0);
-                c.mz(1);
+                c.mz(&[0, 1]);
             })
             .unwrap();
 
@@ -818,10 +843,9 @@ mod tests {
         let results = sampler
             .sample(100, |c| {
                 // Create Bell state: |00> + |11>
-                c.h(0);
-                c.cx(0, 1);
-                c.mz(0);
-                c.mz(1);
+                c.h(&[0]);
+                c.cx(&[(0, 1)]);
+                c.mz(&[0, 1]);
             })
             .unwrap();
 
@@ -859,7 +883,7 @@ mod tests {
         let results = sampler
             .sample(100, |c| {
                 // Qubit in |0> state
-                c.mz(0);
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -877,8 +901,8 @@ mod tests {
         let results = sampler
             .sample(100, |c| {
                 // Apply noise point after identity
-                c.noise_1q(0);
-                c.mz(0);
+                c.noise_1q(&[0]);
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -902,23 +926,21 @@ mod tests {
 
         let results1 = sampler1
             .sample(50, |c| {
-                c.h(0);
-                c.noise_1q(0);
-                c.cx(0, 1);
-                c.noise_2q(0, 1);
-                c.mz(0);
-                c.mz(1);
+                c.h(&[0]);
+                c.noise_1q(&[0]);
+                c.cx(&[(0, 1)]);
+                c.noise_2q(&[(0, 1)]);
+                c.mz(&[0, 1]);
             })
             .unwrap();
 
         let results2 = sampler2
             .sample(50, |c| {
-                c.h(0);
-                c.noise_1q(0);
-                c.cx(0, 1);
-                c.noise_2q(0, 1);
-                c.mz(0);
-                c.mz(1);
+                c.h(&[0]);
+                c.noise_1q(&[0]);
+                c.cx(&[(0, 1)]);
+                c.noise_2q(&[(0, 1)]);
+                c.mz(&[0, 1]);
             })
             .unwrap();
 
@@ -983,7 +1005,7 @@ mod tests {
         let results = sampler
             .sample(100, |c| {
                 // Qubit starts in |0>
-                c.mz(0);
+                c.mz(&[0]);
             })
             .unwrap();
 
@@ -1000,8 +1022,8 @@ mod tests {
 
         let results = sampler
             .sample(100, |c| {
-                c.x(0); // Put in |1> state
-                c.mz(0);
+                c.x(&[0]); // Put in |1> state
+                c.mz(&[0]);
             })
             .unwrap();
 

@@ -38,7 +38,7 @@ use pecos_quantum::{DagCircuit, TickCircuit};
 /// use pecos_neo::prelude::*;
 /// use pecos_neo::engines::CommandQueueEngine;
 ///
-/// let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let engine = CommandQueueEngine::new(commands, 1);
 /// ```
 #[derive(Debug, Clone)]
@@ -174,9 +174,9 @@ impl CommandSource for TickCircuitEngine {
 /// use pecos_quantum::DagCircuit;
 ///
 /// let mut dag = DagCircuit::new();
-/// dag.pz(0);
-/// dag.h(0);
-/// dag.mz(0);
+/// dag.pz(&[0]);
+/// dag.h(&[0]);
+/// dag.mz(&[0]);
 ///
 /// let engine = DagCircuitEngine::new(dag);
 /// ```
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_command_queue_engine() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
         let mut engine = CommandQueueEngine::new(commands.clone(), 1);
 
         assert!(!engine.is_complete());
@@ -276,12 +276,12 @@ mod tests {
     #[test]
     fn test_dag_circuit_engine() {
         let mut dag = DagCircuit::new();
-        dag.pz(0usize);
-        dag.pz(1usize);
-        dag.h(0usize);
-        dag.cx(0usize, 1usize);
-        dag.mz(0usize);
-        dag.mz(1usize);
+        dag.pz(&[0usize]);
+        dag.pz(&[1usize]);
+        dag.h(&[0usize]);
+        dag.cx(&[(0usize, 1usize)]);
+        dag.mz(&[0usize]);
+        dag.mz(&[1usize]);
 
         let mut engine = DagCircuitEngine::new(dag);
 

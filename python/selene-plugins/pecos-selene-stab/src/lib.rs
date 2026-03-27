@@ -265,7 +265,7 @@ impl SimulatorInterface for StabSimulator {
             ApproxAngle::Zero => (),
             ApproxAngle::FracPi2 => {
                 // sqrt(ZZ) = szz in PECOS
-                self.simulator.szz(&[q1, q2]);
+                self.simulator.szz(&[(q1, q2)]);
             }
             ApproxAngle::Pi => {
                 // ZZ = Z tensor Z (up to global phase)
@@ -273,7 +273,7 @@ impl SimulatorInterface for StabSimulator {
             }
             ApproxAngle::Frac3Pi2 => {
                 // sqrt(ZZ)^dagger = szzdg in PECOS
-                self.simulator.szzdg(&[q1, q2]);
+                self.simulator.szzdg(&[(q1, q2)]);
             }
             ApproxAngle::NoSuitableApproximation => {
                 return Err(anyhow!(

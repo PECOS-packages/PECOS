@@ -26,7 +26,7 @@ type QubitBuf = SmallVec<[QubitId; 8]>;
 /// All methods take `&[QubitId]` slices, allowing both single-qubit and batch operations:
 ///
 /// - Single-qubit gates: `sim.rx(theta, &[QubitId(0)])` or batch: `sim.rx(theta, &[q0, q1, q2])`
-/// - Two-qubit gates: `sim.rzz(theta, &[q0, q1])` or batch: `sim.rzz(theta, &[q0, q1, q2, q3])`
+/// - Two-qubit gates: `sim.rzz(theta, &[(q0, q1)])` or batch: `sim.rzz(theta, &[(q0, q1), (q2, q3)])`
 ///
 /// # Note
 /// Most of the methods in this trait have default implementations. However, the
@@ -162,19 +162,15 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Parameters
     /// - `theta`: The rotation angle.
-    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// - `pairs`: Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RXX requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.h(&q1s).h(&q2s).rzz(theta, qubits).h(&q1s).h(&q2s)
+    fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.h(&q1s).h(&q2s).rzz(theta, pairs).h(&q1s).h(&q2s)
     }
 
     /// Apply RYY(theta) = exp(-i theta YY/2) gate, which implements evolution under the YY coupling
@@ -191,21 +187,17 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Parameters
     /// - `theta`: The rotation angle.
-    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// - `pairs`: Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RYY requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+    fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.sx(&q1s)
             .sx(&q2s)
-            .rzz(theta, qubits)
+            .rzz(theta, pairs)
             .sxdg(&q1s)
             .sxdg(&q2s)
     }
@@ -234,11 +226,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Parameters
     /// - `theta`: The rotation angle.
-    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// - `pairs`: Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
     /// Applies a composite rotation gate using RXX, RYY, and RZZ gates.
     ///
@@ -246,7 +238,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// - `theta`: The rotation angle for the RXX gate.
     /// - `phi`: The rotation angle for the RYY gate.
     /// - `lambda`: The rotation angle for the RZZ gate.
-    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// - `pairs`: Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
@@ -257,9 +249,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         theta: Angle64,
         phi: Angle64,
         lambda: Angle64,
-        qubits: &[QubitId],
+        pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
-        self.rxx(theta, qubits).ryy(phi, qubits).rzz(lambda, qubits)
+        self.rxx(theta, pairs).ryy(phi, pairs).rzz(lambda, pairs)
     }
 
     /// Applies a general 2-qubit unitary via KAK decomposition:
@@ -269,7 +261,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// - `before`: U3(theta, phi, lambda) parameters for each qubit, applied after the interaction
     /// - `interaction`: [alpha, beta, gamma] for RXXRYYRZZ
     /// - `after`: U3(theta, phi, lambda) parameters for each qubit, applied before the interaction
-    /// - `qubits`: Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// - `pairs`: Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
@@ -279,23 +271,19 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         before: [[Angle64; 3]; 2],
         interaction: [Angle64; 3],
         after: [[Angle64; 3]; 2],
-        qubits: &[QubitId],
+        pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "U2q requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q0 = &[pair[0]];
-            let q1 = &[pair[1]];
+        for &(q0, q1) in pairs {
+            let q0s = &[q0];
+            let q1s = &[q1];
             // Apply after (right-most) single-qubit gates first
-            self.u(after[0][0], after[0][1], after[0][2], q0);
-            self.u(after[1][0], after[1][1], after[1][2], q1);
+            self.u(after[0][0], after[0][1], after[0][2], q0s);
+            self.u(after[1][0], after[1][1], after[1][2], q1s);
             // Interaction
-            self.rxxryyrzz(interaction[0], interaction[1], interaction[2], pair);
+            self.rxxryyrzz(interaction[0], interaction[1], interaction[2], &[(q0, q1)]);
             // Apply before (left-most) single-qubit gates last
-            self.u(before[0][0], before[0][1], before[0][2], q0);
-            self.u(before[1][0], before[1][1], before[1][2], q1);
+            self.u(before[0][0], before[0][1], before[0][2], q0s);
+            self.u(before[1][0], before[1][1], before[1][2], q1s);
         }
         self
     }

@@ -641,7 +641,7 @@ mod tests {
         use pecos_core::QubitId;
         use pecos_simulators::SparseStab;
 
-        let commands = CommandBuilder::new().pz(0).z(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).z(&[0]).mz(&[0]).build();
 
         let noise_a = general_noise()
             .with_p1(0.3)
@@ -817,11 +817,11 @@ mod tests {
             .build();
 
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut state = SparseStab::new(2);
@@ -852,9 +852,9 @@ mod tests {
 
         // Build commands once
         let commands = CommandBuilder::new()
-            .pz(0)
-            .identity(0) // Identity gate (gets noise)
-            .mz(0)
+            .pz(&[0])
+            .identity(&[0]) // Identity gate (gets noise)
+            .mz(&[0])
             .build();
 
         // Run with GeneralNoiseModelBuilder - count Z basis measurements
@@ -917,11 +917,11 @@ mod tests {
 
         // Build commands once
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         // Run with GeneralNoiseModelBuilder
@@ -984,7 +984,7 @@ mod tests {
         let shots = 1000;
 
         // Build commands once - Prepare |0> and measure
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         // Run with GeneralNoiseModelBuilder - errors should flip to 1
         let mut state = SparseStab::new(1);

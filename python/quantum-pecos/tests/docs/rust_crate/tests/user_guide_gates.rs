@@ -219,7 +219,7 @@ fn test_user_guide_gates_rust_14() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.cx(&[control, target]);
+    sim.cx(&[(control, target)]);
 
 }
 
@@ -235,7 +235,7 @@ fn test_user_guide_gates_rust_15() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.cy(&[control, target]);
+    sim.cy(&[(control, target)]);
 
 }
 
@@ -251,7 +251,7 @@ fn test_user_guide_gates_rust_16() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.cz(&[q1, q2]);
+    sim.cz(&[(q1, q2)]);
 
 }
 
@@ -267,7 +267,7 @@ fn test_user_guide_gates_rust_17() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.swap(&[q1, q2]);
+    sim.swap(&[(q1, q2)]);
 
 }
 
@@ -283,7 +283,7 @@ fn test_user_guide_gates_rust_18() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.iswap(&[q1, q2]);
+    sim.iswap(&[(q1, q2)]);
 
 }
 
@@ -299,8 +299,8 @@ fn test_user_guide_gates_rust_19() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.sxx(&[q1, q2]);
-sim.sxxdg(&[q1, q2]);  // Adjoint
+    sim.sxx(&[(q1, q2)]);
+sim.sxxdg(&[(q1, q2)]);  // Adjoint
 
 }
 
@@ -316,8 +316,8 @@ fn test_user_guide_gates_rust_20() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.syy(&[q1, q2]);
-sim.syydg(&[q1, q2]);  // Adjoint
+    sim.syy(&[(q1, q2)]);
+sim.syydg(&[(q1, q2)]);  // Adjoint
 
 }
 
@@ -333,8 +333,8 @@ fn test_user_guide_gates_rust_21() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.szz(&[q1, q2]);
-sim.szzdg(&[q1, q2]);  // Adjoint
+    sim.szz(&[(q1, q2)]);
+sim.szzdg(&[(q1, q2)]);  // Adjoint
 
 }
 
@@ -350,7 +350,7 @@ fn test_user_guide_gates_rust_22() {
     let q2 = QubitId(2);
     let control = QubitId(0);
     let target = QubitId(1);
-    sim.g(&[q1, q2]);
+    sim.g(&[(q1, q2)]);
 
 }
 
@@ -499,7 +499,7 @@ fn test_user_guide_gates_rust_30() {
     let theta = Angle64::from_radians(PI / 4.0);
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
-    sim.rxx(theta, &[q1, q2]);
+    sim.rxx(theta, &[(q1, q2)]);
 
 }
 
@@ -517,7 +517,7 @@ fn test_user_guide_gates_rust_31() {
     let theta = Angle64::from_radians(PI / 4.0);
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
-    sim.ryy(theta, &[q1, q2]);
+    sim.ryy(theta, &[(q1, q2)]);
 
 }
 
@@ -535,7 +535,7 @@ fn test_user_guide_gates_rust_32() {
     let theta = Angle64::from_radians(PI / 4.0);
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
-    sim.rzz(theta, &[q1, q2]);
+    sim.rzz(theta, &[(q1, q2)]);
 
 }
 

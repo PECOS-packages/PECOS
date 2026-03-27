@@ -20,7 +20,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 use crate::ArbitraryRotationGateable;
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 // ============================================================================
@@ -189,8 +189,9 @@ pub fn verify_two_qubit_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut
 
         // On Bell state
         sim.reset();
-        sim.h(&qid(0)).cx(&qid2(0, 1));
-        sim.rzz(ang, &qid2(0, 1)).rzz(neg_ang, &qid2(0, 1));
+        sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        sim.rzz(ang, &[(QubitId(0), QubitId(1))])
+            .rzz(neg_ang, &[(QubitId(0), QubitId(1))]);
 
         // Should still be a Bell state
         let r0 = sim.mz(&qid(0));
@@ -206,8 +207,9 @@ pub fn verify_two_qubit_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut
 
         // RXX(theta)*RXX(-theta) = I
         sim.reset();
-        sim.h(&qid(0)).cx(&qid2(0, 1));
-        sim.rxx(ang, &qid2(0, 1)).rxx(neg_ang, &qid2(0, 1));
+        sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        sim.rxx(ang, &[(QubitId(0), QubitId(1))])
+            .rxx(neg_ang, &[(QubitId(0), QubitId(1))]);
         let r0 = sim.mz(&qid(0));
         let r1 = sim.mz(&qid(1));
         assert!(
@@ -221,8 +223,9 @@ pub fn verify_two_qubit_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut
 
         // RYY(theta)*RYY(-theta) = I
         sim.reset();
-        sim.h(&qid(0)).cx(&qid2(0, 1));
-        sim.ryy(ang, &qid2(0, 1)).ryy(neg_ang, &qid2(0, 1));
+        sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        sim.ryy(ang, &[(QubitId(0), QubitId(1))])
+            .ryy(neg_ang, &[(QubitId(0), QubitId(1))]);
         let r0 = sim.mz(&qid(0));
         let r1 = sim.mz(&qid(1));
         assert!(
@@ -333,8 +336,8 @@ pub fn verify_rz_composition<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_rzz_special_angles<S: ArbitraryRotationGateable>(sim: &mut S) {
     // RZZ(0) = I
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
-    sim.rzz(Angle64::from_radians(0.0), &qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    sim.rzz(Angle64::from_radians(0.0), &[(QubitId(0), QubitId(1))]);
     let r0 = sim.mz(&qid(0));
     let r1 = sim.mz(&qid(1));
     assert!(r1[0].is_deterministic, "RZZ(0) Bell: q1 deterministic");
@@ -355,7 +358,7 @@ pub fn verify_rzz_special_angles<S: ArbitraryRotationGateable>(sim: &mut S) {
         if q1_val {
             sim.x(&qid(1));
         }
-        sim.rzz(Angle64::from_radians(1.0), &qid2(0, 1));
+        sim.rzz(Angle64::from_radians(1.0), &[(QubitId(0), QubitId(1))]);
         assert_mz(sim, 0, q0_val, &format!("RZZ(1.0)|{state:02b}>: q0"));
         assert_mz(sim, 1, q1_val, &format!("RZZ(1.0)|{state:02b}>: q1"));
     }
@@ -365,8 +368,8 @@ pub fn verify_rzz_special_angles<S: ArbitraryRotationGateable>(sim: &mut S) {
 pub fn verify_rxx_ryy_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
     // RXX(0)|Bell> = |Bell>
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
-    sim.rxx(Angle64::from_radians(0.0), &qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    sim.rxx(Angle64::from_radians(0.0), &[(QubitId(0), QubitId(1))]);
     let r0 = sim.mz(&qid(0));
     let r1 = sim.mz(&qid(1));
     assert!(r1[0].is_deterministic, "RXX(0) Bell: q1 deterministic");
@@ -377,8 +380,8 @@ pub fn verify_rxx_ryy_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
 
     // RYY(0)|Bell> = |Bell>
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
-    sim.ryy(Angle64::from_radians(0.0), &qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    sim.ryy(Angle64::from_radians(0.0), &[(QubitId(0), QubitId(1))]);
     let r0 = sim.mz(&qid(0));
     let r1 = sim.mz(&qid(1));
     assert!(r1[0].is_deterministic, "RYY(0) Bell: q1 deterministic");
@@ -734,7 +737,7 @@ pub fn verify_rxxryyrzz_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
     assert_mz(sim, 0, false, "RXXRYYRZZ(0,0,0)|00> q0");
     assert_mz(sim, 1, false, "RXXRYYRZZ(0,0,0)|00> q1");
@@ -746,7 +749,7 @@ pub fn verify_rxxryyrzz_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
     assert_mz(sim, 0, true, "RXXRYYRZZ(0,0,0)|10> q0");
     assert_mz(sim, 1, false, "RXXRYYRZZ(0,0,0)|10> q1");
@@ -758,7 +761,7 @@ pub fn verify_rxxryyrzz_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
         Angle64::from_radians(0.0),
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
     assert_mx(sim, 0, false, "RXXRYYRZZ(0,0,0)|+0> q0");
     assert_mz(sim, 1, false, "RXXRYYRZZ(0,0,0)|+0> q1");
@@ -776,13 +779,13 @@ pub fn verify_rxxryyrzz_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
             Angle64::from_radians(a),
             Angle64::from_radians(b),
             Angle64::from_radians(c),
-            &qid2(0, 1),
+            &[(QubitId(0), QubitId(1))],
         );
         sim.rxxryyrzz(
             Angle64::from_radians(-a),
             Angle64::from_radians(-b),
             Angle64::from_radians(-c),
-            &qid2(0, 1),
+            &[(QubitId(0), QubitId(1))],
         );
         assert_mz(sim, 0, false, &format!("RXXRYYRZZ inv|01> q0 a={a}"));
         assert_mz(sim, 1, true, &format!("RXXRYYRZZ inv|01> q1 a={a}"));
@@ -794,13 +797,13 @@ pub fn verify_rxxryyrzz_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
             Angle64::from_radians(a),
             Angle64::from_radians(b),
             Angle64::from_radians(c),
-            &qid2(0, 1),
+            &[(QubitId(0), QubitId(1))],
         );
         sim.rxxryyrzz(
             Angle64::from_radians(-a),
             Angle64::from_radians(-b),
             Angle64::from_radians(-c),
-            &qid2(0, 1),
+            &[(QubitId(0), QubitId(1))],
         );
         assert_mx(sim, 0, false, &format!("RXXRYYRZZ inv|+0> q0 a={a}"));
         assert_mz(sim, 1, false, &format!("RXXRYYRZZ inv|+0> q1 a={a}"));
@@ -821,11 +824,11 @@ pub fn verify_rxxryyrzz_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
         Angle64::from_radians(a),
         Angle64::from_radians(b),
         Angle64::from_radians(c),
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
-    sim.rzz(Angle64::from_radians(-c), &qid2(0, 1));
-    sim.ryy(Angle64::from_radians(-b), &qid2(0, 1));
-    sim.rxx(Angle64::from_radians(-a), &qid2(0, 1));
+    sim.rzz(Angle64::from_radians(-c), &[(QubitId(0), QubitId(1))]);
+    sim.ryy(Angle64::from_radians(-b), &[(QubitId(0), QubitId(1))]);
+    sim.rxx(Angle64::from_radians(-a), &[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, false, "RXXRYYRZZ decomp|01> q0");
     assert_mz(sim, 1, true, "RXXRYYRZZ decomp|01> q1");
 
@@ -836,11 +839,11 @@ pub fn verify_rxxryyrzz_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
         Angle64::from_radians(a),
         Angle64::from_radians(b),
         Angle64::from_radians(c),
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
-    sim.rzz(Angle64::from_radians(-c), &qid2(0, 1));
-    sim.ryy(Angle64::from_radians(-b), &qid2(0, 1));
-    sim.rxx(Angle64::from_radians(-a), &qid2(0, 1));
+    sim.rzz(Angle64::from_radians(-c), &[(QubitId(0), QubitId(1))]);
+    sim.ryy(Angle64::from_radians(-b), &[(QubitId(0), QubitId(1))]);
+    sim.rxx(Angle64::from_radians(-a), &[(QubitId(0), QubitId(1))]);
     assert_mx(sim, 0, false, "RXXRYYRZZ decomp|+0> q0");
     assert_mz(sim, 1, false, "RXXRYYRZZ decomp|+0> q1");
 }
@@ -856,21 +859,36 @@ pub fn verify_u2q_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
 
     // On |00>
     sim.reset();
-    sim.u2q(id_params, [Angle64::ZERO; 3], id_params, &qid2(0, 1));
+    sim.u2q(
+        id_params,
+        [Angle64::ZERO; 3],
+        id_params,
+        &[(QubitId(0), QubitId(1))],
+    );
     assert_mz(sim, 0, false, "U2q(I)|00> q0");
     assert_mz(sim, 1, false, "U2q(I)|00> q1");
 
     // On |10>
     sim.reset();
     sim.x(&qid(0));
-    sim.u2q(id_params, [Angle64::ZERO; 3], id_params, &qid2(0, 1));
+    sim.u2q(
+        id_params,
+        [Angle64::ZERO; 3],
+        id_params,
+        &[(QubitId(0), QubitId(1))],
+    );
     assert_mz(sim, 0, true, "U2q(I)|10> q0");
     assert_mz(sim, 1, false, "U2q(I)|10> q1");
 
     // On |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.u2q(id_params, [Angle64::ZERO; 3], id_params, &qid2(0, 1));
+    sim.u2q(
+        id_params,
+        [Angle64::ZERO; 3],
+        id_params,
+        &[(QubitId(0), QubitId(1))],
+    );
     assert_mx(sim, 0, false, "U2q(I)|+0> q0");
     assert_mz(sim, 1, false, "U2q(I)|+0> q1");
 }
@@ -922,16 +940,26 @@ pub fn verify_u2q_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     // On |01>
     sim.reset();
     sim.x(&qid(1));
-    sim.u2q(before, interaction, after, &qid2(0, 1));
-    sim.u2q(inv_before, inv_interaction, inv_after, &qid2(0, 1));
+    sim.u2q(before, interaction, after, &[(QubitId(0), QubitId(1))]);
+    sim.u2q(
+        inv_before,
+        inv_interaction,
+        inv_after,
+        &[(QubitId(0), QubitId(1))],
+    );
     assert_mz(sim, 0, false, "U2q*U2q_inv|01> q0");
     assert_mz(sim, 1, true, "U2q*U2q_inv|01> q1");
 
     // On |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.u2q(before, interaction, after, &qid2(0, 1));
-    sim.u2q(inv_before, inv_interaction, inv_after, &qid2(0, 1));
+    sim.u2q(before, interaction, after, &[(QubitId(0), QubitId(1))]);
+    sim.u2q(
+        inv_before,
+        inv_interaction,
+        inv_after,
+        &[(QubitId(0), QubitId(1))],
+    );
     assert_mx(sim, 0, false, "U2q*U2q_inv|+0> q0");
     assert_mz(sim, 1, false, "U2q*U2q_inv|+0> q1");
 }
@@ -951,12 +979,17 @@ pub fn verify_u2q_matches_rxxryyrzz<S: ArbitraryRotationGateable>(sim: &mut S) {
     // is just rxxryyrzz.
     sim.reset();
     sim.x(&qid(1)); // |01>
-    sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
+    sim.u2q(
+        id_params,
+        interaction,
+        id_params,
+        &[(QubitId(0), QubitId(1))],
+    );
     sim.rxxryyrzz(
         -interaction[0],
         -interaction[1],
         -interaction[2],
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
     assert_mz(sim, 0, false, "U2q(I,int,I)*RXXRYYRZZ_inv|01> q0");
     assert_mz(sim, 1, true, "U2q(I,int,I)*RXXRYYRZZ_inv|01> q1");
@@ -964,12 +997,17 @@ pub fn verify_u2q_matches_rxxryyrzz<S: ArbitraryRotationGateable>(sim: &mut S) {
     // On |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.u2q(id_params, interaction, id_params, &qid2(0, 1));
+    sim.u2q(
+        id_params,
+        interaction,
+        id_params,
+        &[(QubitId(0), QubitId(1))],
+    );
     sim.rxxryyrzz(
         -interaction[0],
         -interaction[1],
         -interaction[2],
-        &qid2(0, 1),
+        &[(QubitId(0), QubitId(1))],
     );
     assert_mx(sim, 0, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q0");
     assert_mz(sim, 1, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q1");

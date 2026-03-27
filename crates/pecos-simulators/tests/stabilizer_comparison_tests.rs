@@ -1,4 +1,4 @@
-use pecos_core::{qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_simulators::CliffordGateable;
 use pecos_simulators::DensityMatrix;
 use pecos_simulators::QuantumSimulator;
@@ -182,8 +182,8 @@ fn test_compare_bell_state() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply sequence of gates to create a Bell state
-    stab.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &stab, num_qubits);
 }
@@ -196,22 +196,22 @@ fn test_compare_two_qubit_gates() {
     // Test CNOT (CX) gate
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     compare_probabilities(&mut dm, &stab, num_qubits);
 
     // Test CZ gate
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.h(&qid(0)).h(&qid(1)).cz(&qid2(0, 1));
-    dm.h(&qid(0)).h(&qid(1)).cz(&qid2(0, 1));
+    stab.h(&qid(0)).h(&qid(1)).cz(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).h(&qid(1)).cz(&[(QubitId(0), QubitId(1))]);
     compare_probabilities(&mut dm, &stab, num_qubits);
 
     // Test SWAP gate
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.x(&qid(0)).swap(&qid2(0, 1));
-    dm.x(&qid(0)).swap(&qid2(0, 1));
+    stab.x(&qid(0)).swap(&[(QubitId(0), QubitId(1))]);
+    dm.x(&qid(0)).swap(&[(QubitId(0), QubitId(1))]);
     compare_probabilities(&mut dm, &stab, num_qubits);
 }
 
@@ -223,8 +223,12 @@ fn test_compare_complex_circuit() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a GHZ state
-    stab.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
-    dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+    stab.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))]);
+    dm.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))]);
 
     compare_probabilities(&mut dm, &stab, num_qubits);
 
@@ -349,8 +353,8 @@ fn test_compare_reset() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply some gates to get to a non-trivial state
-    stab.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Reset both simulators
     stab.reset();
@@ -367,29 +371,35 @@ fn test_compare_bell_states() {
     // Bell state |Phi+> = (|00> + |11>)/sqrt(2)
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     compare_probabilities(&mut dm, &stab, num_qubits);
 
     // Bell state |Phi-> = (|00> - |11>)/sqrt(2)
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
-    dm.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
+    stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).z(&qid(1));
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).z(&qid(1));
     compare_probabilities(&mut dm, &stab, num_qubits);
 
     // Bell state |Psi+> = (|01> + |10>)/sqrt(2)
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
-    dm.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
+    stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).x(&qid(1));
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).x(&qid(1));
     compare_probabilities(&mut dm, &stab, num_qubits);
 
     // Bell state |Psi-> = (|01> - |10>)/sqrt(2)
     let mut stab = SparseStab::new(num_qubits);
     let mut dm = DensityMatrix::new(num_qubits);
-    stab.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
-    dm.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
+    stab.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(0))
+        .x(&qid(1));
+    dm.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(0))
+        .x(&qid(1));
     compare_probabilities(&mut dm, &stab, num_qubits);
 }
 
@@ -401,8 +411,12 @@ fn test_compare_ghz_state() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a GHZ state |000> + |111>
-    stab.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
-    dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+    stab.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))]);
+    dm.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))]);
 
     compare_probabilities(&mut dm, &stab, num_qubits);
 
@@ -431,8 +445,10 @@ fn test_compare_w_state() {
     dm.h(&qid(0)).h(&qid(1));
 
     // Apply CZ between qubits 0,2 and 1,2
-    stab.cz(&qid2(0, 2)).cz(&qid2(1, 2));
-    dm.cz(&qid2(0, 2)).cz(&qid2(1, 2));
+    stab.cz(&[(QubitId(0), QubitId(2))])
+        .cz(&[(QubitId(1), QubitId(2))]);
+    dm.cz(&[(QubitId(0), QubitId(2))])
+        .cz(&[(QubitId(1), QubitId(2))]);
 
     // Apply H again to qubit 0 and 1
     stab.h(&qid(0)).h(&qid(1));

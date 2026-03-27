@@ -172,8 +172,8 @@ fn qid(n: usize) -> [QubitId; 1] {
     [QubitId(n)]
 }
 
-fn qid2(a: usize, b: usize) -> [QubitId; 2] {
-    [QubitId(a), QubitId(b)]
+fn qid2(a: usize, b: usize) -> [(QubitId, QubitId); 1] {
+    [(QubitId(a), QubitId(b))]
 }
 
 fn assert_amplitude_eq(actual: Complex64, expected: Complex64, msg: &str) {
@@ -1114,7 +1114,7 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
 
     // Test CX gate: batch of two pairs vs sequential
     // Batch: CX on (0,1) and (2,3) simultaneously
-    let pairs_batch = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+    let pairs_batch = [(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))];
 
     sim.reset();
     sim.x(&qid(0)); // Set control qubits to |1⟩
@@ -1311,7 +1311,7 @@ pub fn verify_batch_two_qubit_rotation_gates<
         return;
     }
 
-    let pairs_batch = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+    let pairs_batch = [(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))];
     let theta = Angle64::from_radians(FRAC_PI_4);
 
     // Test RZZ gate: batch vs sequential

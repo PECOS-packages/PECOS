@@ -1002,10 +1002,8 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "RZZ" => {
                         if qubits.len() >= 2 && !params.is_empty() {
-                            builder.rzz(
-                                Angle64::from_radians(params[0]),
-                                &[(qubits[0], qubits[1])],
-                            );
+                            builder
+                                .rzz(Angle64::from_radians(params[0]), &[(qubits[0], qubits[1])]);
                         }
                     }
                     _ => {

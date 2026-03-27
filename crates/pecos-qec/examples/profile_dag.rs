@@ -32,15 +32,15 @@ fn build_syndrome_circuit(data_qubits: usize, ancilla_qubits: usize) -> DagCircu
 
     // Build circuit
     for a in 0..ancilla_qubits {
-        dag.pz(data_qubits + a);
+        dag.pz(&[data_qubits + a]);
     }
     for (a, neighbors) in ancilla_neighbors.iter().enumerate() {
         for &d in neighbors {
-            dag.cx(d, data_qubits + a);
+            dag.cx(&[(d, data_qubits + a)]);
         }
     }
     for a in 0..ancilla_qubits {
-        dag.mz(data_qubits + a);
+        dag.mz(&[data_qubits + a]);
     }
 
     dag

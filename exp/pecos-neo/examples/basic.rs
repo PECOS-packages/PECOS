@@ -38,12 +38,12 @@ fn example_bell_state() {
 
     // Build the circuit
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0) // Create superposition on qubit 0
-        .cx(0, 1) // Entangle with qubit 1
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0]) // Create superposition on qubit 0
+        .cx(&[(0, 1)]) // Entangle with qubit 1
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Create a simulator and a stateless runner
@@ -79,18 +79,18 @@ fn example_ghz_state() {
 
     // Build the GHZ circuit
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .pz(2)
-        .pz(3)
-        .h(0)
-        .cx(0, 1)
-        .cx(1, 2)
-        .cx(2, 3)
-        .mz(0)
-        .mz(1)
-        .mz(2)
-        .mz(3)
+        .pz(&[0])
+        .pz(&[1])
+        .pz(&[2])
+        .pz(&[3])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .cx(&[(1, 2)])
+        .cx(&[(2, 3)])
+        .mz(&[0])
+        .mz(&[1])
+        .mz(&[2])
+        .mz(&[3])
         .build();
 
     let mut state = SparseStab::new(4);
@@ -128,19 +128,19 @@ fn example_random_circuit() {
 
     // Build a circuit with various Clifford gates
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .pz(2)
-        .h(0)
-        .sz(1)
-        .cx(0, 1)
-        .cz(1, 2)
-        .h(2)
-        .szdg(0)
-        .cx(2, 0)
-        .mz(0)
-        .mz(1)
-        .mz(2)
+        .pz(&[0])
+        .pz(&[1])
+        .pz(&[2])
+        .h(&[0])
+        .sz(&[1])
+        .cx(&[(0, 1)])
+        .cz(&[(1, 2)])
+        .h(&[2])
+        .szdg(&[0])
+        .cx(&[(2, 0)])
+        .mz(&[0])
+        .mz(&[1])
+        .mz(&[2])
         .build();
 
     let mut state = SparseStab::new(3);
@@ -174,7 +174,7 @@ fn example_shot_statistics() {
     println!("--- Shot Statistics ---");
 
     // Simple Hadamard circuit - should give 50/50 distribution
-    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let mut state = SparseStab::new(1);
     let mut runner = CircuitRunner::<SparseStab>::new().with_seed(789);

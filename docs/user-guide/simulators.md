@@ -332,7 +332,7 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 
     // Track how an X error on qubit 0 propagates
     let mut prop = PauliProp::new();
-    prop.add_x(0);  // Track an X error on qubit 0
+    prop.track_x(&[0]);  // Track an X error on qubit 0
 
     // Apply Hadamard - transforms X to Z
     prop.h(&[QubitId(0)]);
@@ -480,7 +480,7 @@ For fine-grained control, you can use simulators directly:
 
     // Apply gates
     state.h(&[QubitId(0)]);
-    state.cx(&[QubitId(0), QubitId(1)]);
+    state.cx(&[(QubitId(0), QubitId(1))]);
 
     // Measure
     let results = state.mz(&[QubitId(0)]);

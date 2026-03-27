@@ -644,23 +644,20 @@ impl GpuStateVec {
     }
 
     /// Apply CX gates to multiple qubit pairs in a single GPU submission.
-    ///
-    /// Takes qubits as interleaved pairs: [control0, target0, control1, target1, ...]
     #[allow(clippy::cast_possible_truncation)]
-    fn cx_batch_qubits(&mut self, qubits: &[QubitId]) {
-        let num_pairs = qubits.len() / 2;
-        if num_pairs == 0 {
+    fn cx_batch_pairs(&mut self, pairs: &[(QubitId, QubitId)]) {
+        if pairs.is_empty() {
             return;
         }
 
         // Build all gate params on CPU first, then write in a single buffer operation
-        let total_size = num_pairs * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let total_size = pairs.len() * ALIGNED_GATE_PARAMS_SIZE as usize;
         let mut params_data = vec![0u8; total_size];
 
-        for (i, pair) in qubits.chunks_exact(2).enumerate() {
+        for (i, &(q0, q1)) in pairs.iter().enumerate() {
             let params = GateParams {
-                target_qubit: pair[1].index() as u32,
-                control_qubit: pair[0].index() as u32,
+                target_qubit: q1.index() as u32,
+                control_qubit: q0.index() as u32,
                 num_qubits: self.num_qubits,
                 _padding: 0,
                 matrix_row0: [0.0; 4],
@@ -692,7 +689,7 @@ impl GpuStateVec {
             let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
 
             // Use dynamic offset with persistent bind group for each gate pair
-            for i in 0..num_pairs {
+            for i in 0..pairs.len() {
                 let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
                 pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
                 pass.dispatch_workgroups(wg_x, wg_y, 1);
@@ -703,23 +700,20 @@ impl GpuStateVec {
     }
 
     /// Apply CZ gates to multiple qubit pairs in a single GPU submission.
-    ///
-    /// Takes qubits as interleaved pairs: [control0, target0, control1, target1, ...]
     #[allow(clippy::cast_possible_truncation)]
-    fn cz_batch_qubits(&mut self, qubits: &[QubitId]) {
-        let num_pairs = qubits.len() / 2;
-        if num_pairs == 0 {
+    fn cz_batch_pairs(&mut self, pairs: &[(QubitId, QubitId)]) {
+        if pairs.is_empty() {
             return;
         }
 
         // Build all gate params on CPU first, then write in a single buffer operation
-        let total_size = num_pairs * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let total_size = pairs.len() * ALIGNED_GATE_PARAMS_SIZE as usize;
         let mut params_data = vec![0u8; total_size];
 
-        for (i, pair) in qubits.chunks_exact(2).enumerate() {
+        for (i, &(q0, q1)) in pairs.iter().enumerate() {
             let params = GateParams {
-                target_qubit: pair[1].index() as u32,
-                control_qubit: pair[0].index() as u32,
+                target_qubit: q1.index() as u32,
+                control_qubit: q0.index() as u32,
                 num_qubits: self.num_qubits,
                 _padding: 0,
                 matrix_row0: [0.0; 4],
@@ -751,7 +745,7 @@ impl GpuStateVec {
             let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
 
             // Use dynamic offset with persistent bind group for each gate pair
-            for i in 0..num_pairs {
+            for i in 0..pairs.len() {
                 let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
                 pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
                 pass.dispatch_workgroups(wg_x, wg_y, 1);
@@ -762,23 +756,20 @@ impl GpuStateVec {
     }
 
     /// Apply RZZ gates to multiple qubit pairs in a single GPU submission.
-    ///
-    /// Takes qubits as interleaved pairs: [q0, q1, q2, q3, ...] for pairs (q0,q1), (q2,q3), ...
     #[allow(clippy::cast_possible_truncation)]
-    fn rzz_batch_qubits(&mut self, theta: f64, qubits: &[QubitId]) {
-        let num_pairs = qubits.len() / 2;
-        if num_pairs == 0 {
+    fn rzz_batch_pairs(&mut self, theta: f64, pairs: &[(QubitId, QubitId)]) {
+        if pairs.is_empty() {
             return;
         }
 
         // Build all gate params on CPU first, then write in a single buffer operation
-        let total_size = num_pairs * ALIGNED_GATE_PARAMS_SIZE as usize;
+        let total_size = pairs.len() * ALIGNED_GATE_PARAMS_SIZE as usize;
         let mut params_data = vec![0u8; total_size];
 
-        for (i, pair) in qubits.chunks_exact(2).enumerate() {
+        for (i, &(q0, q1)) in pairs.iter().enumerate() {
             let params = GateParams {
-                target_qubit: pair[1].index() as u32,
-                control_qubit: pair[0].index() as u32,
+                target_qubit: q1.index() as u32,
+                control_qubit: q0.index() as u32,
                 num_qubits: self.num_qubits,
                 _padding: 0,
                 matrix_row0: [theta as f32, 0.0, 0.0, 0.0],
@@ -810,7 +801,7 @@ impl GpuStateVec {
             let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
 
             // Use dynamic offset with persistent bind group for each gate pair
-            for i in 0..num_pairs {
+            for i in 0..pairs.len() {
                 let offset = (i as u64 * ALIGNED_GATE_PARAMS_SIZE) as u32;
                 pass.set_bind_group(0, &self.gate_bind_group, &[offset]);
                 pass.dispatch_workgroups(wg_x, wg_y, 1);
@@ -831,7 +822,7 @@ impl GpuStateVec {
     // sampling an outcome, then collapsing the state on GPU. These steps are tightly
     // coupled and extracting them would complicate the control flow.
     #[allow(clippy::too_many_lines)]
-    pub fn measure(&mut self, qubit: u32) -> u32 {
+    fn mz_gpu(&mut self, qubit: u32) -> u32 {
         // Compute probabilities for all amplitudes
         let params = GateParams {
             target_qubit: qubit,
@@ -1096,21 +1087,13 @@ impl CliffordGateable for GpuStateVec {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        self.cx_batch_qubits(qubits);
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.cx_batch_pairs(pairs);
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        self.cz_batch_qubits(qubits);
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.cz_batch_pairs(pairs);
         self
     }
 
@@ -1119,7 +1102,7 @@ impl CliffordGateable for GpuStateVec {
         qubits
             .iter()
             .map(|&q| {
-                let outcome = self.measure(q.index() as u32);
+                let outcome = self.mz_gpu(q.index() as u32);
                 MeasurementResult {
                     outcome: outcome == 1,
                     is_deterministic: false, // State vector sim is never deterministic unless in eigenstate
@@ -1142,13 +1125,9 @@ impl ArbitraryRotationGateable for GpuStateVec {
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
-        self.rzz_batch_qubits(theta, qubits);
+        self.rzz_batch_pairs(theta, pairs);
         self
     }
 }
@@ -1156,7 +1135,7 @@ impl ArbitraryRotationGateable for GpuStateVec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{qid, qid2};
+    use pecos_core::qid;
     use pecos_simulators::CliffordGateable;
 
     // Compile-time assertions that GpuStateVec is Send + Sync.
@@ -1186,10 +1165,10 @@ mod tests {
         for _ in 0..100 {
             sim.reset();
             sim.h(&qid(0));
-            if sim.measure(0) == 0 {
-                zeros += 1;
-            } else {
+            if sim.mz(&qid(0))[0].outcome {
                 ones += 1;
+            } else {
+                zeros += 1;
             }
         }
 
@@ -1207,11 +1186,13 @@ mod tests {
         for _ in 0..20 {
             sim.reset();
             sim.h(&qid(0));
-            sim.cx(&qid2(0, 1));
+            sim.cx(&[(QubitId(0), QubitId(1))]);
 
-            let m0 = sim.measure(0);
-            let m1 = sim.measure(1);
-            assert_eq!(m0, m1, "Bell state qubits should be correlated");
+            let results = sim.mz(&[QubitId(0), QubitId(1)]);
+            assert_eq!(
+                results[0].outcome, results[1].outcome,
+                "Bell state qubits should be correlated"
+            );
         }
     }
 
@@ -1233,7 +1214,7 @@ mod tests {
         sim.reset();
         sim.x(&qid(0)); // |10>
         sim.x(&qid(1)); // |11>
-        sim.cz(&qid2(0, 1)); // Apply CZ - should add phase but not change computational basis
+        sim.cz(&[(QubitId(0), QubitId(1))]); // Apply CZ - should add phase but not change computational basis
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         let m0 = &results[0];
         let m1 = &results[1];
@@ -1245,7 +1226,7 @@ mod tests {
         // Test SWAP gate (derived from CX)
         sim.reset();
         sim.x(&qid(0)); // |10>
-        sim.swap(&qid2(0, 1)); // Should give |01>
+        sim.swap(&[(QubitId(0), QubitId(1))]); // Should give |01>
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         let m0 = &results[0];
         let m1 = &results[1];
@@ -1485,8 +1466,8 @@ mod tests {
                 cpu.h(&qid(control));
 
                 // Apply CX
-                gpu.cx(&qid2(control, target));
-                cpu.cx(&qid2(control, target));
+                gpu.cx(&[(QubitId(control), QubitId(target))]);
+                cpu.cx(&[(QubitId(control), QubitId(target))]);
 
                 let max_diff = compare_states(&gpu, &mut cpu);
                 assert!(
@@ -1509,8 +1490,8 @@ mod tests {
         cpu.h(&qid(1));
 
         // Apply CZ
-        gpu.cz(&qid2(0, 1));
-        cpu.cz(&qid2(0, 1));
+        gpu.cz(&[(QubitId(0), QubitId(1))]);
+        cpu.cz(&[(QubitId(0), QubitId(1))]);
 
         let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
@@ -1534,8 +1515,8 @@ mod tests {
             cpu.h(&qid(1));
 
             // Apply RZZ
-            gpu.rzz(Angle64::from_radians(theta), &qid2(0, 1));
-            cpu.rzz(Angle64::from_radians(theta), &qid2(0, 1));
+            gpu.rzz(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+            cpu.rzz(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
 
             let max_diff = compare_states(&gpu, &mut cpu);
             assert!(
@@ -1568,10 +1549,10 @@ mod tests {
         cpu.rz(Angle64::from_radians(1.1), &qid(3));
 
         // Layer 3: Entangling gates
-        gpu.cx(&qid2(0, 1));
-        cpu.cx(&qid2(0, 1));
-        gpu.cx(&qid2(2, 3));
-        cpu.cx(&qid2(2, 3));
+        gpu.cx(&[(QubitId(0), QubitId(1))]);
+        cpu.cx(&[(QubitId(0), QubitId(1))]);
+        gpu.cx(&[(QubitId(2), QubitId(3))]);
+        cpu.cx(&[(QubitId(2), QubitId(3))]);
 
         // Layer 4: More rotations
         gpu.rz(Angle64::from_radians(0.2), &qid(0));
@@ -1580,8 +1561,8 @@ mod tests {
         cpu.rz(Angle64::from_radians(0.4), &qid(1));
 
         // Layer 5: Cross entanglement
-        gpu.cx(&qid2(1, 2));
-        cpu.cx(&qid2(1, 2));
+        gpu.cx(&[(QubitId(1), QubitId(2))]);
+        cpu.cx(&[(QubitId(1), QubitId(2))]);
 
         let max_diff = compare_states(&gpu, &mut cpu);
         assert!(
@@ -1597,9 +1578,9 @@ mod tests {
 
         // Apply some gates
         gpu.h(&qid(0));
-        gpu.cx(&qid2(0, 1));
+        gpu.cx(&[(QubitId(0), QubitId(1))]);
         cpu.h(&qid(0));
-        cpu.cx(&qid2(0, 1));
+        cpu.cx(&[(QubitId(0), QubitId(1))]);
 
         // Reset both
         gpu.reset();

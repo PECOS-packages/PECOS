@@ -1,5 +1,5 @@
 use num_complex::Complex64;
-use pecos_core::{qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_simulators::CliffordGateable;
 use pecos_simulators::DensityMatrix;
 
@@ -7,7 +7,7 @@ use pecos_simulators::DensityMatrix;
 fn test_get_density_matrix() {
     // Create a Bell state
     let mut state = DensityMatrix::new(2);
-    state.h(&qid(0)).cx(&qid2(0, 1));
+    state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Get the density matrix
     let rho = state.get_density_matrix();
@@ -87,7 +87,7 @@ fn test_real_world_circuit() {
     // Apply a sequence of gates
     state
         .h(&qid(0)) // Put qubit 0 in superposition
-        .cx(&qid2(0, 1)) // Entangle qubits 0 and 1
+        .cx(&[(QubitId(0), QubitId(1))]) // Entangle qubits 0 and 1
         .z(&qid(0)) // Apply phase flip to qubit 0
         .h(&qid(1)); // Apply Hadamard to qubit 1
 
@@ -115,7 +115,7 @@ fn test_real_world_circuit() {
 fn test_export_formats() {
     // Create a Bell state
     let mut state = DensityMatrix::new(2);
-    state.h(&qid(0)).cx(&qid2(0, 1));
+    state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Test flattened representation
     let flat = state.get_flattened_density_matrix();

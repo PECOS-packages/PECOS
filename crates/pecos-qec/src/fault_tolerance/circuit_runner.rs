@@ -147,46 +147,34 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
 
         // Two-qubit gates (qubits come in pairs: [ctrl, tgt, ctrl, tgt, ...])
         GateType::CX => {
-            for pair in qubits.chunks(2) {
-                if pair.len() == 2 {
-                    sim.cx(&[pair[0], pair[1]]);
-                }
-            }
+            let pairs: Vec<(QubitId, QubitId)> =
+                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            sim.cx(&pairs);
         }
         GateType::CY => {
-            for pair in qubits.chunks(2) {
-                if pair.len() == 2 {
-                    sim.cy(&[pair[0], pair[1]]);
-                }
-            }
+            let pairs: Vec<(QubitId, QubitId)> =
+                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            sim.cy(&pairs);
         }
         GateType::CZ => {
-            for pair in qubits.chunks(2) {
-                if pair.len() == 2 {
-                    sim.cz(&[pair[0], pair[1]]);
-                }
-            }
+            let pairs: Vec<(QubitId, QubitId)> =
+                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            sim.cz(&pairs);
         }
         GateType::SZZ => {
-            for pair in qubits.chunks(2) {
-                if pair.len() == 2 {
-                    sim.szz(&[pair[0], pair[1]]);
-                }
-            }
+            let pairs: Vec<(QubitId, QubitId)> =
+                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            sim.szz(&pairs);
         }
         GateType::SZZdg => {
-            for pair in qubits.chunks(2) {
-                if pair.len() == 2 {
-                    sim.szzdg(&[pair[0], pair[1]]);
-                }
-            }
+            let pairs: Vec<(QubitId, QubitId)> =
+                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            sim.szzdg(&pairs);
         }
         GateType::SWAP => {
-            for pair in qubits.chunks(2) {
-                if pair.len() == 2 {
-                    sim.swap(&[pair[0], pair[1]]);
-                }
-            }
+            let pairs: Vec<(QubitId, QubitId)> =
+                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            sim.swap(&pairs);
         }
 
         // Measurements

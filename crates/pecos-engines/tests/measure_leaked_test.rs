@@ -13,7 +13,7 @@ fn test_measure_leaked_basic_functionality() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.h(&[0]); // Create superposition
-    builder.add_measure_leakages(&[0, 1]); // MeasureLeaked on both qubits
+    builder.measure_leakages(&[0, 1]); // MeasureLeaked on both qubits
 
     let circuit = builder.build();
     let result = system.process(circuit).unwrap();
@@ -52,8 +52,8 @@ fn test_measure_leaked_with_general_noise_model() {
 
     // Mix of regular Measure and MeasureLeaked
     builder.mz(&[0]); // Regular measure on leaked qubit 0
-    builder.add_measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
-    builder.add_measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
+    builder.measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
+    builder.measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
 
     let circuit = builder.build();
     let result = system.process(circuit).unwrap();
@@ -85,7 +85,7 @@ fn test_measure_leaked_preserves_quantum_state() {
     let _ = builder.for_quantum_operations();
     builder.h(&[0]);
     builder.cx(&[(0, 1)]);
-    builder.add_measure_leakages(&[0, 1]);
+    builder.measure_leakages(&[0, 1]);
 
     let circuit = builder.build();
 
@@ -137,7 +137,7 @@ fn test_measure_leaked_sequential_measurements() {
     // First circuit: measure the leaked qubit
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_measure_leakages(&[0]);
+    builder.measure_leakages(&[0]);
 
     let circuit1 = builder.build();
     let result1 = system.process(circuit1).unwrap();
@@ -151,7 +151,7 @@ fn test_measure_leaked_sequential_measurements() {
     // Second circuit: measure the same qubit again (should still be leaked)
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_measure_leakages(&[0]);
+    builder.measure_leakages(&[0]);
 
     let circuit2 = builder.build();
     let result2 = system.process(circuit2).unwrap();
@@ -198,7 +198,7 @@ fn test_measure_leaked_with_prep_unleaks() {
     // First circuit: measure the leaked qubit
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.add_measure_leakages(&[0]); // Should return 2
+    builder.measure_leakages(&[0]); // Should return 2
 
     let circuit1 = builder.build();
     let result1 = system.process(circuit1).unwrap();
@@ -211,7 +211,7 @@ fn test_measure_leaked_with_prep_unleaks() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.pz(&[0]); // Unleak the qubit
-    builder.add_measure_leakages(&[0]); // Should return 0 (back to |0⟩)
+    builder.measure_leakages(&[0]); // Should return 0 (back to |0⟩)
 
     let circuit2 = builder.build();
     let result2 = system.process(circuit2).unwrap();

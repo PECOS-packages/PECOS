@@ -2028,14 +2028,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // application). CX is phase-free; CZ picks up (-1)^{xc*xt}.
     // SWAP can always swap frames without flushing.
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        if qubits.len() == 2 {
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
             // Single pair: fast path
-            let (c, t) = (qubits[0].0, qubits[1].0);
+            let (c, t) = (pairs[0].0.0, pairs[0].1.0);
             let fc = self.frames[c];
             let ft = self.frames[t];
             if fc.is_pauli() && ft.is_pauli() {
@@ -2049,8 +2045,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             self.apply_cx_gate(c, t);
         } else {
             // Multiple pairs: process all frames, then batch physical ops.
-            for pair in qubits.chunks_exact(2) {
-                let (c, t) = (pair[0].0, pair[1].0);
+            for &(q0, q1) in pairs {
+                let (c, t) = (q0.0, q1.0);
                 let fc = self.frames[c];
                 let ft = self.frames[t];
                 if fc.is_pauli() && ft.is_pauli() {
@@ -2071,9 +2067,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             };
             for idx in indices.iter_mut() {
                 let mut xor_mask = 0usize;
-                for pair in qubits.chunks_exact(2) {
-                    let control_mask = 1usize << pair[0].0;
-                    let target_mask = 1usize << pair[1].0;
+                for &(q0, q1) in pairs {
+                    let control_mask = 1usize << q0.0;
+                    let target_mask = 1usize << q1.0;
                     if *idx & control_mask != 0 {
                         xor_mask ^= target_mask;
                     }
@@ -2085,14 +2081,10 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        if qubits.len() == 2 {
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
             // Single pair: fast path
-            let (c, t) = (qubits[0].0, qubits[1].0);
+            let (c, t) = (pairs[0].0.0, pairs[0].1.0);
             let fc = self.frames[c];
             let ft = self.frames[t];
             if fc.is_pauli() && ft.is_pauli() {
@@ -2111,8 +2103,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             self.apply_cz_inplace(c, t);
         } else {
             // Multiple pairs: process all frames, then batch physical sign flips
-            for pair in qubits.chunks_exact(2) {
-                let (c, t) = (pair[0].0, pair[1].0);
+            for &(q0, q1) in pairs {
+                let (c, t) = (q0.0, q1.0);
                 let fc = self.frames[c];
                 let ft = self.frames[t];
                 if fc.is_pauli() && ft.is_pauli() {
@@ -2146,9 +2138,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             };
             for i in 0..len {
                 let mut flip = false;
-                for pair in qubits.chunks_exact(2) {
-                    let q1_mask = 1usize << pair[0].0;
-                    let q2_mask = 1usize << pair[1].0;
+                for &(q0, q1) in pairs {
+                    let q1_mask = 1usize << q0.0;
+                    let q2_mask = 1usize << q1.0;
                     if (indices[i] & q1_mask != 0) && (indices[i] & q2_mask != 0) {
                         flip = !flip;
                     }
@@ -2162,11 +2154,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
+    fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // CY = (I tensor S) . CX . (I tensor Sdg)
         // Circuit order: Sdg on target, then CX, then S on target
-        for pair in qubits.chunks_exact(2) {
-            let (c, t) = (pair[0].0, pair[1].0);
+        for &(q0, q1) in pairs {
+            let (c, t) = (q0.0, q1.0);
             // Compose Sdg on target frame, then flush both, apply CX, compose S on target
             self.compose_frame(t, CliffordFrame::SZDG, 0);
             self.flush_frame(c);
@@ -2177,21 +2169,17 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-        if qubits.len() == 2 {
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
             // Single pair: fast path
-            let (c, t) = (qubits[0].0, qubits[1].0);
+            let (c, t) = (pairs[0].0.0, pairs[0].1.0);
             self.apply_swap_gate(c, t);
             self.frames.swap(c, t);
             self.frame_phases.swap(c, t);
         } else {
             // Multiple pairs: swap all frames, then batch physical bit-swaps
-            for pair in qubits.chunks_exact(2) {
-                let (c, t) = (pair[0].0, pair[1].0);
+            for &(q0, q1) in pairs {
+                let (c, t) = (q0.0, q1.0);
                 self.frames.swap(c, t);
                 self.frame_phases.swap(c, t);
             }
@@ -2203,9 +2191,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 &mut self.indices_b[..len]
             };
             for idx in indices.iter_mut() {
-                for pair in qubits.chunks_exact(2) {
-                    let mask1 = 1usize << pair[0].0;
-                    let mask2 = 1usize << pair[1].0;
+                for &(q0, q1) in pairs {
+                    let mask1 = 1usize << q0.0;
+                    let mask2 = 1usize << q1.0;
                     let bit1 = (*idx & mask1) != 0;
                     let bit2 = (*idx & mask2) != 0;
                     if bit1 != bit2 {
@@ -2228,13 +2216,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // (G† P G = phase · P'), but we need the Schrödinger-picture phase
     // (G P G† = phase* · P'). For 8th-root phases, conjugation is (8-k)%8.
 
-    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZ requires pairs of qubits"
-        );
-        if qubits.len() == 2 {
-            let (q1, q2) = (qubits[0].0, qubits[1].0);
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
+            let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
             let f1 = self.frames[q1];
             let f2 = self.frames[q2];
             if f1.is_pauli() && f2.is_pauli() {
@@ -2250,8 +2234,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             self.apply_szz_gate(q1, q2);
         } else {
             // Multiple pairs: process frames, then batch physical diagonal phase
-            for pair in qubits.chunks_exact(2) {
-                let (q1, q2) = (pair[0].0, pair[1].0);
+            for &(qa, qb) in pairs {
+                let (q1, q2) = (qa.0, qb.0);
                 let f1 = self.frames[q1];
                 let f2 = self.frames[q2];
                 if f1.is_pauli() && f2.is_pauli() {
@@ -2266,7 +2250,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 }
             }
             // Batched physical SZZ: single pass, combined parity phase
-            let n_pairs = qubits.len() / 2;
+            let n_pairs = pairs.len();
             let len = self.len;
             let (indices, real, imag) = if self.active_a {
                 (
@@ -2283,9 +2267,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             };
             for i in 0..len {
                 let mut n_diff: u32 = 0;
-                for pair in qubits.chunks_exact(2) {
-                    let mask1 = 1usize << pair[0].0;
-                    let mask2 = 1usize << pair[1].0;
+                for &(q0, q1) in pairs {
+                    let mask1 = 1usize << q0.0;
+                    let mask2 = 1usize << q1.0;
                     let bit1 = (indices[i] & mask1) != 0;
                     let bit2 = (indices[i] & mask2) != 0;
                     if bit1 != bit2 {
@@ -2308,13 +2292,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZdg requires pairs of qubits"
-        );
-        if qubits.len() == 2 {
-            let (q1, q2) = (qubits[0].0, qubits[1].0);
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
+            let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
             let f1 = self.frames[q1];
             let f2 = self.frames[q2];
             if f1.is_pauli() && f2.is_pauli() {
@@ -2331,8 +2311,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             self.apply_szzdg_gate(q1, q2);
         } else {
             // Multiple pairs: process frames, then batch physical diagonal phase
-            for pair in qubits.chunks_exact(2) {
-                let (q1, q2) = (pair[0].0, pair[1].0);
+            for &(qa, qb) in pairs {
+                let (q1, q2) = (qa.0, qb.0);
                 let f1 = self.frames[q1];
                 let f2 = self.frames[q2];
                 if f1.is_pauli() && f2.is_pauli() {
@@ -2346,7 +2326,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 }
             }
             // Batched physical SZZdg: single pass, conjugated parity phase
-            let n_pairs = qubits.len() / 2;
+            let n_pairs = pairs.len();
             let len = self.len;
             let (indices, real, imag) = if self.active_a {
                 (
@@ -2363,9 +2343,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             };
             for i in 0..len {
                 let mut n_diff: u32 = 0;
-                for pair in qubits.chunks_exact(2) {
-                    let mask1 = 1usize << pair[0].0;
-                    let mask2 = 1usize << pair[1].0;
+                for &(q0, q1) in pairs {
+                    let mask1 = 1usize << q0.0;
+                    let mask2 = 1usize << q1.0;
                     let bit1 = (indices[i] & mask1) != 0;
                     let bit2 = (indices[i] & mask2) != 0;
                     if bit1 != bit2 {
@@ -2388,13 +2368,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn iswap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "iSWAP requires pairs of qubits"
-        );
-        if qubits.len() == 2 {
-            let (q1, q2) = (qubits[0].0, qubits[1].0);
+    fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
+            let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
             let f1 = self.frames[q1];
             let f2 = self.frames[q2];
             if f1.is_pauli() && f2.is_pauli() {
@@ -2410,8 +2386,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             self.apply_iswap_gate(q1, q2);
         } else {
             // Multiple pairs: process frames, then batch physical iSWAP
-            for pair in qubits.chunks_exact(2) {
-                let (q1, q2) = (pair[0].0, pair[1].0);
+            for &(qa, qb) in pairs {
+                let (q1, q2) = (qa.0, qb.0);
                 let f1 = self.frames[q1];
                 let f2 = self.frames[q2];
                 if f1.is_pauli() && f2.is_pauli() {
@@ -2442,9 +2418,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             };
             for i in 0..len {
                 let mut swap_count: u32 = 0;
-                for pair in qubits.chunks_exact(2) {
-                    let mask1 = 1usize << pair[0].0;
-                    let mask2 = 1usize << pair[1].0;
+                for &(q0, q1) in pairs {
+                    let mask1 = 1usize << q0.0;
+                    let mask2 = 1usize << q1.0;
                     let bit1 = (indices[i] & mask1) != 0;
                     let bit2 = (indices[i] & mask2) != 0;
                     if bit1 != bit2 {
@@ -2701,12 +2677,8 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 
-    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta_rad = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RXX requires pairs of qubits"
-        );
         // RXX(theta) = exp(-i*theta*XX/2)
         // Pairs (00<->11) and (01<->10) with matrix [[cos, -i*sin], [-i*sin, cos]].
         //
@@ -2715,9 +2687,9 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         //
         // Hybrid: use direct gate for Pauli frames (push-through saves flush),
         // decomposition H*H*RZZ*H*H for non-Pauli (frame cancellation is O(k)).
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].0;
-            let q2 = pair[1].0;
+        for &(qa, qb) in pairs {
+            let q1 = qa.0;
+            let q2 = qb.0;
 
             if self.frames[q1].is_pauli() && self.frames[q2].is_pauli() {
                 let mut flips = 0u32;
@@ -2740,22 +2712,18 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             } else {
                 // Non-Pauli frame: decompose as H*H*RZZ*H*H.
                 // H updates the frame cheaply, and RZZ benefits from push-through.
-                self.h(&[pair[0]])
-                    .h(&[pair[1]])
-                    .rzz(theta, pair)
-                    .h(&[pair[0]])
-                    .h(&[pair[1]]);
+                self.h(&[qa])
+                    .h(&[qb])
+                    .rzz(theta, &[(qa, qb)])
+                    .h(&[qa])
+                    .h(&[qb]);
             }
         }
         self
     }
 
-    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta_rad = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RYY requires pairs of qubits"
-        );
         // RYY(theta) = exp(-i*theta*YY/2)
         // Same parity (00<->11): matrix [[cos, +i*sin], [+i*sin, cos]]
         // Diff parity (01<->10): matrix [[cos, -i*sin], [-i*sin, cos]]
@@ -2765,9 +2733,9 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         //
         // Hybrid: use direct gate for Pauli frames (push-through saves flush),
         // decomposition SX*SX*RZZ*SXdg*SXdg for non-Pauli (frame cancellation is O(k)).
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].0;
-            let q2 = pair[1].0;
+        for &(qa, qb) in pairs {
+            let q1 = qa.0;
+            let q2 = qb.0;
 
             if self.frames[q1].is_pauli() && self.frames[q2].is_pauli() {
                 let mut flips = 0u32;
@@ -2791,29 +2759,25 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
             } else {
                 // Non-Pauli frame: decompose as SX*SX*RZZ*SXdg*SXdg.
                 // SX/SXdg update frames cheaply, and RZZ benefits from push-through.
-                self.sx(&[pair[0]])
-                    .sx(&[pair[1]])
-                    .rzz(theta, pair)
-                    .sxdg(&[pair[0]])
-                    .sxdg(&[pair[1]]);
+                self.sx(&[qa])
+                    .sx(&[qb])
+                    .rzz(theta, &[(qa, qb)])
+                    .sxdg(&[qa])
+                    .sxdg(&[qb]);
             }
         }
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
         // RZZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2}, e^{i*theta/2}, e^{-i*theta/2})
         //
         // Push-through: X and Y anticommute with Z, so each qubit with X component
         // in its Pauli frame contributes a flip.
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].0;
-            let q2 = pair[1].0;
+        for &(qa, qb) in pairs {
+            let q1 = qa.0;
+            let q2 = qb.0;
 
             let mut flips = 0u32;
             if self.frames[q1].is_pauli() {
@@ -2915,7 +2879,7 @@ mod tests {
     fn test_bell_state() {
         let mut sim = SparseStateVecSoA::new(2);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         assert_eq!(sim.num_amplitudes(), 2);
         let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
@@ -2938,7 +2902,7 @@ mod tests {
     fn test_cz_gate() {
         let mut sim = SparseStateVecSoA::new(2);
         sim.h(&[QubitId(0), QubitId(1)]);
-        sim.cz(&[QubitId(0), QubitId(1)]);
+        sim.cz(&[(QubitId(0), QubitId(1))]);
 
         // |11⟩ should have negative amplitude
         assert!(sim.get_amplitude(0b11).re < 0.0);
@@ -2948,7 +2912,7 @@ mod tests {
     fn test_cx_gate() {
         let mut sim = SparseStateVecSoA::new(2);
         sim.x(&[QubitId(0)]); // |01⟩
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Should be |11⟩
         assert_eq!(sim.num_amplitudes(), 1);

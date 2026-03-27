@@ -179,15 +179,15 @@ pub fn discover_logical_operators(
                 }
                 Pauli::X => {
                     // Controlled-X (CNOT) from ancilla to data
-                    state.cx(&[ancilla, qubit]);
+                    state.cx(&[(ancilla, qubit)]);
                 }
                 Pauli::Z => {
                     // Controlled-Z from ancilla to data
-                    state.cz(&[ancilla, qubit]);
+                    state.cz(&[(ancilla, qubit)]);
                 }
                 Pauli::Y => {
                     // Controlled-Y from ancilla to data
-                    state.cy(&[ancilla, qubit]);
+                    state.cy(&[(ancilla, qubit)]);
                 }
             }
         }

@@ -1202,7 +1202,7 @@ impl GeneralNoiseModel {
             // Mark qubit as leaked
             trace!("Marking qubit {qubit} as leaked");
             self.mark_as_leaked(qubit);
-            Some(Gate::prep(&[qubit]))
+            Some(Gate::pz(&[qubit]))
         } else {
             // Apply completely depolarizing noise instead of leakage
             trace!("Replaced leakage with Pauli error on qubit {qubit}");
@@ -1273,7 +1273,7 @@ impl GeneralNoiseModel {
         } else {
             trace!("Marking qubit {qubit} as unleaked");
             self.mark_as_unleaked(qubit);
-            Option::from(Gate::prep(&[qubit]))
+            Option::from(Gate::pz(&[qubit]))
         }
     }
 
@@ -2167,7 +2167,7 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.mz(&[0]); // Regular measure
-        builder.add_measure_leakages(&[1]); // MeasureLeaked
+        builder.measure_leakages(&[1]); // MeasureLeaked
 
         let measurement_command = builder.build();
         let _noisy_command = noise.start(measurement_command.clone()).unwrap();
@@ -2234,7 +2234,7 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.mz(&[0]); // Regular measure on leaked qubit
-        builder.add_measure_leakages(&[1]); // MeasureLeaked on leaked qubit
+        builder.measure_leakages(&[1]); // MeasureLeaked on leaked qubit
 
         let measurement_command = builder.build();
         let _noisy_command = noise.start(measurement_command).unwrap();
@@ -2287,8 +2287,8 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.mz(&[0]); // Regular measure on leaked qubit 0
-        builder.add_measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
-        builder.add_measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
+        builder.measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
+        builder.measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
         builder.mz(&[3]); // Regular measure on non-leaked qubit 3
 
         let measurement_command = builder.build();
@@ -2489,7 +2489,7 @@ mod tests {
         builder.pz(&[0, 1, 2, 3, 4]);
         // Apply mid-circuit measurement and reset
         builder.mz(&[2]);
-        builder.add_meas_crosstalk_global_payload(&[2]);
+        builder.meas_crosstalk_global_payload(&[2]);
         builder.pz(&[2]);
         let _cmd = noise.start(builder.build()).unwrap();
 

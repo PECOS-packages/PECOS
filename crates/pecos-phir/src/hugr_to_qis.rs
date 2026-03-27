@@ -39,7 +39,7 @@ pub fn emit_const_float(result: SSAValue, value: f64) -> Instruction {
     }
 }
 
-/// Helper: emit a `qis.rz(qubit, angle)` instruction.
+/// Helper: emit a `qis.rz(qubit, &[angle])` instruction.
 #[must_use]
 pub fn emit_qis_rz(qubit: SSAValue, angle: SSAValue) -> Instruction {
     Instruction {

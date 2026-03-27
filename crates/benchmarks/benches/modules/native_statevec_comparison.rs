@@ -54,7 +54,7 @@ fn pecos_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
             sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
         }
         for q in 0..num_qubits - 1 {
-            sim.cx(&[QubitId(q), QubitId(q + 1)]);
+            sim.cx(&[(QubitId(q), QubitId(q + 1))]);
         }
     }
 }
@@ -642,7 +642,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -655,7 +655,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -667,7 +667,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -680,7 +680,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -692,7 +692,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());

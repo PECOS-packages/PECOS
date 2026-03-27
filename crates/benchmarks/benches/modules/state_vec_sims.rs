@@ -62,7 +62,7 @@ where
         }
         // Two-qubit layer: CX between adjacent qubits
         for q in 0..(num_qubits - 1) {
-            sim.cx(&[QubitId(q), QubitId(q + 1)]);
+            sim.cx(&[(QubitId(q), QubitId(q + 1))]);
         }
     }
 }
@@ -162,7 +162,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -174,7 +174,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.cz(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cz(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -186,7 +186,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.szz(&[QubitId(q), QubitId(q + 1)]);
+                    sim.szz(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -198,7 +198,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.sxx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.sxx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());

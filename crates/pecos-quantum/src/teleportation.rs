@@ -29,8 +29,8 @@ use crate::DagCircuit;
 pub fn bell_pair(dag: &mut DagCircuit, a: impl Into<QubitId>, b: impl Into<QubitId>) {
     let a = a.into();
     let b = b.into();
-    dag.h(a);
-    dag.cx(a, b);
+    dag.h(&[a]);
+    dag.cx(&[(a, b)]);
 }
 
 /// Perform a Bell basis measurement on two qubits.
@@ -45,8 +45,8 @@ pub fn bell_measure(
 ) {
     let a = a.into();
     let b = b.into();
-    dag.cx(a, b);
-    dag.h(a);
+    dag.cx(&[(a, b)]);
+    dag.h(&[a]);
     dag.mz_to(a, cbit_a);
     dag.mz_to(b, cbit_b);
 }
@@ -62,8 +62,8 @@ pub fn teleport_corrections(
     cbit_z: impl Into<ClassicalBitId>,
 ) {
     let target = target.into();
-    dag.if_bit(cbit_x, true).x(target);
-    dag.if_bit(cbit_z, true).z(target);
+    dag.if_bit(cbit_x, true).x(&[target]);
+    dag.if_bit(cbit_z, true).z(&[target]);
 }
 
 /// Full quantum teleportation protocol.

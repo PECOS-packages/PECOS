@@ -31,10 +31,10 @@ use rand::rngs::SmallRng;
 /// Build a simple syndrome extraction circuit (2 data qubits, 1 ancilla).
 fn build_parity_check_circuit() -> DagCircuit {
     let mut dag = DagCircuit::new();
-    dag.pz(2); // Ancilla
-    dag.cx(0, 2);
-    dag.cx(1, 2);
-    dag.mz(2);
+    dag.pz(&[2]); // Ancilla
+    dag.cx(&[(0, 2)]);
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);
     dag
 }
 
@@ -42,17 +42,17 @@ fn build_parity_check_circuit() -> DagCircuit {
 fn build_repetition_code_circuit() -> DagCircuit {
     let mut dag = DagCircuit::new();
     // Prepare ancillas
-    dag.pz(3);
-    dag.pz(4);
+    dag.pz(&[3]);
+    dag.pz(&[4]);
     // Check Z0*Z1
-    dag.cx(0, 3);
-    dag.cx(1, 3);
+    dag.cx(&[(0, 3)]);
+    dag.cx(&[(1, 3)]);
     // Check Z1*Z2
-    dag.cx(1, 4);
-    dag.cx(2, 4);
+    dag.cx(&[(1, 4)]);
+    dag.cx(&[(2, 4)]);
     // Measure
-    dag.mz(3);
-    dag.mz(4);
+    dag.mz(&[3]);
+    dag.mz(&[4]);
     dag
 }
 
@@ -292,9 +292,9 @@ fn test_empty_detector_definitions() {
 #[test]
 fn test_single_qubit_circuit() {
     let mut dag = DagCircuit::new();
-    dag.pz(0);
-    dag.h(0);
-    dag.mz(0);
+    dag.pz(&[0]);
+    dag.h(&[0]);
+    dag.mz(&[0]);
 
     let analyzer = DagFaultAnalyzer::new(&dag);
     let influence_map = analyzer.build_influence_map();

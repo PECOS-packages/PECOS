@@ -45,8 +45,8 @@ fn main() {
 /// Bell state circuit -> ZX -> all formats.
 fn bell_state_ascii() {
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.cx(0, 1);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
 
     let graph = dag_to_zx(&dag).expect("conversion failed");
 
@@ -74,11 +74,11 @@ fn graph_state_ascii() {
 /// Before/after simplification in all formats.
 fn simplification_ascii() {
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.h(0);
-    dag.cx(0, 1);
-    dag.cx(0, 1);
-    dag.h(1);
+    dag.h(&[0]);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
+    dag.cx(&[(0, 1)]);
+    dag.h(&[1]);
 
     let mut graph = dag_to_zx(&dag).expect("conversion failed");
 
@@ -97,8 +97,8 @@ fn colored_output() {
     println!("\n--- Colored Output ---\n");
 
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.cx(0, 1);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
 
     let graph = dag_to_zx(&dag).expect("conversion failed");
 

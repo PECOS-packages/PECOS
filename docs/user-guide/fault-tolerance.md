@@ -256,10 +256,10 @@ use pecos_quantum::DagCircuit;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build a simple parity check circuit
     let mut dag = DagCircuit::new();
-    dag.pz(2);       // prepare ancilla
-    dag.cx(0, 2);    // parity check
-    dag.cx(1, 2);
-    dag.mz(2);       // measure syndrome
+    dag.pz(&[2]);       // prepare ancilla
+    dag.cx(&[(0, 2)]);  // parity check
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);       // measure syndrome
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);

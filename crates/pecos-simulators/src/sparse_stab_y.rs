@@ -1048,15 +1048,10 @@ where
     /// - AND q1's Z matches q2's X (both absent or both present)
     ///   i.e., (X,Z) or (Y,Y) on (q1,q2) -- exactly the cases where `n_Y` changes by +/-2.
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            let q1 = control.index();
+            let q2 = target.index();
 
             // Y-convention sign update (only on stabs, not destabs)
             // Toggle signs_minus where: col_x[q1] AND col_z[q2] AND NOT(col_z[q1] XOR col_x[q2])
@@ -1107,21 +1102,16 @@ where
     /// Sign update: toggle `signs_minus` when the odd-Z qubit had Y (both x,z set),
     /// because removing Y's implicit i requires a stored phase correction.
     #[inline]
-    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXX requires pairs of qubits"
-        );
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
-
-            // Sign update (stabs only): Q → i·Q·XX. Per-qubit phase from
-            // right-multiplying by X: Z·X=iY (c=+i), Y·X=-iZ (c=-i).
-            // For odd-Z generators (z=1 at one qubit), total = i·c_q:
-            //   z=1 qubit is Z (x=0): i·(+i) = -1 → toggle signs_minus
-            //   z=1 qubit is Y (x=1): i·(-i) = +1 → no toggle
+            // Sign update (stabs only): Q -> i*Q*XX. Per-qubit phase from
+            // right-multiplying by X: Z*X=iY (c=+i), Y*X=-iZ (c=-i).
+            // For odd-Z generators (z=1 at one qubit), total = i*c_q:
+            //   z=1 qubit is Z (x=0): i*(+i) = -1 -> toggle signs_minus
+            //   z=1 qubit is Y (x=1): i*(-i) = +1 -> no toggle
             for g in self.stabs.col_z[q1].iter() {
                 if !self.stabs.col_z[q2].contains(g) && !self.stabs.col_x[q1].contains(g) {
                     self.stabs.signs_minus.toggle(g);
@@ -1177,14 +1167,10 @@ where
 
     /// Adjoint of square root of XX gate. `SXXdg` = X(q1).X(q2).SXX
     #[inline]
-    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXXdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.x(&q1s).x(&q2s).sxx(qubits)
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.x(&q1s).x(&q2s).sxx(pairs)
     }
 
     /// Square root of ZZ gate (Y-convention).
@@ -1192,21 +1178,16 @@ where
     /// Generators with odd X-count on {q1,q2}: toggle Z on both qubits.
     /// Sign update: toggle `signs_minus` when the odd-X qubit had Y (both x,z set).
     #[inline]
-    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZ requires pairs of qubits"
-        );
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
-
-            // Sign update (stabs only): Q → i·Q·ZZ. Per-qubit phase from
-            // right-multiplying by Z: X·Z=-iY (c=-i), Y·Z=iX (c=+i).
-            // For odd-X generators (x=1 at one qubit), total = i·c_q:
-            //   x=1 qubit is X (z=0): i·(-i) = +1 → no toggle
-            //   x=1 qubit is Y (z=1): i·(+i) = -1 → toggle signs_minus
+            // Sign update (stabs only): Q -> i*Q*ZZ. Per-qubit phase from
+            // right-multiplying by Z: X*Z=-iY (c=-i), Y*Z=iX (c=+i).
+            // For odd-X generators (x=1 at one qubit), total = i*c_q:
+            //   x=1 qubit is X (z=0): i*(-i) = +1 -> no toggle
+            //   x=1 qubit is Y (z=1): i*(+i) = -1 -> toggle signs_minus
             for g in self.stabs.col_x[q1].iter() {
                 if !self.stabs.col_x[q2].contains(g) && self.stabs.col_z[q1].contains(g) {
                     self.stabs.signs_minus.toggle(g);
@@ -1261,14 +1242,10 @@ where
 
     /// Adjoint of square root of ZZ gate. `SZZdg` = Z(q1).Z(q2).SZZ
     #[inline]
-    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.z(&q1s).z(&q2s).szz(qubits)
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.z(&q1s).z(&q2s).szz(pairs)
     }
 
     /// Square root of YY gate (Y-convention).
@@ -1276,22 +1253,17 @@ where
     /// Generators where odd number of {q1,q2} anticommute with Y: toggle both X,Z on both qubits.
     /// Sign update: toggle `signs_minus` when the non-anticommuting qubit had Y (both x,z set).
     #[inline]
-    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYY requires pairs of qubits"
-        );
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
-
-            // Sign update (stabs only): Q → i·Q·YY. Per-qubit phase from
-            // right-multiplying by Y: X·Y=iZ (c=+i), Z·Y=-iX (c=-i).
-            // For the anticommuting qubit (x≠z), total = i·c:
-            //   X (x=1,z=0): i·(+i) = -1 → toggle signs_minus
-            //   Z (x=0,z=1): i·(-i) = +1 → no toggle
-            // Commuting qubit (x=z) always has c=+1 (I·Y=Y or Y·Y=I).
+            // Sign update (stabs only): Q -> i*Q*YY. Per-qubit phase from
+            // right-multiplying by Y: X*Y=iZ (c=+i), Z*Y=-iX (c=-i).
+            // For the anticommuting qubit (x!=z), total = i*c:
+            //   X (x=1,z=0): i*(+i) = -1 -> toggle signs_minus
+            //   Z (x=0,z=1): i*(-i) = +1 -> no toggle
+            // Commuting qubit (x=z) always has c=+1 (I*Y=Y or Y*Y=I).
             //
             // Iterate over generators with X at q1 (x1=1, z1=0) where q2 commutes (x2=z2).
             for g in self.stabs.col_x[q1].iter() {
@@ -1301,7 +1273,7 @@ where
                 let x2 = self.stabs.col_x[q2].contains(g);
                 let z2 = self.stabs.col_z[q2].contains(g);
                 if x2 == z2 {
-                    // q2 commutes with Y → generator is affected, toggle
+                    // q2 commutes with Y -> generator is affected, toggle
                     self.stabs.signs_minus.toggle(g);
                 }
             }
@@ -1313,7 +1285,7 @@ where
                 let x1 = self.stabs.col_x[q1].contains(g);
                 let z1 = self.stabs.col_z[q1].contains(g);
                 if x1 == z1 {
-                    // q1 commutes with Y → toggle
+                    // q1 commutes with Y -> toggle
                     self.stabs.signs_minus.toggle(g);
                 }
             }
@@ -1389,14 +1361,10 @@ where
 
     /// Adjoint of square root of YY gate. `SYYdg` = Y(q1).Y(q2).SYY
     #[inline]
-    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYYdg requires pairs of qubits"
-        );
-        let q1s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: Vec<QubitId> = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.y(&q1s).y(&q2s).syy(qubits)
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: Vec<QubitId> = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: Vec<QubitId> = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.y(&q1s).y(&q2s).syy(pairs)
     }
 
     /// Measures qubits in the Z basis.
@@ -1492,8 +1460,8 @@ mod tests {
         [QubitId(n)]
     }
 
-    fn q2(a: usize, b: usize) -> [QubitId; 2] {
-        [QubitId(a), QubitId(b)]
+    fn q2(a: usize, b: usize) -> [(QubitId, QubitId); 1] {
+        [(QubitId(a), QubitId(b))]
     }
 
     /// Test that the initial state is correct: stabs = Z per qubit, destabs = X per qubit.
@@ -1726,7 +1694,7 @@ mod tests {
     }
 
     fn apply_2q_cliff(state: &mut SparseStabY, cliff: Clifford) {
-        let qq = &[QubitId(0), QubitId(1)];
+        let qq = &[(QubitId(0), QubitId(1))];
         match cliff {
             Clifford::CX => {
                 state.cx(qq);
@@ -1964,121 +1932,133 @@ mod tests {
         use crate::SparseStab;
         use pecos_core::clifford::Clifford;
 
+        /// A test operation: either a single-qubit or two-qubit gate.
+        enum Op {
+            Sq(Clifford, QubitId),
+            Tq(Clifford, QubitId, QubitId),
+        }
+        use Op::{Sq, Tq};
+
+        fn apply(y: &mut SparseStabY, w: &mut SparseStab, op: &Op) {
+            match *op {
+                Sq(Clifford::H, q) => {
+                    y.h(&[q]);
+                    w.h(&[q]);
+                }
+                Sq(Clifford::SZ, q) => {
+                    y.sz(&[q]);
+                    w.sz(&[q]);
+                }
+                Sq(Clifford::SY, q) => {
+                    y.sy(&[q]);
+                    w.sy(&[q]);
+                }
+                Sq(g, _) => panic!("unhandled 1q gate {g:?}"),
+                Tq(Clifford::CX, a, b) => {
+                    y.cx(&[(a, b)]);
+                    w.cx(&[(a, b)]);
+                }
+                Tq(Clifford::CY, a, b) => {
+                    y.cy(&[(a, b)]);
+                    w.cy(&[(a, b)]);
+                }
+                Tq(Clifford::CZ, a, b) => {
+                    y.cz(&[(a, b)]);
+                    w.cz(&[(a, b)]);
+                }
+                Tq(Clifford::SXX, a, b) => {
+                    y.sxx(&[(a, b)]);
+                    w.sxx(&[(a, b)]);
+                }
+                Tq(Clifford::SYY, a, b) => {
+                    y.syy(&[(a, b)]);
+                    w.syy(&[(a, b)]);
+                }
+                Tq(Clifford::SZZ, a, b) => {
+                    y.szz(&[(a, b)]);
+                    w.szz(&[(a, b)]);
+                }
+                Tq(Clifford::ISWAP, a, b) => {
+                    y.iswap(&[(a, b)]);
+                    w.iswap(&[(a, b)]);
+                }
+                Tq(g, _, _) => panic!("unhandled 2q gate {g:?}"),
+            }
+        }
+
         for seed in 0..100 {
             let mut y_sim = SparseStabY::with_seed(4, seed);
             let mut w_sim = SparseStab::with_seed(4, seed);
 
             // Build a circuit that creates Y-stabilizers
             // Pattern depends on seed to get variety
-            let ops: &[(Clifford, &[QubitId])] = match seed % 10 {
-                0 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::SZ, &[QubitId(0)]), // Creates Y stabilizer
-                    (Clifford::CX, &[QubitId(0), QubitId(1)]),
+            let ops: Vec<Op> = match seed % 10 {
+                0 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Sq(Clifford::SZ, QubitId(0)), // Creates Y stabilizer
+                    Tq(Clifford::CX, QubitId(0), QubitId(1)),
                 ],
-                1 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::CY, &[QubitId(0), QubitId(1)]), // Creates Y
+                1 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Tq(Clifford::CY, QubitId(0), QubitId(1)), // Creates Y
                 ],
-                2 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::H, &[QubitId(1)]),
-                    (Clifford::SYY, &[QubitId(0), QubitId(1)]), // Y-Y entangling
+                2 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Sq(Clifford::H, QubitId(1)),
+                    Tq(Clifford::SYY, QubitId(0), QubitId(1)), // Y-Y entangling
                 ],
-                3 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::SZ, &[QubitId(0)]),
-                    (Clifford::CX, &[QubitId(0), QubitId(1)]),
-                    (Clifford::SZ, &[QubitId(1)]),
-                    (Clifford::CX, &[QubitId(1), QubitId(2)]),
+                3 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Sq(Clifford::SZ, QubitId(0)),
+                    Tq(Clifford::CX, QubitId(0), QubitId(1)),
+                    Sq(Clifford::SZ, QubitId(1)),
+                    Tq(Clifford::CX, QubitId(1), QubitId(2)),
                 ],
-                4 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::H, &[QubitId(2)]),
-                    (Clifford::ISWAP, &[QubitId(0), QubitId(1)]),
-                    (Clifford::CX, &[QubitId(2), QubitId(3)]),
+                4 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Sq(Clifford::H, QubitId(2)),
+                    Tq(Clifford::ISWAP, QubitId(0), QubitId(1)),
+                    Tq(Clifford::CX, QubitId(2), QubitId(3)),
                 ],
-                5 => &[
-                    (Clifford::H, &[QubitId(1)]),
-                    (Clifford::SY, &[QubitId(1)]),
-                    (Clifford::CZ, &[QubitId(0), QubitId(1)]),
-                    (Clifford::H, &[QubitId(0)]),
+                5 => vec![
+                    Sq(Clifford::H, QubitId(1)),
+                    Sq(Clifford::SY, QubitId(1)),
+                    Tq(Clifford::CZ, QubitId(0), QubitId(1)),
+                    Sq(Clifford::H, QubitId(0)),
                 ],
-                6 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::CX, &[QubitId(0), QubitId(1)]),
-                    (Clifford::SZ, &[QubitId(0)]),
-                    (Clifford::SZ, &[QubitId(1)]),
-                    (Clifford::H, &[QubitId(2)]),
-                    (Clifford::CX, &[QubitId(2), QubitId(3)]),
+                6 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Tq(Clifford::CX, QubitId(0), QubitId(1)),
+                    Sq(Clifford::SZ, QubitId(0)),
+                    Sq(Clifford::SZ, QubitId(1)),
+                    Sq(Clifford::H, QubitId(2)),
+                    Tq(Clifford::CX, QubitId(2), QubitId(3)),
                 ],
-                7 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::SZ, &[QubitId(0)]),
-                    (Clifford::H, &[QubitId(0)]), // SZ H creates non-trivial 1q state
-                    (Clifford::CX, &[QubitId(0), QubitId(1)]),
+                7 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Sq(Clifford::SZ, QubitId(0)),
+                    Sq(Clifford::H, QubitId(0)), // SZ H creates non-trivial 1q state
+                    Tq(Clifford::CX, QubitId(0), QubitId(1)),
                 ],
-                8 => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::H, &[QubitId(1)]),
-                    (Clifford::CX, &[QubitId(0), QubitId(1)]),
-                    (Clifford::SZ, &[QubitId(0)]),
-                    (Clifford::SZ, &[QubitId(1)]),
-                    (Clifford::CX, &[QubitId(1), QubitId(2)]),
-                    (Clifford::SZ, &[QubitId(2)]),
+                8 => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Sq(Clifford::H, QubitId(1)),
+                    Tq(Clifford::CX, QubitId(0), QubitId(1)),
+                    Sq(Clifford::SZ, QubitId(0)),
+                    Sq(Clifford::SZ, QubitId(1)),
+                    Tq(Clifford::CX, QubitId(1), QubitId(2)),
+                    Sq(Clifford::SZ, QubitId(2)),
                 ],
-                _ => &[
-                    (Clifford::H, &[QubitId(0)]),
-                    (Clifford::SXX, &[QubitId(0), QubitId(1)]),
-                    (Clifford::SYY, &[QubitId(1), QubitId(2)]),
-                    (Clifford::SZZ, &[QubitId(2), QubitId(3)]),
+                _ => vec![
+                    Sq(Clifford::H, QubitId(0)),
+                    Tq(Clifford::SXX, QubitId(0), QubitId(1)),
+                    Tq(Clifford::SYY, QubitId(1), QubitId(2)),
+                    Tq(Clifford::SZZ, QubitId(2), QubitId(3)),
                 ],
             };
 
-            for &(gate, qubits) in ops {
-                match gate {
-                    Clifford::H => {
-                        y_sim.h(qubits);
-                        w_sim.h(qubits);
-                    }
-                    Clifford::SZ => {
-                        y_sim.sz(qubits);
-                        w_sim.sz(qubits);
-                    }
-                    Clifford::SY => {
-                        y_sim.sy(qubits);
-                        w_sim.sy(qubits);
-                    }
-                    Clifford::CX => {
-                        y_sim.cx(qubits);
-                        w_sim.cx(qubits);
-                    }
-                    Clifford::CY => {
-                        y_sim.cy(qubits);
-                        w_sim.cy(qubits);
-                    }
-                    Clifford::CZ => {
-                        y_sim.cz(qubits);
-                        w_sim.cz(qubits);
-                    }
-                    Clifford::SXX => {
-                        y_sim.sxx(qubits);
-                        w_sim.sxx(qubits);
-                    }
-                    Clifford::SYY => {
-                        y_sim.syy(qubits);
-                        w_sim.syy(qubits);
-                    }
-                    Clifford::SZZ => {
-                        y_sim.szz(qubits);
-                        w_sim.szz(qubits);
-                    }
-                    Clifford::ISWAP => {
-                        y_sim.iswap(qubits);
-                        w_sim.iswap(qubits);
-                    }
-                    _ => panic!("unhandled gate {gate:?}"),
-                }
+            for op in &ops {
+                apply(&mut y_sim, &mut w_sim, op);
             }
 
             let qubits_all = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];

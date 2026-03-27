@@ -58,9 +58,9 @@
 //!
 //!         // Try again: prep, rotate, measure
 //!         Some(CommandBuilder::new()
-//!             .pz(0)
-//!             .h(0)
-//!             .mz(0)
+//!             .pz(&[0])
+//!             .h(&[0])
+//!             .mz(&[0])
 //!             .build())
 //!     }
 //!
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_static_program() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut program = StaticProgram::new(commands, 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_repeated_program() {
         // Simulate QEC: prep, measure syndrome, repeat
-        let round_commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let round_commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut program = RepeatedProgram::new(round_commands, 3, 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
@@ -528,12 +528,12 @@ mod tests {
     #[test]
     fn test_conditional_program() {
         // Initial: prep and measure
-        let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         // Branch: if measured 1, apply X correction
         let branch = |outcomes: &MeasurementOutcomes| {
             if outcomes.get_bit(QubitId(0)) == Some(true) {
-                Some(CommandBuilder::new().x(0).mz(0).build())
+                Some(CommandBuilder::new().x(&[0]).mz(&[0]).build())
             } else {
                 None
             }
@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_program_reset() {
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
         let mut program = StaticProgram::new(commands, 1);
         let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
 
@@ -566,12 +566,12 @@ mod tests {
     #[test]
     fn test_bell_state_program() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut program = StaticProgram::new(commands, 2);

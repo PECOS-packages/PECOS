@@ -1069,27 +1069,22 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     // Two-qubit gates
     // -------------------------------------------------------------------------
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-
-        if qubits.len() == 2 {
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
             // Single pair: use O(k) partition-swap (needs sorted input)
             self.ensure_sorted();
-            self.apply_cx_inplace(qubits[0].0, qubits[1].0);
+            self.apply_cx_inplace(pairs[0].0.0, pairs[0].1.0);
         } else {
             // Multiple pairs: compute combined XOR mask for each amplitude
             // This avoids multiple buffer swaps
-            let pairs: Vec<(usize, usize)> = qubits
-                .chunks_exact(2)
-                .map(|pair| (1usize << pair[0].0, 1usize << pair[1].0))
+            let masks: Vec<(usize, usize)> = pairs
+                .iter()
+                .map(|&(q0, q1)| (1usize << q0.0, 1usize << q1.0))
                 .collect();
 
             for (idx, _) in &mut self.amplitudes {
                 let mut xor_mask = 0usize;
-                for &(control_mask, target_mask) in &pairs {
+                for &(control_mask, target_mask) in &masks {
                     if *idx & control_mask != 0 {
                         xor_mask ^= target_mask;
                     }
@@ -1101,16 +1096,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-
-        if qubits.len() == 2 {
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
             // Single pair: simple path
-            let q1_mask = 1usize << qubits[0].0;
-            let q2_mask = 1usize << qubits[1].0;
+            let q1_mask = 1usize << pairs[0].0.0;
+            let q2_mask = 1usize << pairs[0].1.0;
             for (idx, amp) in &mut self.amplitudes {
                 if (*idx & q1_mask != 0) && (*idx & q2_mask != 0) {
                     *amp = -*amp;
@@ -1119,9 +1109,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         } else {
             // Multiple pairs: single pass checking all pairs
             // Precompute masks for efficiency
-            let masks: Vec<(usize, usize)> = qubits
-                .chunks_exact(2)
-                .map(|pair| (1usize << pair[0].0, 1usize << pair[1].0))
+            let masks: Vec<(usize, usize)> = pairs
+                .iter()
+                .map(|&(q0, q1)| (1usize << q0.0, 1usize << q1.0))
                 .collect();
 
             for (idx, amp) in &mut self.amplitudes {
@@ -1139,17 +1129,13 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
+    fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // CY: if control=1, apply Y to target
         // Y|0⟩ = i|1⟩, Y|1⟩ = -i|0⟩
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CY requires pairs of qubits"
-        );
 
-        if qubits.len() == 2 {
-            let control_mask = 1usize << qubits[0].0;
-            let target_mask = 1usize << qubits[1].0;
+        if pairs.len() == 1 {
+            let control_mask = 1usize << pairs[0].0.0;
+            let target_mask = 1usize << pairs[0].1.0;
             let i = Complex64::new(0.0, 1.0);
             let mi = Complex64::new(0.0, -1.0);
 
@@ -1162,9 +1148,9 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             }
         } else {
             // Batched CY: for each pair, conditionally flip target and apply phase
-            let pairs: Vec<(usize, usize)> = qubits
-                .chunks_exact(2)
-                .map(|pair| (1usize << pair[0].0, 1usize << pair[1].0))
+            let masks: Vec<(usize, usize)> = pairs
+                .iter()
+                .map(|&(q0, q1)| (1usize << q0.0, 1usize << q1.0))
                 .collect();
 
             let i = Complex64::new(0.0, 1.0);
@@ -1174,7 +1160,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
                 let mut phase = Complex64::new(1.0, 0.0);
                 let mut xor_mask = 0usize;
 
-                for &(control_mask, target_mask) in &pairs {
+                for &(control_mask, target_mask) in &masks {
                     if *idx & control_mask != 0 {
                         let target_was_one = *idx & target_mask != 0;
                         xor_mask ^= target_mask;
@@ -1190,16 +1176,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-
-        if qubits.len() == 2 {
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        if pairs.len() == 1 {
             // Single SWAP: simple path
-            let mask1 = 1usize << qubits[0].0;
-            let mask2 = 1usize << qubits[1].0;
+            let mask1 = 1usize << pairs[0].0.0;
+            let mask2 = 1usize << pairs[0].1.0;
             let combined = mask1 | mask2;
 
             for (idx, _) in &mut self.amplitudes {
@@ -1211,17 +1192,17 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             }
         } else {
             // Batched SWAP: compute all swaps in single pass
-            let pairs: Vec<(usize, usize, usize)> = qubits
-                .chunks_exact(2)
-                .map(|pair| {
-                    let m1 = 1usize << pair[0].0;
-                    let m2 = 1usize << pair[1].0;
+            let masks: Vec<(usize, usize, usize)> = pairs
+                .iter()
+                .map(|&(q0, q1)| {
+                    let m1 = 1usize << q0.0;
+                    let m2 = 1usize << q1.0;
                     (m1, m2, m1 | m2)
                 })
                 .collect();
 
             for (idx, _) in &mut self.amplitudes {
-                for &(mask1, mask2, combined) in &pairs {
+                for &(mask1, mask2, combined) in &masks {
                     let bit1 = (*idx & mask1) != 0;
                     let bit2 = (*idx & mask2) != 0;
                     if bit1 != bit2 {
@@ -1235,17 +1216,13 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn iswap(&mut self, qubits: &[QubitId]) -> &mut Self {
+    fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // iSWAP: |00⟩→|00⟩, |01⟩→i|10⟩, |10⟩→i|01⟩, |11⟩→|11⟩
         // Swaps bits when they differ, multiplies by i for each swap
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "iSWAP requires pairs of qubits"
-        );
 
-        if qubits.len() == 2 {
-            let mask1 = 1usize << qubits[0].0;
-            let mask2 = 1usize << qubits[1].0;
+        if pairs.len() == 1 {
+            let mask1 = 1usize << pairs[0].0.0;
+            let mask2 = 1usize << pairs[0].1.0;
             let combined = mask1 | mask2;
             let i = Complex64::new(0.0, 1.0);
 
@@ -1259,11 +1236,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             }
         } else {
             // Batched iSWAP: swap bits and count swaps for phase
-            let pairs: Vec<(usize, usize, usize)> = qubits
-                .chunks_exact(2)
-                .map(|pair| {
-                    let m1 = 1usize << pair[0].0;
-                    let m2 = 1usize << pair[1].0;
+            let masks: Vec<(usize, usize, usize)> = pairs
+                .iter()
+                .map(|&(q0, q1)| {
+                    let m1 = 1usize << q0.0;
+                    let m2 = 1usize << q1.0;
                     (m1, m2, m1 | m2)
                 })
                 .collect();
@@ -1278,7 +1255,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
 
             for (idx, amp) in &mut self.amplitudes {
                 let mut swap_count = 0usize;
-                for &(mask1, mask2, combined) in &pairs {
+                for &(mask1, mask2, combined) in &masks {
                     let bit1 = (*idx & mask1) != 0;
                     let bit2 = (*idx & mask2) != 0;
                     if bit1 != bit2 {
@@ -1559,20 +1536,16 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
         let half = theta / 2.0;
         // Same parity: e^{-i*theta/2}, different parity: e^{i*theta/2}
         let phase_same = Complex64::new((-half).cos(), (-half).sin());
         let phase_diff = Complex64::new(half.cos(), half.sin());
 
-        for pair in qubits.chunks_exact(2) {
-            let mask1 = 1usize << pair[0].0;
-            let mask2 = 1usize << pair[1].0;
+        for &(q0, q1) in pairs {
+            let mask1 = 1usize << q0.0;
+            let mask2 = 1usize << q1.0;
             for (idx, amp) in &mut self.amplitudes {
                 let bit1 = (*idx & mask1) != 0;
                 let bit2 = (*idx & mask2) != 0;
@@ -1653,7 +1626,7 @@ mod tests {
     fn test_bell_state() {
         let mut sim = SparseStateVecAoS::new(2);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         assert_eq!(sim.num_amplitudes(), 2);
         let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
@@ -1714,7 +1687,7 @@ mod tests {
     fn test_cx_gate() {
         let mut sim = SparseStateVecAoS::new(2);
         sim.x(&[QubitId(0)]); // |01⟩
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Should be |11⟩
         assert_eq!(sim.num_amplitudes(), 1);
@@ -1728,7 +1701,7 @@ mod tests {
         sim.h(&[QubitId(0), QubitId(1)]);
 
         // Apply CZ
-        sim.cz(&[QubitId(0), QubitId(1)]);
+        sim.cz(&[(QubitId(0), QubitId(1))]);
 
         // |11⟩ component should have negative sign
         let amp_11 = sim.get_amplitude(0b11);
@@ -1911,11 +1884,11 @@ mod tests {
         }
 
         // Individual CY gates
-        sim1.cy(&[QubitId(0), QubitId(4)]);
-        sim1.cy(&[QubitId(1), QubitId(5)]);
+        sim1.cy(&[(QubitId(0), QubitId(4))]);
+        sim1.cy(&[(QubitId(1), QubitId(5))]);
 
         // Batched CY gates
-        sim2.cy(&[QubitId(0), QubitId(4), QubitId(1), QubitId(5)]);
+        sim2.cy(&[(QubitId(0), QubitId(4)), (QubitId(1), QubitId(5))]);
 
         // Compare states
         for i in 0..64 {
@@ -1941,11 +1914,11 @@ mod tests {
         }
 
         // Individual iSWAP gates
-        sim1.iswap(&[QubitId(0), QubitId(1)]);
-        sim1.iswap(&[QubitId(2), QubitId(3)]);
+        sim1.iswap(&[(QubitId(0), QubitId(1))]);
+        sim1.iswap(&[(QubitId(2), QubitId(3))]);
 
         // Batched iSWAP gates
-        sim2.iswap(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
+        sim2.iswap(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
 
         // Compare states
         for i in 0..64 {

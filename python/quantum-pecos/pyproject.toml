@@ -32,6 +32,7 @@ dependencies = [
     "phir>=0.3.3",
     "networkx>=2.1.0",
     "guppylang>=0.21.6",
+    "tket<0.12.16",  # 0.12.16 requires GLIBC 2.38 (manylinux_2_38)
     "hugr>=0.13.0",
     "selene-sim~=0.2.0",
 ]

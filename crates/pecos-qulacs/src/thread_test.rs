@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod thread_safety_tests {
     use crate::QulacsStateVec;
-    use pecos_core::{RngManageable, qid, qid2};
+    use pecos_core::{QubitId, RngManageable, qid};
     use pecos_random::PecosRng;
     use pecos_simulators::{CliffordGateable, QuantumSimulator};
     use std::sync::{Arc, Mutex};
@@ -38,7 +38,7 @@ mod thread_safety_tests {
         let handle1 = thread::spawn(move || {
             let mut sim = sim1;
             sim.h(&qid(0));
-            sim.cx(&qid2(0, 1));
+            sim.cx(&[(QubitId(0), QubitId(1))]);
             let state = sim.state();
             results1
                 .lock()

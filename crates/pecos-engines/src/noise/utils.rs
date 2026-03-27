@@ -247,7 +247,7 @@ impl NoiseUtils {
             GateType::Idle if !gate.params.is_empty() => {
                 // Use gate params for idle time
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_idle(gate.params[0], &qubits_usize);
+                builder.idle(gate.params[0], &qubits_usize);
             }
 
             // Custom is a placeholder (actual gate name is in metadata) -- skip.

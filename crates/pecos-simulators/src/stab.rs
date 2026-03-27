@@ -19,17 +19,17 @@
 //! # Example
 //!
 //! ```rust
-//! use pecos_core::{qid, qid2};
+//! use pecos_core::{QubitId, qid};
 //! use pecos_simulators::{Stab, CliffordGateable, QuantumSimulator};
 //!
 //! // Create a stabilizer simulator
 //! let mut sim = Stab::new(2);
 //!
 //! // Create a Bell state
-//! sim.h(&qid(0)).cx(&qid2(0, 1));
+//! sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 //!
 //! // Measure
-//! let results = sim.mz(&qid2(0, 1));
+//! let results = sim.mz(&[QubitId(0), QubitId(1)]);
 //! assert_eq!(results[0].outcome, results[1].outcome);
 //! ```
 //!
@@ -160,20 +160,20 @@ impl CliffordGateable for Stab {
     }
 
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.inner.cx(qubits);
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.inner.cx(pairs);
         self
     }
 
     #[inline]
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.inner.cz(qubits);
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.inner.cz(pairs);
         self
     }
 
     #[inline]
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.inner.swap(qubits);
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.inner.swap(pairs);
         self
     }
 
@@ -253,7 +253,7 @@ mod tests {
     fn test_stab_basic() {
         let mut sim = Stab::new(2);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }

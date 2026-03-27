@@ -756,7 +756,7 @@ impl OperationProcessor {
                     // This conversion may lose precision for very large durations (>52 bits)
                     #[allow(clippy::cast_precision_loss)]
                     let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
-                    builder.add_idle(duration_seconds, &qubit_indices);
+                    builder.idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Transport {
@@ -774,7 +774,7 @@ impl OperationProcessor {
                     // This conversion may lose precision for very large durations (>52 bits)
                     #[allow(clippy::cast_precision_loss)]
                     let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
-                    builder.add_idle(duration_seconds, &qubit_indices);
+                    builder.idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Delay {
@@ -792,7 +792,7 @@ impl OperationProcessor {
                     // This conversion may lose precision for very large durations (>52 bits)
                     #[allow(clippy::cast_precision_loss)]
                     let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
-                    builder.add_idle(duration_seconds, &qubit_indices);
+                    builder.idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Timing {

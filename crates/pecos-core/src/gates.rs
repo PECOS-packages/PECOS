@@ -788,7 +788,7 @@ impl Gate {
 
     /// Create Measure gate on multiple qubits
     #[must_use]
-    pub fn measure(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+    pub fn mz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::MZ,
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
@@ -804,9 +804,9 @@ impl Gate {
         )
     }
 
-    /// Create Prep gate on multiple qubits
+    /// Create PZ (prep) gate on multiple qubits
     #[must_use]
-    pub fn prep(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+    pub fn pz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::PZ,
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
@@ -833,7 +833,7 @@ impl Gate {
 
     /// Create `MeasureFree` gate (measure and deallocate) on multiple qubits
     #[must_use]
-    pub fn measure_free(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+    pub fn mz_free(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::MeasureFree,
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
@@ -1032,7 +1032,7 @@ mod tests {
         assert!(cx_gate.angles.is_empty());
 
         // Measure gates
-        let measure_gate = Gate::measure(&[2, 3]);
+        let measure_gate = Gate::mz(&[2, 3]);
         assert_eq!(measure_gate.gate_type, GateType::MZ);
         assert_eq!(
             measure_gate.qubits.as_slice(),

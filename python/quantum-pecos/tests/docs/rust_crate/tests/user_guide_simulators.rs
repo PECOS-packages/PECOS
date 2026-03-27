@@ -67,7 +67,7 @@ fn test_user_guide_simulators_rust_4() -> Result<(), Box<dyn std::error::Error>>
 
 // Track how an X error on qubit 0 propagates
 let mut prop = PauliProp::new();
-prop.x(0);  // Track an X error on qubit 0
+prop.track_x(&[0]);  // Track an X error on qubit 0
 
 // Apply Hadamard - transforms X to Z
 prop.h(&[QubitId(0)]);
@@ -165,7 +165,7 @@ let mut state = SparseStab::new(5);
 
 // Apply gates
 state.h(&[QubitId(0)]);
-state.cx(&[QubitId(0), QubitId(1)]);
+state.cx(&[(QubitId(0), QubitId(1))]);
 
 // Measure
 let results = state.mz(&[QubitId(0)]);

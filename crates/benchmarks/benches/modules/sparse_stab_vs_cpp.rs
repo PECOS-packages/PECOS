@@ -102,11 +102,11 @@ fn run_circuit_sparse_stab(sim: &mut SparseStab, params: &SurfaceCodeParams, rou
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId::from(data)]);
+                    sim.cx(&[(ancilla, QubitId::from(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId::from(data), ancilla]);
+                    sim.cx(&[(QubitId::from(data), ancilla)]);
                 }
             }
         }
@@ -132,11 +132,11 @@ fn run_circuit_cpp_sparse_stab(sim: &mut CppSparseStab, params: &SurfaceCodePara
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId::from(data)]);
+                    sim.cx(&[(ancilla, QubitId::from(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId::from(data), ancilla]);
+                    sim.cx(&[(QubitId::from(data), ancilla)]);
                 }
             }
         }
@@ -162,11 +162,11 @@ fn run_circuit_stab(sim: &mut Stab, params: &SurfaceCodeParams, rounds: usize) {
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId::from(data)]);
+                    sim.cx(&[(ancilla, QubitId::from(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId::from(data), ancilla]);
+                    sim.cx(&[(QubitId::from(data), ancilla)]);
                 }
             }
         }

@@ -79,7 +79,7 @@ class CoinToss:
         """
         self._sim.set_seed(seed)
 
-    def measure(self, qubit: int) -> int:
+    def mz(self, qubit: int) -> int:
         """Perform a coin toss measurement on the given qubit.
 
         Args:
@@ -153,7 +153,7 @@ def _noop_gate(*args: object, **kwargs: object) -> None:
 
 def _measure_gate(state: CoinToss, qubit: int, **_params: SimulatorGateParams) -> int:
     """Return |1> with probability state.prob or |0> otherwise."""
-    return state.measure(qubit)
+    return state.mz(qubit)
 
 
 gate_dict = {

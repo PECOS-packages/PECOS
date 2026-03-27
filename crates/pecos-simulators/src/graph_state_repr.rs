@@ -2090,8 +2090,8 @@ mod tests {
         let mut sim = crate::GraphStateSim::with_seed(3, 42);
         // Reset puts qubits in |0>. Apply H to get |+>, then CZ for edges.
         sim.h(&[QubitId::new(0), QubitId::new(1), QubitId::new(2)]);
-        sim.cz(&[QubitId::new(0), QubitId::new(1)]);
-        sim.cz(&[QubitId::new(1), QubitId::new(2)]);
+        sim.cz(&[(QubitId::new(0), QubitId::new(1))]);
+        sim.cz(&[(QubitId::new(1), QubitId::new(2))]);
 
         let sim_gs = sim.to_graph_state();
         let sim_gens = sim_gs.stabilizer_generators();
@@ -2121,8 +2121,8 @@ mod tests {
 
         let mut sim1 = crate::GraphStateSim::with_seed(3, 42);
         sim1.h(&[QubitId::new(0), QubitId::new(1), QubitId::new(2)]);
-        sim1.cz(&[QubitId::new(0), QubitId::new(1)]);
-        sim1.cz(&[QubitId::new(1), QubitId::new(2)]);
+        sim1.cz(&[(QubitId::new(0), QubitId::new(1))]);
+        sim1.cz(&[(QubitId::new(1), QubitId::new(2))]);
 
         // Round-trip through GraphState
         let gs = sim1.to_graph_state();

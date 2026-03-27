@@ -37,7 +37,7 @@
 //! use pecos_neo::prelude::*;
 //! use pecos_simulators::SparseStab;
 //!
-//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //! let mut explorer = PathExplorer::new(SparseStab::new(1));
 //!
 //! // Record a path during execution
@@ -550,22 +550,34 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                 self.simulator.szdg(&qubits);
             }
             GateType::CX => {
-                self.simulator.cx(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.cx(&pairs);
             }
             GateType::CY => {
-                self.simulator.cy(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.cy(&pairs);
             }
             GateType::CZ => {
-                self.simulator.cz(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.cz(&pairs);
             }
             GateType::SZZ => {
-                self.simulator.szz(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.szz(&pairs);
             }
             GateType::SZZdg => {
-                self.simulator.szzdg(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.szzdg(&pairs);
             }
             GateType::SWAP => {
-                self.simulator.swap(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.swap(&pairs);
             }
             _ => {}
         }
@@ -714,9 +726,9 @@ mod tests {
     #[test]
     fn test_path_explorer_record() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Creates superposition
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Creates superposition
+            .mz(&[0])
             .build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
@@ -728,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_path_explorer_replay() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(1));
 
@@ -747,7 +759,7 @@ mod tests {
     fn test_path_enumeration_statistics() {
         // Simple circuit: H then measure
         // Should have 50% probability of each outcome
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(1));
         let mut stats = PathStatistics::new();
@@ -780,12 +792,12 @@ mod tests {
         // Bell state: H on q0, CX, measure both
         // Should always get correlated outcomes (00 or 11)
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut explorer = PathExplorer::new(SparseStab::new(2));

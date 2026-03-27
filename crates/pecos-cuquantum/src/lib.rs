@@ -37,7 +37,7 @@
 //!
 //!     // Create a Bell state
 //!     sim.h(&[QubitId(0)]);
-//!     sim.cx(&[QubitId(0), QubitId(1)]);
+//!     sim.cx(&[(QubitId(0), QubitId(1))]);
 //!
 //!     // Measure
 //!     let results = sim.mz(&[QubitId(0), QubitId(1)]);

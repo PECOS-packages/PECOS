@@ -47,10 +47,10 @@ pub use pecos_num::graph::Attribute;
 /// use pecos_quantum::DagCircuit;
 ///
 /// let mut dag = DagCircuit::new();
-/// dag.h(0);
-/// dag.cx(0, 1);
-/// dag.mz(0);
-/// dag.mz(1);
+/// dag.h(&[0]);
+/// dag.cx(&[(0, 1)]);
+/// dag.mz(&[0]);
+/// dag.mz(&[1]);
 ///
 /// let index = dag.build_traversal_index();
 /// assert_eq!(index.max_qubit(), 1);
@@ -156,7 +156,7 @@ impl DagTraversalIndex {
     /// let h = dag.add_gate(Gate::h(&[0]));
     /// let cx = dag.add_gate(Gate::cx(&[(0, 1)]));
     /// dag.connect(h, cx, QubitId::from(0)).unwrap();
-    /// let mz = dag.add_gate(Gate::measure(&[QubitId::from(0)]));
+    /// let mz = dag.add_gate(Gate::mz(&[QubitId::from(0)]));
     /// dag.connect(cx, mz, QubitId::from(0)).unwrap();
     ///
     /// let index = dag.build_traversal_index();
@@ -205,7 +205,7 @@ impl DagTraversalIndex {
     /// let h = dag.add_gate(Gate::h(&[0]));
     /// let cx = dag.add_gate(Gate::cx(&[(0, 1)]));
     /// dag.connect(h, cx, QubitId::from(0)).unwrap();
-    /// let mz = dag.add_gate(Gate::measure(&[QubitId::from(0)]));
+    /// let mz = dag.add_gate(Gate::mz(&[QubitId::from(0)]));
     /// dag.connect(cx, mz, QubitId::from(0)).unwrap();
     ///
     /// let index = dag.build_traversal_index();
@@ -323,8 +323,8 @@ impl TraversalWorkBuffers {
 /// use pecos_quantum::{DagCircuit, Attribute};
 ///
 /// let mut circuit = DagCircuit::new();
-/// circuit.mz(0).meta("basis", Attribute::String("Z".into()));
-/// circuit.h(1);  // continue building
+/// circuit.mz(&[0]).meta("basis", Attribute::String("Z".into()));
+/// circuit.h(&[1]);  // continue building
 /// ```
 pub struct MeasureHandle<'a> {
     circuit: &'a mut DagCircuit,
@@ -357,8 +357,8 @@ impl MeasureHandle<'_> {
 /// use pecos_quantum::{DagCircuit, Attribute};
 ///
 /// let mut circuit = DagCircuit::new();
-/// circuit.pz(0).meta("reason", Attribute::String("reset".into()));
-/// circuit.h(1);  // continue building
+/// circuit.pz(&[0]).meta("reason", Attribute::String("reset".into()));
+/// circuit.h(&[1]);  // continue building
 /// ```
 pub struct PrepHandle<'a> {
     circuit: &'a mut DagCircuit,
@@ -917,8 +917,8 @@ impl DagCircuit {
     /// use pecos_quantum::DagCircuit;
     ///
     /// let mut dag = DagCircuit::new();
-    /// dag.h(0);
-    /// dag.cx(0, 1);
+    /// dag.h(&[0]);
+    /// dag.cx(&[(0, 1)]);
     ///
     /// let index = dag.build_traversal_index();
     /// // O(1) position lookup
@@ -1054,8 +1054,8 @@ impl DagCircuit {
     /// use pecos_quantum::{DagCircuit, Attribute};
     ///
     /// let mut circuit = DagCircuit::new();
-    /// circuit.h(0).meta("error_rate", Attribute::Float(0.01)).cx(0, 1);
-    /// circuit.mz(0);
+    /// circuit.h(&[0]).meta("error_rate", Attribute::Float(0.01)).cx(&[(0, 1)]);
+    /// circuit.mz(&[0]);
     /// circuit.meta("basis", Attribute::String("Z".into()));
     /// ```
     ///
@@ -1082,7 +1082,7 @@ impl DagCircuit {
     ///     ("duration".to_string(), Attribute::Float(50.0)),
     ///     ("error_rate".to_string(), Attribute::Float(0.001)),
     /// ]);
-    /// circuit.h(0).metas(attrs).cx(0, 1);
+    /// circuit.h(&[0]).metas(attrs).cx(&[(0, 1)]);
     /// ```
     ///
     /// # Panics
@@ -1104,151 +1104,193 @@ impl DagCircuit {
 
     // -------------------- Single-qubit Clifford gates --------------------
 
-    /// Apply the identity gate.
-    pub fn identity(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::I, vec![q.into()]));
+    /// Apply identity gate(s).
+    pub fn identity(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::I, vec![q.into()]));
+        }
         self
     }
 
-    /// Alias for `identity` - apply the identity gate.
-    pub fn iden(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.identity(q)
+    /// Alias for `identity`.
+    pub fn iden(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        self.identity(qubits)
     }
 
-    /// Apply an X (Pauli-X) gate.
-    pub fn x(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::x(&[q.into()]));
+    /// Apply X (Pauli-X) gate(s).
+    pub fn x(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::x(&[q]));
+        }
         self
     }
 
-    /// Apply a Y (Pauli-Y) gate.
-    pub fn y(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::y(&[q.into()]));
+    /// Apply Y (Pauli-Y) gate(s).
+    pub fn y(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::y(&[q]));
+        }
         self
     }
 
-    /// Apply a Z (Pauli-Z) gate.
-    pub fn z(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::z(&[q.into()]));
+    /// Apply Z (Pauli-Z) gate(s).
+    pub fn z(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::z(&[q]));
+        }
         self
     }
 
-    /// Apply the Hadamard gate.
-    pub fn h(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::h(&[q.into()]));
+    /// Apply Hadamard gate(s).
+    pub fn h(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::h(&[q]));
+        }
         self
     }
 
-    /// Apply the SZ (sqrt(Z), S gate) gate.
-    pub fn sz(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SZ, vec![q.into()]));
+    /// Apply SZ (sqrt(Z), S gate) gate(s).
+    pub fn sz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::SZ, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply the SZ-dagger (S-dagger) gate.
-    pub fn szdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SZdg, vec![q.into()]));
+    /// Apply SZ-dagger (S-dagger) gate(s).
+    pub fn szdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::SZdg, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply the SX (sqrt(X)) gate.
-    ///
-    /// This is a native gate on IBM quantum hardware. Two SX gates equal an X gate.
-    pub fn sx(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SX, vec![q.into()]));
+    /// Apply SX (sqrt(X)) gate(s).
+    pub fn sx(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::SX, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply the SX-dagger (sqrt(X) inverse) gate.
-    pub fn sxdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SXdg, vec![q.into()]));
+    /// Apply SX-dagger (sqrt(X) inverse) gate(s).
+    pub fn sxdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::SXdg, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply the SY (sqrt(Y)) gate.
-    ///
-    /// Two SY gates equal a Y gate.
-    pub fn sy(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SY, vec![q.into()]));
+    /// Apply SY (sqrt(Y)) gate(s).
+    pub fn sy(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::SY, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply the SY-dagger (sqrt(Y) inverse) gate.
-    pub fn sydg(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SYdg, vec![q.into()]));
+    /// Apply SY-dagger (sqrt(Y) inverse) gate(s).
+    pub fn sydg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::SYdg, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply a T gate.
-    pub fn t(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::T, vec![q.into()]));
+    /// Apply T gate(s).
+    pub fn t(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::T, vec![q.into()]));
+        }
         self
     }
 
-    /// Apply a T-dagger gate.
-    pub fn tdg(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::Tdg, vec![q.into()]));
+    /// Apply T-dagger gate(s).
+    pub fn tdg(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::Tdg, vec![q.into()]));
+        }
         self
     }
 
     // -------------------- Single-qubit rotation gates --------------------
 
-    /// Apply an RX (rotation about X) gate.
-    ///
-    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
-    pub fn rx(&mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::rx(theta.into(), &[q.into()]));
+    /// Apply RX (rotation about X) gate(s).
+    pub fn rx(
+        &mut self,
+        theta: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
+        let angle = theta.into();
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::rx(angle, &[q]));
+        }
         self
     }
 
-    /// Apply an RY (rotation about Y) gate.
-    ///
-    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
-    pub fn ry(&mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::ry(theta.into(), &[q.into()]));
+    /// Apply RY (rotation about Y) gate(s).
+    pub fn ry(
+        &mut self,
+        theta: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
+        let angle = theta.into();
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::ry(angle, &[q]));
+        }
         self
     }
 
-    /// Apply an RZ (rotation about Z) gate.
-    ///
-    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
-    pub fn rz(&mut self, theta: impl Into<Angle64>, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::rz(theta.into(), &[q.into()]));
+    /// Apply RZ (rotation about Z) gate(s).
+    pub fn rz(
+        &mut self,
+        theta: impl Into<Angle64>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
+        let angle = theta.into();
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::rz(angle, &[q]));
+        }
         self
     }
 
-    /// Apply a general single-qubit unitary U(theta, phi, lambda) gate.
-    ///
-    /// All angles can be `Angle64` or `f64` (interpreted as radians).
+    /// Apply general single-qubit unitary U(theta, phi, lambda) gate(s).
     pub fn u(
         &mut self,
         theta: impl Into<Angle64>,
         phi: impl Into<Angle64>,
         lambda: impl Into<Angle64>,
-        q: impl Into<QubitId>,
+        qubits: &[impl Into<QubitId> + Copy],
     ) -> &mut Self {
-        self.add_gate_auto_wire(Gate::with_angles(
-            GateType::U,
-            vec![theta.into(), phi.into(), lambda.into()],
-            vec![q.into()],
-        ));
+        let t = theta.into();
+        let p = phi.into();
+        let l = lambda.into();
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::with_angles(
+                GateType::U,
+                vec![t, p, l],
+                vec![q.into()],
+            ));
+        }
         self
     }
 
-    /// Apply an R1XY (X-Y plane rotation) gate.
-    ///
-    /// Both angles can be `Angle64` or `f64` (interpreted as radians).
+    /// Apply R1XY (X-Y plane rotation) gate(s).
     pub fn r1xy(
         &mut self,
         theta: impl Into<Angle64>,
         phi: impl Into<Angle64>,
-        q: impl Into<QubitId>,
+        qubits: &[impl Into<QubitId> + Copy],
     ) -> &mut Self {
-        self.add_gate_auto_wire(Gate::with_angles(
-            GateType::R1XY,
-            vec![theta.into(), phi.into()],
-            vec![q.into()],
-        ));
+        let t = theta.into();
+        let p = phi.into();
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::with_angles(
+                GateType::R1XY,
+                vec![t, p],
+                vec![q.into()],
+            ));
+        }
         self
     }
 
@@ -1258,120 +1300,184 @@ impl DagCircuit {
     ///
     /// The first qubit is the control, the second is the target.
     /// Flips the target qubit if the control is |1>.
-    pub fn cx(&mut self, control: impl Into<QubitId>, target: impl Into<QubitId>) -> &mut Self {
-        let c = control.into();
-        let t = target.into();
-        self.add_gate_auto_wire(Gate::cx(&[(c, t)]));
+    pub fn cx(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(c, t) in pairs {
+            self.add_gate_auto_wire(Gate::cx(&[(c, t)]));
+        }
         self
     }
 
-    /// Apply a CY (controlled-Y) gate.
+    /// Apply CY (controlled-Y) gate(s).
     ///
-    /// The first qubit is the control, the second is the target.
-    pub fn cy(&mut self, control: impl Into<QubitId>, target: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(
-            GateType::CY,
-            vec![control.into(), target.into()],
-        ));
+    /// The first element of each pair is the control, the second is the target.
+    pub fn cy(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(c, t) in pairs {
+            self.add_gate_auto_wire(Gate::cy(&[(c, t)]));
+        }
         self
     }
 
-    /// Apply a CZ (controlled-Z) gate.
+    /// Apply CZ (controlled-Z) gate(s).
     ///
     /// Applies a phase flip when both qubits are |1>. This gate is symmetric.
-    pub fn cz(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::CZ, vec![q1.into(), q2.into()]));
+    pub fn cz(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::cz(&[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply an SZZ (sqrt(ZZ)) gate.
+    /// Apply SZZ (sqrt(ZZ)) gate(s).
     ///
     /// Native entangling gate on some trapped-ion systems.
-    pub fn szz(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SZZ, vec![q1.into(), q2.into()]));
+    pub fn szz(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::szz(&[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply an SZZ-dagger (sqrt(ZZ) inverse) gate.
-    pub fn szzdg(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SZZdg, vec![q1.into(), q2.into()]));
+    /// Apply SZZ-dagger (sqrt(ZZ) inverse) gate(s).
+    pub fn szzdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::szzdg(&[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply an RZZ (ZZ rotation) gate.
+    /// Apply SXX (sqrt(XX)) gate(s).
+    pub fn sxx(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::sxx(&[(q1, q2)]));
+        }
+        self
+    }
+
+    /// Apply SXX-dagger (sqrt(XX) inverse) gate(s).
+    pub fn sxxdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::sxxdg(&[(q1, q2)]));
+        }
+        self
+    }
+
+    /// Apply SYY (sqrt(YY)) gate(s).
+    pub fn syy(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::syy(&[(q1, q2)]));
+        }
+        self
+    }
+
+    /// Apply SYY-dagger (sqrt(YY) inverse) gate(s).
+    pub fn syydg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::syydg(&[(q1, q2)]));
+        }
+        self
+    }
+
+    /// Apply RZZ (ZZ rotation) gate(s).
     ///
     /// Implements exp(-i * theta/2 * Z*Z). The angle can be `Angle64` or `f64` (radians).
     pub fn rzz(
         &mut self,
         theta: impl Into<Angle64>,
-        q1: impl Into<QubitId>,
-        q2: impl Into<QubitId>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        self.add_gate_auto_wire(Gate::with_angles(
-            GateType::RZZ,
-            vec![theta.into()],
-            vec![q1.into(), q2.into()],
-        ));
+        let angle = theta.into();
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::rzz(angle, &[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply an RXX (XX rotation) gate.
+    /// Apply RXX (XX rotation) gate(s).
     ///
     /// Implements exp(-i * theta/2 * X*X). Native gate on trapped-ion systems.
-    /// The angle can be `Angle64` or `f64` (radians).
     pub fn rxx(
         &mut self,
         theta: impl Into<Angle64>,
-        q1: impl Into<QubitId>,
-        q2: impl Into<QubitId>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        self.add_gate_auto_wire(Gate::with_angles(
-            GateType::RXX,
-            vec![theta.into()],
-            vec![q1.into(), q2.into()],
-        ));
+        let angle = theta.into();
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::rxx(angle, &[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply an RYY (YY rotation) gate.
+    /// Apply RYY (YY rotation) gate(s).
     ///
-    /// Implements exp(-i * theta/2 * Y*Y). The angle can be `Angle64` or `f64` (radians).
+    /// Implements exp(-i * theta/2 * Y*Y).
     pub fn ryy(
         &mut self,
         theta: impl Into<Angle64>,
-        q1: impl Into<QubitId>,
-        q2: impl Into<QubitId>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        self.add_gate_auto_wire(Gate::with_angles(
-            GateType::RYY,
-            vec![theta.into()],
-            vec![q1.into(), q2.into()],
-        ));
+        let angle = theta.into();
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::ryy(angle, &[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply a SWAP gate.
+    /// Apply SWAP gate(s).
     ///
     /// Exchanges the states of two qubits.
-    pub fn swap(&mut self, q1: impl Into<QubitId>, q2: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::simple(GateType::SWAP, vec![q1.into(), q2.into()]));
+    pub fn swap(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::swap(&[(q1, q2)]));
+        }
         self
     }
 
-    /// Apply a CRZ (controlled-RZ) gate.
+    /// Apply CRZ (controlled-RZ) gate(s).
     ///
     /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
     pub fn crz(
         &mut self,
         theta: impl Into<Angle64>,
-        control: impl Into<QubitId>,
-        target: impl Into<QubitId>,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        self.add_gate_auto_wire(Gate::with_angles(
-            GateType::CRZ,
-            vec![theta.into()],
-            vec![control.into(), target.into()],
-        ));
+        let angle = theta.into();
+        for &(c, t) in pairs {
+            self.add_gate_auto_wire(Gate::with_angles(
+                GateType::CRZ,
+                vec![angle],
+                vec![c.into(), t.into()],
+            ));
+        }
         self
     }
 
@@ -1409,12 +1515,18 @@ impl DagCircuit {
     /// use pecos_core::TimeUnits;
     ///
     /// let mut circuit = DagCircuit::new();
-    /// circuit.idle(TimeUnits::new(100), 0);
-    /// circuit.idle(100u64, 0);  // 100 time units
+    /// circuit.idle(TimeUnits::new(100), &[0]);
+    /// circuit.idle(100u64, &[0, 1]);  // idle on two qubits
     /// ```
-    pub fn idle(&mut self, duration: impl Into<TimeUnits>, q: impl Into<QubitId>) -> &mut Self {
+    pub fn idle(
+        &mut self,
+        duration: impl Into<TimeUnits>,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> &mut Self {
         let units: TimeUnits = duration.into();
-        self.add_gate_auto_wire(Gate::idle(units.as_f64(), vec![q.into()]));
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::idle(units.as_f64(), vec![q.into()]));
+        }
         self
     }
 
@@ -1425,76 +1537,54 @@ impl DagCircuit {
     // MeasurementResult instead of &mut Self.
     // Preparations return &mut Self and are chainable.
 
-    /// Measure a qubit in the Z basis.
+    /// Measure qubit(s) in the Z basis.
     ///
-    /// Returns a `MeasureHandle` that allows attaching metadata via `.meta()`,
-    /// but breaks the chain (matching simulator behavior).
+    /// Each qubit becomes a separate measurement node in the DAG.
     ///
     /// # Example
     /// ```
-    /// use pecos_quantum::{DagCircuit, Attribute};
+    /// use pecos_quantum::DagCircuit;
     ///
     /// let mut circuit = DagCircuit::new();
-    /// circuit.mz(0).meta("basis", Attribute::String("Z".into()));
-    /// circuit.h(1);  // continue building
+    /// circuit.h(&[0]).mz(&[0, 1]);
     /// ```
-    pub fn mz(&mut self, q: impl Into<QubitId>) -> MeasureHandle<'_> {
-        let node = self.add_gate_auto_wire(Gate::measure(&[q.into()]));
-        MeasureHandle {
-            circuit: self,
-            node,
+    pub fn mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::mz(&[q]));
         }
-    }
-
-    /// Measure and free a qubit (destructive measurement).
-    ///
-    /// Returns a `MeasureHandle` that allows attaching metadata via `.meta()`,
-    /// but breaks the chain (matching simulator behavior).
-    pub fn measure_free(&mut self, q: impl Into<QubitId>) -> MeasureHandle<'_> {
-        let node = self.add_gate_auto_wire(Gate::measure_free(&[q.into()]));
-        MeasureHandle {
-            circuit: self,
-            node,
-        }
-    }
-
-    /// Prepare a qubit in the |0> state (Z-basis preparation).
-    ///
-    /// Returns a `PrepHandle` for attaching metadata.
-    pub fn pz(&mut self, q: impl Into<QubitId>) -> PrepHandle<'_> {
-        let node = self.add_gate_auto_wire(Gate::simple(GateType::PZ, vec![q.into()]));
-        PrepHandle {
-            circuit: self,
-            node,
-        }
-    }
-
-    /// Allocate a qubit in the |0> state.
-    pub fn qalloc(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::qalloc(&[q.into()]));
         self
     }
 
-    /// Free/deallocate a qubit.
-    pub fn qfree(&mut self, q: impl Into<QubitId>) -> &mut Self {
-        self.add_gate_auto_wire(Gate::qfree(&[q.into()]));
+    /// Measure and free qubit(s) (destructive measurement).
+    pub fn mz_free(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::mz_free(&[q]));
+        }
         self
     }
 
-    // -------------------- Aliases for compatibility --------------------
-
-    /// Alias for `mz` - measure a qubit.
-    ///
-    /// Returns a `MeasureHandle` for attaching metadata.
-    pub fn measure(&mut self, q: impl Into<QubitId>) -> MeasureHandle<'_> {
-        self.mz(q)
+    /// Prepare qubit(s) in the |0> state (Z-basis preparation).
+    pub fn pz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::simple(GateType::PZ, vec![q.into()]));
+        }
+        self
     }
 
-    /// Alias for `pz` - prepare/reset a qubit.
-    ///
-    /// Returns a `PrepHandle` for attaching metadata.
-    pub fn prep(&mut self, q: impl Into<QubitId>) -> PrepHandle<'_> {
-        self.pz(q)
+    /// Allocate qubit(s) in the |0> state.
+    pub fn qalloc(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::qalloc(&[q]));
+        }
+        self
+    }
+
+    /// Free/deallocate qubit(s).
+    pub fn qfree(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
+        for &q in qubits {
+            self.add_gate_auto_wire(Gate::qfree(&[q]));
+        }
+        self
     }
 
     // ==================== DAG access ====================
@@ -2171,7 +2261,7 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         // Build a Bell state using method chaining
-        circuit.h(0).cx(0, 1);
+        circuit.h(&[0]).cx(&[(0, 1)]);
 
         assert_eq!(circuit.gate_count(), 2);
         assert_eq!(circuit.wire_count(), 1); // H -> CX on qubit 0
@@ -2199,10 +2289,10 @@ mod tests {
         // Test that rotation gates accept both Angle64 and f64
         // API follows simulator convention: rx(theta, q)
         circuit
-            .h(0)
-            .rz(PI / 4.0, 0) // f64 in radians, then qubit
-            .rx(Angle64::QUARTER_TURN, 0); // Angle64, then qubit
-        circuit.mz(0); // mz returns () - not chainable (matches simulator)
+            .h(&[0])
+            .rz(PI / 4.0, &[0]) // f64 in radians, then qubit
+            .rx(Angle64::QUARTER_TURN, &[0]); // Angle64, then qubit
+        circuit.mz(&[0]);
 
         assert_eq!(circuit.gate_count(), 4);
         assert_eq!(circuit.wire_count(), 3); // h -> rz -> rx -> mz
@@ -2224,8 +2314,8 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         // Idle gates represent waiting time in abstract time units
-        circuit.h(0).idle(TimeUnits::new(100), 0).h(0);
-        circuit.mz(0);
+        circuit.h(&[0]).idle(TimeUnits::new(100), &[0]).h(&[0]);
+        circuit.mz(&[0]);
 
         assert_eq!(circuit.gate_count(), 4);
 
@@ -2240,13 +2330,13 @@ mod tests {
 
         // Test with different time units
         let mut circuit2 = DagCircuit::new();
-        circuit2.idle(TimeUnits::new(1000), 0);
+        circuit2.idle(TimeUnits::new(1000), &[0]);
         let gate = circuit2.gate(0).unwrap();
         assert!((gate.idle_duration() - 1000.0).abs() < 1e-10);
 
         // Test with u64
         let mut circuit3 = DagCircuit::new();
-        circuit3.idle(200u64, 0);
+        circuit3.idle(200u64, &[0]);
         let gate = circuit3.gate(0).unwrap();
         assert!((gate.idle_duration() - 200.0).abs() < 1e-10);
     }
@@ -2257,9 +2347,9 @@ mod tests {
 
         // Two parallel qubit paths
         // Measurements are not chainable (matches simulator API)
-        circuit.h(0).h(1).cx(0, 1);
-        circuit.mz(0);
-        circuit.mz(1);
+        circuit.h(&[0]).h(&[1]).cx(&[(0, 1)]);
+        circuit.mz(&[0]);
+        circuit.mz(&[1]);
 
         assert_eq!(circuit.gate_count(), 5);
         // Wires: h0->cx, h1->cx, cx->m0, cx->m1
@@ -2283,22 +2373,22 @@ mod tests {
 
         // Matches CliffordGateable API
         circuit
-            .h(0)
-            .sz(0) // sqrt(Z), same as simulator
-            .szdg(0) // sqrt(Z) dagger
-            .cx(0, 1)
-            .szz(0, 1) // sqrt(ZZ)
-            .szzdg(0, 1); // sqrt(ZZ) dagger
+            .h(&[0])
+            .sz(&[0]) // sqrt(Z), same as simulator
+            .szdg(&[0]) // sqrt(Z) dagger
+            .cx(&[(0, 1)])
+            .szz(&[(0, 1)]) // sqrt(ZZ)
+            .szzdg(&[(0, 1)]); // sqrt(ZZ) dagger
 
         assert_eq!(circuit.gate_count(), 6);
 
         // Matches ArbitraryRotationGateable API: rx(theta, q)
         let mut circuit2 = DagCircuit::new();
         circuit2
-            .rx(FRAC_PI_4, 0)
-            .ry(FRAC_PI_4, 0)
-            .rz(FRAC_PI_4, 0)
-            .rzz(FRAC_PI_4, 0, 1); // rzz(theta, q1, q2)
+            .rx(FRAC_PI_4, &[0])
+            .ry(FRAC_PI_4, &[0])
+            .rz(FRAC_PI_4, &[0])
+            .rzz(FRAC_PI_4, &[(0, 1)]); // rzz(theta, &[(q1, q2)])
 
         assert_eq!(circuit2.gate_count(), 4);
     }
@@ -2309,14 +2399,14 @@ mod tests {
 
         // Chain meta with gates (meta returns &mut Self for gates)
         circuit
-            .h(0)
+            .h(&[0])
             .meta("error_rate", Attribute::Float(0.001))
-            .cx(0, 1)
+            .cx(&[(0, 1)])
             .meta("fidelity", Attribute::Float(0.99));
 
-        // Chain meta directly from measurement (mz returns MeasureHandle)
+        // Chain meta directly from measurement (mz returns &mut Self)
         circuit
-            .mz(0)
+            .mz(&[0])
             .meta("basis", Attribute::String("Z".to_string()));
 
         assert_eq!(circuit.gate_count(), 3);
@@ -2363,9 +2453,9 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         // MeasureHandle can be ignored (dropped without calling .meta())
-        circuit.h(0);
-        circuit.mz(0); // returns MeasureHandle, but we ignore it
-        circuit.h(1); // continue building
+        circuit.h(&[0]);
+        circuit.mz(&[0]);
+        circuit.h(&[1]); // continue building
 
         assert_eq!(circuit.gate_count(), 3);
     }
@@ -2375,9 +2465,9 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         // PrepHandle can be ignored (dropped without calling .meta())
-        circuit.pz(0); // returns PrepHandle, but we ignore it
-        circuit.h(0); // continue building
-        circuit.mz(0);
+        circuit.pz(&[0]);
+        circuit.h(&[0]); // continue building
+        circuit.mz(&[0]);
 
         assert_eq!(circuit.gate_count(), 3);
     }
@@ -2387,9 +2477,9 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         circuit
-            .pz(0)
+            .pz(&[0])
             .meta("reason", Attribute::String("reset".to_string()));
-        circuit.h(0);
+        circuit.h(&[0]);
 
         assert_eq!(circuit.gate_count(), 2);
 
@@ -2407,10 +2497,10 @@ mod tests {
 
         assert!(circuit.last_added_node().is_none());
 
-        circuit.h(0);
+        circuit.h(&[0]);
         let h_node = circuit.last_added_node().unwrap();
 
-        circuit.cx(0, 1);
+        circuit.cx(&[(0, 1)]);
         let cx_node = circuit.last_added_node().unwrap();
 
         assert_ne!(h_node, cx_node);
@@ -2429,7 +2519,7 @@ mod tests {
             ("error_rate".to_string(), Attribute::Float(0.001)),
         ]);
 
-        circuit.h(0).metas(attrs).cx(0, 1);
+        circuit.h(&[0]).metas(attrs).cx(&[(0, 1)]);
 
         let gate_attrs = circuit.gate_attrs(0).expect("gate should have attributes");
         assert_eq!(gate_attrs.get("duration"), Some(&Attribute::Float(50.0)));
@@ -2446,7 +2536,7 @@ mod tests {
         ]);
 
         circuit.set_attrs(attrs);
-        circuit.h(0);
+        circuit.h(&[0]);
 
         assert_eq!(
             circuit.get_attr("name"),

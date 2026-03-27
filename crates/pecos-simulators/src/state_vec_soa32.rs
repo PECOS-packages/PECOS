@@ -1093,15 +1093,10 @@ where
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index();
-            let target = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index();
+            let target = q1.index();
             self.flush_two_qubit(control, target);
 
             let n = self.real.len();
@@ -1161,15 +1156,10 @@ where
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
             self.flush_two_qubit(q1, q2);
 
             let n = self.real.len();
@@ -1209,15 +1199,10 @@ where
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
             self.flush_two_qubit(q1, q2);
 
             let mask1 = 1 << q1;
@@ -1364,46 +1349,37 @@ where
         self
     }
 
-    fn rxx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RXX = exp(-i * theta/2 * XX)
         // Decompose: H-H, CX, RZ, CX, H-H
-        debug_assert!(qubits.len().is_multiple_of(2));
-        for pair in qubits.chunks_exact(2) {
-            let q0 = pair[0];
-            let q1 = pair[1];
+        for &(q0, q1) in pairs {
             self.h(&[q0, q1]);
-            self.cx(&[q0, q1]);
+            self.cx(&[(q0, q1)]);
             self.rz(theta, &[q1]);
-            self.cx(&[q0, q1]);
+            self.cx(&[(q0, q1)]);
             self.h(&[q0, q1]);
         }
         self
     }
 
-    fn ryy(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RYY decomposition
-        debug_assert!(qubits.len().is_multiple_of(2));
-        for pair in qubits.chunks_exact(2) {
-            let q0 = pair[0];
-            let q1 = pair[1];
+        for &(q0, q1) in pairs {
             self.rx(Angle64::QUARTER_TURN, &[q0, q1]);
-            self.cx(&[q0, q1]);
+            self.cx(&[(q0, q1)]);
             self.rz(theta, &[q1]);
-            self.cx(&[q0, q1]);
+            self.cx(&[(q0, q1)]);
             self.rx(-Angle64::QUARTER_TURN, &[q0, q1]);
         }
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RZZ = exp(-i * theta/2 * ZZ)
-        debug_assert!(qubits.len().is_multiple_of(2));
-        for pair in qubits.chunks_exact(2) {
-            let q0 = pair[0];
-            let q1 = pair[1];
-            self.cx(&[q0, q1]);
+        for &(q0, q1) in pairs {
+            self.cx(&[(q0, q1)]);
             self.rz(theta, &[q1]);
-            self.cx(&[q0, q1]);
+            self.cx(&[(q0, q1)]);
         }
         self
     }
@@ -1453,7 +1429,7 @@ mod tests {
     fn test_cx_gate() {
         let mut sim: StateVecSoA32 = StateVecSoA32::new(2);
         sim.x(&qid(0)); // Set control to |1>
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.flush();
 
         // Should be |11>
@@ -1464,7 +1440,7 @@ mod tests {
     fn test_bell_state() {
         let mut sim: StateVecSoA32 = StateVecSoA32::new(2);
         sim.h(&qid(0));
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.flush();
 
         let inv_sqrt2 = std::f32::consts::FRAC_1_SQRT_2;

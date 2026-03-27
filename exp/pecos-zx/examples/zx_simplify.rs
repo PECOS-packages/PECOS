@@ -31,13 +31,13 @@ fn main() {
     // CX(0,1), CX(0,1) -- cancels to identity
     // H(1), T(1), H(1) -- does not cancel but simplifies
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.h(0); // H*H = I
-    dag.cx(0, 1);
-    dag.cx(0, 1); // CX*CX = I
-    dag.h(1);
-    dag.sz(1);
-    dag.h(1);
+    dag.h(&[0]);
+    dag.h(&[0]); // H*H = I
+    dag.cx(&[(0, 1)]);
+    dag.cx(&[(0, 1)]); // CX*CX = I
+    dag.h(&[1]);
+    dag.sz(&[1]);
+    dag.h(&[1]);
 
     let original_count = dag.gate_count();
     println!("=== ZX Simplification ===\n");

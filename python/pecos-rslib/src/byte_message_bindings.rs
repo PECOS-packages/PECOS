@@ -135,22 +135,71 @@ impl PyByteMessageBuilder {
     }
 
     /// Add U gate(s): `u(theta, phi, lambda_, [q0, q1])`
-    fn u(
-        &mut self,
-        theta: AngleParam,
-        phi: AngleParam,
-        lambda_: AngleParam,
-        qubits: Vec<usize>,
-    ) {
+    fn u(&mut self, theta: AngleParam, phi: AngleParam, lambda_: AngleParam, qubits: Vec<usize>) {
         self.inner.u(theta.0, phi.0, lambda_.0, &qubits);
     }
 
-    /// Add Z-basis measurement(s): `mz([0, 1, 2])`
+    /// SX (sqrt-X) gate(s): `sx([q0, q1])`
+    fn sx(&mut self, qubits: Vec<usize>) {
+        self.inner.sx(&qubits);
+    }
+
+    /// `SXdg` (sqrt-X dagger) gate(s): `sxdg([q0, q1])`
+    fn sxdg(&mut self, qubits: Vec<usize>) {
+        self.inner.sxdg(&qubits);
+    }
+
+    /// SY (sqrt-Y) gate(s): `sy([q0, q1])`
+    fn sy(&mut self, qubits: Vec<usize>) {
+        self.inner.sy(&qubits);
+    }
+
+    /// `SYdg` (sqrt-Y dagger) gate(s): `sydg([q0, q1])`
+    fn sydg(&mut self, qubits: Vec<usize>) {
+        self.inner.sydg(&qubits);
+    }
+
+    /// SWAP gate(s): `swap([(q0, q1), (q2, q3)])`
+    fn swap(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.swap(&pairs);
+    }
+
+    /// SXX (sqrt-XX) gate(s): `sxx([(q0, q1)])`
+    fn sxx(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.sxx(&pairs);
+    }
+
+    /// `SXXdg` (sqrt-XX dagger) gate(s): `sxxdg([(q0, q1)])`
+    fn sxxdg(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.sxxdg(&pairs);
+    }
+
+    /// SYY (sqrt-YY) gate(s): `syy([(q0, q1)])`
+    fn syy(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.syy(&pairs);
+    }
+
+    /// `SYYdg` (sqrt-YY dagger) gate(s): `syydg([(q0, q1)])`
+    fn syydg(&mut self, pairs: Vec<(usize, usize)>) {
+        self.inner.syydg(&pairs);
+    }
+
+    /// RXX gate(s): `rxx(theta, [(q0, q1)])`
+    fn rxx(&mut self, theta: AngleParam, pairs: Vec<(usize, usize)>) {
+        self.inner.rxx(theta.0, &pairs);
+    }
+
+    /// RYY gate(s): `ryy(theta, [(q0, q1)])`
+    fn ryy(&mut self, theta: AngleParam, pairs: Vec<(usize, usize)>) {
+        self.inner.ryy(theta.0, &pairs);
+    }
+
+    /// Z-basis measurement(s): `mz([0, 1, 2])`
     fn mz(&mut self, qubits: Vec<usize>) {
         self.inner.mz(&qubits);
     }
 
-    /// Add PZ (preparation/reset) gate(s): `pz([0, 1, 2])`
+    /// PZ (preparation/reset) gate(s): `pz([0, 1, 2])`
     fn pz(&mut self, qubits: Vec<usize>) {
         self.inner.pz(&qubits);
     }

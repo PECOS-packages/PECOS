@@ -44,6 +44,15 @@ use crate::{CliffordGateable, MeasurementResult};
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
 use pecos_quantum::{GateBatch, TickBatches, TickCircuitSoA, TickGateGroups};
+use smallvec::SmallVec;
+
+/// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
+fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
+    qubits
+        .chunks_exact(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect()
+}
 
 /// Executes a `TickCircuitSoA` on a Clifford simulator using batched operations.
 ///
@@ -170,34 +179,44 @@ fn execute_single_batch<S: CliffordGateable>(
             sim.szdg(qubits);
         }
         GateType::CX => {
-            sim.cx(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.cx(&pairs);
         }
         GateType::CY => {
-            sim.cy(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.cy(&pairs);
         }
         GateType::CZ => {
-            sim.cz(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.cz(&pairs);
         }
         GateType::SXX => {
-            sim.sxx(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.sxx(&pairs);
         }
         GateType::SXXdg => {
-            sim.sxxdg(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.sxxdg(&pairs);
         }
         GateType::SYY => {
-            sim.syy(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.syy(&pairs);
         }
         GateType::SYYdg => {
-            sim.syydg(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.syydg(&pairs);
         }
         GateType::SZZ => {
-            sim.szz(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.szz(&pairs);
         }
         GateType::SZZdg => {
-            sim.szzdg(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.szzdg(&pairs);
         }
         GateType::SWAP => {
-            sim.swap(qubits);
+            let pairs = flat_to_pairs(qubits);
+            sim.swap(&pairs);
         }
         GateType::PZ | GateType::QAlloc => {
             sim.pz(qubits);

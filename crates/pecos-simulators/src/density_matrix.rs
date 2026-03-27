@@ -107,7 +107,7 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_simulators::{QuantumSimulator, DensityMatrix, qid, qid2};
+    /// use pecos_simulators::{QuantumSimulator, DensityMatrix, qid};
     /// let state = DensityMatrix::new(2);
     /// let num = state.num_qubits();
     /// assert_eq!(num, 2);
@@ -177,11 +177,12 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid, qid2};
+    /// use pecos_core::QubitId;
+    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid};
     ///
     /// // Create a Bell state
     /// let mut state = DensityMatrix::new(2);
-    /// state.h(&qid(0)).cx(&qid2(0, 1));
+    /// state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     ///
     /// // Get the density matrix representation
     /// let rho = state.get_density_matrix();
@@ -256,11 +257,12 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid, qid2};
+    /// use pecos_core::QubitId;
+    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid};
     ///
     /// // Create a Bell state
     /// let mut state = DensityMatrix::new(2);
-    /// state.h(&qid(0)).cx(&qid2(0, 1));
+    /// state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     ///
     /// // Print the density matrix with 6 decimal places
     /// let matrix_str = state.density_matrix_to_string(6, 1e-10);
@@ -345,11 +347,12 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid, qid2};
+    /// use pecos_core::QubitId;
+    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid};
     ///
     /// // Create a Bell state
     /// let mut state = DensityMatrix::new(2);
-    /// state.h(&qid(0)).cx(&qid2(0, 1));
+    /// state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     ///
     /// // Get the flattened density matrix
     /// let flat_rho = state.get_flattened_density_matrix();
@@ -882,11 +885,12 @@ where
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid, qid2};
+    /// use pecos_core::QubitId;
+    /// use pecos_simulators::{DensityMatrix, CliffordGateable, qid};
     ///
     /// // Create a Bell state
     /// let mut state = DensityMatrix::new(2);
-    /// state.h(&qid(0)).cx(&qid2(0, 1));
+    /// state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     ///
     /// // Print the density matrix with default formatting
     /// println!("{}", state);
@@ -1003,25 +1007,21 @@ where
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let n = self.num_physical_qubits;
 
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index();
-            let target = pair[1].index();
+        for &(control, target) in pairs {
+            let control = control.index();
+            let target = target.index();
 
             // Apply CX to the system qubits
             self.state_vector_mut()
-                .cx(&[QubitId(control), QubitId(target)]);
+                .cx(&[(QubitId(control), QubitId(target))]);
 
             // Apply CX* to the environment qubits
             // CX is real so CX* = CX
             self.state_vector_mut()
-                .cx(&[QubitId(control + n), QubitId(target + n)]);
+                .cx(&[(QubitId(control + n), QubitId(target + n))]);
         }
 
         self
@@ -1212,27 +1212,23 @@ where
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let n = self.num_physical_qubits;
 
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
-            let sys_pairs = [QubitId(q1), QubitId(q2)];
-            let env_pairs = [QubitId(q1 + n), QubitId(q2 + n)];
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let sys_pairs = [(QubitId(q1), QubitId(q2))];
+            let env_pairs = [(QubitId(q1 + n), QubitId(q2 + n))];
 
             // Apply RZZ to the system qubits
             self.state_vector_mut().rzz(theta, &sys_pairs);
 
             // Apply RZZ* to the environment qubits
             // RZZ(-theta) = (X tensor I) * RZZ(theta) * (X tensor I)
-            self.state_vector_mut().x(&[env_pairs[0]]);
+            self.state_vector_mut().x(&[env_pairs[0].0]);
             self.state_vector_mut().rzz(theta, &env_pairs);
-            self.state_vector_mut().x(&[env_pairs[0]]);
+            self.state_vector_mut().x(&[env_pairs[0].0]);
         }
 
         self
@@ -1248,7 +1244,7 @@ impl crate::density_matrix_test_utils::DensityMatrixSimulator for DensityMatrix 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{qid, qid2};
+    use pecos_core::{QubitId, qid};
 
     #[test]
     fn test_new_density_matrix() {
@@ -1347,7 +1343,7 @@ mod tests {
         let mut dm = DensityMatrix::new(2);
 
         // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
-        dm.h(&qid(0)).cx(&qid2(0, 1));
+        dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
         // Check probabilities
         assert!((dm.probability(0) - 0.5).abs() < 1e-10);

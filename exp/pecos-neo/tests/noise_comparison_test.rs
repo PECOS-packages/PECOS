@@ -164,7 +164,7 @@ fn test_single_qubit_depolarizing_comparison() {
     );
 
     // Circuit for ComposableNoiseModel
-    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let composable_counts = run_composable_noise_model(composable_model, commands, 1, NUM_SHOTS);
 
@@ -230,12 +230,12 @@ fn test_two_qubit_depolarizing_comparison() {
 
     // Circuit for ComposableNoiseModel
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .x(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .x(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let composable_counts = run_composable_noise_model(composable_model, commands, 2, NUM_SHOTS);
@@ -295,7 +295,7 @@ fn test_measurement_error_comparison() {
     );
 
     // Circuit for ComposableNoiseModel
-    let commands = CommandBuilder::new().pz(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     let composable_counts = run_composable_noise_model(composable_model, commands, 1, NUM_SHOTS);
 
@@ -362,7 +362,7 @@ fn test_preparation_error_comparison() {
     );
 
     // Circuit for ComposableNoiseModel
-    let commands = CommandBuilder::new().pz(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     let composable_counts = run_composable_noise_model(composable_model, commands, 1, NUM_SHOTS);
 
@@ -428,12 +428,12 @@ fn test_combined_noise_comparison() {
 
     // Bell state circuit for ComposableNoiseModel
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let composable_counts = run_composable_noise_model(composable_model, commands, 2, NUM_SHOTS);
@@ -518,12 +518,12 @@ fn test_general_noise_model_builder_comparison() {
     );
 
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .x(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .x(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let composable_counts = run_composable_noise_model(builder_model, commands, 2, NUM_SHOTS);
@@ -569,11 +569,11 @@ fn test_idle_noise_with_time_scale() {
     // Circuit with idle - use H gates to make Z errors detectable
     // H|+> = |0>, H|-> = |1>, so Z|+> = |-> gives different outcome after H
     let commands = CommandBuilder::new()
-        .pz(0)
-        .h(0) // Prepare |+> state
-        .idle(0, 1000) // 1000 ns idle = 1 us (Z errors here)
-        .h(0) // Convert Z errors to bit flips
-        .mz(0)
+        .pz(&[0])
+        .h(&[0]) // Prepare |+> state
+        .idle(&[0], 1000) // 1000 ns idle = 1 us (Z errors here)
+        .h(&[0]) // Convert Z errors to bit flips
+        .mz(&[0])
         .build();
 
     let mut state = SparseStab::new(1);

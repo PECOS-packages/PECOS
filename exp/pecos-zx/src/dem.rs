@@ -593,23 +593,23 @@ mod tests {
     fn rep_code_segments() -> (DagCircuit, DagCircuit, DagCircuit) {
         let mut init = DagCircuit::new();
         for q in 0..5 {
-            init.pz(q);
+            init.pz(&[q]);
         }
 
         let mut body = DagCircuit::new();
-        body.pz(3);
-        body.pz(4);
-        body.cx(0, 3);
-        body.cx(1, 3);
-        body.cx(1, 4);
-        body.cx(2, 4);
-        body.mz(3);
-        body.mz(4);
+        body.pz(&[3]);
+        body.pz(&[4]);
+        body.cx(&[(0, 3)]);
+        body.cx(&[(1, 3)]);
+        body.cx(&[(1, 4)]);
+        body.cx(&[(2, 4)]);
+        body.mz(&[3]);
+        body.mz(&[4]);
 
         let mut finalize = DagCircuit::new();
-        finalize.mz(0);
-        finalize.mz(1);
-        finalize.mz(2);
+        finalize.mz(&[0]);
+        finalize.mz(&[1]);
+        finalize.mz(&[2]);
 
         (init, body, finalize)
     }
@@ -749,24 +749,24 @@ mod tests {
         let mut dag = DagCircuit::new();
 
         // Round 1
-        dag.pz(3);
-        dag.pz(4);
-        dag.cx(0, 3);
-        dag.cx(1, 3);
-        dag.cx(1, 4);
-        dag.cx(2, 4);
-        dag.mz(3);
-        dag.mz(4);
+        dag.pz(&[3]);
+        dag.pz(&[4]);
+        dag.cx(&[(0, 3)]);
+        dag.cx(&[(1, 3)]);
+        dag.cx(&[(1, 4)]);
+        dag.cx(&[(2, 4)]);
+        dag.mz(&[3]);
+        dag.mz(&[4]);
 
         // Round 2 (fresh ancilla indices)
-        dag.pz(5);
-        dag.pz(6);
-        dag.cx(0, 5);
-        dag.cx(1, 5);
-        dag.cx(1, 6);
-        dag.cx(2, 6);
-        dag.mz(5);
-        dag.mz(6);
+        dag.pz(&[5]);
+        dag.pz(&[6]);
+        dag.cx(&[(0, 5)]);
+        dag.cx(&[(1, 5)]);
+        dag.cx(&[(1, 6)]);
+        dag.cx(&[(2, 6)]);
+        dag.mz(&[5]);
+        dag.mz(&[6]);
 
         let graph = dag_to_zx(&dag).expect("conversion failed");
         let result = compute_pauli_webs(&graph);

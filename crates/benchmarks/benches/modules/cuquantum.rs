@@ -61,7 +61,7 @@ fn bench_statevec_gates(c: &mut Criterion) {
                 |b, &n| {
                     b.iter(|| {
                         for i in 0..n - 1 {
-                            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
                         }
                         black_box(&sim);
                     });
@@ -110,7 +110,7 @@ fn bench_stabilizer_gates(c: &mut Criterion) {
                 |b, &n| {
                     b.iter(|| {
                         for i in 0..n - 1 {
-                            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
                         }
                         black_box(&sim);
                     });
@@ -143,7 +143,7 @@ fn bench_bell_state(c: &mut Criterion) {
                     // Create GHZ state
                     sim.h(&[QubitId(0)]);
                     for i in 0..n - 1 {
-                        sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                        sim.cx(&[(QubitId(i), QubitId(i + 1))]);
                     }
                     let qubits: Vec<_> = (0..n).map(QubitId).collect();
                     let results = sim.mz(&qubits);
@@ -163,7 +163,7 @@ fn bench_bell_state(c: &mut Criterion) {
                     // Create GHZ state
                     sim.h(&[QubitId(0)]);
                     for i in 0..n - 1 {
-                        sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                        sim.cx(&[(QubitId(i), QubitId(i + 1))]);
                     }
                     let qubits: Vec<_> = (0..n).map(QubitId).collect();
                     let results = sim.mz(&qubits);
@@ -205,7 +205,7 @@ fn bench_surface_code_syndrome(c: &mut Criterion) {
                     // Some CX gates to simulate stabilizer measurement
                     for i in 0..ancilla {
                         if i + ancilla < total {
-                            sim.cx(&[QubitId(i), QubitId(i + ancilla)]);
+                            sim.cx(&[(QubitId(i), QubitId(i + ancilla))]);
                         }
                     }
                     for i in 0..ancilla {
@@ -298,7 +298,7 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
                     for i in 0..n - 1 {
                         sim.rzz(
                             Angle64::from_radians(PI / 4.0),
-                            &[QubitId(i), QubitId(i + 1)],
+                            &[(QubitId(i), QubitId(i + 1))],
                         );
                     }
                     black_box(&sim);
@@ -315,7 +315,7 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
                     for i in 0..n - 1 {
                         sim.rxx(
                             Angle64::from_radians(PI / 4.0),
-                            &[QubitId(i), QubitId(i + 1)],
+                            &[(QubitId(i), QubitId(i + 1))],
                         );
                     }
                     black_box(&sim);
@@ -332,7 +332,7 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
                     for i in 0..n - 1 {
                         sim.ryy(
                             Angle64::from_radians(PI / 4.0),
-                            &[QubitId(i), QubitId(i + 1)],
+                            &[(QubitId(i), QubitId(i + 1))],
                         );
                     }
                     black_box(&sim);

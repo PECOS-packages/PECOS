@@ -248,14 +248,10 @@ where
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let qulacs_q1 = self.convert_qubit_index(pair[0].index());
-            let qulacs_q2 = self.convert_qubit_index(pair[1].index());
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let qulacs_q1 = self.convert_qubit_index(q1.index());
+            let qulacs_q2 = self.convert_qubit_index(q2.index());
             ffi::apply_cnot(self.state.pin_mut(), qulacs_q1, qulacs_q2);
         }
         self
@@ -317,27 +313,19 @@ where
 
     // sx, sxdg, sy, sydg use trait default decompositions for consistency with StateVec
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let qulacs_q1 = self.convert_qubit_index(pair[0].index());
-            let qulacs_q2 = self.convert_qubit_index(pair[1].index());
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let qulacs_q1 = self.convert_qubit_index(q1.index());
+            let qulacs_q2 = self.convert_qubit_index(q2.index());
             ffi::apply_cz(self.state.pin_mut(), qulacs_q1, qulacs_q2);
         }
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let qulacs_q1 = self.convert_qubit_index(pair[0].index());
-            let qulacs_q2 = self.convert_qubit_index(pair[1].index());
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let qulacs_q1 = self.convert_qubit_index(q1.index());
+            let qulacs_q2 = self.convert_qubit_index(q2.index());
             ffi::apply_swap(self.state.pin_mut(), qulacs_q1, qulacs_q2);
         }
         self
@@ -388,17 +376,13 @@ where
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
         // RZZ(θ) = exp(-i θ/2 Z⊗Z)
         // Decomposition: CNOT(q1,q2), RZ(θ, q2), CNOT(q1,q2)
-        for pair in qubits.chunks_exact(2) {
-            let q1_conv = self.convert_qubit_index(pair[0].index());
-            let q2_conv = self.convert_qubit_index(pair[1].index());
+        for &(q1, q2) in pairs {
+            let q1_conv = self.convert_qubit_index(q1.index());
+            let q2_conv = self.convert_qubit_index(q2.index());
             ffi::apply_cnot(self.state.pin_mut(), q1_conv, q2_conv);
             ffi::apply_rz(self.state.pin_mut(), q2_conv, theta);
             ffi::apply_cnot(self.state.pin_mut(), q1_conv, q2_conv);

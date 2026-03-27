@@ -29,8 +29,8 @@
 //! prop.inject_x_fault(0);
 //!
 //! // Propagate through circuit
-//! prop.h(0);      // X -> Z
-//! prop.cx(0, 1);  // Z propagates to control
+//! prop.h(&[0]);      // X -> Z
+//! prop.cx(&[(0, 1)]);  // Z propagates to control
 //!
 //! prop.flush();
 //!
@@ -354,50 +354,68 @@ impl GpuPauliProp {
     // =========================================================================
 
     /// Apply Hadamard gate. Transforms: X <-> Z, Y -> -Y
-    pub fn h(&mut self, qubit: usize) {
-        self.queue_gate(GATE_H, qubit as u32, 0);
+    pub fn h(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.queue_gate(GATE_H, q as u32, 0);
+        }
     }
 
     /// Apply SZ (S) gate. Transforms: X -> Y, Y -> -X, Z -> Z
-    pub fn sz(&mut self, qubit: usize) {
-        self.queue_gate(GATE_SZ, qubit as u32, 0);
+    pub fn sz(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.queue_gate(GATE_SZ, q as u32, 0);
+        }
     }
 
     /// Apply SZ-dagger gate. Transforms: X -> -Y, Y -> X, Z -> Z
-    pub fn szdg(&mut self, qubit: usize) {
-        self.queue_gate(GATE_SZDG, qubit as u32, 0);
+    pub fn szdg(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.queue_gate(GATE_SZDG, q as u32, 0);
+        }
     }
 
     /// Apply X gate. Toggles X fault.
-    pub fn x(&mut self, qubit: usize) {
-        self.queue_gate(GATE_X, qubit as u32, 0);
+    pub fn x(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.queue_gate(GATE_X, q as u32, 0);
+        }
     }
 
     /// Apply Y gate. Toggles both X and Z faults.
-    pub fn y(&mut self, qubit: usize) {
-        self.queue_gate(GATE_Y, qubit as u32, 0);
+    pub fn y(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.queue_gate(GATE_Y, q as u32, 0);
+        }
     }
 
     /// Apply Z gate. Toggles Z fault.
-    pub fn z(&mut self, qubit: usize) {
-        self.queue_gate(GATE_Z, qubit as u32, 0);
+    pub fn z(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.queue_gate(GATE_Z, q as u32, 0);
+        }
     }
 
     /// Apply CX (CNOT) gate.
     /// Transforms: `ctrl_X` -> `tgt_X`, `tgt_Z` -> `ctrl_Z`
-    pub fn cx(&mut self, control: usize, target: usize) {
-        self.queue_gate(GATE_CX, control as u32, target as u32);
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) {
+        for &(control, target) in pairs {
+            self.queue_gate(GATE_CX, control as u32, target as u32);
+        }
     }
 
     /// Apply CZ gate.
     /// Transforms: `ctrl_X` -> `tgt_Z`, `tgt_X` -> `ctrl_Z`
-    pub fn cz(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.queue_gate(GATE_CZ, qubit_a as u32, qubit_b as u32);
+    pub fn cz(&mut self, pairs: &[(usize, usize)]) {
+        for &(a, b) in pairs {
+            self.queue_gate(GATE_CZ, a as u32, b as u32);
+        }
     }
 
     /// Apply SWAP gate.
-    pub fn swap(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.queue_gate(GATE_SWAP, qubit_a as u32, qubit_b as u32);
+    pub fn swap(&mut self, pairs: &[(usize, usize)]) {
+        for &(a, b) in pairs {
+            self.queue_gate(GATE_SWAP, a as u32, b as u32);
+        }
     }
 
     // =========================================================================
@@ -791,7 +809,7 @@ mod tests {
         prop.inject_x_fault(0);
 
         // H transforms X -> Z
-        prop.h(0);
+        prop.h(&[0]);
         prop.flush();
 
         let (x, z) = prop.get_fault_tables();
@@ -809,7 +827,7 @@ mod tests {
         prop.inject_x_fault(0);
 
         // SZ transforms X -> Y (XZ)
-        prop.sz(0);
+        prop.sz(&[0]);
         prop.flush();
 
         let (x, z) = prop.get_fault_tables();
@@ -827,7 +845,7 @@ mod tests {
         prop.inject_x_fault(0);
 
         // CX: control X propagates to target
-        prop.cx(0, 1);
+        prop.cx(&[(0, 1)]);
         prop.flush();
 
         let (x, _z) = prop.get_fault_tables();
@@ -845,7 +863,7 @@ mod tests {
         prop.inject_z_fault(1);
 
         // CX: target Z propagates to control
-        prop.cx(0, 1);
+        prop.cx(&[(0, 1)]);
         prop.flush();
 
         let (_x, z) = prop.get_fault_tables();

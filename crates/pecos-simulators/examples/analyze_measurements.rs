@@ -90,11 +90,11 @@ fn analyze_measurements(params: &SurfaceCodeParams, rounds: usize) -> (usize, us
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId(data)]);
+                    sim.cx(&[(ancilla, QubitId(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId(data), ancilla]);
+                    sim.cx(&[(QubitId(data), ancilla)]);
                 }
             }
         }

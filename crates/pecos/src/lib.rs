@@ -232,7 +232,7 @@ pub mod quantum {
 /// use pecos::QubitId;
 ///
 /// let mut sim = SparseStab::new(2);
-/// sim.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
+/// sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
 /// ```
 #[cfg(feature = "sim")]
 pub mod simulators {

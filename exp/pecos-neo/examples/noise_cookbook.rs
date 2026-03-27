@@ -45,7 +45,7 @@ fn recipe_quick_start() {
     println!("--- Recipe 1: Quick Start ---");
 
     // Simple X gate circuit
-    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     // Method 1: One-liner with pre-built pattern
     let error_rate = run_with_noise(
@@ -80,7 +80,7 @@ fn recipe_quick_start() {
 fn recipe_sim_neo_integration() {
     println!("--- Recipe 2: sim_neo() Integration ---");
 
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     // Method 1: Pass pre-built pattern directly to .noise()
     let results = sim_neo(circuit.clone())
@@ -175,8 +175,8 @@ fn recipe_measurement_noise() {
     println!("--- Recipe 3: Measurement Noise ---");
 
     let commands = CommandBuilder::new()
-        .pz(0) // Prepare |0>
-        .mz(0)
+        .pz(&[0]) // Prepare |0>
+        .mz(&[0])
         .build();
 
     // Symmetric measurement error (same rate for 0->1 and 1->0)
@@ -220,13 +220,13 @@ fn recipe_leakage_model() {
 
     // Multiple gates to accumulate leakage effects
     let commands = CommandBuilder::new()
-        .pz(0)
-        .h(0)
-        .h(0)
-        .h(0)
-        .h(0)
-        .h(0) // 5 Hadamard gates
-        .mz(0)
+        .pz(&[0])
+        .h(&[0])
+        .h(&[0])
+        .h(&[0])
+        .h(&[0])
+        .h(&[0]) // 5 Hadamard gates
+        .mz(&[0])
         .build();
 
     // Using pre-built leakage pattern
@@ -276,11 +276,11 @@ fn recipe_custom_composite() {
     println!("--- Recipe 5: Custom Composite Primitives ---");
 
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Custom two-qubit noise: biased towards Z errors (dephasing)
@@ -325,12 +325,12 @@ fn recipe_crosstalk() {
 
     // 3-qubit chain: measure middle qubit, observe neighbors
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .pz(2)
-        .mz(1) // Measure middle qubit
-        .mz(0) // Check if neighbors were affected
-        .mz(2)
+        .pz(&[0])
+        .pz(&[1])
+        .pz(&[2])
+        .mz(&[1]) // Measure middle qubit
+        .mz(&[0]) // Check if neighbors were affected
+        .mz(&[2])
         .build();
 
     // Chain crosstalk: measuring qubit 1 can flip qubits 0 and 2
@@ -385,12 +385,12 @@ fn recipe_realistic_device() {
     println!("--- Recipe 7: Realistic Device Noise ---");
 
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1) // Create Bell state
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)]) // Create Bell state
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Full device noise with all parameters

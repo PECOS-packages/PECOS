@@ -109,9 +109,9 @@ class TestMultiprocessingPauliProp:
     def test_pool_map(self) -> None:
         """Test PauliProp serialization works with multiprocessing Pool.map."""
         sim = PauliProp(num_qubits=3, track_sign=True)
-        sim.x(0)
+        sim.track_x([0])
         sim_bytes = pickle.dumps(sim)
-        args = [(sim_bytes, "h", (0,), "weight", ())] * 2
+        args = [(sim_bytes, "h", ([0],), "weight", ())] * 2
         ctx = _get_pool_context()
         with ctx.Pool(processes=2) as pool:
             results = pool.map_async(deserialize_and_call, args).get(

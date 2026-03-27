@@ -92,11 +92,11 @@ fn run_circuit<S: CliffordGateable + QuantumSimulator>(
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId::from(data)]);
+                    sim.cx(&[(ancilla, QubitId::from(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId::from(data), ancilla]);
+                    sim.cx(&[(QubitId::from(data), ancilla)]);
                 }
             }
         }

@@ -640,7 +640,7 @@ fn test_entity_state_preservation_through_transfer() {
     // Apply some gates to create a non-trivial state
     if let Some(sim_comp) = world1.simulators.get_mut(e1) {
         sim_comp.simulator.h(&[QubitId(0)]);
-        sim_comp.simulator.cx(&[QubitId(0), QubitId(1)]);
+        sim_comp.simulator.cx(&[(QubitId(0), QubitId(1))]);
     }
 
     // Mark a qubit as leaked in noise context
@@ -834,9 +834,9 @@ fn test_quantum_circuit_subset_simulation() {
     // Ancilla qubits: 1, 2
     fn syndrome_circuit() -> pecos_neo::command::CommandQueue {
         CommandBuilder::new()
-            .pz(1) // Reset ancilla
-            .cx(0, 1) // CNOT data -> ancilla
-            .mz(1)
+            .pz(&[1]) // Reset ancilla
+            .cx(&[(0, 1)]) // CNOT data -> ancilla
+            .mz(&[1])
             .build()
     }
 
@@ -856,7 +856,12 @@ fn test_quantum_circuit_subset_simulation() {
 
             // Build circuit for this round - need to reset simulator for rounds after first
             let circuit = if round == 0 {
-                CommandBuilder::new().pz(0).pz(1).cx(0, 1).mz(1).build()
+                CommandBuilder::new()
+                    .pz(&[0])
+                    .pz(&[1])
+                    .cx(&[(0, 1)])
+                    .mz(&[1])
+                    .build()
             } else {
                 syndrome_circuit()
             };
@@ -908,7 +913,12 @@ fn test_quantum_circuit_subset_simulation() {
                     .with_rng(PecosRng::seed_from_u64(seed));
 
                 let circuit = if round == 0 {
-                    CommandBuilder::new().pz(0).pz(1).cx(0, 1).mz(1).build()
+                    CommandBuilder::new()
+                        .pz(&[0])
+                        .pz(&[1])
+                        .cx(&[(0, 1)])
+                        .mz(&[1])
+                        .build()
                 } else {
                     syndrome_circuit()
                 };
@@ -1066,11 +1076,11 @@ fn test_subset_simulation_with_noise() {
     // Build a circuit with identity gates that can accumulate errors.
     // Without noise, this always measures 0.
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .identity(0) // Gate that can have depolarizing error
-        .identity(0)
-        .identity(0)
-        .mz(0)
+        .pz(&[0])
+        .identity(&[0]) // Gate that can have depolarizing error
+        .identity(&[0])
+        .identity(&[0])
+        .mz(&[0])
         .build();
 
     // Score function: 1.0 if measured 1 (error), 0.0 if measured 0 (correct)

@@ -652,7 +652,12 @@ mod tests {
         let p1 = 0.1;
         let shots = 500;
 
-        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
 
         // Simple configuration
         let mut state = SparseStab::new(1);

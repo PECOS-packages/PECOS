@@ -37,9 +37,9 @@ use std::mem;
 /// use pecos_simulators::SymbolicSparseStab;
 ///
 /// let mut sim = SymbolicSparseStab::new(2);
-/// sim.h(0).cx(0, 1);  // Create Bell state
-/// let r0 = sim.mz(0); // Non-deterministic
-/// let r1 = sim.mz(1); // Deterministic, depends on r0
+/// sim.h(&[0]).cx(&[(0, 1)]);  // Create Bell state
+/// let r0 = sim.mz(&[0])[0].clone(); // Non-deterministic
+/// let r1 = sim.mz(&[1])[0].clone(); // Deterministic, depends on r0
 /// assert_eq!(r0.outcome, r1.outcome);
 /// ```
 #[derive(Clone, Debug)]
@@ -103,61 +103,69 @@ impl SymbolicSparseStab {
 
     /// Pauli X gate. X -> X, Z -> -Z
     #[inline]
-    pub fn x(&mut self, q: usize) -> &mut Self {
-        self.stabs.signs_minus ^= &self.stabs.col_z[q];
+    pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.stabs.signs_minus ^= &self.stabs.col_z[q];
+        }
         self
     }
 
     /// Pauli Y gate. X -> -X, Z -> -Z
     #[inline]
-    pub fn y(&mut self, q: usize) -> &mut Self {
-        // XOR elements in symmetric difference of col_x[q] and col_z[q] into signs_minus
-        let sym_diff = &self.stabs.col_x[q] ^ &self.stabs.col_z[q];
-        self.stabs.signs_minus ^= &sym_diff;
+    pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            // XOR elements in symmetric difference of col_x[q] and col_z[q] into signs_minus
+            let sym_diff = &self.stabs.col_x[q] ^ &self.stabs.col_z[q];
+            self.stabs.signs_minus ^= &sym_diff;
+        }
         self
     }
 
     /// Pauli Z gate. X -> -X, Z -> Z
     #[inline]
-    pub fn z(&mut self, q: usize) -> &mut Self {
-        self.stabs.signs_minus ^= &self.stabs.col_x[q];
+    pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.stabs.signs_minus ^= &self.stabs.col_x[q];
+        }
         self
     }
 
     /// Sqrt of Z gate (S gate). X -> Y, Z -> Z
     #[inline]
-    pub fn sz(&mut self, q: usize) -> &mut Self {
-        // X -> i: track phase changes
-        // i * i = -1, so if already has i, add minus and remove i
-        // Compute intersection manually using BitSet words
-        let intersection = {
-            let mut result = BitSet::new();
-            for i in &self.stabs.signs_i {
-                if self.stabs.col_x[q].contains(i) {
-                    result.insert(i);
+    pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            // X -> i: track phase changes
+            // i * i = -1, so if already has i, add minus and remove i
+            // Compute intersection manually using BitSet words
+            let intersection = {
+                let mut result = BitSet::new();
+                for i in &self.stabs.signs_i {
+                    if self.stabs.col_x[q].contains(i) {
+                        result.insert(i);
+                    }
                 }
+                result
+            };
+            self.stabs.signs_minus ^= &intersection;
+            self.stabs.signs_i ^= &self.stabs.col_x[q];
+
+            // Update the Pauli structure (X -> Y means add Z component)
+            // Need to collect indices first to avoid borrow issues
+            let col_x_indices: Vec<usize> = self.stabs.col_x[q].iter().collect();
+
+            // Update stabs
+            self.stabs.col_z[q] ^= &self.stabs.col_x[q];
+            let q_set = BitSet::single(q);
+            for i in &col_x_indices {
+                self.stabs.row_z[*i] ^= &q_set;
             }
-            result
-        };
-        self.stabs.signs_minus ^= &intersection;
-        self.stabs.signs_i ^= &self.stabs.col_x[q];
 
-        // Update the Pauli structure (X -> Y means add Z component)
-        // Need to collect indices first to avoid borrow issues
-        let col_x_indices: Vec<usize> = self.stabs.col_x[q].iter().collect();
-
-        // Update stabs
-        self.stabs.col_z[q] ^= &self.stabs.col_x[q];
-        let q_set = BitSet::single(q);
-        for i in &col_x_indices {
-            self.stabs.row_z[*i] ^= &q_set;
-        }
-
-        // Update destabs
-        let destab_col_x_indices: Vec<usize> = self.destabs.col_x[q].iter().collect();
-        self.destabs.col_z[q] ^= &self.destabs.col_x[q];
-        for i in &destab_col_x_indices {
-            self.destabs.row_z[*i] ^= &q_set;
+            // Update destabs
+            let destab_col_x_indices: Vec<usize> = self.destabs.col_x[q].iter().collect();
+            self.destabs.col_z[q] ^= &self.destabs.col_x[q];
+            for i in &destab_col_x_indices {
+                self.destabs.row_z[*i] ^= &q_set;
+            }
         }
 
         self
@@ -165,64 +173,66 @@ impl SymbolicSparseStab {
 
     /// Hadamard gate. X -> Z, Z -> X, Y -> -Y
     #[inline]
-    pub fn h(&mut self, q: usize) -> &mut Self {
-        // Y -> -Y: add minus for generators that have both X and Z on this qubit
-        // Compute intersection
-        let intersection = {
-            let mut result = BitSet::new();
-            for i in &self.stabs.col_x[q] {
-                if self.stabs.col_z[q].contains(i) {
-                    result.insert(i);
+    pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            // Y -> -Y: add minus for generators that have both X and Z on this qubit
+            // Compute intersection
+            let intersection = {
+                let mut result = BitSet::new();
+                for i in &self.stabs.col_x[q] {
+                    if self.stabs.col_z[q].contains(i) {
+                        result.insert(i);
+                    }
                 }
-            }
-            result
-        };
-        self.stabs.signs_minus ^= &intersection;
+                result
+            };
+            self.stabs.signs_minus ^= &intersection;
 
-        // Swap X and Z for this qubit - process stabs
-        {
-            // Elements only in col_x (not in col_z)
-            let only_x: Vec<usize> = self.stabs.col_x[q]
-                .iter()
-                .filter(|i| !self.stabs.col_z[q].contains(*i))
-                .collect();
-            // Elements only in col_z (not in col_x)
-            let only_z: Vec<usize> = self.stabs.col_z[q]
-                .iter()
-                .filter(|i| !self.stabs.col_x[q].contains(*i))
-                .collect();
+            // Swap X and Z for this qubit - process stabs
+            {
+                // Elements only in col_x (not in col_z)
+                let only_x: Vec<usize> = self.stabs.col_x[q]
+                    .iter()
+                    .filter(|i| !self.stabs.col_z[q].contains(*i))
+                    .collect();
+                // Elements only in col_z (not in col_x)
+                let only_z: Vec<usize> = self.stabs.col_z[q]
+                    .iter()
+                    .filter(|i| !self.stabs.col_x[q].contains(*i))
+                    .collect();
 
-            for i in only_x {
-                self.stabs.row_x[i].remove(q);
-                self.stabs.row_z[i].insert(q);
+                for i in only_x {
+                    self.stabs.row_x[i].remove(q);
+                    self.stabs.row_z[i].insert(q);
+                }
+                for i in only_z {
+                    self.stabs.row_z[i].remove(q);
+                    self.stabs.row_x[i].insert(q);
+                }
+                mem::swap(&mut self.stabs.col_x[q], &mut self.stabs.col_z[q]);
             }
-            for i in only_z {
-                self.stabs.row_z[i].remove(q);
-                self.stabs.row_x[i].insert(q);
-            }
-            mem::swap(&mut self.stabs.col_x[q], &mut self.stabs.col_z[q]);
-        }
 
-        // Swap X and Z for destabs
-        {
-            let only_x: Vec<usize> = self.destabs.col_x[q]
-                .iter()
-                .filter(|i| !self.destabs.col_z[q].contains(*i))
-                .collect();
-            let only_z: Vec<usize> = self.destabs.col_z[q]
-                .iter()
-                .filter(|i| !self.destabs.col_x[q].contains(*i))
-                .collect();
+            // Swap X and Z for destabs
+            {
+                let only_x: Vec<usize> = self.destabs.col_x[q]
+                    .iter()
+                    .filter(|i| !self.destabs.col_z[q].contains(*i))
+                    .collect();
+                let only_z: Vec<usize> = self.destabs.col_z[q]
+                    .iter()
+                    .filter(|i| !self.destabs.col_x[q].contains(*i))
+                    .collect();
 
-            for i in only_x {
-                self.destabs.row_x[i].remove(q);
-                self.destabs.row_z[i].insert(q);
+                for i in only_x {
+                    self.destabs.row_x[i].remove(q);
+                    self.destabs.row_z[i].insert(q);
+                }
+                for i in only_z {
+                    self.destabs.row_z[i].remove(q);
+                    self.destabs.row_x[i].insert(q);
+                }
+                mem::swap(&mut self.destabs.col_x[q], &mut self.destabs.col_z[q]);
             }
-            for i in only_z {
-                self.destabs.row_z[i].remove(q);
-                self.destabs.row_x[i].insert(q);
-            }
-            mem::swap(&mut self.destabs.col_x[q], &mut self.destabs.col_z[q]);
         }
 
         self
@@ -230,47 +240,49 @@ impl SymbolicSparseStab {
 
     /// CNOT gate. IX -> IX, XI -> XX, IZ -> ZZ, ZI -> ZI
     #[inline]
-    pub fn cx(&mut self, q1: usize, q2: usize) -> &mut Self {
-        // Pre-create the single-element BitSets for toggling
-        let q1_set = BitSet::single(q1);
-        let q2_set = BitSet::single(q2);
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            // Pre-create the single-element BitSets for toggling
+            let q1_set = BitSet::single(q1);
+            let q2_set = BitSet::single(q2);
 
-        // Process stabs
-        {
-            // Handle col_x: XI -> XX
-            let x_col_indices: Vec<usize> = self.stabs.col_x[q1].iter().collect();
-            for i in &x_col_indices {
-                self.stabs.row_x[*i] ^= &q2_set;
-            }
-            let x_col_copy = self.stabs.col_x[q1].clone();
-            self.stabs.col_x[q2] ^= &x_col_copy;
+            // Process stabs
+            {
+                // Handle col_x: XI -> XX
+                let x_col_indices: Vec<usize> = self.stabs.col_x[q1].iter().collect();
+                for i in &x_col_indices {
+                    self.stabs.row_x[*i] ^= &q2_set;
+                }
+                let x_col_copy = self.stabs.col_x[q1].clone();
+                self.stabs.col_x[q2] ^= &x_col_copy;
 
-            // Handle col_z: IZ -> ZZ
-            let z_col_indices: Vec<usize> = self.stabs.col_z[q2].iter().collect();
-            for i in &z_col_indices {
-                self.stabs.row_z[*i] ^= &q1_set;
+                // Handle col_z: IZ -> ZZ
+                let z_col_indices: Vec<usize> = self.stabs.col_z[q2].iter().collect();
+                for i in &z_col_indices {
+                    self.stabs.row_z[*i] ^= &q1_set;
+                }
+                let z_col_copy = self.stabs.col_z[q2].clone();
+                self.stabs.col_z[q1] ^= &z_col_copy;
             }
-            let z_col_copy = self.stabs.col_z[q2].clone();
-            self.stabs.col_z[q1] ^= &z_col_copy;
-        }
 
-        // Process destabs
-        {
-            // Handle col_x: XI -> XX
-            let x_col_indices: Vec<usize> = self.destabs.col_x[q1].iter().collect();
-            for i in &x_col_indices {
-                self.destabs.row_x[*i] ^= &q2_set;
-            }
-            let x_col_copy = self.destabs.col_x[q1].clone();
-            self.destabs.col_x[q2] ^= &x_col_copy;
+            // Process destabs
+            {
+                // Handle col_x: XI -> XX
+                let x_col_indices: Vec<usize> = self.destabs.col_x[q1].iter().collect();
+                for i in &x_col_indices {
+                    self.destabs.row_x[*i] ^= &q2_set;
+                }
+                let x_col_copy = self.destabs.col_x[q1].clone();
+                self.destabs.col_x[q2] ^= &x_col_copy;
 
-            // Handle col_z: IZ -> ZZ
-            let z_col_indices: Vec<usize> = self.destabs.col_z[q2].iter().collect();
-            for i in &z_col_indices {
-                self.destabs.row_z[*i] ^= &q1_set;
+                // Handle col_z: IZ -> ZZ
+                let z_col_indices: Vec<usize> = self.destabs.col_z[q2].iter().collect();
+                for i in &z_col_indices {
+                    self.destabs.row_z[*i] ^= &q1_set;
+                }
+                let z_col_copy = self.destabs.col_z[q2].clone();
+                self.destabs.col_z[q1] ^= &z_col_copy;
             }
-            let z_col_copy = self.destabs.col_z[q2].clone();
-            self.destabs.col_z[q1] ^= &z_col_copy;
         }
 
         self
@@ -278,17 +290,22 @@ impl SymbolicSparseStab {
 
     // ==================== Measurement ====================
 
-    /// Measure a qubit in the Z basis.
+    /// Measure qubits in the Z basis.
     #[inline]
-    pub fn mz(&mut self, q: usize) -> SymbolicMeasurementResult {
-        let result = if self.stabs.col_x[q].is_empty() {
-            self.deterministic_meas(q)
-        } else {
-            self.nondeterministic_meas(q)
-        };
+    pub fn mz(&mut self, qubits: &[usize]) -> Vec<SymbolicMeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| {
+                let result = if self.stabs.col_x[q].is_empty() {
+                    self.deterministic_meas(q)
+                } else {
+                    self.nondeterministic_meas(q)
+                };
 
-        self.measurement_history.push(result.clone());
-        result
+                self.measurement_history.push(result.clone());
+                result
+            })
+            .collect()
     }
 
     /// Handle a deterministic measurement.
@@ -501,17 +518,17 @@ mod tests {
         let mut sim = SymbolicSparseStab::new(2);
 
         // Create Bell state
-        sim.h(0).cx(0, 1);
+        sim.h(&[0]).cx(&[(0, 1)]);
 
         // Measure qubit 0 - should be non-deterministic
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(!r0.is_deterministic);
         assert_eq!(r0.outcome.len(), 1);
         assert!(r0.outcome.contains(0));
         assert_eq!(r0.index, 0);
 
         // Measure qubit 1 - should be deterministic
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(r1.is_deterministic);
         assert_eq!(r0.outcome, r1.outcome);
         assert_eq!(r1.index, 1);
@@ -521,12 +538,12 @@ mod tests {
     fn test_product_state_bitset() {
         let mut sim = SymbolicSparseStab::new(2);
 
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(r0.is_deterministic);
         assert!(r0.outcome.is_empty());
         assert_eq!(r0.index, 0);
 
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(r1.is_deterministic);
         assert!(r1.outcome.is_empty());
         assert_eq!(r1.index, 1);

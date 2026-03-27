@@ -86,7 +86,7 @@ pub fn quantum_cx(control: SSAValue, target: SSAValue) -> Instruction {
 
 /// Create a measurement instruction
 #[must_use]
-pub fn measure(qubit: SSAValue) -> (Instruction, SSAValue) {
+pub fn mz(qubit: SSAValue) -> (Instruction, SSAValue) {
     let result = SSAValue {
         id: qubit.id + 1000,
         version: 0,

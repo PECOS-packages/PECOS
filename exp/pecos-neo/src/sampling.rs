@@ -33,7 +33,7 @@
 //! use pecos_simulators::SparseStab;
 //!
 //! let n = 5;
-//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //! let mut explorer = PathExplorer::new(SparseStab::new(n));
 //! let mut stats = PathStatistics::new();
 //!

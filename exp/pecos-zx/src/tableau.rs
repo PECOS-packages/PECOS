@@ -106,7 +106,7 @@ impl CliffordTableau {
     }
 
     /// Record a measurement of qubit `q`, optionally targeting classical bit `cbit`.
-    pub fn measure(&mut self, q: usize, cbit: Option<ClassicalBitId>) {
+    pub fn mz(&mut self, q: usize, cbit: Option<ClassicalBitId>) {
         self.measurements.push(MeasurementRecord { qubit: q, cbit });
     }
 
@@ -273,7 +273,7 @@ impl CliffordTableau {
                     // Measurement
                     GateType::MZ | GateType::MeasureFree => {
                         let cbit = dag.measurement_target(node_id);
-                        self.measure(qs[0], cbit);
+                        self.mz(qs[0], cbit);
                     }
 
                     // Single-qubit Clifford gates
@@ -804,7 +804,7 @@ mod tests {
             tab.prepare(q);
         }
         for q in 0..n {
-            tab.measure(q, None);
+            tab.mz(q, None);
         }
 
         let result = tab.extract_detectors();
@@ -841,8 +841,8 @@ mod tests {
         tab.prepare(1);
         tab.apply_h(0);
         tab.apply_cx(0, 1);
-        tab.measure(0, None);
-        tab.measure(1, None);
+        tab.mz(0, None);
+        tab.mz(1, None);
 
         let result = tab.extract_detectors();
         assert_eq!(
@@ -894,8 +894,8 @@ mod tests {
         tab.apply_cx(2, 4);
 
         // Measure ancillas
-        tab.measure(3, None);
-        tab.measure(4, None);
+        tab.mz(3, None);
+        tab.mz(4, None);
 
         let result = tab.extract_detectors();
         assert_eq!(
@@ -931,12 +931,12 @@ mod tests {
     fn from_dag_bell_state() {
         // Build a Bell circuit via DagCircuit, then extract detectors via from_dag.
         let mut dag = DagCircuit::new();
-        dag.prep(0);
-        dag.prep(1);
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.measure(0);
-        dag.measure(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let tab = CliffordTableau::from_dag(&dag).expect("Bell circuit is Clifford");
         let result = tab.extract_detectors();
@@ -960,23 +960,23 @@ mod tests {
 
         // Data qubits 0,1,2 are inputs (not prepared)
         // Ancilla qubits 3,4 are prepared
-        dag.prep(3);
-        dag.prep(4);
+        dag.pz(&[3]);
+        dag.pz(&[4]);
 
         // Syndrome extraction
-        dag.cx(0, 3);
-        dag.cx(1, 3);
-        dag.cx(1, 4);
-        dag.cx(2, 4);
+        dag.cx(&[(0, 3)]);
+        dag.cx(&[(1, 3)]);
+        dag.cx(&[(1, 4)]);
+        dag.cx(&[(2, 4)]);
 
         // Measure ancillas
-        dag.measure(3);
-        dag.measure(4);
+        dag.mz(&[3]);
+        dag.mz(&[4]);
 
         // Measure data qubits (needed for ZX graph to have outputs)
-        dag.measure(0);
-        dag.measure(1);
-        dag.measure(2);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
+        dag.mz(&[2]);
 
         // Method 1: Tableau-based detector extraction
         let tab = CliffordTableau::from_dag(&dag).expect("repetition code is Clifford");
@@ -1055,9 +1055,9 @@ mod tests {
         use pecos_core::Angle64;
 
         let mut dag = DagCircuit::new();
-        dag.prep(0);
-        dag.rz(Angle64::from_turns(0.125), 0); // T gate equivalent, non-Clifford
-        dag.measure(0);
+        dag.pz(&[0]);
+        dag.rz(Angle64::from_turns(0.125), &[0]); // T gate equivalent, non-Clifford
+        dag.mz(&[0]);
 
         let result = CliffordTableau::from_dag(&dag);
         assert!(result.is_err());
@@ -1119,25 +1119,25 @@ mod tests {
         // Init: prepare all 5 qubits
         let mut init = DagCircuit::new();
         for q in 0..5 {
-            init.prep(q);
+            init.pz(&[q]);
         }
 
         // Body: prep ancillas, syndrome extraction, measure ancillas
         let mut body = DagCircuit::new();
-        body.prep(3);
-        body.prep(4);
-        body.cx(0, 3);
-        body.cx(1, 3);
-        body.cx(1, 4);
-        body.cx(2, 4);
-        body.measure(3);
-        body.measure(4);
+        body.pz(&[3]);
+        body.pz(&[4]);
+        body.cx(&[(0, 3)]);
+        body.cx(&[(1, 3)]);
+        body.cx(&[(1, 4)]);
+        body.cx(&[(2, 4)]);
+        body.mz(&[3]);
+        body.mz(&[4]);
 
         // Finalize: measure data qubits
         let mut finalize = DagCircuit::new();
-        finalize.measure(0);
-        finalize.measure(1);
-        finalize.measure(2);
+        finalize.mz(&[0]);
+        finalize.mz(&[1]);
+        finalize.mz(&[2]);
 
         (init, body, finalize)
     }
@@ -1243,15 +1243,15 @@ mod tests {
         // Body: prep ancilla (q1), measure ancilla (q1), no gates on data (q0).
         // Each ancilla measurement is individually deterministic every round.
         let mut init = DagCircuit::new();
-        init.prep(0);
-        init.prep(1);
+        init.pz(&[0]);
+        init.pz(&[1]);
 
         let mut body = DagCircuit::new();
-        body.prep(1);
-        body.measure(1);
+        body.pz(&[1]);
+        body.mz(&[1]);
 
         let mut finalize = DagCircuit::new();
-        finalize.measure(0);
+        finalize.mz(&[0]);
 
         let analysis =
             analyze_periodic(&init, &body, &finalize).expect("trivial circuit should analyze");
@@ -1290,25 +1290,25 @@ mod tests {
 
         // Init: prep all qubits
         for q in 0..5 {
-            unrolled.prep(q);
+            unrolled.pz(&[q]);
         }
 
         // 3 body rounds
         for _round in 0..3 {
-            unrolled.prep(3);
-            unrolled.prep(4);
-            unrolled.cx(0, 3);
-            unrolled.cx(1, 3);
-            unrolled.cx(1, 4);
-            unrolled.cx(2, 4);
-            unrolled.measure(3);
-            unrolled.measure(4);
+            unrolled.pz(&[3]);
+            unrolled.pz(&[4]);
+            unrolled.cx(&[(0, 3)]);
+            unrolled.cx(&[(1, 3)]);
+            unrolled.cx(&[(1, 4)]);
+            unrolled.cx(&[(2, 4)]);
+            unrolled.mz(&[3]);
+            unrolled.mz(&[4]);
         }
 
         // Finalize
-        unrolled.measure(0);
-        unrolled.measure(1);
-        unrolled.measure(2);
+        unrolled.mz(&[0]);
+        unrolled.mz(&[1]);
+        unrolled.mz(&[2]);
 
         let unrolled_tab =
             CliffordTableau::from_dag(&unrolled).expect("unrolled circuit is Clifford");
@@ -1336,14 +1336,14 @@ mod tests {
     #[test]
     fn no_body_measurements_error() {
         let mut init = DagCircuit::new();
-        init.prep(0);
+        init.pz(&[0]);
 
         // Body with no measurements
         let mut body = DagCircuit::new();
-        body.h(0);
+        body.h(&[0]);
 
         let mut finalize = DagCircuit::new();
-        finalize.measure(0);
+        finalize.mz(&[0]);
 
         let result = analyze_periodic(&init, &body, &finalize);
         assert!(

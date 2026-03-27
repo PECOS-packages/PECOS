@@ -109,25 +109,24 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
         }
 
         // Self-adjoint two-qubit gates - same in both directions
-        // Access qubits directly instead of using chunks iterator
         GateType::CX => {
             if qubits.len() >= 2 {
-                prop.cx(&qubits[0..2]);
+                prop.cx(&[(qubits[0], qubits[1])]);
             }
         }
         GateType::CY => {
             if qubits.len() >= 2 {
-                prop.cy(&qubits[0..2]);
+                prop.cy(&[(qubits[0], qubits[1])]);
             }
         }
         GateType::CZ => {
             if qubits.len() >= 2 {
-                prop.cz(&qubits[0..2]);
+                prop.cz(&[(qubits[0], qubits[1])]);
             }
         }
         GateType::SWAP => {
             if qubits.len() >= 2 {
-                prop.swap(&qubits[0..2]);
+                prop.swap(&[(qubits[0], qubits[1])]);
             }
         }
 
@@ -235,7 +234,7 @@ pub fn propagate_tick_range(
 ///
 /// // Start with Z at the measurement (tick 2) and propagate backward
 /// let mut prop = PauliProp::new();
-/// prop.add_z(0);
+/// prop.track_z(&[0]);
 /// propagate_backward_from_tick(&circuit, &mut prop, 2);
 ///
 /// // After H gate backward propagation, Z becomes X
@@ -334,10 +333,10 @@ pub fn propagate_observable_backward(
     let mut prop = PauliProp::new();
 
     for &q in x_positions {
-        prop.add_x(q);
+        prop.track_x(&[q]);
     }
     for &q in z_positions {
-        prop.add_z(q);
+        prop.track_z(&[q]);
     }
 
     propagate_backward_from_tick(circuit, &mut prop, start_tick);
@@ -351,12 +350,12 @@ pub fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
     for (qubit, &pauli) in fault.location.qubits.iter().zip(fault.paulis.iter()) {
         let q = qubit.index();
         match pauli {
-            1 => prop.add_x(q),
+            1 => prop.track_x(&[q]),
             2 => {
-                prop.add_x(q);
-                prop.add_z(q);
+                prop.track_x(&[q]);
+                prop.track_z(&[q]);
             }
-            3 => prop.add_z(q),
+            3 => prop.track_z(&[q]),
             _ => {}
         }
     }

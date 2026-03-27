@@ -22,20 +22,20 @@ fn build_repetition_code_circuit(num_rounds: usize) -> DagCircuit {
 
     for _round in 0..num_rounds {
         // Prepare ancillas in |0>
-        dag.pz(3);
-        dag.pz(4);
+        dag.pz(&[3]);
+        dag.pz(&[4]);
 
         // First parity check: Z0 * Z1
-        dag.cx(0, 3);
-        dag.cx(1, 3);
+        dag.cx(&[(0, 3)]);
+        dag.cx(&[(1, 3)]);
 
         // Second parity check: Z1 * Z2
-        dag.cx(1, 4);
-        dag.cx(2, 4);
+        dag.cx(&[(1, 4)]);
+        dag.cx(&[(2, 4)]);
 
         // Measure ancillas
-        dag.mz(3);
-        dag.mz(4);
+        dag.mz(&[3]);
+        dag.mz(&[4]);
     }
 
     dag

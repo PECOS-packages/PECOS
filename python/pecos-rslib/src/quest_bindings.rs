@@ -210,15 +210,15 @@ impl QuestStateVec {
 
         match symbol {
             "CX" | "CNOT" => {
-                self.inner.cx(&[QubitId(control), QubitId(target)]);
+                self.inner.cx(&[(QubitId(control), QubitId(target))]);
                 Ok(())
             }
             "CY" => {
-                self.inner.cy(&[QubitId(control), QubitId(target)]);
+                self.inner.cy(&[(QubitId(control), QubitId(target))]);
                 Ok(())
             }
             "CZ" => {
-                self.inner.cz(&[QubitId(control), QubitId(target)]);
+                self.inner.cz(&[(QubitId(control), QubitId(target))]);
                 Ok(())
             }
             "RXX" => {
@@ -227,7 +227,7 @@ impl QuestStateVec {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
                                 self.inner
-                                    .rxx(angle.0, &[QubitId(control), QubitId(target)]);
+                                    .rxx(angle.0, &[(QubitId(control), QubitId(target))]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -252,7 +252,7 @@ impl QuestStateVec {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
                                 self.inner
-                                    .ryy(angle.0, &[QubitId(control), QubitId(target)]);
+                                    .ryy(angle.0, &[(QubitId(control), QubitId(target))]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -277,7 +277,7 @@ impl QuestStateVec {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
                                 self.inner
-                                    .rzz(angle.0, &[QubitId(control), QubitId(target)]);
+                                    .rzz(angle.0, &[(QubitId(control), QubitId(target))]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -314,17 +314,17 @@ impl QuestStateVec {
 
     /// Applies a square root of XX gate to two qubits
     fn sxx_gate(&mut self, control: usize, target: usize) {
-        self.inner.sxx(&[QubitId(control), QubitId(target)]);
+        self.inner.sxx(&[(QubitId(control), QubitId(target))]);
     }
 
     /// Applies a square root of YY gate to two qubits
     fn syy_gate(&mut self, control: usize, target: usize) {
-        self.inner.syy(&[QubitId(control), QubitId(target)]);
+        self.inner.syy(&[(QubitId(control), QubitId(target))]);
     }
 
     /// Applies a square root of ZZ gate to two qubits
     fn szz_gate(&mut self, control: usize, target: usize) {
-        self.inner.szz(&[QubitId(control), QubitId(target)]);
+        self.inner.szz(&[(QubitId(control), QubitId(target))]);
     }
     /// Applies an R1XY gate to the specified qubit
     fn r1xy_gate(&mut self, theta: AngleParam, phi: AngleParam, location: usize) {
@@ -346,12 +346,12 @@ impl QuestStateVec {
         // Note: The trait's rxxryyrzz has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner
-            .rxxryyrzz(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
+            .rxxryyrzz(theta.0, phi.0, lambda.0, &[(QubitId(q1), QubitId(q2))]);
     }
 
     /// Applies a SWAP gate to two qubits
     fn swap_gate(&mut self, control: usize, target: usize) {
-        self.inner.swap(&[QubitId(control), QubitId(target)]);
+        self.inner.swap(&[(QubitId(control), QubitId(target))]);
     }
 
     /// Applies H2 gate variant
@@ -612,15 +612,15 @@ impl QuestDensityMatrix {
 
         match symbol {
             "CX" | "CNOT" => {
-                self.inner.cx(&[QubitId(control), QubitId(target)]);
+                self.inner.cx(&[(QubitId(control), QubitId(target))]);
                 Ok(())
             }
             "CY" => {
-                self.inner.cy(&[QubitId(control), QubitId(target)]);
+                self.inner.cy(&[(QubitId(control), QubitId(target))]);
                 Ok(())
             }
             "CZ" => {
-                self.inner.cz(&[QubitId(control), QubitId(target)]);
+                self.inner.cz(&[(QubitId(control), QubitId(target))]);
                 Ok(())
             }
             "RXX" => {
@@ -629,7 +629,7 @@ impl QuestDensityMatrix {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
                                 self.inner
-                                    .rxx(angle.0, &[QubitId(control), QubitId(target)]);
+                                    .rxx(angle.0, &[(QubitId(control), QubitId(target))]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -654,7 +654,7 @@ impl QuestDensityMatrix {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
                                 self.inner
-                                    .ryy(angle.0, &[QubitId(control), QubitId(target)]);
+                                    .ryy(angle.0, &[(QubitId(control), QubitId(target))]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -679,7 +679,7 @@ impl QuestDensityMatrix {
                         Ok(Some(py_any)) => {
                             if let Ok(angle) = py_any.extract::<AngleParam>() {
                                 self.inner
-                                    .rzz(angle.0, &[QubitId(control), QubitId(target)]);
+                                    .rzz(angle.0, &[(QubitId(control), QubitId(target))]);
                                 Ok(())
                             } else {
                                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -716,17 +716,17 @@ impl QuestDensityMatrix {
 
     /// Applies a square root of XX gate to two qubits
     fn sxx_gate(&mut self, control: usize, target: usize) {
-        self.inner.sxx(&[QubitId(control), QubitId(target)]);
+        self.inner.sxx(&[(QubitId(control), QubitId(target))]);
     }
 
     /// Applies a square root of YY gate to two qubits
     fn syy_gate(&mut self, control: usize, target: usize) {
-        self.inner.syy(&[QubitId(control), QubitId(target)]);
+        self.inner.syy(&[(QubitId(control), QubitId(target))]);
     }
 
     /// Applies a square root of ZZ gate to two qubits
     fn szz_gate(&mut self, control: usize, target: usize) {
-        self.inner.szz(&[QubitId(control), QubitId(target)]);
+        self.inner.szz(&[(QubitId(control), QubitId(target))]);
     }
     /// Applies an R1XY gate to the specified qubit
     fn r1xy_gate(&mut self, theta: AngleParam, phi: AngleParam, location: usize) {
@@ -748,12 +748,12 @@ impl QuestDensityMatrix {
         // Note: The trait's rxxryyrzz has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner
-            .rxxryyrzz(theta.0, phi.0, lambda.0, &[QubitId(q1), QubitId(q2)]);
+            .rxxryyrzz(theta.0, phi.0, lambda.0, &[(QubitId(q1), QubitId(q2))]);
     }
 
     /// Applies a SWAP gate to two qubits
     fn swap_gate(&mut self, control: usize, target: usize) {
-        self.inner.swap(&[QubitId(control), QubitId(target)]);
+        self.inner.swap(&[(QubitId(control), QubitId(target))]);
     }
 
     /// Applies H2 gate variant

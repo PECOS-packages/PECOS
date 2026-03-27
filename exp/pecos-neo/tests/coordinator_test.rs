@@ -65,12 +65,12 @@ fn distributions_match(
 fn test_coordinator_vs_monte_carlo_bell_state() {
     // Compare ParallelCoordinator against MonteCarloRunner for Bell state
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Run with MonteCarloRunner
@@ -112,12 +112,12 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
         || SparseStab::new(2),
         |world| {
             let commands = CommandBuilder::new()
-                .pz(0)
-                .pz(1)
-                .h(0)
-                .cx(0, 1)
-                .mz(0)
-                .mz(1)
+                .pz(&[0])
+                .pz(&[1])
+                .h(&[0])
+                .cx(&[(0, 1)])
+                .mz(&[0])
+                .mz(&[1])
                 .build();
 
             world
@@ -174,7 +174,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
     // Compare with depolarizing noise
     let p1 = 0.05;
 
-    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     // Run with MonteCarloRunner
     let mc_config = MonteCarloConfig::new()
@@ -207,7 +207,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
     let coord_results = coordinator.run(
         || SparseStab::new(1),
         |world| {
-            let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+            let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
             world
                 .entities()
@@ -264,7 +264,7 @@ fn test_coordinator_determinism() {
         .run(
             || SparseStab::new(1),
             |world| {
-                let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+                let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
                 world
                     .entities()
@@ -290,7 +290,7 @@ fn test_coordinator_determinism() {
         .run(
             || SparseStab::new(1),
             |world| {
-                let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+                let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
                 world
                     .entities()
@@ -370,7 +370,7 @@ fn test_coordinator_hadamard_distribution() {
     let results = coordinator.run(
         || SparseStab::new(1),
         |world| {
-            let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+            let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
             world
                 .entities()

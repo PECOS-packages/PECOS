@@ -58,17 +58,17 @@ fn phase_to_angle(phase: Phase) -> Angle64 {
 /// (S, Sdg, T, Tdg, Z) instead of a generic RZ.
 fn zphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
     if phase == Phase::new((1, 2)) {
-        dag.sz(q);
+        dag.sz(&[q]);
     } else if phase == Phase::new((-1, 2)) {
-        dag.szdg(q);
+        dag.szdg(&[q]);
     } else if phase == Phase::new((1, 4)) {
-        dag.t(q);
+        dag.t(&[q]);
     } else if phase == Phase::new((-1, 4)) {
-        dag.tdg(q);
+        dag.tdg(&[q]);
     } else if phase == Phase::one() {
-        dag.z(q);
+        dag.z(&[q]);
     } else {
-        dag.rz(phase_to_angle(phase), q);
+        dag.rz(phase_to_angle(phase), &[q]);
     }
 }
 
@@ -78,13 +78,13 @@ fn zphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
 /// (SX, SXdg, X) instead of a generic RX.
 fn xphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
     if phase == Phase::new((1, 2)) {
-        dag.sx(q);
+        dag.sx(&[q]);
     } else if phase == Phase::new((-1, 2)) {
-        dag.sxdg(q);
+        dag.sxdg(&[q]);
     } else if phase == Phase::one() {
-        dag.x(q);
+        dag.x(&[q]);
     } else {
-        dag.rx(phase_to_angle(phase), q);
+        dag.rx(phase_to_angle(phase), &[q]);
     }
 }
 
@@ -239,37 +239,37 @@ pub fn zx_circuit_to_dag(zx_circ: &ZxCircuit) -> Result<DagCircuit, ConvertError
         match zx_gate.t {
             GType::HAD => {
                 for &q in &zx_gate.qs {
-                    dag.h(q);
+                    dag.h(&[q]);
                 }
             }
             GType::NOT => {
                 for &q in &zx_gate.qs {
-                    dag.x(q);
+                    dag.x(&[q]);
                 }
             }
             GType::Z => {
                 for &q in &zx_gate.qs {
-                    dag.z(q);
+                    dag.z(&[q]);
                 }
             }
             GType::S => {
                 for &q in &zx_gate.qs {
-                    dag.sz(q);
+                    dag.sz(&[q]);
                 }
             }
             GType::Sdg => {
                 for &q in &zx_gate.qs {
-                    dag.szdg(q);
+                    dag.szdg(&[q]);
                 }
             }
             GType::T => {
                 for &q in &zx_gate.qs {
-                    dag.t(q);
+                    dag.t(&[q]);
                 }
             }
             GType::Tdg => {
                 for &q in &zx_gate.qs {
-                    dag.tdg(q);
+                    dag.tdg(&[q]);
                 }
             }
             GType::ZPhase => {
@@ -287,27 +287,27 @@ pub fn zx_circuit_to_dag(zx_circ: &ZxCircuit) -> Result<DagCircuit, ConvertError
                     zx_gate.qs.len() == 2,
                     "CNOT gate must have exactly 2 qubits"
                 );
-                dag.cx(zx_gate.qs[0], zx_gate.qs[1]);
+                dag.cx(&[(zx_gate.qs[0], zx_gate.qs[1])]);
             }
             GType::CZ => {
                 assert!(zx_gate.qs.len() == 2, "CZ gate must have exactly 2 qubits");
-                dag.cz(zx_gate.qs[0], zx_gate.qs[1]);
+                dag.cz(&[(zx_gate.qs[0], zx_gate.qs[1])]);
             }
             GType::SWAP => {
                 assert!(
                     zx_gate.qs.len() == 2,
                     "SWAP gate must have exactly 2 qubits"
                 );
-                dag.swap(zx_gate.qs[0], zx_gate.qs[1]);
+                dag.swap(&[(zx_gate.qs[0], zx_gate.qs[1])]);
             }
             GType::Measure | GType::MeasureReset => {
                 for &q in &zx_gate.qs {
-                    dag.mz(q);
+                    dag.mz(&[q]);
                 }
             }
             GType::InitAncilla => {
                 for &q in &zx_gate.qs {
-                    dag.pz(q);
+                    dag.pz(&[q]);
                 }
             }
             other => {
@@ -343,8 +343,8 @@ mod tests {
     #[test]
     fn test_bell_state_roundtrip() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
 
         let graph = dag_to_zx(&dag).expect("conversion should succeed");
         assert!(graph.num_vertices() > 0);
@@ -353,10 +353,10 @@ mod tests {
     #[test]
     fn test_dag_to_zx_circuit_basic() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.sz(0);
-        dag.t(1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.sz(&[0]);
+        dag.t(&[1]);
 
         let zx_circ = dag_to_zx_circuit(&dag).expect("conversion should succeed");
         assert_eq!(zx_circ.num_qubits(), 2);
@@ -367,8 +367,8 @@ mod tests {
     fn test_sx_roundtrip() {
         // SX -> ZX circuit -> DagCircuit should recover SX (not RX)
         let mut dag = DagCircuit::new();
-        dag.sx(0);
-        dag.sxdg(1);
+        dag.sx(&[0]);
+        dag.sxdg(&[1]);
 
         let zx_circ = dag_to_zx_circuit(&dag).expect("forward conversion");
         let recovered = zx_circuit_to_dag(&zx_circ).expect("reverse conversion");
@@ -456,10 +456,10 @@ mod tests {
     fn test_full_circuit_roundtrip() {
         // Full dag -> ZX -> dag roundtrip preserving gate identities
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.sz(0);
-        dag.cx(0, 1);
-        dag.t(1);
+        dag.h(&[0]);
+        dag.sz(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.t(&[1]);
 
         let zx_circ = dag_to_zx_circuit(&dag).expect("forward conversion");
         let recovered = zx_circuit_to_dag(&zx_circ).expect("reverse conversion");

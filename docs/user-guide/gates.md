@@ -479,7 +479,7 @@ CX = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cx(&[control, target]);
+    sim.cx(&[(control, target)]);
     ```
 
 ---
@@ -511,7 +511,7 @@ CY = [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cy(&[control, target]);
+    sim.cy(&[(control, target)]);
     ```
 
 ---
@@ -543,7 +543,7 @@ CZ = [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cz(&[q1, q2]);
+    sim.cz(&[(q1, q2)]);
     ```
 
 ---
@@ -575,7 +575,7 @@ SWAP = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.swap(&[q1, q2]);
+    sim.swap(&[(q1, q2)]);
     ```
 
 ---
@@ -602,7 +602,7 @@ iSWAP = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.iswap(&[q1, q2]);
+    sim.iswap(&[(q1, q2)]);
     ```
 
 ---
@@ -629,8 +629,8 @@ SXX = 1/√2 [[1,  0,  0, -i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.sxx(&[q1, q2]);
-    sim.sxxdg(&[q1, q2]);  // Adjoint
+    sim.sxx(&[(q1, q2)]);
+    sim.sxxdg(&[(q1, q2)]);  // Adjoint
     ```
 
 ---
@@ -649,8 +649,8 @@ IZ → YX
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.syy(&[q1, q2]);
-    sim.syydg(&[q1, q2]);  // Adjoint
+    sim.syy(&[(q1, q2)]);
+    sim.syydg(&[(q1, q2)]);  // Adjoint
     ```
 
 ---
@@ -682,8 +682,8 @@ SZZ = e^(-iπ/4) [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.szz(&[q1, q2]);
-    sim.szzdg(&[q1, q2]);  // Adjoint
+    sim.szz(&[(q1, q2)]);
+    sim.szzdg(&[(q1, q2)]);  // Adjoint
     ```
 
 ---
@@ -710,7 +710,7 @@ G = 1/2 [[ 1,  1,  1, -1],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.g(&[q1, q2]);
+    sim.g(&[(q1, q2)]);
     ```
 
 ---
@@ -921,7 +921,7 @@ Two-qubit rotation implementing evolution under the XX interaction.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rxx(theta, &[q1, q2]);
+    sim.rxx(theta, &[(q1, q2)]);
     ```
 
 ---
@@ -940,7 +940,7 @@ The YY coupling generates entanglement through the Y⊗Y interaction. For exampl
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.ryy(theta, &[q1, q2]);
+    sim.ryy(theta, &[(q1, q2)]);
     ```
 
 ---
@@ -972,7 +972,7 @@ RZZ(θ) = [[e^(-iθ/2),     0,          0,          0       ],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rzz(theta, &[q1, q2]);
+    sim.rzz(theta, &[(q1, q2)]);
     ```
 
 ---

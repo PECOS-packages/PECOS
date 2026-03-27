@@ -303,7 +303,7 @@ impl ByteMessageBuilder {
     /// # Returns
     ///
     /// A mutable reference to self for method chaining
-    pub fn add_idle(&mut self, duration: f64, qubits: &[usize]) -> &mut Self {
+    pub fn idle(&mut self, duration: f64, qubits: &[usize]) -> &mut Self {
         // Ensure we have qubits to work with
         if qubits.is_empty() {
             return self;
@@ -419,7 +419,7 @@ impl ByteMessageBuilder {
     pub fn mz(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
             // Add a measurement as a regular gate command
-            let gate = Gate::measure(&[qubit]);
+            let gate = Gate::mz(&[qubit]);
             self.add_gate_command(&gate);
         }
         self
@@ -434,7 +434,7 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn add_measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
             // Add a measure_leaked as a regular gate command
             let gate = Gate::measure_leaked(&[qubit]);
@@ -444,14 +444,14 @@ impl ByteMessageBuilder {
     }
 
     /// Add a `MeasCrosstalkGlobalPayload`
-    pub fn add_meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::meas_crosstalk_global_payload(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a `MeasCrosstalkLocalPayload`
-    pub fn add_meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::meas_crosstalk_local_payload(qubits);
         self.add_gate_command(&gate);
         self
@@ -459,7 +459,7 @@ impl ByteMessageBuilder {
 
     /// Add a PZ (preparation/reset) gate
     pub fn pz(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::prep(qubits);
+        let gate = Gate::pz(qubits);
         self.add_gate_command(&gate);
         self
     }
@@ -516,6 +516,97 @@ impl ByteMessageBuilder {
     /// Each tuple is a (control, target) pair.
     pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         let gate = Gate::cz(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an SX (sqrt-X) gate
+    pub fn sx(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sx(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an `SXdg` (sqrt-X dagger) gate
+    pub fn sxdg(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sxdg(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an SY (sqrt-Y) gate
+    pub fn sy(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sy(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an `SYdg` (sqrt-Y dagger) gate
+    pub fn sydg(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sydg(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add SWAP gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn swap(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::swap(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add SXX gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn sxx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::sxx(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add `SXXdg` gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn sxxdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::sxxdg(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add SYY gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn syy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::syy(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add `SYYdg` gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn syydg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::syydg(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add RXX gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn rxx(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::rxx(theta, pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add RYY gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn ryy(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::ryy(theta, pairs);
         self.add_gate_command(&gate);
         self
     }
@@ -811,7 +902,7 @@ mod tests {
 
         // Add measure_leakages for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.add_measure_leakages(&qubits);
+        builder.measure_leakages(&qubits);
 
         // Build the message
         let message = builder.build();

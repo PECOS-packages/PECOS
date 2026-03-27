@@ -18,12 +18,12 @@
 //! ```
 //! use pecos_gpu_sims::GpuStateVec;
 //! use pecos_simulators::CliffordGateable;
-//! use pecos_core::{qid, qid2};
+//! use pecos_core::{qid, QubitId};
 //!
 //! let mut sim = GpuStateVec::new(4).unwrap(); // 4 qubits
 //! sim.h(&qid(0));         // Hadamard on qubit 0
-//! sim.cx(&qid2(0, 1));    // CNOT with control=0, target=1
-//! let result = sim.measure(0);  // Measure qubit 0
+//! sim.cx(&[(QubitId(0), QubitId(1))]);    // CNOT with control=0, target=1
+//! let result = sim.mz(&[QubitId(0)]);  // Measure qubit 0
 //! ```
 
 pub mod circuit_compiler;

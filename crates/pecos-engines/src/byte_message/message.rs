@@ -887,9 +887,7 @@ mod tests {
         assert!(empty_message.is_empty().unwrap());
 
         // Create a non-empty message
-        let non_empty_message = ByteMessage::quantum_operations_builder()
-            .h(&[0])
-            .build();
+        let non_empty_message = ByteMessage::quantum_operations_builder().h(&[0]).build();
         assert!(!non_empty_message.is_empty().unwrap());
     }
 

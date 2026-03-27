@@ -78,15 +78,15 @@ fn example_dag_circuit_execution() {
 
     // Build a GHZ state circuit using DagCircuit
     let mut dag = DagCircuit::new();
-    dag.pz(0);
-    dag.pz(1);
-    dag.pz(2);
-    dag.h(0);
-    dag.cx(0, 1);
-    dag.cx(1, 2);
-    dag.mz(0);
-    dag.mz(1);
-    dag.mz(2);
+    dag.pz(&[0]);
+    dag.pz(&[1]);
+    dag.pz(&[2]);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[0]);
+    dag.mz(&[1]);
+    dag.mz(&[2]);
 
     println!("  DagCircuit with {} gates", dag.topological_order().len());
 
@@ -173,12 +173,12 @@ fn example_round_trip() {
 
     // Start with CommandBuilder
     let original = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     println!("  Original CommandQueue: {} commands", original.len());

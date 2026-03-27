@@ -265,11 +265,13 @@ impl std::ops::Index<usize> for MeasurementHistory {
 /// let mut sim = SymbolicSparseStabVecSet::new(2);
 ///
 /// // Create Bell state
-/// sim.h(0).cx(0, 1);
+/// sim.h(&[0]).cx(&[(0, 1)]);
 ///
 /// // Measure both qubits
-/// let r0 = sim.mz(0);  // Non-deterministic: outcome depends on measurement 0
-/// let r1 = sim.mz(1);  // Deterministic: outcome equals measurement 0's outcome
+/// let results = sim.mz(&[0]);  // Non-deterministic: outcome depends on measurement 0
+/// let r0 = &results[0];
+/// let results = sim.mz(&[1]);  // Deterministic: outcome equals measurement 0's outcome
+/// let r1 = &results[0];
 ///
 /// // r0.outcome = {0} (depends on measurement 0)
 /// // r1.outcome = {0} (also depends on measurement 0, showing correlation)
@@ -328,9 +330,9 @@ impl SymbolicSparseStabVecSet {
     /// use pecos_simulators::symbolic_sparse_stab::SymbolicSparseStabVecSet;
     ///
     /// let mut sim = SymbolicSparseStabVecSet::new(2);
-    /// sim.h(0).cx(0, 1);
-    /// sim.mz(0);
-    /// sim.mz(1);
+    /// sim.h(&[0]).cx(&[(0, 1)]);
+    /// sim.mz(&[0]);
+    /// sim.mz(&[1]);
     ///
     /// let history = sim.measurement_history();
     /// assert_eq!(history.len(), 2);
@@ -430,43 +432,51 @@ impl SymbolicSparseStabVecSet {
 
     /// Pauli X gate. X -> X, Z -> -Z
     #[inline]
-    pub fn x(&mut self, q: usize) -> &mut Self {
-        self.stabs.signs_minus ^= &self.stabs.col_z[q];
+    pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.stabs.signs_minus ^= &self.stabs.col_z[q];
+        }
         self
     }
 
     /// Pauli Y gate. X -> -X, Z -> -Z
     #[inline]
-    pub fn y(&mut self, q: usize) -> &mut Self {
-        for i in self.stabs.col_x[q].symmetric_difference(&self.stabs.col_z[q]) {
-            self.stabs.signs_minus ^= i;
+    pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            for i in self.stabs.col_x[q].symmetric_difference(&self.stabs.col_z[q]) {
+                self.stabs.signs_minus ^= i;
+            }
         }
         self
     }
 
     /// Pauli Z gate. X -> -X, Z -> Z
     #[inline]
-    pub fn z(&mut self, q: usize) -> &mut Self {
-        self.stabs.signs_minus ^= &self.stabs.col_x[q];
+    pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            self.stabs.signs_minus ^= &self.stabs.col_x[q];
+        }
         self
     }
 
     /// Sqrt of Z gate (S gate). X -> Y, Z -> Z
     #[inline]
-    pub fn sz(&mut self, q: usize) -> &mut Self {
-        // X -> i: track phase changes
-        // i * i = -1, so if already has i, add minus and remove i
-        for i in self.stabs.signs_i.intersection(&self.stabs.col_x[q]) {
-            self.stabs.signs_minus ^= i;
-        }
-        self.stabs.signs_i ^= &self.stabs.col_x[q];
+    pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            // X -> i: track phase changes
+            // i * i = -1, so if already has i, add minus and remove i
+            for i in self.stabs.signs_i.intersection(&self.stabs.col_x[q]) {
+                self.stabs.signs_minus ^= i;
+            }
+            self.stabs.signs_i ^= &self.stabs.col_x[q];
 
-        // Update the Pauli structure (X -> Y means add Z component)
-        for g in [&mut self.stabs, &mut self.destabs] {
-            g.col_z[q] ^= &g.col_x[q];
+            // Update the Pauli structure (X -> Y means add Z component)
+            for g in [&mut self.stabs, &mut self.destabs] {
+                g.col_z[q] ^= &g.col_x[q];
 
-            for &i in &g.col_x[q] {
-                g.row_z[i] ^= &q;
+                for &i in &g.col_x[q] {
+                    g.row_z[i] ^= &q;
+                }
             }
         }
         self
@@ -474,77 +484,81 @@ impl SymbolicSparseStabVecSet {
 
     /// Hadamard gate. X -> Z, Z -> X, Y -> -Y
     #[inline]
-    pub fn h(&mut self, q: usize) -> &mut Self {
-        // Y -> -Y: add minus for generators that have both X and Z on this qubit
-        for i in self.stabs.col_x[q].intersection(&self.stabs.col_z[q]) {
-            self.stabs.signs_minus ^= i;
-        }
-
-        // Swap X and Z for this qubit
-        for g in [&mut self.stabs, &mut self.destabs] {
-            for i in g.col_x[q].difference(&g.col_z[q]) {
-                g.row_x[*i].remove(&q);
-                g.row_z[*i].insert(q);
+    pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
+        for &q in qubits {
+            // Y -> -Y: add minus for generators that have both X and Z on this qubit
+            for i in self.stabs.col_x[q].intersection(&self.stabs.col_z[q]) {
+                self.stabs.signs_minus ^= i;
             }
 
-            for i in g.col_z[q].difference(&g.col_x[q]) {
-                g.row_z[*i].remove(&q);
-                g.row_x[*i].insert(q);
-            }
+            // Swap X and Z for this qubit
+            for g in [&mut self.stabs, &mut self.destabs] {
+                for i in g.col_x[q].difference(&g.col_z[q]) {
+                    g.row_x[*i].remove(&q);
+                    g.row_z[*i].insert(q);
+                }
 
-            mem::swap(&mut g.col_x[q], &mut g.col_z[q]);
+                for i in g.col_z[q].difference(&g.col_x[q]) {
+                    g.row_z[*i].remove(&q);
+                    g.row_x[*i].insert(q);
+                }
+
+                mem::swap(&mut g.col_x[q], &mut g.col_z[q]);
+            }
         }
         self
     }
 
     /// CNOT gate. IX -> IX, XI -> XX, IZ -> ZZ, ZI -> ZI
     #[inline]
-    pub fn cx(&mut self, q1: usize, q2: usize) -> &mut Self {
-        for g in &mut [&mut self.stabs, &mut self.destabs] {
-            let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            for g in &mut [&mut self.stabs, &mut self.destabs] {
+                let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
-            // Handle col_x: XI -> XX
-            {
-                let (_left, right) = g.col_x.split_at_mut(qu_min);
-                let (mid, right) = right.split_at_mut(qu_max - qu_min);
-                let col_x_min = &mut mid[0];
-                let col_x_max = &mut right[0];
+                // Handle col_x: XI -> XX
+                {
+                    let (_left, right) = g.col_x.split_at_mut(qu_min);
+                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
+                    let col_x_min = &mut mid[0];
+                    let col_x_max = &mut right[0];
 
-                let (col_x_qu1, col_x_qu2) = if q1 < q2 {
-                    (col_x_min, col_x_max)
-                } else {
-                    (col_x_max, col_x_min)
-                };
+                    let (col_x_qu1, col_x_qu2) = if q1 < q2 {
+                        (col_x_min, col_x_max)
+                    } else {
+                        (col_x_max, col_x_min)
+                    };
 
-                let mut q2_set = VecSet::new();
-                q2_set.insert(q2);
+                    let mut q2_set = VecSet::new();
+                    q2_set.insert(q2);
 
-                for i in col_x_qu1.iter() {
-                    g.row_x[*i].symmetric_difference_update(&q2_set);
+                    for i in col_x_qu1.iter() {
+                        g.row_x[*i].symmetric_difference_update(&q2_set);
+                    }
+                    col_x_qu2.symmetric_difference_update(col_x_qu1);
                 }
-                col_x_qu2.symmetric_difference_update(col_x_qu1);
-            }
 
-            // Handle col_z: IZ -> ZZ
-            {
-                let (_left, right) = g.col_z.split_at_mut(qu_min);
-                let (mid, right) = right.split_at_mut(qu_max - qu_min);
-                let col_z_min = &mut mid[0];
-                let col_z_max = &mut right[0];
+                // Handle col_z: IZ -> ZZ
+                {
+                    let (_left, right) = g.col_z.split_at_mut(qu_min);
+                    let (mid, right) = right.split_at_mut(qu_max - qu_min);
+                    let col_z_min = &mut mid[0];
+                    let col_z_max = &mut right[0];
 
-                let (col_z_qu1, col_z_qu2) = if q1 < q2 {
-                    (col_z_min, col_z_max)
-                } else {
-                    (col_z_max, col_z_min)
-                };
+                    let (col_z_qu1, col_z_qu2) = if q1 < q2 {
+                        (col_z_min, col_z_max)
+                    } else {
+                        (col_z_max, col_z_min)
+                    };
 
-                let mut q1_set = VecSet::new();
-                q1_set.insert(q1);
+                    let mut q1_set = VecSet::new();
+                    q1_set.insert(q1);
 
-                for i in col_z_qu2.iter() {
-                    g.row_z[*i].symmetric_difference_update(&q1_set);
+                    for i in col_z_qu2.iter() {
+                        g.row_z[*i].symmetric_difference_update(&q1_set);
+                    }
+                    col_z_qu1.symmetric_difference_update(col_z_qu2);
                 }
-                col_z_qu1.symmetric_difference_update(col_z_qu2);
             }
         }
         self
@@ -552,24 +566,29 @@ impl SymbolicSparseStabVecSet {
 
     // ==================== Measurement ====================
 
-    /// Measure a qubit in the Z basis.
+    /// Measure qubits in the Z basis.
     ///
-    /// Returns a [`SymbolicMeasurementResult`] containing the set of measurement indices
-    /// whose outcomes XOR together to determine this measurement's result.
+    /// Returns a `Vec<SymbolicMeasurementResult>` containing the set of measurement indices
+    /// whose outcomes XOR together to determine each measurement's result.
     #[inline]
-    pub fn mz(&mut self, q: usize) -> SymbolicMeasurementResult {
-        let result = if self.stabs.col_x[q].is_empty() {
-            // Deterministic measurement
-            self.deterministic_meas(q)
-        } else {
-            // Non-deterministic measurement
-            self.nondeterministic_meas(q)
-        };
+    pub fn mz(&mut self, qubits: &[usize]) -> Vec<SymbolicMeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| {
+                let result = if self.stabs.col_x[q].is_empty() {
+                    // Deterministic measurement
+                    self.deterministic_meas(q)
+                } else {
+                    // Non-deterministic measurement
+                    self.nondeterministic_meas(q)
+                };
 
-        // Record in measurement history
-        self.measurement_history.push(result.clone());
+                // Record in measurement history
+                self.measurement_history.push(result.clone());
 
-        result
+                result
+            })
+            .collect()
     }
 
     /// Handle a deterministic measurement.
@@ -786,17 +805,17 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Create Bell state
-        sim.h(0).cx(0, 1);
+        sim.h(&[0]).cx(&[(0, 1)]);
 
         // Measure qubit 0 - should be non-deterministic
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(!r0.is_deterministic);
         assert_eq!(r0.outcome.len(), 1);
         assert!(r0.outcome.contains(0)); // First measurement has index 0
         assert_eq!(r0.index, 0);
 
         // Measure qubit 1 - should be deterministic but still gets an index
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(r1.is_deterministic);
         assert_eq!(r0.outcome, r1.outcome); // Same measurement dependency = correlated
         assert_eq!(r1.index, 1);
@@ -807,13 +826,13 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Measure qubit 0 without any gates - should be deterministic |0⟩
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(r0.is_deterministic);
         assert!(r0.outcome.is_empty()); // Empty set = deterministic 0
         assert_eq!(r0.index, 0);
 
         // Measure qubit 1 - also deterministic |0⟩
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(r1.is_deterministic);
         assert!(r1.outcome.is_empty());
         assert_eq!(r1.index, 1);
@@ -824,10 +843,10 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(1);
 
         // Apply H to put in superposition
-        sim.h(0);
+        sim.h(&[0]);
 
         // Measure - should be non-deterministic
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert!(!r.is_deterministic);
         assert_eq!(r.outcome.len(), 1);
         assert!(r.outcome.contains(0));
@@ -839,22 +858,22 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(3);
 
         // Create GHZ state: (|000⟩ + |111⟩)/√2
-        sim.h(0).cx(0, 1).cx(1, 2);
+        sim.h(&[0]).cx(&[(0, 1)]).cx(&[(1, 2)]);
 
         // Measure qubit 0 - non-deterministic
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(!r0.is_deterministic);
         assert!(r0.outcome.contains(0));
         assert_eq!(r0.index, 0);
 
         // Measure qubit 1 - deterministic, depends on measurement 0
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(r1.is_deterministic);
         assert_eq!(r0.outcome, r1.outcome);
         assert_eq!(r1.index, 1);
 
         // Measure qubit 2 - deterministic, depends on measurement 0
-        let r2 = sim.mz(2);
+        let r2 = sim.mz(&[2])[0].clone();
         assert!(r2.is_deterministic);
         assert_eq!(r0.outcome, r2.outcome);
         assert_eq!(r2.index, 2);
@@ -865,16 +884,16 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Put both qubits in superposition independently
-        sim.h(0).h(1);
+        sim.h(&[0]).h(&[1]);
 
         // Measure qubit 0 - non-deterministic, index 0
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(!r0.is_deterministic);
         assert!(r0.outcome.contains(0));
         assert_eq!(r0.index, 0);
 
         // Measure qubit 1 - non-deterministic, index 1
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(!r1.is_deterministic);
         assert!(r1.outcome.contains(1));
         assert_eq!(r1.index, 1);
@@ -889,13 +908,13 @@ mod tests {
         assert_eq!(sim.measurement_count(), 0);
 
         // All deterministic measurements - counter always increments
-        sim.mz(0);
+        sim.mz(&[0]);
         assert_eq!(sim.measurement_count(), 1);
 
-        sim.mz(1);
+        sim.mz(&[1]);
         assert_eq!(sim.measurement_count(), 2);
 
-        sim.mz(2);
+        sim.mz(&[2]);
         assert_eq!(sim.measurement_count(), 3);
     }
 
@@ -905,15 +924,15 @@ mod tests {
         assert_eq!(sim.measurement_count(), 0);
 
         // Make non-deterministic measurements
-        sim.h(0).h(1).h(2);
+        sim.h(&[0]).h(&[1]).h(&[2]);
 
-        sim.mz(0);
+        sim.mz(&[0]);
         assert_eq!(sim.measurement_count(), 1);
 
-        sim.mz(1);
+        sim.mz(&[1]);
         assert_eq!(sim.measurement_count(), 2);
 
-        sim.mz(2);
+        sim.mz(&[2]);
         assert_eq!(sim.measurement_count(), 3);
     }
 
@@ -922,13 +941,13 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Deterministic measurement on |0⟩
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(r0.is_deterministic);
 
         // Reset and make non-deterministic
         sim.reset();
-        sim.h(0);
-        let r1 = sim.mz(0);
+        sim.h(&[0]);
+        let r1 = sim.mz(&[0])[0].clone();
         assert!(!r1.is_deterministic);
     }
 
@@ -942,11 +961,11 @@ mod tests {
         assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
 
         // Apply X: stabilizer becomes -Z
-        sim.x(0);
+        sim.x(&[0]);
         assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
 
         // Measure - should be deterministic 1 (empty set XOR 1 = 1)
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert!(r.is_deterministic);
         assert!(r.outcome.is_empty()); // No measurement dependencies
         assert!(r.flip); // Flip is true, so result is 1
@@ -958,10 +977,10 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(1);
 
         // Apply Y: +Z becomes -Z
-        sim.y(0);
+        sim.y(&[0]);
         assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
 
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert!(r.is_deterministic);
         assert!(r.outcome.is_empty());
         assert!(r.flip);
@@ -976,10 +995,10 @@ mod tests {
         assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
 
         // Apply Z: +Z stays +Z
-        sim.z(0);
+        sim.z(&[0]);
         assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
 
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert!(r.is_deterministic);
         assert!(r.outcome.is_empty());
         assert!(!r.flip); // No flip
@@ -990,13 +1009,13 @@ mod tests {
         // X X = I, so two X gates should cancel
         let mut sim = SymbolicSparseStabVecSet::new(1);
 
-        sim.x(0);
+        sim.x(&[0]);
         assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
 
-        sim.x(0);
+        sim.x(&[0]);
         assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
 
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert!(r.is_deterministic);
         assert!(r.outcome.is_empty());
         assert!(!r.flip);
@@ -1008,11 +1027,11 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(1);
 
         // H transforms Z stabilizer to X stabilizer
-        sim.h(0);
+        sim.h(&[0]);
         assert_eq!(sim.stab_tableau(), "{} ^ 0 X\n");
 
         // Measure - non-deterministic, no flip since no accumulated phase
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert!(!r.is_deterministic);
         assert!(r.outcome.contains(0));
         assert!(!r.flip);
@@ -1024,17 +1043,17 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Apply X to qubit 0 first, then create Bell state
-        sim.x(0).h(0).cx(0, 1);
+        sim.x(&[0]).h(&[0]).cx(&[(0, 1)]);
 
         // Measure qubit 0
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert!(!r0.is_deterministic);
         assert!(r0.outcome.contains(0));
         // The X gate introduces a flip that should propagate
         // Note: The exact flip value depends on how phases propagate through H and CX
 
         // Measure qubit 1 - should be correlated with qubit 0
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert!(r1.is_deterministic);
         assert_eq!(r0.outcome, r1.outcome);
     }
@@ -1050,7 +1069,7 @@ mod tests {
         assert!(tableau.contains("IZ"));
 
         // After X on qubit 0
-        sim.x(0);
+        sim.x(&[0]);
         let tableau = sim.stab_tableau();
         assert!(tableau.contains("{} ^ 1 ZI")); // First stabilizer gets flipped
         assert!(tableau.contains("{} ^ 0 IZ")); // Second stabilizer unchanged
@@ -1064,17 +1083,17 @@ mod tests {
         assert!(sim.measurement_history().is_empty());
 
         // Create GHZ state and measure
-        sim.h(0).cx(0, 1).cx(1, 2);
+        sim.h(&[0]).cx(&[(0, 1)]).cx(&[(1, 2)]);
 
-        let r0 = sim.mz(0);
+        let r0 = sim.mz(&[0])[0].clone();
         assert_eq!(sim.measurement_history().len(), 1);
         assert_eq!(sim.measurement_history()[0], r0);
 
-        let r1 = sim.mz(1);
+        let r1 = sim.mz(&[1])[0].clone();
         assert_eq!(sim.measurement_history().len(), 2);
         assert_eq!(sim.measurement_history()[1], r1);
 
-        let r2 = sim.mz(2);
+        let r2 = sim.mz(&[2])[0].clone();
         assert_eq!(sim.measurement_history().len(), 3);
         assert_eq!(sim.measurement_history()[2], r2);
 
@@ -1099,9 +1118,9 @@ mod tests {
     fn test_measurement_history_reset() {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
-        sim.h(0);
-        sim.mz(0);
-        sim.mz(1);
+        sim.h(&[0]);
+        sim.mz(&[0]);
+        sim.mz(&[1]);
         assert_eq!(sim.measurement_history().len(), 2);
 
         // Reset should clear history
@@ -1181,22 +1200,22 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Deterministic 0
-        let r = sim.mz(0);
+        let r = sim.mz(&[0])[0].clone();
         assert_eq!(format!("{r}"), "m0=0");
 
         sim.reset();
 
         // Apply X for deterministic 1
-        sim.x(0);
-        let r = sim.mz(0);
+        sim.x(&[0]);
+        let r = sim.mz(&[0])[0].clone();
         assert_eq!(format!("{r}"), "m0=1");
 
         sim.reset();
 
         // Bell state
-        sim.h(0).cx(0, 1);
-        let r0 = sim.mz(0);
-        let r1 = sim.mz(1);
+        sim.h(&[0]).cx(&[(0, 1)]);
+        let r0 = sim.mz(&[0])[0].clone();
+        let r1 = sim.mz(&[1])[0].clone();
 
         // r0 is non-deterministic
         assert_eq!(format!("{r0}"), "m0=?");
@@ -1209,10 +1228,10 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(3);
 
         // Create GHZ state: first measurement non-deterministic, rest deterministic
-        sim.h(0).cx(0, 1).cx(1, 2);
-        sim.mz(0); // non-det
-        sim.mz(1); // det
-        sim.mz(2); // det
+        sim.h(&[0]).cx(&[(0, 1)]).cx(&[(1, 2)]);
+        sim.mz(&[0]); // non-det
+        sim.mz(&[1]); // det
+        sim.mz(&[2]); // det
 
         let history = sim.measurement_history();
 
@@ -1251,9 +1270,9 @@ mod tests {
         let mut sim = SymbolicSparseStabVecSet::new(2);
 
         // Apply X to get flip=1, then measure
-        sim.x(0);
-        sim.mz(0); // det with flip=1
-        sim.mz(1); // det with flip=0
+        sim.x(&[0]);
+        sim.mz(&[0]); // det with flip=1
+        sim.mz(&[1]); // det with flip=0
 
         let history = sim.measurement_history();
         assert_eq!(history.format_all(), "[m0=1, m1=0]");

@@ -37,7 +37,7 @@ fn bench_sparse_friendly(c: &mut Criterion) {
                         sim.z(&[QubitId(q)]);
                     }
                     for q in 0..n - 1 {
-                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                        sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                     }
                 });
             },
@@ -55,7 +55,7 @@ fn bench_sparse_friendly(c: &mut Criterion) {
                         sim.z(&[QubitId(q)]);
                     }
                     for q in 0..n - 1 {
-                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                        sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                     }
                 });
             },
@@ -73,7 +73,7 @@ fn bench_sparse_friendly(c: &mut Criterion) {
                         sim.z(&[QubitId(q)]);
                     }
                     for q in 0..n - 1 {
-                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                        sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                     }
                 });
             },
@@ -184,7 +184,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(0), QubitId(1)]);
+                sim.cx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -195,7 +195,7 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cz(&[QubitId(0), QubitId(1)]);
+                sim.cz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -254,10 +254,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cz(&[QubitId(10), QubitId(11)]);
-                sim.cz(&[QubitId(12), QubitId(13)]);
-                sim.cz(&[QubitId(14), QubitId(15)]);
-                sim.cz(&[QubitId(10), QubitId(12)]);
+                sim.cz(&[(QubitId(10), QubitId(11))]);
+                sim.cz(&[(QubitId(12), QubitId(13))]);
+                sim.cz(&[(QubitId(14), QubitId(15))]);
+                sim.cz(&[(QubitId(10), QubitId(12))]);
             });
         });
 
@@ -268,14 +268,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.cz(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(10),
-                    QubitId(12),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(10), QubitId(12)),
                 ]);
             });
         });
@@ -287,10 +283,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(10), QubitId(11)]);
-                sim.cx(&[QubitId(12), QubitId(13)]);
-                sim.cx(&[QubitId(14), QubitId(15)]);
-                sim.cx(&[QubitId(10), QubitId(12)]);
+                sim.cx(&[(QubitId(10), QubitId(11))]);
+                sim.cx(&[(QubitId(12), QubitId(13))]);
+                sim.cx(&[(QubitId(14), QubitId(15))]);
+                sim.cx(&[(QubitId(10), QubitId(12))]);
             });
         });
 
@@ -301,14 +297,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.cx(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(10),
-                    QubitId(12),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(10), QubitId(12)),
                 ]);
             });
         });
@@ -320,10 +312,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(10), QubitId(11)]);
-                sim.cx(&[QubitId(12), QubitId(13)]);
-                sim.cx(&[QubitId(14), QubitId(15)]);
-                sim.cx(&[QubitId(8), QubitId(9)]);
+                sim.cx(&[(QubitId(10), QubitId(11))]);
+                sim.cx(&[(QubitId(12), QubitId(13))]);
+                sim.cx(&[(QubitId(14), QubitId(15))]);
+                sim.cx(&[(QubitId(8), QubitId(9))]);
             });
         });
 
@@ -334,14 +326,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.cx(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(8),
-                    QubitId(9),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(8), QubitId(9)),
                 ]);
             });
         });
@@ -353,10 +341,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cz(&[QubitId(10), QubitId(11)]);
-                sim.cz(&[QubitId(12), QubitId(13)]);
-                sim.cz(&[QubitId(14), QubitId(15)]);
-                sim.cz(&[QubitId(8), QubitId(9)]);
+                sim.cz(&[(QubitId(10), QubitId(11))]);
+                sim.cz(&[(QubitId(12), QubitId(13))]);
+                sim.cz(&[(QubitId(14), QubitId(15))]);
+                sim.cz(&[(QubitId(8), QubitId(9))]);
             });
         });
 
@@ -367,14 +355,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.cz(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(8),
-                    QubitId(9),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(8), QubitId(9)),
                 ]);
             });
         });
@@ -388,10 +372,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                     sim.h(&[QubitId(q)]);
                 }
                 b.iter(|| {
-                    sim.swap(&[QubitId(10), QubitId(11)]);
-                    sim.swap(&[QubitId(12), QubitId(13)]);
-                    sim.swap(&[QubitId(14), QubitId(15)]);
-                    sim.swap(&[QubitId(8), QubitId(9)]);
+                    sim.swap(&[(QubitId(10), QubitId(11))]);
+                    sim.swap(&[(QubitId(12), QubitId(13))]);
+                    sim.swap(&[(QubitId(14), QubitId(15))]);
+                    sim.swap(&[(QubitId(8), QubitId(9))]);
                 });
             },
         );
@@ -404,14 +388,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.swap(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(8),
-                    QubitId(9),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(8), QubitId(9)),
                 ]);
             });
         });
@@ -426,10 +406,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 }
                 sim.flush_all_frames();
                 b.iter(|| {
-                    sim.swap(&[QubitId(0), QubitId(1)]);
-                    sim.swap(&[QubitId(2), QubitId(3)]);
-                    sim.swap(&[QubitId(4), QubitId(5)]);
-                    sim.swap(&[QubitId(6), QubitId(7)]);
+                    sim.swap(&[(QubitId(0), QubitId(1))]);
+                    sim.swap(&[(QubitId(2), QubitId(3))]);
+                    sim.swap(&[(QubitId(4), QubitId(5))]);
+                    sim.swap(&[(QubitId(6), QubitId(7))]);
                 });
             },
         );
@@ -445,14 +425,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.flush_all_frames();
                 b.iter(|| {
                     sim.swap(&[
-                        QubitId(0),
-                        QubitId(1),
-                        QubitId(2),
-                        QubitId(3),
-                        QubitId(4),
-                        QubitId(5),
-                        QubitId(6),
-                        QubitId(7),
+                        (QubitId(0), QubitId(1)),
+                        (QubitId(2), QubitId(3)),
+                        (QubitId(4), QubitId(5)),
+                        (QubitId(6), QubitId(7)),
                     ]);
                 });
             },
@@ -465,10 +441,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szz(&[QubitId(10), QubitId(11)]);
-                sim.szz(&[QubitId(12), QubitId(13)]);
-                sim.szz(&[QubitId(14), QubitId(15)]);
-                sim.szz(&[QubitId(8), QubitId(9)]);
+                sim.szz(&[(QubitId(10), QubitId(11))]);
+                sim.szz(&[(QubitId(12), QubitId(13))]);
+                sim.szz(&[(QubitId(14), QubitId(15))]);
+                sim.szz(&[(QubitId(8), QubitId(9))]);
             });
         });
 
@@ -480,14 +456,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.szz(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(8),
-                    QubitId(9),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(8), QubitId(9)),
                 ]);
             });
         });
@@ -502,10 +474,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 }
                 sim.flush_all_frames();
                 b.iter(|| {
-                    sim.szz(&[QubitId(0), QubitId(1)]);
-                    sim.szz(&[QubitId(2), QubitId(3)]);
-                    sim.szz(&[QubitId(4), QubitId(5)]);
-                    sim.szz(&[QubitId(6), QubitId(7)]);
+                    sim.szz(&[(QubitId(0), QubitId(1))]);
+                    sim.szz(&[(QubitId(2), QubitId(3))]);
+                    sim.szz(&[(QubitId(4), QubitId(5))]);
+                    sim.szz(&[(QubitId(6), QubitId(7))]);
                 });
             },
         );
@@ -521,14 +493,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.flush_all_frames();
                 b.iter(|| {
                     sim.szz(&[
-                        QubitId(0),
-                        QubitId(1),
-                        QubitId(2),
-                        QubitId(3),
-                        QubitId(4),
-                        QubitId(5),
-                        QubitId(6),
-                        QubitId(7),
+                        (QubitId(0), QubitId(1)),
+                        (QubitId(2), QubitId(3)),
+                        (QubitId(4), QubitId(5)),
+                        (QubitId(6), QubitId(7)),
                     ]);
                 });
             },
@@ -541,10 +509,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.iswap(&[QubitId(10), QubitId(11)]);
-                sim.iswap(&[QubitId(12), QubitId(13)]);
-                sim.iswap(&[QubitId(14), QubitId(15)]);
-                sim.iswap(&[QubitId(8), QubitId(9)]);
+                sim.iswap(&[(QubitId(10), QubitId(11))]);
+                sim.iswap(&[(QubitId(12), QubitId(13))]);
+                sim.iswap(&[(QubitId(14), QubitId(15))]);
+                sim.iswap(&[(QubitId(8), QubitId(9))]);
             });
         });
 
@@ -556,14 +524,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
             }
             b.iter(|| {
                 sim.iswap(&[
-                    QubitId(10),
-                    QubitId(11),
-                    QubitId(12),
-                    QubitId(13),
-                    QubitId(14),
-                    QubitId(15),
-                    QubitId(8),
-                    QubitId(9),
+                    (QubitId(10), QubitId(11)),
+                    (QubitId(12), QubitId(13)),
+                    (QubitId(14), QubitId(15)),
+                    (QubitId(8), QubitId(9)),
                 ]);
             });
         });
@@ -578,10 +542,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 }
                 sim.flush_all_frames();
                 b.iter(|| {
-                    sim.iswap(&[QubitId(0), QubitId(1)]);
-                    sim.iswap(&[QubitId(2), QubitId(3)]);
-                    sim.iswap(&[QubitId(4), QubitId(5)]);
-                    sim.iswap(&[QubitId(6), QubitId(7)]);
+                    sim.iswap(&[(QubitId(0), QubitId(1))]);
+                    sim.iswap(&[(QubitId(2), QubitId(3))]);
+                    sim.iswap(&[(QubitId(4), QubitId(5))]);
+                    sim.iswap(&[(QubitId(6), QubitId(7))]);
                 });
             },
         );
@@ -597,14 +561,10 @@ fn bench_sparse_operations(c: &mut Criterion) {
                 sim.flush_all_frames();
                 b.iter(|| {
                     sim.iswap(&[
-                        QubitId(0),
-                        QubitId(1),
-                        QubitId(2),
-                        QubitId(3),
-                        QubitId(4),
-                        QubitId(5),
-                        QubitId(6),
-                        QubitId(7),
+                        (QubitId(0), QubitId(1)),
+                        (QubitId(2), QubitId(3)),
+                        (QubitId(4), QubitId(5)),
+                        (QubitId(6), QubitId(7)),
                     ]);
                 });
             },
@@ -737,7 +697,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(0), QubitId(1)]);
+                sim.cx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -748,7 +708,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(0), QubitId(1)]);
+                sim.cx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -781,7 +741,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cz(&[QubitId(0), QubitId(1)]);
+                sim.cz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -792,7 +752,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cz(&[QubitId(0), QubitId(1)]);
+                sim.cz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -803,7 +763,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szz(&[QubitId(0), QubitId(1)]);
+                sim.szz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -815,7 +775,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.szz(&[QubitId(0), QubitId(1)]);
+                sim.szz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -826,7 +786,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szzdg(&[QubitId(0), QubitId(1)]);
+                sim.szzdg(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -838,7 +798,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.szzdg(&[QubitId(0), QubitId(1)]);
+                sim.szzdg(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -849,7 +809,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.iswap(&[QubitId(0), QubitId(1)]);
+                sim.iswap(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -861,7 +821,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.iswap(&[QubitId(0), QubitId(1)]);
+                sim.iswap(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -872,7 +832,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.sxx(&[QubitId(0), QubitId(1)]);
+                sim.sxx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -884,7 +844,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.sxx(&[QubitId(0), QubitId(1)]);
+                sim.sxx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -895,7 +855,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.g(&[QubitId(0), QubitId(1)]);
+                sim.g(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -907,7 +867,7 @@ fn bench_sparse_aos_vs_soa(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.g(&[QubitId(0), QubitId(1)]);
+                sim.g(&[(QubitId(0), QubitId(1))]);
             });
         });
     }
@@ -928,7 +888,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                 sim.reset();
                 sim.h(&[QubitId(0)]);
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             });
         });
@@ -939,7 +899,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                 sim.reset();
                 sim.h(&[QubitId(0)]);
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             });
         });
@@ -952,7 +912,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                     sim.reset();
                     sim.h(&[QubitId(0)]);
                     for q in 0..num_qubits - 1 {
-                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                        sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                     }
                 });
             });
@@ -978,10 +938,10 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                             sim.z(&[QubitId(q)]);
                         }
                         2 => {
-                            sim.cx(&[QubitId(q), QubitId(q2)]);
+                            sim.cx(&[(QubitId(q), QubitId(q2))]);
                         }
                         _ => {
-                            sim.cz(&[QubitId(q), QubitId(q2)]);
+                            sim.cz(&[(QubitId(q), QubitId(q2))]);
                         }
                     }
                 }
@@ -1002,10 +962,10 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                             sim.z(&[QubitId(q)]);
                         }
                         2 => {
-                            sim.cx(&[QubitId(q), QubitId(q2)]);
+                            sim.cx(&[(QubitId(q), QubitId(q2))]);
                         }
                         _ => {
-                            sim.cz(&[QubitId(q), QubitId(q2)]);
+                            sim.cz(&[(QubitId(q), QubitId(q2))]);
                         }
                     }
                 }
@@ -1028,10 +988,10 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                                 sim.z(&[QubitId(q)]);
                             }
                             2 => {
-                                sim.cx(&[QubitId(q), QubitId(q2)]);
+                                sim.cx(&[(QubitId(q), QubitId(q2))]);
                             }
                             _ => {
-                                sim.cz(&[QubitId(q), QubitId(q2)]);
+                                sim.cz(&[(QubitId(q), QubitId(q2))]);
                             }
                         }
                     }
@@ -1053,7 +1013,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                     sim.h(&[QubitId(q)]);
                     // Intersperse with CZ gates
                     if q > 0 {
-                        sim.cz(&[QubitId(q - 1), QubitId(q)]);
+                        sim.cz(&[(QubitId(q - 1), QubitId(q))]);
                     }
                 }
             });
@@ -1066,7 +1026,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                 for q in 0..final_h_count {
                     sim.h(&[QubitId(q)]);
                     if q > 0 {
-                        sim.cz(&[QubitId(q - 1), QubitId(q)]);
+                        sim.cz(&[(QubitId(q - 1), QubitId(q))]);
                     }
                 }
             });
@@ -1081,7 +1041,7 @@ fn bench_realistic_circuits(c: &mut Criterion) {
                     for q in 0..final_h_count {
                         sim.h(&[QubitId(q)]);
                         if q > 0 {
-                            sim.cz(&[QubitId(q - 1), QubitId(q)]);
+                            sim.cz(&[(QubitId(q - 1), QubitId(q))]);
                         }
                     }
                 });
@@ -1108,7 +1068,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szz(&[QubitId(0), QubitId(1)]);
+                sim.szz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1119,7 +1079,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.szz(&[QubitId(0), QubitId(1)]);
+                sim.szz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1129,7 +1089,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szz(&[QubitId(0), QubitId(1)]);
+                sim.szz(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1140,7 +1100,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szzdg(&[QubitId(0), QubitId(1)]);
+                sim.szzdg(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1151,7 +1111,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.szzdg(&[QubitId(0), QubitId(1)]);
+                sim.szzdg(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1161,7 +1121,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.szzdg(&[QubitId(0), QubitId(1)]);
+                sim.szzdg(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1172,7 +1132,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.iswap(&[QubitId(0), QubitId(1)]);
+                sim.iswap(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1183,7 +1143,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.iswap(&[QubitId(0), QubitId(1)]);
+                sim.iswap(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1193,7 +1153,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.iswap(&[QubitId(0), QubitId(1)]);
+                sim.iswap(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1204,7 +1164,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.sxx(&[QubitId(0), QubitId(1)]);
+                sim.sxx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1215,7 +1175,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.sxx(&[QubitId(0), QubitId(1)]);
+                sim.sxx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1225,7 +1185,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.sxx(&[QubitId(0), QubitId(1)]);
+                sim.sxx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1236,7 +1196,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(0), QubitId(1)]);
+                sim.cx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1247,7 +1207,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
             }
             sim.flush_all_frames();
             b.iter(|| {
-                sim.cx(&[QubitId(0), QubitId(1)]);
+                sim.cx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1257,7 +1217,7 @@ fn bench_three_statevecs_gates(c: &mut Criterion) {
                 sim.h(&[QubitId(q)]);
             }
             b.iter(|| {
-                sim.cx(&[QubitId(0), QubitId(1)]);
+                sim.cx(&[(QubitId(0), QubitId(1))]);
             });
         });
 
@@ -1451,11 +1411,11 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             b.iter(|| {
                 sim.rzz(
                     Angle64::from_radians(0.123),
-                    &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                    &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                 );
                 sim.rzz(
                     Angle64::from_radians(-0.123),
-                    &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                    &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                 );
             });
         });
@@ -1470,11 +1430,11 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             b.iter(|| {
                 sim.rzz(
                     Angle64::from_radians(0.123),
-                    &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                    &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                 );
                 sim.rzz(
                     Angle64::from_radians(-0.123),
-                    &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                    &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                 );
             });
         });
@@ -1495,7 +1455,7 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.rzz(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1511,11 +1471,11 @@ fn bench_rotation_pauli_pushthrough(c: &mut Criterion) {
             b.iter(|| {
                 sim.rzz(
                     Angle64::from_radians(0.123),
-                    &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                    &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                 );
                 sim.rzz(
                     Angle64::from_radians(-0.123),
-                    &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                    &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                 );
             });
         });
@@ -1666,7 +1626,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.rxx(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1689,7 +1649,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.rxx(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1709,7 +1669,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.rxx(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1734,7 +1694,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.ryy(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1757,7 +1717,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.ryy(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1777,7 +1737,7 @@ fn bench_nondiag_rotation_pushthrough(c: &mut Criterion) {
                 |mut sim| {
                     sim.ryy(
                         Angle64::from_radians(0.123),
-                        &[QubitId(h_qubits), QubitId(h_qubits + 1)],
+                        &[(QubitId(h_qubits), QubitId(h_qubits + 1))],
                     );
                 },
                 criterion::BatchSize::SmallInput,
@@ -1814,7 +1774,7 @@ fn bench_qec_rotation_circuit(c: &mut Criterion) {
                         sim.z(&[QubitId(q + 1)]);
                     }
                     for q in (0..num_qubits - 1).step_by(2) {
-                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                        sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                     }
                     // T layer: should push through Pauli frames
                     for q in 0..num_qubits {
@@ -1837,7 +1797,7 @@ fn bench_qec_rotation_circuit(c: &mut Criterion) {
                         sim.z(&[QubitId(q + 1)]);
                     }
                     for q in (0..num_qubits - 1).step_by(2) {
-                        sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                        sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                     }
                     for q in 0..num_qubits {
                         sim.t(&[QubitId(q)]);
@@ -1859,7 +1819,7 @@ fn bench_qec_rotation_circuit(c: &mut Criterion) {
                         sim.z(&[QubitId(q + 1)]);
                     }
                     for q in (0..num_qubits - 1).step_by(2) {
-                        sim.rzz(Angle64::from_radians(0.1), &[QubitId(q), QubitId(q + 1)]);
+                        sim.rzz(Angle64::from_radians(0.1), &[(QubitId(q), QubitId(q + 1))]);
                     }
                 }
             });
@@ -1878,7 +1838,7 @@ fn bench_qec_rotation_circuit(c: &mut Criterion) {
                         sim.z(&[QubitId(q + 1)]);
                     }
                     for q in (0..num_qubits - 1).step_by(2) {
-                        sim.rzz(Angle64::from_radians(0.1), &[QubitId(q), QubitId(q + 1)]);
+                        sim.rzz(Angle64::from_radians(0.1), &[(QubitId(q), QubitId(q + 1))]);
                     }
                 }
             });

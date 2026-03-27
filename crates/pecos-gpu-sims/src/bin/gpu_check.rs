@@ -8,7 +8,7 @@
 //!
 //! Used by build tools to conditionally enable GPU-dependent features.
 
-use pecos_core::{QubitId, qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_gpu_sims::GpuStabMulti;
 use pecos_gpu_sims::gpu_probe::{GpuAdapterInfo, GpuStartupError, request_default_gpu_device};
 use pecos_random::PecosRng;
@@ -21,7 +21,7 @@ fn run_simulator_smoke_test() -> Result<(), String> {
 
     // Create a Bell state and verify perfect Z-basis parity correlation.
     sim.h(&qid(0));
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
     let results = sim.mz(&[QubitId(0), QubitId(1)]);
 
     if results.len() != num_shots {

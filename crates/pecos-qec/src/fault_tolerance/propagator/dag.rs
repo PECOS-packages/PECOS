@@ -39,10 +39,10 @@
 //! use pecos_quantum::DagCircuit;
 //!
 //! let mut dag = DagCircuit::new();
-//! dag.pz(2);       // Prep ancilla
-//! dag.cx(0, 2);    // CNOT data -> ancilla
-//! dag.cx(1, 2);    // CNOT data -> ancilla
-//! dag.mz(2);       // Measure ancilla
+//! dag.pz(&[2]);       // Prep ancilla
+//! dag.cx(&[(0, 2)]);    // CNOT data -> ancilla
+//! dag.cx(&[(1, 2)]);    // CNOT data -> ancilla
+//! dag.mz(&[2]);       // Measure ancilla
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let map = analyzer.build_influence_map();
@@ -792,10 +792,10 @@ impl InfluenceRecorder for BucketRecorder {
 ///
 /// // Build a simple syndrome extraction circuit
 /// let mut dag = DagCircuit::new();
-/// dag.pz(2);           // Prep ancilla
-/// dag.cx(0, 2);        // CNOT data -> ancilla
-/// dag.cx(1, 2);        // CNOT data -> ancilla
-/// dag.mz(2);           // Measure ancilla
+/// dag.pz(&[2]);           // Prep ancilla
+/// dag.cx(&[(0, 2)]);        // CNOT data -> ancilla
+/// dag.cx(&[(1, 2)]);        // CNOT data -> ancilla
+/// dag.mz(&[2]);           // Measure ancilla
 ///
 /// // Build the fault influence map using sparse propagation
 /// let propagator = DagFaultAnalyzer::new(&dag);
@@ -902,9 +902,9 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// use pecos_quantum::DagCircuit;
     ///
     /// let mut dag = DagCircuit::new();
-    /// dag.pz(2);
-    /// dag.cx(0, 2);
-    /// dag.mz(2);
+    /// dag.pz(&[2]);
+    /// dag.cx(&[(0, 2)]);
+    /// dag.mz(&[2]);
     ///
     /// let propagator = DagFaultAnalyzer::new(&dag);
     /// let map = propagator.build_influence_map();
@@ -1025,9 +1025,9 @@ impl<'a> DagFaultAnalyzer<'a> {
         // Start with the observable being measured
         let mut prop = PauliProp::new();
         if basis == 0 {
-            prop.add_z(meas_qubit);
+            prop.track_z(&[meas_qubit]);
         } else {
-            prop.add_x(meas_qubit);
+            prop.track_x(&[meas_qubit]);
         }
 
         // Get measurement position (O(1) lookup)
@@ -1068,10 +1068,10 @@ impl<'a> DagFaultAnalyzer<'a> {
                         if idx <= self.max_qubit() {
                             // Kill the Pauli by toggling off
                             if prop.contains_x(idx) {
-                                prop.add_x(idx);
+                                prop.track_x(&[idx]);
                             }
                             if prop.contains_z(idx) {
-                                prop.add_z(idx);
+                                prop.track_z(&[idx]);
                             }
                             active_qubits[idx] = false;
                         }
@@ -1151,9 +1151,9 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// use pecos_quantum::DagCircuit;
     ///
     /// let mut dag = DagCircuit::new();
-    /// dag.pz(2);
-    /// dag.cx(0, 2);
-    /// dag.mz(2);
+    /// dag.pz(&[2]);
+    /// dag.cx(&[(0, 2)]);
+    /// dag.mz(&[2]);
     ///
     /// let propagator = DagFaultAnalyzer::new(&dag);
     ///
@@ -1197,22 +1197,22 @@ mod tests {
     /// Simple Z-stabilizer measurement circuit: measures Z0 Z1 parity
     fn simple_syndrome_circuit() -> DagCircuit {
         let mut dag = DagCircuit::new();
-        dag.pz(2); // Prep ancilla in |0>
-        dag.cx(0, 2); // CNOT from data 0 to ancilla
-        dag.cx(1, 2); // CNOT from data 1 to ancilla
-        dag.mz(2); // Measure ancilla
+        dag.pz(&[2]); // Prep ancilla in |0>
+        dag.cx(&[(0, 2)]); // CNOT from data 0 to ancilla
+        dag.cx(&[(1, 2)]); // CNOT from data 1 to ancilla
+        dag.mz(&[2]); // Measure ancilla
         dag
     }
 
     /// Circuit with CZ gates for testing multi-qubit symmetric faults
     fn cz_syndrome_circuit() -> DagCircuit {
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.h(2); // Put ancilla in |+> for X-type measurement
-        dag.cz(0, 2);
-        dag.cz(1, 2);
-        dag.h(2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.h(&[2]); // Put ancilla in |+> for X-type measurement
+        dag.cz(&[(0, 2)]);
+        dag.cz(&[(1, 2)]);
+        dag.h(&[2]);
+        dag.mz(&[2]);
         dag
     }
 
@@ -1235,7 +1235,7 @@ mod tests {
         // Add some prep gates
         for q in 0..num_qubits {
             if next_rand() % 2 == 0 {
-                dag.pz(q);
+                dag.pz(&[q]);
             }
         }
 
@@ -1246,13 +1246,13 @@ mod tests {
 
             match gate_type {
                 0 => {
-                    dag.h(q1);
+                    dag.h(&[q1]);
                 }
                 1 => {
-                    dag.sz(q1);
+                    dag.sz(&[q1]);
                 }
                 2 => {
-                    dag.szdg(q1);
+                    dag.szdg(&[q1]);
                 }
                 3 => {
                     // CX - need two different qubits
@@ -1260,7 +1260,7 @@ mod tests {
                     if q2 == q1 {
                         q2 = (q1 + 1) % num_qubits;
                     }
-                    dag.cx(q1, q2);
+                    dag.cx(&[(q1, q2)]);
                 }
                 _ => {
                     // CZ - need two different qubits
@@ -1268,7 +1268,7 @@ mod tests {
                     if q2 == q1 {
                         q2 = (q1 + 1) % num_qubits;
                     }
-                    dag.cz(q1, q2);
+                    dag.cz(&[(q1, q2)]);
                 }
             }
         }
@@ -1276,7 +1276,7 @@ mod tests {
         // Add measurements on some qubits
         for q in 0..num_qubits {
             if next_rand() % 3 == 0 {
-                dag.mz(q);
+                dag.mz(&[q]);
             }
         }
         // Ensure at least one measurement
@@ -1284,7 +1284,7 @@ mod tests {
             dag.gate(n)
                 .is_none_or(|g| !matches!(g.gate_type, GateType::MZ | GateType::MeasureFree))
         }) {
-            dag.mz(0);
+            dag.mz(&[0]);
         }
 
         dag
@@ -1318,15 +1318,15 @@ mod tests {
 
         // Build circuit
         for a in 0..ancilla_qubits {
-            dag.pz(data_qubits + a);
+            dag.pz(&[data_qubits + a]);
         }
         for (a, neighbors) in ancilla_neighbors.iter().enumerate() {
             for &d in neighbors {
-                dag.cx(d, data_qubits + a);
+                dag.cx(&[(d, data_qubits + a)]);
             }
         }
         for a in 0..ancilla_qubits {
-            dag.mz(data_qubits + a);
+            dag.mz(&[data_qubits + a]);
         }
 
         dag
@@ -1429,11 +1429,11 @@ mod tests {
         // Test that CX gates have separate fault locations for each qubit.
         // This enables proper depolarizing noise analysis (XI vs IX vs XX).
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.cx(0, 1); // Two-qubit gate
-        dag.mz(0);
-        dag.mz(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.cx(&[(0, 1)]); // Two-qubit gate
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();
@@ -1496,9 +1496,9 @@ mod tests {
     fn test_per_qubit_fault_influences() {
         // Test that per-qubit fault locations correctly track influences
         let mut dag = DagCircuit::new();
-        dag.pz(2); // ancilla
-        dag.cx(0, 2); // X on control spreads to target
-        dag.mz(2);
+        dag.pz(&[2]); // ancilla
+        dag.cx(&[(0, 2)]); // X on control spreads to target
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();
@@ -1526,10 +1526,10 @@ mod tests {
     fn test_all_paulis_on_per_qubit_location() {
         // Test X, Y, Z faults on per-qubit locations
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();
@@ -1610,12 +1610,12 @@ mod tests {
                     let mut prop = PauliProp::new();
                     for q in &loc.qubits {
                         match pauli {
-                            1 => prop.add_x(q.index()),
+                            1 => prop.track_x(&[q.index()]),
                             2 => {
-                                prop.add_x(q.index());
-                                prop.add_z(q.index());
+                                prop.track_x(&[q.index()]);
+                                prop.track_z(&[q.index()]);
                             }
-                            3 => prop.add_z(q.index()),
+                            3 => prop.track_z(&[q.index()]),
                             _ => {}
                         }
                     }

@@ -326,14 +326,10 @@ where
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index();
-            let target = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index();
+            let target = q1.index();
             self.check_qubit_index(control)
                 .expect("Invalid control qubit");
             self.check_qubit_index(target)
@@ -413,14 +409,10 @@ where
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index();
-            let target = pair[1].index();
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index();
+            let target = q1.index();
             self.check_qubit_index(control)
                 .expect("Invalid control qubit");
             self.check_qubit_index(target)
@@ -468,16 +460,10 @@ where
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
         let half_angle = theta / 2.0;
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0];
-            let q2 = pair[1];
+        for &(q1, q2) in pairs {
             self.check_qubit_index(q1.index())
                 .expect("Invalid qubit1 index");
             self.check_qubit_index(q2.index())
@@ -486,7 +472,7 @@ where
             let half_angle_a = Angle64::from_radians(half_angle);
             let neg_half_angle_a = Angle64::from_radians(-half_angle);
             self.rz(half_angle_a, &[q1]).rz(half_angle_a, &[q2]);
-            self.cz(&[q1, q2]);
+            self.cz(&[(q1, q2)]);
             self.rz(neg_half_angle_a, &[q1]).rz(neg_half_angle_a, &[q2]);
         }
         self
@@ -790,14 +776,10 @@ where
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index();
-            let target = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index();
+            let target = q1.index();
             self.check_qubit_index(control)
                 .expect("Invalid control qubit");
             self.check_qubit_index(target)
@@ -877,14 +859,10 @@ where
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index();
-            let target = pair[1].index();
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index();
+            let target = q1.index();
             self.check_qubit_index(control)
                 .expect("Invalid control qubit");
             self.check_qubit_index(target)
@@ -932,16 +910,10 @@ where
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
         let half_angle = theta / 2.0;
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0];
-            let q2 = pair[1];
+        for &(q1, q2) in pairs {
             self.check_qubit_index(q1.index())
                 .expect("Invalid qubit1 index");
             self.check_qubit_index(q2.index())
@@ -950,7 +922,7 @@ where
             let half_angle_a = Angle64::from_radians(half_angle);
             let neg_half_angle_a = Angle64::from_radians(-half_angle);
             self.rz(half_angle_a, &[q1]).rz(half_angle_a, &[q2]);
-            self.cz(&[q1, q2]);
+            self.cz(&[(q1, q2)]);
             self.rz(neg_half_angle_a, &[q1]).rz(neg_half_angle_a, &[q2]);
         }
         self

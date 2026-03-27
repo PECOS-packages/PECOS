@@ -573,14 +573,10 @@ impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphStateSim<R> {
 
     // -- Two-qubit gates --
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let ctrl = pair[0].index();
-            let targ = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(ctrl, targ) in pairs {
+            let ctrl = ctrl.index();
+            let targ = targ.index();
             // CX = (I x H) CZ (I x H)
             self.vops[targ] = self.vops[targ].compose(CliffordFrame::H);
             self.cz_internal(ctrl, targ);
@@ -589,13 +585,9 @@ impl<R: SeedableRng + Rng + Debug> CliffordGateable for GraphStateSim<R> {
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            self.cz_internal(pair[0].index(), pair[1].index());
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.cz_internal(q0.index(), q1.index());
         }
         self
     }
@@ -731,7 +723,7 @@ mod tests {
         for seed in 0..20 {
             let mut sim = GraphStateSim::with_seed(2, seed);
             sim.h(&qid(0));
-            sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+            sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
             let r0 = sim.mz(&qid(0));
             let r1 = sim.mz(&qid(1));
@@ -752,7 +744,7 @@ mod tests {
         let mut sim = GraphStateSim::with_seed(2, 42);
         sim.h(&qid(0));
         sim.h(&[QubitId::new(1)]);
-        sim.cz(&[QubitId::new(0), QubitId::new(1)]);
+        sim.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
         // CZ|++> should give a 2-qubit cluster state
         // Measuring Z on qubit 0 should be non-deterministic
@@ -765,8 +757,8 @@ mod tests {
         for seed in 0..20 {
             let mut sim = GraphStateSim::with_seed(3, seed);
             sim.h(&qid(0));
-            sim.cx(&[QubitId::new(0), QubitId::new(1)]);
-            sim.cx(&[QubitId::new(1), QubitId::new(2)]);
+            sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
+            sim.cx(&[(QubitId::new(1), QubitId::new(2))]);
 
             let r0 = sim.mz(&qid(0));
             let r1 = sim.mz(&[QubitId::new(1)]);

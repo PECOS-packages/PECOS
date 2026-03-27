@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn test_layout_single_gate() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
+        dag.h(&[0]);
 
         let layout = layout_from_dag(&dag);
         assert_eq!(layout.num_qubits, 1);
@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn test_layout_two_qubit_gate() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
 
         let layout = layout_from_dag(&dag);
         assert_eq!(layout.num_qubits, 2);
@@ -351,8 +351,8 @@ mod tests {
     #[test]
     fn test_layout_parallel_gates() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.x(1);
+        dag.h(&[0]);
+        dag.x(&[1]);
 
         let layout = layout_from_dag(&dag);
         assert_eq!(layout.num_qubits, 2);
@@ -366,8 +366,8 @@ mod tests {
     #[test]
     fn test_layout_with_measurement() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.mz(0);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let layout = layout_from_dag(&dag);
 
@@ -380,9 +380,9 @@ mod tests {
     // fn test_layout_with_condition() {
     //     let mut dag = DagCircuit::new();
     //     dag.set_num_cbits(1);
-    //     dag.h(0);
+    //     dag.h(&[0]);
     //     dag.mz_to(0, pecos_core::ClassicalBitId::new(0));
-    //     dag.if_bit(pecos_core::ClassicalBitId::new(0), true).x(1);
+    //     dag.if_bit(pecos_core::ClassicalBitId::new(0), true).x(&[1]);
     //
     //     let layout = layout_from_dag(&dag);
     //

@@ -63,20 +63,20 @@ impl RepetitionCode {
 
         // Prepare ancillas in |0⟩
         for &a in &self.ancilla_qubits {
-            b = b.pz(a);
+            b = b.pz(&[a]);
         }
 
         // Parity check for A0 = Z0 * Z1
-        b = b.cx(self.data_qubits[0], self.ancilla_qubits[0]);
-        b = b.cx(self.data_qubits[1], self.ancilla_qubits[0]);
+        b = b.cx(&[(self.data_qubits[0], self.ancilla_qubits[0])]);
+        b = b.cx(&[(self.data_qubits[1], self.ancilla_qubits[0])]);
 
         // Parity check for A1 = Z1 * Z2
-        b = b.cx(self.data_qubits[1], self.ancilla_qubits[1]);
-        b = b.cx(self.data_qubits[2], self.ancilla_qubits[1]);
+        b = b.cx(&[(self.data_qubits[1], self.ancilla_qubits[1])]);
+        b = b.cx(&[(self.data_qubits[2], self.ancilla_qubits[1])]);
 
         // Measure ancillas
         for &a in &self.ancilla_qubits {
-            b = b.mz(a);
+            b = b.mz(&[a]);
         }
 
         b
@@ -88,7 +88,7 @@ impl RepetitionCode {
 
         // Initialize data qubits in |000⟩ (logical |0⟩)
         for &d in &self.data_qubits {
-            builder = builder.pz(d);
+            builder = builder.pz(&[d]);
         }
 
         // Syndrome extraction rounds
@@ -98,7 +98,7 @@ impl RepetitionCode {
 
         // Final data measurement
         for &d in &self.data_qubits {
-            builder = builder.mz(d);
+            builder = builder.mz(&[d]);
         }
 
         builder.build()

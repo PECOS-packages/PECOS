@@ -705,22 +705,22 @@ class TestRandomCliffordFuzzing:
 
             if name == "R":
                 for t in targets:
-                    dag.pz(t.value)
+                    dag.pz([t.value])
             elif name == "H":
                 for t in targets:
-                    dag.h(t.value)
+                    dag.h([t.value])
             elif name == "S":
                 for t in targets:
-                    dag.sz(t.value)
+                    dag.sz([t.value])
             elif name == "S_DAG":
                 for t in targets:
-                    dag.szdg(t.value)
+                    dag.szdg([t.value])
             elif name == "CX":
                 for i in range(0, len(targets), 2):
-                    dag.cx(targets[i].value, targets[i + 1].value)
+                    dag.cx([(targets[i].value, targets[i + 1].value)])
             elif name == "M":
                 for t in targets:
-                    dag.mz(t.value)
+                    dag.mz([t.value])
             # Skip TICK, DETECTOR, etc.
 
         return dag

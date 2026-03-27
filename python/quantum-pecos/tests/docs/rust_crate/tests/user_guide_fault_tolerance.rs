@@ -180,10 +180,10 @@ fn test_user_guide_fault_tolerance_rust_8() -> Result<(), Box<dyn std::error::Er
     use pecos_quantum::DagCircuit;
     // Build a simple parity check circuit
     let mut dag = DagCircuit::new();
-    dag.pz(2);       // prepare ancilla
-    dag.cx(0, 2);    // parity check
-    dag.cx(1, 2);
-    dag.mz(2);       // measure syndrome
+    dag.pz(&[2]);       // prepare ancilla
+    dag.cx(&[(0, 2)]);  // parity check
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);       // measure syndrome
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
@@ -215,10 +215,10 @@ fn test_user_guide_fault_tolerance_rust_9() -> Result<(), Box<dyn std::error::Er
     use pecos_quantum::DagCircuit;
     // Build a simple parity check circuit
     let mut dag = DagCircuit::new();
-    dag.pz(2);       // prepare ancilla
-    dag.cx(0, 2);    // parity check
-    dag.cx(1, 2);
-    dag.mz(2);       // measure syndrome
+    dag.pz(&[2]);       // prepare ancilla
+    dag.cx(&[(0, 2)]);  // parity check
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);       // measure syndrome
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
@@ -265,10 +265,10 @@ fn test_user_guide_fault_tolerance_rust_10() -> Result<(), Box<dyn std::error::E
     use pecos_quantum::DagCircuit;
     // Build a simple parity check circuit
     let mut dag = DagCircuit::new();
-    dag.pz(2);       // prepare ancilla
-    dag.cx(0, 2);    // parity check
-    dag.cx(1, 2);
-    dag.mz(2);       // measure syndrome
+    dag.pz(&[2]);       // prepare ancilla
+    dag.cx(&[(0, 2)]);  // parity check
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);       // measure syndrome
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
@@ -308,10 +308,10 @@ fn test_user_guide_fault_tolerance_rust_11() -> Result<(), Box<dyn std::error::E
     use pecos_quantum::DagCircuit;
     // Build a simple parity check circuit
     let mut dag = DagCircuit::new();
-    dag.pz(2);       // prepare ancilla
-    dag.cx(0, 2);    // parity check
-    dag.cx(1, 2);
-    dag.mz(2);       // measure syndrome
+    dag.pz(&[2]);       // prepare ancilla
+    dag.cx(&[(0, 2)]);  // parity check
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);       // measure syndrome
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
@@ -347,10 +347,10 @@ calculate_distance, DistanceSearchConfig,
 };
     // Build a simple parity check circuit
     let mut dag = DagCircuit::new();
-    dag.pz(2);       // prepare ancilla
-    dag.cx(0, 2);    // parity check
-    dag.cx(1, 2);
-    dag.mz(2);       // measure syndrome
+    dag.pz(&[2]);       // prepare ancilla
+    dag.cx(&[(0, 2)]);  // parity check
+    dag.cx(&[(1, 2)]);
+    dag.mz(&[2]);       // measure syndrome
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);

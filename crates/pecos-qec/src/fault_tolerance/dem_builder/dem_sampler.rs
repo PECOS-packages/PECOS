@@ -1973,9 +1973,9 @@ mod tests {
 
         // Simple circuit with prep, gate, measure
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -1999,10 +1999,10 @@ mod tests {
 
         // Two-qubit parity check circuit
         let mut dag = DagCircuit::new();
-        dag.pz(2); // Ancilla
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]); // Ancilla
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2037,12 +2037,12 @@ mod tests {
 
         // Create a simple circuit with noise
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.mz(0);
-        dag.mz(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2084,9 +2084,9 @@ mod tests {
 
         // Simple circuit
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2117,12 +2117,12 @@ mod tests {
         use rand::rngs::SmallRng;
 
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.mz(0);
-        dag.mz(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2157,12 +2157,12 @@ mod tests {
         use rand::rngs::SmallRng;
 
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.mz(0);
-        dag.mz(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2204,9 +2204,9 @@ mod tests {
         use rand::rngs::SmallRng;
 
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2234,9 +2234,9 @@ mod tests {
         use rand::rngs::SmallRng;
 
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -2264,12 +2264,12 @@ mod tests {
         use rand::rngs::SmallRng;
 
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.mz(0);
-        dag.mz(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();

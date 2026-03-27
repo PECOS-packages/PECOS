@@ -218,7 +218,7 @@ class QuantumCircuit(MutableSequence):
 
             for loc in loc_list:
                 if isinstance(loc, tuple) and len(loc) == 2:
-                    result = tick_handle.rzz(zz_angle, loc[0], loc[1])
+                    result = tick_handle.rzz(zz_angle, [(loc[0], loc[1])])
                     if hasattr(result, "meta"):
                         result.meta("_symbol", symbol)
                         result.meta("_rxxryyrzz_angles", f"{zz_angle},{yy_angle},{xx_angle}")

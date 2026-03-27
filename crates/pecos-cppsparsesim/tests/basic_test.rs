@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_core::{QubitId, qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_cppsparsesim::CppSparseStab;
 use pecos_simulators::{CliffordGateable, QuantumSimulator};
 
@@ -31,7 +31,7 @@ fn test_bell_state() {
 
     // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
     sim.h(&qid(0));
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
 
     // Measure both qubits
     let r0 = sim.mz(&qid(0))[0].outcome;
@@ -46,7 +46,7 @@ fn test_reset() {
     let mut sim = CppSparseStab::new(3);
 
     // Apply some gates
-    sim.h(&qid(0)).cx(&qid2(0, 1)).h(&qid(2));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).h(&qid(2));
 
     // Reset the simulator
     sim.reset();
@@ -95,12 +95,12 @@ fn test_deterministic_with_seed() {
     // Apply same operations to both
     sim1.h(&qid(0));
     sim1.h(&qid(1));
-    sim1.cx(&qid2(0, 2));
+    sim1.cx(&[(QubitId(0), QubitId(2))]);
     sim1.h(&qid(2));
 
     sim2.h(&qid(0));
     sim2.h(&qid(1));
-    sim2.cx(&qid2(0, 2));
+    sim2.cx(&[(QubitId(0), QubitId(2))]);
     sim2.h(&qid(2));
 
     // Collect measurements from both simulators
@@ -126,7 +126,7 @@ fn test_deterministic_with_seed() {
     let mut sim3 = CppSparseStab::new_with_seed(3, seed + 1);
     sim3.h(&qid(0));
     sim3.h(&qid(1));
-    sim3.cx(&qid2(0, 2));
+    sim3.cx(&[(QubitId(0), QubitId(2))]);
     sim3.h(&qid(2));
 
     let _results3 = [
@@ -289,12 +289,12 @@ fn run_complex_circuit(seed: u32) -> Vec<bool> {
 
     // Create a complex entangled state
     sim.h(&qid(0));
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
     sim.h(&qid(2));
-    sim.cx(&qid2(2, 3));
-    sim.cx(&qid2(1, 4));
+    sim.cx(&[(QubitId(2), QubitId(3))]);
+    sim.cx(&[(QubitId(1), QubitId(4))]);
     sim.h(&qid(5));
-    sim.cz(&qid2(3, 5));
+    sim.cz(&[(QubitId(3), QubitId(5))]);
 
     // Apply some single-qubit gates
     sim.sz(&qid(0));
@@ -307,7 +307,7 @@ fn run_complex_circuit(seed: u32) -> Vec<bool> {
 
     // Apply more gates
     sim.h(&qid(1));
-    sim.cx(&qid2(4, 5));
+    sim.cx(&[(QubitId(4), QubitId(5))]);
 
     // Measure remaining qubits
     results.push(sim.mz(&qid(1))[0].outcome);

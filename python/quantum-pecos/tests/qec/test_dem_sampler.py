@@ -17,10 +17,10 @@ def test_dem_sampler_builder_basic() -> None:
 
     # Build a simple parity check circuit
     dag = DagCircuit()
-    dag.pz(2)  # Ancilla
-    dag.cx(0, 2)
-    dag.cx(1, 2)
-    dag.mz(2)
+    dag.pz([2])  # Ancilla
+    dag.cx([(0, 2)])
+    dag.cx([(1, 2)])
+    dag.mz([2])
 
     # Build influence map
     analyzer = DagFaultAnalyzer(dag)
@@ -46,10 +46,10 @@ def test_dem_sampler_sampling() -> None:
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
     dag = DagCircuit()
-    dag.pz(2)
-    dag.cx(0, 2)
-    dag.cx(1, 2)
-    dag.mz(2)
+    dag.pz([2])
+    dag.cx([(0, 2)])
+    dag.cx([(1, 2)])
+    dag.mz([2])
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
@@ -79,10 +79,10 @@ def test_dem_sampler_determinism() -> None:
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
     dag = DagCircuit()
-    dag.pz(2)
-    dag.cx(0, 2)
-    dag.cx(1, 2)
-    dag.mz(2)
+    dag.pz([2])
+    dag.cx([(0, 2)])
+    dag.cx([(1, 2)])
+    dag.mz([2])
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
@@ -106,10 +106,10 @@ def test_dem_sampler_statistics() -> None:
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
     dag = DagCircuit()
-    dag.pz(2)
-    dag.cx(0, 2)
-    dag.cx(1, 2)
-    dag.mz(2)
+    dag.pz([2])
+    dag.cx([(0, 2)])
+    dag.cx([(1, 2)])
+    dag.mz([2])
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
@@ -141,10 +141,10 @@ def test_dem_sampler_zero_noise() -> None:
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
     dag = DagCircuit()
-    dag.pz(2)
-    dag.cx(0, 2)
-    dag.cx(1, 2)
-    dag.mz(2)
+    dag.pz([2])
+    dag.cx([(0, 2)])
+    dag.cx([(1, 2)])
+    dag.mz([2])
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
@@ -167,8 +167,8 @@ def test_dem_sampler_repr() -> None:
     from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
 
     dag = DagCircuit()
-    dag.pz(0)
-    dag.mz(0)
+    dag.pz([0])
+    dag.mz([0])
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()

@@ -297,7 +297,7 @@ fn run_composable_noise_repetition(
 
         // Initialize data qubits
         for &q in &code.data_qubits {
-            builder = builder.pz(q);
+            builder = builder.pz(&[q]);
         }
 
         // Track which measurement index corresponds to which qubit
@@ -307,25 +307,25 @@ fn run_composable_noise_repetition(
         for _round in 0..num_rounds {
             // Prepare ancillas
             for &a in &code.z_ancillas {
-                builder = builder.pz(a);
+                builder = builder.pz(&[a]);
             }
 
             // CNOT gates for parity checks
-            builder = builder.cx(0, 3); // Z0*Z1 on ancilla 3
-            builder = builder.cx(1, 3);
-            builder = builder.cx(1, 4); // Z1*Z2 on ancilla 4
-            builder = builder.cx(2, 4);
+            builder = builder.cx(&[(0, 3)]); // Z0*Z1 on ancilla 3
+            builder = builder.cx(&[(1, 3)]);
+            builder = builder.cx(&[(1, 4)]); // Z1*Z2 on ancilla 4
+            builder = builder.cx(&[(2, 4)]);
 
             // Measure ancillas
             for &a in &code.z_ancillas {
-                builder = builder.mz(a);
+                builder = builder.mz(&[a]);
                 meas_order.push(a);
             }
         }
 
         // Final data measurements
         for &q in &code.data_qubits {
-            builder = builder.mz(q);
+            builder = builder.mz(&[q]);
             meas_order.push(q);
         }
 

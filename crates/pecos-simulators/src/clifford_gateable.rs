@@ -19,6 +19,9 @@ use smallvec::SmallVec;
 /// Benchmarks show 5-10% improvement for 1-4 pairs vs Vec.
 type QubitBuf = SmallVec<[QubitId; 8]>;
 
+/// Stack-allocated pair buffer for small batches (up to 4 pairs).
+type PairBuf = SmallVec<[(QubitId, QubitId); 4]>;
+
 pub struct MeasurementResult {
     pub outcome: bool,
     pub is_deterministic: bool,
@@ -59,7 +62,7 @@ pub struct MeasurementResult {
 /// All methods take `&[QubitId]` slices, allowing both single-qubit and batch operations:
 ///
 /// - Single-qubit gates: `sim.h(&[QubitId(0)])` or `sim.h(&[QubitId(0), QubitId(1), QubitId(2)])`
-/// - Two-qubit gates: `sim.cx(&[control, target])` or `sim.cx(&[c0, t0, c1, t1])` for batches
+/// - Two-qubit gates: `sim.cx(&[(control, target)])` or `sim.cx(&[(c0, t0), (c1, t1)])` for batches
 ///
 /// # Gate Transformations
 /// Gates transform Pauli operators according to their Heisenberg representation. For example:
@@ -92,7 +95,7 @@ pub struct MeasurementResult {
 /// let mut sim = SparseStab::new(2);
 ///
 /// // Create Bell state
-/// sim.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
+/// sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
 ///
 /// // Measure in Z basis
 /// let outcomes = sim.mz(&[QubitId(0)]);
@@ -754,7 +757,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The CX gate flips the target qubit if the control qubit is in state |1⟩.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of (control, target) qubit indices: `[c0, t0, c1, t1, ...]`
+    /// * `pairs` - Pairs of (control, target) qubit indices: `[(c0, t0), (c1, t1), ...]`
     ///
     /// CX = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ X
     ///
@@ -776,17 +779,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
-    ///
-    /// # Panics
-    /// Panics if `qubits.len()` is not even.
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self;
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
     /// Applies a controlled-Y operation between qubit pairs.
     ///
     /// The CY gate applies a Y operation on the target qubit if the control qubit is in state |1⟩.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of (control, target) qubit indices: `[c0, t0, c1, t1, ...]`
+    /// * `pairs` - Pairs of (control, target) qubit indices: `[(c0, t0), (c1, t1), ...]`
     ///
     /// CY = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Y
     ///
@@ -809,15 +809,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CY requires pairs of qubits"
-        );
-        let targets: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
+    fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let targets: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         // CY = (I ⊗ S†) CX (I ⊗ S) because S†XS = Y
         // Circuit order: S† on target, then CX, then S on target
-        self.szdg(&targets).cx(qubits).sz(&targets)
+        self.szdg(&targets).cx(pairs).sz(&targets)
     }
 
     /// Applies a controlled-Z operation between qubit pairs.
@@ -825,7 +821,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The CZ gate applies a phase of -1 when both qubits are in state |1⟩.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// CZ = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Z
     ///
@@ -848,13 +844,9 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        let targets: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.h(&targets).cx(qubits).h(&targets)
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let targets: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.h(&targets).cx(pairs).h(&targets)
     }
 
     /// Applies a square root of XX (SXX) operation between qubit pairs.
@@ -862,7 +854,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SXX gate implements evolution under XX coupling for time π/4.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -883,14 +875,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXX requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.sx(&q1s).sx(&q2s).sydg(&q1s).cx(qubits).sy(&q1s)
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.sx(&q1s).sx(&q2s).sydg(&q1s).cx(pairs).sy(&q1s)
     }
 
     /// Applies the adjoint of the square root of XX operation.
@@ -898,7 +886,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SXX† gate implements reverse evolution under XX coupling.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -919,14 +907,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXXdg requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.x(&q1s).x(&q2s).sxx(qubits)
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.x(&q1s).x(&q2s).sxx(pairs)
     }
 
     /// Applies a square root of YY (SYY) operation between qubit pairs.
@@ -934,7 +918,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SYY gate implements evolution under YY coupling for time π/4.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -955,14 +939,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn syy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYY requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.szdg(&q1s).szdg(&q2s).sxx(qubits).sz(&q1s).sz(&q2s)
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.szdg(&q1s).szdg(&q2s).sxx(pairs).sz(&q1s).sz(&q2s)
     }
 
     /// Applies the adjoint of the square root of YY operation.
@@ -970,7 +950,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SYY† gate implements reverse evolution under YY coupling.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -991,14 +971,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn syydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SYYdg requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.y(&q1s).y(&q2s).syy(qubits)
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.y(&q1s).y(&q2s).syy(pairs)
     }
 
     /// Applies a square root of ZZ (SZZ) operation between qubit pairs.
@@ -1006,7 +982,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SZZ gate implements evolution under ZZ coupling for time π/4.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -1027,14 +1003,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn szz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZ requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.h(&q1s).h(&q2s).sxx(qubits).h(&q1s).h(&q2s)
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.h(&q1s).h(&q2s).sxx(pairs).h(&q1s).h(&q2s)
     }
 
     /// Applies the adjoint of the square root of ZZ operation.
@@ -1042,7 +1014,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SZZ† gate implements reverse evolution under ZZ coupling.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -1063,14 +1035,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn szzdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SZZdg requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.z(&q1s).z(&q2s).szz(qubits)
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.z(&q1s).z(&q2s).szz(pairs)
     }
 
     /// Applies the SWAP operation between qubit pairs.
@@ -1078,7 +1046,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The SWAP gate exchanges the quantum states of two qubits.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -1099,18 +1067,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // For SWAP, we need to apply cx in both directions
         // SWAP = CX(a,b) CX(b,a) CX(a,b)
-        let reversed: QubitBuf = qubits
-            .chunks_exact(2)
-            .flat_map(|pair| [pair[1], pair[0]])
-            .collect();
-        self.cx(qubits).cx(&reversed).cx(qubits)
+        let reversed: PairBuf = pairs.iter().map(|&(a, b)| (b, a)).collect();
+        self.cx(pairs).cx(&reversed).cx(pairs)
     }
 
     /// Applies the iSWAP two-qubit Clifford operation.
@@ -1118,7 +1079,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The iSWAP gate swaps states with an additional i phase on the swapped states.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -1138,21 +1099,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
-    fn iswap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "iSWAP requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        let reversed: QubitBuf = qubits
-            .chunks_exact(2)
-            .flat_map(|pair| [pair[1], pair[0]])
-            .collect();
+    fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        let reversed: PairBuf = pairs.iter().map(|&(a, b)| (b, a)).collect();
         self.sz(&q1s)
             .sz(&q2s)
             .h(&q1s)
-            .cx(qubits)
+            .cx(pairs)
             .cx(&reversed)
             .h(&q2s)
     }
@@ -1163,7 +1117,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// of single-qubit Paulis.
     ///
     /// # Arguments
-    /// * `qubits` - Pairs of qubit indices: `[q0, q1, q2, q3, ...]`
+    /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
     ///
     /// # Pauli Transformation
     /// ```text
@@ -1184,11 +1138,10 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
-    fn g(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(qubits.len().is_multiple_of(2), "G requires pairs of qubits");
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        self.cz(qubits).h(&q1s).h(&q2s).cz(qubits)
+    fn g(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        self.cz(pairs).h(&q1s).h(&q2s).cz(pairs)
     }
 
     /// Applies the inverse (dagger) of the iSWAP gate.
@@ -1201,20 +1154,13 @@ pub trait CliffordGateable: QuantumSimulator {
     /// IZ → ZI     (same as iSWAP)
     /// ```
     #[inline]
-    fn iswapdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "iSWAPdg requires pairs of qubits"
-        );
-        let q1s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[0]).collect();
-        let q2s: QubitBuf = qubits.chunks_exact(2).map(|pair| pair[1]).collect();
-        let reversed: QubitBuf = qubits
-            .chunks_exact(2)
-            .flat_map(|pair| [pair[1], pair[0]])
-            .collect();
+    fn iswapdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
+        let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
+        let reversed: PairBuf = pairs.iter().map(|&(a, b)| (b, a)).collect();
         self.h(&q2s)
             .cx(&reversed)
-            .cx(qubits)
+            .cx(pairs)
             .h(&q1s)
             .szdg(&q2s)
             .szdg(&q1s)
@@ -1222,8 +1168,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the dagger of the G gate. G is Hermitian (self-inverse), so Gdg = G.
     #[inline]
-    fn gdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.g(qubits)
+    fn gdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.g(pairs)
     }
 
     /// Measures the +X Pauli operator, projecting to the measured eigenstate.

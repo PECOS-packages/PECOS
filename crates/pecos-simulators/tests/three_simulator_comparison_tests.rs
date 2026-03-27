@@ -4,7 +4,7 @@ use pecos_simulators::CliffordGateable;
 use pecos_simulators::DensityMatrix;
 use pecos_simulators::QuantumSimulator;
 use pecos_simulators::StateVec;
-use pecos_simulators::{SparseStab, qid, qid2};
+use pecos_simulators::{QubitId, SparseStab, qid};
 use std::f64::consts::PI;
 
 // Helper function to check if two probabilities are close enough
@@ -169,23 +169,23 @@ fn test_phase_gates_consistency() {
 fn test_multi_qubit_gates_consistency() {
     // Test two-qubit CNOT gate
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.cx(&qid2(0, 1));
-        dm.cx(&qid2(0, 1));
-        stab.cx(&qid2(0, 1));
+        sv.cx(&[(QubitId(0), QubitId(1))]);
+        dm.cx(&[(QubitId(0), QubitId(1))]);
+        stab.cx(&[(QubitId(0), QubitId(1))]);
     });
 
     // Test CZ gate
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.cz(&qid2(0, 1));
-        dm.cz(&qid2(0, 1));
-        stab.cz(&qid2(0, 1));
+        sv.cz(&[(QubitId(0), QubitId(1))]);
+        dm.cz(&[(QubitId(0), QubitId(1))]);
+        stab.cz(&[(QubitId(0), QubitId(1))]);
     });
 
     // Test SWAP gate
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.swap(&qid2(0, 1));
-        dm.swap(&qid2(0, 1));
-        stab.swap(&qid2(0, 1));
+        sv.swap(&[(QubitId(0), QubitId(1))]);
+        dm.swap(&[(QubitId(0), QubitId(1))]);
+        stab.swap(&[(QubitId(0), QubitId(1))]);
     });
 }
 
@@ -193,30 +193,39 @@ fn test_multi_qubit_gates_consistency() {
 fn test_bell_state_consistency() {
     // Test creation of Bell state |Φ⁺⟩ = (|00⟩ + |11⟩)/√2
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).cx(&qid2(0, 1));
-        dm.h(&qid(0)).cx(&qid2(0, 1));
-        stab.h(&qid(0)).cx(&qid2(0, 1));
+        sv.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     });
 
     // Test creation of Bell state |Φ⁻⟩ = (|00⟩ - |11⟩)/√2
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
-        dm.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
-        stab.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
+        sv.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).z(&qid(1));
+        dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).z(&qid(1));
+        stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).z(&qid(1));
     });
 
     // Test creation of Bell state |Ψ⁺⟩ = (|01⟩ + |10⟩)/√2
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
-        dm.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
-        stab.h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
+        sv.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).x(&qid(1));
+        dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).x(&qid(1));
+        stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).x(&qid(1));
     });
 
     // Test creation of Bell state |Ψ⁻⟩ = (|01⟩ - |10⟩)/√2
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
-        dm.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
-        stab.h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
+        sv.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .z(&qid(0))
+            .x(&qid(1));
+        dm.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .z(&qid(0))
+            .x(&qid(1));
+        stab.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .z(&qid(0))
+            .x(&qid(1));
     });
 }
 
@@ -231,9 +240,9 @@ fn test_ghz_state_consistency() {
 
             // Entangle all qubits
             for i in 0..(num_qubits - 1) {
-                sv.cx(&qid2(i, i + 1));
-                dm.cx(&qid2(i, i + 1));
-                stab.cx(&qid2(i, i + 1));
+                sv.cx(&[(QubitId(i), QubitId(i + 1))]);
+                dm.cx(&[(QubitId(i), QubitId(i + 1))]);
+                stab.cx(&[(QubitId(i), QubitId(i + 1))]);
             }
         });
     }
@@ -308,9 +317,9 @@ fn test_complex_circuit_consistency() {
             stab.h(&qid(0));
 
             for i in 0..(num_qubits - 1) {
-                sv.cx(&qid2(i, i + 1));
-                dm.cx(&qid2(i, i + 1));
-                stab.cx(&qid2(i, i + 1));
+                sv.cx(&[(QubitId(i), QubitId(i + 1))]);
+                dm.cx(&[(QubitId(i), QubitId(i + 1))]);
+                stab.cx(&[(QubitId(i), QubitId(i + 1))]);
             }
 
             // Apply some additional gates
@@ -319,9 +328,12 @@ fn test_complex_circuit_consistency() {
             stab.h(&qid(1)).sz(&qid(2));
 
             if num_qubits > 3 {
-                sv.cz(&qid2(0, 3)).swap(&qid2(1, 2));
-                dm.cz(&qid2(0, 3)).swap(&qid2(1, 2));
-                stab.cz(&qid2(0, 3)).swap(&qid2(1, 2));
+                sv.cz(&[(QubitId(0), QubitId(3))])
+                    .swap(&[(QubitId(1), QubitId(2))]);
+                dm.cz(&[(QubitId(0), QubitId(3))])
+                    .swap(&[(QubitId(1), QubitId(2))]);
+                stab.cz(&[(QubitId(0), QubitId(3))])
+                    .swap(&[(QubitId(1), QubitId(2))]);
             }
         });
     }
@@ -344,25 +356,29 @@ fn test_non_clifford_circuits() {
     compare_general_circuit(2, |sv, dm| {
         sv.h(&qid(0))
             .h(&qid(1))
-            .rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+            .rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
         dm.h(&qid(0))
             .h(&qid(1))
-            .rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+            .rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
     });
 
     // Test complex non-Clifford circuit
     compare_general_circuit(3, |sv, dm| {
         // Create GHZ state
-        sv.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
-        dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+        sv.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(2))]);
+        dm.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(2))]);
 
         // Apply non-Clifford rotations
         sv.rx(Angle64::from_radians(PI / 5.0), &qid(0))
             .rz(Angle64::from_radians(PI / 7.0), &qid(1))
-            .rzz(Angle64::from_radians(PI / 9.0), &qid2(0, 2));
+            .rzz(Angle64::from_radians(PI / 9.0), &[(QubitId(0), QubitId(2))]);
         dm.rx(Angle64::from_radians(PI / 5.0), &qid(0))
             .rz(Angle64::from_radians(PI / 7.0), &qid(1))
-            .rzz(Angle64::from_radians(PI / 9.0), &qid2(0, 2));
+            .rzz(Angle64::from_radians(PI / 9.0), &[(QubitId(0), QubitId(2))]);
     });
 }
 
@@ -427,9 +443,9 @@ fn test_reset_consistency() {
         stab.h(&qid(0));
 
         if num_qubits > 1 {
-            sv.cx(&qid2(0, 1));
-            dm.cx(&qid2(0, 1));
-            stab.cx(&qid2(0, 1));
+            sv.cx(&[(QubitId(0), QubitId(1))]);
+            dm.cx(&[(QubitId(0), QubitId(1))]);
+            stab.cx(&[(QubitId(0), QubitId(1))]);
         }
 
         // Reset all simulators
@@ -573,82 +589,94 @@ fn test_f_family_gates_consistency() {
 fn test_all_2q_gates_consistency() {
     // SXX family
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).sxx(&qid2(0, 1));
-        dm.h(&qid(0)).sxx(&qid2(0, 1));
-        stab.h(&qid(0)).sxx(&qid2(0, 1));
+        sv.h(&qid(0)).sxx(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).sxx(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).sxx(&[(QubitId(0), QubitId(1))]);
     });
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).sxxdg(&qid2(0, 1));
-        dm.h(&qid(0)).sxxdg(&qid2(0, 1));
-        stab.h(&qid(0)).sxxdg(&qid2(0, 1));
+        sv.h(&qid(0)).sxxdg(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).sxxdg(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).sxxdg(&[(QubitId(0), QubitId(1))]);
     });
 
     // SYY family
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).syy(&qid2(0, 1));
-        dm.h(&qid(0)).syy(&qid2(0, 1));
-        stab.h(&qid(0)).syy(&qid2(0, 1));
+        sv.h(&qid(0)).syy(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).syy(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).syy(&[(QubitId(0), QubitId(1))]);
     });
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).syydg(&qid2(0, 1));
-        dm.h(&qid(0)).syydg(&qid2(0, 1));
-        stab.h(&qid(0)).syydg(&qid2(0, 1));
+        sv.h(&qid(0)).syydg(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).syydg(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).syydg(&[(QubitId(0), QubitId(1))]);
     });
 
     // SZZ family
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).szz(&qid2(0, 1));
-        dm.h(&qid(0)).szz(&qid2(0, 1));
-        stab.h(&qid(0)).szz(&qid2(0, 1));
+        sv.h(&qid(0)).szz(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).szz(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).szz(&[(QubitId(0), QubitId(1))]);
     });
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).szzdg(&qid2(0, 1));
-        dm.h(&qid(0)).szzdg(&qid2(0, 1));
-        stab.h(&qid(0)).szzdg(&qid2(0, 1));
+        sv.h(&qid(0)).szzdg(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).szzdg(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).szzdg(&[(QubitId(0), QubitId(1))]);
     });
 
     // ISWAP family
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).iswap(&qid2(0, 1));
-        dm.h(&qid(0)).iswap(&qid2(0, 1));
-        stab.h(&qid(0)).iswap(&qid2(0, 1));
+        sv.h(&qid(0)).iswap(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).iswap(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).iswap(&[(QubitId(0), QubitId(1))]);
     });
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).iswapdg(&qid2(0, 1));
-        dm.h(&qid(0)).iswapdg(&qid2(0, 1));
-        stab.h(&qid(0)).iswapdg(&qid2(0, 1));
+        sv.h(&qid(0)).iswapdg(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).iswapdg(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).iswapdg(&[(QubitId(0), QubitId(1))]);
     });
 
     // G family (G is self-inverse)
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).g(&qid2(0, 1));
-        dm.h(&qid(0)).g(&qid2(0, 1));
-        stab.h(&qid(0)).g(&qid2(0, 1));
+        sv.h(&qid(0)).g(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).g(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).g(&[(QubitId(0), QubitId(1))]);
     });
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).gdg(&qid2(0, 1));
-        dm.h(&qid(0)).gdg(&qid2(0, 1));
-        stab.h(&qid(0)).gdg(&qid2(0, 1));
+        sv.h(&qid(0)).gdg(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).gdg(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).gdg(&[(QubitId(0), QubitId(1))]);
     });
 
     // CY
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).cy(&qid2(0, 1));
-        dm.h(&qid(0)).cy(&qid2(0, 1));
-        stab.h(&qid(0)).cy(&qid2(0, 1));
+        sv.h(&qid(0)).cy(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0)).cy(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0)).cy(&[(QubitId(0), QubitId(1))]);
     });
 
     // ISWAP * ISWAPdg = I
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).iswap(&qid2(0, 1)).iswapdg(&qid2(0, 1));
-        dm.h(&qid(0)).iswap(&qid2(0, 1)).iswapdg(&qid2(0, 1));
-        stab.h(&qid(0)).iswap(&qid2(0, 1)).iswapdg(&qid2(0, 1));
+        sv.h(&qid(0))
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswapdg(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0))
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswapdg(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0))
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswapdg(&[(QubitId(0), QubitId(1))]);
     });
 
     // G * G = I (G is Hermitian)
     compare_clifford_circuit(2, |sv, dm, stab| {
-        sv.h(&qid(0)).g(&qid2(0, 1)).g(&qid2(0, 1));
-        dm.h(&qid(0)).g(&qid2(0, 1)).g(&qid2(0, 1));
-        stab.h(&qid(0)).g(&qid2(0, 1)).g(&qid2(0, 1));
+        sv.h(&qid(0))
+            .g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(0), QubitId(1))]);
+        dm.h(&qid(0))
+            .g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(0), QubitId(1))]);
+        stab.h(&qid(0))
+            .g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(0), QubitId(1))]);
     });
 }

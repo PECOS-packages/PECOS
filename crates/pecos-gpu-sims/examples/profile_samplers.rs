@@ -25,11 +25,11 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
 
     for _round in 0..num_rounds {
         for a in 0..num_x_ancillas {
-            dag.pz(x_ancilla_start + a);
-            dag.h(x_ancilla_start + a);
+            dag.pz(&[x_ancilla_start + a]);
+            dag.h(&[x_ancilla_start + a]);
         }
         for a in 0..num_z_ancillas {
-            dag.pz(z_ancilla_start + a);
+            dag.pz(&[z_ancilla_start + a]);
         }
 
         for row in 0..(distance - 1) {
@@ -40,10 +40,10 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
                 let d2 = (row + 1) * distance + col;
                 let d3 = (row + 1) * distance + col + 1;
 
-                dag.cx(ancilla, d0);
-                dag.cx(ancilla, d1);
-                dag.cx(ancilla, d2);
-                dag.cx(ancilla, d3);
+                dag.cx(&[(ancilla, d0)]);
+                dag.cx(&[(ancilla, d1)]);
+                dag.cx(&[(ancilla, d2)]);
+                dag.cx(&[(ancilla, d3)]);
             }
         }
 
@@ -55,19 +55,19 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
                 let d2 = (row + 1) * distance + col;
                 let d3 = (row + 1) * distance + col + 1;
 
-                dag.cx(d0, ancilla);
-                dag.cx(d1, ancilla);
-                dag.cx(d2, ancilla);
-                dag.cx(d3, ancilla);
+                dag.cx(&[(d0, ancilla)]);
+                dag.cx(&[(d1, ancilla)]);
+                dag.cx(&[(d2, ancilla)]);
+                dag.cx(&[(d3, ancilla)]);
             }
         }
 
         for a in 0..num_x_ancillas {
-            dag.h(x_ancilla_start + a);
-            dag.mz(x_ancilla_start + a);
+            dag.h(&[x_ancilla_start + a]);
+            dag.mz(&[x_ancilla_start + a]);
         }
         for a in 0..num_z_ancillas {
-            dag.mz(z_ancilla_start + a);
+            dag.mz(&[z_ancilla_start + a]);
         }
     }
 

@@ -1,5 +1,5 @@
 use pecos_core::Angle64;
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, qid, qid2};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QubitId, qid};
 use std::f64::consts::PI;
 
 fn main() {
@@ -12,7 +12,7 @@ fn main() {
     println!("{dm}");
 
     // Create a Bell state
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     println!("\nBell state (|00⟩ + |11⟩)/√2:");
     println!("{dm}");
 
@@ -54,7 +54,7 @@ fn main() {
 
     // Create a simple Bell state for demonstration
     let mut bell = DensityMatrix::new(2);
-    bell.h(&qid(0)).cx(&qid2(0, 1));
+    bell.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Get the 2D density matrix
     let rho_2d = bell.get_density_matrix();

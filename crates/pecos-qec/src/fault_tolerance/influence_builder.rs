@@ -118,37 +118,37 @@ impl<'a> InfluenceBuilder<'a> {
 
                 match op.gate_type {
                     pecos_quantum::GateType::H => {
-                        sim.h(qubits[0]);
+                        sim.h(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::SZ => {
-                        sim.sz(qubits[0]);
+                        sim.sz(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::SZdg => {
                         // SZdg = SZ^3 = SZ * SZ * SZ
-                        sim.sz(qubits[0]);
-                        sim.sz(qubits[0]);
-                        sim.sz(qubits[0]);
+                        sim.sz(&[qubits[0]]);
+                        sim.sz(&[qubits[0]]);
+                        sim.sz(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::X => {
-                        sim.x(qubits[0]);
+                        sim.x(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::Y => {
-                        sim.y(qubits[0]);
+                        sim.y(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::Z => {
-                        sim.z(qubits[0]);
+                        sim.z(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::CX => {
-                        sim.cx(qubits[0], qubits[1]);
+                        sim.cx(&[(qubits[0], qubits[1])]);
                     }
                     pecos_quantum::GateType::CZ => {
                         // CZ = H(target) CX H(target)
-                        sim.h(qubits[1]);
-                        sim.cx(qubits[0], qubits[1]);
-                        sim.h(qubits[1]);
+                        sim.h(&[qubits[1]]);
+                        sim.cx(&[(qubits[0], qubits[1])]);
+                        sim.h(&[qubits[1]]);
                     }
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
-                        sim.mz(qubits[0]);
+                        sim.mz(&[qubits[0]]);
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
                     }
@@ -379,7 +379,7 @@ impl<'a> InfluenceBuilder<'a> {
                 {
                     for qubit in &gate.qubits {
                         // Z-basis measurement means we propagate Z
-                        combined_prop.add_z(qubit.index());
+                        combined_prop.track_z(&[qubit.index()]);
                     }
                 }
             }
@@ -412,7 +412,7 @@ impl<'a> InfluenceBuilder<'a> {
         if !self.logical_x_qubits.is_empty() {
             let mut prop = PauliProp::new();
             for &q in &self.logical_x_qubits {
-                prop.add_x(q);
+                prop.track_x(&[q]);
             }
 
             self.propagate_observable(
@@ -432,7 +432,7 @@ impl<'a> InfluenceBuilder<'a> {
         if !self.logical_z_qubits.is_empty() {
             let mut prop = PauliProp::new();
             for &q in &self.logical_z_qubits {
-                prop.add_z(q);
+                prop.track_z(&[q]);
             }
 
             self.propagate_observable(
@@ -736,9 +736,9 @@ mod tests {
     fn test_simple_circuit() {
         // Simple circuit: prep, H, measure
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let builder = InfluenceBuilder::new(&dag);
         let map = builder.build();
@@ -753,14 +753,14 @@ mod tests {
         let mut dag = DagCircuit::new();
 
         // Prepare ancilla
-        dag.pz(2);
+        dag.pz(&[2]);
 
         // CNOT from data to ancilla
-        dag.cx(0, 2);
-        dag.cx(1, 2);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
 
         // Measure ancilla
-        dag.mz(2);
+        dag.mz(&[2]);
 
         let builder = InfluenceBuilder::new(&dag);
         let map = builder.build();
@@ -775,16 +775,16 @@ mod tests {
         let mut dag = DagCircuit::new();
 
         // Round 1
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         // Round 2
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let builder = InfluenceBuilder::new(&dag);
         let map = builder.build();
@@ -800,9 +800,9 @@ mod tests {
     #[test]
     fn test_with_logical() {
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.mz(&[2]);
 
         let builder = InfluenceBuilder::new(&dag).with_logical_z(vec![0]); // Track Z logical on qubit 0
 

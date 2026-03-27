@@ -30,7 +30,7 @@ use std::ptr;
 ///
 /// let mut sim = CuStateVec::new(4).unwrap(); // 4 qubits
 /// sim.h(&[QubitId(0)]);           // Hadamard on qubit 0
-/// sim.cx(&[QubitId(0), QubitId(1)]);       // CNOT with control=0, target=1
+/// sim.cx(&[(QubitId(0), QubitId(1))]);       // CNOT with control=0, target=1
 /// let results = sim.mz(&[QubitId(0)]);  // Measure qubit 0
 /// ```
 pub struct CuStateVec {
@@ -611,11 +611,7 @@ impl CliffordGateable for CuStateVec {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // CNOT matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,0,1], [0,0,1,0]]
         #[rustfmt::skip]
@@ -625,8 +621,8 @@ impl CliffordGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [1.0, 0.0],
             [0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 0.0],
         ];
-        for pair in qubits.chunks_exact(2) {
-            self.apply_matrix_2q(pair[0].0, pair[1].0, &matrix);
+        for &(q0, q1) in pairs {
+            self.apply_matrix_2q(q0.0, q1.0, &matrix);
         }
         self
     }
@@ -670,11 +666,7 @@ impl CliffordGateable for CuStateVec {
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // CZ matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,-1]]
         #[rustfmt::skip]
@@ -684,17 +676,13 @@ impl CliffordGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 0.0],
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [-1.0, 0.0],
         ];
-        for pair in qubits.chunks_exact(2) {
-            self.apply_matrix_2q(pair[0].0, pair[1].0, &matrix);
+        for &(q0, q1) in pairs {
+            self.apply_matrix_2q(q0.0, q1.0, &matrix);
         }
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // SWAP matrix (4x4)
         // [[1,0,0,0], [0,0,1,0], [0,1,0,0], [0,0,0,1]]
         #[rustfmt::skip]
@@ -704,8 +692,8 @@ impl CliffordGateable for CuStateVec {
             [0.0, 0.0], [1.0, 0.0], [0.0, 0.0], [0.0, 0.0],
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [1.0, 0.0],
         ];
-        for pair in qubits.chunks_exact(2) {
-            self.apply_matrix_2q(pair[0].0, pair[1].0, &matrix);
+        for &(q0, q1) in pairs {
+            self.apply_matrix_2q(q0.0, q1.0, &matrix);
         }
         self
     }
@@ -736,12 +724,8 @@ impl ArbitraryRotationGateable for CuStateVec {
         self
     }
 
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
         // RZZ(theta) = diag(e^(-i*theta/2), e^(i*theta/2), e^(i*theta/2), e^(-i*theta/2))
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();
@@ -752,8 +736,8 @@ impl ArbitraryRotationGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [c, s], [0.0, 0.0],
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [c, -s],
         ];
-        for pair in qubits.chunks_exact(2) {
-            self.apply_matrix_2q(pair[0].0, pair[1].0, &matrix);
+        for &(q0, q1) in pairs {
+            self.apply_matrix_2q(q0.0, q1.0, &matrix);
         }
         self
     }

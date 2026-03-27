@@ -54,7 +54,7 @@
 //! // Queue gates
 //! sim.h(&qid(0));
 //! for i in 1..100 {
-//!     sim.cx(&[pecos_core::QubitId(0), pecos_core::QubitId(i)]);
+//!     sim.cx(&[(pecos_core::QubitId(0), pecos_core::QubitId(i))]);
 //! }
 //!
 //! // Measure - this would trigger GPU execution in a real GPU impl
@@ -671,16 +671,16 @@ impl CliffordGateable for GpuStab {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.apply_cx(pair[0].index(), pair[1].index());
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            self.apply_cx(control.index(), target.index());
         }
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.apply_cz(pair[0].index(), pair[1].index());
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.apply_cz(q0.index(), q1.index());
         }
         self
     }
@@ -819,7 +819,7 @@ mod tests {
     fn test_gpu_stab_basic() {
         let mut sim = GpuStab::new(2);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }

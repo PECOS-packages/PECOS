@@ -247,7 +247,11 @@ where
 
         let mut measurements: Vec<usize> = Vec::new();
 
-        for cmd in &batch {
+        // Use indexed iteration so we can batch consecutive MZ commands into
+        // one simulator call, enabling joint-sampling optimizations.
+        let mut cmd_idx = 0;
+        while cmd_idx < batch.len() {
+            let cmd = &batch[cmd_idx];
             match cmd.gate_type {
                 GateType::X => {
                     debug!("Processing X gate on qubits {:?}", cmd.qubits);
@@ -555,12 +559,24 @@ where
                     }
                 }
 
-                // TODO: Fix it so we have multiple result_ids or get rid of result ids...
+                // Batch consecutive MZ commands into one simulator call.
+                // This enables joint-sampling optimizations (fewer state vector passes).
                 GateType::MZ | GateType::MeasureLeaked => {
-                    debug!("Processing measurement on qubits {:?}", cmd.qubits);
-                    let meas_results = self.simulator.mz(&cmd.qubits);
+                    // Collect qubits from consecutive MZ/MeasureLeaked commands
+                    let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
+                    while cmd_idx + 1 < batch.len()
+                        && matches!(
+                            batch[cmd_idx + 1].gate_type,
+                            GateType::MZ | GateType::MeasureLeaked
+                        )
+                    {
+                        cmd_idx += 1;
+                        mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
+                    }
+
+                    debug!("Processing batched measurement on {} qubits", mz_qubits.len());
+                    let meas_results = self.simulator.mz(&mz_qubits);
                     for meas_result in meas_results {
-                        // mz() outcome: true if projected to |1⟩, false if projected to |0⟩
                         measurements.push(usize::from(meas_result.outcome));
                     }
                 }
@@ -677,6 +693,7 @@ where
                     self.simulator.u2q(before, interaction, after, &pairs);
                 }
             }
+            cmd_idx += 1;
         }
 
         // Create a message with the measurement results
@@ -860,7 +877,9 @@ impl Engine for SparseStabEngine {
         let batch = message.quantum_ops()?;
         let mut measurements: Vec<usize> = Vec::new();
 
-        for cmd in &batch {
+        let mut cmd_idx = 0;
+        while cmd_idx < batch.len() {
+            let cmd = &batch[cmd_idx];
             match cmd.gate_type {
                 // Single-qubit Clifford gates
                 GateType::X
@@ -885,12 +904,22 @@ impl Engine for SparseStabEngine {
                 | GateType::SYYdg => {
                     self.process_two_qubit_gate(cmd.gate_type, &cmd.qubits);
                 }
-                // Special operations
+                // Batch consecutive MZ commands
                 GateType::MZ | GateType::MeasureLeaked => {
-                    debug!("Processing measurement on qubits {:?}", cmd.qubits);
-                    let meas_results = self.simulator.mz(&cmd.qubits);
+                    let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
+                    while cmd_idx + 1 < batch.len()
+                        && matches!(
+                            batch[cmd_idx + 1].gate_type,
+                            GateType::MZ | GateType::MeasureLeaked
+                        )
+                    {
+                        cmd_idx += 1;
+                        mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
+                    }
+
+                    debug!("Processing batched measurement on {} qubits", mz_qubits.len());
+                    let meas_results = self.simulator.mz(&mz_qubits);
                     for meas_result in meas_results {
-                        // mz() outcome: true if projected to |1⟩, false if projected to |0⟩
                         measurements.push(usize::from(meas_result.outcome));
                     }
                 }
@@ -987,6 +1016,7 @@ impl Engine for SparseStabEngine {
                     )));
                 }
             }
+            cmd_idx += 1;
         }
 
         // Create a message with the measurement results

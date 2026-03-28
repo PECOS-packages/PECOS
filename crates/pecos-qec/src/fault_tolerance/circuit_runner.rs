@@ -106,91 +106,149 @@ fn apply_fault<S: CliffordGateable>(sim: &mut S, fault: &PauliFault) {
 ///
 /// * `sim` - The simulator to apply the gate to
 /// * `gate` - The gate to apply
+/// Apply all gates in a tick to the simulator, consolidating same-type gates
+/// into batched calls. This reduces per-gate dispatch overhead and enables
+/// simulator-level batch optimizations (gate fusion, SIMD batching, etc.).
+fn apply_tick_gates<S: CliffordGateable>(
+    sim: &mut S,
+    tick: &pecos_quantum::Tick,
+) {
+    // For ticks with few gates, skip consolidation overhead
+    let gate_count = tick.gates().len();
+    if gate_count <= 2 {
+        for gate in tick.gates() {
+            apply_gate(sim, gate);
+        }
+        return;
+    }
+
+    // Consolidate: collect qubits per gate type, then dispatch batched
+    let mut h_qubits: Vec<QubitId> = Vec::new();
+    let mut x_qubits: Vec<QubitId> = Vec::new();
+    let mut y_qubits: Vec<QubitId> = Vec::new();
+    let mut z_qubits: Vec<QubitId> = Vec::new();
+    let mut sz_qubits: Vec<QubitId> = Vec::new();
+    let mut szdg_qubits: Vec<QubitId> = Vec::new();
+    let mut sx_qubits: Vec<QubitId> = Vec::new();
+    let mut sxdg_qubits: Vec<QubitId> = Vec::new();
+    let mut sy_qubits: Vec<QubitId> = Vec::new();
+    let mut sydg_qubits: Vec<QubitId> = Vec::new();
+    let mut cx_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut cy_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut cz_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut szz_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut szzdg_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut swap_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut mz_qubits: Vec<QubitId> = Vec::new();
+    let mut pz_qubits: Vec<QubitId> = Vec::new();
+
+    for gate in tick.gates() {
+        match gate.gate_type {
+            GateType::H => h_qubits.extend(gate.qubits.iter()),
+            GateType::X => x_qubits.extend(gate.qubits.iter()),
+            GateType::Y => y_qubits.extend(gate.qubits.iter()),
+            GateType::Z => z_qubits.extend(gate.qubits.iter()),
+            GateType::SZ => sz_qubits.extend(gate.qubits.iter()),
+            GateType::SZdg => szdg_qubits.extend(gate.qubits.iter()),
+            GateType::SX => sx_qubits.extend(gate.qubits.iter()),
+            GateType::SXdg => sxdg_qubits.extend(gate.qubits.iter()),
+            GateType::SY => sy_qubits.extend(gate.qubits.iter()),
+            GateType::SYdg => sydg_qubits.extend(gate.qubits.iter()),
+            GateType::CX => {
+                for c in gate.qubits.chunks_exact(2) {
+                    cx_pairs.push((c[0], c[1]));
+                }
+            }
+            GateType::CY => {
+                for c in gate.qubits.chunks_exact(2) {
+                    cy_pairs.push((c[0], c[1]));
+                }
+            }
+            GateType::CZ => {
+                for c in gate.qubits.chunks_exact(2) {
+                    cz_pairs.push((c[0], c[1]));
+                }
+            }
+            GateType::SZZ => {
+                for c in gate.qubits.chunks_exact(2) {
+                    szz_pairs.push((c[0], c[1]));
+                }
+            }
+            GateType::SZZdg => {
+                for c in gate.qubits.chunks_exact(2) {
+                    szzdg_pairs.push((c[0], c[1]));
+                }
+            }
+            GateType::SWAP => {
+                for c in gate.qubits.chunks_exact(2) {
+                    swap_pairs.push((c[0], c[1]));
+                }
+            }
+            GateType::MZ | GateType::MeasureFree => mz_qubits.extend(gate.qubits.iter()),
+            GateType::PZ => pz_qubits.extend(gate.qubits.iter()),
+            GateType::I => {}
+            _ => {
+                // Fallback: apply individually for unsupported gate types
+                apply_gate(sim, gate);
+            }
+        }
+    }
+
+    // Dispatch all collected gates in batched calls.
+    // Order within a tick doesn't matter (gates act on non-overlapping qubits).
+    // Preparations first, then gates, then measurements.
+    if !pz_qubits.is_empty() { sim.pz(&pz_qubits); }
+    if !h_qubits.is_empty() { sim.h(&h_qubits); }
+    if !x_qubits.is_empty() { sim.x(&x_qubits); }
+    if !y_qubits.is_empty() { sim.y(&y_qubits); }
+    if !z_qubits.is_empty() { sim.z(&z_qubits); }
+    if !sz_qubits.is_empty() { sim.sz(&sz_qubits); }
+    if !szdg_qubits.is_empty() { sim.szdg(&szdg_qubits); }
+    if !sx_qubits.is_empty() { sim.sx(&sx_qubits); }
+    if !sxdg_qubits.is_empty() { sim.sxdg(&sxdg_qubits); }
+    if !sy_qubits.is_empty() { sim.sy(&sy_qubits); }
+    if !sydg_qubits.is_empty() { sim.sydg(&sydg_qubits); }
+    if !cx_pairs.is_empty() { sim.cx(&cx_pairs); }
+    if !cy_pairs.is_empty() { sim.cy(&cy_pairs); }
+    if !cz_pairs.is_empty() { sim.cz(&cz_pairs); }
+    if !szz_pairs.is_empty() { sim.szz(&szz_pairs); }
+    if !szzdg_pairs.is_empty() { sim.szzdg(&szzdg_pairs); }
+    if !swap_pairs.is_empty() { sim.swap(&swap_pairs); }
+    if !mz_qubits.is_empty() { sim.mz(&mz_qubits); }
+}
+
 fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
     let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
     match gate.gate_type {
-        // Single-qubit gates
-        GateType::I => {
-            sim.identity(&qubits);
-        }
-        GateType::X => {
-            sim.x(&qubits);
-        }
-        GateType::Y => {
-            sim.y(&qubits);
-        }
-        GateType::Z => {
-            sim.z(&qubits);
-        }
-        GateType::H => {
-            sim.h(&qubits);
-        }
-        GateType::SX => {
-            sim.sx(&qubits);
-        }
-        GateType::SXdg => {
-            sim.sxdg(&qubits);
-        }
-        GateType::SY => {
-            sim.sy(&qubits);
-        }
-        GateType::SYdg => {
-            sim.sydg(&qubits);
-        }
-        GateType::SZ => {
-            sim.sz(&qubits);
-        }
-        GateType::SZdg => {
-            sim.szdg(&qubits);
-        }
-
-        // Two-qubit gates (qubits come in pairs: [ctrl, tgt, ctrl, tgt, ...])
-        GateType::CX => {
+        GateType::I => { sim.identity(&qubits); }
+        GateType::X => { sim.x(&qubits); }
+        GateType::Y => { sim.y(&qubits); }
+        GateType::Z => { sim.z(&qubits); }
+        GateType::H => { sim.h(&qubits); }
+        GateType::SX => { sim.sx(&qubits); }
+        GateType::SXdg => { sim.sxdg(&qubits); }
+        GateType::SY => { sim.sy(&qubits); }
+        GateType::SYdg => { sim.sydg(&qubits); }
+        GateType::SZ => { sim.sz(&qubits); }
+        GateType::SZdg => { sim.szdg(&qubits); }
+        GateType::CX | GateType::CY | GateType::CZ
+        | GateType::SZZ | GateType::SZZdg | GateType::SWAP => {
             let pairs: Vec<(QubitId, QubitId)> =
                 qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-            sim.cx(&pairs);
+            match gate.gate_type {
+                GateType::CX => { sim.cx(&pairs); }
+                GateType::CY => { sim.cy(&pairs); }
+                GateType::CZ => { sim.cz(&pairs); }
+                GateType::SZZ => { sim.szz(&pairs); }
+                GateType::SZZdg => { sim.szzdg(&pairs); }
+                GateType::SWAP => { sim.swap(&pairs); }
+                _ => unreachable!(),
+            }
         }
-        GateType::CY => {
-            let pairs: Vec<(QubitId, QubitId)> =
-                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-            sim.cy(&pairs);
-        }
-        GateType::CZ => {
-            let pairs: Vec<(QubitId, QubitId)> =
-                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-            sim.cz(&pairs);
-        }
-        GateType::SZZ => {
-            let pairs: Vec<(QubitId, QubitId)> =
-                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-            sim.szz(&pairs);
-        }
-        GateType::SZZdg => {
-            let pairs: Vec<(QubitId, QubitId)> =
-                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-            sim.szzdg(&pairs);
-        }
-        GateType::SWAP => {
-            let pairs: Vec<(QubitId, QubitId)> =
-                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
-            sim.swap(&pairs);
-        }
-
-        // Measurements
-        GateType::MZ | GateType::MeasureFree => {
-            sim.mz(&qubits);
-        }
-
-        // Preparations
-        GateType::PZ => {
-            sim.pz(&qubits);
-        }
-
-        // TODO: Add support for rotation gates if needed
-        _ => {
-            // Unsupported gate type - skip for now
-        }
+        GateType::MZ | GateType::MeasureFree => { sim.mz(&qubits); }
+        GateType::PZ => { sim.pz(&qubits); }
+        _ => {}
     }
 }
 
@@ -229,10 +287,8 @@ pub fn run_circuit_with_faults<S: CliffordGateable>(
             apply_fault(sim, fault);
         }
 
-        // Apply all gates in this tick
-        for gate in tick.gates() {
-            apply_gate(sim, gate);
-        }
+        // Apply all gates in this tick (consolidated by type for batch dispatch)
+        apply_tick_gates(sim, tick);
 
         // Apply after-faults (typical gate errors)
         for fault in after_faults {

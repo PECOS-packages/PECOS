@@ -656,9 +656,247 @@ where
     ///
     /// This is called automatically before two-qubit gates and measurements.
     /// You can also call it manually to ensure all pending gates are applied.
+    ///
+    /// For large state vectors (16+ qubits), uses cache-blocked iteration:
+    /// low-stride qubits (stride < block size) are processed together per
+    /// cache block, so each block is loaded from memory once instead of once
+    /// per gate. High-stride qubits are flushed individually.
     pub fn flush(&mut self) {
-        for qubit in 0..self.num_qubits {
-            self.flush_qubit(qubit);
+        // Block size in amplitudes: 2^14 = 16384 × 16 bytes = 256KB (fits in L2 cache)
+        const BLOCK_BITS: usize = 14;
+
+        // Only use blocking when the state vector is large enough for cache effects
+        // to matter (> 2^16 amplitudes = 1MB) and there are multiple pending gates
+        let pending_count = self.pending_gates[..self.num_qubits]
+            .iter()
+            .filter(|g| g.is_some())
+            .count();
+
+        // Only use blocking when the state vector exceeds L3 cache (~16MB).
+        // At 21+ qubits (32MB+), multiple flush passes cause real cache thrashing.
+        // Below that, the simple approach is faster because data stays in cache.
+        if self.num_qubits < 21 || pending_count < 3 {
+            for qubit in 0..self.num_qubits {
+                self.flush_qubit(qubit);
+            }
+            return;
+        }
+
+        self.flush_blocked(BLOCK_BITS);
+    }
+
+    /// Cache-blocked flush: apply low-stride pending gates per block, then
+    /// high-stride gates individually.
+    fn flush_blocked(&mut self, block_bits: usize) {
+        let n = self.real.len();
+        let block_size = 1usize << block_bits;
+        let max_low_qubit = block_bits.min(self.num_qubits);
+
+        // Collect low-stride pending gates (stride fits within one block)
+        let mut low_gates: Vec<(usize, Complex2x2)> = Vec::new();
+        for q in 0..max_low_qubit {
+            if let Some(matrix) = self.pending_gates[q].take() {
+                if !matrix.is_identity() {
+                    low_gates.push((q, matrix));
+                }
+            }
+        }
+
+        // Apply low-stride gates in blocked fashion: one block loaded into L2,
+        // all gates applied before moving to next block
+        if !low_gates.is_empty() {
+            for block_start in (0..n).step_by(block_size) {
+                for &(q, ref m) in &low_gates {
+                    let step = 1 << q;
+                    let block_end = block_start + block_size;
+
+                    if step >= 4 {
+                        let a_re = f64x4::splat(m.a_re);
+                        let a_im = f64x4::splat(m.a_im);
+                        let b_re = f64x4::splat(m.b_re);
+                        let b_im = f64x4::splat(m.b_im);
+                        let c_re = f64x4::splat(m.c_re);
+                        let c_im = f64x4::splat(m.c_im);
+                        let d_re = f64x4::splat(m.d_re);
+                        let d_im = f64x4::splat(m.d_im);
+
+                        for i in (block_start..block_end).step_by(step * 2) {
+                            let mut j = i;
+                            while j + 4 <= i + step {
+                                let pj = j + step;
+
+                                let ar = f64x4::from(&self.real[j..j + 4]);
+                                let ai = f64x4::from(&self.imag[j..j + 4]);
+                                let br = f64x4::from(&self.real[pj..pj + 4]);
+                                let bi = f64x4::from(&self.imag[pj..pj + 4]);
+
+                                let nr: [f64; 4] =
+                                    ((a_re * ar - a_im * ai) + (b_re * br - b_im * bi)).into();
+                                let ni: [f64; 4] =
+                                    ((a_re * ai + a_im * ar) + (b_re * bi + b_im * br)).into();
+                                let pr: [f64; 4] =
+                                    ((c_re * ar - c_im * ai) + (d_re * br - d_im * bi)).into();
+                                let pi: [f64; 4] =
+                                    ((c_re * ai + c_im * ar) + (d_re * bi + d_im * br)).into();
+
+                                self.real[j..j + 4].copy_from_slice(&nr);
+                                self.imag[j..j + 4].copy_from_slice(&ni);
+                                self.real[pj..pj + 4].copy_from_slice(&pr);
+                                self.imag[pj..pj + 4].copy_from_slice(&pi);
+
+                                j += 4;
+                            }
+                        }
+                    } else {
+                        for i in (block_start..block_end).step_by(step * 2) {
+                            for j in i..(i + step) {
+                                let pj = j + step;
+                                let ar = self.real[j];
+                                let ai = self.imag[j];
+                                let br = self.real[pj];
+                                let bi = self.imag[pj];
+
+                                self.real[j] = (m.a_re * ar - m.a_im * ai)
+                                    + (m.b_re * br - m.b_im * bi);
+                                self.imag[j] = (m.a_re * ai + m.a_im * ar)
+                                    + (m.b_re * bi + m.b_im * br);
+                                self.real[pj] = (m.c_re * ar - m.c_im * ai)
+                                    + (m.d_re * br - m.d_im * bi);
+                                self.imag[pj] = (m.c_re * ai + m.c_im * ar)
+                                    + (m.d_re * bi + m.d_im * br);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Flush remaining high-stride qubits, pairing adjacent qubits to halve
+        // memory passes. For each pair (q, q+1), both gates are applied in one
+        // pass: load 4 amplitude groups, apply M_lo then M_hi, store.
+        let mut q = max_low_qubit;
+        while q + 1 < self.num_qubits {
+            let have_lo = self.pending_gates[q].is_some();
+            let have_hi = self.pending_gates[q + 1].is_some();
+
+            if have_lo && have_hi {
+                let m_lo = self.pending_gates[q].take().unwrap();
+                let m_hi = self.pending_gates[q + 1].take().unwrap();
+                let lo_id = m_lo.is_identity();
+                let hi_id = m_hi.is_identity();
+
+                if !lo_id && !hi_id {
+                    self.flush_pair(q, q + 1, &m_lo, &m_hi);
+                } else if !lo_id {
+                    self.apply_fused_matrix(q, &m_lo);
+                } else if !hi_id {
+                    self.apply_fused_matrix(q + 1, &m_hi);
+                }
+                q += 2;
+            } else {
+                if have_lo {
+                    self.flush_qubit(q);
+                }
+                if have_hi {
+                    self.flush_qubit(q + 1);
+                }
+                q += 2;
+            }
+        }
+        // Handle leftover odd qubit
+        if q < self.num_qubits {
+            self.flush_qubit(q);
+        }
+    }
+
+    /// Apply two independent single-qubit gates in one pass over the state vector.
+    /// For adjacent qubits (q_lo, q_hi = q_lo + 1), loads groups of 4 amplitudes,
+    /// applies both matrices, and stores — one pass instead of two.
+    fn flush_pair(&mut self, q_lo: usize, q_hi: usize, m_lo: &Complex2x2, m_hi: &Complex2x2) {
+        let n = self.real.len();
+        let step_lo = 1usize << q_lo;
+        let step_hi = 1usize << q_hi;
+
+        // SIMD splats for M_lo
+        let la_re = f64x4::splat(m_lo.a_re);
+        let la_im = f64x4::splat(m_lo.a_im);
+        let lb_re = f64x4::splat(m_lo.b_re);
+        let lb_im = f64x4::splat(m_lo.b_im);
+        let lc_re = f64x4::splat(m_lo.c_re);
+        let lc_im = f64x4::splat(m_lo.c_im);
+        let ld_re = f64x4::splat(m_lo.d_re);
+        let ld_im = f64x4::splat(m_lo.d_im);
+        // SIMD splats for M_hi
+        let ha_re = f64x4::splat(m_hi.a_re);
+        let ha_im = f64x4::splat(m_hi.a_im);
+        let hb_re = f64x4::splat(m_hi.b_re);
+        let hb_im = f64x4::splat(m_hi.b_im);
+        let hc_re = f64x4::splat(m_hi.c_re);
+        let hc_im = f64x4::splat(m_hi.c_im);
+        let hd_re = f64x4::splat(m_hi.d_re);
+        let hd_im = f64x4::splat(m_hi.d_im);
+
+        for i_hi in (0..n).step_by(step_hi * 2) {
+            for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
+                let mut off = 0;
+                while off + 4 <= step_lo {
+                    let base = i_lo + off;
+                    let i00 = base;
+                    let i01 = base + step_lo;
+                    let i10 = base + step_hi;
+                    let i11 = base + step_lo + step_hi;
+
+                    // Load 4 amplitude groups
+                    let r00 = f64x4::from(&self.real[i00..i00 + 4]);
+                    let m00 = f64x4::from(&self.imag[i00..i00 + 4]);
+                    let r01 = f64x4::from(&self.real[i01..i01 + 4]);
+                    let m01 = f64x4::from(&self.imag[i01..i01 + 4]);
+                    let r10 = f64x4::from(&self.real[i10..i10 + 4]);
+                    let m10 = f64x4::from(&self.imag[i10..i10 + 4]);
+                    let r11 = f64x4::from(&self.real[i11..i11 + 4]);
+                    let m11 = f64x4::from(&self.imag[i11..i11 + 4]);
+
+                    // Apply M_lo to (00,01) pair and (10,11) pair
+                    let t00r = (la_re * r00 - la_im * m00) + (lb_re * r01 - lb_im * m01);
+                    let t00i = (la_re * m00 + la_im * r00) + (lb_re * m01 + lb_im * r01);
+                    let t01r = (lc_re * r00 - lc_im * m00) + (ld_re * r01 - ld_im * m01);
+                    let t01i = (lc_re * m00 + lc_im * r00) + (ld_re * m01 + ld_im * r01);
+                    let t10r = (la_re * r10 - la_im * m10) + (lb_re * r11 - lb_im * m11);
+                    let t10i = (la_re * m10 + la_im * r10) + (lb_re * m11 + lb_im * r11);
+                    let t11r = (lc_re * r10 - lc_im * m10) + (ld_re * r11 - ld_im * m11);
+                    let t11i = (lc_re * m10 + lc_im * r10) + (ld_re * m11 + ld_im * r11);
+
+                    // Apply M_hi to (00,10) pair and (01,11) pair
+                    let f00r: [f64; 4] =
+                        ((ha_re * t00r - ha_im * t00i) + (hb_re * t10r - hb_im * t10i)).into();
+                    let f00i: [f64; 4] =
+                        ((ha_re * t00i + ha_im * t00r) + (hb_re * t10i + hb_im * t10r)).into();
+                    let f10r: [f64; 4] =
+                        ((hc_re * t00r - hc_im * t00i) + (hd_re * t10r - hd_im * t10i)).into();
+                    let f10i: [f64; 4] =
+                        ((hc_re * t00i + hc_im * t00r) + (hd_re * t10i + hd_im * t10r)).into();
+                    let f01r: [f64; 4] =
+                        ((ha_re * t01r - ha_im * t01i) + (hb_re * t11r - hb_im * t11i)).into();
+                    let f01i: [f64; 4] =
+                        ((ha_re * t01i + ha_im * t01r) + (hb_re * t11i + hb_im * t11r)).into();
+                    let f11r: [f64; 4] =
+                        ((hc_re * t01r - hc_im * t01i) + (hd_re * t11r - hd_im * t11i)).into();
+                    let f11i: [f64; 4] =
+                        ((hc_re * t01i + hc_im * t01r) + (hd_re * t11i + hd_im * t11r)).into();
+
+                    // Store
+                    self.real[i00..i00 + 4].copy_from_slice(&f00r);
+                    self.imag[i00..i00 + 4].copy_from_slice(&f00i);
+                    self.real[i01..i01 + 4].copy_from_slice(&f01r);
+                    self.imag[i01..i01 + 4].copy_from_slice(&f01i);
+                    self.real[i10..i10 + 4].copy_from_slice(&f10r);
+                    self.imag[i10..i10 + 4].copy_from_slice(&f10i);
+                    self.real[i11..i11 + 4].copy_from_slice(&f11r);
+                    self.imag[i11..i11 + 4].copy_from_slice(&f11i);
+
+                    off += 4;
+                }
+            }
         }
     }
 
@@ -1923,6 +2161,302 @@ where
         std::mem::swap(&mut self.real, &mut self.scratch_real);
         std::mem::swap(&mut self.imag, &mut self.scratch_imag);
         self
+    }
+
+    /// Joint measurement of ALL qubits via CDF sampling.
+    ///
+    /// Instead of 2n passes (probability + collapse per qubit), this does:
+    /// 1. One pass to build CDF, sample outcome, and compute marginal probabilities
+    /// 2. One pass to collapse to the sampled basis state
+    fn mz_joint_all(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let n = self.real.len();
+        let num_qubits = self.num_qubits;
+
+        // Pass 1: SIMD probability computation + CDF sampling + marginal probs.
+        //
+        // For chunks of 4 consecutive amplitudes (i, i+1, i+2, i+3):
+        // - Qubit 0 bits: always [0, 1, 0, 1] (constant SIMD mask)
+        // - Qubit 1 bits: always [0, 0, 1, 1] (constant SIMD mask)
+        // - Qubit q>=2 bits: all same value (i >> q) & 1 (use scalar chunk_sum)
+        let r: f64 = rand::RngExt::random(&mut self.rng);
+        let mut cumsum = 0.0f64;
+        let mut sampled_idx = n - 1;
+        let mut marginal_probs = vec![0.0f64; num_qubits];
+
+        // SIMD accumulators for qubits 0 and 1
+        let q0_mask = f64x4::from([0.0, 1.0, 0.0, 1.0]);
+        let q1_mask = f64x4::from([0.0, 0.0, 1.0, 1.0]);
+        let mut q0_acc = f64x4::ZERO;
+        let mut q1_acc = f64x4::ZERO;
+
+        let mut i = 0;
+        while i + 4 <= n {
+            let re = f64x4::from(&self.real[i..i + 4]);
+            let im = f64x4::from(&self.imag[i..i + 4]);
+            let probs = re * re + im * im;
+
+            // Qubits 0, 1: constant SIMD masks
+            q0_acc += probs * q0_mask;
+            q1_acc += probs * q1_mask;
+
+            // Qubits 2+: all 4 amplitudes share the same bit at position q,
+            // so use the horizontal sum × scalar bit
+            let vals: [f64; 4] = probs.into();
+            let chunk_sum = vals[0] + vals[1] + vals[2] + vals[3];
+            for q in 2..num_qubits {
+                marginal_probs[q] += chunk_sum * (((i >> q) & 1) as f64);
+            }
+
+            // CDF sampling
+            cumsum += chunk_sum;
+            if sampled_idx == n - 1 && cumsum >= r {
+                // Threshold crossed in this chunk — find exact amplitude
+                cumsum -= chunk_sum;
+                for (j, &p) in vals.iter().enumerate() {
+                    cumsum += p;
+                    if cumsum >= r {
+                        sampled_idx = i + j;
+                        break;
+                    }
+                }
+            }
+
+            i += 4;
+        }
+
+        // Remainder (n not divisible by 4 — rare for power-of-two state vectors)
+        while i < n {
+            let prob = self.real[i] * self.real[i] + self.imag[i] * self.imag[i];
+            for q in 0..num_qubits {
+                marginal_probs[q] += prob * (((i >> q) & 1) as f64);
+            }
+            cumsum += prob;
+            if sampled_idx == n - 1 && cumsum >= r {
+                sampled_idx = i;
+            }
+            i += 1;
+        }
+
+        // Reduce SIMD accumulators
+        let v0: [f64; 4] = q0_acc.into();
+        marginal_probs[0] = v0[0] + v0[1] + v0[2] + v0[3];
+        if num_qubits > 1 {
+            let v1: [f64; 4] = q1_acc.into();
+            marginal_probs[1] = v1[0] + v1[1] + v1[2] + v1[3];
+        }
+
+        // Build results in caller's qubit order
+        let mut results = Vec::with_capacity(qubits.len());
+        for &q in qubits {
+            let outcome = (sampled_idx >> q.index()) & 1 == 1;
+            let prob_one = marginal_probs[q.index()];
+            let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
+            results.push(MeasurementResult {
+                outcome,
+                is_deterministic,
+            });
+        }
+
+        // Pass 2: collapse to |sampled_idx⟩ using fill + set (avoids per-element branch)
+        let norm = (self.real[sampled_idx] * self.real[sampled_idx]
+            + self.imag[sampled_idx] * self.imag[sampled_idx])
+        .sqrt();
+        let final_re = self.real[sampled_idx] / norm;
+        let final_im = self.imag[sampled_idx] / norm;
+        self.real.fill(0.0);
+        self.imag.fill(0.0);
+        self.real[sampled_idx] = final_re;
+        self.imag[sampled_idx] = final_im;
+
+        results
+    }
+
+    /// Joint measurement of a SUBSET of qubits (4 <= k <= 20) via probability table.
+    ///
+    /// Builds a 2^k probability table in one pass over the state vector, samples
+    /// a joint outcome, then collapses the state in one pass using bitmask matching.
+    fn mz_joint_subset(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let k = qubits.len();
+        let n = self.real.len();
+
+        let qubit_indices: Vec<usize> = qubits.iter().map(|q| q.index()).collect();
+        let table_size = 1usize << k;
+        let mut prob_table = vec![0.0f64; table_size];
+        let mut marginal_probs = vec![0.0f64; k];
+
+        // Classify measured qubits by position for SIMD optimization.
+        // For chunks of 4 consecutive amplitudes: bits at positions 0,1 vary
+        // within the chunk; bits at positions >= 2 are constant.
+        let q0_mask = f64x4::from([0.0, 1.0, 0.0, 1.0]);
+        let q1_mask = f64x4::from([0.0, 0.0, 1.0, 1.0]);
+        let mut acc_q0 = f64x4::ZERO;
+        let mut acc_q1 = f64x4::ZERO;
+        let mut q0_j: Option<usize> = None; // j-index for measured qubit at position 0
+        let mut q1_j: Option<usize> = None;
+        let mut high_qubits: Vec<(usize, usize)> = Vec::new();
+
+        for (j, &q_idx) in qubit_indices.iter().enumerate() {
+            match q_idx {
+                0 => q0_j = Some(j),
+                1 => q1_j = Some(j),
+                _ => high_qubits.push((j, q_idx)),
+            }
+        }
+
+        let q0_bit = q0_j.map_or(0, |j| 1usize << j);
+        let q1_bit = q1_j.map_or(0, |j| 1usize << j);
+
+        // Pass 1: SIMD probability + table accumulation + marginal probs
+        let mut i = 0;
+        while i + 4 <= n {
+            let re = f64x4::from(&self.real[i..i + 4]);
+            let im = f64x4::from(&self.imag[i..i + 4]);
+            let probs = re * re + im * im;
+
+            // SIMD marginal probs for qubits at positions 0 and 1
+            if q0_j.is_some() {
+                acc_q0 += probs * q0_mask;
+            }
+            if q1_j.is_some() {
+                acc_q1 += probs * q1_mask;
+            }
+
+            let vals: [f64; 4] = probs.into();
+            let chunk_sum = vals[0] + vals[1] + vals[2] + vals[3];
+
+            // Scalar marginal probs for high qubits (same bit for all 4)
+            for &(j, q_idx) in &high_qubits {
+                marginal_probs[j] += chunk_sum * (((i >> q_idx) & 1) as f64);
+            }
+
+            // Table accumulation: base pattern from high qubits is shared
+            let mut base = 0usize;
+            for &(j, q_idx) in &high_qubits {
+                base |= ((i >> q_idx) & 1) << j;
+            }
+
+            match (q0_j.is_some(), q1_j.is_some()) {
+                (false, false) => {
+                    prob_table[base] += chunk_sum;
+                }
+                (true, false) => {
+                    prob_table[base] += vals[0] + vals[2];
+                    prob_table[base | q0_bit] += vals[1] + vals[3];
+                }
+                (false, true) => {
+                    prob_table[base] += vals[0] + vals[1];
+                    prob_table[base | q1_bit] += vals[2] + vals[3];
+                }
+                (true, true) => {
+                    prob_table[base] += vals[0];
+                    prob_table[base | q0_bit] += vals[1];
+                    prob_table[base | q1_bit] += vals[2];
+                    prob_table[base | q0_bit | q1_bit] += vals[3];
+                }
+            }
+
+            i += 4;
+        }
+
+        // Remainder
+        while i < n {
+            let prob = self.real[i] * self.real[i] + self.imag[i] * self.imag[i];
+            let mut pattern = 0usize;
+            for (j, &q_idx) in qubit_indices.iter().enumerate() {
+                let bit = (i >> q_idx) & 1;
+                pattern |= bit << j;
+                marginal_probs[j] += prob * (bit as f64);
+            }
+            prob_table[pattern] += prob;
+            i += 1;
+        }
+
+        // Reduce SIMD accumulators
+        if let Some(j) = q0_j {
+            let v: [f64; 4] = acc_q0.into();
+            marginal_probs[j] = v[0] + v[1] + v[2] + v[3];
+        }
+        if let Some(j) = q1_j {
+            let v: [f64; 4] = acc_q1.into();
+            marginal_probs[j] = v[0] + v[1] + v[2] + v[3];
+        }
+
+        // Sample from probability table
+        let r: f64 = rand::RngExt::random(&mut self.rng);
+        let mut cumsum = 0.0;
+        let mut sampled_pattern = table_size - 1;
+        for (pat, &prob) in prob_table.iter().enumerate() {
+            cumsum += prob;
+            if cumsum >= r {
+                sampled_pattern = pat;
+                break;
+            }
+        }
+
+        // Build results
+        let mut results = Vec::with_capacity(k);
+        for j in 0..k {
+            let outcome = (sampled_pattern >> j) & 1 == 1;
+            let prob_one = marginal_probs[j];
+            let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
+            results.push(MeasurementResult {
+                outcome,
+                is_deterministic,
+            });
+        }
+
+        // Pass 2: SIMD collapse using precomputed bitmask factors.
+        // For 4 consecutive indices, bits at positions >= 2 are constant,
+        // so we precompute a SIMD mask for the varying low bits.
+        let mut measured_mask = 0usize;
+        let mut expected_bits = 0usize;
+        for (j, &q_idx) in qubit_indices.iter().enumerate() {
+            measured_mask |= 1 << q_idx;
+            if (sampled_pattern >> j) & 1 == 1 {
+                expected_bits |= 1 << q_idx;
+            }
+        }
+
+        let pattern_prob = prob_table[sampled_pattern];
+        let norm_factor = 1.0 / pattern_prob.sqrt();
+
+        // Precompute per-element factors for the 4 varying low-bit combinations
+        let high_mask = measured_mask & !3usize;
+        let high_expected = expected_bits & !3usize;
+        let mut d_factors = [0.0f64; 4];
+        for d in 0..4usize {
+            let low_match = (d & measured_mask & 3) == (expected_bits & 3);
+            d_factors[d] = if low_match { 1.0 } else { 0.0 };
+        }
+        let d_fv = f64x4::from(d_factors);
+
+        let mut ci = 0;
+        while ci + 4 <= n {
+            let base_match = (ci & high_mask) == high_expected;
+            let factor = if base_match { norm_factor } else { 0.0 };
+            let fv = f64x4::splat(factor) * d_fv;
+
+            let re = f64x4::from(&self.real[ci..ci + 4]);
+            let im = f64x4::from(&self.imag[ci..ci + 4]);
+            let nr: [f64; 4] = (re * fv).into();
+            let ni: [f64; 4] = (im * fv).into();
+            self.real[ci..ci + 4].copy_from_slice(&nr);
+            self.imag[ci..ci + 4].copy_from_slice(&ni);
+
+            ci += 4;
+        }
+        while ci < n {
+            if (ci & measured_mask) == expected_bits {
+                self.real[ci] *= norm_factor;
+                self.imag[ci] *= norm_factor;
+            } else {
+                self.real[ci] = 0.0;
+                self.imag[ci] = 0.0;
+            }
+            ci += 1;
+        }
+
+        results
     }
 
     /// Internal helper for computing probability of |1⟩.
@@ -3458,6 +3992,19 @@ where
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         // Flush all pending gates before measurement
         self.flush();
+
+        // When measuring multiple qubits, use joint sampling to reduce
+        // memory passes from 2k to 2. Each sequential measurement does
+        // a probability pass + collapse pass over the full state vector.
+        // Joint sampling computes all probabilities in one pass and
+        // collapses in one pass.
+        let k = qubits.len();
+        if k >= 4 && k == self.num_qubits {
+            return self.mz_joint_all(qubits);
+        }
+        if k >= 4 && k <= 20 {
+            return self.mz_joint_subset(qubits);
+        }
 
         let mut results = Vec::with_capacity(qubits.len());
         for &q in qubits {

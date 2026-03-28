@@ -70,6 +70,7 @@ where
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_state_vec_scaling(c);
     bench_individual_gates(c);
+    bench_measurement_scaling(c);
     #[cfg(feature = "parallel")]
     bench_parallel_execution(c);
 }
@@ -236,6 +237,61 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
             }
         });
     });
+
+    group.finish();
+}
+
+/// Benchmark measurement performance scaling across qubit counts.
+/// Measures all qubits after applying H to each (maximum uncertainty).
+/// This isolates the GPU measurement optimization (workgroup reduction vs full readback).
+fn bench_measurement_scaling<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Measurement Scaling");
+    group.sample_size(20);
+
+    let qubit_counts = [10, 14, 18, 20, 22];
+
+    for &nq in &qubit_counts {
+        // CPU baseline: StateVec
+        group.bench_with_input(
+            BenchmarkId::new("StateVec_CPU", nq),
+            &nq,
+            |b, &nq| {
+                let mut sim = StateVecSoA::new(nq);
+                b.iter(|| {
+                    sim.reset();
+                    for q in 0..nq {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    for q in 0..nq {
+                        black_box(sim.mz(&[QubitId(q)]));
+                    }
+                });
+            },
+        );
+
+        // GPU: GpuStateVec (wgpu)
+        #[cfg(feature = "gpu-sims")]
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            if let Ok(mut sim) = GpuStateVec::new(nq as u32) {
+                group.bench_with_input(
+                    BenchmarkId::new("GpuStateVec_wgpu", nq),
+                    &nq,
+                    |b, &nq| {
+                        b.iter(|| {
+                            sim.reset();
+                            for q in 0..nq {
+                                sim.h(&[QubitId(q)]);
+                            }
+                            for q in 0..nq {
+                                black_box(sim.mz(&[QubitId(q)]));
+                            }
+                        });
+                    },
+                );
+            }
+        }
+    }
 
     group.finish();
 }

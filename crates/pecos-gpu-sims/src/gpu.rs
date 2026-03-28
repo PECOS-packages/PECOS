@@ -84,7 +84,6 @@ pub struct GpuStateVec {
     // GPU buffers
     state_buffer: wgpu::Buffer,
     params_buffer: wgpu::Buffer,
-    probability_buffer: wgpu::Buffer,
     measure_params_buffer: wgpu::Buffer,
     staging_buffer: wgpu::Buffer,
 
@@ -93,17 +92,25 @@ pub struct GpuStateVec {
     cx_pipeline: wgpu::ComputePipeline,
     cz_pipeline: wgpu::ComputePipeline,
     rzz_pipeline: wgpu::ComputePipeline,
-    probability_pipeline: wgpu::ComputePipeline,
     collapse_pipeline: wgpu::ComputePipeline,
 
-    // Bind group layouts (kept for potential future bind group recreation)
+    // Bind group layouts (kept alive — wgpu may hold weak refs)
     #[allow(dead_code)]
     gate_bind_group_layout: wgpu::BindGroupLayout,
-    probability_bind_group_layout: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
     collapse_bind_group_layout: wgpu::BindGroupLayout,
 
-    // Persistent bind group for gate operations (uses dynamic uniform buffer offsets)
+    // Persistent bind groups
     gate_bind_group: wgpu::BindGroup,
+    collapse_bind_group: wgpu::BindGroup,
+    marginal_bind_group: wgpu::BindGroup,
+
+    // GPU-side marginal probability reduction
+    partial_sums_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
+    marginal_bind_group_layout: wgpu::BindGroupLayout,
+    marginal_pipeline: wgpu::ComputePipeline,
+    num_partial_sums: u64,
 
     // RNG for measurements (Send + Sync for parallel Monte Carlo)
     rng: PecosRng,
@@ -217,13 +224,6 @@ impl GpuStateVec {
             mapped_at_creation: false,
         });
 
-        let probability_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Probabilities"),
-            size: num_amplitudes * 4, // f32 per amplitude
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let measure_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Measure parameters"),
             size: std::mem::size_of::<MeasureParams>() as u64,
@@ -265,43 +265,6 @@ impl GpuStateVec {
                             >(
                             )
                                 as u64),
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let probability_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Probability bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
                         },
                         count: None,
                     },
@@ -352,13 +315,6 @@ impl GpuStateVec {
             immediate_size: 0,
         });
 
-        let probability_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Probability pipeline layout"),
-                bind_group_layouts: &[&probability_bind_group_layout],
-                immediate_size: 0,
-            });
-
         let collapse_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Collapse pipeline layout"),
@@ -404,16 +360,6 @@ impl GpuStateVec {
             cache: None,
         });
 
-        let probability_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Probability pipeline"),
-                layout: Some(&probability_pipeline_layout),
-                module: &shader,
-                entry_point: Some("compute_probabilities"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
-
         let collapse_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Collapse pipeline"),
             layout: Some(&collapse_pipeline_layout),
@@ -443,6 +389,110 @@ impl GpuStateVec {
             ],
         });
 
+        // Persistent collapse bind group (same buffers every time)
+        let collapse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Collapse bind group (persistent)"),
+            layout: &collapse_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: measure_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // GPU-side marginal probability reduction: workgroup partial sums
+        let (meas_wg_x, meas_wg_y) = Self::compute_workgroups(num_amplitudes);
+        let num_partial_sums = u64::from(meas_wg_x) * u64::from(meas_wg_y);
+
+        let partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Marginal partial sums"),
+            size: num_partial_sums * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let marginal_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Marginal probability bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let marginal_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Marginal probability pipeline layout"),
+                bind_group_layouts: &[&marginal_bind_group_layout],
+                immediate_size: 0,
+            });
+
+        let marginal_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Marginal probability pipeline"),
+                layout: Some(&marginal_pipeline_layout),
+                module: &shader,
+                entry_point: Some("reduce_marginal_probability"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
+
+        let marginal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Marginal probability bind group (persistent)"),
+            layout: &marginal_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: partial_sums_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
         let mut sim = Self {
             device,
             queue,
@@ -450,19 +500,22 @@ impl GpuStateVec {
             num_amplitudes,
             state_buffer,
             params_buffer,
-            probability_buffer,
             measure_params_buffer,
             staging_buffer,
             single_gate_pipeline,
             cx_pipeline,
             cz_pipeline,
             rzz_pipeline,
-            probability_pipeline,
             collapse_pipeline,
             gate_bind_group_layout,
-            probability_bind_group_layout,
             collapse_bind_group_layout,
             gate_bind_group,
+            collapse_bind_group,
+            marginal_bind_group,
+            partial_sums_buffer,
+            marginal_bind_group_layout,
+            marginal_pipeline,
+            num_partial_sums,
             rng: rand::make_rng(),
         };
 
@@ -822,8 +875,13 @@ impl GpuStateVec {
     // sampling an outcome, then collapsing the state on GPU. These steps are tightly
     // coupled and extracting them would complicate the control flow.
     #[allow(clippy::too_many_lines)]
+    /// Measure a single qubit using GPU-side workgroup reduction.
+    ///
+    /// Instead of reading back all 2^n probabilities (O(2^n) transfer), this uses
+    /// a reduction kernel that produces ~2^n/256 partial sums, reducing the readback
+    /// by 256x. The CPU sums the partial sums and samples the outcome.
     fn mz_gpu(&mut self, qubit: u32) -> u32 {
-        // Compute probabilities for all amplitudes
+        // Write target qubit to params buffer
         let params = GateParams {
             target_qubit: qubit,
             control_qubit: 0,
@@ -832,85 +890,56 @@ impl GpuStateVec {
             matrix_row0: [0.0; 4],
             matrix_row1: [0.0; 4],
         };
-
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        let prob_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Probability bind group"),
-            layout: &self.probability_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.probability_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
+        // GPU reduction: each workgroup computes a partial sum of P(qubit = 1)
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Measure encoder"),
+                label: Some("Marginal probability encoder"),
             });
-
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Probability pass"),
+                label: Some("Marginal probability pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.probability_pipeline);
-            pass.set_bind_group(0, &prob_bind_group, &[]);
-
+            pass.set_pipeline(&self.marginal_pipeline);
+            pass.set_bind_group(0, &self.marginal_bind_group, &[]);
             let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
-        // Copy probabilities to staging buffer
+        // Copy partial sums to staging buffer (256x smaller than full probability readback)
+        let readback_size = self.num_partial_sums * 4;
         encoder.copy_buffer_to_buffer(
-            &self.probability_buffer,
+            &self.partial_sums_buffer,
             0,
             &self.staging_buffer,
             0,
-            self.num_amplitudes * 4,
+            readback_size,
         );
-
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        // Read back probabilities
-        let buffer_slice = self.staging_buffer.slice(..);
+        // Read back partial sums and compute marginal probability
+        let buffer_slice = self.staging_buffer.slice(..readback_size);
         buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .unwrap();
 
-        let probabilities: Vec<f32> = {
+        let prob_one: f32 = {
             let data = buffer_slice.get_mapped_range();
-            bytemuck::cast_slice(&data).to_vec()
+            let sums: &[f32] = bytemuck::cast_slice(&data);
+            sums.iter().sum()
         };
         self.staging_buffer.unmap();
-
-        // Sum probabilities for |1> outcome on target qubit
-        let target_mask = 1u64 << qubit;
-        let mut prob_one = 0.0f32;
-        for (idx, &prob) in probabilities.iter().enumerate() {
-            if (idx as u64 & target_mask) != 0 {
-                prob_one += prob;
-            }
-        }
 
         // Sample outcome
         let random: f32 = self.rng.random();
         let outcome = u32::from(random < prob_one);
 
-        // Collapse the state
+        // Collapse the state using persistent bind group
         let norm_factor = if outcome == 1 {
             1.0 / prob_one.sqrt()
         } else {
@@ -923,50 +952,27 @@ impl GpuStateVec {
             norm_factor,
             _padding: 0,
         };
-
         self.queue.write_buffer(
             &self.measure_params_buffer,
             0,
             bytemuck::bytes_of(&measure_params),
         );
 
-        let collapse_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Collapse bind group"),
-            layout: &self.collapse_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.state_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.measure_params_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Collapse encoder"),
             });
-
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Collapse pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.collapse_pipeline);
-            pass.set_bind_group(0, &collapse_bind_group, &[]);
-
+            pass.set_bind_group(0, &self.collapse_bind_group, &[]);
             let (wg_x, wg_y) = Self::compute_workgroups(self.num_amplitudes);
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
-
         self.queue.submit(std::iter::once(encoder.finish()));
 
         outcome

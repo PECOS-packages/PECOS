@@ -185,27 +185,6 @@ fn apply_rzz(
     state[idx] = vec2<f32>(amp.x * c - amp.y * s, amp.x * s + amp.y * c);
 }
 
-// Compute probability for each amplitude (for measurement)
-// Stores |amplitude|^2 in a separate buffer
-@group(0) @binding(2)
-var<storage, read_write> probabilities: array<f32>;
-
-@compute @workgroup_size(256)
-fn compute_probabilities(
-    @builtin(global_invocation_id) global_id: vec3<u32>,
-    @builtin(num_workgroups) num_workgroups: vec3<u32>
-) {
-    let idx = get_linear_idx(global_id, num_workgroups);
-    let num_amplitudes = 1u << params.num_qubits;
-
-    if (idx >= num_amplitudes) {
-        return;
-    }
-
-    let amp = state[idx];
-    probabilities[idx] = amp.x * amp.x + amp.y * amp.y;
-}
-
 // Collapse state after measurement
 // Zeros out amplitudes inconsistent with measurement result and renormalizes
 struct MeasureParams {
@@ -239,5 +218,55 @@ fn collapse_state(
     } else {
         // Zero out
         state[idx] = vec2<f32>(0.0, 0.0);
+    }
+}
+
+// GPU-side workgroup reduction for marginal probability P(target_qubit = 1).
+// Each workgroup of 256 threads computes a partial sum via shared memory reduction.
+// The CPU reads back the partial sums (one per workgroup) and does the final sum.
+// This avoids reading back all 2^n probabilities — only ~2^n/256 floats.
+@group(0) @binding(4)
+var<storage, read_write> partial_sums: array<f32>;
+
+var<workgroup> shared_prob: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn reduce_marginal_probability(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
+    let num_amplitudes = 1u << params.num_qubits;
+    let lid = local_id.x;
+
+    // Each thread loads |amplitude|^2 if target qubit bit is 1, else 0
+    if (idx < num_amplitudes) {
+        let target_mask = 1u << params.target_qubit;
+        if ((idx & target_mask) != 0u) {
+            let amp = state[idx];
+            shared_prob[lid] = amp.x * amp.x + amp.y * amp.y;
+        } else {
+            shared_prob[lid] = 0.0;
+        }
+    } else {
+        shared_prob[lid] = 0.0;
+    }
+
+    workgroupBarrier();
+
+    // Tree reduction within workgroup
+    for (var stride = 128u; stride > 0u; stride >>= 1u) {
+        if (lid < stride) {
+            shared_prob[lid] += shared_prob[lid + stride];
+        }
+        workgroupBarrier();
+    }
+
+    // Thread 0 writes workgroup partial sum
+    if (lid == 0u) {
+        let wg_idx = workgroup_id.y * num_workgroups.x + workgroup_id.x;
+        partial_sums[wg_idx] = shared_prob[0];
     }
 }

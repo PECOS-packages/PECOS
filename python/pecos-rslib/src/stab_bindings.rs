@@ -379,7 +379,10 @@ impl PyStab {
         self.run_gate_highlevel(symbol, locations, params, py)
     }
 
-    /// High-level `run_gate` method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations.
+    ///
+    /// Uses shared batch dispatch for common Clifford gates to avoid per-location
+    /// overhead. Falls back to per-location dispatch for parameterized gates.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -398,22 +401,33 @@ impl PyStab {
             return Ok(output.into());
         }
 
-        // Convert locations to a vector
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
 
+        // Fast path: batch dispatch for common gates without special params
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+        if !has_special_params {
+            if let Some(result) =
+                crate::simulator_utils::try_clifford_batch_dispatch(
+                    &mut self.inner, symbol, &locations_set, py,
+                )?
+            {
+                return Ok(result);
+            }
+        }
+
+        // Fallback: per-location dispatch
         for location in locations_set.iter() {
-            // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
                 location.clone().cast_into()?
             } else {
-                // Single qubit - wrap in tuple
                 PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
-            // Call the underlying run_gate_internal
             let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
 
-            // Only add to output if result is Some (non-zero measurement)
             if let Some(value) = result {
                 output.set_item(location, value)?;
             }

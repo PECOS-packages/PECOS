@@ -427,7 +427,12 @@ impl PySparseSim {
         }
     }
 
-    /// High-level `run_gate` method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations.
+    ///
+    /// For common gates without special parameters, collects all locations and
+    /// dispatches one batched call to the simulator instead of per-location calls.
+    /// This avoids per-location Python↔Rust overhead and enables simulator-level
+    /// batch optimizations (gate fusion, joint measurement sampling, etc.).
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -446,22 +451,37 @@ impl PySparseSim {
             return Ok(output.into());
         }
 
-        // Convert locations to a vector
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
 
+        // Check if params have special keys that require per-location dispatch
+        // Gates with special params need per-location dispatch (forced outcomes,
+        // rotation angles, conditional execution, etc.)
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+
+        // Fast path: batch dispatch for common gates without special params
+        if !has_special_params {
+            if let Some(result) =
+                crate::simulator_utils::try_clifford_batch_dispatch(
+                    &mut self.inner, symbol, &locations_set, py,
+                )?
+            {
+                return Ok(result);
+            }
+        }
+
+        // Fallback: per-location dispatch for parameterized/special gates
         for location in locations_set.iter() {
-            // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
                 location.clone().cast_into()?
             } else {
-                // Single qubit - wrap in tuple
                 PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
-            // Call the underlying run_gate_internal
             let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
 
-            // Only add to output if result is Some (non-zero measurement)
             if let Some(value) = result {
                 output.set_item(location, value)?;
             }
@@ -469,6 +489,8 @@ impl PySparseSim {
 
         Ok(output.into())
     }
+
+    // try_batch_dispatch is now shared via crate::simulator_utils::try_clifford_batch_dispatch
 
     /// Execute a quantum circuit
     #[pyo3(signature = (circuit, removed_locations=None))]

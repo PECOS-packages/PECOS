@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pecos as pc
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 # Load gate_matrix_def from the same directory (importlib mode doesn't auto-add it to sys.path)
 _gate_matrix_def_path = Path(__file__).parent / "gate_matrix_def.py"
@@ -17,7 +17,7 @@ sys.modules["gate_matrix_def"] = g
 _spec.loader.exec_module(g)
 
 states = [
-    SparseSim,
+    SparseStab,
 ]
 
 
@@ -117,7 +117,7 @@ def gate_test(gate_symbol: str, stab_dict: dict[str, str]) -> None:
         # destab_test(state, init_destab, stab_dict)
 
 
-def destab_test(state: SparseSim, init_destab: str, stab_dict: dict[str, str]) -> None:
+def destab_test(state: SparseStab, init_destab: str, stab_dict: dict[str, str]) -> None:
     """Test destabilizer transformations match expected results."""
     destab = refsym(state.destabs.print_tableau(verbose=False)[0])
 

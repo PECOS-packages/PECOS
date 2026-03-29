@@ -1908,7 +1908,7 @@ mod tests {
     fn test_all_stabilizer_sims_agree_on_random_circuits() {
         use crate::{
             DenseStab, DenseStabColOnly, DenseStabRowOnly, GpuStab, GpuStabOpt, GpuStabParallel,
-            SparseColOnly, SparseRowOnly, Stab, StabilizerTableauSimulator,
+            SparseColOnly, SparseRowOnly, Stabilizer, StabilizerTableauSimulator,
         };
         use pecos_random::PecosRng;
 
@@ -1930,7 +1930,7 @@ mod tests {
             let mut dense_row = DenseStabRowOnly::<PecosRng>::new(num_qubits);
             let mut sparse_col = SparseColOnly::new(num_qubits);
             let mut sparse_row = SparseRowOnly::new(num_qubits);
-            let mut stab = Stab::new(num_qubits);
+            let mut stab = Stabilizer::new(num_qubits);
             let mut gpu_stab = GpuStab::new(num_qubits);
             let mut gpu_stab_opt = GpuStabOpt::new(num_qubits);
             let mut gpu_stab_parallel = GpuStabParallel::new(num_qubits);
@@ -1973,7 +1973,7 @@ mod tests {
             check_tableau!(dense_row, "DenseStabRowOnly");
             check_tableau!(sparse_col, "SparseColOnly");
             check_tableau!(sparse_row, "SparseRowOnly");
-            check_tableau!(stab, "Stab");
+            check_tableau!(stab, "Stabilizer");
             check_tableau!(gpu_stab, "GpuStab");
             check_tableau!(gpu_stab_opt, "GpuStabOpt");
             check_tableau!(gpu_stab_parallel, "GpuStabParallel");
@@ -2018,7 +2018,7 @@ mod tests {
             check_measurements!(dense_row, "DenseStabRowOnly");
             check_measurements!(sparse_col, "SparseColOnly");
             check_measurements!(sparse_row, "SparseRowOnly");
-            check_measurements!(stab, "Stab");
+            check_measurements!(stab, "Stabilizer");
             check_measurements!(gpu_stab, "GpuStab");
             check_measurements!(gpu_stab_opt, "GpuStabOpt");
             check_measurements!(gpu_stab_parallel, "GpuStabParallel");

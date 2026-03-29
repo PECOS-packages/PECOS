@@ -17,7 +17,7 @@ and fault propagation simulators.
 # specific language governing permissions and limitations under the License.
 
 # Rust simulators (direct exports without Python wrappers)
-from pecos_rslib.simulators import SparseSim, Stab
+from pecos_rslib.simulators import SparseStab, Stabilizer
 
 from pecos.simulators import sim_class_types
 
@@ -40,7 +40,7 @@ from pecos.simulators.qulacs import Qulacs
 
 # Pauli fault propagation sim
 from pecos.simulators.sparsesim import (
-    SparseSim as SparseSimPy,
+    SparseStabPy as SparseStabPy,
 )
 from pecos.simulators.statevec import StateVec
 
@@ -92,9 +92,9 @@ __all__ = [
     "QuestStateVec",
     "Qulacs",
     # Rust simulators
-    "SparseSim",
-    "SparseSimPy",
-    "Stab",
+    "SparseStab",
+    "SparseStabPy",
+    "Stabilizer",
     "StateVec",
     # Submodules
     "sim_class_types",

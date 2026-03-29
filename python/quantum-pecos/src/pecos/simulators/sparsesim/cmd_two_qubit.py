@@ -22,14 +22,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseSim
+    from pecos.simulators.sparsesim.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
 from pecos.simulators.sparsesim.cmd_one_qubit import SX, SY, SZ, SYdg, SZdg, X
 
 
 def CX(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -76,7 +76,7 @@ def CX(
     YY -> -XZ
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubits (tuple[int, int]): A tuple of (control, target) qubit indices.
         **_params: Unused additional parameters (kept for interface compatibility).
 
@@ -109,7 +109,7 @@ def CX(
 
 
 def CZ(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -156,7 +156,7 @@ def CZ(
     YZ -> YI
     YY -> XX
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -210,7 +210,7 @@ def CZ(
 
 
 def CY(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -221,7 +221,7 @@ def CY(
     ZI -> ZI
     IZ -> ZZ
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -235,7 +235,7 @@ def CY(
 
 
 def SWAP(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -263,7 +263,7 @@ def SWAP(
     WZ -> ZW
     WW -> WW
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -324,7 +324,7 @@ def SWAP(
 
 
 def G2(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -354,7 +354,7 @@ def G2(
     WZ -> -WZ
     WW -> ZZ
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -441,7 +441,7 @@ def G2(
 
 
 def II(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -452,7 +452,7 @@ def II(
     ZI -> ZI
     IZ -> IZ
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -461,7 +461,7 @@ def II(
 
 
 def SXX(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -509,7 +509,7 @@ def SXX(
     YZ -> YZ
     YY -> YY
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -577,7 +577,7 @@ def SXX(
 
 
 def SXXdg(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -597,7 +597,7 @@ def SXXdg(
 
 
 def SqrtXX2(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -645,7 +645,7 @@ def SqrtXX2(
     YZ -> YZ
     YY -> YY
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -660,7 +660,7 @@ def SqrtXX2(
 
 
 def SYY(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -674,7 +674,7 @@ def SYY(
     TODO: verify implementation!
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubits (tuple[int, int]): A tuple of two qubit indices to apply the gate to.
     """
     qubit1, qubit2 = qubits
@@ -686,14 +686,14 @@ def SYY(
 
 
 def SYYdg(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
     """Adjoint of SYY.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubits (tuple[int, int]): A tuple of two qubit indices to apply the gate to.
         **_params: Unused additional parameters (kept for interface compatibility).
     """
@@ -706,7 +706,7 @@ def SYYdg(
 
 
 def SZZ(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -718,7 +718,7 @@ def SZZ(
     IZ -> IZ
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubits (tuple[int, int]): A tuple of two qubit indices to apply the gate to.
     """
     qubit1, qubit2 = qubits
@@ -730,14 +730,14 @@ def SZZ(
 
 
 def SZZdg(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
     r"""Adjoint of SZZ.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubits (tuple[int, int]): A tuple of two qubit indices to apply the gate to.
     """
     qubit1, qubit2 = qubits
@@ -749,7 +749,7 @@ def SZZdg(
 
 
 def iSWAP(
-    state: SparseSim,
+    state: SparseStabPy,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:

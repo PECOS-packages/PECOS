@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pecos as pc
 from pecos.engines.cvm.classical import eval_condition, eval_cop, eval_op, get_val
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 
 def test_arithmetic_ops() -> None:
@@ -64,7 +64,7 @@ def test_arithmetic_ops() -> None:
         qc.append("cop", set(), expr={"t": "countNeg", "op": "-", "a": "countNeg", "b": 2}, cond=cond)
         qc.append("cop", set(), expr={"t": "countMul", "op": "*", "a": "countMul", "b": 3}, cond=cond)
 
-    state = SparseSim(5)
+    state = SparseStab(5)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -117,7 +117,7 @@ def test_integer_support() -> None:
     qc.append("cop", set(), expr={"t": "negMul", "op": "*", "a": "sub", "b": 3})
     qc.append("cop", set(), expr={"t": "dblNegMul", "op": "*", "a": "sub", "b": -3})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -149,7 +149,7 @@ def test_multiply_by_zero() -> None:
     qc.append("cop", set(), expr={"t": "x", "op": "=", "a": 42})
     qc.append("cop", set(), expr={"t": "x", "op": "*", "a": "x", "b": 0})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -170,7 +170,7 @@ def test_add_zero() -> None:
     qc.append("cop", set(), expr={"t": "x", "op": "=", "a": 7})
     qc.append("cop", set(), expr={"t": "x", "op": "+", "a": "x", "b": 0})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -186,7 +186,7 @@ def test_bitwise_and_with_zero() -> None:
     qc.append("cop", set(), expr={"t": "x", "op": "=", "a": 0xFF})
     qc.append("cop", set(), expr={"t": "x", "op": "&", "a": "x", "b": 0})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -212,7 +212,7 @@ def test_negative_value_roundtrip_through_bitint_storage() -> None:
     # c = b + 50 = -50
     qc.append("cop", set(), expr={"t": "c", "op": "+", "a": "b", "b": 50})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -300,7 +300,7 @@ def test_chained_negative_arithmetic() -> None:
     # x = x + 10 = -20
     qc.append("cop", set(), expr={"t": "x", "op": "+", "a": "x", "b": 10})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -336,7 +336,7 @@ def test_condition_on_zero_valued_variable() -> None:
         cond={"a": "flag", "op": "==", "b": 0},
     )
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -519,7 +519,7 @@ def test_export_cvar_preserves_negative_sign() -> None:
     # Export x
     qc.append("cop", set(), cop_type="ExportCVar", export="x")
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -537,7 +537,7 @@ def test_export_cvar_preserves_positive_value() -> None:
     qc.append("cop", set(), expr={"t": "x", "op": "=", "a": 123})
     qc.append("cop", set(), cop_type="ExportCVar", export="x")
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -590,7 +590,7 @@ def test_two_negative_variables_subtraction() -> None:
     qc.append("cop", set(), expr={"t": "y", "op": "-", "a": 0, "b": 5})
     qc.append("cop", set(), expr={"t": "result", "op": "-", "a": "x", "b": "y"})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 
@@ -609,7 +609,7 @@ def test_two_negative_variables_multiplication() -> None:
     qc.append("cop", set(), expr={"t": "y", "op": "-", "a": 0, "b": 3})
     qc.append("cop", set(), expr={"t": "result", "op": "*", "a": "x", "b": "y"})
 
-    state = SparseSim(1)
+    state = SparseStab(1)
     eng = pc.HybridEngine()
     output, _ = eng.run(state, qc, shot_id=0)
 

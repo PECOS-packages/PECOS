@@ -30,7 +30,7 @@ from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
-from pecos.simulators import SparseSimPy
+from pecos.simulators import SparseStabPy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -372,7 +372,7 @@ def codecapacity_logical_rate(
 
     for _ in range(runs):
         # State
-        state = SparseSimPy(qecc.num_qudits)
+        state = SparseStabPy(qecc.num_qudits)
 
         # Create ideal logical |0>
         circuit_runner.run(state, initzero)

@@ -1,7 +1,7 @@
 """Tests for the hybrid engine."""
 
 import pecos as pc
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 
 def test_hybrid_engine() -> None:
@@ -13,7 +13,7 @@ def test_hybrid_engine() -> None:
     qc.append("measure Z", {0}, var=("m", 0))
     qc.append("measure Z", {1}, var=("m", 1))
 
-    state = SparseSim(2)
+    state = SparseStab(2)
     runner = pc.HybridEngine()
 
     ms = []

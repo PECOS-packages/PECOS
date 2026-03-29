@@ -18,7 +18,7 @@ import pickle
 import numpy as np
 import pytest
 
-from pecos_rslib import CoinToss, PauliProp, Qulacs, SparseSim, StateVec
+from pecos_rslib import CoinToss, PauliProp, Qulacs, SparseStab, StateVec
 
 
 def _state_vec_to_numpy(sim):
@@ -158,11 +158,11 @@ class TestQulacsProbabilities:
 
 
 class TestSparseSimPickle:
-    """Test pickle support for SparseSim."""
+    """Test pickle support for SparseStab."""
 
     def test_roundtrip_default_state(self) -> None:
-        """Verify pickle roundtrip preserves default SparseSim tableaux."""
-        sim = SparseSim(4)
+        """Verify pickle roundtrip preserves default SparseStab tableaux."""
+        sim = SparseStab(4)
         data = pickle.dumps(sim)
         restored = pickle.loads(data)
         assert restored.num_qubits == 4
@@ -170,8 +170,8 @@ class TestSparseSimPickle:
         assert restored.destab_tableau() == sim.destab_tableau()
 
     def test_roundtrip_after_gates(self) -> None:
-        """Verify pickle roundtrip preserves SparseSim tableaux after gate application."""
-        sim = SparseSim(3)
+        """Verify pickle roundtrip preserves SparseStab tableaux after gate application."""
+        sim = SparseStab(3)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
         sim.run_1q_gate("S", 2)
@@ -184,8 +184,8 @@ class TestSparseSimPickle:
         assert restored.destab_tableau() == original_destab
 
     def test_deepcopy(self) -> None:
-        """Verify deepcopy produces an independent copy of SparseSim with matching tableau."""
-        sim = SparseSim(3)
+        """Verify deepcopy produces an independent copy of SparseStab with matching tableau."""
+        sim = SparseStab(3)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
         original_stab = sim.stab_tableau()
@@ -194,8 +194,8 @@ class TestSparseSimPickle:
         assert copied.stab_tableau() == original_stab
 
     def test_unpickled_sim_is_functional(self) -> None:
-        """Verify restored SparseSim can continue running gates after unpickling."""
-        sim = SparseSim(3)
+        """Verify restored SparseStab can continue running gates after unpickling."""
+        sim = SparseStab(3)
         sim.run_1q_gate("H", 0)
 
         restored = pickle.loads(pickle.dumps(sim))
@@ -205,18 +205,18 @@ class TestSparseSimPickle:
 
 
 class TestSparseSimGens:
-    """Test SparseSim .gens property."""
+    """Test SparseStab .gens property."""
 
     def test_gens_returns_tuple(self) -> None:
         """Verify gens returns a tuple of two elements."""
-        sim = SparseSim(3)
+        sim = SparseStab(3)
         gens = sim.gens
         assert isinstance(gens, tuple)
         assert len(gens) == 2
 
     def test_gens_matches_stabs_destabs(self) -> None:
         """Verify gens tuple contents match the stabs and destabs properties."""
-        sim = SparseSim(3)
+        sim = SparseStab(3)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
 
@@ -229,7 +229,7 @@ class TestSparseSimGens:
 
     def test_gens_after_gates(self) -> None:
         """Verify gens returns non-trivial stabilizers and destabilizers after gate application."""
-        sim = SparseSim(2)
+        sim = SparseStab(2)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
 

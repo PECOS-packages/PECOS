@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pecos import HybridEngine, QuantumCircuit
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 THIS_DIR = Path(__file__).parent
 
@@ -68,7 +68,7 @@ def _run_wat_circuit(
     qc.metadata["ccop"] = wat_bytes
     qc.metadata["ccop_type"] = "wasmtime"
 
-    state = SparseSim(num_qubits=1)
+    state = SparseStab(num_qubits=1)
     runner = HybridEngine()
     shot_output, _ = runner.run(state, qc, shot_id=0)
     return shot_output

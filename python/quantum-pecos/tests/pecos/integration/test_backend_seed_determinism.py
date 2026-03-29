@@ -128,7 +128,7 @@ ERROR_MODEL = GenericErrorModel(
 # List of all PECOS backend simulators to test
 # Note: CuStateVec and MPS are optional (require GPU/pytket) and tested separately
 CORE_BACKENDS = [
-    "stabilizer",  # SparseSim - stabilizer simulator
+    "stabilizer",  # SparseStab - stabilizer simulator
     "StateVec",  # StateVec - state vector simulator
     "Qulacs",  # Qulacs - state vector (Rust wrapper)
     "QuestStateVec",  # QuEST - state vector (Rust wrapper)

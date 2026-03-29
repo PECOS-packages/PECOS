@@ -38,7 +38,7 @@ def test_surface() -> None:
 
     sim = pc.circuit_runners.Standard()
 
-    state = pc.simulators.SparseSimPy(surface.num_qudits)
+    state = pc.simulators.SparseStabPy(surface.num_qudits)
 
     _output1, _error_circuits1 = sim.run(state, logic)
 

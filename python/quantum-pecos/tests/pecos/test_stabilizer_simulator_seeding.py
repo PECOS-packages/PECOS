@@ -13,7 +13,7 @@
 """High-level tests for seeded stabilizer simulator re-exports."""
 
 import pytest
-from pecos.simulators import SparseSim, Stab
+from pecos.simulators import SparseStab, Stabilizer
 
 
 def _measurement_sequence(
@@ -35,7 +35,7 @@ def _measurement_sequence(
     return outcomes
 
 
-@pytest.mark.parametrize("sim_cls", [SparseSim, Stab])
+@pytest.mark.parametrize("sim_cls", [SparseStab, Stabilizer])
 def test_high_level_simulators_accept_seed_and_set_seed(sim_cls: type) -> None:
     """Verify that seeded stabilizer simulators produce reproducible results."""
     assert _measurement_sequence(sim_cls, seed=42) == _measurement_sequence(sim_cls, seed=42)

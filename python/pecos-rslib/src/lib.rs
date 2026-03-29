@@ -79,9 +79,9 @@ use pecos_random_bindings::RngPcg;
 use pyo3::prelude::*;
 use quest_bindings::{QuestDensityMatrix, QuestStateVec};
 use qulacs_bindings::PyQulacs;
-use sparse_stab_bindings::PySparseSim;
+use sparse_stab_bindings::PySparseStab;
 use sparse_stab_engine_bindings::PySparseStabEngine;
-use stab_bindings::PyStab;
+use stab_bindings::PyStabilizer;
 use state_vec_bindings::PyStateVec;
 use state_vec_engine_bindings::PyStateVecEngine;
 #[cfg(feature = "wasm")]
@@ -206,8 +206,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         }
     }
 
-    m.add_class::<PySparseSim>()?;
-    m.add_class::<PyStab>()?;
+    m.add_class::<PySparseStab>()?;
+    m.add_class::<PyStabilizer>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
     m.add_class::<PyStateVec>()?;
     m.add_class::<PyQulacs>()?;

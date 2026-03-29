@@ -15,8 +15,8 @@
 //! This module provides a `pecos_rslib.simulators` submodule containing all
 //! quantum simulator backends:
 //!
-//! - `SparseSim` - Rust sparse stabilizer simulator
-//! - `Stab` - Generic stabilizer simulator (recommended)
+//! - `SparseStab` - Rust sparse stabilizer simulator
+//! - `Stabilizer` - Generic stabilizer simulator (recommended)
 //! - `StateVec` - State vector simulator
 //! - `Qulacs` - Qulacs-based state vector simulator
 //! - `CoinToss` - Random measurement simulator for testing
@@ -30,10 +30,10 @@ use pyo3::prelude::*;
 ///
 /// This creates `pecos_rslib.simulators` with all simulator classes, enabling:
 /// ```python
-/// from pecos_rslib.simulators import SparseSim, StateVec
+/// from pecos_rslib.simulators import SparseStab, StateVec
 /// # or
 /// import pecos_rslib.simulators as sims
-/// sim = sims.SparseSim(10)
+/// sim = sims.SparseStab(10)
 /// ```
 pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
@@ -43,8 +43,8 @@ pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> 
     // These are already registered at the top level, so we reference them via getattr
 
     // Stabilizer simulators
-    simulators.add("SparseSim", parent.getattr("SparseSim")?)?;
-    simulators.add("Stab", parent.getattr("Stab")?)?;
+    simulators.add("SparseStab", parent.getattr("SparseStab")?)?;
+    simulators.add("Stabilizer", parent.getattr("Stabilizer")?)?;
 
     // State vector simulators
     simulators.add("StateVec", parent.getattr("StateVec")?)?;
@@ -59,7 +59,7 @@ pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> 
     simulators.add("PauliProp", parent.getattr("PauliProp")?)?;
 
     // Register in sys.modules for import statement support
-    // This allows: `from pecos_rslib.simulators import SparseSim`
+    // This allows: `from pecos_rslib.simulators import SparseStab`
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
     modules.set_item("pecos_rslib.simulators", &simulators)?;

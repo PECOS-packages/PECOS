@@ -923,7 +923,7 @@ results = engine.run(program, shots=100)
 │                         │                                    │
 │  ┌──────────────────────┴──────────────────────────────┐    │
 │  │              PyO3 Bindings (pecos-rslib)             │    │
-│  │  - SparseSim, StateVec exposed to Python             │    │
+│  │  - SparseStab, StateVec exposed to Python             │    │
 │  │  - WasmForeignObject for classical co-processors     │    │
 │  │  - Engine builders for Rust-native pipelines         │    │
 │  └──────────────────────┬──────────────────────────────┘    │

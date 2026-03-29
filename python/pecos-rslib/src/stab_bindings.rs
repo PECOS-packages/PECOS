@@ -1,6 +1,6 @@
 // Copyright 2026 The PECOS Developers
 use pecos::prelude::*;
-use pecos::simulators::{ForcedMeasurement, Stab, StabilizerTableauSimulator};
+use pecos::simulators::{ForcedMeasurement, Stabilizer, StabilizerTableauSimulator};
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -16,20 +16,20 @@ use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
-#[pyclass(name = "Stab", module = "pecos_rslib")]
-pub struct PyStab {
-    inner: Stab,
+#[pyclass(name = "Stabilizer", module = "pecos_rslib")]
+pub struct PyStabilizer {
+    inner: Stabilizer,
 }
 
 #[pymethods]
-impl PyStab {
+impl PyStabilizer {
     #[new]
     #[pyo3(signature = (num_qubits, seed=None))]
     fn new(num_qubits: usize, seed: Option<u64>) -> Self {
-        PyStab {
+        PyStabilizer {
             inner: match seed {
-                Some(s) => Stab::with_seed(num_qubits, s),
-                None => Stab::new(num_qubits),
+                Some(s) => Stabilizer::with_seed(num_qubits, s),
+                None => Stabilizer::new(num_qubits),
             },
         }
     }
@@ -146,7 +146,7 @@ impl PyStab {
                     })?
                     .call_method0("__bool__")?
                     .extract::<bool>()?;
-                // Stab lacks pz_forced, so use mz_forced + conditional X
+                // Stabilizer lacks pz_forced, so use mz_forced + conditional X
                 let result = self.inner.mz_forced(location, forced_value);
                 if result.outcome {
                     self.inner.x(q);

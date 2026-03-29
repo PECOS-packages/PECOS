@@ -11,7 +11,7 @@
 
 """Tests for TableauWrapper col_x, col_z, row_x, row_z properties."""
 
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 
 def test_initial_state_tableau_properties() -> None:
@@ -21,7 +21,7 @@ def test_initial_state_tableau_properties() -> None:
     so col_z should have qubit i in generator i, and col_x should be empty.
     """
     n = 3
-    state = SparseSim(n)
+    state = SparseStab(n)
 
     stabs = state.stabs
     col_x = stabs.col_x
@@ -35,7 +35,7 @@ def test_initial_state_tableau_properties() -> None:
 
 def test_bell_state_tableau_properties() -> None:
     """Test tableau properties after creating a Bell-like entangled state."""
-    state = SparseSim(2)
+    state = SparseStab(2)
     state.run_gate("H", {0})
     state.run_gate("CX", {(0, 1)})
 
@@ -52,7 +52,7 @@ def test_bell_state_tableau_properties() -> None:
 def test_tableau_row_properties() -> None:
     """Test that row_x and row_z are accessible and have correct dimensions."""
     n = 3
-    state = SparseSim(n)
+    state = SparseStab(n)
 
     stabs = state.stabs
     row_x = stabs.row_x
@@ -65,7 +65,7 @@ def test_tableau_row_properties() -> None:
 def test_destabs_tableau_properties() -> None:
     """Test that destabilizer tableau properties are accessible."""
     n = 3
-    state = SparseSim(n)
+    state = SparseStab(n)
 
     destabs = state.destabs
     col_x = destabs.col_x
@@ -86,7 +86,7 @@ def test_destabs_tableau_properties() -> None:
 
 def test_gens_property() -> None:
     """Test that the gens property returns (stabs, destabs) tuple."""
-    state = SparseSim(2)
+    state = SparseStab(2)
     stabs_wrapper, destabs_wrapper = state.gens
 
     # Should be able to access col_x on both
@@ -96,7 +96,7 @@ def test_gens_property() -> None:
 
 def test_tableau_after_gate() -> None:
     """Test that tableau properties update correctly after applying gates."""
-    state = SparseSim(1)
+    state = SparseStab(1)
 
     # Initial |0>: stab is Z
     assert state.stabs.col_x == [[]]

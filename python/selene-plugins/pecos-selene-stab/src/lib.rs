@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! PECOS `Stab` simulator plugin for the Selene quantum emulator.
+//! PECOS `Stabilizer` simulator plugin for the Selene quantum emulator.
 //!
 //! This crate provides a Selene-compatible plugin wrapping the PECOS stabilizer simulator.
 //! As a stabilizer simulator, it can only simulate Clifford operations (rotations that are
@@ -19,7 +19,7 @@
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use pecos_core::QubitId;
-use pecos_simulators::{CliffordGateable, Stab};
+use pecos_simulators::{CliffordGateable, Stabilizer};
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -40,7 +40,7 @@ enum ApproxAngle {
     NoSuitableApproximation,
 }
 
-/// Command-line parameters for the `Stab` plugin.
+/// Command-line parameters for the `Stabilizer` plugin.
 #[derive(Parser, Debug)]
 struct Params {
     /// Threshold for angle approximation. Angles within this threshold of a
@@ -49,10 +49,10 @@ struct Params {
     angle_threshold: f64,
 }
 
-/// The PECOS `Stab` simulator wrapped for Selene compatibility.
+/// The PECOS `Stabilizer` simulator wrapped for Selene compatibility.
 pub struct StabSimulator {
     /// The underlying PECOS stabilizer simulator
-    simulator: Stab,
+    simulator: Stabilizer,
     /// Number of qubits in the system
     n_qubits: u64,
     /// Threshold for angle approximation to Clifford rotations
@@ -118,7 +118,7 @@ impl SimulatorInterface for StabSimulator {
 
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         // Create a fresh simulator with the given seed for deterministic behavior
-        self.simulator = Stab::with_seed(Self::to_usize(self.n_qubits), seed);
+        self.simulator = Stabilizer::with_seed(Self::to_usize(self.n_qubits), seed);
         Ok(())
     }
 
@@ -160,7 +160,7 @@ impl SimulatorInterface for StabSimulator {
                 return Err(anyhow!(
                     "RXY(qubit={qubit}, theta={theta}, phi={phi}) is not representable in \
                      stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS Stab simulator."
+                     the PECOS Stabilizer simulator."
                 ));
             }
         }
@@ -181,7 +181,7 @@ impl SimulatorInterface for StabSimulator {
                 return Err(anyhow!(
                     "RXY(qubit={qubit}, theta={theta}, phi={phi}) is not representable in \
                      stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS Stab simulator."
+                     the PECOS Stabilizer simulator."
                 ));
             }
         }
@@ -206,7 +206,7 @@ impl SimulatorInterface for StabSimulator {
                 return Err(anyhow!(
                     "RXY(qubit={qubit}, theta={theta}, phi={phi}) is not representable in \
                      stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS Stab simulator."
+                     the PECOS Stabilizer simulator."
                 ));
             }
         }
@@ -240,7 +240,7 @@ impl SimulatorInterface for StabSimulator {
             ApproxAngle::NoSuitableApproximation => {
                 return Err(anyhow!(
                     "RZ(qubit={qubit}, theta={theta}) is not representable in stabilizer form. \
-                     Angles must be (approximate) multiples of pi/2 to use the PECOS Stab \
+                     Angles must be (approximate) multiples of pi/2 to use the PECOS Stabilizer \
                      simulator."
                 ));
             }
@@ -279,7 +279,7 @@ impl SimulatorInterface for StabSimulator {
                 return Err(anyhow!(
                     "RZZ(qubit1={qubit1}, qubit2={qubit2}, theta={theta}) is not representable \
                      in stabilizer form. Angles must be (approximate) multiples of pi/2 to use \
-                     the PECOS Stab simulator."
+                     the PECOS Stabilizer simulator."
                 ));
             }
         }
@@ -364,7 +364,7 @@ impl SimulatorInterface for StabSimulator {
     fn dump_state(&mut self, _file: &std::path::Path, _qubits: &[u64]) -> Result<()> {
         // State dumping is not yet implemented for the stabilizer simulator
         Err(anyhow!(
-            "State dumping is not yet supported for the PECOS Stab simulator."
+            "State dumping is not yet supported for the PECOS Stabilizer simulator."
         ))
     }
 }
@@ -384,9 +384,9 @@ impl SimulatorInterfaceFactory for StabSimulatorFactory {
         let args: Vec<String> = args.iter().map(|s| s.as_ref().to_string()).collect();
 
         match Params::try_parse_from(args) {
-            Err(e) => Err(anyhow!("Error parsing arguments to PECOS Stab plugin: {e}")),
+            Err(e) => Err(anyhow!("Error parsing arguments to PECOS Stabilizer plugin: {e}")),
             Ok(params) => Ok(Box::new(StabSimulator {
-                simulator: Stab::with_seed(StabSimulator::to_usize(n_qubits), 0),
+                simulator: Stabilizer::with_seed(StabSimulator::to_usize(n_qubits), 0),
                 n_qubits,
                 angle_threshold: params.angle_threshold,
             })),

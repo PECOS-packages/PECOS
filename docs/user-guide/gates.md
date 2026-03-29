@@ -9,10 +9,10 @@ All examples in this guide use the following setup:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import SparseSim
+    from pecos.simulators import SparseStab
 
     # Create a stabilizer simulator with 5 qubits
-    state = SparseSim(num_qubits=5)
+    state = SparseStab(num_qubits=5)
 
     # Qubit indices for examples
     q = 0
@@ -32,10 +32,10 @@ All examples in this guide use the following setup:
     ```
 
 ```hidden-python
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 # Create a stabilizer simulator with 5 qubits
-state = SparseSim(num_qubits=5)
+state = SparseStab(num_qubits=5)
 
 # Qubit indices for examples
 q = 0
@@ -62,7 +62,7 @@ fn main() {
 
 PECOS supports two categories of quantum gates:
 
-- **Clifford Gates**: Gates that map Pauli operators to Pauli operators. These can be efficiently simulated using stabilizer simulators like `SparseSim`.
+- **Clifford Gates**: Gates that map Pauli operators to Pauli operators. These can be efficiently simulated using stabilizer simulators like `SparseStab`.
 - **Non-Clifford Gates**: Rotation gates and other operations that require state vector simulation.
 
 ## Quick Reference
@@ -113,10 +113,10 @@ The examples below use a simulator instance. Run this setup code first:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import SparseSim
+    from pecos.simulators import SparseStab
 
     # Create a stabilizer simulator with 5 qubits
-    state = SparseSim(num_qubits=5)
+    state = SparseStab(num_qubits=5)
 
     # Qubit indices for examples
     q = 0
@@ -1071,7 +1071,7 @@ These operations measure and then prepare the qubit in a specific eigenstate reg
 
 | Simulator | Clifford Gates | Non-Clifford Gates | Notes |
 |-----------|---------------|-------------------|-------|
-| **SparseSim** | All | None | Default, fastest for QEC |
+| **SparseStab** | All | None | Default, fastest for QEC |
 | **StateVec** | All | All | Pure Rust state vector |
 | **Qulacs** | All | All | High-performance C++ backend |
 | **CuStateVec** | All | All | GPU-accelerated (requires CUDA) |

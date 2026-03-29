@@ -37,7 +37,7 @@ pub mod rotation_test_utils;
 pub mod sign_algebra;
 pub mod sparse_stab;
 pub mod sparse_stab_y;
-pub mod stab;
+pub mod stabilizer;
 pub mod stabilizer_tableau;
 pub mod stabilizer_test_utils;
 pub mod state_vec;
@@ -92,7 +92,7 @@ pub use sparse_stab_y::{
     SparseStabY, SparseStabYBitSet, SparseStabYGeneric, SparseStabYUnsortedVecSet,
     SparseStabYVecSet,
 };
-pub use stab::Stab;
+pub use stabilizer::Stabilizer;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 // StateVec uses the sparse SoA implementation optimized for QEC workloads.
 // The dense implementation is available as DenseStateVec / StateVecSoA.

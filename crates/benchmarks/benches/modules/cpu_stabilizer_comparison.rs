@@ -14,7 +14,7 @@
 //!
 //! Compares all CPU-based stabilizer simulator implementations on surface code
 //! syndrome extraction to determine relative performance. This helps inform
-//! which implementation `Stab` should wrap as its default backend.
+//! which implementation `Stabilizer` should wrap as its default backend.
 //!
 //! Simulators compared:
 //! - `DenseStab` (row+column dual representation)
@@ -143,7 +143,7 @@ fn bench_cpu_stabilizer_surface_code<M: Measurement>(c: &mut Criterion<M>) {
             let ops_per_run = rounds * (params.num_ancillas * 3 + params.num_ancillas);
             group.throughput(Throughput::Elements(ops_per_run as u64));
 
-            // --- DenseStab (row+col dual, what Stab currently wraps) ---
+            // --- DenseStab (row+col dual, what Stabilizer currently wraps) ---
             group.bench_with_input(BenchmarkId::new("DenseStab", &label), &(), |b, ()| {
                 b.iter_batched(
                     || {

@@ -11,12 +11,12 @@
 
 """Integration tests for stabilizer simulator gate initialization."""
 
-from pecos.simulators import SparseSim, SparseSimPy, Stab
+from pecos.simulators import SparseStab, SparseStabPy, Stabilizer
 
 states = [
-    SparseSimPy,
-    SparseSim,
-    Stab,
+    SparseStabPy,
+    SparseStab,
+    Stabilizer,
 ]
 
 

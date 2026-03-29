@@ -16,17 +16,17 @@ use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 
-#[pyclass(name = "SparseSim", module = "pecos_rslib")]
-pub struct PySparseSim {
+#[pyclass(name = "SparseStab", module = "pecos_rslib")]
+pub struct PySparseStab {
     inner: SparseStab,
 }
 
 #[pymethods]
-impl PySparseSim {
+impl PySparseStab {
     #[new]
     #[pyo3(signature = (num_qubits, seed=None))]
     fn new(num_qubits: usize, seed: Option<u64>) -> Self {
-        PySparseSim {
+        PySparseStab {
             inner: match seed {
                 Some(s) => SparseStab::with_seed(num_qubits, s),
                 None => SparseStab::new(num_qubits),
@@ -580,7 +580,7 @@ impl PySparseSim {
         let stabs_dict = serialize_gens(self.inner.stabs())?;
         let destabs_dict = serialize_gens(self.inner.destabs())?;
 
-        let cls = py.get_type::<PySparseSim>();
+        let cls = py.get_type::<PySparseStab>();
         let from_pickle = cls.getattr("_from_pickle")?;
         PyTuple::new(
             py,
@@ -645,7 +645,7 @@ impl PySparseSim {
         let mut inner = SparseStab::new(num_qubits);
         *inner.stabs_mut() = stabs;
         *inner.destabs_mut() = destabs;
-        Ok(PySparseSim { inner })
+        Ok(PySparseStab { inner })
     }
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.

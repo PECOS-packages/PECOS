@@ -15,7 +15,7 @@
 //! Compares performance of:
 //! - `GpuStabMulti` (GPU via wgpu/Vulkan/Metal/DX12) - multi-shot stabilizer
 //! - `CuFrameSimulator` (GPU via NVIDIA cuQuantum/CUDA) - frame-based stabilizer
-//! - `SparseSim` (CPU) - baseline stabilizer simulator
+//! - `SparseStab` (CPU) - baseline stabilizer simulator
 //!
 //! Run with specific features:
 //! ```

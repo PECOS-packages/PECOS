@@ -44,7 +44,7 @@ class VerifyStabilizers:
         Sets up the circuit simulator and initializes empty data structures
         for stabilizer checks, logical operators, and qubit tracking.
         """
-        self.circ_sim = pc.simulators.SparseSimPy
+        self.circ_sim = pc.simulators.SparseStabPy
 
         self.checks = []
         self.logical_zs = []
@@ -334,7 +334,7 @@ class VerifyStabilizers:
         # ------------
         # Separate the checks, logical stabilizers, and ancilla stabilizers.
         circuit = self.circuit
-        state = pc.simulators.SparseSimPy(self.num_qubits)
+        state = pc.simulators.SparseStabPy(self.num_qubits)
         state.run_circuit(circuit)
         self.get_info(state, verbose=False)
         self.state = state

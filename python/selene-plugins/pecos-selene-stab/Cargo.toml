@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "PECOS Stab simulator plugin for the Selene quantum emulator"
+description = "PECOS Stabilizer simulator plugin for the Selene quantum emulator"
 
 [lib]
 name = "pecos_selene_stab"

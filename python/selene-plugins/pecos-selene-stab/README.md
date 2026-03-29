@@ -1,4 +1,4 @@
-# PECOS Stab Selene Plugin
+# PECOS Stabilizer Selene Plugin
 
 A stabilizer simulator plugin for the [Selene](https://github.com/Quantinuum/selene) quantum emulator using the PECOS stabilizer implementation.
 

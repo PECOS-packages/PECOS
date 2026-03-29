@@ -2,7 +2,7 @@
 
 import pecos as pc
 from pecos.noise.error_depolar import DepolarizingErrorModel
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 
 def test_simple_conditional() -> None:
@@ -12,7 +12,7 @@ def test_simple_conditional() -> None:
     qc.append("measure Z", {0}, var_output={0: ("m", 0)})
 
     eng = pc.HybridEngine()
-    state = SparseSim(1)
+    state = SparseStab(1)
     err = DepolarizingErrorModel()
 
     error_params = {

@@ -10,18 +10,18 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Performance comparison: Pure Rust `SparseStab` vs C++ `CppSparseStab` vs `Stab` (`DenseStab`).
+//! Performance comparison: Pure Rust `SparseStab` vs C++ `CppSparseStab` vs `Stabilizer` (`DenseStab`).
 //!
 //! Benchmarks surface code syndrome extraction at various distances and round counts
 //! to compare the three stabilizer simulator backends:
 //!
 //! - `SparseStab` (pure Rust, BitSet-based sparse representation)
 //! - `CppSparseStab` (C++ implementation via cxx FFI)
-//! - `Stab` (pure Rust, `DenseStab` with row+column bit-matrix layout)
+//! - `Stabilizer` (pure Rust, `DenseStab` with row+column bit-matrix layout)
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
-use pecos::simulators::{SparseStab, Stab};
+use pecos::simulators::{SparseStab, Stabilizer};
 use pecos_cppsparsesim::CppSparseStab;
 use std::hint::black_box;
 
@@ -148,8 +148,8 @@ fn run_circuit_cpp_sparse_stab(sim: &mut CppSparseStab, params: &SurfaceCodePara
     }
 }
 
-/// Run surface code syndrome extraction on Stab (`DenseStab`, pure Rust).
-fn run_circuit_stab(sim: &mut Stab, params: &SurfaceCodeParams, rounds: usize) {
+/// Run surface code syndrome extraction on Stabilizer (`DenseStab`, pure Rust).
+fn run_circuit_stab(sim: &mut Stabilizer, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
         sim.h(&[QubitId::from(i)]);
@@ -178,7 +178,7 @@ fn run_circuit_stab(sim: &mut Stab, params: &SurfaceCodeParams, rounds: usize) {
     }
 }
 
-/// Compare `SparseStab` (Rust) vs `CppSparseStab` (C++) vs Stab (`DenseStab`) on surface code
+/// Compare `SparseStab` (Rust) vs `CppSparseStab` (C++) vs Stabilizer (`DenseStab`) on surface code
 /// syndrome extraction across distances and round counts.
 fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
     use criterion::BatchSize;
@@ -227,11 +227,11 @@ fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
                 );
             });
 
-            // --- DenseStab (Stab, pure Rust) ---
-            group.bench_with_input(BenchmarkId::new("Stab_DenseRust", &label), &(), |b, ()| {
+            // --- DenseStab (Stabilizer, pure Rust) ---
+            group.bench_with_input(BenchmarkId::new("Stabilizer_DenseRust", &label), &(), |b, ()| {
                 b.iter_batched(
                     || {
-                        let mut sim = Stab::new(params.num_qubits);
+                        let mut sim = Stabilizer::new(params.num_qubits);
                         sim.reset();
                         sim
                     },
@@ -264,7 +264,7 @@ mod tests {
         cpp_sim.reset();
         run_circuit_cpp_sparse_stab(&mut cpp_sim, &params, rounds);
 
-        let mut stab_sim = Stab::new(params.num_qubits);
+        let mut stab_sim = Stabilizer::new(params.num_qubits);
         stab_sim.reset();
         run_circuit_stab(&mut stab_sim, &params, rounds);
     }

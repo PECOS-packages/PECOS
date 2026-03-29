@@ -62,14 +62,14 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cargo build --release \
-            -p pecos-selene-stab \
+            -p pecos-selene-stabilizer \
             -p pecos-selene-statevec
 
       - name: Build Selene plugins (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --release -p pecos-selene-stab -p pecos-selene-statevec
+          cargo build --release -p pecos-selene-stabilizer -p pecos-selene-statevec
 
       - name: Copy libraries to Python packages (Unix)
         if: runner.os != 'Windows'
@@ -82,25 +82,25 @@ jobs:
           fi
 
           # Copy libraries
-          mkdir -p python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib
+          mkdir -p python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib
           mkdir -p python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
 
-          cp target/release/libpecos_selene_stab.$EXT python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib/
+          cp target/release/libpecos_selene_stabilizer.$EXT python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib/
           cp target/release/libpecos_selene_statevec.$EXT python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
 
       - name: Copy libraries to Python packages (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib
+          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib
           New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
 
-          Copy-Item target/release/pecos_selene_stab.dll python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab/_dist/lib/
+          Copy-Item target/release/pecos_selene_stabilizer.dll python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib/
           Copy-Item target/release/pecos_selene_statevec.dll python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
 
       - name: Install Python packages
         run: |
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-stab[test]
+          uv pip install --system -e ./python/selene-plugins/pecos-selene-stabilizer[test]
           uv pip install --system -e ./python/selene-plugins/pecos-selene-statevec[test]
 
       - name: Run tests
@@ -116,8 +116,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
         plugin:
-          - name: pecos-selene-stab
-            package: pecos_selene_stab
+          - name: pecos-selene-stabilizer
+            package: pecos_selene_stabilizer
           - name: pecos-selene-statevec
             package: pecos_selene_statevec
 

@@ -37,7 +37,7 @@ let results = sim(program.clone()).run(1000)?;
 
 // With configuration
 let results = sim(program).seed(42).run(1000)?;
-
+    
     Ok(())
 }
 
@@ -80,7 +80,7 @@ let results = sim(program)
     .workers(4)  // Explicitly set number of threads
     // .auto_workers()  // Or use all available CPU cores
     .run(1000)?;
-
+    
     Ok(())
 }
 
@@ -122,7 +122,7 @@ let mut experiment = sim(program)
 // Run multiple times
 let results_100 = experiment.run(100)?;
 let results_1000 = experiment.run(1000)?;
-
+    
     Ok(())
 }
 
@@ -160,7 +160,7 @@ let _custom = DepolarizingNoiseModel::builder()
 // Biased depolarizing (asymmetric error distribution)
 let _biased = BiasedDepolarizingNoiseModel::builder()
     .with_uniform_probability(0.01);
-
+    
     Ok(())
 }
 
@@ -192,7 +192,7 @@ let noise = GeneralNoiseModelBuilder::new()
 
 // Use with sim()
 let results = sim(program).noise(noise).run(1000)?;
-
+    
     Ok(())
 }
 
@@ -234,7 +234,7 @@ let results = sim(program.clone())
 let results = sim(program)
     .quantum(state_vector())
     .run(1000)?;
-
+    
     Ok(())
 }
 
@@ -277,7 +277,7 @@ let shot_map = results.try_as_shot_map()?;
 // Access measurement results by register name
 let c_values = shot_map.try_bits_as_u64("c")?;
 // Returns Vec<u64> where each value is the decimal encoding
-
+    
     Ok(())
 }
 
@@ -326,7 +326,7 @@ fn bell_state_example() -> Result<(), PecosError> {
 
     Ok(())
 }
-
+    
     Ok(())
 }
 
@@ -376,7 +376,7 @@ fn ghz_noise_example() -> Result<(), PecosError> {
 
     Ok(())
 }
-
+    
     Ok(())
 }
 
@@ -417,6 +417,6 @@ let results = sim(program.clone()).workers(4).run(1000)?;
 
 // Automatically use all available cores
 let results = sim(program).auto_workers().run(1000)?;
-
+    
     Ok(())
 }

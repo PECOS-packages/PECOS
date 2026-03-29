@@ -16,14 +16,14 @@ fn test_user_guide_simulators_rust_2() -> Result<(), Box<dyn std::error::Error>>
         measure q -> c;
     "#;
     let program = Qasm::from_string(qasm_code);
-    // SparseSim is used by default
+    // SparseStab is used by default
 let results = sim(program.clone()).run(1000)?;
 
 // Or explicitly select it
 let results = sim(program)
     .quantum(sparse_stabilizer())
     .run(1000)?;
-
+    
     Ok(())
 }
 
@@ -44,7 +44,7 @@ fn test_user_guide_simulators_rust_3() -> Result<(), Box<dyn std::error::Error>>
     let results = sim(program)
     .quantum(state_vector())
     .run(100)?;
-
+    
     Ok(())
 }
 
@@ -75,7 +75,7 @@ prop.h(&[QubitId(0)]);
 // Check resulting error pattern
 assert!(prop.contains_z(0));  // X transformed to Z
 assert!(!prop.contains_x(0)); // No longer has X
-
+    
     Ok(())
 }
 
@@ -100,7 +100,7 @@ fn test_user_guide_simulators_rust_5() -> Result<(), Box<dyn std::error::Error>>
 let mut builder = coin_toss().qubits(2);
 let engine = builder.build()?;
 // Engine is ready for processing quantum operations
-
+    
     Ok(())
 }
 
@@ -139,7 +139,7 @@ let results = sim(circuit.clone())
 let results = sim(circuit)
     .quantum(sparse_stabilizer())
     .run(1000)?;
-
+    
     Ok(())
 }
 
@@ -173,6 +173,6 @@ println!("Qubit 0 measured: {}", results[0].outcome);
 
 // Inspect stabilizers
 println!("{:?}", state);
-
+    
     Ok(())
 }

@@ -23,4 +23,4 @@ fn test_readme_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     // 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
     Ok(())
 }
-
+    

@@ -255,60 +255,48 @@ fn bench_measurement_scaling<M: Measurement>(c: &mut Criterion<M>) {
 
     for &nq in &qubit_counts {
         // Sequential: one mz() call per qubit (2n passes)
-        group.bench_with_input(
-            BenchmarkId::new("mz_sequential", nq),
-            &nq,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                b.iter(|| {
-                    sim.reset();
-                    for q in 0..nq {
-                        sim.h(&[QubitId(q)]);
-                    }
-                    for q in 0..nq {
-                        black_box(sim.mz(&[QubitId(q)]));
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("mz_sequential", nq), &nq, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            b.iter(|| {
+                sim.reset();
+                for q in 0..nq {
+                    sim.h(&[QubitId(q)]);
+                }
+                for q in 0..nq {
+                    black_box(sim.mz(&[QubitId(q)]));
+                }
+            });
+        });
 
         // Batch: one mz() call with all qubits (2 passes via joint sampling)
-        group.bench_with_input(
-            BenchmarkId::new("mz_batch", nq),
-            &nq,
-            |b, &nq| {
-                let mut sim = StateVecSoA::new(nq);
-                let all_qubits: Vec<QubitId> = (0..nq).map(QubitId).collect();
-                b.iter(|| {
-                    sim.reset();
-                    for q in 0..nq {
-                        sim.h(&[QubitId(q)]);
-                    }
-                    black_box(sim.mz(&all_qubits));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("mz_batch", nq), &nq, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let all_qubits: Vec<QubitId> = (0..nq).map(QubitId).collect();
+            b.iter(|| {
+                sim.reset();
+                for q in 0..nq {
+                    sim.h(&[QubitId(q)]);
+                }
+                black_box(sim.mz(&all_qubits));
+            });
+        });
 
         // GPU (sequential per-qubit for comparison)
         #[cfg(feature = "gpu-sims")]
         {
             #[allow(clippy::cast_possible_truncation)]
             if let Ok(mut sim) = GpuStateVec::new(nq as u32) {
-                group.bench_with_input(
-                    BenchmarkId::new("GpuStateVec_wgpu", nq),
-                    &nq,
-                    |b, &nq| {
-                        b.iter(|| {
-                            sim.reset();
-                            for q in 0..nq {
-                                sim.h(&[QubitId(q)]);
-                            }
-                            for q in 0..nq {
-                                black_box(sim.mz(&[QubitId(q)]));
-                            }
-                        });
-                    },
-                );
+                group.bench_with_input(BenchmarkId::new("GpuStateVec_wgpu", nq), &nq, |b, &nq| {
+                    b.iter(|| {
+                        sim.reset();
+                        for q in 0..nq {
+                            sim.h(&[QubitId(q)]);
+                        }
+                        for q in 0..nq {
+                            black_box(sim.mz(&[QubitId(q)]));
+                        }
+                    });
+                });
             }
         }
     }
@@ -317,7 +305,7 @@ fn bench_measurement_scaling<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Benchmark subset measurement: measure half the qubits (even-indexed).
-/// Tests the mz_joint_subset path (QEC-realistic: measure ancillas, not data qubits).
+/// Tests the `mz_joint_subset` path (QEC-realistic: measure ancillas, not data qubits).
 fn bench_subset_measurement<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Subset Measurement");
     group.sample_size(20);

@@ -228,20 +228,24 @@ fn bench_rust_vs_cpp_surface_code<M: Measurement>(c: &mut Criterion<M>) {
             });
 
             // --- DenseStab (Stabilizer, pure Rust) ---
-            group.bench_with_input(BenchmarkId::new("Stabilizer_DenseRust", &label), &(), |b, ()| {
-                b.iter_batched(
-                    || {
-                        let mut sim = Stabilizer::new(params.num_qubits);
-                        sim.reset();
-                        sim
-                    },
-                    |mut sim| {
-                        run_circuit_stab(&mut sim, &params, rounds);
-                        black_box(sim)
-                    },
-                    BatchSize::SmallInput,
-                );
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Stabilizer_DenseRust", &label),
+                &(),
+                |b, ()| {
+                    b.iter_batched(
+                        || {
+                            let mut sim = Stabilizer::new(params.num_qubits);
+                            sim.reset();
+                            sim
+                        },
+                        |mut sim| {
+                            run_circuit_stab(&mut sim, &params, rounds);
+                            black_box(sim)
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
         }
     }
 

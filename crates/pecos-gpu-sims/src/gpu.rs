@@ -464,15 +464,14 @@ impl GpuStateVec {
                 immediate_size: 0,
             });
 
-        let marginal_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Marginal probability pipeline"),
-                layout: Some(&marginal_pipeline_layout),
-                module: &shader,
-                entry_point: Some("reduce_marginal_probability"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let marginal_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Marginal probability pipeline"),
+            layout: Some(&marginal_pipeline_layout),
+            module: &shader,
+            entry_point: Some("reduce_marginal_probability"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
 
         let marginal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Marginal probability bind group (persistent)"),

@@ -574,7 +574,10 @@ where
                         mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                     }
 
-                    debug!("Processing batched measurement on {} qubits", mz_qubits.len());
+                    debug!(
+                        "Processing batched measurement on {} qubits",
+                        mz_qubits.len()
+                    );
                     let meas_results = self.simulator.mz(&mz_qubits);
                     for meas_result in meas_results {
                         measurements.push(usize::from(meas_result.outcome));
@@ -917,7 +920,10 @@ impl Engine for SparseStabEngine {
                         mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                     }
 
-                    debug!("Processing batched measurement on {} qubits", mz_qubits.len());
+                    debug!(
+                        "Processing batched measurement on {} qubits",
+                        mz_qubits.len()
+                    );
                     let meas_results = self.simulator.mz(&mz_qubits);
                     for meas_result in meas_results {
                         measurements.push(usize::from(meas_result.outcome));

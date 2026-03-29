@@ -462,14 +462,15 @@ impl PySparseStab {
         let has_special_params = params.is_some_and(|p| !p.is_empty());
 
         // Fast path: batch dispatch for common gates without special params
-        if !has_special_params {
-            if let Some(result) =
-                crate::simulator_utils::try_clifford_batch_dispatch(
-                    &mut self.inner, symbol, &locations_set, py,
-                )?
-            {
-                return Ok(result);
-            }
+        if !has_special_params
+            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
+                &mut self.inner,
+                symbol,
+                &locations_set,
+                py,
+            )?
+        {
+            return Ok(result);
         }
 
         // Fallback: per-location dispatch for parameterized/special gates

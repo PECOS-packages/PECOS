@@ -17,7 +17,8 @@
 
 use pecos_simulators::{
     DenseStab, DenseStabColOnly, DenseStabRowOnly, GpuStab, GpuStabOpt, GpuStabParallel,
-    SparseColOnly, SparseStab, SparseStabHybrid, SparseStabUnsortedVecSet, SparseStabVecSet, Stabilizer,
+    SparseColOnly, SparseStab, SparseStabHybrid, SparseStabUnsortedVecSet, SparseStabVecSet,
+    Stabilizer,
 };
 
 // Generate test suites for all stabilizer simulator implementations

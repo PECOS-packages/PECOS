@@ -695,10 +695,10 @@ where
         // Collect low-stride pending gates (stride fits within one block)
         let mut low_gates: Vec<(usize, Complex2x2)> = Vec::new();
         for q in 0..max_low_qubit {
-            if let Some(matrix) = self.pending_gates[q].take() {
-                if !matrix.is_identity() {
-                    low_gates.push((q, matrix));
-                }
+            if let Some(matrix) = self.pending_gates[q].take()
+                && !matrix.is_identity()
+            {
+                low_gates.push((q, matrix));
             }
         }
 
@@ -756,14 +756,14 @@ where
                                 let br = self.real[pj];
                                 let bi = self.imag[pj];
 
-                                self.real[j] = (m.a_re * ar - m.a_im * ai)
-                                    + (m.b_re * br - m.b_im * bi);
-                                self.imag[j] = (m.a_re * ai + m.a_im * ar)
-                                    + (m.b_re * bi + m.b_im * br);
-                                self.real[pj] = (m.c_re * ar - m.c_im * ai)
-                                    + (m.d_re * br - m.d_im * bi);
-                                self.imag[pj] = (m.c_re * ai + m.c_im * ar)
-                                    + (m.d_re * bi + m.d_im * br);
+                                self.real[j] =
+                                    (m.a_re * ar - m.a_im * ai) + (m.b_re * br - m.b_im * bi);
+                                self.imag[j] =
+                                    (m.a_re * ai + m.a_im * ar) + (m.b_re * bi + m.b_im * br);
+                                self.real[pj] =
+                                    (m.c_re * ar - m.c_im * ai) + (m.d_re * br - m.d_im * bi);
+                                self.imag[pj] =
+                                    (m.c_re * ai + m.c_im * ar) + (m.d_re * bi + m.d_im * br);
                             }
                         }
                     }
@@ -810,7 +810,7 @@ where
     }
 
     /// Apply two independent single-qubit gates in one pass over the state vector.
-    /// For adjacent qubits (q_lo, q_hi = q_lo + 1), loads groups of 4 amplitudes,
+    /// For adjacent qubits (`q_lo`, `q_hi` = `q_lo` + 1), loads groups of 4 amplitudes,
     /// applies both matrices, and stores — one pass instead of two.
     fn flush_pair(&mut self, q_lo: usize, q_hi: usize, m_lo: &Complex2x2, m_hi: &Complex2x2) {
         let n = self.real.len();
@@ -2203,8 +2203,8 @@ where
             // so use the horizontal sum × scalar bit
             let vals: [f64; 4] = probs.into();
             let chunk_sum = vals[0] + vals[1] + vals[2] + vals[3];
-            for q in 2..num_qubits {
-                marginal_probs[q] += chunk_sum * (((i >> q) & 1) as f64);
+            for (q, mp) in marginal_probs.iter_mut().enumerate().skip(2) {
+                *mp += chunk_sum * (((i >> q) & 1) as f64);
             }
 
             // CDF sampling
@@ -2227,8 +2227,8 @@ where
         // Remainder (n not divisible by 4 — rare for power-of-two state vectors)
         while i < n {
             let prob = self.real[i] * self.real[i] + self.imag[i] * self.imag[i];
-            for q in 0..num_qubits {
-                marginal_probs[q] += prob * (((i >> q) & 1) as f64);
+            for (q, mp) in marginal_probs.iter_mut().enumerate() {
+                *mp += prob * (((i >> q) & 1) as f64);
             }
             cumsum += prob;
             if sampled_idx == n - 1 && cumsum >= r {
@@ -2260,7 +2260,7 @@ where
         // Pass 2: collapse to |sampled_idx⟩ using fill + set (avoids per-element branch)
         let norm = (self.real[sampled_idx] * self.real[sampled_idx]
             + self.imag[sampled_idx] * self.imag[sampled_idx])
-        .sqrt();
+            .sqrt();
         let final_re = self.real[sampled_idx] / norm;
         let final_im = self.imag[sampled_idx] / norm;
         self.real.fill(0.0);
@@ -2279,7 +2279,7 @@ where
         let k = qubits.len();
         let n = self.real.len();
 
-        let qubit_indices: Vec<usize> = qubits.iter().map(|q| q.index()).collect();
+        let qubit_indices: Vec<usize> = qubits.iter().map(pecos_core::QubitId::index).collect();
         let table_size = 1usize << k;
         let mut prob_table = vec![0.0f64; table_size];
         let mut marginal_probs = vec![0.0f64; k];
@@ -2395,9 +2395,8 @@ where
 
         // Build results
         let mut results = Vec::with_capacity(k);
-        for j in 0..k {
+        for (j, &prob_one) in marginal_probs.iter().enumerate().take(k) {
             let outcome = (sampled_pattern >> j) & 1 == 1;
-            let prob_one = marginal_probs[j];
             let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
             results.push(MeasurementResult {
                 outcome,
@@ -2424,9 +2423,9 @@ where
         let high_mask = measured_mask & !3usize;
         let high_expected = expected_bits & !3usize;
         let mut d_factors = [0.0f64; 4];
-        for d in 0..4usize {
+        for (d, factor) in d_factors.iter_mut().enumerate() {
             let low_match = (d & measured_mask & 3) == (expected_bits & 3);
-            d_factors[d] = if low_match { 1.0 } else { 0.0 };
+            *factor = if low_match { 1.0 } else { 0.0 };
         }
         let d_fv = f64x4::from(d_factors);
 
@@ -4002,7 +4001,7 @@ where
         if k >= 4 && k == self.num_qubits {
             return self.mz_joint_all(qubits);
         }
-        if k >= 4 && k <= 20 {
+        if (4..=20).contains(&k) {
             return self.mz_joint_subset(qubits);
         }
 

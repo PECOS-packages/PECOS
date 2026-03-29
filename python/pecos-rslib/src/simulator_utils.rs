@@ -234,10 +234,10 @@ pub fn extract_single_qubit(location: &Bound<'_, PyAny>) -> PyResult<usize> {
     if let Ok(q) = location.extract::<usize>() {
         return Ok(q);
     }
-    if let Ok(tuple) = location.downcast::<PyTuple>() {
-        if tuple.len() == 1 {
-            return tuple.get_item(0)?.extract::<usize>();
-        }
+    if let Ok(tuple) = location.cast::<PyTuple>()
+        && tuple.len() == 1
+    {
+        return tuple.get_item(0)?.extract::<usize>();
     }
     Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
         "Expected int or 1-tuple for single-qubit location, got {:?}",
@@ -245,7 +245,7 @@ pub fn extract_single_qubit(location: &Bound<'_, PyAny>) -> PyResult<usize> {
     )))
 }
 
-/// Collect single-qubit locations from a Python set into a Vec of QubitIds.
+/// Collect single-qubit locations from a Python set into a Vec of `QubitIds`.
 fn collect_single_qubits(locations: &Bound<'_, PySet>) -> PyResult<Vec<QubitId>> {
     locations
         .iter()
@@ -255,10 +255,7 @@ fn collect_single_qubits(locations: &Bound<'_, PySet>) -> PyResult<Vec<QubitId>>
 
 /// Collect single-qubit locations as raw usize values.
 fn collect_single_qubit_indices(locations: &Bound<'_, PySet>) -> PyResult<Vec<usize>> {
-    locations
-        .iter()
-        .map(|l| extract_single_qubit(&l))
-        .collect()
+    locations.iter().map(|l| extract_single_qubit(&l)).collect()
 }
 
 /// Collect two-qubit pair locations from a Python set.
@@ -302,37 +299,82 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
         "I" => return Ok(Some(PyDict::new(py).into())),
 
         // Single-qubit Clifford gates (no return value)
-        "X" | "Y" | "Z" | "H" | "H1" | "H+z+x" | "H2" | "H-z-x" | "H3" | "H+y-z"
-        | "H4" | "H-y-z" | "H5" | "H-x+y" | "H6" | "H-x-y" | "F" | "F1" | "Fdg"
-        | "F1d" | "F1dg" | "F2" | "F2dg" | "F2d" | "F3" | "F3dg" | "F3d" | "F4"
-        | "F4dg" | "F4d" | "Q" | "SX" | "SqrtX" | "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg"
-        | "R" | "SY" | "SqrtY" | "Rd" | "SYdg" | "SqrtYd" | "SqrtYdg" | "S" | "SZ"
-        | "SqrtZ" | "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
+        "X" | "Y" | "Z" | "H" | "H1" | "H+z+x" | "H2" | "H-z-x" | "H3" | "H+y-z" | "H4"
+        | "H-y-z" | "H5" | "H-x+y" | "H6" | "H-x-y" | "F" | "F1" | "Fdg" | "F1d" | "F1dg"
+        | "F2" | "F2dg" | "F2d" | "F3" | "F3dg" | "F3d" | "F4" | "F4dg" | "F4d" | "Q" | "SX"
+        | "SqrtX" | "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" | "R" | "SY" | "SqrtY" | "Rd" | "SYdg"
+        | "SqrtYd" | "SqrtYdg" | "S" | "SZ" | "SqrtZ" | "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
             let qubits = collect_single_qubits(locations)?;
             match symbol {
-                "X" => { sim.x(&qubits); }
-                "Y" => { sim.y(&qubits); }
-                "Z" => { sim.z(&qubits); }
-                "H" | "H1" | "H+z+x" => { sim.h(&qubits); }
-                "H2" | "H-z-x" => { sim.h2(&qubits); }
-                "H3" | "H+y-z" => { sim.h3(&qubits); }
-                "H4" | "H-y-z" => { sim.h4(&qubits); }
-                "H5" | "H-x+y" => { sim.h5(&qubits); }
-                "H6" | "H-x-y" => { sim.h6(&qubits); }
-                "F" | "F1" => { sim.f(&qubits); }
-                "Fdg" | "F1d" | "F1dg" => { sim.fdg(&qubits); }
-                "F2" => { sim.f2(&qubits); }
-                "F2dg" | "F2d" => { sim.f2dg(&qubits); }
-                "F3" => { sim.f3(&qubits); }
-                "F3dg" | "F3d" => { sim.f3dg(&qubits); }
-                "F4" => { sim.f4(&qubits); }
-                "F4dg" | "F4d" => { sim.f4dg(&qubits); }
-                "Q" | "SX" | "SqrtX" => { sim.sx(&qubits); }
-                "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" => { sim.sxdg(&qubits); }
-                "R" | "SY" | "SqrtY" => { sim.sy(&qubits); }
-                "Rd" | "SYdg" | "SqrtYd" | "SqrtYdg" => { sim.sydg(&qubits); }
-                "S" | "SZ" | "SqrtZ" => { sim.sz(&qubits); }
-                "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => { sim.szdg(&qubits); }
+                "X" => {
+                    sim.x(&qubits);
+                }
+                "Y" => {
+                    sim.y(&qubits);
+                }
+                "Z" => {
+                    sim.z(&qubits);
+                }
+                "H" | "H1" | "H+z+x" => {
+                    sim.h(&qubits);
+                }
+                "H2" | "H-z-x" => {
+                    sim.h2(&qubits);
+                }
+                "H3" | "H+y-z" => {
+                    sim.h3(&qubits);
+                }
+                "H4" | "H-y-z" => {
+                    sim.h4(&qubits);
+                }
+                "H5" | "H-x+y" => {
+                    sim.h5(&qubits);
+                }
+                "H6" | "H-x-y" => {
+                    sim.h6(&qubits);
+                }
+                "F" | "F1" => {
+                    sim.f(&qubits);
+                }
+                "Fdg" | "F1d" | "F1dg" => {
+                    sim.fdg(&qubits);
+                }
+                "F2" => {
+                    sim.f2(&qubits);
+                }
+                "F2dg" | "F2d" => {
+                    sim.f2dg(&qubits);
+                }
+                "F3" => {
+                    sim.f3(&qubits);
+                }
+                "F3dg" | "F3d" => {
+                    sim.f3dg(&qubits);
+                }
+                "F4" => {
+                    sim.f4(&qubits);
+                }
+                "F4dg" | "F4d" => {
+                    sim.f4dg(&qubits);
+                }
+                "Q" | "SX" | "SqrtX" => {
+                    sim.sx(&qubits);
+                }
+                "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" => {
+                    sim.sxdg(&qubits);
+                }
+                "R" | "SY" | "SqrtY" => {
+                    sim.sy(&qubits);
+                }
+                "Rd" | "SYdg" | "SqrtYd" | "SqrtYdg" => {
+                    sim.sydg(&qubits);
+                }
+                "S" | "SZ" | "SqrtZ" => {
+                    sim.sz(&qubits);
+                }
+                "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
+                    sim.szdg(&qubits);
+                }
                 _ => unreachable!(),
             }
             return Ok(Some(PyDict::new(py).into()));
@@ -385,22 +427,44 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
         }
 
         // Two-qubit Clifford gates (no return value)
-        "CX" | "CNOT" | "CY" | "CZ" | "SZZ" | "SZZdg" | "SXX" | "SXXdg" | "SYY"
-        | "SYYdg" | "SqrtZZ" | "SqrtZZd" | "SqrtXX" | "SqrtXXd" | "SqrtYY" | "SqrtYYd"
-        | "SWAP" | "G" | "G2" => {
+        "CX" | "CNOT" | "CY" | "CZ" | "SZZ" | "SZZdg" | "SXX" | "SXXdg" | "SYY" | "SYYdg"
+        | "SqrtZZ" | "SqrtZZd" | "SqrtXX" | "SqrtXXd" | "SqrtYY" | "SqrtYYd" | "SWAP" | "G"
+        | "G2" => {
             let pairs = collect_pairs(locations)?;
             match symbol {
-                "CX" | "CNOT" => { sim.cx(&pairs); }
-                "CY" => { sim.cy(&pairs); }
-                "CZ" => { sim.cz(&pairs); }
-                "SZZ" | "SqrtZZ" => { sim.szz(&pairs); }
-                "SZZdg" | "SqrtZZd" => { sim.szzdg(&pairs); }
-                "SXX" | "SqrtXX" => { sim.sxx(&pairs); }
-                "SXXdg" | "SqrtXXd" => { sim.sxxdg(&pairs); }
-                "SYY" | "SqrtYY" => { sim.syy(&pairs); }
-                "SYYdg" | "SqrtYYd" => { sim.syydg(&pairs); }
-                "SWAP" => { sim.swap(&pairs); }
-                "G" | "G2" => { sim.g(&pairs); }
+                "CX" | "CNOT" => {
+                    sim.cx(&pairs);
+                }
+                "CY" => {
+                    sim.cy(&pairs);
+                }
+                "CZ" => {
+                    sim.cz(&pairs);
+                }
+                "SZZ" | "SqrtZZ" => {
+                    sim.szz(&pairs);
+                }
+                "SZZdg" | "SqrtZZd" => {
+                    sim.szzdg(&pairs);
+                }
+                "SXX" | "SqrtXX" => {
+                    sim.sxx(&pairs);
+                }
+                "SXXdg" | "SqrtXXd" => {
+                    sim.sxxdg(&pairs);
+                }
+                "SYY" | "SqrtYY" => {
+                    sim.syy(&pairs);
+                }
+                "SYYdg" | "SqrtYYd" => {
+                    sim.syydg(&pairs);
+                }
+                "SWAP" => {
+                    sim.swap(&pairs);
+                }
+                "G" | "G2" => {
+                    sim.g(&pairs);
+                }
                 _ => unreachable!(),
             }
             return Ok(Some(PyDict::new(py).into()));

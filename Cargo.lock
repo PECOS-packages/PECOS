@@ -4097,7 +4097,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-selene-stab"
+name = "pecos-selene-stabilizer"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",

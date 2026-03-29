@@ -613,7 +613,7 @@ pecos-qis-ffi (C ABI for external programs)
 selene-plugins/ (simulator plugins)
     │
     ├── pecos-selene-statevec
-    └── pecos-selene-stab
+    └── pecos-selene-stabilizer
 ```
 
 ## ByteMessage: Binary Protocol for FFI and Plugins
@@ -698,7 +698,7 @@ pub trait SimulatorInterface {
 
 **Available Plugins:**
 - `pecos-selene-statevec` - State vector simulator
-- `pecos-selene-stab` - Stabilizer simulator
+- `pecos-selene-stabilizer` - Stabilizer simulator
 
 ### Python Bindings
 

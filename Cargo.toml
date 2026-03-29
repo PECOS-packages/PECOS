@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "python/pecos-rslib",
   "python/pecos-rslib-cuda",
-  "python/selene-plugins/pecos-selene-stab",
+  "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",

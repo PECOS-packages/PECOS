@@ -50,7 +50,7 @@ struct Params {
 }
 
 /// The PECOS `Stabilizer` simulator wrapped for Selene compatibility.
-pub struct StabSimulator {
+pub struct StabilizerSimulator {
     /// The underlying PECOS stabilizer simulator
     simulator: Stabilizer,
     /// Number of qubits in the system
@@ -59,7 +59,7 @@ pub struct StabSimulator {
     angle_threshold: f64,
 }
 
-impl StabSimulator {
+impl StabilizerSimulator {
     /// Convert a `u64` to `usize` for use with the simulator.
     ///
     /// # Safety
@@ -111,7 +111,7 @@ impl StabSimulator {
     }
 }
 
-impl SimulatorInterface for StabSimulator {
+impl SimulatorInterface for StabilizerSimulator {
     fn exit(&mut self) -> Result<()> {
         Ok(())
     }
@@ -369,12 +369,12 @@ impl SimulatorInterface for StabSimulator {
     }
 }
 
-/// Factory for creating `StabSimulator` instances.
+/// Factory for creating `StabilizerSimulator` instances.
 #[derive(Default)]
-pub struct StabSimulatorFactory;
+pub struct StabilizerSimulatorFactory;
 
-impl SimulatorInterfaceFactory for StabSimulatorFactory {
-    type Interface = StabSimulator;
+impl SimulatorInterfaceFactory for StabilizerSimulatorFactory {
+    type Interface = StabilizerSimulator;
 
     fn init(
         self: Arc<Self>,
@@ -387,8 +387,8 @@ impl SimulatorInterfaceFactory for StabSimulatorFactory {
             Err(e) => Err(anyhow!(
                 "Error parsing arguments to PECOS Stabilizer plugin: {e}"
             )),
-            Ok(params) => Ok(Box::new(StabSimulator {
-                simulator: Stabilizer::with_seed(StabSimulator::to_usize(n_qubits), 0),
+            Ok(params) => Ok(Box::new(StabilizerSimulator {
+                simulator: Stabilizer::with_seed(StabilizerSimulator::to_usize(n_qubits), 0),
                 n_qubits,
                 angle_threshold: params.angle_threshold,
             })),
@@ -397,17 +397,17 @@ impl SimulatorInterfaceFactory for StabSimulatorFactory {
 }
 
 // Export the plugin using Selene's macro
-export_simulator_plugin!(crate::StabSimulatorFactory);
+export_simulator_plugin!(crate::StabilizerSimulatorFactory);
 
 #[cfg(test)]
 mod tests {
-    use super::StabSimulatorFactory;
+    use super::StabilizerSimulatorFactory;
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
 
     #[test]
     fn basic_conformance_test() {
-        let interface = Arc::new(StabSimulatorFactory);
+        let interface = Arc::new(StabilizerSimulatorFactory);
         let args = vec![String::new(), "--angle-threshold=0.001".to_string()];
         run_basic_tests(interface, args);
     }

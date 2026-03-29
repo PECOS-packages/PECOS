@@ -70,9 +70,11 @@ def restore_cwd():  # noqa: ANN201
     which can interfere with other tests that rely on path resolution.
     """
     from pathlib import Path
+
     original_cwd = Path.cwd()
     yield
     import os
+
     os.chdir(original_cwd)
 
 

@@ -18,7 +18,7 @@ circuit.h(&[0]).cx(&[(0, 1)]).rz(0.5, &[0]).mz(&[0]);
 println!("Gates: {}", circuit.gate_count());
 println!("Depth: {}", circuit.depth());
 println!("Width: {}", circuit.width());
-    
+
 }
 
 
@@ -57,7 +57,7 @@ circuit.pz(&[1]);
 
 // Chaining
 circuit.h(&[0]).cx(&[(0, 1)]).h(&[0]).mz(&[0]);
-    
+
 }
 
 
@@ -78,7 +78,7 @@ circuit.cx(&[(0, 1)]).meta("duration_ns", Attribute::Int(50));
 
 // Measurements break the chain but still support metadata
 circuit.mz(&[0]).meta("basis", Attribute::String("Z".into()));
-    
+
 }
 
 
@@ -115,7 +115,7 @@ for node_id in circuit.topological_order() {
 for (i, layer) in circuit.layers().enumerate() {
     println!("Layer {}: {:?}", i, layer);
 }
-    
+
 }
 
 
@@ -138,7 +138,7 @@ circuit.connect(h_node, cx_node, QubitId::from(0)).unwrap();
 // Query connections
 println!("Predecessors of CX: {:?}", circuit.predecessors(cx_node));
 println!("Successors of H: {:?}", circuit.successors(h_node));
-    
+
 }
 
 
@@ -162,7 +162,7 @@ circuit.tick().mz(&[0, 1]);
 
 println!("Number of ticks: {}", circuit.num_ticks());
 println!("Total gates: {}", circuit.gate_count());
-    
+
 }
 
 
@@ -184,7 +184,7 @@ tick.h(&[0]);
 if let Err(e) = tick.try_add_gate(Gate::cx(&[(0, 1)])) {
     println!("Conflict on qubits: {:?}", e.conflicting_qubits);
 }
-    
+
 }
 
 
@@ -203,7 +203,7 @@ tick.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 
 // Circuit-level metadata
 circuit.set_meta("name", Attribute::String("Bell state".into()));
-    
+
 }
 
 
@@ -223,7 +223,7 @@ let dag_circuit = DagCircuit::from(tick_circuit);
 
 // DagCircuit -> TickCircuit
 let tick_circuit2 = TickCircuit::from(dag_circuit);
-    
+
 }
 
 
@@ -251,7 +251,7 @@ println!("Predecessors of n2: {:?}", graph.predecessors(n2));
 println!("Successors of n0: {:?}", graph.successors(n0));
 println!("In-degree of n2: {}", graph.in_degree(n2));
 println!("Out-degree of n0: {}", graph.out_degree(n0));
-    
+
 }
 
 
@@ -288,5 +288,5 @@ println!("Descendants of n0: {:?}", dag.descendants(n0));
 for layer in dag.layers(dag.roots()) {
     println!("Layer: {:?}", layer);
 }
-    
+
 }

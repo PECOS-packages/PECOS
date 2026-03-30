@@ -17,10 +17,10 @@ This module provides gate operation bindings for the sparse stabilizer simulator
 stabilizer gate implementations optimized for sparse representation of stabilizer tableaux.
 """
 
-from pecos.simulators.sparsesim import cmd_init as qinit
-from pecos.simulators.sparsesim import cmd_meas as qmeas
-from pecos.simulators.sparsesim import cmd_one_qubit as q1
-from pecos.simulators.sparsesim import cmd_two_qubit as q2
+from pecos.simulators.sparsestab import cmd_init as qinit
+from pecos.simulators.sparsestab import cmd_meas as qmeas
+from pecos.simulators.sparsestab import cmd_one_qubit as q1
+from pecos.simulators.sparsestab import cmd_two_qubit as q2
 
 gate_dict = {
     # Initialization

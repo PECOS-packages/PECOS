@@ -1,7 +1,7 @@
-pecos.simulators.sparsesim.logical\_sign
+pecos.simulators.sparsestab.logical\_sign
 ========================================
 
-.. automodule:: pecos.simulators.sparsesim.logical_sign
+.. automodule:: pecos.simulators.sparsestab.logical_sign
 
 
 

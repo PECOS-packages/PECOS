@@ -1,7 +1,7 @@
-pecos.simulators.sparsesim.state
+pecos.simulators.sparsestab.state
 ================================
 
-.. automodule:: pecos.simulators.sparsesim.state
+.. automodule:: pecos.simulators.sparsestab.state
 
 
 

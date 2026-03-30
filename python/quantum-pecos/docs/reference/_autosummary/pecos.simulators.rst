@@ -36,4 +36,4 @@
    pecos.simulators.quantum_simulator
    pecos.simulators.qulacs
    pecos.simulators.sim_class_types
-   pecos.simulators.sparsesim
+   pecos.simulators.sparsestab

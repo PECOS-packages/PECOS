@@ -1,7 +1,7 @@
-pecos.simulators.sparsesim.refactor
+pecos.simulators.sparsestab.refactor
 ===================================
 
-.. automodule:: pecos.simulators.sparsesim.refactor
+.. automodule:: pecos.simulators.sparsestab.refactor
 
 
 

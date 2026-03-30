@@ -41,7 +41,7 @@ from pecos.simulators.quest_statevec import QuestStateVec
 from pecos.simulators.qulacs import Qulacs
 
 # Pauli fault propagation sim
-from pecos.simulators.sparsesim import (
+from pecos.simulators.sparsestab import (
     SparseStabPy as SparseStabPy,
 )
 from pecos.simulators.statevec import StateVec

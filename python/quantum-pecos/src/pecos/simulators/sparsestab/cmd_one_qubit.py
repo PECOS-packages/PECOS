@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseStabPy
+    from pecos.simulators.sparsestab.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
 

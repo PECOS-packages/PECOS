@@ -1,7 +1,7 @@
-pecos.simulators.sparsesim.cmd\_two\_qubit
+pecos.simulators.sparsestab.cmd\_two\_qubit
 ==========================================
 
-.. automodule:: pecos.simulators.sparsesim.cmd_two_qubit
+.. automodule:: pecos.simulators.sparsestab.cmd_two_qubit
 
 
 

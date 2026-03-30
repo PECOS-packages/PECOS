@@ -22,7 +22,7 @@ from typing import Any
 
 from pecos.reps.pyphir.op_types import QOp
 from pecos.simulators import Qulacs, StateVec
-from pecos.simulators.sparsesim.state import SparseStabPy
+from pecos.simulators.sparsestab.state import SparseStabPy
 
 JSONType = dict[str, Any] | list[Any] | str | int | float | bool | None
 

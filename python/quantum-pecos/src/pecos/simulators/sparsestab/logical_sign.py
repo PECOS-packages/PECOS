@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
-    from pecos.simulators.sparsesim.state import SparseStabPy
+    from pecos.simulators.sparsestab.state import SparseStabPy
 
 
 def find_logical_signs(

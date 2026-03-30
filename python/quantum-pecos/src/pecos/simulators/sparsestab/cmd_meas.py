@@ -24,10 +24,10 @@ from typing import TYPE_CHECKING
 import pecos as pc
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseStabPy
+    from pecos.simulators.sparsestab.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
-from pecos.simulators.sparsesim.cmd_one_qubit import H5, H
+from pecos.simulators.sparsestab.cmd_one_qubit import H5, H
 
 
 def meas_x(

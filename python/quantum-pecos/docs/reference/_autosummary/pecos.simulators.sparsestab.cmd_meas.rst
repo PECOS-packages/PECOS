@@ -1,7 +1,7 @@
-pecos.simulators.sparsesim.cmd\_meas
+pecos.simulators.sparsestab.cmd\_meas
 ====================================
 
-.. automodule:: pecos.simulators.sparsesim.cmd_meas
+.. automodule:: pecos.simulators.sparsestab.cmd_meas
 
 
 

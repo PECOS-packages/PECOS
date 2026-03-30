@@ -42,10 +42,10 @@ from typing import TYPE_CHECKING
 
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.sim_class_types import Stabilizer
-from pecos.simulators.sparsesim import bindings
-from pecos.simulators.sparsesim.logical_sign import find_logical_signs
-from pecos.simulators.sparsesim.refactor import find_stab as find_stabilizer
-from pecos.simulators.sparsesim.refactor import refactor as refactor_generators
+from pecos.simulators.sparsestab import bindings
+from pecos.simulators.sparsestab.logical_sign import find_logical_signs
+from pecos.simulators.sparsestab.refactor import find_stab as find_stabilizer
+from pecos.simulators.sparsestab.refactor import refactor as refactor_generators
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit

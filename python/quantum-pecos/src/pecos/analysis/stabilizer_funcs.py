@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import Any
 
-    from pecos.simulators.sparsesim.state import Gens, SparseStabPy
+    from pecos.simulators.sparsestab.state import Gens, SparseStabPy
 
 
 def circ2set(circuit: Iterable[tuple[str, Any]]) -> tuple[set, set]:

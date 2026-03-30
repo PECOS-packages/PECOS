@@ -35,7 +35,7 @@ Date        Author  Comment
                     purpose.
 """
 
-from pecos.simulators.sparsesim import bindings
+from pecos.simulators.sparsestab import bindings
 
 # Class that represents the stabilizer state
-from pecos.simulators.sparsesim.state import SparseStabPy
+from pecos.simulators.sparsestab.state import SparseStabPy

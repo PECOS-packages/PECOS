@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseStabPy
+    from pecos.simulators.sparsestab.state import SparseStabPy
 
 
 def find_stab(state: SparseStabPy, xs: set[int], zs: set[int]) -> tuple[bool, set[int]]:

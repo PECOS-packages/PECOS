@@ -22,11 +22,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseStabPy
+    from pecos.simulators.sparsestab.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
-from pecos.simulators.sparsesim.cmd_meas import meas_z
-from pecos.simulators.sparsesim.cmd_one_qubit import H2, H5, H6, H, X
+from pecos.simulators.sparsestab.cmd_meas import meas_z
+from pecos.simulators.sparsestab.cmd_one_qubit import H2, H5, H6, H, X
 
 
 def init_zero(

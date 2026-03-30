@@ -114,7 +114,7 @@ def _dedent_code(code: str) -> str:
             if line.strip():
                 dedented_lines.append(line[int(min_indent) :])
             else:
-                dedented_lines.append(line)
+                dedented_lines.append("")
         return "\n".join(dedented_lines)
     return code.strip()
 
@@ -882,9 +882,11 @@ def restore_cwd():  # noqa: ANN201
     which can interfere with other tests that rely on path resolution.
     """
     from pathlib import Path
+
     original_cwd = Path.cwd()
     yield
     import os
+
     os.chdir(original_cwd)
 
 
@@ -1135,7 +1137,9 @@ def _generate_unified_rust_crate(markdown_files: list[Path], docs_dir: Path, cra
             test_content += "\n" + "\n".join(result) + "\n"
             total_tests += 1
 
-        test_file.write_text(test_content)
+        # Strip trailing whitespace from each line
+        cleaned_lines = [line.rstrip() for line in test_content.split("\n")]
+        test_file.write_text("\n".join(cleaned_lines))
 
     print(f"Generated unified Rust test crate: {total_tests} tests in {crate_dir}")
 

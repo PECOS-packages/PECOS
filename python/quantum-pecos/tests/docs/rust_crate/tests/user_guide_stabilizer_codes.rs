@@ -25,7 +25,7 @@ let xzzx = X(0) & Z(1) & Z(2) & X(3);  // XZZXI...
 assert!(x0.commutes_with(&z3));
 // X and Z on the SAME qubit anticommute:
 assert!(!X(0).commutes_with(&Z(0)));
-    
+
 }
 
 
@@ -45,7 +45,7 @@ let code = StabilizerCode::from_group(group);
 
 // Or use the built-in constructor:
 let code = StabilizerCode::repetition(3);
-    
+
 }
 
 
@@ -60,7 +60,7 @@ let code = StabilizerCode::steane();
 println!("n = {}", code.num_qubits());          // 7
 println!("k = {}", code.num_logical_qubits());   // 1
 println!("{}", code.code_parameters());           // [[7, 1]]
-    
+
 }
 
 

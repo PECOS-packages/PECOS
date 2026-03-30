@@ -2,6 +2,7 @@
 **.DS_Store
 tmp/
 **/.*/settings.local.json
+**/worktrees/
 
 # LLVM (extracted from archive for Windows development)
 /llvm/

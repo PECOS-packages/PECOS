@@ -53,10 +53,10 @@ class StabPlugin(Simulator):
         libdir = Path(__file__).parent / "_dist" / "lib"
         system = platform.system()
         if system == "Linux":
-            return libdir / "libpecos_selene_stab.so"
+            return libdir / "libpecos_selene_stabilizer.so"
         if system == "Darwin":
-            return libdir / "libpecos_selene_stab.dylib"
+            return libdir / "libpecos_selene_stabilizer.dylib"
         if system == "Windows":
-            return libdir / "pecos_selene_stab.dll"
+            return libdir / "pecos_selene_stabilizer.dll"
         msg = f"Unsupported platform: {system}"
         raise RuntimeError(msg)

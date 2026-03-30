@@ -105,9 +105,9 @@ fn example_amplitude_damping() {
 
     // Circuit: prepare |1⟩ and measure
     let commands = CommandBuilder::new()
-        .pz(0)
-        .x(0) // Prepare |1⟩
-        .mz(0)
+        .pz(&[0])
+        .x(&[0]) // Prepare |1⟩
+        .mz(&[0])
         .build();
 
     for gamma in [0.0, 0.1, 0.3, 0.5] {
@@ -239,10 +239,10 @@ fn example_gate_specific_noise() {
 
     // Test H gate
     let h_commands = CommandBuilder::new()
-        .pz(0)
-        .h(0)
-        .h(0) // H^2 = I, should return to |0⟩
-        .mz(0)
+        .pz(&[0])
+        .h(&[0])
+        .h(&[0]) // H^2 = I, should return to |0⟩
+        .mz(&[0])
         .build();
 
     let noise_h = ComposableNoiseModel::new()
@@ -270,10 +270,10 @@ fn example_gate_specific_noise() {
 
     // Test SZ gate
     let sz_commands = CommandBuilder::new()
-        .pz(0)
-        .sz(0)
-        .szdg(0) // SZ * SZ^dag = I
-        .mz(0)
+        .pz(&[0])
+        .sz(&[0])
+        .szdg(&[0]) // SZ * SZ^dag = I
+        .mz(&[0])
         .build();
 
     let noise_sz = ComposableNoiseModel::new()
@@ -406,12 +406,12 @@ fn example_correlated_noise() {
 
         // Bell state circuit
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut state = SparseStab::new(2);
@@ -528,10 +528,10 @@ fn example_context_aware_noise() {
         .add_channel(ContextAwareChannel::new(0.05, 0.50)); // 5% active, 50% leaked
 
     let commands = CommandBuilder::new()
-        .pz(0)
-        .h(0)
-        .h(0) // Should return to |0⟩
-        .mz(0)
+        .pz(&[0])
+        .h(&[0])
+        .h(&[0]) // Should return to |0⟩
+        .mz(&[0])
         .build();
 
     let mut state = SparseStab::new(1);
@@ -583,10 +583,10 @@ fn example_builtin_gate_dependent() {
 
     // Test H gate (high error rate)
     let h_commands = CommandBuilder::new()
-        .pz(0)
-        .h(0)
-        .h(0) // H^2 = I
-        .mz(0)
+        .pz(&[0])
+        .h(&[0])
+        .h(&[0]) // H^2 = I
+        .mz(&[0])
         .build();
 
     let noise = ComposableNoiseModel::new()
@@ -609,10 +609,10 @@ fn example_builtin_gate_dependent() {
 
     // Test SZ gate (low error rate)
     let sz_commands = CommandBuilder::new()
-        .pz(0)
-        .sz(0)
-        .szdg(0) // SZ * SZ^dag = I
-        .mz(0)
+        .pz(&[0])
+        .sz(&[0])
+        .szdg(&[0]) // SZ * SZ^dag = I
+        .mz(&[0])
         .build();
 
     let noise = ComposableNoiseModel::new()
@@ -665,12 +665,12 @@ fn example_builtin_correlated() {
 
         // Bell state circuit
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut state = SparseStab::new(2);

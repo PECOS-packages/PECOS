@@ -5,7 +5,7 @@ use crate::{QuestDensityMatrix, QuestStateVec};
 #[cfg(test)]
 use num_complex::Complex64;
 #[cfg(test)]
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 #[cfg(test)]
 use pecos_num::assert_relative_eq;
 #[cfg(test)]
@@ -150,13 +150,13 @@ fn test_cnot_gate() {
 
     // Test CNOT with control=0, target=1
     // |00⟩ -> |00⟩
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
     assert_complex_eq(sim.get_amplitude(0b00), Complex64::new(1.0, 0.0), EPSILON);
 
     sim.reset();
 
     // |10⟩ -> |11⟩
-    sim.x(&qid(0)).cx(&qid2(0, 1));
+    sim.x(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     assert_complex_eq(sim.get_amplitude(0b11), Complex64::new(1.0, 0.0), EPSILON);
 }
 
@@ -167,7 +167,7 @@ fn test_cz_gate() {
     // Prepare |11⟩ state
     sim.x(&qid(0)).x(&qid(1));
     // Apply CZ: |11⟩ -> -|11⟩
-    sim.cz(&qid2(0, 1));
+    sim.cz(&[(QubitId(0), QubitId(1))]);
 
     assert_complex_eq(sim.get_amplitude(0b11), Complex64::new(-1.0, 0.0), EPSILON);
 }
@@ -177,7 +177,7 @@ fn test_bell_state_preparation() {
     let mut sim = QuestStateVec::new(2);
 
     // Create Bell state (|00⟩ + |11⟩)/√2
-    sim.h(&qid(0)).cx(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     let sqrt2_inv = 1.0 / 2.0_f64.sqrt();
     assert_complex_eq(
@@ -254,8 +254,8 @@ fn test_method_chaining() {
 
     // Test that method chaining works
     sim.h(&qid(0))
-        .cx(&qid2(0, 1))
-        .cx(&qid2(1, 2))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))])
         .h(&qid(2))
         .z(&qid(1))
         .y(&qid(0));
@@ -283,7 +283,7 @@ fn test_density_matrix_operations() {
     let mut sim = QuestDensityMatrix::new(2);
 
     // Apply gates
-    sim.h(&qid(0)).cx(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Check probabilities (diagonal elements)
     let p0 = sim.probability(0);
@@ -322,7 +322,7 @@ fn test_parallel_simulators() {
         .map(|i| {
             thread::spawn(move || {
                 let mut sim: QuestStateVec = QuestStateVec::with_seed(2, i);
-                sim.h(&qid(0)).cx(&qid2(0, 1));
+                sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
                 // Each thread should create a valid Bell state
                 let amp00 = sim.get_amplitude(0);
@@ -390,7 +390,10 @@ fn test_rzz_gate() {
     sim.x(&qid(0)).x(&qid(1));
 
     // Apply RZZ(π/2)
-    sim.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+    sim.rzz(
+        Angle64::from_radians(FRAC_PI_2),
+        &[(QubitId(0), QubitId(1))],
+    );
 
     // QuEST's RZZ appears to apply a different scaling
     // RZZ(π/2) on |11⟩ gives phase -π instead of -π/4
@@ -437,7 +440,7 @@ fn test_measurement_determinism_with_seed() {
     let mut results1 = Vec::new();
     for _ in 0..num_measurements {
         sim1.reset();
-        sim1.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
+        sim1.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Create Bell state
         results1.push(sim1.mz(&qid(0))[0].outcome);
     }
 
@@ -446,7 +449,7 @@ fn test_measurement_determinism_with_seed() {
     let mut results2 = Vec::new();
     for _ in 0..num_measurements {
         sim2.reset();
-        sim2.h(&qid(0)).cx(&qid2(0, 1)); // Create same Bell state
+        sim2.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Create same Bell state
         results2.push(sim2.mz(&qid(0))[0].outcome);
     }
 
@@ -523,7 +526,7 @@ fn test_density_matrix_measurement_determinism_with_seed() {
     let mut results1 = Vec::new();
     for _ in 0..num_measurements {
         sim1.reset();
-        sim1.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
+        sim1.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Create Bell state
         results1.push(sim1.mz(&qid(0))[0].outcome);
     }
 
@@ -532,7 +535,7 @@ fn test_density_matrix_measurement_determinism_with_seed() {
     let mut results2 = Vec::new();
     for _ in 0..num_measurements {
         sim2.reset();
-        sim2.h(&qid(0)).cx(&qid2(0, 1)); // Create same Bell state
+        sim2.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Create same Bell state
         results2.push(sim2.mz(&qid(0))[0].outcome);
     }
 

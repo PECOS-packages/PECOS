@@ -7,7 +7,7 @@ from pecos import (
     biased_depolarizing_noise,
     depolarizing_noise,
     qasm_engine,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 
@@ -36,11 +36,11 @@ class TestQasmSimRslib:
 
     def test_import_utilities(self) -> None:
         """Test that we can import utility functions from pecos."""
-        from pecos import sparse_stabilizer, state_vector
+        from pecos import sparse_stab, state_vector
 
         # Test quantum engine builders
         assert callable(state_vector)
-        assert callable(sparse_stabilizer)
+        assert callable(sparse_stab)
 
     def test_basic_simulation(self) -> None:
         """Test basic QASM simulation using pecos imports."""
@@ -117,7 +117,7 @@ class TestQasmSimRslib:
             .seed(42)
             .workers(2)
             .noise(biased_depolarizing_noise().with_uniform_probability(0.003))
-            .quantum(sparse_stabilizer())
+            .quantum(sparse_stab())
             .build()
         )
 

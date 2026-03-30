@@ -22,7 +22,7 @@
 //!
 //! Builder classes:
 //! - `StateVectorEngineBuilder` - Builder for state vector engines
-//! - `SparseStabilizerEngineBuilder` - Builder for sparse stabilizer engines
+//! - `SparseStabEngineBuilder` - Builder for sparse stabilizer engines
 //! - `QasmEngineBuilder` - Builder for QASM engines
 //! - `QisEngineBuilder` - Builder for QIS engines
 //! - `PhirJsonEngineBuilder` - Builder for PHIR JSON engines
@@ -58,8 +58,8 @@ pub fn register_engines_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         parent.getattr("StateVectorEngineBuilder")?,
     )?;
     engines.add(
-        "SparseStabilizerEngineBuilder",
-        parent.getattr("SparseStabilizerEngineBuilder")?,
+        "SparseStabEngineBuilder",
+        parent.getattr("SparseStabEngineBuilder")?,
     )?;
     engines.add("QasmEngineBuilder", parent.getattr("QasmEngineBuilder")?)?;
     engines.add("QisEngineBuilder", parent.getattr("QisEngineBuilder")?)?;

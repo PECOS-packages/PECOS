@@ -756,7 +756,7 @@ impl OperationProcessor {
                     // This conversion may lose precision for very large durations (>52 bits)
                     #[allow(clippy::cast_precision_loss)]
                     let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
-                    builder.add_idle(duration_seconds, &qubit_indices);
+                    builder.idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Transport {
@@ -774,7 +774,7 @@ impl OperationProcessor {
                     // This conversion may lose precision for very large durations (>52 bits)
                     #[allow(clippy::cast_precision_loss)]
                     let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
-                    builder.add_idle(duration_seconds, &qubit_indices);
+                    builder.idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Delay {
@@ -792,7 +792,7 @@ impl OperationProcessor {
                     // This conversion may lose precision for very large durations (>52 bits)
                     #[allow(clippy::cast_precision_loss)]
                     let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
-                    builder.add_idle(duration_seconds, &qubit_indices);
+                    builder.idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Timing {
@@ -1592,10 +1592,10 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         match gate_type {
             "RZ" => {
-                builder.add_rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
+                builder.rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
             }
             "R1XY" => {
-                builder.add_r1xy(
+                builder.r1xy(
                     Angle64::from_radians(angle_args[0]),
                     Angle64::from_radians(angle_args[1]),
                     &[qubit_args[0]],
@@ -1611,31 +1611,31 @@ impl OperationProcessor {
                 builder.add_gate_command(&gate);
             }
             "SZZ" => {
-                builder.add_szz(&[qubit_args[0]], &[qubit_args[1]]);
+                builder.szz(&[(qubit_args[0], qubit_args[1])]);
             }
             "CX" => {
-                builder.add_cx(&[qubit_args[0]], &[qubit_args[1]]);
+                builder.cx(&[(qubit_args[0], qubit_args[1])]);
             }
             "H" => {
-                builder.add_h(&[qubit_args[0]]);
+                builder.h(&[qubit_args[0]]);
             }
             "X" => {
-                builder.add_x(&[qubit_args[0]]);
+                builder.x(&[qubit_args[0]]);
             }
             "Y" => {
-                builder.add_y(&[qubit_args[0]]);
+                builder.y(&[qubit_args[0]]);
             }
             "Z" => {
-                builder.add_z(&[qubit_args[0]]);
+                builder.z(&[qubit_args[0]]);
             }
             "Measure" => {
-                builder.add_measurements(&[qubit_args[0]]);
+                builder.mz(&[qubit_args[0]]);
             }
             "Init" => {
                 // Initialize qubit to |0⟩ state using the Prep gate
                 for &qubit in qubit_args {
                     // The Prep gate initializes a qubit to the |0⟩ state
-                    builder.add_prep(&[qubit]);
+                    builder.pz(&[qubit]);
                 }
             }
             _ => {

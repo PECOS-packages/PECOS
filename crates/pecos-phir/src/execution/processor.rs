@@ -207,27 +207,27 @@ impl PhirProcessor {
             // Parameterized single-qubit gates
             QuantumOp::RX(angle) => {
                 let qubit_id = self.extract_single_qubit(instruction, "RX")?;
-                message_builder.add_rx(*angle, &[qubit_id]);
+                message_builder.rx(*angle, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::RY(angle) => {
                 let qubit_id = self.extract_single_qubit(instruction, "RY")?;
-                message_builder.add_ry(*angle, &[qubit_id]);
+                message_builder.ry(*angle, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::RZ(angle) => {
                 let qubit_id = self.extract_single_qubit(instruction, "RZ")?;
-                message_builder.add_rz(*angle, &[qubit_id]);
+                message_builder.rz(*angle, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::R1XY(theta, phi) => {
                 let qubit_id = self.extract_single_qubit(instruction, "R1XY")?;
-                message_builder.add_r1xy(*theta, *phi, &[qubit_id]);
+                message_builder.r1xy(*theta, *phi, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::U3(theta, phi, lambda) => {
                 let qubit_id = self.extract_single_qubit(instruction, "U3")?;
-                message_builder.add_u(*theta, *phi, *lambda, &[qubit_id]);
+                message_builder.u(*theta, *phi, *lambda, &[qubit_id]);
                 Ok(true)
             }
 
@@ -242,7 +242,7 @@ impl PhirProcessor {
             }
             QuantumOp::RZZ(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "RZZ")?;
-                message_builder.add_rzz(*angle, &[q1], &[q2]);
+                message_builder.rzz(*angle, &[(q1, q2)]);
                 Ok(true)
             }
             QuantumOp::CPhase(angle) => {
@@ -278,7 +278,7 @@ impl PhirProcessor {
                 if !instruction.operands.is_empty() {
                     let qubit_id =
                         usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-                    message_builder.add_prep(&[qubit_id]);
+                    message_builder.pz(&[qubit_id]);
                 }
                 Ok(true)
             }
@@ -287,7 +287,7 @@ impl PhirProcessor {
                 if !instruction.operands.is_empty() {
                     let qubit_id =
                         usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-                    message_builder.add_prep(&[qubit_id]);
+                    message_builder.pz(&[qubit_id]);
                 }
                 Ok(true)
             }
@@ -345,28 +345,28 @@ impl PhirProcessor {
 
         match gate_name {
             "H" => {
-                message_builder.add_h(&[qubit_id]);
+                message_builder.h(&[qubit_id]);
             }
             "X" => {
-                message_builder.add_x(&[qubit_id]);
+                message_builder.x(&[qubit_id]);
             }
             "Y" => {
-                message_builder.add_y(&[qubit_id]);
+                message_builder.y(&[qubit_id]);
             }
             "Z" => {
-                message_builder.add_z(&[qubit_id]);
+                message_builder.z(&[qubit_id]);
             }
             "S" => {
-                message_builder.add_sz(&[qubit_id]);
+                message_builder.sz(&[qubit_id]);
             }
             "Sdg" => {
-                message_builder.add_szdg(&[qubit_id]);
+                message_builder.szdg(&[qubit_id]);
             }
             "T" => {
-                message_builder.add_t(&[qubit_id]);
+                message_builder.t(&[qubit_id]);
             }
             "Tdg" => {
-                message_builder.add_tdg(&[qubit_id]);
+                message_builder.tdg(&[qubit_id]);
             }
             _ => {
                 return Err(PhirError::internal(format!(
@@ -389,10 +389,10 @@ impl PhirProcessor {
 
         match gate_name {
             "CX" => {
-                message_builder.add_cx(&[q1], &[q2]);
+                message_builder.cx(&[(q1, q2)]);
             }
             "CZ" => {
-                message_builder.add_cz(&[q1], &[q2]);
+                message_builder.cz(&[(q1, q2)]);
             }
             _ => {
                 return Err(PhirError::internal(format!(
@@ -423,7 +423,7 @@ impl PhirProcessor {
         // Track maximum qubit index
         self.qubit_count = self.qubit_count.max(qubit_id + 1);
 
-        message_builder.add_measurements(&[qubit_id]);
+        message_builder.mz(&[qubit_id]);
 
         // Track measurement mapping for later processing
         // The measurement index maps to which variable should receive the result

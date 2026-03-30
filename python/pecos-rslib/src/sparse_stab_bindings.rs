@@ -16,17 +16,17 @@ use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 
-#[pyclass(name = "SparseSim", module = "pecos_rslib")]
-pub struct PySparseSim {
+#[pyclass(name = "SparseStab", module = "pecos_rslib")]
+pub struct PySparseStab {
     inner: SparseStab,
 }
 
 #[pymethods]
-impl PySparseSim {
+impl PySparseStab {
     #[new]
     #[pyo3(signature = (num_qubits, seed=None))]
     fn new(num_qubits: usize, seed: Option<u64>) -> Self {
-        PySparseSim {
+        PySparseStab {
             inner: match seed {
                 Some(s) => SparseStab::with_seed(num_qubits, s),
                 None => SparseStab::new(num_qubits),
@@ -290,7 +290,7 @@ impl PySparseSim {
 
         let q1: usize = location.get_item(0)?.extract()?;
         let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[QubitId(q1), QubitId(q2)];
+        let pair = &[(QubitId(q1), QubitId(q2))];
 
         match symbol {
             "CX" | "CNOT" => {
@@ -427,7 +427,12 @@ impl PySparseSim {
         }
     }
 
-    /// High-level `run_gate` method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations.
+    ///
+    /// For common gates without special parameters, collects all locations and
+    /// dispatches one batched call to the simulator instead of per-location calls.
+    /// This avoids per-location Python↔Rust overhead and enables simulator-level
+    /// batch optimizations (gate fusion, joint measurement sampling, etc.).
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -446,22 +451,38 @@ impl PySparseSim {
             return Ok(output.into());
         }
 
-        // Convert locations to a vector
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
 
+        // Check if params have special keys that require per-location dispatch
+        // Gates with special params need per-location dispatch (forced outcomes,
+        // rotation angles, conditional execution, etc.)
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+
+        // Fast path: batch dispatch for common gates without special params
+        if !has_special_params
+            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
+                &mut self.inner,
+                symbol,
+                &locations_set,
+                py,
+            )?
+        {
+            return Ok(result);
+        }
+
+        // Fallback: per-location dispatch for parameterized/special gates
         for location in locations_set.iter() {
-            // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
                 location.clone().cast_into()?
             } else {
-                // Single qubit - wrap in tuple
                 PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
-            // Call the underlying run_gate_internal
             let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
 
-            // Only add to output if result is Some (non-zero measurement)
             if let Some(value) = result {
                 output.set_item(location, value)?;
             }
@@ -469,6 +490,8 @@ impl PySparseSim {
 
         Ok(output.into())
     }
+
+    // try_batch_dispatch is now shared via crate::simulator_utils::try_clifford_batch_dispatch
 
     /// Execute a quantum circuit
     #[pyo3(signature = (circuit, removed_locations=None))]
@@ -558,7 +581,7 @@ impl PySparseSim {
         let stabs_dict = serialize_gens(self.inner.stabs())?;
         let destabs_dict = serialize_gens(self.inner.destabs())?;
 
-        let cls = py.get_type::<PySparseSim>();
+        let cls = py.get_type::<PySparseStab>();
         let from_pickle = cls.getattr("_from_pickle")?;
         PyTuple::new(
             py,
@@ -623,7 +646,7 @@ impl PySparseSim {
         let mut inner = SparseStab::new(num_qubits);
         *inner.stabs_mut() = stabs;
         *inner.destabs_mut() = destabs;
-        Ok(PySparseSim { inner })
+        Ok(PySparseStab { inner })
     }
 
     /// Returns the raw gens data (`col_x`, `col_z`, `row_x`, `row_z`) for stabs or destabs.

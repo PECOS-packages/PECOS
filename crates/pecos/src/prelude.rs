@@ -30,7 +30,7 @@
 //! let program = Qasm::from_string(qasm_code);
 //!
 //! let results = sim(program)
-//!     .quantum(sparse_stabilizer())
+//!     .quantum(sparse_stab())
 //!     .seed(42)
 //!     .run(1000)?;
 //! # Ok::<(), pecos_core::errors::PecosError>(())

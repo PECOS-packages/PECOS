@@ -273,7 +273,7 @@ mod tests {
         // Create a simple quantum circuit with an X gate on qubit 0
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
+        builder.x(&[0]);
         let input = builder.build();
 
         // Process the input with 1% noise
@@ -341,8 +341,8 @@ mod tests {
         // Create a simple quantum circuit with a Hadamard gate and measurement
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_h(&[0]);
-        builder.add_measurements(&[0]);
+        builder.h(&[0]);
+        builder.mz(&[0]);
         let input = builder.build();
 
         // Process the input with both systems - they should produce the same results
@@ -419,8 +419,8 @@ mod tests {
         // Create a simple quantum circuit with an X gate on qubit 0 and measurement
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
-        builder.add_measurements(&[0]);
+        builder.x(&[0]);
+        builder.mz(&[0]);
         let input = builder.build();
 
         // Process the input using the blanket implementation of Engine for EngineSystem
@@ -442,8 +442,8 @@ mod tests {
         // Create a simple quantum circuit with an X gate on qubit 0 and measurement
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
-        builder.add_measurements(&[0]);
+        builder.x(&[0]);
+        builder.mz(&[0]);
         let input = builder.build();
 
         // Process the input through the system

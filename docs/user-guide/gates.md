@@ -9,10 +9,10 @@ All examples in this guide use the following setup:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import SparseSim
+    from pecos.simulators import SparseStab
 
     # Create a stabilizer simulator with 5 qubits
-    state = SparseSim(num_qubits=5)
+    state = SparseStab(num_qubits=5)
 
     # Qubit indices for examples
     q = 0
@@ -32,10 +32,10 @@ All examples in this guide use the following setup:
     ```
 
 ```hidden-python
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 # Create a stabilizer simulator with 5 qubits
-state = SparseSim(num_qubits=5)
+state = SparseStab(num_qubits=5)
 
 # Qubit indices for examples
 q = 0
@@ -62,7 +62,7 @@ fn main() {
 
 PECOS supports two categories of quantum gates:
 
-- **Clifford Gates**: Gates that map Pauli operators to Pauli operators. These can be efficiently simulated using stabilizer simulators like `SparseSim`.
+- **Clifford Gates**: Gates that map Pauli operators to Pauli operators. These can be efficiently simulated using stabilizer simulators like `SparseStab`.
 - **Non-Clifford Gates**: Rotation gates and other operations that require state vector simulation.
 
 ## Quick Reference
@@ -113,10 +113,10 @@ The examples below use a simulator instance. Run this setup code first:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import SparseSim
+    from pecos.simulators import SparseStab
 
     # Create a stabilizer simulator with 5 qubits
-    state = SparseSim(num_qubits=5)
+    state = SparseStab(num_qubits=5)
 
     # Qubit indices for examples
     q = 0
@@ -479,7 +479,7 @@ CX = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cx(&[control, target]);
+    sim.cx(&[(control, target)]);
     ```
 
 ---
@@ -511,7 +511,7 @@ CY = [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cy(&[control, target]);
+    sim.cy(&[(control, target)]);
     ```
 
 ---
@@ -543,7 +543,7 @@ CZ = [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.cz(&[q1, q2]);
+    sim.cz(&[(q1, q2)]);
     ```
 
 ---
@@ -575,7 +575,7 @@ SWAP = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.swap(&[q1, q2]);
+    sim.swap(&[(q1, q2)]);
     ```
 
 ---
@@ -602,7 +602,7 @@ iSWAP = [[1, 0, 0, 0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.iswap(&[q1, q2]);
+    sim.iswap(&[(q1, q2)]);
     ```
 
 ---
@@ -629,8 +629,8 @@ SXX = 1/√2 [[1,  0,  0, -i],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.sxx(&[q1, q2]);
-    sim.sxxdg(&[q1, q2]);  // Adjoint
+    sim.sxx(&[(q1, q2)]);
+    sim.sxxdg(&[(q1, q2)]);  // Adjoint
     ```
 
 ---
@@ -649,8 +649,8 @@ IZ → YX
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.syy(&[q1, q2]);
-    sim.syydg(&[q1, q2]);  // Adjoint
+    sim.syy(&[(q1, q2)]);
+    sim.syydg(&[(q1, q2)]);  // Adjoint
     ```
 
 ---
@@ -682,8 +682,8 @@ SZZ = e^(-iπ/4) [[1,  0,  0,  0],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.szz(&[q1, q2]);
-    sim.szzdg(&[q1, q2]);  // Adjoint
+    sim.szz(&[(q1, q2)]);
+    sim.szzdg(&[(q1, q2)]);  // Adjoint
     ```
 
 ---
@@ -710,7 +710,7 @@ G = 1/2 [[ 1,  1,  1, -1],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.g(&[q1, q2]);
+    sim.g(&[(q1, q2)]);
     ```
 
 ---
@@ -921,7 +921,7 @@ Two-qubit rotation implementing evolution under the XX interaction.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rxx(theta, &[q1, q2]);
+    sim.rxx(theta, &[(q1, q2)]);
     ```
 
 ---
@@ -940,7 +940,7 @@ The YY coupling generates entanglement through the Y⊗Y interaction. For exampl
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.ryy(theta, &[q1, q2]);
+    sim.ryy(theta, &[(q1, q2)]);
     ```
 
 ---
@@ -972,7 +972,7 @@ RZZ(θ) = [[e^(-iθ/2),     0,          0,          0       ],
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.rzz(theta, &[q1, q2]);
+    sim.rzz(theta, &[(q1, q2)]);
     ```
 
 ---
@@ -1071,7 +1071,7 @@ These operations measure and then prepare the qubit in a specific eigenstate reg
 
 | Simulator | Clifford Gates | Non-Clifford Gates | Notes |
 |-----------|---------------|-------------------|-------|
-| **SparseSim** | All | None | Default, fastest for QEC |
+| **SparseStab** | All | None | Default, fastest for QEC |
 | **StateVec** | All | All | Pure Rust state vector |
 | **Qulacs** | All | All | High-performance C++ backend |
 | **CuStateVec** | All | All | GPU-accelerated (requires CUDA) |

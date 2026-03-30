@@ -50,15 +50,15 @@ fn create_surface_code_sampler(
 
     // Initialize data qubits
     for q in 0..num_data {
-        dag.pz(q);
-        dag.h(q);
+        dag.pz(&[q]);
+        dag.h(&[q]);
     }
 
     // Syndrome extraction rounds
     for _round in 0..rounds {
         // Initialize ancillas
         for a in 0..num_ancilla {
-            dag.pz(num_data + a);
+            dag.pz(&[num_data + a]);
         }
 
         // Entangle ancillas with data (simplified pattern)
@@ -66,13 +66,13 @@ fn create_surface_code_sampler(
             let ancilla = num_data + a;
             let d1 = a % num_data;
             let d2 = (a + 1) % num_data;
-            dag.cx(ancilla, d1);
-            dag.cx(ancilla, d2);
+            dag.cx(&[(ancilla, d1)]);
+            dag.cx(&[(ancilla, d2)]);
         }
 
         // Measure ancillas
         for a in 0..num_ancilla {
-            dag.mz(num_data + a);
+            dag.mz(&[num_data + a]);
         }
     }
 

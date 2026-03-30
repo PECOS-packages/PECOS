@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn test_ascii_single_gate() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
+        dag.h(&[0]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let ascii = render_circuit_ascii(&layout, &CircuitAsciiOptions::default());
@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn test_ascii_two_qubit_gate() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let ascii = render_circuit_ascii(&layout, &CircuitAsciiOptions::default());
@@ -276,8 +276,8 @@ mod tests {
     #[test]
     fn test_ascii_parallel_gates() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.x(1);
+        dag.h(&[0]);
+        dag.x(&[1]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let ascii = render_circuit_ascii(&layout, &CircuitAsciiOptions::default());
@@ -297,8 +297,8 @@ mod tests {
     #[test]
     fn test_ascii_with_measurement() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.mz(0);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let ascii = render_circuit_ascii(&layout, &CircuitAsciiOptions::default());
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn test_ascii_no_labels() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
+        dag.h(&[0]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let options = CircuitAsciiOptions {

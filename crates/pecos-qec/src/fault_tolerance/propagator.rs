@@ -34,10 +34,10 @@
 //!
 //! // Build a simple syndrome extraction circuit
 //! let mut dag = DagCircuit::new();
-//! dag.pz(2);       // Prep ancilla
-//! dag.cx(0, 2);    // CNOT data -> ancilla
-//! dag.cx(1, 2);    // CNOT data -> ancilla
-//! dag.mz(2);       // Measure ancilla
+//! dag.pz(&[2]);       // Prep ancilla
+//! dag.cx(&[(0, 2)]);    // CNOT data -> ancilla
+//! dag.cx(&[(1, 2)]);    // CNOT data -> ancilla
+//! dag.mz(&[2]);       // Measure ancilla
 //!
 //! // Build the fault influence map
 //! let analyzer = DagFaultAnalyzer::new(&dag);
@@ -220,20 +220,20 @@ impl<'a> PropagationContext<'a> {
 
     /// Initializes the Pauli observable for a Z-basis measurement.
     pub fn init_z_measurement(&mut self, qubit: usize) {
-        self.prop.add_z(qubit);
+        self.prop.track_z(&[qubit]);
     }
 
     /// Initializes the Pauli observable for an X-basis measurement.
     pub fn init_x_measurement(&mut self, qubit: usize) {
-        self.prop.add_x(qubit);
+        self.prop.track_x(&[qubit]);
     }
 
     /// Initializes the Pauli observable based on measurement basis.
     pub fn init_measurement(&mut self, qubit: usize, basis: u8) {
         if basis == 0 {
-            self.prop.add_z(qubit);
+            self.prop.track_z(&[qubit]);
         } else {
-            self.prop.add_x(qubit);
+            self.prop.track_x(&[qubit]);
         }
     }
 
@@ -376,15 +376,15 @@ impl InfluenceRecorder for CountingRecorder {
 /// use pecos_simulators::PauliProp;
 ///
 /// let mut dag = DagCircuit::new();
-/// dag.h(0);
-/// dag.cx(0, 1);
+/// dag.h(&[0]);
+/// dag.cx(&[(0, 1)]);
 ///
 /// // Pre-compute indices (do this once)
 /// let propagator = DagPropagator::new(&dag);
 ///
 /// // Propagate multiple times efficiently
 /// let mut prop = PauliProp::new();
-/// prop.add_z(0);
+/// prop.track_z(&[0]);
 /// propagator.propagate_sparse(&mut prop, Direction::Forward);
 /// ```
 pub struct DagPropagator<'a> {
@@ -477,9 +477,11 @@ impl<'a> DagPropagator<'a> {
     /// use pecos_quantum::DagCircuit;
     ///
     /// let mut dag = DagCircuit::new();
-    /// let prep = dag.pz(0).node();  // prep returns a PrepHandle with .node()
-    /// dag.h(0);                      // h returns &mut Self, not a handle
-    /// let meas = dag.mz(0).node();  // mz returns a MeasureHandle with .node()
+    /// dag.pz(&[0]);
+    /// dag.h(&[0]);
+    /// dag.mz(&[0]);
+    ///
+    /// let prep = dag.topological_order()[0]; // first node is PZ
     ///
     /// let propagator = DagPropagator::new(&dag);
     ///
@@ -595,10 +597,10 @@ impl<'a> DagPropagator<'a> {
                         for q in &gate.qubits {
                             let idx = q.index();
                             if prop.contains_x(idx) {
-                                prop.add_x(idx); // toggle off
+                                prop.track_x(&[idx]); // toggle off
                             }
                             if prop.contains_z(idx) {
-                                prop.add_z(idx); // toggle off
+                                prop.track_z(&[idx]); // toggle off
                             }
                             active_qubits.remove(&idx);
                         }
@@ -772,15 +774,15 @@ mod tests {
     #[test]
     fn test_dag_propagator_basic() {
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let propagator = DagPropagator::new(&dag);
 
         // Start with Z at the end
         let mut prop = PauliProp::new();
-        prop.add_z(0);
+        prop.track_z(&[0]);
 
         // Propagate backward through H: Z -> X
         propagator.propagate_sparse(&mut prop, Direction::Backward);
@@ -793,20 +795,20 @@ mod tests {
     #[test]
     fn test_dag_propagator_cx() {
         let mut dag = DagCircuit::new();
-        dag.cx(0, 1);
+        dag.cx(&[(0, 1)]);
 
         let propagator = DagPropagator::new(&dag);
 
         // Test 1: X on control spreads to target
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
         propagator.propagate_sparse(&mut prop, Direction::Forward);
         assert!(prop.contains_x(0));
         assert!(prop.contains_x(1));
 
         // Test 2: Z on target spreads to control
         let mut prop2 = PauliProp::new();
-        prop2.add_z(1);
+        prop2.track_z(&[1]);
         propagator.propagate_sparse(&mut prop2, Direction::Backward);
         assert!(prop2.contains_z(0));
         assert!(prop2.contains_z(1));
@@ -815,10 +817,10 @@ mod tests {
     #[test]
     fn test_dag_fault_analyzer_basic() {
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();
@@ -836,12 +838,12 @@ mod tests {
 
         // Forward: X -> Z
         let mut forward = PauliProp::new();
-        forward.add_x(0);
+        forward.track_x(&[0]);
         propagate_through_circuit(&circuit, &mut forward, Direction::Forward);
 
         // Backward: Z -> X
         let mut backward = PauliProp::new();
-        backward.add_z(0);
+        backward.track_z(&[0]);
         propagate_through_circuit(&circuit, &mut backward, Direction::Backward);
 
         // Forward X->Z, Backward Z->X
@@ -852,10 +854,10 @@ mod tests {
     #[test]
     fn test_dag_fault_analyzer_z_error_check() {
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();
@@ -869,13 +871,13 @@ mod tests {
         // Test with a larger circuit to ensure scalability
         let mut dag = DagCircuit::new();
         for i in 0..10 {
-            dag.pz(i);
+            dag.pz(&[i]);
         }
         for i in 0..9 {
-            dag.cx(i, i + 1);
+            dag.cx(&[(i, i + 1)]);
         }
         for i in 0..10 {
-            dag.mz(i);
+            dag.mz(&[i]);
         }
 
         let analyzer = DagFaultAnalyzer::new(&dag);
@@ -935,7 +937,7 @@ mod tests {
             // Test forward then backward should give identity for self-adjoint circuits
             // (This is not exactly identity due to how we track things, but structure should match)
             let mut prop = PauliProp::new();
-            prop.add_x(0);
+            prop.track_x(&[0]);
             propagate_through_circuit(&circuit, &mut prop, Direction::Forward);
             propagate_through_circuit(&circuit, &mut prop, Direction::Backward);
 
@@ -1043,16 +1045,16 @@ mod tests {
         let mut dag = DagCircuit::new();
 
         // Round 1
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         // Round 2
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();

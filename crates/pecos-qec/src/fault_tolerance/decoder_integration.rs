@@ -50,7 +50,7 @@
 //!
 //! // Simulate an X error on qubit 0
 //! let mut prop = PauliProp::new();
-//! prop.add_x(0);
+//! prop.track_x(&[0]);
 //!
 //! let syndrome = extract_syndrome(&prop, &config.z_ancillas, &config.x_ancillas);
 //! assert_eq!(syndrome.len(), 2);
@@ -241,9 +241,9 @@ pub fn apply_recovery(prop: &mut PauliProp, recovery: &[u8], apply_x: bool) {
     for (q, &bit) in recovery.iter().enumerate() {
         if bit == 1 {
             if apply_x {
-                prop.add_x(q);
+                prop.track_x(&[q]);
             } else {
-                prop.add_z(q);
+                prop.track_z(&[q]);
             }
         }
     }
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn test_extract_syndrome() {
         let mut prop = PauliProp::new();
-        prop.add_x(3); // X error on ancilla 3
+        prop.track_x(&[3]); // X error on ancilla 3
 
         let syndrome = extract_syndrome(&prop, &[3, 4], &[]);
         assert_eq!(syndrome, vec![1, 0]);
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn test_apply_recovery() {
         let mut prop = PauliProp::new();
-        prop.add_x(0); // X error on qubit 0
+        prop.track_x(&[0]); // X error on qubit 0
 
         // Apply X recovery on qubit 0 (should cancel out)
         apply_recovery(&mut prop, &[1, 0, 0], true);

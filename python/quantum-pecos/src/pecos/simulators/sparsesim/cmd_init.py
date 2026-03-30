@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseSim
+    from pecos.simulators.sparsesim.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
 from pecos.simulators.sparsesim.cmd_meas import meas_z
@@ -30,7 +30,7 @@ from pecos.simulators.sparsesim.cmd_one_qubit import H2, H5, H6, H, X
 
 
 def init_zero(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     forced_outcome: int = -1,
     **_params: SimulatorGateParams,
@@ -38,7 +38,7 @@ def init_zero(
     """Initialize qubit to zero state.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int): Value for a "random" outcome. Default is -1, which means 0 and 1 are equally probable.
         **_params: Unused additional parameters (kept for interface compatibility).
@@ -50,7 +50,7 @@ def init_zero(
 
 
 def init_one(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     forced_outcome: int = -1,
     **_params: SimulatorGateParams,
@@ -58,7 +58,7 @@ def init_one(
     """Initialize qubit in state |1>.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome: Value for a "random" outcome. Default is -1, which means 0 and 1 are equally probable.
     """
@@ -67,7 +67,7 @@ def init_one(
 
 
 def init_plus(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     forced_outcome: int = -1,
     **_params: SimulatorGateParams,
@@ -75,7 +75,7 @@ def init_plus(
     """Initialize qubit in state |+>.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome: Value for a "random" outcome. Default is -1, which means 0 and 1 are equally probable.
     """
@@ -84,7 +84,7 @@ def init_plus(
 
 
 def init_minus(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     forced_outcome: int = -1,
     **_params: SimulatorGateParams,
@@ -92,7 +92,7 @@ def init_minus(
     """Initialize qubit in state |->.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome: Value for a "random" outcome. Default is -1, which means 0 and 1 are equally probable.
     """
@@ -101,7 +101,7 @@ def init_minus(
 
 
 def init_plusi(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     forced_outcome: int = -1,
     **_params: SimulatorGateParams,
@@ -109,7 +109,7 @@ def init_plusi(
     """Initialize qubit in state |+i>.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome: Value for a "random" outcome. Default is -1, which means 0 and 1 are equally probable.
     """
@@ -118,7 +118,7 @@ def init_plusi(
 
 
 def init_minusi(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     forced_outcome: int = -1,
     **_params: SimulatorGateParams,
@@ -126,7 +126,7 @@ def init_minusi(
     """Initialize qubit in state |-i>.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome: Value for a "random" outcome. Default is -1, which means 0 and 1 are equally probable.
     """

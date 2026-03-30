@@ -6,7 +6,7 @@ from pecos_rslib import (
     depolarizing_noise,
     qasm_engine,
     sim,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 
@@ -100,7 +100,7 @@ def test_sim_with_different_quantum_engines() -> None:
     assert len(results_sv) == 100
 
     # Sparse stabilizer backend (only works for Clifford circuits)
-    results_ss = sim(Qasm.from_string(qasm_code)).quantum(sparse_stabilizer()).run(100)
+    results_ss = sim(Qasm.from_string(qasm_code)).quantum(sparse_stab()).run(100)
     assert len(results_ss) == 100
 
 

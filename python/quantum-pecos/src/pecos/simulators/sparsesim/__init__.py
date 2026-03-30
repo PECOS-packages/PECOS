@@ -38,4 +38,4 @@ Date        Author  Comment
 from pecos.simulators.sparsesim import bindings
 
 # Class that represents the stabilizer state
-from pecos.simulators.sparsesim.state import SparseSim
+from pecos.simulators.sparsesim.state import SparseStabPy

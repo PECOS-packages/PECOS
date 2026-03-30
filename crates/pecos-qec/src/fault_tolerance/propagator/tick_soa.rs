@@ -254,8 +254,8 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
 
         let mut prop = PauliProp::new();
         match initial_pauli {
-            1 => prop.add_x(measurement.qubit),
-            3 => prop.add_z(measurement.qubit),
+            1 => prop.track_x(&[measurement.qubit]),
+            3 => prop.track_z(&[measurement.qubit]),
             _ => {}
         }
 
@@ -356,10 +356,10 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     let tgt_z = prop.contains_z(target);
 
                     if ctrl_x {
-                        prop.add_x(target);
+                        prop.track_x(&[target]);
                     }
                     if tgt_z {
-                        prop.add_z(control);
+                        prop.track_z(&[control]);
                     }
 
                     // Update active qubits
@@ -377,10 +377,10 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     let x1 = prop.contains_x(q1);
 
                     if x0 {
-                        prop.add_z(q1);
+                        prop.track_z(&[q1]);
                     }
                     if x1 {
-                        prop.add_z(q0);
+                        prop.track_z(&[q0]);
                     }
 
                     self.update_active_qubit(q0, prop, buffers);
@@ -395,11 +395,11 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     let has_z = prop.contains_z(q);
 
                     if has_x && !has_z {
-                        prop.add_x(q);
-                        prop.add_z(q);
+                        prop.track_x(&[q]);
+                        prop.track_z(&[q]);
                     } else if has_z && !has_x {
-                        prop.add_z(q);
-                        prop.add_x(q);
+                        prop.track_z(&[q]);
+                        prop.track_x(&[q]);
                     }
 
                     self.update_active_qubit(q, prop, buffers);
@@ -412,7 +412,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     let has_x = prop.contains_x(q);
 
                     if has_x {
-                        prop.add_z(q);
+                        prop.track_z(&[q]);
                     }
 
                     self.update_active_qubit(q, prop, buffers);
@@ -424,10 +424,10 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 for qid in qubits {
                     let q = qid.index();
                     if prop.contains_x(q) {
-                        prop.add_x(q);
+                        prop.track_x(&[q]);
                     }
                     if prop.contains_z(q) {
-                        prop.add_z(q);
+                        prop.track_z(&[q]);
                     }
                     if q < buffers.active_qubits.len() {
                         buffers.active_qubits[q] = false;
@@ -462,13 +462,13 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         let mut prop = PauliProp::new();
 
         for &q in x_positions {
-            prop.add_x(q);
+            prop.track_x(&[q]);
             if q < buffers.active_qubits.len() {
                 buffers.active_qubits[q] = true;
             }
         }
         for &q in z_positions {
-            prop.add_z(q);
+            prop.track_z(&[q]);
             if q < buffers.active_qubits.len() {
                 buffers.active_qubits[q] = true;
             }

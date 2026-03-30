@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Simulator | Type | Best For | Requirements |
 |-----------|------|----------|--------------|
-| **SparseSim** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
+| **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
 | **Qulacs** | State vector | High-performance state vector | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    Clifford only?      Arbitrary gates?      Error tracking?
         │                     │                     │
         ▼                     ▼                     ▼
-   SparseSim ←───┐      ┌─────┴─────┐          PauliProp
+   SparseStab ←───┐      ┌─────┴─────┐          PauliProp
    (fastest)     │      │           │
                  │   Small system?  GPU available?
                  │      │           │
@@ -132,7 +132,7 @@ measure q -> c;
 
 Stabilizer simulators efficiently simulate **Clifford circuits** (H, S, CNOT, CZ, and similar gates). They scale polynomially with qubit count, making them ideal for quantum error correction.
 
-### SparseSim (Recommended)
+### SparseStab (Recommended)
 
 The default simulator, optimized for QEC workloads with sparse stabilizer tableaux.
 
@@ -141,24 +141,24 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
     ```python
     from pecos import sim, Qasm
 
-    # SparseSim is used by default
+    # SparseStab is used by default
     results = sim(Qasm(circuit)).run(1000)
 
     # Or explicitly select it
-    from pecos.simulators import SparseSim
+    from pecos.simulators import SparseStab
 
-    results = sim(Qasm(circuit)).quantum(SparseSim).run(1000)
+    results = sim(Qasm(circuit)).quantum(SparseStab).run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    // SparseSim is used by default
+    // SparseStab is used by default
     let results = sim(program.clone()).run(1000)?;
 
     // Or explicitly select it
     let results = sim(program)
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .run(1000)?;
     ```
 
@@ -172,14 +172,14 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
 
 - Only Clifford gates (no T gates or arbitrary rotations)
 
-### SparseSimPy (Python only)
+### SparseStabPy (Python only)
 
-Pure Python reference implementation—useful for learning and debugging but slower than `SparseSim`.
+Pure Python reference implementation—useful for learning and debugging but slower than `SparseStab`.
 
 ```python
-from pecos.simulators import SparseSimPy
+from pecos.simulators import SparseStabPy
 
-results = sim(Qasm(circuit)).quantum(SparseSimPy).run(100)
+results = sim(Qasm(circuit)).quantum(SparseStabPy).run(100)
 ```
 
 ## State Vector Simulators
@@ -332,7 +332,7 @@ Tracks how Pauli errors propagate through Clifford circuits—essential for QEC 
 
     // Track how an X error on qubit 0 propagates
     let mut prop = PauliProp::new();
-    prop.add_x(0);  // Track an X error on qubit 0
+    prop.track_x(&[0]);  // Track an X error on qubit 0
 
     // Apply Hadamard - transforms X to Z
     prop.h(&[QubitId(0)]);
@@ -385,7 +385,7 @@ Approximate performance characteristics (relative, not absolute):
 
 | Simulator | Speed (Clifford) | Speed (Universal) | Memory | Max Qubits |
 |-----------|------------------|-------------------|--------|------------|
-| SparseSim | ★★★★★ | N/A | Low | 1000+ |
+| SparseStab | ★★★★★ | N/A | Low | 1000+ |
 | StateVec | ★★★ | ★★★ | 2^n | ~25-30 |
 | Qulacs | ★★★★ | ★★★★ | 2^n | ~25-30 |
 | CuStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
@@ -400,7 +400,7 @@ The `sim()` API lets you switch simulators easily:
 
     ```python
     from pecos import sim, Qasm
-    from pecos.simulators import SparseSim, StateVec, Qulacs
+    from pecos.simulators import SparseStab, StateVec, Qulacs
 
     circuit = Qasm(
         """
@@ -414,7 +414,7 @@ The `sim()` API lets you switch simulators easily:
     """
     )
 
-    # Default (SparseSim for Clifford circuits)
+    # Default (SparseStab for Clifford circuits)
     results = sim(circuit).run(1000)
 
     # Explicit simulator selection
@@ -444,7 +444,7 @@ The `sim()` API lets you switch simulators easily:
         .run(1000)?;
 
     let results = sim(circuit)
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .run(1000)?;
     ```
 
@@ -455,10 +455,10 @@ For fine-grained control, you can use simulators directly:
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import SparseSim
+    from pecos.simulators import SparseStab
 
     # Create simulator with 5 qubits
-    state = SparseSim(5)
+    state = SparseStab(5)
 
     # Apply gates using run_gate (qubits specified as sets)
     state.run_gate("H", {0})
@@ -480,7 +480,7 @@ For fine-grained control, you can use simulators directly:
 
     // Apply gates
     state.h(&[QubitId(0)]);
-    state.cx(&[QubitId(0), QubitId(1)]);
+    state.cx(&[(QubitId(0), QubitId(1))]);
 
     // Measure
     let results = state.mz(&[QubitId(0)]);

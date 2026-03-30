@@ -221,3 +221,257 @@ pub fn register_simulator_utils(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TableauWrapper>()?;
     Ok(())
 }
+
+// --- Shared batch dispatch for simulator bindings ---
+
+use pecos::core::QubitId;
+use pecos::simulators::{CliffordGateable, MeasurementResult};
+use pyo3::types::{PySet, PyTuple};
+
+/// Extract a single qubit index from a Python location.
+/// Handles both bare ints and 1-tuples like `(0,)` (the `GateBindingsDict` wraps ints in tuples).
+pub fn extract_single_qubit(location: &Bound<'_, PyAny>) -> PyResult<usize> {
+    if let Ok(q) = location.extract::<usize>() {
+        return Ok(q);
+    }
+    if let Ok(tuple) = location.cast::<PyTuple>()
+        && tuple.len() == 1
+    {
+        return tuple.get_item(0)?.extract::<usize>();
+    }
+    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+        "Expected int or 1-tuple for single-qubit location, got {:?}",
+        location.get_type().name()?
+    )))
+}
+
+/// Collect single-qubit locations from a Python set into a Vec of `QubitIds`.
+fn collect_single_qubits(locations: &Bound<'_, PySet>) -> PyResult<Vec<QubitId>> {
+    locations
+        .iter()
+        .map(|l| Ok(QubitId(extract_single_qubit(&l)?)))
+        .collect()
+}
+
+/// Collect single-qubit locations as raw usize values.
+fn collect_single_qubit_indices(locations: &Bound<'_, PySet>) -> PyResult<Vec<usize>> {
+    locations.iter().map(|l| extract_single_qubit(&l)).collect()
+}
+
+/// Collect two-qubit pair locations from a Python set.
+fn collect_pairs(locations: &Bound<'_, PySet>) -> PyResult<Vec<(QubitId, QubitId)>> {
+    locations
+        .iter()
+        .map(|l| {
+            let t: (usize, usize) = l.extract()?;
+            Ok((QubitId(t.0), QubitId(t.1)))
+        })
+        .collect()
+}
+
+/// Build a measurement output dict from qubit indices and results.
+fn build_meas_output(
+    py: Python<'_>,
+    qubits: &[usize],
+    results: Vec<MeasurementResult>,
+) -> PyResult<Py<PyDict>> {
+    let output = PyDict::new(py);
+    for (&q, r) in qubits.iter().zip(results) {
+        if r.outcome {
+            output.set_item(q, 1u8)?;
+        }
+    }
+    Ok(output.into())
+}
+
+/// Try to dispatch a gate in batch mode for any `CliffordGateable` simulator.
+///
+/// Returns `Some(output_dict)` if the gate was handled, `None` to fall back to
+/// per-location dispatch (for parameterized gates, unknown symbols, etc.).
+pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
+    sim: &mut S,
+    symbol: &str,
+    locations: &Bound<'_, PySet>,
+    py: Python<'_>,
+) -> PyResult<Option<Py<PyDict>>> {
+    match symbol {
+        // Identity
+        "I" => return Ok(Some(PyDict::new(py).into())),
+
+        // Single-qubit Clifford gates (no return value)
+        "X" | "Y" | "Z" | "H" | "H1" | "H+z+x" | "H2" | "H-z-x" | "H3" | "H+y-z" | "H4"
+        | "H-y-z" | "H5" | "H-x+y" | "H6" | "H-x-y" | "F" | "F1" | "Fdg" | "F1d" | "F1dg"
+        | "F2" | "F2dg" | "F2d" | "F3" | "F3dg" | "F3d" | "F4" | "F4dg" | "F4d" | "Q" | "SX"
+        | "SqrtX" | "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" | "R" | "SY" | "SqrtY" | "Rd" | "SYdg"
+        | "SqrtYd" | "SqrtYdg" | "S" | "SZ" | "SqrtZ" | "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
+            let qubits = collect_single_qubits(locations)?;
+            match symbol {
+                "X" => {
+                    sim.x(&qubits);
+                }
+                "Y" => {
+                    sim.y(&qubits);
+                }
+                "Z" => {
+                    sim.z(&qubits);
+                }
+                "H" | "H1" | "H+z+x" => {
+                    sim.h(&qubits);
+                }
+                "H2" | "H-z-x" => {
+                    sim.h2(&qubits);
+                }
+                "H3" | "H+y-z" => {
+                    sim.h3(&qubits);
+                }
+                "H4" | "H-y-z" => {
+                    sim.h4(&qubits);
+                }
+                "H5" | "H-x+y" => {
+                    sim.h5(&qubits);
+                }
+                "H6" | "H-x-y" => {
+                    sim.h6(&qubits);
+                }
+                "F" | "F1" => {
+                    sim.f(&qubits);
+                }
+                "Fdg" | "F1d" | "F1dg" => {
+                    sim.fdg(&qubits);
+                }
+                "F2" => {
+                    sim.f2(&qubits);
+                }
+                "F2dg" | "F2d" => {
+                    sim.f2dg(&qubits);
+                }
+                "F3" => {
+                    sim.f3(&qubits);
+                }
+                "F3dg" | "F3d" => {
+                    sim.f3dg(&qubits);
+                }
+                "F4" => {
+                    sim.f4(&qubits);
+                }
+                "F4dg" | "F4d" => {
+                    sim.f4dg(&qubits);
+                }
+                "Q" | "SX" | "SqrtX" => {
+                    sim.sx(&qubits);
+                }
+                "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" => {
+                    sim.sxdg(&qubits);
+                }
+                "R" | "SY" | "SqrtY" => {
+                    sim.sy(&qubits);
+                }
+                "Rd" | "SYdg" | "SqrtYd" | "SqrtYdg" => {
+                    sim.sydg(&qubits);
+                }
+                "S" | "SZ" | "SqrtZ" => {
+                    sim.sz(&qubits);
+                }
+                "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
+                    sim.szdg(&qubits);
+                }
+                _ => unreachable!(),
+            }
+            return Ok(Some(PyDict::new(py).into()));
+        }
+
+        // Preparations (no return value)
+        "PZ" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
+            sim.pz(&collect_single_qubits(locations)?);
+            return Ok(Some(PyDict::new(py).into()));
+        }
+        "PnZ" | "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
+            sim.pnz(&collect_single_qubits(locations)?);
+            return Ok(Some(PyDict::new(py).into()));
+        }
+        "PX" | "Init +X" | "init |+>" => {
+            sim.px(&collect_single_qubits(locations)?);
+            return Ok(Some(PyDict::new(py).into()));
+        }
+        "PnX" | "Init -X" | "init |->" => {
+            sim.pnx(&collect_single_qubits(locations)?);
+            return Ok(Some(PyDict::new(py).into()));
+        }
+        "PY" | "Init +Y" | "init |+i>" => {
+            sim.py(&collect_single_qubits(locations)?);
+            return Ok(Some(PyDict::new(py).into()));
+        }
+        "PnY" | "Init -Y" | "init |-i>" => {
+            sim.pny(&collect_single_qubits(locations)?);
+            return Ok(Some(PyDict::new(py).into()));
+        }
+
+        // Measurements (return outcomes)
+        "MZ" | "Measure" | "measure Z" | "Measure +Z" => {
+            let qubits = collect_single_qubit_indices(locations)?;
+            let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| QubitId(q)).collect();
+            let results = sim.mz(&qubit_ids);
+            return Ok(Some(build_meas_output(py, &qubits, results)?));
+        }
+        "MX" | "Measure +X" => {
+            let qubits = collect_single_qubit_indices(locations)?;
+            let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| QubitId(q)).collect();
+            let results = sim.mx(&qubit_ids);
+            return Ok(Some(build_meas_output(py, &qubits, results)?));
+        }
+        "MY" | "Measure +Y" => {
+            let qubits = collect_single_qubit_indices(locations)?;
+            let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| QubitId(q)).collect();
+            let results = sim.my(&qubit_ids);
+            return Ok(Some(build_meas_output(py, &qubits, results)?));
+        }
+
+        // Two-qubit Clifford gates (no return value)
+        "CX" | "CNOT" | "CY" | "CZ" | "SZZ" | "SZZdg" | "SXX" | "SXXdg" | "SYY" | "SYYdg"
+        | "SqrtZZ" | "SqrtZZd" | "SqrtXX" | "SqrtXXd" | "SqrtYY" | "SqrtYYd" | "SWAP" | "G"
+        | "G2" => {
+            let pairs = collect_pairs(locations)?;
+            match symbol {
+                "CX" | "CNOT" => {
+                    sim.cx(&pairs);
+                }
+                "CY" => {
+                    sim.cy(&pairs);
+                }
+                "CZ" => {
+                    sim.cz(&pairs);
+                }
+                "SZZ" | "SqrtZZ" => {
+                    sim.szz(&pairs);
+                }
+                "SZZdg" | "SqrtZZd" => {
+                    sim.szzdg(&pairs);
+                }
+                "SXX" | "SqrtXX" => {
+                    sim.sxx(&pairs);
+                }
+                "SXXdg" | "SqrtXXd" => {
+                    sim.sxxdg(&pairs);
+                }
+                "SYY" | "SqrtYY" => {
+                    sim.syy(&pairs);
+                }
+                "SYYdg" | "SqrtYYd" => {
+                    sim.syydg(&pairs);
+                }
+                "SWAP" => {
+                    sim.swap(&pairs);
+                }
+                "G" | "G2" => {
+                    sim.g(&pairs);
+                }
+                _ => unreachable!(),
+            }
+            return Ok(Some(PyDict::new(py).into()));
+        }
+
+        _ => {}
+    }
+
+    Ok(None)
+}

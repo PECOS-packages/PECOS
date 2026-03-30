@@ -559,8 +559,8 @@ struct GateLocation {
 /// let mut circuit = DagCircuit::new();
 /// circuit.add_gate(Gate::h(&[0]));
 /// circuit.add_gate(Gate::cx(&[(0, 1)]));
-/// circuit.add_gate(Gate::measure(&[0]));
-/// circuit.add_gate(Gate::measure(&[1]));
+/// circuit.add_gate(Gate::mz(&[0]));
+/// circuit.add_gate(Gate::mz(&[1]));
 ///
 /// // Run symbolic simulation to get noiseless measurement history
 /// let mut sim = SymbolicSparseStab::new(2);
@@ -853,9 +853,9 @@ impl NoisyMeasurementHistoryBuilder {
 
         // Add the initial Pauli
         match pauli {
-            Pauli::X => prop.add_x(qubit),
-            Pauli::Y => prop.add_y(qubit),
-            Pauli::Z => prop.add_z(qubit),
+            Pauli::X => prop.track_x(&[qubit]),
+            Pauli::Y => prop.track_y(&[qubit]),
+            Pauli::Z => prop.track_z(&[qubit]),
         }
 
         let mut affected_measurements = BTreeSet::new();
@@ -887,21 +887,21 @@ impl NoisyMeasurementHistoryBuilder {
                 // Two-qubit Clifford gates
                 GateType::CX => {
                     if location.qubits.len() >= 2 {
-                        prop.cx(&[QubitId(location.qubits[0]), QubitId(location.qubits[1])]);
+                        prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
                     }
                 }
                 GateType::CY => {
                     if location.qubits.len() >= 2 {
                         let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
                         // CY = (I ⊗ S†) CX (I ⊗ S)
-                        prop.sz(&[q2]).cx(&[q1, q2]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
+                        prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
                     }
                 }
                 GateType::CZ => {
                     if location.qubits.len() >= 2 {
                         let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
                         // CZ = (I ⊗ H) CX (I ⊗ H)
-                        prop.h(&[q2]).cx(&[q1, q2]).h(&[q2]);
+                        prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
                     }
                 }
 
@@ -941,14 +941,14 @@ impl NoisyMeasurementHistoryBuilder {
 
         // Add both Paulis
         match pauli1 {
-            Pauli::X => prop.add_x(qubit1),
-            Pauli::Y => prop.add_y(qubit1),
-            Pauli::Z => prop.add_z(qubit1),
+            Pauli::X => prop.track_x(&[qubit1]),
+            Pauli::Y => prop.track_y(&[qubit1]),
+            Pauli::Z => prop.track_z(&[qubit1]),
         }
         match pauli2 {
-            Pauli::X => prop.add_x(qubit2),
-            Pauli::Y => prop.add_y(qubit2),
-            Pauli::Z => prop.add_z(qubit2),
+            Pauli::X => prop.track_x(&[qubit2]),
+            Pauli::Y => prop.track_y(&[qubit2]),
+            Pauli::Z => prop.track_z(&[qubit2]),
         }
 
         let mut affected_measurements = BTreeSet::new();
@@ -974,19 +974,19 @@ impl NoisyMeasurementHistoryBuilder {
                 }
                 GateType::CX => {
                     if location.qubits.len() >= 2 {
-                        prop.cx(&[QubitId(location.qubits[0]), QubitId(location.qubits[1])]);
+                        prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
                     }
                 }
                 GateType::CY => {
                     if location.qubits.len() >= 2 {
                         let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                        prop.sz(&[q2]).cx(&[q1, q2]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
+                        prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
                     }
                 }
                 GateType::CZ => {
                     if location.qubits.len() >= 2 {
                         let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                        prop.h(&[q2]).cx(&[q1, q2]).h(&[q2]);
+                        prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
                     }
                 }
                 GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
@@ -1740,7 +1740,7 @@ mod tests {
         use pecos_simulators::PauliProp;
 
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
 
         // X on qubit 0 should flip Z-basis measurement on qubit 0
         assert!(prop.contains_x(0));
@@ -1752,7 +1752,7 @@ mod tests {
         use pecos_simulators::PauliProp;
 
         let mut prop = PauliProp::new();
-        prop.add_z(0);
+        prop.track_z(&[0]);
 
         // Z on qubit 0 should NOT flip Z-basis measurement on qubit 0
         assert!(!prop.contains_x(0));
@@ -1765,7 +1765,7 @@ mod tests {
         use pecos_simulators::{CliffordGateable, PauliProp};
 
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
         prop.h(&[QubitId(0)]);
 
         // After H, X becomes Z, which doesn't flip Z-basis measurement
@@ -1779,7 +1779,7 @@ mod tests {
         use pecos_simulators::{CliffordGateable, PauliProp};
 
         let mut prop = PauliProp::new();
-        prop.add_z(0);
+        prop.track_z(&[0]);
         prop.h(&[QubitId(0)]);
 
         // After H, Z becomes X, which does flip Z-basis measurement
@@ -1793,8 +1793,8 @@ mod tests {
         use pecos_simulators::{CliffordGateable, PauliProp};
 
         let mut prop = PauliProp::new();
-        prop.add_x(0); // X on control
-        prop.cx(&[QubitId(0), QubitId(1)]);
+        prop.track_x(&[0]); // X on control
+        prop.cx(&[(QubitId(0), QubitId(1))]);
 
         // X on control propagates to target: XI -> XX
         assert!(prop.contains_x(0));
@@ -1807,8 +1807,8 @@ mod tests {
         use pecos_simulators::{CliffordGateable, PauliProp};
 
         let mut prop = PauliProp::new();
-        prop.add_z(1); // Z on target
-        prop.cx(&[QubitId(0), QubitId(1)]);
+        prop.track_z(&[1]); // Z on target
+        prop.cx(&[(QubitId(0), QubitId(1))]);
 
         // Z on target propagates to control: IZ -> ZZ
         assert!(prop.contains_z(0));

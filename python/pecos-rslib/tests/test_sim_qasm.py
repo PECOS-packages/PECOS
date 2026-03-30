@@ -11,7 +11,7 @@ from pecos_rslib import (
     biased_depolarizing_noise,
     depolarizing_noise,
     general_noise,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 
@@ -87,7 +87,7 @@ class TestUnifiedSimApi:
             sim(Qasm.from_string(qasm))
             .seed(42)
             .workers(2)
-            .quantum(sparse_stabilizer())
+            .quantum(sparse_stab())
             .noise(depolarizing_noise().with_uniform_probability(0.01))
             .run(100)
         )
@@ -211,7 +211,7 @@ class TestUnifiedSimApi:
         """
 
         # Both engines should work for Clifford circuits
-        for engine in [state_vector(), sparse_stabilizer()]:
+        for engine in [state_vector(), sparse_stab()]:
             shot_vec = sim(Qasm.from_string(qasm_clifford)).seed(42).quantum(engine).run(100)
             results = shot_vec.to_dict()
             assert len(results["c"]) == 100
@@ -240,7 +240,7 @@ class TestUnifiedSimApi:
         with suppress(RuntimeError):
             # Expected to fail if the engine detects non-Clifford operations
             sim(Qasm.from_string(qasm_non_clifford)).quantum(
-                sparse_stabilizer(),
+                sparse_stab(),
             ).run(10)
 
     def test_deterministic_behavior(self) -> None:
@@ -339,7 +339,7 @@ class TestUnifiedSimApi:
             .seed(42)
             .workers(2)
             .noise(depolarizing_noise().with_uniform_probability(0.01))
-            .quantum(sparse_stabilizer())
+            .quantum(sparse_stab())
             .run(100)
         )
         builder_results = builder_shot_vec.to_dict()
@@ -350,7 +350,7 @@ class TestUnifiedSimApi:
             .seed(42)  # Same seed should give same results
             .workers(2)
             .noise(depolarizing_noise().with_uniform_probability(0.01))
-            .quantum(sparse_stabilizer())
+            .quantum(sparse_stab())
             .run(100)
         )
         direct_results = alt_shot_vec.to_dict()

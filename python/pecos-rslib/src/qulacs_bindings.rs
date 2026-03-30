@@ -29,7 +29,7 @@ impl PyQulacs {
         q1: usize,
         q2: usize,
     ) -> PyResult<Option<u8>> {
-        let pair = &[QubitId(q1), QubitId(q2)];
+        let pair = &[(QubitId(q1), QubitId(q2))];
         match symbol {
             "CX" => {
                 self.inner.cx(pair);
@@ -491,7 +491,7 @@ impl PyQulacs {
             )));
         }
 
-        let pair = &[QubitId(q1), QubitId(q2)];
+        let pair = &[(QubitId(q1), QubitId(q2))];
         match symbol {
             "CX" | "CY" | "CZ" | "SWAP" | "G" | "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ"
             | "SqrtZZ" | "SZZdg" | "G2" => self.handle_simple_2q_gate(symbol, q1, q2),

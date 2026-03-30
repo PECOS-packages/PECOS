@@ -5,7 +5,6 @@
 
 use crate::{QuestDensityMatrix, QuestStateVec};
 use pecos_core::Angle64;
-#[cfg(feature = "cuda")]
 use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
@@ -18,6 +17,14 @@ use pecos_simulators::MeasurementResult;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::any::Any;
 use std::fmt::Debug;
+
+/// Convert a flat slice of `QubitId` into pairs for two-qubit gate calls.
+fn to_pairs(qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
+    qubits
+        .chunks_exact(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect()
+}
 
 /// Quest state vector quantum engine wrapper
 #[derive(Debug, Clone)]
@@ -80,23 +87,23 @@ impl Engine for QuestStateVecEngine {
                     self.simulator.tdg(&cmd.qubits);
                 }
                 GateType::CX => {
-                    self.simulator.cx(&cmd.qubits);
+                    self.simulator.cx(&to_pairs(&cmd.qubits));
                 }
                 GateType::CY => {
-                    self.simulator.cy(&cmd.qubits);
+                    self.simulator.cy(&to_pairs(&cmd.qubits));
                 }
                 GateType::CZ => {
-                    self.simulator.cz(&cmd.qubits);
+                    self.simulator.cz(&to_pairs(&cmd.qubits));
                 }
                 // CH = Ry(π/4)_target, CX(control, target), Ry(-π/4)_target
                 GateType::CH => {
-                    for qubits in cmd.qubits.chunks_exact(2) {
-                        let target_slice = &[qubits[1]];
+                    for pair in cmd.qubits.chunks_exact(2) {
+                        let target_slice = &[pair[1]];
                         self.simulator.ry(
                             Angle64::from_radians(std::f64::consts::FRAC_PI_4),
                             target_slice,
                         );
-                        self.simulator.cx(qubits);
+                        self.simulator.cx(&[(pair[0], pair[1])]);
                         self.simulator.ry(
                             Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
                             target_slice,
@@ -104,13 +111,13 @@ impl Engine for QuestStateVecEngine {
                     }
                 }
                 GateType::RZZ => {
-                    self.simulator.rzz(cmd.angles[0], &cmd.qubits);
+                    self.simulator.rzz(cmd.angles[0], &to_pairs(&cmd.qubits));
                 }
                 GateType::SZZ => {
-                    self.simulator.szz(&cmd.qubits);
+                    self.simulator.szz(&to_pairs(&cmd.qubits));
                 }
                 GateType::SZZdg => {
-                    self.simulator.szzdg(&cmd.qubits);
+                    self.simulator.szzdg(&to_pairs(&cmd.qubits));
                 }
                 GateType::F => {
                     self.simulator.f(&cmd.qubits);
@@ -131,7 +138,7 @@ impl Engine for QuestStateVecEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.sxx(&cmd.qubits);
+                    self.simulator.sxx(&to_pairs(&cmd.qubits));
                 }
                 GateType::SXXdg => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -140,7 +147,7 @@ impl Engine for QuestStateVecEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.sxxdg(&cmd.qubits);
+                    self.simulator.sxxdg(&to_pairs(&cmd.qubits));
                 }
                 GateType::SYY => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -149,7 +156,7 @@ impl Engine for QuestStateVecEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.syy(&cmd.qubits);
+                    self.simulator.syy(&to_pairs(&cmd.qubits));
                 }
                 GateType::SYYdg => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -158,10 +165,10 @@ impl Engine for QuestStateVecEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.syydg(&cmd.qubits);
+                    self.simulator.syydg(&to_pairs(&cmd.qubits));
                 }
                 GateType::SWAP => {
-                    self.simulator.swap(&cmd.qubits);
+                    self.simulator.swap(&to_pairs(&cmd.qubits));
                 }
                 GateType::CRZ => {
                     if !cmd.angles.is_empty() {
@@ -170,9 +177,9 @@ impl Engine for QuestStateVecEngine {
                         for pair in cmd.qubits.chunks_exact(2) {
                             // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
                             self.simulator.rz(half_angle, &[pair[1]]);
-                            self.simulator.cx(pair);
+                            self.simulator.cx(&[(pair[0], pair[1])]);
                             self.simulator.rz(-half_angle, &[pair[1]]);
-                            self.simulator.cx(pair);
+                            self.simulator.cx(&[(pair[0], pair[1])]);
                         }
                     }
                 }
@@ -183,20 +190,20 @@ impl Engine for QuestStateVecEngine {
                         let c1 = qubits[1];
                         let target = qubits[2];
                         self.simulator.h(&[target]);
-                        self.simulator.cx(&[c1, target]);
+                        self.simulator.cx(&[(c1, target)]);
                         self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
+                        self.simulator.cx(&[(c0, target)]);
                         self.simulator.t(&[target]);
-                        self.simulator.cx(&[c1, target]);
+                        self.simulator.cx(&[(c1, target)]);
                         self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
+                        self.simulator.cx(&[(c0, target)]);
                         self.simulator.t(&[c1]);
                         self.simulator.t(&[target]);
-                        self.simulator.cx(&[c0, c1]);
+                        self.simulator.cx(&[(c0, c1)]);
                         self.simulator.h(&[target]);
                         self.simulator.t(&[c0]);
                         self.simulator.tdg(&[c1]);
-                        self.simulator.cx(&[c0, c1]);
+                        self.simulator.cx(&[(c0, c1)]);
                     }
                 }
                 GateType::SX => {
@@ -256,7 +263,7 @@ impl Engine for QuestStateVecEngine {
                             "RXX gate requires at least one angle".to_string(),
                         ));
                     }
-                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    self.simulator.rxx(cmd.angles[0], &to_pairs(&cmd.qubits));
                 }
                 GateType::RYY => {
                     if cmd.angles.is_empty() {
@@ -264,7 +271,7 @@ impl Engine for QuestStateVecEngine {
                             "RYY gate requires at least one angle".to_string(),
                         ));
                     }
-                    self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                    self.simulator.ryy(cmd.angles[0], &to_pairs(&cmd.qubits));
                 }
                 GateType::RXXRYYRZZ | GateType::U2q => {
                     if cmd.angles.len() < 3 {
@@ -272,9 +279,9 @@ impl Engine for QuestStateVecEngine {
                             "RXXRYYRZZ gate requires three angles".to_string(),
                         ));
                     }
-                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
-                    self.simulator.ryy(cmd.angles[1], &cmd.qubits);
-                    self.simulator.rzz(cmd.angles[2], &cmd.qubits);
+                    self.simulator.rxx(cmd.angles[0], &to_pairs(&cmd.qubits));
+                    self.simulator.ryy(cmd.angles[1], &to_pairs(&cmd.qubits));
+                    self.simulator.rzz(cmd.angles[2], &to_pairs(&cmd.qubits));
                 }
             }
         }
@@ -369,23 +376,23 @@ impl Engine for QuestDensityMatrixEngine {
                     self.simulator.tdg(&cmd.qubits);
                 }
                 GateType::CX => {
-                    self.simulator.cx(&cmd.qubits);
+                    self.simulator.cx(&to_pairs(&cmd.qubits));
                 }
                 GateType::CY => {
-                    self.simulator.cy(&cmd.qubits);
+                    self.simulator.cy(&to_pairs(&cmd.qubits));
                 }
                 GateType::CZ => {
-                    self.simulator.cz(&cmd.qubits);
+                    self.simulator.cz(&to_pairs(&cmd.qubits));
                 }
                 // CH = Ry(π/4)_target, CX(control, target), Ry(-π/4)_target
                 GateType::CH => {
-                    for qubits in cmd.qubits.chunks_exact(2) {
-                        let target_slice = &[qubits[1]];
+                    for pair in cmd.qubits.chunks_exact(2) {
+                        let target_slice = &[pair[1]];
                         self.simulator.ry(
                             Angle64::from_radians(std::f64::consts::FRAC_PI_4),
                             target_slice,
                         );
-                        self.simulator.cx(qubits);
+                        self.simulator.cx(&[(pair[0], pair[1])]);
                         self.simulator.ry(
                             Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
                             target_slice,
@@ -393,13 +400,13 @@ impl Engine for QuestDensityMatrixEngine {
                     }
                 }
                 GateType::RZZ => {
-                    self.simulator.rzz(cmd.angles[0], &cmd.qubits);
+                    self.simulator.rzz(cmd.angles[0], &to_pairs(&cmd.qubits));
                 }
                 GateType::SZZ => {
-                    self.simulator.szz(&cmd.qubits);
+                    self.simulator.szz(&to_pairs(&cmd.qubits));
                 }
                 GateType::SZZdg => {
-                    self.simulator.szzdg(&cmd.qubits);
+                    self.simulator.szzdg(&to_pairs(&cmd.qubits));
                 }
                 GateType::F => {
                     self.simulator.f(&cmd.qubits);
@@ -420,7 +427,7 @@ impl Engine for QuestDensityMatrixEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.sxx(&cmd.qubits);
+                    self.simulator.sxx(&to_pairs(&cmd.qubits));
                 }
                 GateType::SXXdg => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -429,7 +436,7 @@ impl Engine for QuestDensityMatrixEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.sxxdg(&cmd.qubits);
+                    self.simulator.sxxdg(&to_pairs(&cmd.qubits));
                 }
                 GateType::SYY => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -438,7 +445,7 @@ impl Engine for QuestDensityMatrixEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.syy(&cmd.qubits);
+                    self.simulator.syy(&to_pairs(&cmd.qubits));
                 }
                 GateType::SYYdg => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -447,10 +454,10 @@ impl Engine for QuestDensityMatrixEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    self.simulator.syydg(&cmd.qubits);
+                    self.simulator.syydg(&to_pairs(&cmd.qubits));
                 }
                 GateType::SWAP => {
-                    self.simulator.swap(&cmd.qubits);
+                    self.simulator.swap(&to_pairs(&cmd.qubits));
                 }
                 GateType::CRZ => {
                     if !cmd.angles.is_empty() {
@@ -459,9 +466,9 @@ impl Engine for QuestDensityMatrixEngine {
                         for pair in cmd.qubits.chunks_exact(2) {
                             // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
                             self.simulator.rz(half_angle, &[pair[1]]);
-                            self.simulator.cx(pair);
+                            self.simulator.cx(&[(pair[0], pair[1])]);
                             self.simulator.rz(-half_angle, &[pair[1]]);
-                            self.simulator.cx(pair);
+                            self.simulator.cx(&[(pair[0], pair[1])]);
                         }
                     }
                 }
@@ -472,20 +479,20 @@ impl Engine for QuestDensityMatrixEngine {
                         let c1 = qubits[1];
                         let target = qubits[2];
                         self.simulator.h(&[target]);
-                        self.simulator.cx(&[c1, target]);
+                        self.simulator.cx(&[(c1, target)]);
                         self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
+                        self.simulator.cx(&[(c0, target)]);
                         self.simulator.t(&[target]);
-                        self.simulator.cx(&[c1, target]);
+                        self.simulator.cx(&[(c1, target)]);
                         self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[c0, target]);
+                        self.simulator.cx(&[(c0, target)]);
                         self.simulator.t(&[c1]);
                         self.simulator.t(&[target]);
-                        self.simulator.cx(&[c0, c1]);
+                        self.simulator.cx(&[(c0, c1)]);
                         self.simulator.h(&[target]);
                         self.simulator.t(&[c0]);
                         self.simulator.tdg(&[c1]);
-                        self.simulator.cx(&[c0, c1]);
+                        self.simulator.cx(&[(c0, c1)]);
                     }
                 }
                 GateType::SX => {
@@ -545,7 +552,7 @@ impl Engine for QuestDensityMatrixEngine {
                             "RXX gate requires at least one angle".to_string(),
                         ));
                     }
-                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
+                    self.simulator.rxx(cmd.angles[0], &to_pairs(&cmd.qubits));
                 }
                 GateType::RYY => {
                     if cmd.angles.is_empty() {
@@ -553,7 +560,7 @@ impl Engine for QuestDensityMatrixEngine {
                             "RYY gate requires at least one angle".to_string(),
                         ));
                     }
-                    self.simulator.ryy(cmd.angles[0], &cmd.qubits);
+                    self.simulator.ryy(cmd.angles[0], &to_pairs(&cmd.qubits));
                 }
                 GateType::RXXRYYRZZ | GateType::U2q => {
                     if cmd.angles.len() < 3 {
@@ -561,9 +568,9 @@ impl Engine for QuestDensityMatrixEngine {
                             "RXXRYYRZZ gate requires three angles".to_string(),
                         ));
                     }
-                    self.simulator.rxx(cmd.angles[0], &cmd.qubits);
-                    self.simulator.ryy(cmd.angles[1], &cmd.qubits);
-                    self.simulator.rzz(cmd.angles[2], &cmd.qubits);
+                    self.simulator.rxx(cmd.angles[0], &to_pairs(&cmd.qubits));
+                    self.simulator.ryy(cmd.angles[1], &to_pairs(&cmd.qubits));
+                    self.simulator.rzz(cmd.angles[2], &to_pairs(&cmd.qubits));
                 }
             }
         }
@@ -1559,18 +1566,10 @@ impl CliffordGateable for QuestCudaStateVecEngine {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
             unsafe {
-                (self.backend.apply_cnot)(
-                    self.qureg_handle,
-                    pair[0].index() as i32,
-                    pair[1].index() as i32,
-                );
+                (self.backend.apply_cnot)(self.qureg_handle, q0.index() as i32, q1.index() as i32);
             }
         }
         self
@@ -1617,21 +1616,17 @@ impl ArbitraryRotationGateable for QuestCudaStateVecEngine {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    fn rzz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
         // RZZ(theta) = exp(-i * theta/2 * Z⊗Z)
         // Decomposition: CNOT(q1,q2) . RZ(theta, q2) . CNOT(q1,q2)
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "RZZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index() as i32;
-            let q2 = pair[1].index() as i32;
+        for &(q0, q1) in pairs {
+            let a = q0.index() as i32;
+            let b = q1.index() as i32;
             unsafe {
-                (self.backend.apply_cnot)(self.qureg_handle, q1, q2);
-                (self.backend.apply_rotation_z)(self.qureg_handle, q2, theta);
-                (self.backend.apply_cnot)(self.qureg_handle, q1, q2);
+                (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                (self.backend.apply_rotation_z)(self.qureg_handle, b, theta);
+                (self.backend.apply_cnot)(self.qureg_handle, a, b);
             }
         }
         self

@@ -191,8 +191,8 @@ impl<'a> TickFaultAnalyzer<'a> {
 
         let mut prop = PauliProp::new();
         match initial_pauli {
-            1 => prop.add_x(measurement.qubit),
-            3 => prop.add_z(measurement.qubit),
+            1 => prop.track_x(&[measurement.qubit]),
+            3 => prop.track_z(&[measurement.qubit]),
             _ => {}
         }
 
@@ -284,14 +284,14 @@ impl<'a> TickFaultAnalyzer<'a> {
 
         // X positions in logical -> X in prop
         for &q in x_positions {
-            prop.add_x(q);
+            prop.track_x(&[q]);
             if q <= self.max_qubit {
                 active_qubits[q] = true;
             }
         }
         // Z positions in logical -> Z in prop
         for &q in z_positions {
-            prop.add_z(q);
+            prop.track_z(&[q]);
             if q <= self.max_qubit {
                 active_qubits[q] = true;
             }
@@ -484,11 +484,11 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                     // X spreads from control to target
                     if ctrl_x {
-                        prop.add_x(target);
+                        prop.track_x(&[target]);
                     }
                     // Z spreads from target to control
                     if tgt_z {
-                        prop.add_z(control);
+                        prop.track_z(&[control]);
                     }
                 }
             }
@@ -504,10 +504,10 @@ impl<'a> TickFaultAnalyzer<'a> {
                     let x1 = prop.contains_x(q1);
 
                     if x0 {
-                        prop.add_z(q1);
+                        prop.track_z(&[q1]);
                     }
                     if x1 {
-                        prop.add_z(q0);
+                        prop.track_z(&[q0]);
                     }
                 }
             }
@@ -522,12 +522,12 @@ impl<'a> TickFaultAnalyzer<'a> {
                     // Swap X and Z using toggle
                     if has_x && !has_z {
                         // Remove X by toggling, add Z
-                        prop.add_x(q); // toggles off
-                        prop.add_z(q);
+                        prop.track_x(&[q]); // toggles off
+                        prop.track_z(&[q]);
                     } else if has_z && !has_x {
                         // Remove Z by toggling, add X
-                        prop.add_z(q); // toggles off
-                        prop.add_x(q);
+                        prop.track_z(&[q]); // toggles off
+                        prop.track_x(&[q]);
                     }
                     // If both or neither, no change needed
                 }
@@ -543,10 +543,10 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                     if has_x && !has_z {
                         // X -> XZ (Y with phase)
-                        prop.add_z(q);
+                        prop.track_z(&[q]);
                     } else if has_x && has_z {
                         // Y (XZ) -> X: remove Z by toggling
-                        prop.add_z(q); // toggles off
+                        prop.track_z(&[q]); // toggles off
                     }
                     // Z -> Z (no change)
                 }
@@ -562,10 +562,10 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                     if has_x && !has_z {
                         // X -> XZ (Y)
-                        prop.add_z(q);
+                        prop.track_z(&[q]);
                     } else if has_x && has_z {
                         // Y -> X: remove Z by toggling
-                        prop.add_z(q); // toggles off
+                        prop.track_z(&[q]); // toggles off
                     }
                 }
             }
@@ -577,10 +577,10 @@ impl<'a> TickFaultAnalyzer<'a> {
                 for qid in qubits {
                     let q = qid.index();
                     if prop.contains_x(q) {
-                        prop.add_x(q); // toggles off
+                        prop.track_x(&[q]); // toggles off
                     }
                     if prop.contains_z(q) {
-                        prop.add_z(q); // toggles off
+                        prop.track_z(&[q]); // toggles off
                     }
                 }
             }

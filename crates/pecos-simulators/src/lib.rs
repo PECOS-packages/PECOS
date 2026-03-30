@@ -12,16 +12,19 @@
 
 pub mod arbitrary_rotation_gateable;
 pub mod batched_ops;
+pub mod ch_form;
 pub mod circuit_executor;
 pub mod clifford_frame;
 pub mod clifford_gateable;
 pub mod clifford_rotation;
+pub mod clifford_rz;
 pub mod clifford_test_utils;
 pub mod coin_toss;
 pub mod dense_stab;
 pub mod dense_stab_variants;
 pub mod density_matrix;
 pub mod density_matrix_test_utils;
+pub mod exact_scalar;
 pub mod gens;
 pub mod gpu_stab;
 pub mod gpu_stab_opt;
@@ -32,12 +35,14 @@ pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
 pub mod prelude;
+pub mod quadratic_form;
 pub mod quantum_simulator;
 pub mod rotation_test_utils;
 pub mod sign_algebra;
+pub mod sparse_binary_matrix;
 pub mod sparse_stab;
 pub mod sparse_stab_y;
-pub mod stab;
+pub mod stabilizer;
 pub mod stabilizer_tableau;
 pub mod stabilizer_test_utils;
 pub mod state_vec;
@@ -66,22 +71,26 @@ pub type GensData = (
     Vec<Vec<usize>>,
 );
 
+pub use ch_form::{CHForm, CHFormGeneric};
+pub use clifford_rz::{CliffordRz, CliffordRzBuilder, CliffordRzGeneric};
 pub use dense_stab::DenseStab;
 pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly, SparseRowOnly};
 pub use density_matrix::DensityMatrix;
+pub use exact_scalar::ExactScalar;
 pub use gens::{Gens, GensBitSet, GensGeneric, GensHybrid, GensVecSet, PauliClassification};
 pub use gpu_stab::GpuStab;
 pub use gpu_stab_opt::GpuStabOpt;
 pub use gpu_stab_parallel::GpuStabParallel;
 pub use graph_state::GraphStateSim;
 pub use graph_state_repr::{GraphState, GraphStateRenderer};
+pub use sparse_binary_matrix::SparseBinaryMatrix;
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
     SequentialMeasurementSampler,
 };
 pub use pauli_prop::PauliProp;
-pub use pecos_core::{VecSet, qid, qid2, qids, qids2};
+pub use pecos_core::{QubitId, VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{
@@ -92,7 +101,7 @@ pub use sparse_stab_y::{
     SparseStabY, SparseStabYBitSet, SparseStabYGeneric, SparseStabYUnsortedVecSet,
     SparseStabYVecSet,
 };
-pub use stab::Stab;
+pub use stabilizer::Stabilizer;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 // StateVec uses the sparse SoA implementation optimized for QEC workloads.
 // The dense implementation is available as DenseStateVec / StateVecSoA.

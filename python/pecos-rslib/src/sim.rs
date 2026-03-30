@@ -470,7 +470,10 @@ impl PySimBuilder {
             PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
             PyGeneralNoiseModelBuilder,
         };
-        use crate::engine_builders::{PySparseStabilizerEngineBuilder, PyStateVectorEngineBuilder};
+        use crate::engine_builders::{
+            PyCliffordRzEngineBuilder, PyCoinTossEngineBuilder, PyDensityMatrixEngineBuilder,
+            PySparseStabEngineBuilder, PyStabilizerEngineBuilder, PyStateVectorEngineBuilder,
+        };
         use crate::shot_results_bindings::PyShotVec;
         use pyo3::exceptions::PyRuntimeError;
 
@@ -524,9 +527,46 @@ impl PySimBuilder {
                                 ))
                             }
                         } else if let Ok(mut sparse_stab) =
-                            qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                            qe_py.extract::<PySparseStabEngineBuilder>(py)
                         {
                             if let Some(inner) = sparse_stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut clifford_rz) =
+                            qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                        {
+                            if let Some(inner) = clifford_rz.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut density_mat) =
+                            qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                        {
+                            if let Some(inner) = density_mat.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut stab) = qe_py.extract::<PyStabilizerEngineBuilder>(py)
+                        {
+                            if let Some(inner) = stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py) {
+                            if let Some(inner) = ct.inner.take() {
                                 Ok(sim_builder.quantum(inner))
                             } else {
                                 Err(PyErr::new::<PyRuntimeError, _>(
@@ -606,9 +646,46 @@ impl PySimBuilder {
                                 ))
                             }
                         } else if let Ok(mut sparse_stab) =
-                            qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                            qe_py.extract::<PySparseStabEngineBuilder>(py)
                         {
                             if let Some(inner) = sparse_stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut clifford_rz) =
+                            qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                        {
+                            if let Some(inner) = clifford_rz.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut density_mat) =
+                            qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                        {
+                            if let Some(inner) = density_mat.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut stab) = qe_py.extract::<PyStabilizerEngineBuilder>(py)
+                        {
+                            if let Some(inner) = stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py) {
+                            if let Some(inner) = ct.inner.take() {
                                 Ok(sim_builder.quantum(inner))
                             } else {
                                 Err(PyErr::new::<PyRuntimeError, _>(
@@ -737,9 +814,46 @@ impl PySimBuilder {
                                 ))
                             }
                         } else if let Ok(mut sparse_stab) =
-                            qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                            qe_py.extract::<PySparseStabEngineBuilder>(py)
                         {
                             if let Some(inner) = sparse_stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut clifford_rz) =
+                            qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                        {
+                            if let Some(inner) = clifford_rz.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut density_mat) =
+                            qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                        {
+                            if let Some(inner) = density_mat.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut stab) = qe_py.extract::<PyStabilizerEngineBuilder>(py)
+                        {
+                            if let Some(inner) = stab.inner.take() {
+                                Ok(sim_builder.quantum(inner))
+                            } else {
+                                Err(PyErr::new::<PyRuntimeError, _>(
+                                    "Quantum engine builder has already been consumed",
+                                ))
+                            }
+                        } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py) {
+                            if let Some(inner) = ct.inner.take() {
                                 Ok(sim_builder.quantum(inner))
                             } else {
                                 Err(PyErr::new::<PyRuntimeError, _>(
@@ -789,8 +903,11 @@ impl PySimBuilder {
             PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
             PyGeneralNoiseModelBuilder,
         };
+        use crate::engine_builders::{
+            PyCliffordRzEngineBuilder, PyCoinTossEngineBuilder, PyDensityMatrixEngineBuilder,
+            PySparseStabEngineBuilder, PyStabilizerEngineBuilder, PyStateVectorEngineBuilder,
+        };
         use crate::engine_builders::{PyPhirJsonSimulation, PyPhirSimulation, PyQasmSimulation};
-        use crate::engine_builders::{PySparseStabilizerEngineBuilder, PyStateVectorEngineBuilder};
         use pyo3::exceptions::PyRuntimeError;
 
         Python::attach(|py| {
@@ -842,9 +959,48 @@ impl PySimBuilder {
                                     ))
                                 }
                             } else if let Ok(mut sparse_stab) =
-                                qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                                qe_py.extract::<PySparseStabEngineBuilder>(py)
                             {
                                 if let Some(inner) = sparse_stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut clifford_rz) =
+                                qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                            {
+                                if let Some(inner) = clifford_rz.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut density_mat) =
+                                qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                            {
+                                if let Some(inner) = density_mat.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut stab) =
+                                qe_py.extract::<PyStabilizerEngineBuilder>(py)
+                            {
+                                if let Some(inner) = stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py)
+                            {
+                                if let Some(inner) = ct.inner.take() {
                                     Ok(sim_builder.quantum(inner))
                                 } else {
                                     Err(PyErr::new::<PyRuntimeError, _>(
@@ -992,9 +1148,48 @@ impl PySimBuilder {
                                     ))
                                 }
                             } else if let Ok(mut sparse_stab) =
-                                qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                                qe_py.extract::<PySparseStabEngineBuilder>(py)
                             {
                                 if let Some(inner) = sparse_stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut clifford_rz) =
+                                qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                            {
+                                if let Some(inner) = clifford_rz.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut density_mat) =
+                                qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                            {
+                                if let Some(inner) = density_mat.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut stab) =
+                                qe_py.extract::<PyStabilizerEngineBuilder>(py)
+                            {
+                                if let Some(inner) = stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py)
+                            {
+                                if let Some(inner) = ct.inner.take() {
                                     Ok(sim_builder.quantum(inner))
                                 } else {
                                     Err(PyErr::new::<PyRuntimeError, _>(
@@ -1129,9 +1324,48 @@ impl PySimBuilder {
                                     ))
                                 }
                             } else if let Ok(mut sparse_stab) =
-                                qe_py.extract::<PySparseStabilizerEngineBuilder>(py)
+                                qe_py.extract::<PySparseStabEngineBuilder>(py)
                             {
                                 if let Some(inner) = sparse_stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut clifford_rz) =
+                                qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                            {
+                                if let Some(inner) = clifford_rz.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut density_mat) =
+                                qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                            {
+                                if let Some(inner) = density_mat.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut stab) =
+                                qe_py.extract::<PyStabilizerEngineBuilder>(py)
+                            {
+                                if let Some(inner) = stab.inner.take() {
+                                    Ok(sim_builder.quantum(inner))
+                                } else {
+                                    Err(PyErr::new::<PyRuntimeError, _>(
+                                        "Quantum engine builder has already been consumed",
+                                    ))
+                                }
+                            } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py)
+                            {
+                                if let Some(inner) = ct.inner.take() {
                                     Ok(sim_builder.quantum(inner))
                                 } else {
                                     Err(PyErr::new::<PyRuntimeError, _>(

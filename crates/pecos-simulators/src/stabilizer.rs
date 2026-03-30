@@ -12,24 +12,24 @@
 
 //! Default stabilizer simulator with automatic implementation selection.
 //!
-//! [`Stab`] is the recommended stabilizer simulator for most use cases. It automatically
+//! [`Stabilizer`] is the recommended stabilizer simulator for most use cases. It automatically
 //! selects the best underlying implementation based on the number of qubits and workload
 //! characteristics.
 //!
 //! # Example
 //!
 //! ```rust
-//! use pecos_core::{qid, qid2};
-//! use pecos_simulators::{Stab, CliffordGateable, QuantumSimulator};
+//! use pecos_core::{QubitId, qid};
+//! use pecos_simulators::{Stabilizer, CliffordGateable, QuantumSimulator};
 //!
 //! // Create a stabilizer simulator
-//! let mut sim = Stab::new(2);
+//! let mut sim = Stabilizer::new(2);
 //!
 //! // Create a Bell state
-//! sim.h(&qid(0)).cx(&qid2(0, 1));
+//! sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 //!
 //! // Measure
-//! let results = sim.mz(&qid2(0, 1));
+//! let results = sim.mz(&[QubitId(0), QubitId(1)]);
 //! assert_eq!(results[0].outcome, results[1].outcome);
 //! ```
 //!
@@ -54,11 +54,11 @@ use pecos_random::PecosRng;
 ///
 /// See the [module documentation](self) for more details.
 #[derive(Debug, Clone)]
-pub struct Stab {
+pub struct Stabilizer {
     inner: SparseStab,
 }
 
-impl Stab {
+impl Stabilizer {
     /// Create a new stabilizer simulator with the given number of qubits.
     ///
     /// All qubits are initialized in the |0⟩ state.
@@ -66,9 +66,9 @@ impl Stab {
     /// # Example
     ///
     /// ```rust
-    /// use pecos_simulators::Stab;
+    /// use pecos_simulators::Stabilizer;
     ///
-    /// let sim = Stab::new(10);
+    /// let sim = Stabilizer::new(10);
     /// assert_eq!(sim.num_qubits(), 10);
     /// ```
     #[inline]
@@ -86,9 +86,9 @@ impl Stab {
     /// # Example
     ///
     /// ```rust
-    /// use pecos_simulators::Stab;
+    /// use pecos_simulators::Stabilizer;
     ///
-    /// let sim = Stab::with_seed(10, 42);
+    /// let sim = Stabilizer::with_seed(10, 42);
     /// ```
     #[inline]
     #[must_use]
@@ -114,7 +114,7 @@ impl Stab {
     }
 }
 
-impl QuantumSimulator for Stab {
+impl QuantumSimulator for Stabilizer {
     #[inline]
     fn reset(&mut self) -> &mut Self {
         self.inner.reset();
@@ -122,7 +122,7 @@ impl QuantumSimulator for Stab {
     }
 }
 
-impl CliffordGateable for Stab {
+impl CliffordGateable for Stabilizer {
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.inner.h(qubits);
@@ -160,20 +160,20 @@ impl CliffordGateable for Stab {
     }
 
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.inner.cx(qubits);
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.inner.cx(pairs);
         self
     }
 
     #[inline]
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.inner.cz(qubits);
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.inner.cz(pairs);
         self
     }
 
     #[inline]
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.inner.swap(qubits);
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        self.inner.swap(pairs);
         self
     }
 
@@ -193,7 +193,7 @@ impl CliffordGateable for Stab {
     }
 }
 
-impl RngManageable for Stab {
+impl RngManageable for Stabilizer {
     type Rng = PecosRng;
 
     #[inline]
@@ -212,7 +212,7 @@ impl RngManageable for Stab {
     }
 }
 
-impl StabilizerTableauSimulator for Stab {
+impl StabilizerTableauSimulator for Stabilizer {
     fn stab_tableau(&self) -> String {
         self.inner.stab_tableau()
     }
@@ -232,13 +232,13 @@ impl StabilizerTableauSimulator for Stab {
 
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
-impl ForcedMeasurement for Stab {
+impl ForcedMeasurement for Stabilizer {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         self.inner.mz_forced(qubit, forced_outcome)
     }
 }
 
-impl StabilizerSimulator for Stab {
+impl StabilizerSimulator for Stabilizer {
     fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::with_seed(num_qubits, seed)
     }
@@ -251,16 +251,16 @@ mod tests {
 
     #[test]
     fn test_stab_basic() {
-        let mut sim = Stab::new(2);
+        let mut sim = Stabilizer::new(2);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }
 
     #[test]
     fn test_stab_full_suite() {
-        let mut sim = Stab::with_seed(8, 42);
+        let mut sim = Stabilizer::with_seed(8, 42);
         run_full_stabilizer_test_suite(&mut sim, 8);
     }
 }

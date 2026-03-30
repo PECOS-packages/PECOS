@@ -36,7 +36,7 @@ graph.set_weight(n1, n2, 2.0);
 graph.set_weight(n0, n2, 5.0);
 
 let source_node = n0;
-
+    
 }
 
 
@@ -74,7 +74,7 @@ if let Some(attrs) = graph.edge_attrs_mut(n0, n1) {
     attrs.insert("path".to_string(),
                 Attribute::IntList(vec![1, 2, 3]));
 }
-
+    
 }
 
 
@@ -99,7 +99,7 @@ fn test_user_guide_graph_api_rust_3() {
 let mut graph = Graph::new();
 // Or with initial capacity
 let mut graph = Graph::with_capacity(100, 200);  // nodes, edges
-
+    
 }
 
 
@@ -135,7 +135,7 @@ attrs.extend([
     ("author".to_string(), Attribute::String("Alice".into())),
     ("date".to_string(), Attribute::String("2025-01-26".into())),
 ]);
-
+    
 }
 
 
@@ -167,7 +167,7 @@ if let Some(name) = attrs.get("name") {
 if attrs.contains_key("distance") {
     println!("{:?}", attrs["distance"]);
 }
-
+    
 }
 
 
@@ -190,7 +190,7 @@ fn test_user_guide_graph_api_rust_6() {
     let source_node = n0;
     let n0 = graph.add_node();  // Returns node ID (usize)
 let n1 = graph.add_node();
-
+    
 }
 
 
@@ -218,7 +218,7 @@ let count = graph.node_count();
 for node in graph.nodes() {
     println!("{}", node);
 }
-
+    
 }
 
 
@@ -257,7 +257,7 @@ if let Some(attrs) = graph.node_attrs_mut(n0) {
         ("y".to_string(), Attribute::Float(2.0)),
     ]);
 }
-
+    
 }
 
 
@@ -289,7 +289,7 @@ fn test_user_guide_graph_api_rust_9() {
         println!("{:?}", attrs["label"]);
     }
 }
-
+    
 }
 
 
@@ -316,7 +316,7 @@ graph.add_edge(n0, n1);
 // Add edge with weight
 graph.add_edge(n0, n1);
 graph.set_weight(n0, n1, 5.0);
-
+    
 }
 
 
@@ -355,7 +355,7 @@ if let Some(attrs) = graph.edge_attrs_mut(n0, n1) {
         ("key2".to_string(), Attribute::String("value".into())),
     ]);
 }
-
+    
 }
 
 
@@ -391,7 +391,7 @@ if let Some(attrs) = graph.edge_attrs(n0, n1) {
         println!("{:?}", attrs["label"]);
     }
 }
-
+    
 }
 
 
@@ -419,7 +419,7 @@ if let Some(edge_id) = graph.find_edge(n0, n1) {
         println!("Edge {}: {} -> {}", edge_id, a, b);
     }
 }
-
+    
 }
 
 
@@ -447,7 +447,7 @@ let count = graph.edge_count();
 for (a, b, weight) in graph.edges() {
     println!("Edge {}-{}: weight={}", a, b, weight);
 }
-
+    
 }
 
 
@@ -500,7 +500,7 @@ graph.attrs_mut().insert("config".into(), Attribute::Json(json!({
         "enabled": true
     }
 })));
-
+    
 }
 
 
@@ -528,7 +528,7 @@ let matching = graph.max_weight_matching(true);
 for (node, matched) in &matching {
     println!("{} matched with {}", node, matched);
 }
-
+    
 }
 
 
@@ -556,7 +556,7 @@ let distances = graph.shortest_path_distances(source_node);
 for (node, dist) in &distances {
     println!("Distance to {}: {}", node, dist);
 }
-
+    
 }
 
 
@@ -584,7 +584,7 @@ let paths = graph.single_source_shortest_path(source_node);
 for (node, path) in &paths {
     println!("Path to {}: {:?}", node, path);
 }
-
+    
 }
 
 
@@ -608,7 +608,7 @@ fn test_user_guide_graph_api_rust_19() {
     // Create subgraph from node subset
 let nodes_to_keep = vec![0, 2, 5, 7];
 let subgraph = graph.subgraph(&nodes_to_keep);
-
+    
 }
 
 
@@ -662,5 +662,5 @@ println!("Path n0->n2: {:?}", paths.get(&n2));  // Some([0, 1, 2])
 // Find matching
 let matching = graph.max_weight_matching(true);
 println!("Matching: {:?}", matching);
-
+    
 }

@@ -5,7 +5,7 @@
 //!
 //! NOTE: `QuEST` has thread safety issues - run with --test-threads=1
 
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 use pecos_quest::QuestDensityMatrix;
 use pecos_random::PecosRng;
 use pecos_simulators::{
@@ -177,8 +177,8 @@ fn test_cx_gate() {
     dm.h(&qid(0));
     qdm.h(&qid(0));
 
-    dm.cx(&qid2(0, 1));
-    qdm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
     compare_purity(&mut dm, &qdm);
@@ -197,8 +197,8 @@ fn test_cz_gate() {
     qdm.h(&qid(0));
     qdm.h(&qid(1));
 
-    dm.cz(&qid2(0, 1));
-    qdm.cz(&qid2(0, 1));
+    dm.cz(&[(QubitId(0), QubitId(1))]);
+    qdm.cz(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -214,8 +214,8 @@ fn test_cy_gate() {
     dm.x(&qid(0));
     qdm.x(&qid(0));
 
-    dm.cy(&qid2(0, 1));
-    qdm.cy(&qid2(0, 1));
+    dm.cy(&[(QubitId(0), QubitId(1))]);
+    qdm.cy(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -231,8 +231,8 @@ fn test_swap_gate() {
     dm.x(&qid(0));
     qdm.x(&qid(0));
 
-    dm.swap(&qid2(0, 1));
-    qdm.swap(&qid2(0, 1));
+    dm.swap(&[(QubitId(0), QubitId(1))]);
+    qdm.swap(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -275,15 +275,15 @@ fn test_ry_in_entangled_system() {
     // Create entanglement first
     dm.h(&qid(0));
     dm.h(&qid(1));
-    dm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
     dm.h(&qid(2));
-    dm.cx(&qid2(1, 2));
+    dm.cx(&[(QubitId(1), QubitId(2))]);
 
     qdm.h(&qid(0));
     qdm.h(&qid(1));
-    qdm.cx(&qid2(0, 1));
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
     qdm.h(&qid(2));
-    qdm.cx(&qid2(1, 2));
+    qdm.cx(&[(QubitId(1), QubitId(2))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 
@@ -324,8 +324,8 @@ fn test_rzz_gate() {
     qdm.h(&qid(0));
     qdm.h(&qid(1));
 
-    dm.rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
-    qdm.rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+    dm.rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
+    qdm.rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
 }
@@ -339,9 +339,9 @@ fn test_bell_state() {
 
     // Create Bell state |Phi+> = (|00> + |11>)/sqrt(2)
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
     qdm.h(&qid(0));
-    qdm.cx(&qid2(0, 1));
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
     compare_purity(&mut dm, &qdm);
@@ -359,11 +359,11 @@ fn test_ghz_state() {
 
     // Create GHZ state (|000> + |111>)/sqrt(2)
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
-    dm.cx(&qid2(1, 2));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
+    dm.cx(&[(QubitId(1), QubitId(2))]);
     qdm.h(&qid(0));
-    qdm.cx(&qid2(0, 1));
-    qdm.cx(&qid2(1, 2));
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
+    qdm.cx(&[(QubitId(1), QubitId(2))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
     compare_purity(&mut dm, &qdm);
@@ -379,19 +379,19 @@ fn test_complex_circuit() {
     // Apply a complex sequence of gates
     dm.h(&qid(0));
     dm.h(&qid(1));
-    dm.cx(&qid2(0, 2));
+    dm.cx(&[(QubitId(0), QubitId(2))]);
     dm.rz(Angle64::from_radians(PI / 4.0), &qid(1));
-    dm.cy(&qid2(1, 0));
+    dm.cy(&[(QubitId(1), QubitId(0))]);
     dm.rx(Angle64::from_radians(PI / 3.0), &qid(2));
-    dm.cz(&qid2(0, 1));
+    dm.cz(&[(QubitId(0), QubitId(1))]);
 
     qdm.h(&qid(0));
     qdm.h(&qid(1));
-    qdm.cx(&qid2(0, 2));
+    qdm.cx(&[(QubitId(0), QubitId(2))]);
     qdm.rz(Angle64::from_radians(PI / 4.0), &qid(1));
-    qdm.cy(&qid2(1, 0));
+    qdm.cy(&[(QubitId(1), QubitId(0))]);
     qdm.rx(Angle64::from_radians(PI / 3.0), &qid(2));
-    qdm.cz(&qid2(0, 1));
+    qdm.cz(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut dm, &qdm, num_qubits);
     compare_purity(&mut dm, &qdm);
@@ -406,9 +406,9 @@ fn test_reset() {
 
     // Create some state
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
     qdm.h(&qid(0));
-    qdm.cx(&qid2(0, 1));
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
 
     // Reset
     dm.reset();
@@ -498,8 +498,8 @@ fn test_purity_pure_state() {
     compare_purity(&mut dm, &qdm);
     assert_close(dm.purity(), 1.0, "superposition purity");
 
-    dm.cx(&qid2(0, 1));
-    qdm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
     compare_purity(&mut dm, &qdm);
     assert_close(dm.purity(), 1.0, "entangled purity");
 }
@@ -539,18 +539,18 @@ fn test_larger_system_4_qubits() {
 
     // Create a complex entangled state
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
     dm.h(&qid(2));
-    dm.cx(&qid2(2, 3));
-    dm.cz(&qid2(1, 2));
+    dm.cx(&[(QubitId(2), QubitId(3))]);
+    dm.cz(&[(QubitId(1), QubitId(2))]);
     dm.rx(Angle64::from_radians(PI / 3.0), &qid(0));
     dm.ry(Angle64::from_radians(PI / 4.0), &qid(3));
 
     qdm.h(&qid(0));
-    qdm.cx(&qid2(0, 1));
+    qdm.cx(&[(QubitId(0), QubitId(1))]);
     qdm.h(&qid(2));
-    qdm.cx(&qid2(2, 3));
-    qdm.cz(&qid2(1, 2));
+    qdm.cx(&[(QubitId(2), QubitId(3))]);
+    qdm.cz(&[(QubitId(1), QubitId(2))]);
     qdm.rx(Angle64::from_radians(PI / 3.0), &qid(0));
     qdm.ry(Angle64::from_radians(PI / 4.0), &qid(3));
 
@@ -565,7 +565,7 @@ fn test_density_matrix_trace_is_one() {
 
     // Apply various operations
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
     dm.rz(Angle64::from_radians(PI / 5.0), &qid(0));
 
     // Check trace = sum of probabilities = 1
@@ -582,7 +582,7 @@ fn test_density_matrix_is_hermitian() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
     dm.sz(&qid(1));
 
     let rho = dm.get_density_matrix();
@@ -610,8 +610,8 @@ fn test_density_matrix_probabilities_sum_to_one() {
 
     // Create GHZ-like state
     dm.h(&qid(0));
-    dm.cx(&qid2(0, 1));
-    dm.cx(&qid2(1, 2));
+    dm.cx(&[(QubitId(0), QubitId(1))]);
+    dm.cx(&[(QubitId(1), QubitId(2))]);
 
     let mut sum = 0.0;
     for i in 0..(1 << num_qubits) {
@@ -651,20 +651,20 @@ fn test_random_circuit_comparison() {
                 qdm.h(&qid(*q1));
             }
             "cx" => {
-                dm.cx(&qid2(*q1, *q_2));
-                qdm.cx(&qid2(*q1, *q_2));
+                dm.cx(&[(QubitId(*q1), QubitId(*q_2))]);
+                qdm.cx(&[(QubitId(*q1), QubitId(*q_2))]);
             }
             "cy" => {
-                dm.cy(&qid2(*q1, *q_2));
-                qdm.cy(&qid2(*q1, *q_2));
+                dm.cy(&[(QubitId(*q1), QubitId(*q_2))]);
+                qdm.cy(&[(QubitId(*q1), QubitId(*q_2))]);
             }
             "cz" => {
-                dm.cz(&qid2(*q1, *q_2));
-                qdm.cz(&qid2(*q1, *q_2));
+                dm.cz(&[(QubitId(*q1), QubitId(*q_2))]);
+                qdm.cz(&[(QubitId(*q1), QubitId(*q_2))]);
             }
             "swap" => {
-                dm.swap(&qid2(*q1, *q_2));
-                qdm.swap(&qid2(*q1, *q_2));
+                dm.swap(&[(QubitId(*q1), QubitId(*q_2))]);
+                qdm.swap(&[(QubitId(*q1), QubitId(*q_2))]);
             }
             "rx" => {
                 dm.rx(Angle64::from_radians(PI / 7.0), &qid(*q1));

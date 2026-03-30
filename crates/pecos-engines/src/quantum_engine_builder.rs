@@ -28,18 +28,18 @@ use pecos_core::errors::PecosError;
 ///
 /// # Example
 /// ```rust
-/// use pecos_engines::quantum_engine_builder::{state_vector, sparse_stabilizer, QuantumEngineBuilder};
+/// use pecos_engines::quantum_engine_builder::{state_vector, sparse_stab, QuantumEngineBuilder};
 ///
 /// // Using built-in engines
 /// let mut state_vec = state_vector();
 /// state_vec.set_qubits_if_needed(10);
 ///
-/// let mut sparse_stab = sparse_stabilizer();
-/// sparse_stab.set_qubits_if_needed(5);
+/// let mut sparse = sparse_stab();
+/// sparse.set_qubits_if_needed(5);
 ///
 /// // You can build engines from these builders
 /// let engine1 = state_vec.build().unwrap();
-/// let engine2 = sparse_stab.build().unwrap();
+/// let engine2 = sparse.build().unwrap();
 ///
 /// // Engines are successfully created and ready to use
 /// // They implement the QuantumEngine trait for processing quantum operations
@@ -164,14 +164,14 @@ impl IntoQuantumEngineBuilder for StateVectorEngineBuilder {
 
 /// Builder for sparse stabilizer quantum engine
 #[derive(Debug, Clone, Default)]
-pub struct SparseStabilizerEngineBuilder {
+pub struct SparseStabEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
     // Future: Could add configuration options here
     // e.g., tableau_size_hint, optimization_flags, etc.
 }
 
-impl SparseStabilizerEngineBuilder {
+impl SparseStabEngineBuilder {
     /// Create a new sparse stabilizer engine builder
     #[must_use]
     pub fn new() -> Self {
@@ -186,7 +186,7 @@ impl SparseStabilizerEngineBuilder {
     }
 }
 
-impl QuantumEngineBuilder for SparseStabilizerEngineBuilder {
+impl QuantumEngineBuilder for SparseStabEngineBuilder {
     fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError> {
         // Require qubits to be set
         let num_qubits = self.num_qubits.ok_or_else(|| {
@@ -202,7 +202,7 @@ impl QuantumEngineBuilder for SparseStabilizerEngineBuilder {
     }
 }
 
-impl IntoQuantumEngineBuilder for SparseStabilizerEngineBuilder {
+impl IntoQuantumEngineBuilder for SparseStabEngineBuilder {
     type Builder = Self;
 
     fn into_quantum_engine_builder(self) -> Self::Builder {
@@ -279,14 +279,162 @@ pub fn state_vector() -> StateVectorEngineBuilder {
 
 /// Create a sparse stabilizer quantum engine builder
 #[must_use]
-pub fn sparse_stabilizer() -> SparseStabilizerEngineBuilder {
-    SparseStabilizerEngineBuilder::new()
+pub fn sparse_stab() -> SparseStabEngineBuilder {
+    SparseStabEngineBuilder::new()
 }
 
-/// Alias for `sparse_stabilizer`
+/// Builder for the recommended stabilizer quantum engine.
+///
+/// Uses [`StabilizerEngine`] which wraps the [`Stabilizer`] type.
+/// When `Stabilizer` changes its internal implementation, this builder
+/// automatically picks up the change.
+#[derive(Debug, Clone, Default)]
+pub struct StabilizerEngineBuilder {
+    num_qubits: Option<usize>,
+}
+
+impl StabilizerEngineBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn qubits(mut self, num_qubits: usize) -> Self {
+        self.num_qubits = Some(num_qubits);
+        self
+    }
+}
+
+impl QuantumEngineBuilder for StabilizerEngineBuilder {
+    fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError> {
+        let num_qubits = self.num_qubits.ok_or_else(|| {
+            PecosError::Input("Number of qubits not specified for stabilizer engine".to_string())
+        })?;
+        Ok(Box::new(crate::quantum::StabilizerEngine::new(num_qubits)))
+    }
+
+    fn set_qubits_if_needed(&mut self, num_qubits: usize) {
+        if self.num_qubits.is_none() {
+            self.num_qubits = Some(num_qubits);
+        }
+    }
+}
+
+impl IntoQuantumEngineBuilder for StabilizerEngineBuilder {
+    type Builder = Self;
+
+    fn into_quantum_engine_builder(self) -> Self::Builder {
+        self
+    }
+}
+
+/// Create a stabilizer quantum engine builder (recommended).
+///
+/// Uses the [`Stabilizer`] type which auto-selects the best implementation.
 #[must_use]
-pub fn sparse_stab() -> SparseStabilizerEngineBuilder {
-    sparse_stabilizer()
+pub fn stabilizer() -> StabilizerEngineBuilder {
+    StabilizerEngineBuilder::new()
+}
+
+/// Builder for Clifford+RZ quantum engine
+#[derive(Debug, Clone, Default)]
+pub struct CliffordRzEngineBuilder {
+    num_qubits: Option<usize>,
+}
+
+impl CliffordRzEngineBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn qubits(mut self, num_qubits: usize) -> Self {
+        self.num_qubits = Some(num_qubits);
+        self
+    }
+}
+
+impl QuantumEngineBuilder for CliffordRzEngineBuilder {
+    fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError> {
+        let num_qubits = self.num_qubits.ok_or_else(|| {
+            PecosError::Input("Number of qubits not specified for Clifford+RZ engine".to_string())
+        })?;
+        Ok(Box::new(crate::quantum::CliffordRzEngine::new(num_qubits)))
+    }
+
+    fn set_qubits_if_needed(&mut self, num_qubits: usize) {
+        if self.num_qubits.is_none() {
+            self.num_qubits = Some(num_qubits);
+        }
+    }
+}
+
+impl IntoQuantumEngineBuilder for CliffordRzEngineBuilder {
+    type Builder = Self;
+
+    fn into_quantum_engine_builder(self) -> Self::Builder {
+        self
+    }
+}
+
+/// Create a Clifford+RZ quantum engine builder
+#[must_use]
+pub fn clifford_rz() -> CliffordRzEngineBuilder {
+    CliffordRzEngineBuilder::new()
+}
+
+/// Builder for density matrix quantum engine
+#[derive(Debug, Clone, Default)]
+pub struct DensityMatrixEngineBuilder {
+    num_qubits: Option<usize>,
+}
+
+impl DensityMatrixEngineBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn qubits(mut self, num_qubits: usize) -> Self {
+        self.num_qubits = Some(num_qubits);
+        self
+    }
+}
+
+impl QuantumEngineBuilder for DensityMatrixEngineBuilder {
+    fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError> {
+        let num_qubits = self.num_qubits.ok_or_else(|| {
+            PecosError::Input(
+                "Number of qubits not specified for density matrix engine".to_string(),
+            )
+        })?;
+        Ok(Box::new(crate::quantum::DensityMatrixEngine::new(
+            num_qubits,
+        )))
+    }
+
+    fn set_qubits_if_needed(&mut self, num_qubits: usize) {
+        if self.num_qubits.is_none() {
+            self.num_qubits = Some(num_qubits);
+        }
+    }
+}
+
+impl IntoQuantumEngineBuilder for DensityMatrixEngineBuilder {
+    type Builder = Self;
+
+    fn into_quantum_engine_builder(self) -> Self::Builder {
+        self
+    }
+}
+
+/// Create a density matrix quantum engine builder
+#[must_use]
+pub fn density_matrix() -> DensityMatrixEngineBuilder {
+    DensityMatrixEngineBuilder::new()
 }
 
 /// Create a coin toss quantum engine builder

@@ -418,9 +418,9 @@ fn test_noisy_execution_statistics() {
     // Circuit: prepare |0>, apply identity gate (I), measure
     // The I gate triggers noise application
     let commands = CommandBuilder::new()
-        .pz(0)
-        .identity(0) // Identity gate triggers noise
-        .mz(0)
+        .pz(&[0])
+        .identity(&[0]) // Identity gate triggers noise
+        .mz(&[0])
         .build();
 
     let mut ones_count = 0;
@@ -495,12 +495,12 @@ impl CommandSource for UserGateProgram {
         // The actual user gate integration would require CommandBuilder extension.
         Some(
             CommandBuilder::new()
-                .pz(0)
-                .pz(1)
-                .h(0)
-                .cx(0, 1)
-                .mz(0)
-                .mz(1)
+                .pz(&[0])
+                .pz(&[1])
+                .h(&[0])
+                .cx(&[(0, 1)])
+                .mz(&[0])
+                .mz(&[1])
                 .build(),
         )
     }
@@ -553,12 +553,12 @@ fn test_command_source_with_user_gates() {
 #[test]
 fn test_conditional_program_with_feedback() {
     // Initial circuit: prepare |+>, measure
-    let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     // Branch: if measured 1, apply X to flip back to |0>
     let branch = |outcomes: &MeasurementOutcomes| {
         if outcomes.get_bit(QubitId(0)) == Some(true) {
-            Some(CommandBuilder::new().x(0).mz(0).build())
+            Some(CommandBuilder::new().x(&[0]).mz(&[0]).build())
         } else {
             None
         }
@@ -916,12 +916,12 @@ fn test_e2e_custom_gate_definition_and_execution() {
     // Step 5: Execute and verify Bell state behavior
     // Build full CommandQueue with prep/measure
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Run multiple shots and verify correlation
@@ -1138,10 +1138,10 @@ fn test_e2e_custom_gate_noise_limitation() {
 
     // Execute with noise
     let commands = CommandBuilder::new()
-        .pz(0)
-        .h(0)
-        .h(0) // This is our "custom gate" decomposed
-        .mz(0)
+        .pz(&[0])
+        .h(&[0])
+        .h(&[0]) // This is our "custom gate" decomposed
+        .mz(&[0])
         .build();
 
     let mut state = SparseStab::new(1);
@@ -1235,12 +1235,12 @@ fn test_e2e_complete_workflow_with_shot_runner() {
 
     // Simple circuit using standard gates
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Use CircuitRunner directly

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners import Standard
-from pecos.simulators import SparseSimPy
+from pecos.simulators import SparseStabPy
 
 
 def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
@@ -76,7 +76,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
     # Check input errors
     for xs, zs in gen_pauli_errors(data_qudits, max_errors=t):
         err = QuantumCircuit([{"X": xs, "Z": zs}])
-        state = SparseSimPy(num_qudits)
+        state = SparseStabPy(num_qudits)
 
         sign = _apply_err(
             state,
@@ -113,7 +113,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
 
     spacetime = set(product(list(range(num_ticks)), qudits))
     for xs, zs in gen_pauli_errors(spacetime, max_errors=t):
-        state = SparseSimPy(num_qudits)
+        state = SparseStabPy(num_qudits)
         xs_list = list(xs)
         zs_list = list(zs)
 

@@ -1,6 +1,6 @@
 // Tests for the new qasm_sim API
 
-use pecos_engines::{ClassicalControlEngineBuilder, sim_builder, sparse_stabilizer, state_vector};
+use pecos_engines::{ClassicalControlEngineBuilder, sim_builder, sparse_stab, state_vector};
 use pecos_programs::Qasm;
 use pecos_qasm::prelude::*;
 use pecos_qasm::qasm_engine;
@@ -277,7 +277,7 @@ fn test_full_configuration() {
         .seed(42)
         .workers(2)
         .qubits(2)
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .noise(noise_builder)
         .build()
         .unwrap();

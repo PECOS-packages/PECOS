@@ -330,22 +330,22 @@ mod tests {
         sim.reset();
 
         for i in 0..num_data {
-            sim.h(i);
+            sim.h(&[i]);
         }
 
         for _round in 0..rounds {
             for a in 0..num_ancillas {
                 let ancilla = ancilla_start + a;
                 let base = a % num_data;
-                sim.cx(ancilla, base);
+                sim.cx(&[(ancilla, base)]);
                 if a + 1 < num_data {
-                    sim.cx(ancilla, (base + 1) % num_data);
+                    sim.cx(&[(ancilla, (base + 1) % num_data)]);
                 }
             }
 
             for a in 0..num_ancillas {
                 let ancilla = ancilla_start + a;
-                sim.mz(ancilla);
+                sim.mz(&[ancilla]);
             }
         }
 

@@ -23,18 +23,18 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
-    from pecos.simulators.sparsesim.state import SparseSim
+    from pecos.simulators.sparsesim.state import SparseStabPy
 
 
 def find_logical_signs(
-    state: SparseSim,
+    state: SparseStabPy,
     logical_circuit: QuantumCircuit,
     delogical_circuit: QuantumCircuit | None = None,
 ) -> int:
     """Find the sign of the logical operator.
 
     Args:
-        state (SparseSim): The SparseSim state instance.
+        state (SparseStabPy): The SparseStabPy state instance.
         logical_circuit (QuantumCircuit): The logical circuit to find the sign of.
         delogical_circuit (QuantumCircuit | None): Optional delogical circuit to check anti-commutation with.
     """

@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn test_depolarizing_only() {
         let model = depolarizing_only(0.5, 0.5);
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_with_measurement() {
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut errors = 0;
@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn test_dephasing_only() {
         let model = dephasing_only(0.5, 0.5);
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -635,7 +635,12 @@ mod tests {
     #[test]
     fn test_with_leakage() {
         let model = with_leakage(0.5, 0.5, 0.5, 0.5);
-        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -649,12 +654,12 @@ mod tests {
     fn test_chain_correlated() {
         let model = chain_correlated(0.1, 0.5);
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .h(1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .h(&[1])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut state = SparseStab::new(2);
@@ -673,7 +678,7 @@ mod tests {
             .with_measurement_error(0.02);
 
         let model = realistic_device_noise(params);
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -687,11 +692,11 @@ mod tests {
     fn test_surface_code_noise() {
         let model = surface_code_noise(0.001, true);
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut state = SparseStab::new(2);

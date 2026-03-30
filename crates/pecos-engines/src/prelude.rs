@@ -21,12 +21,14 @@ pub use crate::{
 
 // Quantum engines and builders
 pub use crate::quantum::{
-    CoinTossEngine, QuantumEngine, SparseStabEngine, StateVecEngine,
-    new_quantum_engine_arbitrary_qgate,
+    CliffordRzEngine, CoinTossEngine, DensityMatrixEngine, QuantumEngine, SparseStabEngine,
+    StabilizerEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
 };
 pub use crate::quantum_engine_builder::{
-    CoinTossEngineBuilder, IntoQuantumEngineBuilder, SparseStabilizerEngineBuilder,
-    StateVectorEngineBuilder, coin_toss, sparse_stabilizer, state_vector,
+    CliffordRzEngineBuilder, CoinTossEngineBuilder, DensityMatrixEngineBuilder,
+    IntoQuantumEngineBuilder, SparseStabEngineBuilder, StabilizerEngineBuilder,
+    StateVectorEngineBuilder, clifford_rz, coin_toss, density_matrix, sparse_stab, stabilizer,
+    state_vector,
 };
 
 // Noise models - both traits and common implementations

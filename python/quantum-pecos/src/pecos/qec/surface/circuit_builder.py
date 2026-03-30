@@ -452,29 +452,29 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.ALLOC:
                 q = op.qubits[0]
                 if q not in allocated:
-                    circuit.qalloc(q)
+                    circuit.qalloc([q])
                     allocated.add(q)
                 else:
                     # Re-allocation acts as reset - use pz (prep Z / reset)
-                    circuit.pz(q)
+                    circuit.pz([q])
 
             elif op.op_type == OpType.PREP:
-                circuit.pz(op.qubits[0])
+                circuit.pz([op.qubits[0]])
 
             elif op.op_type == OpType.H:
-                circuit.h(op.qubits[0])
+                circuit.h([op.qubits[0]])
 
             elif op.op_type == OpType.X:
-                circuit.x(op.qubits[0])
+                circuit.x([op.qubits[0]])
 
             elif op.op_type == OpType.Z:
-                circuit.z(op.qubits[0])
+                circuit.z([op.qubits[0]])
 
             elif op.op_type == OpType.CX:
-                circuit.cx(op.qubits[0], op.qubits[1])
+                circuit.cx([(op.qubits[0], op.qubits[1])])
 
             elif op.op_type == OpType.MEASURE:
-                circuit.mz(op.qubits[0])
+                circuit.mz([op.qubits[0]])
 
             elif op.op_type == OpType.TICK:
                 pass  # DagCircuit doesn't have explicit ticks
@@ -636,41 +636,41 @@ class TickCircuitRenderer(CircuitRenderer):
                 q = op.qubits[0]
                 tick = get_tick_for_qubits([q])
                 if q not in allocated:
-                    tick.qalloc(q)
+                    tick.qalloc([q])
                     allocated.add(q)
                 else:
-                    tick.pz(q)
+                    tick.pz([q])
                 mark_qubits_used([q])
                 # Label helps identify which qubit (e.g., "data[0]", "ax0")
                 queue_gate_metadata({"label": op.label} if op.label else None)
 
             elif op.op_type == OpType.PREP:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).pz(q)
+                get_tick_for_qubits([q]).pz([q])
                 mark_qubits_used([q])
                 queue_gate_metadata()
 
             elif op.op_type == OpType.H:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).h(q)
+                get_tick_for_qubits([q]).h([q])
                 mark_qubits_used([q])
                 queue_gate_metadata()
 
             elif op.op_type == OpType.X:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).x(q)
+                get_tick_for_qubits([q]).x([q])
                 mark_qubits_used([q])
                 queue_gate_metadata()
 
             elif op.op_type == OpType.Z:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).z(q)
+                get_tick_for_qubits([q]).z([q])
                 mark_qubits_used([q])
                 queue_gate_metadata()
 
             elif op.op_type == OpType.CX:
                 qubits = op.qubits
-                get_tick_for_qubits(qubits).cx(qubits[0], qubits[1])
+                get_tick_for_qubits(qubits).cx([(qubits[0], qubits[1])])
                 mark_qubits_used(qubits)
                 # Stabilizer name helps identify which stabilizer (e.g., "X0", "Z2")
                 stab = get_cx_stabilizer(qubits[0], qubits[1])
@@ -678,7 +678,7 @@ class TickCircuitRenderer(CircuitRenderer):
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).mz(q)
+                get_tick_for_qubits([q]).mz([q])
                 mark_qubits_used([q])
                 # Label helps identify measurement (e.g., "sx0", "sz0", "final[0]")
                 queue_gate_metadata({"label": op.label} if op.label else None)

@@ -33,7 +33,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 use crate::CliffordGateable;
-use pecos_core::{QubitId, qid, qid2};
+use pecos_core::{QubitId, qid};
 
 // ============================================================================
 // Helper: deterministic measurement assertion
@@ -480,15 +480,17 @@ pub fn verify_cx_squared<S: CliffordGateable>(sim: &mut S) {
     // On |10>: CX^2 should return to |10>
     sim.reset();
     sim.x(&qid(0));
-    sim.cx(&qid2(0, 1)).cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, true, "CX^2|10> q0");
     assert_mz(sim, 1, false, "CX^2|10> q1");
 
     // On Bell state: CX^2 should preserve
     sim.reset();
     sim.h(&qid(0));
-    sim.cx(&qid2(0, 1));
-    sim.cx(&qid2(0, 1)).cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
+    sim.cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(0), QubitId(1))]);
     // Still a Bell state: q0 non-deterministic, q1 correlated
     let r0 = sim.mz(&qid(0));
     let r1 = sim.mz(&qid(1));
@@ -506,7 +508,8 @@ pub fn verify_cx_squared<S: CliffordGateable>(sim: &mut S) {
 pub fn verify_cy_squared<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0)); // Superposition on control
-    sim.cy(&qid2(0, 1)).cy(&qid2(0, 1));
+    sim.cy(&[(QubitId(0), QubitId(1))])
+        .cy(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 1, false, "CY^2: target should be |0>");
 }
 
@@ -514,13 +517,13 @@ pub fn verify_cy_squared<S: CliffordGateable>(sim: &mut S) {
 pub fn verify_cx_behavior<S: CliffordGateable>(sim: &mut S) {
     // Control = 0: no action
     sim.reset();
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 1, false, "CX control=0: target unchanged");
 
     // Control = 1: flips target
     sim.reset();
     sim.x(&qid(0));
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, true, "CX control=1: control still 1");
     assert_mz(sim, 1, true, "CX control=1: target flipped to 1");
 }
@@ -528,12 +531,12 @@ pub fn verify_cx_behavior<S: CliffordGateable>(sim: &mut S) {
 /// Verify CY behavior: control=0 no action, control=1 applies Y.
 pub fn verify_cy_behavior<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.cy(&qid2(0, 1));
+    sim.cy(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 1, false, "CY control=0: target unchanged");
 
     sim.reset();
     sim.x(&qid(0));
-    sim.cy(&qid2(0, 1));
+    sim.cy(&[(QubitId(0), QubitId(1))]);
     // Y|0> = i|1>
     assert_mz(sim, 1, true, "CY control=1: target flipped to 1");
 }
@@ -543,7 +546,7 @@ pub fn verify_cz_behavior<S: CliffordGateable>(sim: &mut S) {
     // Control = 0: no action on target (test in X basis to detect Z)
     sim.reset();
     sim.h(&qid(1)); // |+> on target
-    sim.cz(&qid2(0, 1));
+    sim.cz(&[(QubitId(0), QubitId(1))]);
     sim.h(&qid(1)); // Convert back
     assert_mz(sim, 1, false, "CZ control=0: H CZ H target = |0>");
 
@@ -551,7 +554,7 @@ pub fn verify_cz_behavior<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(0));
     sim.h(&qid(1)); // |+> on target
-    sim.cz(&qid2(0, 1));
+    sim.cz(&[(QubitId(0), QubitId(1))]);
     sim.h(&qid(1)); // H|-> = |1>
     assert_mz(sim, 1, true, "CZ control=1: H CZ H target = |1>");
 }
@@ -560,7 +563,7 @@ pub fn verify_cz_behavior<S: CliffordGateable>(sim: &mut S) {
 pub fn verify_swap_behavior<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(0)); // q0=|1>, q1=|0>
-    sim.swap(&qid2(0, 1));
+    sim.swap(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, false, "SWAP: q0 should be 0");
     assert_mz(sim, 1, true, "SWAP: q1 should be 1");
 }
@@ -569,7 +572,8 @@ pub fn verify_swap_behavior<S: CliffordGateable>(sim: &mut S) {
 pub fn verify_swap_squared<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(0));
-    sim.swap(&qid2(0, 1)).swap(&qid2(0, 1));
+    sim.swap(&[(QubitId(0), QubitId(1))])
+        .swap(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, true, "SWAP^2: q0 back to 1");
     assert_mz(sim, 1, false, "SWAP^2: q1 back to 0");
 }
@@ -579,14 +583,14 @@ pub fn verify_swap_symmetric<S: CliffordGateable>(sim: &mut S) {
     // SWAP(0,1)
     sim.reset();
     sim.x(&qid(0));
-    sim.swap(&qid2(0, 1));
+    sim.swap(&[(QubitId(0), QubitId(1))]);
     let r0_a = sim.mz(&qid(0));
     let r1_a = sim.mz(&qid(1));
 
     // SWAP(1,0)
     sim.reset();
     sim.x(&qid(0));
-    sim.swap(&[QubitId(1), QubitId(0)]);
+    sim.swap(&[(QubitId(1), QubitId(0))]);
     let r0_b = sim.mz(&qid(0));
     let r1_b = sim.mz(&qid(1));
 
@@ -605,13 +609,13 @@ pub fn verify_iswap_behavior<S: CliffordGateable>(sim: &mut S) {
     // iSWAP|10> = i|01>: q0 -> 0, q1 -> 1 (phase invisible)
     sim.reset();
     sim.x(&qid(0));
-    sim.iswap(&qid2(0, 1));
+    sim.iswap(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, false, "iSWAP|10>: q0 = 0");
     assert_mz(sim, 1, true, "iSWAP|10>: q1 = 1");
 
     // iSWAP|00> = |00>
     sim.reset();
-    sim.iswap(&qid2(0, 1));
+    sim.iswap(&[(QubitId(0), QubitId(1))]);
     assert_mz(sim, 0, false, "iSWAP|00>: q0 = 0");
     assert_mz(sim, 1, false, "iSWAP|00>: q1 = 0");
 }
@@ -623,8 +627,9 @@ pub fn verify_iswap_behavior<S: CliffordGateable>(sim: &mut S) {
 /// Verify SXX * `SXXdg` = I on a Bell state.
 pub fn verify_sxx_adjoint<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1)); // Bell state
-    sim.sxx(&qid2(0, 1)).sxxdg(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Bell state
+    sim.sxx(&[(QubitId(0), QubitId(1))])
+        .sxxdg(&[(QubitId(0), QubitId(1))]);
 
     // Should still be a Bell state
     let r0 = sim.mz(&qid(0));
@@ -642,8 +647,9 @@ pub fn verify_sxx_adjoint<S: CliffordGateable>(sim: &mut S) {
 /// Verify SYY * `SYYdg` = I on a Bell state.
 pub fn verify_syy_adjoint<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
-    sim.syy(&qid2(0, 1)).syydg(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    sim.syy(&[(QubitId(0), QubitId(1))])
+        .syydg(&[(QubitId(0), QubitId(1))]);
 
     let r0 = sim.mz(&qid(0));
     let r1 = sim.mz(&qid(1));
@@ -660,8 +666,9 @@ pub fn verify_syy_adjoint<S: CliffordGateable>(sim: &mut S) {
 /// Verify SZZ * `SZZdg` = I on a Bell state.
 pub fn verify_szz_adjoint<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
-    sim.szz(&qid2(0, 1)).szzdg(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    sim.szz(&[(QubitId(0), QubitId(1))])
+        .szzdg(&[(QubitId(0), QubitId(1))]);
 
     let r0 = sim.mz(&qid(0));
     let r1 = sim.mz(&qid(1));
@@ -682,7 +689,7 @@ pub fn verify_szz_adjoint<S: CliffordGateable>(sim: &mut S) {
 /// Verify Bell state |Phi+> = (|00> + |11>)/sqrt(2) has correct correlations.
 pub fn verify_bell_state_correlations<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     let r0 = sim.mz(&qid(0));
     assert!(
@@ -708,7 +715,7 @@ pub fn verify_ghz_correlations<S: CliffordGateable>(sim: &mut S, num_qubits: usi
     sim.reset();
     sim.h(&qid(0));
     for i in 0..(num_qubits - 1) {
-        sim.cx(&qid2(i, i + 1));
+        sim.cx(&[(QubitId(i), QubitId(i + 1))]);
     }
 
     let r0 = sim.mz(&qid(0));
@@ -748,7 +755,7 @@ pub fn verify_swap_decomposition<S: CliffordGateable>(sim: &mut S) {
         if q1_val {
             sim.x(&qid(1));
         }
-        sim.swap(&qid2(0, 1));
+        sim.swap(&[(QubitId(0), QubitId(1))]);
         let swap_r0 = sim.mz(&qid(0));
         let swap_r1 = sim.mz(&qid(1));
 
@@ -760,9 +767,9 @@ pub fn verify_swap_decomposition<S: CliffordGateable>(sim: &mut S) {
         if q1_val {
             sim.x(&qid(1));
         }
-        sim.cx(&qid2(0, 1))
-            .cx(&[QubitId(1), QubitId(0)])
-            .cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
+            .cx(&[(QubitId(0), QubitId(1))]);
         let cx_r0 = sim.mz(&qid(0));
         let cx_r1 = sim.mz(&qid(1));
 
@@ -791,7 +798,7 @@ pub fn verify_cz_decomposition<S: CliffordGateable>(sim: &mut S) {
         if q1_val {
             sim.x(&qid(1));
         }
-        sim.cz(&qid2(0, 1));
+        sim.cz(&[(QubitId(0), QubitId(1))]);
         // CZ only applies phase, so Z-measurement outcomes are unchanged
         let cz_r0 = sim.mz(&qid(0));
         let cz_r1 = sim.mz(&qid(1));
@@ -804,7 +811,7 @@ pub fn verify_cz_decomposition<S: CliffordGateable>(sim: &mut S) {
         if q1_val {
             sim.x(&qid(1));
         }
-        sim.h(&qid(1)).cx(&qid2(0, 1)).h(&qid(1));
+        sim.h(&qid(1)).cx(&[(QubitId(0), QubitId(1))]).h(&qid(1));
         let decomp_r0 = sim.mz(&qid(0));
         let decomp_r1 = sim.mz(&qid(1));
 
@@ -947,7 +954,7 @@ pub fn verify_measurement_idempotence<S: CliffordGateable>(sim: &mut S) {
 /// Verify measurement idempotence on an entangled state.
 pub fn verify_measurement_idempotence_entangled<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.h(&qid(0)).cx(&qid2(0, 1));
+    sim.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     let r1 = sim.mz(&qid(0));
     let r2 = sim.mz(&qid(0));
@@ -1035,7 +1042,8 @@ pub fn verify_g_squared<S: CliffordGateable>(sim: &mut S) {
         if q1_one {
             sim.x(&qid(1));
         }
-        sim.g(&qid2(0, 1)).g(&qid2(0, 1));
+        sim.g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(0), QubitId(1))]);
 
         let label = format!("G^2|{}{}>", u8::from(q0_one), u8::from(q1_one));
         assert_mz(sim, 0, q0_one, &format!("{label} q0"));
@@ -1045,7 +1053,8 @@ pub fn verify_g_squared<S: CliffordGateable>(sim: &mut S) {
     // Also test on |+0>
     sim.reset();
     sim.h(&qid(0));
-    sim.g(&qid2(0, 1)).g(&qid2(0, 1));
+    sim.g(&[(QubitId(0), QubitId(1))])
+        .g(&[(QubitId(0), QubitId(1))]);
     assert_mx(sim, 0, false, "G^2|+0> q0 should be |+>");
     assert_mz(sim, 1, false, "G^2|+0> q1 should be |0>");
 }
@@ -1056,7 +1065,7 @@ pub fn verify_g_squared<S: CliffordGateable>(sim: &mut S) {
 /// where both qubits are in superposition under Z-basis measurement.
 pub fn verify_g_gate_creates_superposition<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
-    sim.g(&qid2(0, 1));
+    sim.g(&[(QubitId(0), QubitId(1))]);
 
     // Both qubits should be in superposition (non-deterministic under mz)
     assert_mz_superposition(sim, 0, "G|00>: q0 should be in superposition");
@@ -1364,7 +1373,7 @@ pub fn verify_cx_truth_table<S: CliffordGateable>(sim: &mut S) {
         if tgt_in {
             sim.x(&qid(1));
         }
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         let label = format!("CX|{}{}>", u8::from(ctrl_in), u8::from(tgt_in));
         assert_mz(sim, 0, ctrl_out, &format!("{label} ctrl"));
@@ -1391,7 +1400,7 @@ pub fn verify_cy_truth_table<S: CliffordGateable>(sim: &mut S) {
         if tgt_in {
             sim.x(&qid(1));
         }
-        sim.cy(&qid2(0, 1));
+        sim.cy(&[(QubitId(0), QubitId(1))]);
 
         let label = format!("CY|{}{}>", u8::from(ctrl_in), u8::from(tgt_in));
         assert_mz(sim, 0, ctrl_out, &format!("{label} ctrl"));
@@ -1415,7 +1424,7 @@ pub fn verify_cz_truth_table<S: CliffordGateable>(sim: &mut S) {
         if q1_one {
             sim.x(&qid(1));
         }
-        sim.cz(&qid2(0, 1));
+        sim.cz(&[(QubitId(0), QubitId(1))]);
 
         let label = format!("CZ|{}{}>", u8::from(q0_one), u8::from(q1_one));
         assert_mz(sim, 0, q0_one, &format!("{label} q0 unchanged"));
@@ -1427,7 +1436,7 @@ pub fn verify_cz_truth_table<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0)); // |+>
     sim.x(&qid(1)); // |1>
-    sim.cz(&qid2(0, 1));
+    sim.cz(&[(QubitId(0), QubitId(1))]);
     assert_mx(sim, 0, true, "CZ|+1> q0 should be |->");
     assert_mz(sim, 1, true, "CZ|+1> q1 should be |1>");
 
@@ -1435,7 +1444,7 @@ pub fn verify_cz_truth_table<S: CliffordGateable>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0)); // |+>
     // q1 stays |0>
-    sim.cz(&qid2(0, 1));
+    sim.cz(&[(QubitId(0), QubitId(1))]);
     assert_mx(sim, 0, false, "CZ|+0> q0 should still be |+>");
     assert_mz(sim, 1, false, "CZ|+0> q1 should be |0>");
 }
@@ -1460,10 +1469,10 @@ pub fn verify_iswap_fourth<S: CliffordGateable>(sim: &mut S) {
         if q1_one {
             sim.x(&qid(1));
         }
-        sim.iswap(&qid2(0, 1))
-            .iswap(&qid2(0, 1))
-            .iswap(&qid2(0, 1))
-            .iswap(&qid2(0, 1));
+        sim.iswap(&[(QubitId(0), QubitId(1))])
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswap(&[(QubitId(0), QubitId(1))]);
 
         let label = format!("iSWAP^4|{}{}>", u8::from(q0_one), u8::from(q1_one));
         assert_mz(sim, 0, q0_one, &format!("{label} q0"));
@@ -1473,10 +1482,10 @@ pub fn verify_iswap_fourth<S: CliffordGateable>(sim: &mut S) {
     // Also test on |+0> to cover superposition
     sim.reset();
     sim.h(&qid(0));
-    sim.iswap(&qid2(0, 1))
-        .iswap(&qid2(0, 1))
-        .iswap(&qid2(0, 1))
-        .iswap(&qid2(0, 1));
+    sim.iswap(&[(QubitId(0), QubitId(1))])
+        .iswap(&[(QubitId(0), QubitId(1))])
+        .iswap(&[(QubitId(0), QubitId(1))])
+        .iswap(&[(QubitId(0), QubitId(1))]);
     assert_mx(sim, 0, false, "iSWAP^4|+0> q0 should be |+>");
     assert_mz(sim, 1, false, "iSWAP^4|+0> q1 should be |0>");
 }

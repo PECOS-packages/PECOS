@@ -944,30 +944,30 @@ impl ClassicalEngine for PhirJsonEngine {
                 // Add command to builder based on gate type
                 match gate_name.as_str() {
                     "H" => {
-                        builder.add_h(&qubits);
+                        builder.h(&qubits);
                     }
                     "X" => {
-                        builder.add_x(&qubits);
+                        builder.x(&qubits);
                     }
                     "Y" => {
-                        builder.add_y(&qubits);
+                        builder.y(&qubits);
                     }
                     "Z" => {
-                        builder.add_z(&qubits);
+                        builder.z(&qubits);
                     }
                     "CX" => {
                         if qubits.len() >= 2 {
-                            builder.add_cx(&[qubits[0]], &[qubits[1]]);
+                            builder.cx(&[(qubits[0], qubits[1])]);
                         }
                     }
                     "RZ" => {
                         if !params.is_empty() {
-                            builder.add_rz(Angle64::from_radians(params[0]), &qubits);
+                            builder.rz(Angle64::from_radians(params[0]), &qubits);
                         }
                     }
                     "R1XY" => {
                         if params.len() >= 2 {
-                            builder.add_r1xy(
+                            builder.r1xy(
                                 Angle64::from_radians(params[0]),
                                 Angle64::from_radians(params[1]),
                                 &qubits,
@@ -976,7 +976,7 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "SZZ" => {
                         if qubits.len() >= 2 {
-                            builder.add_szz(&[qubits[0]], &[qubits[1]]);
+                            builder.szz(&[(qubits[0], qubits[1])]);
                         }
                     }
                     "Measure" => {
@@ -988,25 +988,22 @@ impl ClassicalEngine for PhirJsonEngine {
                             let result_id_f64 = params[0];
                             if result_id_f64 < 0.0 || result_id_f64 > f64::from(u32::MAX) {
                                 log::debug!("Warning: Invalid result_id {result_id_f64}, using 0");
-                                builder.add_measurements(&qubits);
+                                builder.mz(&qubits);
                             } else {
                                 // Safe to convert to u32 and then usize
                                 // We've already checked the bounds, so we can safely convert
                                 // result_id is no longer needed for measurements, just add the measurement
-                                builder.add_measurements(&qubits);
+                                builder.mz(&qubits);
                             }
                         }
                     }
                     "Prep" => {
-                        builder.add_prep(&qubits);
+                        builder.pz(&qubits);
                     }
                     "RZZ" => {
                         if qubits.len() >= 2 && !params.is_empty() {
-                            builder.add_rzz(
-                                Angle64::from_radians(params[0]),
-                                &[qubits[0]],
-                                &[qubits[1]],
-                            );
+                            builder
+                                .rzz(Angle64::from_radians(params[0]), &[(qubits[0], qubits[1])]);
                         }
                     }
                     _ => {

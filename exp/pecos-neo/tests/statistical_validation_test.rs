@@ -88,7 +88,7 @@ fn chi_square_test(
 fn test_hadamard_distribution_high_statistics() {
     println!("\n=== Hadamard Distribution Test ({NUM_SHOTS} shots) ===\n");
 
-    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     // MonteCarloRunner
     let mc_config = MonteCarloConfig::new()
@@ -118,7 +118,7 @@ fn test_hadamard_distribution_high_statistics() {
     let coord_results = coordinator.run(
         || SparseStab::new(1),
         |world| {
-            let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+            let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
             world
                 .entities()
@@ -174,12 +174,12 @@ fn test_bell_state_distribution_high_statistics() {
     println!("\n=== Bell State Distribution Test ({NUM_SHOTS} shots) ===\n");
 
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // MonteCarloRunner
@@ -268,7 +268,7 @@ fn test_depolarizing_noise_rate_validation() {
     for &p1 in &test_rates {
         // Circuit: |0> -> X -> measure (should give 1 without noise)
         // With depolarizing noise on X gate, some shots will give 0
-        let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let mc_config = MonteCarloConfig::new()
             .with_shots(NUM_SHOTS)
@@ -323,7 +323,7 @@ fn test_measurement_error_rate_validation() {
     for &p_meas in &test_rates {
         // Circuit: |0> -> measure (should give 0 without noise)
         // With measurement error, some shots will give 1
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let mc_config = MonteCarloConfig::new()
             .with_shots(NUM_SHOTS)
@@ -408,12 +408,12 @@ fn test_neo_vs_engines_bell_state_comparison() {
 
     // Run with pecos-neo MonteCarloRunner
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let mc_config = MonteCarloConfig::new()
@@ -512,12 +512,12 @@ fn test_neo_vs_engines_noisy_comparison() {
 
     // pecos-neo
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let mc_config = MonteCarloConfig::new()

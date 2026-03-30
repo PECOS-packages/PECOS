@@ -373,12 +373,12 @@ mod tests {
     #[test]
     fn test_dag_circuit_to_command_queue() {
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.mz(0);
-        dag.mz(1);
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
 
         let queue = CommandQueue::from(&dag);
 
@@ -394,12 +394,12 @@ mod tests {
         use crate::command::CommandBuilder;
 
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let circuit = TickCircuit::from(&commands);

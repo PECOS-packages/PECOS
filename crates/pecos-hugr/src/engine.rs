@@ -1273,37 +1273,37 @@ impl HugrEngine {
 
             // Single-qubit gates
             GateType::H => {
-                self.message_builder.add_h(&[qubits[0].0]);
+                self.message_builder.h(&[qubits[0].0]);
             }
             GateType::X => {
-                self.message_builder.add_x(&[qubits[0].0]);
+                self.message_builder.x(&[qubits[0].0]);
             }
             GateType::Y => {
-                self.message_builder.add_y(&[qubits[0].0]);
+                self.message_builder.y(&[qubits[0].0]);
             }
             GateType::Z => {
-                self.message_builder.add_z(&[qubits[0].0]);
+                self.message_builder.z(&[qubits[0].0]);
             }
             GateType::SZ => {
-                self.message_builder.add_rz(
+                self.message_builder.rz(
                     Angle64::from_radians(std::f64::consts::FRAC_PI_2),
                     &[qubits[0].0],
                 );
             }
             GateType::SZdg => {
-                self.message_builder.add_rz(
+                self.message_builder.rz(
                     Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
                     &[qubits[0].0],
                 );
             }
             GateType::T => {
-                self.message_builder.add_rz(
+                self.message_builder.rz(
                     Angle64::from_radians(std::f64::consts::FRAC_PI_4),
                     &[qubits[0].0],
                 );
             }
             GateType::Tdg => {
-                self.message_builder.add_rz(
+                self.message_builder.rz(
                     Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
                     &[qubits[0].0],
                 );
@@ -1311,29 +1311,29 @@ impl HugrEngine {
             GateType::RX => {
                 let angle = self.resolve_rotation_angle(hugr, node, op);
                 self.message_builder
-                    .add_rx(Angle64::from_radians(angle), &[qubits[0].0]);
+                    .rx(Angle64::from_radians(angle), &[qubits[0].0]);
             }
             GateType::RY => {
                 let angle = self.resolve_rotation_angle(hugr, node, op);
                 self.message_builder
-                    .add_ry(Angle64::from_radians(angle), &[qubits[0].0]);
+                    .ry(Angle64::from_radians(angle), &[qubits[0].0]);
             }
             GateType::RZ => {
                 let angle = self.resolve_rotation_angle(hugr, node, op);
                 self.message_builder
-                    .add_rz(Angle64::from_radians(angle), &[qubits[0].0]);
+                    .rz(Angle64::from_radians(angle), &[qubits[0].0]);
             }
             GateType::PZ => {
-                self.message_builder.add_prep(&[qubits[0].0]);
+                self.message_builder.pz(&[qubits[0].0]);
             }
             GateType::SX => {
-                self.message_builder.add_rx(
+                self.message_builder.rx(
                     Angle64::from_radians(std::f64::consts::FRAC_PI_2),
                     &[qubits[0].0],
                 );
             }
             GateType::SXdg => {
-                self.message_builder.add_rx(
+                self.message_builder.rx(
                     Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
                     &[qubits[0].0],
                 );
@@ -1341,32 +1341,32 @@ impl HugrEngine {
 
             // Two-qubit gates
             GateType::CX => {
-                self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
+                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
             }
             GateType::CY => {
-                self.message_builder.add_cy(&[qubits[0].0], &[qubits[1].0]);
+                self.message_builder.cy(&[(qubits[0].0, qubits[1].0)]);
             }
             GateType::CZ => {
-                self.message_builder.add_cz(&[qubits[0].0], &[qubits[1].0]);
+                self.message_builder.cz(&[(qubits[0].0, qubits[1].0)]);
             }
             GateType::SZZ => {
-                self.message_builder.add_szz(&[qubits[0].0], &[qubits[1].0]);
+                self.message_builder.szz(&[(qubits[0].0, qubits[1].0)]);
             }
             GateType::SWAP => {
-                self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
-                self.message_builder.add_cx(&[qubits[1].0], &[qubits[0].0]);
-                self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
+                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
+                self.message_builder.cx(&[(qubits[1].0, qubits[0].0)]);
+                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
             }
             GateType::CH => {
                 // CH = Ry(pi/4) on target, CX(control, target), Ry(-pi/4) on target
                 let control = qubits[0].0;
                 let target = qubits[1].0;
-                self.message_builder.add_ry(
+                self.message_builder.ry(
                     Angle64::from_radians(std::f64::consts::FRAC_PI_4),
                     &[target],
                 );
-                self.message_builder.add_cx(&[control], &[target]);
-                self.message_builder.add_ry(
+                self.message_builder.cx(&[(control, target)]);
+                self.message_builder.ry(
                     Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
                     &[target],
                 );
@@ -1375,53 +1375,53 @@ impl HugrEngine {
                 let angle = self.resolve_rotation_angle(hugr, node, op);
                 let half_angle = angle / 2.0;
                 self.message_builder
-                    .add_rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
-                self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
+                    .rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
+                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
                 self.message_builder
-                    .add_rz(Angle64::from_radians(-half_angle), &[qubits[1].0]);
-                self.message_builder.add_cx(&[qubits[0].0], &[qubits[1].0]);
+                    .rz(Angle64::from_radians(-half_angle), &[qubits[1].0]);
+                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
             }
             GateType::CCX => {
                 let c0 = qubits[0].0;
                 let c1 = qubits[1].0;
                 let target = qubits[2].0;
-                self.message_builder.add_h(&[target]);
-                self.message_builder.add_cx(&[c1], &[target]);
-                self.message_builder.add_rz(
+                self.message_builder.h(&[target]);
+                self.message_builder.cx(&[(c1, target)]);
+                self.message_builder.rz(
                     Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
                     &[target],
                 );
-                self.message_builder.add_cx(&[c0], &[target]);
-                self.message_builder.add_rz(
+                self.message_builder.cx(&[(c0, target)]);
+                self.message_builder.rz(
                     Angle64::from_radians(std::f64::consts::FRAC_PI_4),
                     &[target],
                 );
-                self.message_builder.add_cx(&[c1], &[target]);
-                self.message_builder.add_rz(
+                self.message_builder.cx(&[(c1, target)]);
+                self.message_builder.rz(
                     Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
                     &[target],
                 );
-                self.message_builder.add_cx(&[c0], &[target]);
+                self.message_builder.cx(&[(c0, target)]);
                 self.message_builder
-                    .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c1]);
-                self.message_builder.add_rz(
+                    .rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c1]);
+                self.message_builder.rz(
                     Angle64::from_radians(std::f64::consts::FRAC_PI_4),
                     &[target],
                 );
-                self.message_builder.add_h(&[target]);
-                self.message_builder.add_cx(&[c0], &[c1]);
+                self.message_builder.h(&[target]);
+                self.message_builder.cx(&[(c0, c1)]);
                 self.message_builder
-                    .add_rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c0]);
+                    .rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c0]);
                 self.message_builder
-                    .add_rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[c1]);
-                self.message_builder.add_cx(&[c0], &[c1]);
+                    .rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[c1]);
+                self.message_builder.cx(&[(c0, c1)]);
             }
 
             // Measurement operations
             GateType::MZ | GateType::MeasureFree => {
                 let qubit_id = qubits[0];
                 debug!(" Measure: qubit {qubit_id:?} at node {node:?}");
-                self.message_builder.add_measurements(&[qubit_id.0]);
+                self.message_builder.mz(&[qubit_id.0]);
                 self.measurement_state.mappings.push((node, qubit_id));
 
                 let bool_output_port = usize::from(op.gate_type == GateType::MZ);

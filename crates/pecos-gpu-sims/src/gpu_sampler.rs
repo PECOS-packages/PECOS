@@ -13,10 +13,10 @@
 //!
 //! // Run symbolic simulation
 //! let mut sim = SymbolicSparseStab::new(4);
-//! sim.h(0);
-//! sim.cx(0, 1);
-//! sim.mz(0);
-//! sim.mz(1);
+//! sim.h(&[0]);
+//! sim.cx(&[(0, 1)]);
+//! sim.mz(&[0]);
+//! sim.mz(&[1]);
 //!
 //! // Convert measurement history to MeasurementKind for GPU sampler
 //! let measurements = MeasurementKind::from_history(sim.measurement_history());

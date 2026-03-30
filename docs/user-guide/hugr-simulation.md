@@ -357,7 +357,7 @@ HUGR programs work with different quantum backends:
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
     from pecos import sim, Guppy
-    from pecos_rslib import state_vector, sparse_stabilizer
+    from pecos_rslib import state_vector, sparse_stab
 
 
     @guppy
@@ -371,13 +371,13 @@ HUGR programs work with different quantum backends:
     results = sim(Guppy(my_circuit)).qubits(5).quantum(state_vector()).run(100)
 
     # Sparse stabilizer - efficient for Clifford circuits
-    results = sim(Guppy(my_circuit)).qubits(5).quantum(sparse_stabilizer()).run(100)
+    results = sim(Guppy(my_circuit)).qubits(5).quantum(sparse_stab()).run(100)
     ```
 
 | Engine | Best For | Gates Supported |
 |--------|----------|-----------------|
 | `state_vector()` | Universal circuits | All gates including T, rotations |
-| `sparse_stabilizer()` | Clifford circuits | H, S, CNOT, measurements |
+| `sparse_stab()` | Clifford circuits | H, S, CNOT, measurements |
 
 ## Adding Noise
 

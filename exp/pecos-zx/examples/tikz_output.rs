@@ -42,8 +42,8 @@ fn main() {
 /// Bell state circuit -> ZX -> all formats.
 fn bell_state_tikz() {
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.cx(0, 1);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
 
     let graph = dag_to_zx(&dag).expect("conversion failed");
 
@@ -88,11 +88,11 @@ fn graph_state_tikz() {
 fn simplification_tikz() {
     // Build a circuit with redundant gates: H*H = I, CX*CX = I
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.h(0);
-    dag.cx(0, 1);
-    dag.cx(0, 1);
-    dag.h(1);
+    dag.h(&[0]);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
+    dag.cx(&[(0, 1)]);
+    dag.h(&[1]);
 
     let mut graph = dag_to_zx(&dag).expect("conversion failed");
 

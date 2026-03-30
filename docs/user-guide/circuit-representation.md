@@ -135,7 +135,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 
     # Fluent builder API
     circuit = DagCircuit()
-    circuit.h(0).cx(0, 1).rz(0.5, 0).mz(0)
+    circuit.h([0]).cx([(0, 1)]).rz(0.5, [0]).mz([0])
 
     # Query properties
     print(f"Gates: {circuit.gate_count()}")
@@ -149,7 +149,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 
     // Fluent builder API
     let mut circuit = DagCircuit::new();
-    circuit.h(0).cx(0, 1).rz(0.5, 0).mz(0);
+    circuit.h(&[0]).cx(&[(0, 1)]).rz(0.5, &[0]).mz(&[0]);
 
     // Query properties
     println!("Gates: {}", circuit.gate_count());
@@ -168,31 +168,31 @@ The fluent API automatically wires gates on the same qubit:
     circuit = DagCircuit()
 
     # Single-qubit gates
-    circuit.h(0)  # Hadamard
-    circuit.x(1)  # Pauli X
-    circuit.y(2)  # Pauli Y
-    circuit.z(3)  # Pauli Z
-    circuit.sz(0)  # S gate (sqrt Z)
-    circuit.szdg(0)  # S-dagger
-    circuit.t(0)  # T gate
-    circuit.tdg(0)  # T-dagger
+    circuit.h([0])  # Hadamard
+    circuit.x([1])  # Pauli X
+    circuit.y([2])  # Pauli Y
+    circuit.z([3])  # Pauli Z
+    circuit.sz([0])  # S gate (sqrt Z)
+    circuit.szdg([0])  # S-dagger
+    circuit.t([0])  # T gate
+    circuit.tdg([0])  # T-dagger
 
     # Rotation gates (angle in radians)
-    circuit.rx(3.14159, 0)  # RX
-    circuit.ry(1.5708, 1)  # RY
-    circuit.rz(0.7854, 2)  # RZ
+    circuit.rx(3.14159, [0])  # RX
+    circuit.ry(1.5708, [1])  # RY
+    circuit.rz(0.7854, [2])  # RZ
 
     # Two-qubit gates
-    circuit.cx(0, 1)  # CNOT (control, target)
-    circuit.szz(0, 1)  # sqrt ZZ
-    circuit.rzz(0.5, 0, 1)  # RZZ rotation
+    circuit.cx([(0, 1)])  # CNOT (control, target)
+    circuit.szz([(0, 1)])  # sqrt ZZ
+    circuit.rzz(0.5, [(0, 1)])  # RZZ rotation
 
     # Measurement and preparation
-    circuit.mz(0)  # Measure in Z basis
-    circuit.pz(1)  # Prepare in Z basis (|0>)
+    circuit.mz([0])  # Measure in Z basis
+    circuit.pz([1])  # Prepare in Z basis (|0>)
 
     # Chaining
-    circuit.h(0).cx(0, 1).h(0).mz(0)
+    circuit.h([0]).cx([(0, 1)]).h([0]).mz([0])
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -202,31 +202,31 @@ The fluent API automatically wires gates on the same qubit:
     let mut circuit = DagCircuit::new();
 
     // Single-qubit gates
-    circuit.h(0);       // Hadamard
-    circuit.x(1);       // Pauli X
-    circuit.y(2);       // Pauli Y
-    circuit.z(3);       // Pauli Z
-    circuit.sz(0);      // S gate
-    circuit.szdg(0);    // S-dagger
-    circuit.t(0);       // T gate
-    circuit.tdg(0);     // T-dagger
+    circuit.h(&[0]);       // Hadamard
+    circuit.x(&[1]);       // Pauli X
+    circuit.y(&[2]);       // Pauli Y
+    circuit.z(&[3]);       // Pauli Z
+    circuit.sz(&[0]);      // S gate
+    circuit.szdg(&[0]);    // S-dagger
+    circuit.t(&[0]);       // T gate
+    circuit.tdg(&[0]);     // T-dagger
 
     // Rotation gates (angle in radians)
-    circuit.rx(3.14159, 0);
-    circuit.ry(1.5708, 1);
-    circuit.rz(0.7854, 2);
+    circuit.rx(3.14159, &[0]);
+    circuit.ry(1.5708, &[1]);
+    circuit.rz(0.7854, &[2]);
 
     // Two-qubit gates
-    circuit.cx(0, 1);
-    circuit.szz(0, 1);
-    circuit.rzz(0.5, 0, 1);
+    circuit.cx(&[(0, 1)]);
+    circuit.szz(&[(0, 1)]);
+    circuit.rzz(0.5, &[(0, 1)]);
 
     // Measurement and preparation
-    circuit.mz(0);
-    circuit.pz(1);
+    circuit.mz(&[0]);
+    circuit.pz(&[1]);
 
     // Chaining
-    circuit.h(0).cx(0, 1).h(0).mz(0);
+    circuit.h(&[0]).cx(&[(0, 1)]).h(&[0]).mz(&[0]);
     ```
 
 ### Adding Metadata
@@ -240,13 +240,13 @@ Gates can have arbitrary metadata attached:
     circuit = DagCircuit()
 
     # Attach metadata to the last gate
-    circuit.h(0).meta("error_rate", 0.001)
+    circuit.h([0]).meta("error_rate", 0.001)
 
     # Multiple metadata entries
-    circuit.cx(0, 1).meta("duration_ns", 50)
+    circuit.cx([(0, 1)]).meta("duration_ns", 50)
 
     # Measurements break the chain but still support metadata
-    circuit.mz(0).meta("basis", "Z")
+    circuit.mz([0]).meta("basis", "Z")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -256,13 +256,13 @@ Gates can have arbitrary metadata attached:
     let mut circuit = DagCircuit::new();
 
     // Attach metadata to the last gate
-    circuit.h(0).meta("error_rate", Attribute::Float(0.001));
+    circuit.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 
     // Multiple metadata entries
-    circuit.cx(0, 1).meta("duration_ns", Attribute::Int(50));
+    circuit.cx(&[(0, 1)]).meta("duration_ns", Attribute::Int(50));
 
     // Measurements break the chain but still support metadata
-    circuit.mz(0).meta("basis", Attribute::String("Z".into()));
+    circuit.mz(&[0]).meta("basis", Attribute::String("Z".into()));
     ```
 
 ### Circuit Analysis
@@ -272,7 +272,7 @@ Gates can have arbitrary metadata attached:
     from pecos.quantum import DagCircuit
 
     circuit = DagCircuit()
-    circuit.h(0).cx(0, 1).h(1).cx(1, 2).mz(0).mz(1).mz(2)
+    circuit.h([0]).cx([(0, 1)]).h([1]).cx([(1, 2)]).mz([0]).mz([1]).mz([2])
 
     # Basic metrics
     print(f"Total gates: {circuit.gate_count()}")
@@ -297,10 +297,10 @@ Gates can have arbitrary metadata attached:
 === ":fontawesome-brands-rust: Rust"
     ```rust
     let mut circuit = DagCircuit::new();
-    circuit.h(0).cx(0, 1).h(1).cx(1, 2);
-    circuit.mz(0);
-    circuit.mz(1);
-    circuit.mz(2);
+    circuit.h(&[0]).cx(&[(0, 1)]).h(&[1]).cx(&[(1, 2)]);
+    circuit.mz(&[0]);
+    circuit.mz(&[1]);
+    circuit.mz(&[2]);
 
     // Basic metrics
     println!("Total gates: {}", circuit.gate_count());
@@ -379,15 +379,15 @@ A time-sliced circuit representation where gates are organized into discrete tim
     circuit = TickCircuit()
 
     # First tick: parallel gates
-    circuit.tick().h(0).h(1).h(2)
+    circuit.tick().h([0]).h([1]).h([2])
 
     # Second tick: entangling layer
-    circuit.tick().cx(0, 1).cx(2, 3)
+    circuit.tick().cx([(0, 1)]).cx([(2, 3)])
 
     # Third tick: measurements (call separately, mz doesn't chain)
     tick = circuit.tick()
-    tick.mz(0)
-    tick.mz(1)
+    tick.mz([0])
+    tick.mz([1])
 
     print(f"Number of ticks: {circuit.num_ticks()}")
     print(f"Total gates: {circuit.gate_count()}")
@@ -424,8 +424,8 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     circuit = TickCircuit()
     tick = circuit.tick()
 
-    tick.h(0)
-    tick.cx(0, 1)  # Error! Qubit 0 already used in this tick
+    tick.h([0])
+    tick.cx([(0, 1)])  # Error! Qubit 0 already used in this tick
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -456,7 +456,7 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     # Add metadata to a tick
     tick = circuit.tick()
     tick.meta("round", 1)
-    tick.h(0).meta("error_rate", 0.001)
+    tick.h([0]).meta("error_rate", 0.001)
 
     # Circuit-level metadata
     circuit.set_meta("name", "Bell state")
@@ -485,8 +485,8 @@ TickCircuit can be converted to and from DagCircuit:
 
     # TickCircuit -> DagCircuit
     tick_circuit = TickCircuit()
-    tick_circuit.tick().h(0).h(1)
-    tick_circuit.tick().cx(0, 1)
+    tick_circuit.tick().h([0]).h([1])
+    tick_circuit.tick().cx([(0, 1)])
 
     dag_circuit = tick_circuit.to_dag_circuit()
 
@@ -640,11 +640,11 @@ A directed acyclic graph with topological ordering and cycle prevention:
 | Method | Description |
 |--------|-------------|
 | `new()` | Create empty circuit |
-| `h(q)`, `x(q)`, `y(q)`, `z(q)` | Single-qubit Pauli gates |
-| `sz(q)`, `szdg(q)`, `t(q)`, `tdg(q)` | Phase gates |
-| `rx(theta, q)`, `ry(theta, q)`, `rz(theta, q)` | Rotation gates |
-| `cx(ctrl, tgt)`, `szz(q1, q2)`, `rzz(theta, q1, q2)` | Two-qubit gates |
-| `mz(q)`, `pz(q)` | Measurement and preparation |
+| `h(qubits)`, `x(qubits)`, `y(qubits)`, `z(qubits)` | Single-qubit Pauli gates |
+| `sz(qubits)`, `szdg(qubits)`, `t(qubits)`, `tdg(qubits)` | Phase gates |
+| `rx(theta, qubits)`, `ry(theta, qubits)`, `rz(theta, qubits)` | Rotation gates |
+| `cx(pairs)`, `szz(pairs)`, `rzz(theta, pairs)` | Two-qubit gates |
+| `mz(qubits)`, `pz(qubits)` | Measurement and preparation |
 | `meta(key, value)` | Attach metadata to last gate |
 | `gate_count()`, `depth()`, `width()` | Circuit metrics |
 | `qubits()` | List of qubits used |

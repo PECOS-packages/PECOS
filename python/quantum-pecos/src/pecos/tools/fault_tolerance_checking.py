@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import pecos as pc
 from pecos.engines.circuit_runners import Standard
-from pecos.simulators import SparseSim
+from pecos.simulators import SparseStab
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
@@ -68,7 +68,7 @@ def find_pauli_fault(
 
     """
     if simulator is None:
-        simulator = SparseSim
+        simulator = SparseStab
     """
 
     if num_qubits is None:
@@ -77,7 +77,7 @@ def find_pauli_fault(
     for err in get_wt_paulis(qcirc, wt, make_qc=True):
         # output = run_sim(qcirc, shots=1, simulator=simulator, error_circuits=err)
         circ_sim = Standard()
-        state = SparseSim(num_qubits)
+        state = SparseStab(num_qubits)
         output, _ = circ_sim.run(state, qcirc, error_circuits=err)
 
         if fail_func(output):

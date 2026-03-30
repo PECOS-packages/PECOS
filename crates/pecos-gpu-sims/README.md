@@ -31,7 +31,7 @@ use pecos_gpu_sims::GpuStateVec;
 let mut sim = GpuStateVec::new(4)?;  // 4 qubits
 sim.h(0);                             // Hadamard
 sim.cx(0, 1);                         // CNOT
-let result = sim.measure(0);          // Measure
+let result = sim.mz(0);               // Measure
 ```
 
 ## Supported Gates

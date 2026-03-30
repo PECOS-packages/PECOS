@@ -56,7 +56,7 @@ public:
     void g2(std::uint64_t qubit1, std::uint64_t qubit2);
     void sxx(std::uint64_t qubit1, std::uint64_t qubit2);
     void sxxdg(std::uint64_t qubit1, std::uint64_t qubit2);
-    std::uint32_t measure(std::uint64_t qubit, std::int32_t forced_outcome, bool collapse);
+    std::uint32_t mz(std::uint64_t qubit, std::int32_t forced_outcome, bool collapse);
 
     // Tableau access methods
     std::uint64_t get_num_qubits() const;

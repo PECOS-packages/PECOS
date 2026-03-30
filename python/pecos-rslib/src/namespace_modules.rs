@@ -50,7 +50,6 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Add factory functions (references to the engine builders)
     quantum.add("state_vector", parent.getattr("state_vector")?)?;
-    quantum.add("sparse_stabilizer", parent.getattr("sparse_stabilizer")?)?;
     quantum.add("sparse_stab", parent.getattr("sparse_stab")?)?;
 
     // Add builder classes (via getattr from parent)
@@ -59,8 +58,8 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         parent.getattr("StateVectorEngineBuilder")?,
     )?;
     quantum.add(
-        "SparseStabilizerEngineBuilder",
-        parent.getattr("SparseStabilizerEngineBuilder")?,
+        "SparseStabEngineBuilder",
+        parent.getattr("SparseStabEngineBuilder")?,
     )?;
 
     // Register in sys.modules for import statement support

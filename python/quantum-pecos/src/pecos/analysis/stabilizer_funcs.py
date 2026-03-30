@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import Any
 
-    from pecos.simulators.sparsesim.state import Gens, SparseSim
+    from pecos.simulators.sparsesim.state import Gens, SparseStabPy
 
 
 def circ2set(circuit: Iterable[tuple[str, Any]]) -> tuple[set, set]:
@@ -77,7 +77,7 @@ def op_commutes(stab_xs: set[int], stab_zs: set[int], commute_with: Gens) -> boo
     return not len(anticom_stabs)
 
 
-def find_stab(state: SparseSim, stab_xs: set[int], stab_zs: set[int]) -> bool:
+def find_stab(state: SparseStabPy, stab_xs: set[int], stab_zs: set[int]) -> bool:
     """Find the sign of the logical operator.
 
     Args:
@@ -118,7 +118,7 @@ def find_stab(state: SparseSim, stab_xs: set[int], stab_zs: set[int]) -> bool:
 
 
 def remove_stab(
-    state: SparseSim,
+    state: SparseStabPy,
     stab_xs: set[int],
     stab_zs: set[int],
     destab_xs: set[int],
@@ -316,7 +316,7 @@ def remove_stab(
         stabs.signs_i ^= delog_anticom
 
 
-def is_not_stabilizer(state: SparseSim, qubits_x: set[int], qubits_z: set[int]) -> int:
+def is_not_stabilizer(state: SparseStabPy, qubits_x: set[int], qubits_z: set[int]) -> int:
     """Check if an operator is not a stabilizer and return classification.
 
     Args:

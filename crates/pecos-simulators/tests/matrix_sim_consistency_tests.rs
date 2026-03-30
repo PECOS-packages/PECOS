@@ -22,7 +22,7 @@ use num_complex::Complex64;
 use pecos_core::Angle64;
 use pecos_core::clifford::Clifford;
 use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QubitId, StateVec, qid};
 
 type GateAction = (Clifford, Box<dyn Fn(&mut StateVec)>);
 type NamedAction = (&'static str, Box<dyn Fn(&mut StateVec)>);
@@ -176,73 +176,73 @@ fn sim_matches_matrix_2q_cliffords() {
         (
             Clifford::CX,
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::CY,
             Box::new(|s: &mut StateVec| {
-                s.cy(&qid2(0, 1));
+                s.cy(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::CZ,
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 1));
+                s.cz(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SWAP,
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 1));
+                s.swap(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SXX,
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SXXdg,
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SYY,
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SYYdg,
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 1));
+                s.syydg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SZZ,
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SZZdg,
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 1));
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::ISWAP,
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 1));
+                s.iswap(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::G,
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 1));
+                s.g(&[(QubitId(0), QubitId(1))]);
             }),
         ),
     ];
@@ -292,73 +292,73 @@ fn sim_matches_matrix_2q_on_superposition() {
         (
             Clifford::CX,
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::CY,
             Box::new(|s: &mut StateVec| {
-                s.cy(&qid2(0, 1));
+                s.cy(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::CZ,
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 1));
+                s.cz(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SWAP,
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 1));
+                s.swap(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SXX,
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SXXdg,
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SYY,
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SYYdg,
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 1));
+                s.syydg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SZZ,
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::SZZdg,
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 1));
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::ISWAP,
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 1));
+                s.iswap(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             Clifford::G,
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 1));
+                s.g(&[(QubitId(0), QubitId(1))]);
             }),
         ),
     ];
@@ -463,21 +463,21 @@ fn sim_matches_matrix_2q_rotations() {
         let mat = unitary_rep::RXX(angle, 0, 1).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(2);
-        sim.rxx(angle, &qid2(0, 1));
+        sim.rxx(angle, &[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &expected);
 
         // RYY
         let mat = unitary_rep::RYY(angle, 0, 1).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(2);
-        sim.ryy(angle, &qid2(0, 1));
+        sim.ryy(angle, &[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &expected);
 
         // RZZ
         let mat = unitary_rep::RZZ(angle, 0, 1).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(2);
-        sim.rzz(angle, &qid2(0, 1));
+        sim.rzz(angle, &[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &expected);
     }
 }
@@ -558,7 +558,7 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
         let mut sim = StateVec::new(2);
         sim.h(&qid(0));
         sim.h(&qid(1));
-        sim.rxx(angle, &qid2(0, 1));
+        sim.rxx(angle, &[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &expected);
 
         // RYY on |++>
@@ -567,7 +567,7 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
         let mut sim = StateVec::new(2);
         sim.h(&qid(0));
         sim.h(&qid(1));
-        sim.ryy(angle, &qid2(0, 1));
+        sim.ryy(angle, &[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &expected);
 
         // RZZ on |++>
@@ -576,7 +576,7 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
         let mut sim = StateVec::new(2);
         sim.h(&qid(0));
         sim.h(&qid(1));
-        sim.rzz(angle, &qid2(0, 1));
+        sim.rzz(angle, &[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &expected);
     }
 }
@@ -621,8 +621,8 @@ fn sxx_squared_is_xx() {
         // Test: prepare then SXX twice
         let mut sim = StateVec::new(2);
         prepare(&mut sim);
-        sim.sxx(&qid2(0, 1));
-        sim.sxx(&qid2(0, 1));
+        sim.sxx(&[(QubitId(0), QubitId(1))]);
+        sim.sxx(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &ref_state);
         let _ = name;
     }
@@ -664,8 +664,8 @@ fn syy_squared_is_yy() {
         // Test: prepare then SYY twice
         let mut sim = StateVec::new(2);
         prepare(&mut sim);
-        sim.syy(&qid2(0, 1));
-        sim.syy(&qid2(0, 1));
+        sim.syy(&[(QubitId(0), QubitId(1))]);
+        sim.syy(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &ref_state);
         let _ = name;
     }
@@ -707,8 +707,8 @@ fn szz_squared_is_zz() {
         // Test: prepare then SZZ twice
         let mut sim = StateVec::new(2);
         prepare(&mut sim);
-        sim.szz(&qid2(0, 1));
-        sim.szz(&qid2(0, 1));
+        sim.szz(&[(QubitId(0), QubitId(1))]);
+        sim.szz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &ref_state);
         let _ = name;
     }
@@ -779,8 +779,8 @@ fn iswap_squared_is_zz() {
         // Test: prepare state then apply iswap twice
         let mut sim = StateVec::new(2);
         prepare(&mut sim);
-        sim.iswap(&qid2(0, 1));
-        sim.iswap(&qid2(0, 1));
+        sim.iswap(&[(QubitId(0), QubitId(1))]);
+        sim.iswap(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &ref_state);
         let _ = name;
     }
@@ -819,8 +819,8 @@ fn g_squared_returns_to_original_state() {
 
         let mut sim = StateVec::new(2);
         prepare(&mut sim);
-        sim.g(&qid2(0, 1));
-        sim.g(&qid2(0, 1));
+        sim.g(&[(QubitId(0), QubitId(1))]);
+        sim.g(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(sim.state(), &ref_state);
 
         // Also verify Gdg matrix * G matrix = I
@@ -1016,37 +1016,37 @@ fn gate_then_dagger_2q_identity() {
         (
             "SXX/SXXdg",
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "SYY/SYYdg",
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 1));
+                s.syydg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "SZZ/SZZdg",
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 1));
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "ISWAP/ISWAPdg",
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 1));
+                s.iswap(&[(QubitId(0), QubitId(1))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.iswapdg(&qid2(0, 1));
+                s.iswapdg(&[(QubitId(0), QubitId(1))]);
             }),
         ),
     ];
@@ -1055,31 +1055,31 @@ fn gate_then_dagger_2q_identity() {
         (
             "CX",
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "CY",
             Box::new(|s: &mut StateVec| {
-                s.cy(&qid2(0, 1));
+                s.cy(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "CZ",
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 1));
+                s.cz(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "SWAP",
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 1));
+                s.swap(&[(QubitId(0), QubitId(1))]);
             }),
         ),
         (
             "G",
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 1));
+                s.g(&[(QubitId(0), QubitId(1))]);
             }),
         ),
     ];
@@ -1155,85 +1155,85 @@ fn sim_matches_matrix_2q_nonadjacent_on_zero_state() {
         (
             Clifford::CX,
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 2));
+                s.cx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::CY,
             Box::new(|s: &mut StateVec| {
-                s.cy(&qid2(0, 2));
+                s.cy(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::CZ,
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 2));
+                s.cz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SWAP,
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 2));
+                s.swap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SXX,
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 2));
+                s.sxx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SXXdg,
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 2));
+                s.sxxdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SYY,
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 2));
+                s.syy(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SYYdg,
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 2));
+                s.syydg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SZZ,
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 2));
+                s.szz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SZZdg,
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 2));
+                s.szzdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::ISWAP,
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 2));
+                s.iswap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::ISWAPdg,
             Box::new(|s: &mut StateVec| {
-                s.iswapdg(&qid2(0, 2));
+                s.iswapdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::G,
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 2));
+                s.g(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::Gdg,
             Box::new(|s: &mut StateVec| {
-                s.gdg(&qid2(0, 2));
+                s.gdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
     ];
@@ -1266,85 +1266,85 @@ fn sim_matches_matrix_2q_nonadjacent_on_superposition() {
         (
             Clifford::CX,
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 2));
+                s.cx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::CY,
             Box::new(|s: &mut StateVec| {
-                s.cy(&qid2(0, 2));
+                s.cy(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::CZ,
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 2));
+                s.cz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SWAP,
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 2));
+                s.swap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SXX,
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 2));
+                s.sxx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SXXdg,
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 2));
+                s.sxxdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SYY,
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 2));
+                s.syy(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SYYdg,
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 2));
+                s.syydg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SZZ,
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 2));
+                s.szz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SZZdg,
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 2));
+                s.szzdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::ISWAP,
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 2));
+                s.iswap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::ISWAPdg,
             Box::new(|s: &mut StateVec| {
-                s.iswapdg(&qid2(0, 2));
+                s.iswapdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::G,
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 2));
+                s.g(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::Gdg,
             Box::new(|s: &mut StateVec| {
-                s.gdg(&qid2(0, 2));
+                s.gdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
     ];
@@ -1382,85 +1382,85 @@ fn sim_matches_matrix_2q_nonadjacent_with_entangled_spectator() {
         (
             Clifford::CX,
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 2));
+                s.cx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::CY,
             Box::new(|s: &mut StateVec| {
-                s.cy(&qid2(0, 2));
+                s.cy(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::CZ,
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 2));
+                s.cz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SWAP,
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 2));
+                s.swap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SXX,
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 2));
+                s.sxx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SXXdg,
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 2));
+                s.sxxdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SYY,
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 2));
+                s.syy(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SYYdg,
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 2));
+                s.syydg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SZZ,
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 2));
+                s.szz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::SZZdg,
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 2));
+                s.szzdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::ISWAP,
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 2));
+                s.iswap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::ISWAPdg,
             Box::new(|s: &mut StateVec| {
-                s.iswapdg(&qid2(0, 2));
+                s.iswapdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::G,
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 2));
+                s.g(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             Clifford::Gdg,
             Box::new(|s: &mut StateVec| {
-                s.gdg(&qid2(0, 2));
+                s.gdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
     ];
@@ -1469,7 +1469,7 @@ fn sim_matches_matrix_2q_nonadjacent_with_entangled_spectator() {
     let input_state = {
         let mut sim = StateVec::new(3);
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.state()
     };
 
@@ -1480,7 +1480,7 @@ fn sim_matches_matrix_2q_nonadjacent_with_entangled_spectator() {
 
         let mut sim = StateVec::new(3);
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         apply_fn(&mut sim);
         let actual = sim.state();
 
@@ -1495,37 +1495,37 @@ fn gate_then_dagger_2q_nonadjacent_identity() {
         (
             "SXX/SXXdg",
             Box::new(|s: &mut StateVec| {
-                s.sxx(&qid2(0, 2));
+                s.sxx(&[(QubitId(0), QubitId(2))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.sxxdg(&qid2(0, 2));
+                s.sxxdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             "SYY/SYYdg",
             Box::new(|s: &mut StateVec| {
-                s.syy(&qid2(0, 2));
+                s.syy(&[(QubitId(0), QubitId(2))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.syydg(&qid2(0, 2));
+                s.syydg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             "SZZ/SZZdg",
             Box::new(|s: &mut StateVec| {
-                s.szz(&qid2(0, 2));
+                s.szz(&[(QubitId(0), QubitId(2))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.szzdg(&qid2(0, 2));
+                s.szzdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             "ISWAP/ISWAPdg",
             Box::new(|s: &mut StateVec| {
-                s.iswap(&qid2(0, 2));
+                s.iswap(&[(QubitId(0), QubitId(2))]);
             }),
             Box::new(|s: &mut StateVec| {
-                s.iswapdg(&qid2(0, 2));
+                s.iswapdg(&[(QubitId(0), QubitId(2))]);
             }),
         ),
     ];
@@ -1534,25 +1534,25 @@ fn gate_then_dagger_2q_nonadjacent_identity() {
         (
             "CX",
             Box::new(|s: &mut StateVec| {
-                s.cx(&qid2(0, 2));
+                s.cx(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             "CZ",
             Box::new(|s: &mut StateVec| {
-                s.cz(&qid2(0, 2));
+                s.cz(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             "SWAP",
             Box::new(|s: &mut StateVec| {
-                s.swap(&qid2(0, 2));
+                s.swap(&[(QubitId(0), QubitId(2))]);
             }),
         ),
         (
             "G",
             Box::new(|s: &mut StateVec| {
-                s.g(&qid2(0, 2));
+                s.g(&[(QubitId(0), QubitId(2))]);
             }),
         ),
     ];
@@ -1582,7 +1582,7 @@ fn gate_then_dagger_2q_nonadjacent_identity() {
             "Bell(0,1)",
             Box::new(|s: &mut StateVec| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             }),
         ),
     ];

@@ -36,6 +36,8 @@ pecos-simulators.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 cxx.workspace = true
+num.workspace = true
+quizx.workspace = true
 num-complex.workspace = true
 pecos = { workspace = true, features = ["runtime"] }
 pecos-engines.workspace = true

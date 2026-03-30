@@ -60,7 +60,7 @@ class PecosSeleneStabBuildHook(BuildHookInterface):
 
         # Check if library already exists (e.g., from `make build-selene`)
         # If so, skip building and just collect artifacts
-        dist_dir = root / "python" / "pecos_selene_stab" / "_dist"
+        dist_dir = root / "python" / "pecos_selene_stabilizer" / "_dist"
         lib_dir = dist_dir / "lib"
         if lib_dir.exists() and any(lib_dir.iterdir()):
             self.app.display_info("Library already built, skipping cargo build...")
@@ -93,8 +93,8 @@ class PecosSeleneStabBuildHook(BuildHookInterface):
             msg = f"Unsupported platform: {system}"
             raise RuntimeError(msg)
 
-        lib_name = "pecos_selene_stab"
-        cargo_package = "pecos-selene-stab"
+        lib_name = "pecos_selene_stabilizer"
+        cargo_package = "pecos-selene-stabilizer"
 
         self.app.display_info(f"Building {cargo_package}...")
 
@@ -130,7 +130,7 @@ class PecosSeleneStabBuildHook(BuildHookInterface):
             raise RuntimeError(msg)
 
         # Copy to the _dist/lib directory in the Python package
-        dest_dir = root / "python" / "pecos_selene_stab" / "_dist" / "lib"
+        dest_dir = root / "python" / "pecos_selene_stabilizer" / "_dist" / "lib"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_lib = dest_dir / lib_filename
 
@@ -139,7 +139,7 @@ class PecosSeleneStabBuildHook(BuildHookInterface):
 
         # Collect artifacts
         artifacts = []
-        dist_dir = root / "python" / "pecos_selene_stab" / "_dist"
+        dist_dir = root / "python" / "pecos_selene_stabilizer" / "_dist"
         for artifact in dist_dir.rglob("*"):
             if artifact.is_file():
                 rel_path = artifact.relative_to(root)

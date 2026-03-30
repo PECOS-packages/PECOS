@@ -7,18 +7,18 @@
 
 #[test]
 fn test_quantum_engine_builders() {
-    use pecos_engines::{sparse_stabilizer, state_vector};
+    use pecos_engines::{sparse_stab, state_vector};
 
     // Test that quantum engine builders can be created and configured
     let _state_vec_builder = state_vector().qubits(4);
-    let _sparse_stab_builder = sparse_stabilizer().qubits(4);
+    let _sparse_stab_builder = sparse_stab().qubits(4);
 
     // Test that builders can be created without qubit count (will be set later)
     let _state_vec_no_qubits = state_vector();
-    let _sparse_stab_no_qubits = sparse_stabilizer();
+    let _sparse_stab_no_qubits = sparse_stab();
 
     // Test chaining
-    let _chained = sparse_stabilizer().qubits(2);
+    let _chained = sparse_stab().qubits(2);
 }
 
 #[test]

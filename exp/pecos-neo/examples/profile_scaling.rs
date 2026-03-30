@@ -26,32 +26,32 @@ fn build_circuit(num_qubits: usize) -> pecos_neo::command::CommandQueue {
 
     // Prepare all qubits
     for q in 0..num_qubits {
-        builder = builder.pz(q);
+        builder = builder.pz(&[q]);
     }
 
     // Layer of Hadamards
     for q in 0..num_qubits {
-        builder = builder.h(q);
+        builder = builder.h(&[q]);
     }
 
     // Layer of CX gates (nearest-neighbor)
     for q in (0..num_qubits - 1).step_by(2) {
-        builder = builder.cx(q, q + 1);
+        builder = builder.cx(&[(q, q + 1)]);
     }
 
     // Another layer of single-qubit gates
     for q in 0..num_qubits {
-        builder = builder.sz(q);
+        builder = builder.sz(&[q]);
     }
 
     // Second CX layer (offset)
     for q in (1..num_qubits - 1).step_by(2) {
-        builder = builder.cx(q, q + 1);
+        builder = builder.cx(&[(q, q + 1)]);
     }
 
     // Measure all
     for q in 0..num_qubits {
-        builder = builder.mz(q);
+        builder = builder.mz(&[q]);
     }
 
     builder.build()

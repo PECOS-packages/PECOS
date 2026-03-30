@@ -4,7 +4,7 @@
 //! the appropriate classical engine based on the program type.
 
 use pecos::sim;
-use pecos_engines::{sparse_stabilizer, state_vector};
+use pecos_engines::{sparse_stab, state_vector};
 use pecos_programs::{Hugr, Qasm, Qis};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .seed(789)
         .workers(2)
         .verbose(false)
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .run(200)?;
 
     println!("  Ran {} shots with custom configuration", results4.len());

@@ -30,8 +30,8 @@ use pecos_zx::viz::Renderer;
 fn main() {
     // 1. Build a Bell state circuit: H(0), CX(0,1)
     let mut dag = DagCircuit::new();
-    dag.h(0);
-    dag.cx(0, 1);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
 
     println!("=== Bell State Circuit -> ZX ===\n");
 

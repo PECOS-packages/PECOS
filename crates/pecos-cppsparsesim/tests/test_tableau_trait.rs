@@ -1,6 +1,6 @@
 // Test the StabilizerTableauSimulator trait implementation for CppSparseStab
 
-use pecos_core::{qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_cppsparsesim::CppSparseStab;
 use pecos_simulators::{CliffordGateable, StabilizerTableauSimulator};
 
@@ -10,7 +10,7 @@ fn test_cpp_sparse_stab_tableau_trait() {
 
     // Apply Bell state preparation
     sim.h(&qid(0));
-    sim.cx(&qid2(0, 1));
+    sim.cx(&[(QubitId(0), QubitId(1))]);
 
     // Test that we can access tableaux through the trait
     let stab = sim.stab_tableau();

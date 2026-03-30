@@ -716,9 +716,9 @@ mod tests {
         tc.tick().h(&[1]);
 
         let mut dag = crate::DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
-        dag.h(1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.h(&[1]);
 
         let tick_out = tc.to_ascii();
         let dag_out = dag.to_ascii();
@@ -820,8 +820,8 @@ mod tests {
         tc.tick().cx(&[(0, 1)]);
 
         let mut dag = crate::DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
 
         let tick_svg = tc.to_svg();
         let dag_svg = dag.to_svg();
@@ -849,8 +849,8 @@ mod tests {
     #[test]
     fn dag_tikz_contains_commands() {
         let mut dag = crate::DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
         let tikz = dag.to_tikz();
         assert!(tikz.contains("\\begin{tikzpicture}"));
         assert!(tikz.contains("{H}"));
@@ -873,8 +873,8 @@ mod tests {
     #[test]
     fn dag_dot_contains_graph() {
         let mut dag = crate::DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
         let dot = dag.to_dot();
         assert!(dot.contains("digraph circuit"));
         assert!(dot.contains("label=\"H\""));
@@ -901,11 +901,11 @@ mod tests {
     #[test]
     fn family_brackets_in_dag_output() {
         let mut dag = crate::DagCircuit::new();
-        dag.pz(0);
-        dag.h(0);
-        dag.sx(0);
-        dag.x(0);
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.sx(&[0]);
+        dag.x(&[0]);
+        dag.mz(&[0]);
         let out = dag.to_ascii();
         assert!(out.contains("(PZ|"));
         assert!(out.contains("[H]"));
@@ -965,8 +965,8 @@ mod tests {
     #[test]
     fn dag_render_with_default_matches_to_ascii() {
         let mut dag = crate::DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
         let style = pecos_core::circuit_diagram::DiagramStyle::default();
         let via_render_with = dag.render_with(&style).text();
         let via_to_ascii = dag.to_ascii();

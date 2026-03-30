@@ -1350,13 +1350,13 @@ mod tests {
         let p1 = 0.1;
 
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0)
-            .h(0)
-            .h(0)
-            .h(0)
-            .h(0)
-            .mz(0)
+            .pz(&[0])
+            .h(&[0])
+            .h(&[0])
+            .h(&[0])
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
             .build();
 
         // Run many shots and check error rate
@@ -1389,7 +1389,7 @@ mod tests {
         let p_1_to_0 = 0.0;
 
         // Prep |0> and measure - only 0->1 errors should occur
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let shots = 500;
         let mut flips = 0;
@@ -1575,12 +1575,12 @@ mod tests {
         // Test that p2_idle works via the builder
         // Use high p2 (which also applies p2_idle) to ensure the channel triggers
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0) // Make qubit 0 in superposition
-            .cx(0, 1) // Two-qubit gate
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0]) // Make qubit 0 in superposition
+            .cx(&[(0, 1)]) // Two-qubit gate
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let shots = 500;
@@ -1659,11 +1659,11 @@ mod tests {
 
         // Test with half-turn angle (pi) - should have ~50% error
         let commands_half = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .rzz(0, 1, Angle64::HALF_TURN) // pi radians
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .rzz(&[(0, 1)], Angle64::HALF_TURN) // pi radians
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let shots = 500;
@@ -1699,11 +1699,11 @@ mod tests {
 
         // Test with quarter-turn angle (pi/4) - should have ~12.5% error (0.5 * 0.25)
         let commands_quarter = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .rzz(0, 1, Angle64::QUARTER_TURN) // pi/2 radians
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .rzz(&[(0, 1)], Angle64::QUARTER_TURN) // pi/2 radians
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut errors_quarter = 0;
@@ -1828,13 +1828,13 @@ mod tests {
 
         // Build circuit with single and two-qubit gates
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .h(1)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .h(&[1])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let shots = 300;
@@ -1903,7 +1903,7 @@ mod tests {
         let p_meas_1 = 0.2;
 
         // Simple prep and measure circuit
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let shots = 500;
         let mut general_flips = 0;
@@ -1967,7 +1967,7 @@ mod tests {
         let p_prep = 0.15;
 
         // Prep and immediately measure
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let shots = 500;
         let mut general_errors = 0;
@@ -2278,11 +2278,11 @@ mod tests {
         let emission = SingleQubitEmissionWeights::leakage_only();
 
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Single-qubit gate where emission can occur
-            .h(0)
-            .h(0)
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Single-qubit gate where emission can occur
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
             .build();
 
         let shots = 200;
@@ -2376,7 +2376,12 @@ mod tests {
         let emission_ratio = 0.5;
         let emission = SingleQubitEmissionWeights::uniform();
 
-        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
 
         let shots = 300;
         let mut general_errors = 0;
@@ -2435,11 +2440,11 @@ mod tests {
         let p2 = 0.3;
 
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let shots = 300;

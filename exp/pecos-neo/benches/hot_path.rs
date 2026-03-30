@@ -100,8 +100,8 @@ fn bench_shot_execution(c: &mut Criterion) {
     // Bell state circuit
     let bell_circuit = CommandBuilder::new()
         .pz_all(0..2)
-        .h(0)
-        .cx(0, 1)
+        .h(&[0])
+        .cx(&[(0, 1)])
         .mz_all(0..2)
         .build();
 
@@ -110,10 +110,10 @@ fn bench_shot_execution(c: &mut Criterion) {
         let mut builder = CommandBuilder::new();
         builder = builder.pz_all(0..10);
         for i in 0..10 {
-            builder = builder.h(i);
+            builder = builder.h(&[i]);
         }
         for i in 0..9 {
-            builder = builder.cx(i, i + 1);
+            builder = builder.cx(&[(i, i + 1)]);
         }
         builder = builder.mz_all(0..10);
         builder.build()
@@ -174,8 +174,8 @@ fn bench_multi_shot(c: &mut Criterion) {
 
     let bell_circuit = CommandBuilder::new()
         .pz_all(0..2)
-        .h(0)
-        .cx(0, 1)
+        .h(&[0])
+        .cx(&[(0, 1)])
         .mz_all(0..2)
         .build();
 
@@ -212,10 +212,10 @@ fn bench_multi_shot(c: &mut Criterion) {
         let mut builder = CommandBuilder::new();
         builder = builder.pz_all(0..50);
         for i in 0..50 {
-            builder = builder.h(i);
+            builder = builder.h(&[i]);
         }
         for i in 0..49 {
-            builder = builder.cx(i, i + 1);
+            builder = builder.cx(&[(i, i + 1)]);
         }
         builder = builder.mz_all(0..50);
         builder.build()
@@ -410,7 +410,7 @@ fn bench_simulator_ops(c: &mut Criterion) {
     group.bench_function("cx_gate", |b| {
         let mut sim = SparseStab::new(10);
         b.iter(|| {
-            sim.cx(&[QubitId(0), QubitId(1)]);
+            sim.cx(&[(QubitId(0), QubitId(1))]);
         });
     });
 
@@ -428,7 +428,7 @@ fn bench_simulator_ops(c: &mut Criterion) {
             let mut sim = SparseStab::new(num_qubits);
             // Modify state first to simulate realistic scenario
             sim.h(&[QubitId(0)]);
-            sim.cx(&[QubitId(0), QubitId(1 % num_qubits)]);
+            sim.cx(&[(QubitId(0), QubitId(1 % num_qubits))]);
             b.iter(|| {
                 sim.reset();
                 black_box(&sim);
@@ -445,7 +445,7 @@ fn bench_simulator_ops(c: &mut Criterion) {
                 sim.h(&[QubitId(i)]);
             }
             for i in 0..num_qubits.saturating_sub(1) {
-                sim.cx(&[QubitId(i), QubitId(i + 1)]);
+                sim.cx(&[(QubitId(i), QubitId(i + 1))]);
             }
             b.iter(|| black_box(sim.clone()));
         });
@@ -595,8 +595,8 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
     // Pre-build commands for pecos-neo (equivalent to pre-parsing QASM)
     let bell_commands = CommandBuilder::new()
         .pz_all(0..2)
-        .h(0)
-        .cx(0, 1)
+        .h(&[0])
+        .cx(&[(0, 1)])
         .mz_all(0..2)
         .build();
 
@@ -734,10 +734,10 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
         let mut builder = CommandBuilder::new();
         builder = builder.pz_all(0..10);
         for i in 0..10 {
-            builder = builder.h(i);
+            builder = builder.h(&[i]);
         }
         for i in 0..9 {
-            builder = builder.cx(i, i + 1);
+            builder = builder.cx(&[(i, i + 1)]);
         }
         builder = builder.mz_all(0..10);
         builder.build()
@@ -808,8 +808,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     // Bell circuit
     let bell_circuit = CommandBuilder::new()
         .pz_all(0..2)
-        .h(0)
-        .cx(0, 1)
+        .h(&[0])
+        .cx(&[(0, 1)])
         .mz_all(0..2)
         .build();
 
@@ -818,13 +818,13 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
         let mut builder = CommandBuilder::new();
         builder = builder.pz_all(0..20);
         for i in 0..20 {
-            builder = builder.h(i);
+            builder = builder.h(&[i]);
         }
         for i in 0..19 {
-            builder = builder.cx(i, i + 1);
+            builder = builder.cx(&[(i, i + 1)]);
         }
         for i in 0..20 {
-            builder = builder.h(i);
+            builder = builder.h(&[i]);
         }
         builder = builder.mz_all(0..20);
         builder.build()

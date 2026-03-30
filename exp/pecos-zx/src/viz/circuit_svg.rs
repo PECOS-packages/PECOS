@@ -374,8 +374,8 @@ mod tests {
     #[test]
     fn test_svg_output_valid() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let svg = render_circuit_svg(&layout, &CircuitSvgOptions::default());
@@ -389,8 +389,8 @@ mod tests {
     #[test]
     fn test_svg_contains_gates() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.x(1);
+        dag.h(&[0]);
+        dag.x(&[1]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let svg = render_circuit_svg(&layout, &CircuitSvgOptions::default());
@@ -402,8 +402,8 @@ mod tests {
     #[test]
     fn test_svg_measurement() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
-        dag.mz(0);
+        dag.h(&[0]);
+        dag.mz(&[0]);
 
         let layout = super::super::circuit_layout::layout_from_dag(&dag);
         let options = CircuitSvgOptions::default();

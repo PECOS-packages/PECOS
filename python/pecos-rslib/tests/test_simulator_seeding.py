@@ -13,7 +13,7 @@
 """Tests for simulator seeding via the pecos_rslib bindings."""
 
 import pytest
-from pecos_rslib.simulators import SparseSim, Stab
+from pecos_rslib.simulators import SparseStab, Stabilizer
 
 
 def _measure_sequence(sim_cls: type, *, seed: int, rounds: int = 16) -> list:
@@ -27,7 +27,7 @@ def _measure_sequence(sim_cls: type, *, seed: int, rounds: int = 16) -> list:
     return outcomes
 
 
-@pytest.mark.parametrize("sim_cls", [SparseSim, Stab])
+@pytest.mark.parametrize("sim_cls", [SparseStab, Stabilizer])
 class TestSimulatorSeeding:
     """Verify that seeded stabilizer simulators produce reproducible results."""
 

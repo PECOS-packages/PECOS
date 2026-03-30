@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 
-class SparseSim(Stabilizer):
+class SparseStabPy(Stabilizer):
     """Represents the stabilizer state.
 
     Attributes:
@@ -91,7 +91,7 @@ class SparseSim(Stabilizer):
 
         self.reset()
 
-    def reset(self) -> SparseSim:
+    def reset(self) -> SparseStabPy:
         """Reset the quantum state for another run without reinitializing."""
         # Initialize all qubits in the zero state
         self.stabs.init_all_z()
@@ -168,7 +168,7 @@ class SparseSim(Stabilizer):
         Returns:
             New SparseSim instance with copied state.
         """
-        new = SparseSim(self.num_qubits)
+        new = SparseStabPy(self.num_qubits)
 
         old_stabs = self.stabs
         old_destabs = self.destabs

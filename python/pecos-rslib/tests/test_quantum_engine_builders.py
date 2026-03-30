@@ -2,10 +2,9 @@
 
 import pytest
 from pecos_rslib import (
-    SparseStabilizerEngineBuilder,
+    SparseStabEngineBuilder,
     StateVectorEngineBuilder,
     sparse_stab,
-    sparse_stabilizer,
     state_vector,
     Qis,
     Qasm,
@@ -21,14 +20,13 @@ class TestQuantumEngineBuilders:
         """Test that factory functions are available."""
         # These should all be callable
         assert callable(state_vector)
-        assert callable(sparse_stabilizer)
         assert callable(sparse_stab)
 
     def test_builder_classes_exist(self) -> None:
         """Test that builder classes are available."""
         # These should be classes
         assert hasattr(StateVectorEngineBuilder, "__name__")
-        assert hasattr(SparseStabilizerEngineBuilder, "__name__")
+        assert hasattr(SparseStabEngineBuilder, "__name__")
 
     def test_state_vector_builder(self) -> None:
         """Test creating state vector engine builder."""
@@ -44,24 +42,24 @@ class TestQuantumEngineBuilders:
         builder3 = state_vector().qubits(10)
         assert builder3 is not None
 
-    def test_sparse_stabilizer_builder(self) -> None:
+    def test_sparse_stab_builder(self) -> None:
         """Test creating sparse stabilizer engine builder."""
         # Using factory function
-        builder1 = sparse_stabilizer()
+        builder1 = sparse_stab()
         assert builder1 is not None
 
         # Using class directly
-        builder2 = SparseStabilizerEngineBuilder()
+        builder2 = SparseStabEngineBuilder()
         assert builder2 is not None
 
         # Test with qubits
-        builder3 = sparse_stabilizer().qubits(5)
+        builder3 = sparse_stab().qubits(5)
         assert builder3 is not None
 
     def test_sparse_stab_alias(self) -> None:
-        """Test that sparse_stab is an alias for sparse_stabilizer."""
+        """Test that sparse_stab creates the expected builder type."""
         builder1 = sparse_stab()
-        builder2 = sparse_stabilizer()
+        builder2 = sparse_stab()
         # Both should create the same type of builder
         assert type(builder1) is type(builder2)
 
@@ -85,7 +83,7 @@ class TestQuantumEngineBuilders:
         assert len(results_dict["c"]) == 100
 
         # Test with sparse stabilizer engine
-        sim2 = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(sparse_stabilizer()).seed(42)
+        sim2 = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(sparse_stab()).seed(42)
         results2 = sim2.run(100)
         results2_dict = results2.to_dict()
         assert "c" in results2_dict

@@ -43,7 +43,7 @@
 //! use pecos_core::QubitId;
 //!
 //! let commands = CommandBuilder::new()
-//!     .pz(0).h(0).mz(0)
+//!     .pz(&[0]).h(&[0]).mz(&[0])
 //!     .build();
 //!
 //! let config = MonteCarloConfig::new()
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_monte_carlo_basic() {
         // Basic test that the Monte Carlo runner executes shots and collects results
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let config = MonteCarloConfig::new()
             .with_shots(100)
@@ -418,8 +418,8 @@ mod tests {
     #[test]
     fn test_monte_carlo_with_noise() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .mz(0) // Should always be 0 without noise
+            .pz(&[0])
+            .mz(&[0]) // Should always be 0 without noise
             .build();
 
         let config = MonteCarloConfig::new()
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_importance_sampling_monte_carlo() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let config = MonteCarloConfig::new()
             .with_shots(1000)
@@ -484,8 +484,8 @@ mod tests {
         // Test that runs with the same seed and setup produce consistent results.
         // We verify this by checking that results match expected statistical properties.
         let commands = CommandBuilder::new()
-            .pz(0)
-            .mz(0) // Always 0 without noise or H gate
+            .pz(&[0])
+            .mz(&[0]) // Always 0 without noise or H gate
             .build();
 
         let config = MonteCarloConfig::new()
@@ -513,9 +513,9 @@ mod tests {
         // Verify that two runs with the same seed produce IDENTICAL results.
         // This tests the hierarchical seeding: config.seed → worker_{id} → noise + simulator
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Creates superposition - outcome depends on RNG
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Creates superposition - outcome depends on RNG
+            .mz(&[0])
             .build();
 
         let config1 = MonteCarloConfig::new()
@@ -554,9 +554,9 @@ mod tests {
     fn test_different_seeds_produce_different_results() {
         // Verify that different seeds produce different results (with high probability)
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Creates superposition
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Creates superposition
+            .mz(&[0])
             .build();
 
         let config1 = MonteCarloConfig::new()

@@ -33,7 +33,7 @@ fn event_handlers_on_before_gate_fires_through_sim_neo() {
     });
 
     // H gate is the only "gate" here (PZ is preparation, MZ is measurement)
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results = sim_neo(circuit)
         .event_handlers(handlers)
@@ -56,7 +56,7 @@ fn event_handlers_parallel_workers_fire_per_worker() {
         NoiseResponse::None
     });
 
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results = sim_neo(circuit)
         .event_handlers(handlers)
@@ -76,7 +76,7 @@ fn event_handlers_empty_is_noop() {
     assert!(handlers.is_empty());
 
     // Should not change results compared to no handlers
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let results_with = sim_neo(circuit.clone())
         .event_handlers(handlers)
@@ -125,7 +125,7 @@ fn event_handlers_multiple_handler_types() {
         });
 
     // PZ (prep), H (gate), MZ (measurement)
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results = sim_neo(circuit)
         .event_handlers(handlers)
@@ -149,7 +149,7 @@ fn event_handlers_on_runner_directly() {
         NoiseResponse::None
     });
 
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let mut state = pecos_simulators::SparseStab::new(1);
     let mut runner = CircuitRunner::<pecos_simulators::SparseStab>::new()
@@ -171,10 +171,10 @@ fn signal_handler_fires_through_sim_neo() {
     });
 
     let circuit = CommandBuilder::new()
-        .pz(0)
+        .pz(&[0])
         .signal(RoundMarker(42))
-        .h(0)
-        .mz(0)
+        .h(&[0])
+        .mz(&[0])
         .build();
 
     let results = sim_neo(circuit)
@@ -197,11 +197,11 @@ fn signal_handler_fires_through_sim_neo_parallel() {
     });
 
     let circuit = CommandBuilder::new()
-        .pz(0)
+        .pz(&[0])
         .signal(RoundMarker(1))
-        .h(0)
+        .h(&[0])
         .signal(RoundMarker(2))
-        .mz(0)
+        .mz(&[0])
         .build();
 
     let results = sim_neo(circuit)

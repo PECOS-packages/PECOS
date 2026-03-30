@@ -16,7 +16,7 @@ use log::debug;
 use pecos::prelude::*;
 #[cfg(feature = "runtime")]
 use pecos::{
-    DepolarizingNoise, GeneralNoiseModelBuilder, qasm_engine, sim_builder, sparse_stabilizer,
+    DepolarizingNoise, GeneralNoiseModelBuilder, qasm_engine, sim_builder, sparse_stab,
     state_vector,
 };
 #[cfg(feature = "runtime")]
@@ -538,7 +538,7 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
             builder = builder.quantum(quantum_builder);
         }
         SimulatorType::Stabilizer => {
-            let mut quantum_builder = sparse_stabilizer();
+            let mut quantum_builder = sparse_stab();
             if let Some(qubits) = num_qubits {
                 quantum_builder = quantum_builder.qubits(qubits);
                 debug!("Set quantum engine to use {qubits} qubits");

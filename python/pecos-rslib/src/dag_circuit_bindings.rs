@@ -466,7 +466,7 @@ impl PyGateType {
 
     #[classattr]
     #[pyo3(name = "Measure")]
-    fn measure() -> Self {
+    fn mz() -> Self {
         Self {
             inner: GateType::MZ,
         }
@@ -474,7 +474,7 @@ impl PyGateType {
 
     #[classattr]
     #[pyo3(name = "MeasureFree")]
-    fn measure_free() -> Self {
+    fn mz_free() -> Self {
         Self {
             inner: GateType::MeasureFree,
         }
@@ -482,7 +482,7 @@ impl PyGateType {
 
     #[classattr]
     #[pyo3(name = "Prep")]
-    fn prep() -> Self {
+    fn pz() -> Self {
         Self {
             inner: GateType::PZ,
         }
@@ -770,9 +770,9 @@ impl PyGate {
 
     /// Create a Measure gate.
     #[staticmethod]
-    fn measure(qubits: Vec<usize>) -> Self {
+    fn mz(qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::measure(&qubits),
+            inner: Gate::mz(&qubits),
         }
     }
 
@@ -794,9 +794,17 @@ impl PyGate {
 
     /// Create a `MeasureFree` gate.
     #[staticmethod]
-    fn measure_free(qubits: Vec<usize>) -> Self {
+    fn mz_free(qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::measure_free(&qubits),
+            inner: Gate::mz_free(&qubits),
+        }
+    }
+
+    /// Create a PZ (preparation/reset) gate.
+    #[staticmethod]
+    fn pz(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::pz(&qubits),
         }
     }
 
@@ -1058,82 +1066,80 @@ impl PyDagCircuit {
     // the simulator APIs. Each method returns self for method chaining.
 
     /// Apply a Hadamard gate.
-    fn h(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.h(q);
+    fn h(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.h(&qubits);
         slf
     }
 
     /// Apply a Pauli-X gate.
-    fn x(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.x(q);
+    fn x(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.x(&qubits);
         slf
     }
 
     /// Apply a Pauli-Y gate.
-    fn y(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.y(q);
+    fn y(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.y(&qubits);
         slf
     }
 
     /// Apply a Pauli-Z gate.
-    fn z(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.z(q);
+    fn z(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.z(&qubits);
         slf
     }
 
     /// Apply a sqrt(Z) gate (S gate).
-    fn sz(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.sz(q);
+    fn sz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.sz(&qubits);
         slf
     }
 
     /// Apply a sqrt(Z)-dagger gate (S-dagger gate).
-    fn szdg(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.szdg(q);
+    fn szdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.szdg(&qubits);
         slf
     }
 
     /// Apply a T gate (fourth root of Z).
-    fn t(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.t(q);
+    fn t(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.t(&qubits);
         slf
     }
 
     /// Apply a T-dagger gate.
-    fn tdg(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.tdg(q);
+    fn tdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.tdg(&qubits);
         slf
     }
 
     /// Apply a CNOT (CX) gate.
     ///
     /// Args:
-    ///     control: The control qubit.
-    ///     target: The target qubit.
-    fn cx(slf: Py<Self>, py: Python<'_>, control: usize, target: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.cx(control, target);
+    ///     pairs: List of (control, target) qubit pairs.
+    fn cx(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> Py<Self> {
+        slf.borrow_mut(py).inner.cx(&pairs);
         slf
     }
 
     /// Apply a CZ (controlled-Z) gate.
     ///
     /// Args:
-    ///     q1: First qubit.
-    ///     q2: Second qubit.
-    fn cz(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.cz(q1, q2);
+    ///     pairs: List of (q1, q2) qubit pairs.
+    fn cz(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> Py<Self> {
+        slf.borrow_mut(py).inner.cz(&pairs);
         slf
     }
 
     /// Apply a sqrt(ZZ) gate.
-    fn szz(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.szz(q1, q2);
+    fn szz(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> Py<Self> {
+        slf.borrow_mut(py).inner.szz(&pairs);
         slf
     }
 
     /// Apply a sqrt(ZZ)-dagger gate.
-    fn szzdg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.szzdg(q1, q2);
+    fn szzdg(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> Py<Self> {
+        slf.borrow_mut(py).inner.szzdg(&pairs);
         slf
     }
 
@@ -1141,9 +1147,9 @@ impl PyDagCircuit {
     ///
     /// Args:
     ///     theta: Rotation angle (angle64 or float radians).
-    ///     q: The qubit to rotate.
-    fn rx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.rx(theta.0, q);
+    ///     qubits: List of qubits to rotate.
+    fn rx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.rx(theta.0, &qubits);
         slf
     }
 
@@ -1151,9 +1157,9 @@ impl PyDagCircuit {
     ///
     /// Args:
     ///     theta: Rotation angle (angle64 or float radians).
-    ///     q: The qubit to rotate.
-    fn ry(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.ry(theta.0, q);
+    ///     qubits: List of qubits to rotate.
+    fn ry(slf: Py<Self>, py: Python<'_>, theta: AngleParam, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.ry(theta.0, &qubits);
         slf
     }
 
@@ -1161,9 +1167,9 @@ impl PyDagCircuit {
     ///
     /// Args:
     ///     theta: Rotation angle (angle64 or float radians).
-    ///     q: The qubit to rotate.
-    fn rz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.rz(theta.0, q);
+    ///     qubits: List of qubits to rotate.
+    fn rz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.rz(theta.0, &qubits);
         slf
     }
 
@@ -1171,26 +1177,30 @@ impl PyDagCircuit {
     ///
     /// Args:
     ///     theta: Rotation angle (angle64 or float radians).
-    ///     q1: First qubit.
-    ///     q2: Second qubit.
-    fn rzz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q1: usize, q2: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.rzz(theta.0, q1, q2);
+    ///     pairs: List of (q1, q2) qubit pairs.
+    fn rzz(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        pairs: Vec<(usize, usize)>,
+    ) -> Py<Self> {
+        slf.borrow_mut(py).inner.rzz(theta.0, &pairs);
         slf
     }
 
     /// Apply an idle gate with a specified duration.
     ///
-    /// Idle gates represent waiting time on a qubit, useful for noise modeling.
+    /// Idle gates represent waiting time on qubits, useful for noise modeling.
     /// Duration is in abstract time units - interpretation depends on your noise model.
     ///
     /// Args:
     ///     duration: Duration as `TimeUnits`, `Nanoseconds` (deprecated), or integer.
-    ///     q: The qubit to idle.
+    ///     qubits: List of qubits to idle.
     fn idle(
         slf: Py<Self>,
         py: Python<'_>,
         duration: &Bound<'_, PyAny>,
-        q: usize,
+        qubits: Vec<usize>,
     ) -> PyResult<Py<Self>> {
         // Try to extract as PyTimeUnits, PyNanoseconds (deprecated), or u64
         let units = if let Ok(py_tu) = duration.extract::<PyTimeUnits>() {
@@ -1205,40 +1215,40 @@ impl PyDagCircuit {
                 "duration must be TimeUnits, Nanoseconds, or an integer",
             ));
         };
-        slf.borrow_mut(py).inner.idle(units, q);
+        slf.borrow_mut(py).inner.idle(units, &qubits);
         Ok(slf)
     }
 
-    /// Measure a qubit in the Z basis.
+    /// Measure qubits in the Z basis.
     ///
     /// Note: Unlike gates, measurements break the chain in simulators.
     /// This method still returns self for convenience in Python.
-    fn mz(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.mz(q);
+    fn mz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.mz(&qubits);
         slf
     }
 
-    /// Measure and free a qubit (destructive measurement).
-    fn measure_free(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.measure_free(q);
+    /// Measure and free qubits (destructive measurement).
+    fn mz_free(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.mz_free(&qubits);
         slf
     }
 
-    /// Prepare a qubit in the |0> state (Z-basis preparation).
-    fn pz(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.pz(q);
+    /// Prepare qubits in the |0> state (Z-basis preparation).
+    fn pz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.pz(&qubits);
         slf
     }
 
-    /// Allocate a qubit in the |0> state.
-    fn qalloc(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.qalloc(q);
+    /// Allocate qubits in the |0> state.
+    fn qalloc(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.qalloc(&qubits);
         slf
     }
 
-    /// Free/deallocate a qubit.
-    fn qfree(slf: Py<Self>, py: Python<'_>, q: usize) -> Py<Self> {
-        slf.borrow_mut(py).inner.qfree(q);
+    /// Free/deallocate qubits.
+    fn qfree(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.qfree(&qubits);
         slf
     }
 
@@ -2122,7 +2132,7 @@ impl PyTickCircuit {
     ///
     /// Example:
     ///     >>> circuit = `TickCircuit()`
-    ///     >>> circuit.tick().h(0).x(1).cx(2, 3)
+    ///     >>> circuit.tick().h(&[0]).x(&[1]).cx(2, 3)
     ///     >>> circuit.discard([0, 2], 0)  # Remove H on q0 and CX on q2,q3
     ///     2
     fn discard(&mut self, qubits: Vec<usize>, tick_idx: usize) -> Option<usize> {
@@ -2519,101 +2529,123 @@ impl PyTickHandle {
     // =========================================================================
 
     /// Apply a Hadamard gate.
-    fn h(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::h(&[q]))?;
+    fn h(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::h(&qubits))?;
         Ok(slf)
     }
 
     /// Apply a Pauli-X gate.
-    fn x(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::x(&[q]))?;
+    fn x(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::x(&qubits))?;
         Ok(slf)
     }
 
     /// Apply a Pauli-Y gate.
-    fn y(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::y(&[q]))?;
+    fn y(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::y(&qubits))?;
         Ok(slf)
     }
 
     /// Apply a Pauli-Z gate.
-    fn z(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::z(&[q]))?;
+    fn z(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::z(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an Identity gate.
-    fn i(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::i(&[q]))?;
+    fn i(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::i(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SX gate (sqrt-X).
-    fn sx(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::sx(&[q]))?;
+    fn sx(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sx(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SX-dagger gate.
-    fn sxdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::sxdg(&[q]))?;
+    fn sxdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sxdg(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SY gate (sqrt-Y).
-    fn sy(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::sy(&[q]))?;
+    fn sy(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sy(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SY-dagger gate.
-    fn sydg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::sydg(&[q]))?;
+    fn sydg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sydg(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SZ gate (sqrt-Z).
-    fn sz(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::sz(&[q]))?;
+    fn sz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::sz(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SZ-dagger gate.
-    fn szdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::szdg(&[q]))?;
+    fn szdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::szdg(&qubits))?;
         Ok(slf)
     }
 
     /// Apply a T gate.
-    fn t(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::t(&[q]))?;
+    fn t(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::t(&qubits))?;
         Ok(slf)
     }
 
     /// Apply a T-dagger gate.
-    fn tdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::tdg(&[q]))?;
+    fn tdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::tdg(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an RX rotation.
-    fn rx(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> PyResult<Py<Self>> {
+    fn rx(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        qubits: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rx(theta.0, &[q]))?;
+            .add_gate_internal(py, Gate::rx(theta.0, &qubits))?;
         Ok(slf)
     }
 
     /// Apply an RY rotation.
-    fn ry(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> PyResult<Py<Self>> {
+    fn ry(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        qubits: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::ry(theta.0, &[q]))?;
+            .add_gate_internal(py, Gate::ry(theta.0, &qubits))?;
         Ok(slf)
     }
 
     /// Apply an RZ rotation.
-    fn rz(slf: Py<Self>, py: Python<'_>, theta: AngleParam, q: usize) -> PyResult<Py<Self>> {
+    fn rz(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        qubits: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rz(theta.0, &[q]))?;
+            .add_gate_internal(py, Gate::rz(theta.0, &qubits))?;
         Ok(slf)
     }
 
@@ -2622,16 +2654,16 @@ impl PyTickHandle {
     /// Args:
     ///     theta: First rotation angle (angle64 or float radians).
     ///     phi: Second rotation angle (angle64 or float radians).
-    ///     q: The qubit to rotate.
+    ///     qubits: List of qubits to rotate.
     fn r1xy(
         slf: Py<Self>,
         py: Python<'_>,
         theta: AngleParam,
         phi: AngleParam,
-        q: usize,
+        qubits: Vec<usize>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::r1xy(theta.0, phi.0, &[q]))?;
+            .add_gate_internal(py, Gate::r1xy(theta.0, phi.0, &qubits))?;
         Ok(slf)
     }
 
@@ -2641,7 +2673,7 @@ impl PyTickHandle {
     ///     theta: First rotation angle (angle64 or float radians).
     ///     phi: Second rotation angle (angle64 or float radians).
     ///     lam: Third rotation angle (angle64 or float radians).
-    ///     q: The qubit to rotate.
+    ///     qubits: List of qubits to rotate.
     #[pyo3(name = "u")]
     fn u_gate(
         slf: Py<Self>,
@@ -2649,10 +2681,10 @@ impl PyTickHandle {
         theta: AngleParam,
         phi: AngleParam,
         lam: AngleParam,
-        q: usize,
+        qubits: Vec<usize>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::u(theta.0, phi.0, lam.0, &[q]))?;
+            .add_gate_internal(py, Gate::u(theta.0, phi.0, lam.0, &qubits))?;
         Ok(slf)
     }
 
@@ -2661,91 +2693,88 @@ impl PyTickHandle {
     // =========================================================================
 
     /// Apply a CNOT (CX) gate.
-    fn cx(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::cx(&[(ctrl, tgt)]))?;
+    fn cx(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::cx(&pairs))?;
         Ok(slf)
     }
 
     /// Apply a CY gate.
-    fn cy(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::cy(&[(ctrl, tgt)]))?;
+    fn cy(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::cy(&pairs))?;
         Ok(slf)
     }
 
     /// Apply a CZ gate.
-    fn cz(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::cz(&[(ctrl, tgt)]))?;
+    fn cz(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::cz(&pairs))?;
         Ok(slf)
     }
 
     /// Apply an SZZ gate (sqrt-ZZ).
-    fn szz(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn szz(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::szz(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::szz(&pairs))?;
         Ok(slf)
     }
 
     /// Apply an SZZ-dagger gate.
-    fn szzdg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn szzdg(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::szzdg(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::szzdg(&pairs))?;
         Ok(slf)
     }
 
     /// Apply an F gate.
-    fn f(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::f(&[q]))?;
+    fn f(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::f(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an F-dagger gate.
-    fn fdg(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).add_gate_internal(py, Gate::fdg(&[q]))?;
+    fn fdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::fdg(&qubits))?;
         Ok(slf)
     }
 
     /// Apply an SXX gate (sqrt-XX).
-    fn sxx(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn sxx(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::sxx(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::sxx(&pairs))?;
         Ok(slf)
     }
 
     /// Apply an SXX-dagger gate.
-    fn sxxdg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn sxxdg(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::sxxdg(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::sxxdg(&pairs))?;
         Ok(slf)
     }
 
     /// Apply an SYY gate (sqrt-YY).
-    fn syy(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn syy(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::syy(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::syy(&pairs))?;
         Ok(slf)
     }
 
     /// Apply an SYY-dagger gate.
-    fn syydg(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn syydg(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::syydg(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::syydg(&pairs))?;
         Ok(slf)
     }
 
     /// Apply a SWAP gate.
-    fn swap(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize) -> PyResult<Py<Self>> {
+    fn swap(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::swap(&[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::swap(&pairs))?;
         Ok(slf)
     }
 
     /// Apply a CH gate (controlled-Hadamard).
-    fn ch(slf: Py<Self>, py: Python<'_>, ctrl: usize, tgt: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::ch(&[(ctrl, tgt)]))?;
+    fn ch(slf: Py<Self>, py: Python<'_>, pairs: Vec<(usize, usize)>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_gate_internal(py, Gate::ch(&pairs))?;
         Ok(slf)
     }
 
@@ -2754,18 +2783,21 @@ impl PyTickHandle {
         slf: Py<Self>,
         py: Python<'_>,
         theta: AngleParam,
-        ctrl: usize,
-        tgt: usize,
+        pairs: Vec<(usize, usize)>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::crz(theta.0, &[(ctrl, tgt)]))?;
+            .add_gate_internal(py, Gate::crz(theta.0, &pairs))?;
         Ok(slf)
     }
 
     /// Apply a CCX gate (Toffoli).
-    fn ccx(slf: Py<Self>, py: Python<'_>, q1: usize, q2: usize, q3: usize) -> PyResult<Py<Self>> {
+    fn ccx(
+        slf: Py<Self>,
+        py: Python<'_>,
+        triples: Vec<(usize, usize, usize)>,
+    ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::ccx(&[(q1, q2, q3)]))?;
+            .add_gate_internal(py, Gate::ccx(&triples))?;
         Ok(slf)
     }
 
@@ -2774,11 +2806,10 @@ impl PyTickHandle {
         slf: Py<Self>,
         py: Python<'_>,
         theta: AngleParam,
-        q1: usize,
-        q2: usize,
+        pairs: Vec<(usize, usize)>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rxx(theta.0, &[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::rxx(theta.0, &pairs))?;
         Ok(slf)
     }
 
@@ -2787,11 +2818,10 @@ impl PyTickHandle {
         slf: Py<Self>,
         py: Python<'_>,
         theta: AngleParam,
-        q1: usize,
-        q2: usize,
+        pairs: Vec<(usize, usize)>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::ryy(theta.0, &[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::ryy(theta.0, &pairs))?;
         Ok(slf)
     }
 
@@ -2800,11 +2830,10 @@ impl PyTickHandle {
         slf: Py<Self>,
         py: Python<'_>,
         theta: AngleParam,
-        q1: usize,
-        q2: usize,
+        pairs: Vec<(usize, usize)>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::rzz(theta.0, &[(q1, q2)]))?;
+            .add_gate_internal(py, Gate::rzz(theta.0, &pairs))?;
         Ok(slf)
     }
 
@@ -3029,14 +3058,14 @@ impl PyTickHandle {
     // State preparation and measurement
     // =========================================================================
 
-    /// Prepare a qubit in the |0> state.
+    /// Prepare qubits in the |0> state.
     ///
     /// Returns a `TickPrepHandle` that allows attaching metadata via `.meta()`.
     /// This breaks the chain - only `.meta()` can be called on the result.
-    fn pz(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<PyTickPrepHandle> {
+    fn pz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<PyTickPrepHandle> {
         let (circuit, tick_idx, gate_idx) = {
             let mut handle = slf.borrow_mut(py);
-            let gate_idx = handle.add_gate_get_idx(py, Gate::prep(&[q]))?;
+            let gate_idx = handle.add_gate_get_idx(py, Gate::pz(&qubits))?;
             (handle.circuit.clone_ref(py), handle.tick_idx, gate_idx)
         };
         Ok(PyTickPrepHandle {
@@ -3046,14 +3075,14 @@ impl PyTickHandle {
         })
     }
 
-    /// Measure a qubit in the Z basis.
+    /// Measure qubits in the Z basis.
     ///
     /// Returns a `TickMeasureHandle` that allows attaching metadata via `.meta()`.
     /// This breaks the chain - only `.meta()` can be called on the result.
-    fn mz(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<PyTickMeasureHandle> {
+    fn mz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<PyTickMeasureHandle> {
         let (circuit, tick_idx, gate_idx) = {
             let mut handle = slf.borrow_mut(py);
-            let gate_idx = handle.add_gate_get_idx(py, Gate::measure(&[q]))?;
+            let gate_idx = handle.add_gate_get_idx(py, Gate::mz(&qubits))?;
             (handle.circuit.clone_ref(py), handle.tick_idx, gate_idx)
         };
         Ok(PyTickMeasureHandle {
@@ -3063,16 +3092,13 @@ impl PyTickHandle {
         })
     }
 
-    /// Measure and free a qubit (destructive measurement).
+    /// Measure and free qubits (destructive measurement).
     ///
     /// Returns a `TickMeasureHandle` that allows attaching metadata via `.meta()`.
-    fn measure_free(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<PyTickMeasureHandle> {
+    fn mz_free(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<PyTickMeasureHandle> {
         let (circuit, tick_idx, gate_idx) = {
             let mut handle = slf.borrow_mut(py);
-            let gate_idx = handle.add_gate_get_idx(
-                py,
-                Gate::simple(GateType::MeasureFree, vec![QubitId::from(q)]),
-            )?;
+            let gate_idx = handle.add_gate_get_idx(py, Gate::mz_free(&qubits))?;
             (handle.circuit.clone_ref(py), handle.tick_idx, gate_idx)
         };
         Ok(PyTickMeasureHandle {
@@ -3086,17 +3112,17 @@ impl PyTickHandle {
     // Resource management
     // =========================================================================
 
-    /// Allocate a qubit.
-    fn qalloc(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+    /// Allocate qubits.
+    fn qalloc(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::qalloc(&[q]))?;
+            .add_gate_internal(py, Gate::qalloc(&qubits))?;
         Ok(slf)
     }
 
-    /// Free a qubit.
-    fn qfree(slf: Py<Self>, py: Python<'_>, q: usize) -> PyResult<Py<Self>> {
+    /// Free qubits.
+    fn qfree(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::qfree(&[q]))?;
+            .add_gate_internal(py, Gate::qfree(&qubits))?;
         Ok(slf)
     }
 
@@ -3110,12 +3136,12 @@ impl PyTickHandle {
     ///
     /// Args:
     ///     duration: Duration as `TimeUnits`, `Nanoseconds` (deprecated), or integer.
-    ///     q: The qubit to idle.
+    ///     qubits: List of qubits to idle.
     fn idle(
         slf: Py<Self>,
         py: Python<'_>,
         duration: &Bound<'_, PyAny>,
-        q: usize,
+        qubits: Vec<usize>,
     ) -> PyResult<Py<Self>> {
         let units = if let Ok(py_tu) = duration.extract::<PyTimeUnits>() {
             py_tu.inner
@@ -3129,8 +3155,9 @@ impl PyTickHandle {
                 "duration must be TimeUnits, Nanoseconds, or an integer",
             ));
         };
+        let qubit_ids: Vec<QubitId> = qubits.into_iter().map(QubitId::from).collect();
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::idle(units.as_f64(), vec![QubitId::from(q)]))?;
+            .add_gate_internal(py, Gate::idle(units.as_f64(), qubit_ids))?;
         Ok(slf)
     }
 

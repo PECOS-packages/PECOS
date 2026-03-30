@@ -29,7 +29,7 @@ from pecos._mp_workers import (
     sim_run_from_bytes,
 )
 from pecos.engines.hybrid_engine_multiprocessing import worker_wrapper
-from pecos_rslib import CoinToss, PauliProp, SparseSim, StateVec
+from pecos_rslib import CoinToss, PauliProp, SparseStab, StateVec
 
 # Use spawn context everywhere. All worker functions live in installed modules
 # (pecos._mp_workers, pecos.engines.hybrid_engine_multiprocessing), so they are
@@ -68,11 +68,11 @@ class TestMultiprocessingStateVec:
 
 @pytest.mark.timeout(120)
 class TestMultiprocessingSparseSim:
-    """Tests for multiprocessing SparseSim simulators via pickle."""
+    """Tests for multiprocessing SparseStab simulators via pickle."""
 
     def test_pool_map(self) -> None:
-        """Test SparseSim serialization works with multiprocessing Pool.map."""
-        sim = SparseSim(4)
+        """Test SparseStab serialization works with multiprocessing Pool.map."""
+        sim = SparseStab(4)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
         sim_bytes = pickle.dumps(sim)
@@ -109,9 +109,9 @@ class TestMultiprocessingPauliProp:
     def test_pool_map(self) -> None:
         """Test PauliProp serialization works with multiprocessing Pool.map."""
         sim = PauliProp(num_qubits=3, track_sign=True)
-        sim.add_x(0)
+        sim.track_x([0])
         sim_bytes = pickle.dumps(sim)
-        args = [(sim_bytes, "h", (0,), "weight", ())] * 2
+        args = [(sim_bytes, "h", ([0],), "weight", ())] * 2
         ctx = _get_pool_context()
         with ctx.Pool(processes=2) as pool:
             results = pool.map_async(deserialize_and_call, args).get(
@@ -172,8 +172,8 @@ class TestWorkerWrapperPattern:
             assert "i" in run_info
 
     def test_worker_wrapper_with_sparsesim(self) -> None:
-        """Test the production worker_wrapper pattern with SparseSim."""
-        sim = SparseSim(4)
+        """Test the production worker_wrapper pattern with SparseStab."""
+        sim = SparseStab(4)
         sim.run_1q_gate("H", 0)
         sim.run_2q_gate("CX", (0, 1), None)
         sim_bytes = pickle.dumps(sim)

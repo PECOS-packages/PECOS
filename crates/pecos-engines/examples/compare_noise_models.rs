@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 fn main() {
     // Create the same Bell state circuit as in run_noisy_circ.rs
     let circ = ByteMessage::quantum_operations_builder()
-        .add_h(&[0])
-        .add_cx(&[0], &[1])
-        .add_measurements(&[0])
-        .add_measurements(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Test that GeneralNoise can reproduce DepolarizingNoise behavior
@@ -165,8 +165,8 @@ fn compare_depolarizing_with_general(circ: &ByteMessage) {
 fn test_asymmetric_measurements() {
     // Create a simple circuit with H-gate and measurement
     let circ = ByteMessage::quantum_operations_builder()
-        .add_h(&[0])
-        .add_measurements(&[0])
+        .h(&[0])
+        .mz(&[0])
         .build();
 
     // Create quantum engine

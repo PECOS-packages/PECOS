@@ -576,7 +576,7 @@ mod tests {
 
         let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results = coordinator.run(
             || SparseStab::new(1),

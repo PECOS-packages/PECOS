@@ -15,7 +15,11 @@ type RustQisEngineBuilder = pecos::QisEngineBuilder;
 type RustPhirJsonEngineBuilder = pecos::PhirJsonEngineBuilder;
 type RustHugrEngineBuilder = pecos::HugrEngineBuilder;
 type RustPhirEngineBuilder = pecos::PhirEngineBuilder;
-type RustSparseStabilizerEngineBuilder = SparseStabilizerEngineBuilder;
+type RustCoinTossEngineBuilder = CoinTossEngineBuilder;
+type RustCliffordRzEngineBuilder = CliffordRzEngineBuilder;
+type RustDensityMatrixEngineBuilder = DensityMatrixEngineBuilder;
+type RustStabilizerEngineBuilder = StabilizerEngineBuilder;
+type RustSparseStabEngineBuilder = SparseStabEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
 use pyo3::exceptions::PyRuntimeError;
@@ -1331,19 +1335,19 @@ impl PyStateVectorEngineBuilder {
     }
 }
 
-/// Python wrapper for `SparseStabilizerEngineBuilder`
-#[pyclass(name = "SparseStabilizerEngineBuilder", from_py_object)]
+/// Python wrapper for `SparseStabEngineBuilder`
+#[pyclass(name = "SparseStabEngineBuilder", from_py_object)]
 #[derive(Clone)]
-pub struct PySparseStabilizerEngineBuilder {
-    pub(crate) inner: Option<RustSparseStabilizerEngineBuilder>,
+pub struct PySparseStabEngineBuilder {
+    pub(crate) inner: Option<RustSparseStabEngineBuilder>,
 }
 
 #[pymethods]
-impl PySparseStabilizerEngineBuilder {
+impl PySparseStabEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::sparse_stabilizer()),
+            inner: Some(pecos::sparse_stab()),
         }
     }
 
@@ -1370,14 +1374,155 @@ pub fn state_vector() -> PyStateVectorEngineBuilder {
 
 /// Create a sparse stabilizer quantum engine builder
 #[pyfunction]
-pub fn sparse_stabilizer() -> PySparseStabilizerEngineBuilder {
-    PySparseStabilizerEngineBuilder::new()
+pub fn sparse_stab() -> PySparseStabEngineBuilder {
+    PySparseStabEngineBuilder::new()
 }
 
-/// Alias for `sparse_stabilizer`
+/// Python wrapper for `StabilizerEngineBuilder` (recommended stabilizer backend).
+#[pyclass(name = "StabilizerEngineBuilder", from_py_object)]
+#[derive(Clone)]
+pub struct PyStabilizerEngineBuilder {
+    pub(crate) inner: Option<RustStabilizerEngineBuilder>,
+}
+
+#[pymethods]
+impl PyStabilizerEngineBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Some(pecos::stabilizer()),
+        }
+    }
+
+    /// Set the number of qubits
+    fn qubits(slf: Py<Self>, num_qubits: usize, py: Python) -> PyResult<Py<Self>> {
+        let mut borrowed = slf.borrow_mut(py);
+        if let Some(inner) = borrowed.inner.take() {
+            borrowed.inner = Some(inner.qubits(num_qubits));
+            drop(borrowed);
+            Ok(slf)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Builder has already been consumed",
+            ))
+        }
+    }
+}
+
+/// Create a stabilizer quantum engine builder (recommended).
 #[pyfunction]
-pub fn sparse_stab() -> PySparseStabilizerEngineBuilder {
-    sparse_stabilizer()
+pub fn stabilizer() -> PyStabilizerEngineBuilder {
+    PyStabilizerEngineBuilder::new()
+}
+
+/// Python wrapper for `CliffordRzEngineBuilder`
+#[pyclass(name = "CliffordRzEngineBuilder", from_py_object)]
+#[derive(Clone)]
+pub struct PyCliffordRzEngineBuilder {
+    pub(crate) inner: Option<RustCliffordRzEngineBuilder>,
+}
+
+#[pymethods]
+impl PyCliffordRzEngineBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Some(pecos::clifford_rz()),
+        }
+    }
+
+    /// Set the number of qubits
+    fn qubits(slf: Py<Self>, num_qubits: usize, py: Python) -> PyResult<Py<Self>> {
+        let mut borrowed = slf.borrow_mut(py);
+        if let Some(inner) = borrowed.inner.take() {
+            borrowed.inner = Some(inner.qubits(num_qubits));
+            drop(borrowed);
+            Ok(slf)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Builder has already been consumed",
+            ))
+        }
+    }
+}
+
+/// Create a Clifford+RZ quantum engine builder
+#[pyfunction]
+pub fn clifford_rz() -> PyCliffordRzEngineBuilder {
+    PyCliffordRzEngineBuilder::new()
+}
+
+/// Python wrapper for `DensityMatrixEngineBuilder`
+#[pyclass(name = "DensityMatrixEngineBuilder", from_py_object)]
+#[derive(Clone)]
+pub struct PyDensityMatrixEngineBuilder {
+    pub(crate) inner: Option<RustDensityMatrixEngineBuilder>,
+}
+
+#[pymethods]
+impl PyDensityMatrixEngineBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Some(pecos::density_matrix()),
+        }
+    }
+
+    /// Set the number of qubits
+    fn qubits(slf: Py<Self>, num_qubits: usize, py: Python) -> PyResult<Py<Self>> {
+        let mut borrowed = slf.borrow_mut(py);
+        if let Some(inner) = borrowed.inner.take() {
+            borrowed.inner = Some(inner.qubits(num_qubits));
+            drop(borrowed);
+            Ok(slf)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Builder has already been consumed",
+            ))
+        }
+    }
+}
+
+/// Create a density matrix quantum engine builder
+#[pyfunction]
+pub fn density_matrix() -> PyDensityMatrixEngineBuilder {
+    PyDensityMatrixEngineBuilder::new()
+}
+
+/// Python wrapper for `CoinTossEngineBuilder`
+#[pyclass(name = "CoinTossEngineBuilder", from_py_object)]
+#[derive(Clone)]
+pub struct PyCoinTossEngineBuilder {
+    pub(crate) inner: Option<RustCoinTossEngineBuilder>,
+}
+
+#[pymethods]
+impl PyCoinTossEngineBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Some(pecos::coin_toss()),
+        }
+    }
+
+    fn qubits(slf: Py<Self>, num_qubits: usize, py: Python) -> PyResult<Py<Self>> {
+        let mut borrowed = slf.borrow_mut(py);
+        if let Some(inner) = borrowed.inner.take() {
+            borrowed.inner = Some(inner.qubits(num_qubits));
+            drop(borrowed);
+            Ok(slf)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Builder has already been consumed",
+            ))
+        }
+    }
+}
+
+/// Create a coin toss quantum engine builder
+#[pyfunction]
+pub fn coin_toss() -> PyCoinTossEngineBuilder {
+    PyCoinTossEngineBuilder::new()
 }
 
 /// Create a `SimBuilder` from scratch without a program
@@ -1450,7 +1595,11 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Quantum engine builders
     m.add_class::<PyStateVectorEngineBuilder>()?;
-    m.add_class::<PySparseStabilizerEngineBuilder>()?;
+    m.add_class::<PySparseStabEngineBuilder>()?;
+    m.add_class::<PyCliffordRzEngineBuilder>()?;
+    m.add_class::<PyDensityMatrixEngineBuilder>()?;
+    m.add_class::<PyStabilizerEngineBuilder>()?;
+    m.add_class::<PyCoinTossEngineBuilder>()?;
 
     // Interface builder wrapper
     m.add_class::<PyQisInterfaceBuilder>()?;
@@ -1476,8 +1625,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Quantum engine builder functions
     m.add_function(wrap_pyfunction!(self::state_vector, m)?)?;
-    m.add_function(wrap_pyfunction!(self::sparse_stabilizer, m)?)?;
-    m.add_function(wrap_pyfunction!(sparse_stab, m)?)?;
+    m.add_function(wrap_pyfunction!(self::sparse_stab, m)?)?;
 
     Ok(())
 }

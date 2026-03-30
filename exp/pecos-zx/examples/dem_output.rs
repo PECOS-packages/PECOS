@@ -39,24 +39,24 @@ fn main() {
     let mut dag = DagCircuit::new();
 
     // --- Round 1 ---
-    dag.pz(3);
-    dag.pz(4);
-    dag.cx(0, 3);
-    dag.cx(1, 3);
-    dag.cx(1, 4);
-    dag.cx(2, 4);
-    dag.mz(3);
-    dag.mz(4);
+    dag.pz(&[3]);
+    dag.pz(&[4]);
+    dag.cx(&[(0, 3)]);
+    dag.cx(&[(1, 3)]);
+    dag.cx(&[(1, 4)]);
+    dag.cx(&[(2, 4)]);
+    dag.mz(&[3]);
+    dag.mz(&[4]);
 
     // --- Round 2 (fresh ancilla indices) ---
-    dag.pz(5);
-    dag.pz(6);
-    dag.cx(0, 5);
-    dag.cx(1, 5);
-    dag.cx(1, 6);
-    dag.cx(2, 6);
-    dag.mz(5);
-    dag.mz(6);
+    dag.pz(&[5]);
+    dag.pz(&[6]);
+    dag.cx(&[(0, 5)]);
+    dag.cx(&[(1, 5)]);
+    dag.cx(&[(1, 6)]);
+    dag.cx(&[(2, 6)]);
+    dag.mz(&[5]);
+    dag.mz(&[6]);
 
     println!("Repetition code (2-round syndrome extraction):");
     println!("  Data qubits: 0, 1, 2");

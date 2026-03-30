@@ -11,8 +11,8 @@ fn main() {
     // Create a simple quantum circuit that prepares a superposition and measures it
     // We expect a roughly 50/50 distribution of 0s and 1s in the ideal case
     let circ = ByteMessage::quantum_operations_builder()
-        .add_h(&[0])
-        .add_measurements(&[0])
+        .h(&[0])
+        .mz(&[0])
         .build();
 
     // Create a quantum engine with 1 qubit
@@ -161,10 +161,10 @@ fn example3_bell_state() {
 
     // Create a Bell state circuit
     let bell_circ = ByteMessage::quantum_operations_builder()
-        .add_h(&[0])
-        .add_cx(&[0], &[1])
-        .add_measurements(&[0])
-        .add_measurements(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Create a new quantum system with 2 qubits

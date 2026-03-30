@@ -22,7 +22,7 @@ from typing import Any
 
 from pecos.reps.pyphir.op_types import QOp
 from pecos.simulators import Qulacs, StateVec
-from pecos.simulators.sparsesim.state import SparseSim
+from pecos.simulators.sparsesim.state import SparseStabPy
 
 JSONType = dict[str, Any] | list[Any] | str | int | float | bool | None
 
@@ -72,7 +72,7 @@ class QuantumSimulator:
             backend: The simulation backend to use. Can be a string identifier
                 (e.g., 'stabilizer', 'state-vector', 'MPS', 'Qulacs', 'CuStateVec',
                 'CudaStateVec', 'CudaStabilizer') or a custom backend object.
-                Defaults to None, which uses SparseSim.
+                Defaults to None, which uses SparseStabPy.
             **params: Additional parameters passed to the underlying simulator backend.
 
         """
@@ -96,7 +96,7 @@ class QuantumSimulator:
 
         if isinstance(self.backend, str):
             if self.backend == "stabilizer":
-                self.state = SparseSim
+                self.state = SparseStabPy
             elif self.backend in "state-vector":
                 if Qulacs is not None:
                     self.state = Qulacs
@@ -123,7 +123,7 @@ class QuantumSimulator:
                 raise NotImplementedError(msg)
 
         if self.backend is None:
-            self.state = SparseSim
+            self.state = SparseStabPy
 
         # Try to initialize with all params including seed
         # If the simulator doesn't support seed, retry without it

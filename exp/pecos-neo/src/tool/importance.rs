@@ -22,7 +22,7 @@
 //! use pecos_neo::tool::{sim_neo, ImportanceSamplingPlugin};
 //! use pecos_neo::prelude::*;
 //!
-//! let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //!
 //! // Create simulation with importance sampling
 //! let mut sim = sim_neo(circuit)

@@ -441,105 +441,105 @@ impl CliffordRep {
     }
 
     /// SX† gate on qubit q.
-    /// Decomposition: X · SX (`CliffordGateable`: self.x(q).sx(q))
+    /// Decomposition: X · SX (`CliffordGateable`: self.x(&[q]).sx(&[q]))
     #[must_use]
     pub fn sxdg(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::x(qubit))
     }
 
     /// SY† gate on qubit q.
-    /// Decomposition: Y · SY (`CliffordGateable`: self.y(q).sy(q))
+    /// Decomposition: Y · SY (`CliffordGateable`: self.y(&[q]).sy(&[q]))
     #[must_use]
     pub fn sydg(qubit: usize) -> Self {
         Self::sy(qubit).compose(&Self::y(qubit))
     }
 
     /// H2 gate on qubit q.
-    /// Decomposition: SY · Z (`CliffordGateable`: self.sy(q).z(q))
+    /// Decomposition: SY · Z (`CliffordGateable`: self.sy(&[q]).z(&[q]))
     #[must_use]
     pub fn h2(qubit: usize) -> Self {
         Self::z(qubit).compose(&Self::sy(qubit))
     }
 
     /// H3 gate on qubit q.
-    /// Decomposition: SZ · Y (`CliffordGateable`: self.sz(q).y(q))
+    /// Decomposition: SZ · Y (`CliffordGateable`: self.sz(&[q]).y(&[q]))
     #[must_use]
     pub fn h3(qubit: usize) -> Self {
         Self::y(qubit).compose(&Self::sz(qubit))
     }
 
     /// H4 gate on qubit q.
-    /// Decomposition: SZ · X (`CliffordGateable`: self.sz(q).x(q))
+    /// Decomposition: SZ · X (`CliffordGateable`: self.sz(&[q]).x(&[q]))
     #[must_use]
     pub fn h4(qubit: usize) -> Self {
         Self::x(qubit).compose(&Self::sz(qubit))
     }
 
     /// H5 gate on qubit q.
-    /// Decomposition: SX · Z (`CliffordGateable`: self.sx(q).z(q))
+    /// Decomposition: SX · Z (`CliffordGateable`: self.sx(&[q]).z(&[q]))
     #[must_use]
     pub fn h5(qubit: usize) -> Self {
         Self::z(qubit).compose(&Self::sx(qubit))
     }
 
     /// H6 gate on qubit q.
-    /// Decomposition: SX · Y (`CliffordGateable`: self.sx(q).y(q))
+    /// Decomposition: SX · Y (`CliffordGateable`: self.sx(&[q]).y(&[q]))
     #[must_use]
     pub fn h6(qubit: usize) -> Self {
         Self::y(qubit).compose(&Self::sx(qubit))
     }
 
     /// F (Face) gate on qubit q.
-    /// Decomposition: SX · SZ (`CliffordGateable`: self.sx(q).sz(q))
+    /// Decomposition: SX · SZ (`CliffordGateable`: self.sx(&[q]).sz(&[q]))
     #[must_use]
     pub fn f(qubit: usize) -> Self {
         Self::sz(qubit).compose(&Self::sx(qubit))
     }
 
     /// F† gate on qubit q.
-    /// Decomposition: SZ† · SX† (`CliffordGateable`: self.szdg(q).sxdg(q))
+    /// Decomposition: SZ† · SX† (`CliffordGateable`: self.szdg(&[q]).sxdg(&[q]))
     #[must_use]
     pub fn fdg(qubit: usize) -> Self {
         Self::sxdg(qubit).compose(&Self::szdg(qubit))
     }
 
     /// F2 gate on qubit q.
-    /// Decomposition: SX† · SY (`CliffordGateable`: self.sxdg(q).sy(q))
+    /// Decomposition: SX† · SY (`CliffordGateable`: self.sxdg(&[q]).sy(&[q]))
     #[must_use]
     pub fn f2(qubit: usize) -> Self {
         Self::sy(qubit).compose(&Self::sxdg(qubit))
     }
 
     /// F2† gate on qubit q.
-    /// Decomposition: SY† · SX (`CliffordGateable`: self.sydg(q).sx(q))
+    /// Decomposition: SY† · SX (`CliffordGateable`: self.sydg(&[q]).sx(&[q]))
     #[must_use]
     pub fn f2dg(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::sydg(qubit))
     }
 
     /// F3 gate on qubit q.
-    /// Decomposition: SX† · SZ (`CliffordGateable`: self.sxdg(q).sz(q))
+    /// Decomposition: SX† · SZ (`CliffordGateable`: self.sxdg(&[q]).sz(&[q]))
     #[must_use]
     pub fn f3(qubit: usize) -> Self {
         Self::sz(qubit).compose(&Self::sxdg(qubit))
     }
 
     /// F3† gate on qubit q.
-    /// Decomposition: SZ† · SX (`CliffordGateable`: self.szdg(q).sx(q))
+    /// Decomposition: SZ† · SX (`CliffordGateable`: self.szdg(&[q]).sx(&[q]))
     #[must_use]
     pub fn f3dg(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::szdg(qubit))
     }
 
     /// F4 gate on qubit q.
-    /// Decomposition: SZ · SX (`CliffordGateable`: self.sz(q).sx(q))
+    /// Decomposition: SZ · SX (`CliffordGateable`: self.sz(&[q]).sx(&[q]))
     #[must_use]
     pub fn f4(qubit: usize) -> Self {
         Self::sx(qubit).compose(&Self::sz(qubit))
     }
 
     /// F4† gate on qubit q.
-    /// Decomposition: SX† · SZ† (`CliffordGateable`: self.sxdg(q).szdg(q))
+    /// Decomposition: SX† · SZ† (`CliffordGateable`: self.sxdg(&[q]).szdg(&[q]))
     #[must_use]
     pub fn f4dg(qubit: usize) -> Self {
         Self::szdg(qubit).compose(&Self::sxdg(qubit))
@@ -1930,7 +1930,7 @@ mod tests {
 
     #[test]
     fn test_compose_matches_simulator_convention() {
-        // CliffordGateable: H3 = self.sz(q).y(q) -- SZ first, then Y
+        // CliffordGateable: H3 = self.sz(&[q]).y(&[q]) -- SZ first, then Y
         // H3 docs: X → Y, Z → -Z
         //
         // sim.gate1(q).gate2(q) applies gate1 first, then gate2 to state.
@@ -1942,7 +1942,7 @@ mod tests {
         //   = gate2_cliff(gate1_cliff(P))
         //   = gate2_cliff.compose(gate1_cliff)
         //
-        // So sim.sz(q).y(q) → Y.compose(SZ)
+        // So sim.sz(&[q]).y(&[q]) → Y.compose(SZ)
         let h3_composed = CliffordRep::y(0).compose(&CliffordRep::sz(0));
         let x0 = PauliString::x(0);
         let z0 = PauliString::z(0);

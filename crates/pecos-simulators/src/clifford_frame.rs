@@ -24,6 +24,10 @@
 //! from these Heisenberg actions.
 //!
 //! Indices 0–3 are the four Paulis (I, X, Y, Z), enabling fast `is_pauli()` checks.
+//!
+//! The CZ lookup table is derived from the `GraphSim` reference implementation of
+//! Anders & Briegel, "Fast simulation of stabilizer circuits using a graph-state
+//! representation", [arXiv:quant-ph/0504117](https://arxiv.org/abs/quant-ph/0504117).
 
 /// Which Pauli axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,9 +102,8 @@ const HEIS: [(u8, bool, u8, bool); 24] = [
 
 /// Generator sequences for each element (0=H, 1=S), applied left-to-right
 /// as matrix products: seq [a,b,c] means the gate C = a·b·c (a applied last to state).
-/// Used by tests to construct matrices for verification.
-#[cfg(test)]
-const GENERATORS: [[u8; 7]; 24] = {
+/// Used for flushing the Clifford frame into H+S gate sequences.
+pub const GENERATORS: [[u8; 7]; 24] = {
     // We store fixed-size arrays with 0xFF as padding (unused entries).
     const P: u8 = 0xFF; // padding
     const H: u8 = 0;
@@ -134,8 +137,7 @@ const GENERATORS: [[u8; 7]; 24] = {
 };
 
 /// Length of each generator sequence (number of non-padding entries).
-#[cfg(test)]
-const GEN_LENS: [u8; 24] = [
+pub const GEN_LENS: [u8; 24] = [
     0, 4, 6, 2, 1, 3, 1, 2, 2, 3, 3, 4, 3, 3, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7,
 ];
 
@@ -823,12 +825,16 @@ impl CliffordFrame {
     ///   xc' = xc,  zc' = zc ⊕ zt,  xt' = xc ⊕ xt,  zt' = zt
     #[inline]
     #[must_use]
-    pub fn push_through_cx(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self) {
+    pub fn push_through_cx(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self, u8) {
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
         let new_ctrl = Self::pauli_from_xz(xc, zc ^ zt);
         let new_targ = Self::pauli_from_xz(xc ^ xt, zt);
-        (new_ctrl, new_targ)
+        // Phase: CX†(P1⊗P2)CX = phase * P1'⊗P2'. Nonzero only for XZ→YY and YY→XZ.
+        // Lookup: index = ctrl_pauli * 4 + targ_pauli (both 0-3).
+        const CX_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0];
+        let phase = CX_PHASE[ctrl_pauli.0 as usize * 4 + targ_pauli.0 as usize];
+        (new_ctrl, new_targ, phase)
     }
 
     /// Push Pauli frames through a CZ gate.
@@ -837,12 +843,15 @@ impl CliffordFrame {
     ///   xc' = xc,  zc' = zc ⊕ xt,  xt' = xt,  zt' = zt ⊕ xc
     #[inline]
     #[must_use]
-    pub fn push_through_cz(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self) {
+    pub fn push_through_cz(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self, u8) {
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
         let new_ctrl = Self::pauli_from_xz(xc, zc ^ xt);
         let new_targ = Self::pauli_from_xz(xt, zt ^ xc);
-        (new_ctrl, new_targ)
+        // Phase: nonzero only for XY→YX and YX→XY.
+        const CZ_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0, 0];
+        let phase = CZ_PHASE[ctrl_pauli.0 as usize * 4 + targ_pauli.0 as usize];
+        (new_ctrl, new_targ, phase)
     }
 
     /// Push Pauli frames through a SWAP gate.
@@ -1322,42 +1331,49 @@ mod tests {
     #[test]
     fn test_push_through_cx() {
         // X_ctrl through CX -> X_ctrl X_targ
-        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::X, CliffordFrame::IDENTITY);
+        let (c, t, ph) = CliffordFrame::push_through_cx(CliffordFrame::X, CliffordFrame::IDENTITY);
         assert_eq!(c, CliffordFrame::X);
         assert_eq!(t, CliffordFrame::X);
+        assert_eq!(ph, 0);
 
         // I_ctrl, Z_targ through CX -> Z_ctrl Z_targ
-        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::Z);
+        let (c, t, ph) = CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::Z);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::Z);
+        assert_eq!(ph, 0);
 
         // Z_ctrl through CX -> Z_ctrl
-        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::Z, CliffordFrame::IDENTITY);
+        let (c, t, ph) = CliffordFrame::push_through_cx(CliffordFrame::Z, CliffordFrame::IDENTITY);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::IDENTITY);
+        assert_eq!(ph, 0);
 
         // I_ctrl, X_targ through CX -> X_targ unchanged
-        let (c, t) = CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::X);
+        let (c, t, ph) = CliffordFrame::push_through_cx(CliffordFrame::IDENTITY, CliffordFrame::X);
         assert_eq!(c, CliffordFrame::IDENTITY);
         assert_eq!(t, CliffordFrame::X);
+        assert_eq!(ph, 0);
     }
 
     #[test]
     fn test_push_through_cz() {
         // X_ctrl through CZ -> X_ctrl Z_targ
-        let (c, t) = CliffordFrame::push_through_cz(CliffordFrame::X, CliffordFrame::IDENTITY);
+        let (c, t, ph) = CliffordFrame::push_through_cz(CliffordFrame::X, CliffordFrame::IDENTITY);
         assert_eq!(c, CliffordFrame::X);
         assert_eq!(t, CliffordFrame::Z);
+        assert_eq!(ph, 0);
 
         // I_ctrl, X_targ through CZ -> Z_ctrl X_targ
-        let (c, t) = CliffordFrame::push_through_cz(CliffordFrame::IDENTITY, CliffordFrame::X);
+        let (c, t, ph) = CliffordFrame::push_through_cz(CliffordFrame::IDENTITY, CliffordFrame::X);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::X);
+        assert_eq!(ph, 0);
 
         // Z_ctrl, Z_targ through CZ -> unchanged
-        let (c, t) = CliffordFrame::push_through_cz(CliffordFrame::Z, CliffordFrame::Z);
+        let (c, t, ph) = CliffordFrame::push_through_cz(CliffordFrame::Z, CliffordFrame::Z);
         assert_eq!(c, CliffordFrame::Z);
         assert_eq!(t, CliffordFrame::Z);
+        assert_eq!(ph, 0);
     }
 
     #[test]

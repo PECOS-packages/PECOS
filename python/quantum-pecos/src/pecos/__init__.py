@@ -280,7 +280,10 @@ depolarizing_noise = pecos_rslib.depolarizing_noise
 biased_depolarizing_noise = pecos_rslib.biased_depolarizing_noise
 general_noise = pecos_rslib.general_noise
 state_vector = pecos_rslib.state_vector
-sparse_stabilizer = pecos_rslib.sparse_stabilizer
+sparse_stab = pecos_rslib.sparse_stab
+stabilizer = pecos_rslib.stabilizer
+clifford_rz = pecos_rslib.clifford_rz
+density_matrix = pecos_rslib.density_matrix
 hugr_engine = pecos_rslib.hugr_engine
 
 # Re-export noise model builder classes for direct instantiation
@@ -372,6 +375,7 @@ __all__ = [
     "circuit_runners",
     # Subpackages - Core
     "circuits",
+    "clifford_rz",
     # Numeric submodules (like numpy.linalg, numpy.random)
     "compare",
     "complex64",
@@ -381,6 +385,7 @@ __all__ = [
     "curve_fit",
     "decoders",
     "delete",
+    "density_matrix",
     "depolarizing_noise",
     "diag",
     # Data types
@@ -438,8 +443,9 @@ __all__ = [
     "sin",
     "sinh",
     # Quantum simulators
-    "sparse_stabilizer",
+    "sparse_stab",
     "sqrt",
+    "stabilizer",
     "state_vector",
     "stats",
     "std",

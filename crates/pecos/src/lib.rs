@@ -222,7 +222,7 @@ pub mod quantum {
 ///
 /// # Builders
 ///
-/// - **`sparse_stabilizer()`**: Builder for sparse stabilizer engines
+/// - **`sparse_stab()`**: Builder for sparse stabilizer engines
 /// - **`state_vector()`**: Builder for state vector engines
 ///
 /// # Example
@@ -232,7 +232,7 @@ pub mod quantum {
 /// use pecos::QubitId;
 ///
 /// let mut sim = SparseStab::new(2);
-/// sim.h(&[QubitId(0)]).cx(&[QubitId(0), QubitId(1)]);
+/// sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
 /// ```
 #[cfg(feature = "sim")]
 pub mod simulators {
@@ -241,13 +241,15 @@ pub mod simulators {
 
     // Engine wrappers
     pub use pecos_engines::quantum::{
-        QuantumEngine, SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
+        CliffordRzEngine, DensityMatrixEngine, QuantumEngine, SparseStabEngine, StabilizerEngine,
+        StateVecEngine, new_quantum_engine_arbitrary_qgate,
     };
 
     // Engine builders
     pub use pecos_engines::quantum_engine_builder::{
-        IntoQuantumEngineBuilder, SparseStabilizerEngineBuilder, StateVectorEngineBuilder,
-        sparse_stabilizer, state_vector,
+        CliffordRzEngineBuilder, DensityMatrixEngineBuilder, IntoQuantumEngineBuilder,
+        SparseStabEngineBuilder, StabilizerEngineBuilder, StateVectorEngineBuilder, clifford_rz,
+        density_matrix, sparse_stab, stabilizer, state_vector,
     };
 
     // Feature-gated backends
@@ -764,7 +766,9 @@ pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
 
 // Quantum backends
 #[cfg(feature = "sim")]
-pub use pecos_engines::{sparse_stabilizer, state_vector};
+pub use pecos_engines::{
+    clifford_rz, coin_toss, density_matrix, sparse_stab, stabilizer, state_vector,
+};
 
 // Noise models
 #[cfg(feature = "sim")]

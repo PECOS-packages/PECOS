@@ -21,9 +21,9 @@ pub trait CommandQueueValidation {
     /// use pecos_neo::extensible::CommandQueueValidation;
     ///
     /// let commands = CommandBuilder::new()
-    ///     .pz(0)
-    ///     .h(0)
-    ///     .mz(0)
+    ///     .pz(&[0])
+    ///     .h(&[0])
+    ///     .mz(&[0])
     ///     .build();
     ///
     /// let registry = GateRegistry::new();
@@ -189,11 +189,11 @@ mod tests {
     #[test]
     fn test_validate_clifford_circuit() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let registry = GateRegistry::new();
@@ -205,9 +205,9 @@ mod tests {
     #[test]
     fn test_validate_rejects_t_gate() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .t(0) // T gate is not Clifford
-            .mz(0)
+            .pz(&[0])
+            .t(&[0]) // T gate is not Clifford
+            .mz(&[0])
             .build();
 
         let registry = GateRegistry::new();
@@ -218,11 +218,16 @@ mod tests {
 
     #[test]
     fn test_is_clifford_circuit() {
-        let clifford = CommandBuilder::new().pz(0).h(0).sz(0).mz(0).build();
+        let clifford = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .sz(&[0])
+            .mz(&[0])
+            .build();
 
         assert!(is_clifford_circuit(&clifford));
 
-        let non_clifford = CommandBuilder::new().pz(0).t(0).mz(0).build();
+        let non_clifford = CommandBuilder::new().pz(&[0]).t(&[0]).mz(&[0]).build();
 
         assert!(!is_clifford_circuit(&non_clifford));
     }
@@ -242,9 +247,9 @@ mod tests {
     #[test]
     fn test_rz_at_clifford_angle_is_clifford() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .rz(0, Angle64::QUARTER_TURN) // RZ(pi/2) = SZ, Clifford
-            .mz(0)
+            .pz(&[0])
+            .rz(&[0], Angle64::QUARTER_TURN) // RZ(pi/2) = SZ, Clifford
+            .mz(&[0])
             .build();
 
         assert!(is_clifford_circuit(&commands));
@@ -253,9 +258,9 @@ mod tests {
     #[test]
     fn test_rz_at_non_clifford_angle() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .rz(0, Angle64::HALF_TURN / 4) // RZ(pi/4) = T, not Clifford
-            .mz(0)
+            .pz(&[0])
+            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) = T, not Clifford
+            .mz(&[0])
             .build();
 
         assert!(!is_clifford_circuit(&commands));
@@ -264,9 +269,9 @@ mod tests {
     #[test]
     fn test_snap_command_queue_exact() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .rz(0, Angle64::QUARTER_TURN)
-            .mz(0)
+            .pz(&[0])
+            .rz(&[0], Angle64::QUARTER_TURN)
+            .mz(&[0])
             .build();
 
         let snapper = AngleSnapper::clifford(1e-9);
@@ -279,10 +284,10 @@ mod tests {
     #[test]
     fn test_to_gate_validations() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0)
-            .rz(0, Angle64::QUARTER_TURN)
-            .mz(0)
+            .pz(&[0])
+            .h(&[0])
+            .rz(&[0], Angle64::QUARTER_TURN)
+            .mz(&[0])
             .build();
 
         let validations = commands.to_gate_validations();

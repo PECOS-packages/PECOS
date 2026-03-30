@@ -29,7 +29,7 @@ from pecos.circuits import LogicalCircuit, QuantumCircuit
 from pecos.decoders import MWPM2D
 from pecos.engines.circuit_runners import Standard
 from pecos.noise.parent_class_error_gen import ErrorCircuits
-from pecos.simulators import SparseSimPy
+from pecos.simulators import SparseStabPy
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -159,8 +159,8 @@ def t_errors_check(
             for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
-            state_zero = SparseSimPy(qecc.num_qudits)
-            state_plus = SparseSimPy(qecc.num_qudits)
+            state_zero = SparseStabPy(qecc.num_qudits)
+            state_plus = SparseStabPy(qecc.num_qudits)
 
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
@@ -302,8 +302,8 @@ def fault_check(
             for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
-            state_zero = SparseSimPy(qecc.num_qudits)
-            state_plus = SparseSimPy(qecc.num_qudits)
+            state_zero = SparseStabPy(qecc.num_qudits)
+            state_plus = SparseStabPy(qecc.num_qudits)
 
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
@@ -352,7 +352,7 @@ def distance_check(
     qudit_set = qecc.data_qudit_set
 
     circ_sim = Standard()
-    state = SparseSimPy(qecc.num_qudits)
+    state = SparseStabPy(qecc.num_qudits)
 
     ideal_initlogic = LogicalCircuit(suppress_warning=True)
     ideal_initlogic.append(qecc.gate("ideal init |0>"))

@@ -36,8 +36,8 @@ fn bench_gate_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
         let label = format!("{num_pairs}_pairs");
 
         // Build qubit pairs for the batch
-        let qubits: Vec<QubitId> = (0..num_pairs)
-            .flat_map(|i| [QubitId(i * 2), QubitId(i * 2 + 1)])
+        let qubits: Vec<(QubitId, QubitId)> = (0..num_pairs)
+            .map(|i| (QubitId(i * 2), QubitId(i * 2 + 1)))
             .collect();
 
         // Benchmark SZZ (uses default impl with SmallVec extraction)

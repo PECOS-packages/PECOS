@@ -42,7 +42,7 @@ use std::fmt;
 /// use pecos_simulators::{PauliProp, CliffordGateable};
 ///
 /// let mut sim = PauliProp::new();
-/// sim.add_x(0);  // Track an X on qubit 0
+/// sim.track_x(&[0]);  // Track an X on qubit 0
 /// sim.h(&qid(0));    // Apply Hadamard - transforms X to Z
 /// assert!(sim.contains_z(0));  // Verify qubit 0 now has Z
 /// ```
@@ -180,43 +180,43 @@ impl PauliProp {
     /// - Y operator: Creates Z
     ///
     /// # Arguments
-    /// * `item` - The qubit index to add the X operator to
+    /// * `qubits` - The qubit indices to track X operators on
     #[inline]
-    pub fn add_x(&mut self, item: usize) {
-        self.xs.symmetric_difference_item_update(&item);
+    pub fn track_x(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.xs.symmetric_difference_item_update(&q);
+        }
     }
 
-    /// Adds a Z operator to the specified qubit.
+    /// Tracks Z operators on the specified qubits.
     ///
-    /// If the qubit already has:
+    /// For each qubit, if it already has:
     /// - No operator: Adds Z
     /// - Z operator: Removes Z
     /// - X operator: Creates Y (iXZ)
     /// - Y operator: Creates X
     ///
     /// # Arguments
-    /// * `item` - The qubit index to add the Z operator to
+    /// * `qubits` - The qubit indices to track Z operators on
     #[inline]
-    pub fn add_z(&mut self, item: usize) {
-        self.zs.symmetric_difference_item_update(&item);
+    pub fn track_z(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.zs.symmetric_difference_item_update(&q);
+        }
     }
 
-    /// Adds a Y operator to the specified qubit.
+    /// Tracks Y operators on the specified qubits.
     ///
-    /// Since Y = iXZ, this adds both X and Z operators to the qubit.
-    ///
-    /// If the qubit already has:
-    /// - No operator: Creates Y (Creates X and Z)
-    /// - X operator: Removes X, Creates Z
-    /// - Z operator: Removes Z, Creates X
-    /// - Y operator: Removes X and Z
+    /// Since Y = iXZ, this tracks both X and Z operators on each qubit.
     ///
     /// # Arguments
-    /// * `item` - The qubit index to add the Y operator to
+    /// * `qubits` - The qubit indices to track Y operators on
     #[inline]
-    pub fn add_y(&mut self, item: usize) {
-        self.add_x(item);
-        self.add_z(item);
+    pub fn track_y(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.track_x(&[q]);
+            self.track_z(&[q]);
+        }
     }
 
     /// Flips the sign of the Pauli string (if sign tracking is enabled).
@@ -279,7 +279,7 @@ impl PauliProp {
                 let was_y = self.contains_y(item);
                 let was_z = self.contains_z(item) && !was_y;
 
-                self.add_x(item);
+                self.track_x(&[item]);
 
                 if self.sign.is_some() {
                     if was_y {
@@ -300,7 +300,7 @@ impl PauliProp {
                 let was_y = self.contains_y(item);
                 let was_x = self.contains_x(item) && !was_y;
 
-                self.add_z(item);
+                self.track_z(&[item]);
 
                 if self.sign.is_some() {
                     if was_x {
@@ -321,7 +321,7 @@ impl PauliProp {
                 let was_x = self.contains_x(item) && !self.contains_z(item);
                 let was_z = self.contains_z(item) && !self.contains_x(item);
 
-                self.add_y(item);
+                self.track_y(&[item]);
 
                 if self.sign.is_some() {
                     if was_z {
@@ -563,7 +563,7 @@ impl CliffordGateable for PauliProp {
         for &q in qubits {
             let qu = q.index();
             if self.contains_x(qu) {
-                self.add_z(qu);
+                self.track_z(&[qu]);
             }
         }
         self
@@ -627,19 +627,15 @@ impl CliffordGateable for PauliProp {
     /// # Returns
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
             if self.contains_x(q1) {
-                self.add_x(q2);
+                self.track_x(&[q2]);
             }
             if self.contains_z(q2) {
-                self.add_z(q1);
+                self.track_z(&[q1]);
             }
         }
         self
@@ -711,19 +707,19 @@ mod tests {
         assert_eq!(sim.weight(), 0);
 
         // Add X on qubit 0
-        sim.add_x(0);
+        sim.track_x(&[0]);
         assert_eq!(sim.weight(), 1);
 
         // Add Z on qubit 1
-        sim.add_z(1);
+        sim.track_z(&[1]);
         assert_eq!(sim.weight(), 2);
 
         // Add Y on qubit 2 (both X and Z)
-        sim.add_y(2);
+        sim.track_y(&[2]);
         assert_eq!(sim.weight(), 3);
 
         // Adding X to qubit with Z makes Y
-        sim.add_x(1);
+        sim.track_x(&[1]);
         assert_eq!(sim.weight(), 3); // Still 3 operators
     }
 
@@ -731,9 +727,9 @@ mod tests {
     fn test_dense_string() {
         let mut sim = PauliProp::with_sign_tracking(4);
 
-        sim.add_x(0);
-        sim.add_z(2);
-        sim.add_y(3);
+        sim.track_x(&[0]);
+        sim.track_z(&[2]);
+        sim.track_y(&[3]);
 
         assert_eq!(sim.dense_string(), "XIZY");
         assert_eq!(sim.to_dense_string(), "+XIZY");
@@ -770,7 +766,7 @@ mod tests {
         let mut sim = PauliProp::with_sign_tracking(2);
 
         // Start with X on qubit 0
-        sim.add_x(0);
+        sim.track_x(&[0]);
 
         // Add Z to same qubit: X·Z = -iY (applying Z after X)
         let mut paulis = BTreeMap::new();

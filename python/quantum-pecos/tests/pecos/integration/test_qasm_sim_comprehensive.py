@@ -75,9 +75,9 @@ class TestQasmSimComprehensive:
         counts = Counter(results_dict["c"])
         assert len(counts) > 1  # Should see multiple outcomes
 
-    def test_sparse_stabilizer_engine(self) -> None:
+    def test_sparse_stab_engine(self) -> None:
         """Test SparseStabilizer engine explicitly with Clifford circuit."""
-        from pecos import Qasm, qasm_engine, sparse_stabilizer
+        from pecos import Qasm, qasm_engine, sparse_stab
 
         # Pure Clifford circuit (using only H and CX which are natively supported)
         qasm = """
@@ -91,7 +91,7 @@ class TestQasmSimComprehensive:
         measure q -> c;
         """
 
-        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(sparse_stabilizer()).seed(42).run(1000)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().quantum(sparse_stab()).seed(42).run(1000)
 
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 1000

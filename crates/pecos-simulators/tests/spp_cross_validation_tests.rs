@@ -24,12 +24,13 @@ mod helpers;
 
 use helpers::assert_states_equal;
 use pecos_core::PauliString;
+use pecos_core::QubitId;
 use pecos_core::Set;
 use pecos_core::clifford::Clifford;
 use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
 use pecos_simulators::{
     CliffordGateable, DenseStateVec, DensityMatrix, SparseStab, SparseStabHybrid, SparseStabY,
-    StateVec, qid, qid2,
+    StateVec, qid,
 };
 
 type NamedPrep = (&'static str, fn(&mut StateVec));
@@ -47,7 +48,7 @@ type CircuitTestEntry = (
 
 /// Apply a 2q SPP gate to `StateVec`.
 fn apply_sv(sim: &mut StateVec, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::SXX => {
             sim.sxx(&q);
@@ -73,7 +74,7 @@ fn apply_sv(sim: &mut StateVec, gate: Clifford) {
 
 /// Apply a 2q SPP gate to `DensityMatrix`.
 fn apply_dm(sim: &mut DensityMatrix, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::SXX => {
             sim.sxx(&q);
@@ -99,7 +100,7 @@ fn apply_dm(sim: &mut DensityMatrix, gate: Clifford) {
 
 /// Apply a 2q SPP gate to `SparseStab`.
 fn apply_ss(sim: &mut SparseStab, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::SXX => {
             sim.sxx(&q);
@@ -125,7 +126,7 @@ fn apply_ss(sim: &mut SparseStab, gate: Clifford) {
 
 /// Apply a 2q SPP gate to `SparseStabY`.
 fn apply_sy(sim: &mut SparseStabY, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::SXX => {
             sim.sxx(&q);
@@ -151,7 +152,7 @@ fn apply_sy(sim: &mut SparseStabY, gate: Clifford) {
 
 /// Apply a 2q SPP gate to `SparseStabHybrid`.
 fn apply_sh(sim: &mut SparseStabHybrid, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::SXX => {
             sim.sxx(&q);
@@ -177,7 +178,7 @@ fn apply_sh(sim: &mut SparseStabHybrid, gate: Clifford) {
 
 /// Apply a 2q SPP gate to `DenseStateVec` (`StateVecSoA`).
 fn apply_dsv(sim: &mut DenseStateVec, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::SXX => {
             sim.sxx(&q);
@@ -435,23 +436,23 @@ fn input_states() -> Vec<StatePrep> {
             "Bell |00>+|11>",
             |s: &mut StateVec| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut DensityMatrix| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStab| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStabY| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStabHybrid| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
             },
         ),
         (
@@ -1056,15 +1057,15 @@ fn spp_squared_is_pp_all_simulators() {
             // StateVec: SXX twice
             let mut sv = StateVec::new(2);
             prep_sv(&mut sv);
-            sv.sxx(&qid2(0, 1));
-            sv.sxx(&qid2(0, 1));
+            sv.sxx(&[(QubitId(0), QubitId(1))]);
+            sv.sxx(&[(QubitId(0), QubitId(1))]);
             assert_states_equal(sv.state(), ref_sv.state());
 
             // DensityMatrix
             let mut dm = DensityMatrix::new(2);
             prep_dm(&mut dm);
-            dm.sxx(&qid2(0, 1));
-            dm.sxx(&qid2(0, 1));
+            dm.sxx(&[(QubitId(0), QubitId(1))]);
+            dm.sxx(&[(QubitId(0), QubitId(1))]);
             for i in 0..4 {
                 assert_probs_close(
                     ref_sv.probability(i),
@@ -1076,8 +1077,8 @@ fn spp_squared_is_pp_all_simulators() {
             // SparseStab
             let mut ss = SparseStab::new(2);
             prep_ss(&mut ss);
-            ss.sxx(&qid2(0, 1));
-            ss.sxx(&qid2(0, 1));
+            ss.sxx(&[(QubitId(0), QubitId(1))]);
+            ss.sxx(&[(QubitId(0), QubitId(1))]);
             let ss_probs = stab_probabilities(&ss, 2);
             for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1090,8 +1091,8 @@ fn spp_squared_is_pp_all_simulators() {
             // SparseStabY
             let mut sy = SparseStabY::new(2);
             prep_sy(&mut sy);
-            sy.sxx(&qid2(0, 1));
-            sy.sxx(&qid2(0, 1));
+            sy.sxx(&[(QubitId(0), QubitId(1))]);
+            sy.sxx(&[(QubitId(0), QubitId(1))]);
             let sy_probs = stab_y_probabilities(&sy, 2);
             for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1111,14 +1112,14 @@ fn spp_squared_is_pp_all_simulators() {
 
             let mut sv = StateVec::new(2);
             prep_sv(&mut sv);
-            sv.syy(&qid2(0, 1));
-            sv.syy(&qid2(0, 1));
+            sv.syy(&[(QubitId(0), QubitId(1))]);
+            sv.syy(&[(QubitId(0), QubitId(1))]);
             assert_states_equal(sv.state(), ref_sv.state());
 
             let mut dm = DensityMatrix::new(2);
             prep_dm(&mut dm);
-            dm.syy(&qid2(0, 1));
-            dm.syy(&qid2(0, 1));
+            dm.syy(&[(QubitId(0), QubitId(1))]);
+            dm.syy(&[(QubitId(0), QubitId(1))]);
             for i in 0..4 {
                 assert_probs_close(
                     ref_sv.probability(i),
@@ -1129,8 +1130,8 @@ fn spp_squared_is_pp_all_simulators() {
 
             let mut ss = SparseStab::new(2);
             prep_ss(&mut ss);
-            ss.syy(&qid2(0, 1));
-            ss.syy(&qid2(0, 1));
+            ss.syy(&[(QubitId(0), QubitId(1))]);
+            ss.syy(&[(QubitId(0), QubitId(1))]);
             let ss_probs = stab_probabilities(&ss, 2);
             for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1142,8 +1143,8 @@ fn spp_squared_is_pp_all_simulators() {
 
             let mut sy = SparseStabY::new(2);
             prep_sy(&mut sy);
-            sy.syy(&qid2(0, 1));
-            sy.syy(&qid2(0, 1));
+            sy.syy(&[(QubitId(0), QubitId(1))]);
+            sy.syy(&[(QubitId(0), QubitId(1))]);
             let sy_probs = stab_y_probabilities(&sy, 2);
             for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1163,14 +1164,14 @@ fn spp_squared_is_pp_all_simulators() {
 
             let mut sv = StateVec::new(2);
             prep_sv(&mut sv);
-            sv.szz(&qid2(0, 1));
-            sv.szz(&qid2(0, 1));
+            sv.szz(&[(QubitId(0), QubitId(1))]);
+            sv.szz(&[(QubitId(0), QubitId(1))]);
             assert_states_equal(sv.state(), ref_sv.state());
 
             let mut dm = DensityMatrix::new(2);
             prep_dm(&mut dm);
-            dm.szz(&qid2(0, 1));
-            dm.szz(&qid2(0, 1));
+            dm.szz(&[(QubitId(0), QubitId(1))]);
+            dm.szz(&[(QubitId(0), QubitId(1))]);
             for i in 0..4 {
                 assert_probs_close(
                     ref_sv.probability(i),
@@ -1181,8 +1182,8 @@ fn spp_squared_is_pp_all_simulators() {
 
             let mut ss = SparseStab::new(2);
             prep_ss(&mut ss);
-            ss.szz(&qid2(0, 1));
-            ss.szz(&qid2(0, 1));
+            ss.szz(&[(QubitId(0), QubitId(1))]);
+            ss.szz(&[(QubitId(0), QubitId(1))]);
             let ss_probs = stab_probabilities(&ss, 2);
             for (i, &ss_prob) in ss_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1194,8 +1195,8 @@ fn spp_squared_is_pp_all_simulators() {
 
             let mut sy = SparseStabY::new(2);
             prep_sy(&mut sy);
-            sy.szz(&qid2(0, 1));
-            sy.szz(&qid2(0, 1));
+            sy.szz(&[(QubitId(0), QubitId(1))]);
+            sy.szz(&[(QubitId(0), QubitId(1))]);
             let sy_probs = stab_y_probabilities(&sy, 2);
             for (i, &sy_prob) in sy_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1308,50 +1309,50 @@ fn spp_in_circuit_sequences_all_simulators() {
             "H(0).SXX.H(1).SZZ",
             |s: &mut StateVec| {
                 s.h(&qid(0));
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut DensityMatrix| {
                 s.h(&qid(0));
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStab| {
                 s.h(&qid(0));
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStabY| {
                 s.h(&qid(0));
-                s.sxx(&qid2(0, 1));
+                s.sxx(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
-                s.szz(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
         ),
         (
             "SYY.CX.SZZdg",
             |s: &mut StateVec| {
-                s.syy(&qid2(0, 1));
-                s.cx(&qid2(0, 1));
-                s.szzdg(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut DensityMatrix| {
-                s.syy(&qid2(0, 1));
-                s.cx(&qid2(0, 1));
-                s.szzdg(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStab| {
-                s.syy(&qid2(0, 1));
-                s.cx(&qid2(0, 1));
-                s.szzdg(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStabY| {
-                s.syy(&qid2(0, 1));
-                s.cx(&qid2(0, 1));
-                s.szzdg(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.szzdg(&[(QubitId(0), QubitId(1))]);
             },
         ),
         (
@@ -1359,33 +1360,33 @@ fn spp_in_circuit_sequences_all_simulators() {
             |s: &mut StateVec| {
                 s.h(&qid(0));
                 s.h(&qid(1));
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
                 s.sz(&qid(0));
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(0));
             },
             |s: &mut DensityMatrix| {
                 s.h(&qid(0));
                 s.h(&qid(1));
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
                 s.sz(&qid(0));
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(0));
             },
             |s: &mut SparseStab| {
                 s.h(&qid(0));
                 s.h(&qid(1));
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
                 s.sz(&qid(0));
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(0));
             },
             |s: &mut SparseStabY| {
                 s.h(&qid(0));
                 s.h(&qid(1));
-                s.sxxdg(&qid2(0, 1));
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
                 s.sz(&qid(0));
-                s.syy(&qid2(0, 1));
+                s.syy(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(0));
             },
         ),
@@ -1393,30 +1394,30 @@ fn spp_in_circuit_sequences_all_simulators() {
             "X(0).SZZ.SXX.SYYdg.H(1)",
             |s: &mut StateVec| {
                 s.x(&qid(0));
-                s.szz(&qid2(0, 1));
-                s.sxx(&qid2(0, 1));
-                s.syydg(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
+                s.sxx(&[(QubitId(0), QubitId(1))]);
+                s.syydg(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
             },
             |s: &mut DensityMatrix| {
                 s.x(&qid(0));
-                s.szz(&qid2(0, 1));
-                s.sxx(&qid2(0, 1));
-                s.syydg(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
+                s.sxx(&[(QubitId(0), QubitId(1))]);
+                s.syydg(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
             },
             |s: &mut SparseStab| {
                 s.x(&qid(0));
-                s.szz(&qid2(0, 1));
-                s.sxx(&qid2(0, 1));
-                s.syydg(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
+                s.sxx(&[(QubitId(0), QubitId(1))]);
+                s.syydg(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
             },
             |s: &mut SparseStabY| {
                 s.x(&qid(0));
-                s.szz(&qid2(0, 1));
-                s.sxx(&qid2(0, 1));
-                s.syydg(&qid2(0, 1));
+                s.szz(&[(QubitId(0), QubitId(1))]);
+                s.sxx(&[(QubitId(0), QubitId(1))]);
+                s.syydg(&[(QubitId(0), QubitId(1))]);
                 s.h(&qid(1));
             },
         ),
@@ -1424,31 +1425,31 @@ fn spp_in_circuit_sequences_all_simulators() {
             "Bell.SYY.SXXdg.SZZ",
             |s: &mut StateVec| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
-                s.syy(&qid2(0, 1));
-                s.sxxdg(&qid2(0, 1));
-                s.szz(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut DensityMatrix| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
-                s.syy(&qid2(0, 1));
-                s.sxxdg(&qid2(0, 1));
-                s.szz(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStab| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
-                s.syy(&qid2(0, 1));
-                s.sxxdg(&qid2(0, 1));
-                s.szz(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
             |s: &mut SparseStabY| {
                 s.h(&qid(0));
-                s.cx(&qid2(0, 1));
-                s.syy(&qid2(0, 1));
-                s.sxxdg(&qid2(0, 1));
-                s.szz(&qid2(0, 1));
+                s.cx(&[(QubitId(0), QubitId(1))]);
+                s.syy(&[(QubitId(0), QubitId(1))]);
+                s.sxxdg(&[(QubitId(0), QubitId(1))]);
+                s.szz(&[(QubitId(0), QubitId(1))]);
             },
         ),
     ];
@@ -1502,7 +1503,7 @@ fn spp_in_circuit_sequences_all_simulators() {
 
 #[test]
 fn spp_nonadjacent_qubits_all_simulators() {
-    let q02 = [pecos_core::QubitId(0), pecos_core::QubitId(2)];
+    let q02 = [(pecos_core::QubitId(0), pecos_core::QubitId(2))];
 
     for gate in SPP_GATES {
         // Prepare |+0+> then apply gate on (0,2)
@@ -1731,8 +1732,8 @@ fn sparse_stab_hybrid_roundtrip_properties() {
 
             let mut sh = SparseStabHybrid::new(2);
             prep_sh(&mut sh);
-            sh.sxx(&qid2(0, 1));
-            sh.sxx(&qid2(0, 1));
+            sh.sxx(&[(QubitId(0), QubitId(1))]);
+            sh.sxx(&[(QubitId(0), QubitId(1))]);
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
             for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1756,8 +1757,8 @@ fn sparse_stab_hybrid_roundtrip_properties() {
 
             let mut sh = SparseStabHybrid::new(2);
             prep_sh(&mut sh);
-            sh.syy(&qid2(0, 1));
-            sh.syy(&qid2(0, 1));
+            sh.syy(&[(QubitId(0), QubitId(1))]);
+            sh.syy(&[(QubitId(0), QubitId(1))]);
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
             for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
@@ -1781,8 +1782,8 @@ fn sparse_stab_hybrid_roundtrip_properties() {
 
             let mut sh = SparseStabHybrid::new(2);
             prep_sh(&mut sh);
-            sh.szz(&qid2(0, 1));
-            sh.szz(&qid2(0, 1));
+            sh.szz(&[(QubitId(0), QubitId(1))]);
+            sh.szz(&[(QubitId(0), QubitId(1))]);
             let sh_probs = stab_hybrid_probabilities(&sh, 2);
             for (i, &sh_prob) in sh_probs.iter().enumerate() {
                 assert_probs_close(
@@ -2512,7 +2513,7 @@ fn gate_then_dagger_identity_all_1q_cliffords() {
 // ============================================================================
 
 fn apply_2q_sv(sim: &mut StateVec, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::CX => {
             sim.cx(&q);
@@ -2561,7 +2562,7 @@ fn apply_2q_sv(sim: &mut StateVec, gate: Clifford) {
 }
 
 fn apply_2q_ss(sim: &mut SparseStab, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::CX => {
             sim.cx(&q);
@@ -2610,7 +2611,7 @@ fn apply_2q_ss(sim: &mut SparseStab, gate: Clifford) {
 }
 
 fn apply_2q_sy_all(sim: &mut SparseStabY, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::CX => {
             sim.cx(&q);
@@ -2659,7 +2660,7 @@ fn apply_2q_sy_all(sim: &mut SparseStabY, gate: Clifford) {
 }
 
 fn apply_2q_sh_all(sim: &mut SparseStabHybrid, gate: Clifford) {
-    let q = qid2(0, 1);
+    let q = [(QubitId(0), QubitId(1))];
     match gate {
         Clifford::CX => {
             sim.cx(&q);
@@ -2998,7 +2999,7 @@ fn prep_dsv(sim: &mut DenseStateVec, name: &str) {
         }
         "Bell |00>+|11>" => {
             sim.h(&qid(0));
-            sim.cx(&qid2(0, 1));
+            sim.cx(&[(QubitId(0), QubitId(1))]);
         }
         "|0,+i> (Y eigenstate at q1)" => {
             sim.sx(&qid(1));

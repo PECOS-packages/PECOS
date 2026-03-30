@@ -346,10 +346,10 @@ mod tests {
     fn test_mem_builder_simple() {
         // Simple circuit: prep, cx, measure
         let mut dag = DagCircuit::new();
-        dag.pz(2); // Prep ancilla
-        dag.cx(0, 2); // CNOT data -> ancilla
-        dag.cx(1, 2); // CNOT data -> ancilla
-        dag.mz(2); // Measure ancilla
+        dag.pz(&[2]); // Prep ancilla
+        dag.cx(&[(0, 2)]); // CNOT data -> ancilla
+        dag.cx(&[(1, 2)]); // CNOT data -> ancilla
+        dag.mz(&[2]); // Measure ancilla
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -367,10 +367,10 @@ mod tests {
     fn test_mem_builder_aggregation() {
         // Circuit where multiple locations produce the same measurement effect
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.cx(1, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.cx(&[(1, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
@@ -406,9 +406,9 @@ mod tests {
         use rand::rngs::SmallRng;
 
         let mut dag = DagCircuit::new();
-        dag.pz(2);
-        dag.cx(0, 2);
-        dag.mz(2);
+        dag.pz(&[2]);
+        dag.cx(&[(0, 2)]);
+        dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();

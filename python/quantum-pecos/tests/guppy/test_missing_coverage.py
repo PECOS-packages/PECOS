@@ -18,7 +18,7 @@ from pecos_rslib import (
     biased_depolarizing_noise,
     depolarizing_noise,
     general_noise,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 
@@ -469,7 +469,7 @@ class TestQuantumEngines:
             r == 0 for r in measurements
         ), f"Clifford circuit H-X-H on |0⟩ should always measure 0, got {set(measurements)}"
 
-    def test_sparse_stabilizer_with_qasm(self) -> None:
+    def test_sparse_stab_with_qasm(self) -> None:
         """Test sparse stabilizer engine with QASM input (which preserves Clifford gates).
 
         The sparse stabilizer simulator works with QASM programs that use
@@ -477,9 +477,9 @@ class TestQuantumEngines:
         """
         try:
             from pecos import Qasm
-            from pecos_rslib import sparse_stabilizer
+            from pecos_rslib import sparse_stab
         except ImportError:
-            pytest.skip("sparse_stabilizer or Qasm not available")
+            pytest.skip("sparse_stab or Qasm not available")
 
         # Create a QASM program with pure Clifford gates
         qasm_str = """
@@ -498,7 +498,7 @@ class TestQuantumEngines:
 
         # Test with sparse stabilizer - should work with QASM Clifford circuits
         try:
-            results = sim(program).qubits(2).quantum(sparse_stabilizer()).seed(42).run(100)
+            results = sim(program).qubits(2).quantum(sparse_stab()).seed(42).run(100)
 
             # QASM returns dict with register names as keys
             assert "c" in results, "Results should contain register 'c'"

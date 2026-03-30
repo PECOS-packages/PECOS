@@ -148,7 +148,7 @@ pub fn verify_cz_symmetric<S: CliffordGateable + QuantumSimulator + ForcedMeasur
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.h(&[QubitId::new(1)]);
-    sim.cz(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
     let r0_a = sim.mz_forced(0, false);
     let r1_a = sim.mz_forced(1, false);
@@ -157,7 +157,7 @@ pub fn verify_cz_symmetric<S: CliffordGateable + QuantumSimulator + ForcedMeasur
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.h(&[QubitId::new(1)]);
-    sim.cz(&[QubitId::new(1), QubitId::new(0)]);
+    sim.cz(&[(QubitId::new(1), QubitId::new(0))]);
 
     let r0_b = sim.mz_forced(0, false);
     let r1_b = sim.mz_forced(1, false);
@@ -195,12 +195,12 @@ pub fn verify_swap_decomposition<
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.x(&[QubitId::new(1)]);
-    sim.swap(&[QubitId::new(0), QubitId::new(1)]);
+    sim.swap(&[(QubitId::new(0), QubitId::new(1))]);
 
     let mut dm1 = DensityMatrix::new(num_qubits);
     dm1.h(&[QubitId::new(0)]);
     dm1.x(&[QubitId::new(1)]);
-    dm1.swap(&[QubitId::new(0), QubitId::new(1)]);
+    dm1.swap(&[(QubitId::new(0), QubitId::new(1))]);
 
     verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
@@ -208,16 +208,16 @@ pub fn verify_swap_decomposition<
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.x(&[QubitId::new(1)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
-    sim.cx(&[QubitId::new(1), QubitId::new(0)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
+    sim.cx(&[(QubitId::new(1), QubitId::new(0))]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
     let mut dm2 = DensityMatrix::new(num_qubits);
     dm2.h(&[QubitId::new(0)]);
     dm2.x(&[QubitId::new(1)]);
-    dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
-    dm2.cx(&[QubitId::new(1), QubitId::new(0)]);
-    dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
+    dm2.cx(&[(QubitId::new(0), QubitId::new(1))]);
+    dm2.cx(&[(QubitId::new(1), QubitId::new(0))]);
+    dm2.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
     verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
 }
@@ -233,12 +233,12 @@ pub fn verify_cz_decomposition<
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.h(&[QubitId::new(1)]);
-    sim.cz(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
     let mut dm1 = DensityMatrix::new(num_qubits);
     dm1.h(&[QubitId::new(0)]);
     dm1.h(&[QubitId::new(1)]);
-    dm1.cz(&[QubitId::new(0), QubitId::new(1)]);
+    dm1.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
     verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
@@ -247,14 +247,14 @@ pub fn verify_cz_decomposition<
     sim.h(&[QubitId::new(0)]);
     sim.h(&[QubitId::new(1)]);
     sim.h(&[QubitId::new(1)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
     sim.h(&[QubitId::new(1)]);
 
     let mut dm2 = DensityMatrix::new(num_qubits);
     dm2.h(&[QubitId::new(0)]);
     dm2.h(&[QubitId::new(1)]);
     dm2.h(&[QubitId::new(1)]);
-    dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
+    dm2.cx(&[(QubitId::new(0), QubitId::new(1))]);
     dm2.h(&[QubitId::new(1)]);
 
     verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
@@ -270,11 +270,11 @@ pub fn verify_cy_decomposition<
     // Apply CY directly
     sim.reset();
     sim.h(&[QubitId::new(0)]);
-    sim.cy(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cy(&[(QubitId::new(0), QubitId::new(1))]);
 
     let mut dm1 = DensityMatrix::new(num_qubits);
     dm1.h(&[QubitId::new(0)]);
-    dm1.cy(&[QubitId::new(0), QubitId::new(1)]);
+    dm1.cy(&[(QubitId::new(0), QubitId::new(1))]);
 
     verify_probabilities_match_density_matrix(sim, &mut dm1, num_qubits);
 
@@ -282,13 +282,13 @@ pub fn verify_cy_decomposition<
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.szdg(&[QubitId::new(1)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
     sim.sz(&[QubitId::new(1)]);
 
     let mut dm2 = DensityMatrix::new(num_qubits);
     dm2.h(&[QubitId::new(0)]);
     dm2.szdg(&[QubitId::new(1)]);
-    dm2.cx(&[QubitId::new(0), QubitId::new(1)]);
+    dm2.cx(&[(QubitId::new(0), QubitId::new(1))]);
     dm2.sz(&[QubitId::new(1)]);
 
     verify_probabilities_match_density_matrix(sim, &mut dm2, num_qubits);
@@ -401,12 +401,12 @@ pub fn verify_swap_decomposition_direct<
         apply_circuit(sim1, &init_circuit);
         apply_circuit(sim2, &init_circuit);
 
-        sim1.swap(&[QubitId::new(0), QubitId::new(1)]);
+        sim1.swap(&[(QubitId::new(0), QubitId::new(1))]);
 
         // Apply decomposition to sim2: CX(0,1) CX(1,0) CX(0,1)
-        sim2.cx(&[QubitId::new(0), QubitId::new(1)]);
-        sim2.cx(&[QubitId::new(1), QubitId::new(0)]);
-        sim2.cx(&[QubitId::new(0), QubitId::new(1)]);
+        sim2.cx(&[(QubitId::new(0), QubitId::new(1))]);
+        sim2.cx(&[(QubitId::new(1), QubitId::new(0))]);
+        sim2.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
         // Compare measurements
         for q in 0..num_qubits {
@@ -448,11 +448,11 @@ pub fn verify_cz_decomposition_direct<
         apply_circuit(sim2, &init_circuit);
 
         // sim1: CZ directly
-        sim1.cz(&[QubitId::new(0), QubitId::new(1)]);
+        sim1.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
         // sim2: H(1) CX(0,1) H(1)
         sim2.h(&[QubitId::new(1)]);
-        sim2.cx(&[QubitId::new(0), QubitId::new(1)]);
+        sim2.cx(&[(QubitId::new(0), QubitId::new(1))]);
         sim2.h(&[QubitId::new(1)]);
 
         for q in 0..num_qubits {
@@ -494,11 +494,11 @@ pub fn verify_cy_decomposition_direct<
         apply_circuit(sim2, &init_circuit);
 
         // sim1: CY directly
-        sim1.cy(&[QubitId::new(0), QubitId::new(1)]);
+        sim1.cy(&[(QubitId::new(0), QubitId::new(1))]);
 
         // sim2: Sdg(1) CX(0,1) S(1)
         sim2.szdg(&[QubitId::new(1)]);
-        sim2.cx(&[QubitId::new(0), QubitId::new(1)]);
+        sim2.cx(&[(QubitId::new(0), QubitId::new(1))]);
         sim2.sz(&[QubitId::new(1)]);
 
         for q in 0..num_qubits {
@@ -678,8 +678,8 @@ pub fn verify_cx_commute_disjoint<S: CliffordGateable + QuantumSimulator + Force
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.h(&[QubitId::new(2)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
-    sim.cx(&[QubitId::new(2), QubitId::new(3)]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
+    sim.cx(&[(QubitId::new(2), QubitId::new(3))]);
 
     let mut results_a = Vec::new();
     for q in 0..4 {
@@ -690,8 +690,8 @@ pub fn verify_cx_commute_disjoint<S: CliffordGateable + QuantumSimulator + Force
     sim.reset();
     sim.h(&[QubitId::new(0)]);
     sim.h(&[QubitId::new(2)]);
-    sim.cx(&[QubitId::new(2), QubitId::new(3)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cx(&[(QubitId::new(2), QubitId::new(3))]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
     let mut results_b = Vec::new();
     for q in 0..4 {
@@ -749,8 +749,8 @@ pub fn verify_cx_same_control_commute<
     // CX(0,1) CX(0,2)
     sim.reset();
     sim.h(&[QubitId::new(0)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(2)]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(2))]);
 
     let mut results_a = Vec::new();
     for q in 0..3 {
@@ -760,8 +760,8 @@ pub fn verify_cx_same_control_commute<
     // CX(0,2) CX(0,1)
     sim.reset();
     sim.h(&[QubitId::new(0)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(2)]);
-    sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(2))]);
+    sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
     let mut results_b = Vec::new();
     for q in 0..3 {
@@ -1016,16 +1016,16 @@ pub fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &CliffordGate) {
             sim.sydg(&[QubitId::new(q)]);
         }
         CliffordGate::CX(c, t) => {
-            sim.cx(&[QubitId::new(c), QubitId::new(t)]);
+            sim.cx(&[(QubitId::new(c), QubitId::new(t))]);
         }
         CliffordGate::CY(c, t) => {
-            sim.cy(&[QubitId::new(c), QubitId::new(t)]);
+            sim.cy(&[(QubitId::new(c), QubitId::new(t))]);
         }
         CliffordGate::CZ(q0, q1) => {
-            sim.cz(&[QubitId::new(q0), QubitId::new(q1)]);
+            sim.cz(&[(QubitId::new(q0), QubitId::new(q1))]);
         }
         CliffordGate::SWAP(q0, q1) => {
-            sim.swap(&[QubitId::new(q0), QubitId::new(q1)]);
+            sim.swap(&[(QubitId::new(q0), QubitId::new(q1))]);
         }
     }
 }
@@ -1713,9 +1713,9 @@ pub fn run_full_stabilizer_test_suite<
         sim.reset();
         dm.reset();
         sim.h(&[QubitId::new(0)]);
-        sim.cx(&[QubitId::new(0), QubitId::new(1)]);
+        sim.cx(&[(QubitId::new(0), QubitId::new(1))]);
         dm.h(&[QubitId::new(0)]);
-        dm.cx(&[QubitId::new(0), QubitId::new(1)]);
+        dm.cx(&[(QubitId::new(0), QubitId::new(1))]);
         verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
     }
 
@@ -1726,8 +1726,8 @@ pub fn run_full_stabilizer_test_suite<
         sim.h(&[QubitId::new(0)]);
         dm.h(&[QubitId::new(0)]);
         for i in 0..(num_qubits - 1) {
-            sim.cx(&[QubitId::new(i), QubitId::new(i + 1)]);
-            dm.cx(&[QubitId::new(i), QubitId::new(i + 1)]);
+            sim.cx(&[(QubitId::new(i), QubitId::new(i + 1))]);
+            dm.cx(&[(QubitId::new(i), QubitId::new(i + 1))]);
         }
         verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
     }
@@ -1908,7 +1908,7 @@ mod tests {
     fn test_all_stabilizer_sims_agree_on_random_circuits() {
         use crate::{
             DenseStab, DenseStabColOnly, DenseStabRowOnly, GpuStab, GpuStabOpt, GpuStabParallel,
-            SparseColOnly, SparseRowOnly, Stab, StabilizerTableauSimulator,
+            SparseColOnly, SparseRowOnly, Stabilizer, StabilizerTableauSimulator,
         };
         use pecos_random::PecosRng;
 
@@ -1930,7 +1930,7 @@ mod tests {
             let mut dense_row = DenseStabRowOnly::<PecosRng>::new(num_qubits);
             let mut sparse_col = SparseColOnly::new(num_qubits);
             let mut sparse_row = SparseRowOnly::new(num_qubits);
-            let mut stab = Stab::new(num_qubits);
+            let mut stab = Stabilizer::new(num_qubits);
             let mut gpu_stab = GpuStab::new(num_qubits);
             let mut gpu_stab_opt = GpuStabOpt::new(num_qubits);
             let mut gpu_stab_parallel = GpuStabParallel::new(num_qubits);
@@ -1973,7 +1973,7 @@ mod tests {
             check_tableau!(dense_row, "DenseStabRowOnly");
             check_tableau!(sparse_col, "SparseColOnly");
             check_tableau!(sparse_row, "SparseRowOnly");
-            check_tableau!(stab, "Stab");
+            check_tableau!(stab, "Stabilizer");
             check_tableau!(gpu_stab, "GpuStab");
             check_tableau!(gpu_stab_opt, "GpuStabOpt");
             check_tableau!(gpu_stab_parallel, "GpuStabParallel");
@@ -2018,7 +2018,7 @@ mod tests {
             check_measurements!(dense_row, "DenseStabRowOnly");
             check_measurements!(sparse_col, "SparseColOnly");
             check_measurements!(sparse_row, "SparseRowOnly");
-            check_measurements!(stab, "Stab");
+            check_measurements!(stab, "Stabilizer");
             check_measurements!(gpu_stab, "GpuStab");
             check_measurements!(gpu_stab_opt, "GpuStabOpt");
             check_measurements!(gpu_stab_parallel, "GpuStabParallel");

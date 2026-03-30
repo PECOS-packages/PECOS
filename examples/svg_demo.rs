@@ -43,15 +43,13 @@ fn main() {
 
     // --- Circuit 3: DagCircuit with mixed gates ---
     let mut dag = DagCircuit::new();
-    dag.pz(0);
-    dag.pz(1);
-    dag.h(0);
-    dag.sx(1);
-    dag.cx(0, 1);
-    dag.sz(0);
-    dag.h(1);
-    dag.mz(0);
-    dag.mz(1);
+    dag.pz(&[0, 1]);
+    dag.h(&[0]);
+    dag.sx(&[1]);
+    dag.cx(&[(0, 1)]);
+    dag.sz(&[0]);
+    dag.h(&[1]);
+    dag.mz(&[0, 1]);
 
     let svg3 = dag.to_svg();
     fs::write(format!("{dir}/dag_mixed.svg"), &svg3).unwrap();

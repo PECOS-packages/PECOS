@@ -43,7 +43,7 @@
 //! use pecos_neo::prelude::*;
 //! use pecos_simulators::SparseStab;
 //!
-//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //!
 //! // Define score function
 //! let score_fn = |outcomes: &MeasurementOutcomes| -> f64 { 0.0 };
@@ -2171,14 +2171,14 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
 #[must_use]
 pub fn bit_flip_syndrome_circuit() -> CommandQueue {
     CommandBuilder::new()
-        .pz(3)
-        .pz(4)
-        .cx(0, 3)
-        .cx(1, 3)
-        .cx(1, 4)
-        .cx(2, 4)
-        .mz(3)
-        .mz(4)
+        .pz(&[3])
+        .pz(&[4])
+        .cx(&[(0, 3)])
+        .cx(&[(1, 3)])
+        .cx(&[(1, 4)])
+        .cx(&[(2, 4)])
+        .mz(&[3])
+        .mz(&[4])
         .build()
 }
 
@@ -2191,18 +2191,18 @@ pub fn bit_flip_syndrome_circuit() -> CommandQueue {
 #[must_use]
 pub fn phase_flip_syndrome_circuit() -> CommandQueue {
     CommandBuilder::new()
-        .pz(3)
-        .pz(4)
-        .h(3)
-        .h(4)
-        .cz(0, 3)
-        .cz(1, 3)
-        .cz(1, 4)
-        .cz(2, 4)
-        .h(3)
-        .h(4)
-        .mz(3)
-        .mz(4)
+        .pz(&[3])
+        .pz(&[4])
+        .h(&[3])
+        .h(&[4])
+        .cz(&[(0, 3)])
+        .cz(&[(1, 3)])
+        .cz(&[(1, 4)])
+        .cz(&[(2, 4)])
+        .h(&[3])
+        .h(&[4])
+        .mz(&[3])
+        .mz(&[4])
         .build()
 }
 
@@ -2518,7 +2518,7 @@ mod tests {
         let mut runner = CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(42));
 
         // Initialize all qubits to |0>
-        let init_circuit = CommandBuilder::new().pz(0).pz(1).pz(2).build();
+        let init_circuit = CommandBuilder::new().pz(&[0]).pz(&[1]).pz(&[2]).build();
 
         runner.apply_circuit(&mut sim, &init_circuit).unwrap();
         let outcomes = runner.apply_circuit(&mut sim, &circuit).unwrap();

@@ -1,7 +1,7 @@
 //! Example of using `GeneralNoiseModelBuilder` with fluent API and the unified simulation API
 
 use pecos_engines::noise::GeneralNoiseModel;
-use pecos_engines::{GateType, sim_builder, sparse_stabilizer};
+use pecos_engines::{GateType, sim_builder, sparse_stab};
 use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
@@ -130,7 +130,7 @@ fn main() {
         .seed(456)
         .workers(2)
         .noise(full_noise)
-        .quantum(sparse_stabilizer().qubits(3))
+        .quantum(sparse_stab().qubits(3))
         .run(50)
         .unwrap();
 

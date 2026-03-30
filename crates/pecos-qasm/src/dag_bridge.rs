@@ -377,7 +377,7 @@ fn resolve_gate(
                 ));
             }
         }
-        "measure" => Gate::measure(qubits),
+        "measure" => Gate::mz(qubits),
         "reset" => Gate::simple(GateType::PZ, qubits.to_vec()),
         _ => {
             return Err(QasmBridgeError::UnknownGate(name.to_string()));
@@ -522,8 +522,8 @@ mod tests {
     fn test_bell_state_dag_to_qasm() {
         let mut dag = DagCircuit::new();
         dag.set_num_cbits(2);
-        dag.h(0);
-        dag.cx(0, 1);
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
         dag.mz_to(0, ClassicalBitId::new(0));
         dag.mz_to(1, ClassicalBitId::new(1));
 
@@ -541,9 +541,9 @@ mod tests {
     fn test_conditional_dag_to_qasm() {
         let mut dag = DagCircuit::new();
         dag.set_num_cbits(1);
-        dag.h(0);
+        dag.h(&[0]);
         dag.mz_to(0, ClassicalBitId::new(0));
-        dag.if_bit(ClassicalBitId::new(0), true).x(1);
+        dag.if_bit(ClassicalBitId::new(0), true).x(&[1]);
 
         let qasm = dag_to_qasm(&dag);
         assert!(qasm.contains("if(c[0]==1) x q[1];"));
@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn test_parameterized_gate_dag_to_qasm() {
         let mut dag = DagCircuit::new();
-        dag.rz(std::f64::consts::FRAC_PI_4, 0);
+        dag.rz(std::f64::consts::FRAC_PI_4, &[0]);
 
         let qasm = dag_to_qasm(&dag);
         assert!(qasm.contains("rz("));
@@ -580,12 +580,12 @@ mod tests {
             .operations
             .push(Operation::NativeGate(Gate::cx(&[(0, 1)])));
         program.operations.push(Operation::MeasureWithMapping {
-            gate: Gate::measure(&[QubitId::from(0)]),
+            gate: Gate::mz(&[QubitId::from(0)]),
             c_reg: "c".to_string(),
             c_index: 0,
         });
         program.operations.push(Operation::MeasureWithMapping {
-            gate: Gate::measure(&[QubitId::from(1)]),
+            gate: Gate::mz(&[QubitId::from(1)]),
             c_reg: "c".to_string(),
             c_index: 1,
         });

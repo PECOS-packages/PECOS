@@ -1,4 +1,4 @@
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 use pecos_simulators::DensityMatrix;
 use pecos_simulators::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use pecos_simulators::clifford_gateable::CliffordGateable;
@@ -102,7 +102,7 @@ fn test_bell_state() {
     let mut dm = DensityMatrix::new(2);
 
     // Create Bell state |Phi+> = (|00> + |11>)/sqrt(2)
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Check probabilities
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -312,7 +312,7 @@ fn test_controlled_y_gate() {
     dm.prepare_computational_basis(2);
 
     // Apply CY(1,0) - should flip the target and add i phase
-    dm.cy(&qid2(1, 0));
+    dm.cy(&[(QubitId(1), QubitId(0))]);
 
     // Should now be in |11⟩ state
     assert!(dm.probability(0) < 1e-10);
@@ -415,7 +415,7 @@ fn test_bell_state_measurement_preserves_correlations() {
         let mut dm = DensityMatrix::with_seed(2, seed);
 
         // Create Bell state
-        dm.h(&qid(0)).cx(&qid2(0, 1));
+        dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
         // Before measurement: P(00) = 0.5, P(11) = 0.5
         assert!((dm.probability(0) - 0.5).abs() < 1e-10);

@@ -6,7 +6,7 @@ from pecos_rslib import (
     depolarizing_noise,
     general_noise,
     qasm_engine,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 from pecos_rslib.programs import Qasm
@@ -81,7 +81,7 @@ class TestSimAPI:
         assert all(val == 3 for val in results_sv["c"])  # Both qubits should be 1
 
         # Test with SparseStabilizer engine
-        results_stab = sim(program).classical(engine).quantum(sparse_stabilizer()).run(10).to_dict()
+        results_stab = sim(program).classical(engine).quantum(sparse_stab()).run(10).to_dict()
         assert all(val == 3 for val in results_stab["c"])  # Both qubits should be 1
 
     def test_noise_models(self) -> None:

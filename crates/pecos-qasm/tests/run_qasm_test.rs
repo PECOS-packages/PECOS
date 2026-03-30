@@ -1,7 +1,7 @@
 // Tests for the new unified QASM API
 
 use pecos_engines::noise::{DepolarizingNoiseModelBuilder, PassThroughNoiseModelBuilder};
-use pecos_engines::{sim_builder, sparse_stabilizer, state_vector};
+use pecos_engines::{sim_builder, sparse_stab, state_vector};
 use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
@@ -93,7 +93,7 @@ fn test_run_qasm_with_engine() {
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
         .noise(PassThroughNoiseModelBuilder::new())
-        .quantum(sparse_stabilizer().qubits(2))
+        .quantum(sparse_stab().qubits(2))
         .run(100)
         .unwrap();
     assert_eq!(results_stab.len(), 100);

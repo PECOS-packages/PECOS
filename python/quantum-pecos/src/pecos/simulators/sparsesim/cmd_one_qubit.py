@@ -22,14 +22,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseSim
+    from pecos.simulators.sparsesim.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
 
-def Identity(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def Identity(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     """Identity, which does nothing.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -37,7 +37,7 @@ def Identity(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> No
     """
 
 
-def X(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def X(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     """Apply Pauli X gate.
 
     X -> X
@@ -47,7 +47,7 @@ def X(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     => If you have a Z component, add a -1.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         **_params: Unused additional parameters (kept for interface compatibility).
 
@@ -63,7 +63,7 @@ def X(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     stabs.signs_minus ^= stabs.col_z[qubit]
 
 
-def Y(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def Y(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     """Pauli Y.
 
     X -> -X
@@ -72,7 +72,7 @@ def Y(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     Y -> Y
     => If you have an X or Z component but not both, add a -1.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -87,7 +87,7 @@ def Y(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
 
 
-def Z(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def Z(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     """Apply Pauli Z gate.
 
     X -> -X
@@ -97,7 +97,7 @@ def Z(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     => If you have a X component, add a -1.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         **_params: Unused additional parameters (kept for interface compatibility).
 
@@ -113,7 +113,7 @@ def Z(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     stabs.signs_minus ^= stabs.col_x[qubit]
 
 
-def SX(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def SX(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Q rotation to stabilizers and destabilizers.
 
     Q = \sqrt{X} = HSH
@@ -128,7 +128,7 @@ def SX(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iZ
     Y -> Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -174,7 +174,7 @@ def SX(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_x[i] ^= {qubit}
 
 
-def SXdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def SXdg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Q^{\dagger} rotation to stabilizers and destabilizers.
 
     Qd = \sqrt{X}^{\dagger} = H S^{\dagger}H
@@ -189,7 +189,7 @@ def SXdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iZ
     Y -> -Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -233,7 +233,7 @@ def SXdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_x[i] ^= {qubit}
 
 
-def SY(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def SY(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a R rotation to stabilizers and destabilizers.
 
     R = \sqrt{XZ} = SQS^{\dagger}
@@ -248,7 +248,7 @@ def SY(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> W
     Y -> Y
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -280,7 +280,7 @@ def SY(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def SYdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def SYdg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a R rotation to stabilizers and destabilizers.
 
     R^{\dagger} = \sqrt{XZ} = SQ^{\dagger}S^{\dagger}
@@ -295,7 +295,7 @@ def SYdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> W
     Y -> Y
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -329,7 +329,7 @@ def SYdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def SZ(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def SZ(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a phase gate (S) rotation to stabilizers and destabilizers.
 
     S = \sqrt{Z}
@@ -346,7 +346,7 @@ def SZ(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iX
     Y -> -X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -375,7 +375,7 @@ def SZ(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_z[i] ^= {qubit}
 
 
-def SZdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def SZdg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hermitian adjoint phase gate (S^{\dagger}) rotation to stabilizers and destabilizers.
 
     S = S
@@ -388,7 +388,7 @@ def SZdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iX
     Y -> X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -433,7 +433,7 @@ def SZdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_z[i] ^= {qubit}
 
 
-def H(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def H(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hadamard gate (H) rotation to stabilizers and destabilizers.
 
     Same as H1 in some places in PECOS.
@@ -445,7 +445,7 @@ def H(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -W
     Y -> -Y
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -479,7 +479,7 @@ def H(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def H2(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def H2(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hadamard gate (H4) rotation to stabilizers and destabilizers.
 
     X - Z
@@ -489,7 +489,7 @@ def H2(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -W
     Y -> -Y
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -523,7 +523,7 @@ def H2(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def H3(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def H3(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hadamard gate (H3) rotation to stabilizers and destabilizers.
 
     Y + X
@@ -533,7 +533,7 @@ def H3(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iX
     Y -> X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -580,7 +580,7 @@ def H3(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_z[i] ^= {qubit}
 
 
-def H4(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def H4(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hadamard gate (H6) rotation to stabilizers and destabilizers.
 
     Y - X
@@ -590,7 +590,7 @@ def H4(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iX
     Y -> -X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -637,7 +637,7 @@ def H4(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_z[i] ^= {qubit}
 
 
-def H5(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def H5(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hadamard gate (H2) rotation to stabilizers and destabilizers.
 
     Z + Y
@@ -690,7 +690,7 @@ def H5(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_x[i] ^= {qubit}
 
 
-def H6(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def H6(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a Hadamard gate (H5) rotation to stabilizers and destabilizers.
 
     Z - Y
@@ -700,7 +700,7 @@ def H6(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iZ
     Y -> -Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -747,7 +747,7 @@ def H6(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
             g.row_x[i] ^= {qubit}
 
 
-def F(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F1) about a stabilizer octahedron face to stabilizers  and destabilizers.
 
     X -> iW = Y
@@ -755,7 +755,7 @@ def F(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iZ
     Y -> Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -820,7 +820,7 @@ def F(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F2(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F2(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F2) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -Z
@@ -828,7 +828,7 @@ def F2(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iX
     Y -> -X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -893,7 +893,7 @@ def F2(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F3(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F3(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F3) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> iW = Y
@@ -901,7 +901,7 @@ def F3(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iZ
     Y -> -Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -966,7 +966,7 @@ def F3(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F4(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F4(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F4) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> Z
@@ -974,7 +974,7 @@ def F4(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iX
     Y -> -X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -1039,7 +1039,7 @@ def F4(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def Fdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def Fdg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F1^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> Z
@@ -1047,7 +1047,7 @@ def Fdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iX
     Y -> X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -1112,7 +1112,7 @@ def Fdg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F2dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F2dg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F2^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -iW = -Y
@@ -1120,7 +1120,7 @@ def F2dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iZ
     Y -> Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -1185,7 +1185,7 @@ def F2dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F3dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F3dg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F3^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -Z
@@ -1193,7 +1193,7 @@ def F3dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> -iX
     Y -> X
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -1258,7 +1258,7 @@ def F3dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F4dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
+def F4dg(state: SparseStabPy, qubit: int, **_params: SimulatorGateParams) -> None:
     r"""Applies a rotation (F4^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -iW = -Y
@@ -1266,7 +1266,7 @@ def F4dg(state: SparseSim, qubit: int, **_params: SimulatorGateParams) -> None:
     W -> iZ
     Y -> -Z
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None

@@ -123,7 +123,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.cx(&[QubitId(q1), QubitId(q2)]);
+                    sim.cx(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -138,7 +138,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = 0;
                 let q2 = nq - 1;
                 b.iter(|| {
-                    sim.cx(&[QubitId(q1), QubitId(q2)]);
+                    sim.cx(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -150,7 +150,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
             let q1 = nq / 2;
             let q2 = q1 + 1;
             b.iter(|| {
-                sim.cz(&[QubitId(q1), QubitId(q2)]);
+                sim.cz(&[(QubitId(q1), QubitId(q2))]);
                 black_box(());
             });
         });
@@ -164,7 +164,7 @@ fn bench_two_qubit_gates<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.swap(&[QubitId(q1), QubitId(q2)]);
+                    sim.swap(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -197,7 +197,7 @@ fn bench_cx_scaling<M: Measurement>(c: &mut Criterion<M>) {
                 let mut sim = StateVecSoA::new(nq);
                 // Control on qubit 0, target on qubit 1
                 b.iter(|| {
-                    sim.cx(&[QubitId(0), QubitId(1)]);
+                    sim.cx(&[(QubitId(0), QubitId(1))]);
                     black_box(());
                 });
             },
@@ -211,7 +211,7 @@ fn bench_cx_scaling<M: Measurement>(c: &mut Criterion<M>) {
                 let mut sim = StateVecSoA::new(nq);
                 // Control on high qubit, target on highest
                 b.iter(|| {
-                    sim.cx(&[QubitId(nq - 2), QubitId(nq - 1)]);
+                    sim.cx(&[(QubitId(nq - 2), QubitId(nq - 1))]);
                     black_box(());
                 });
             },
@@ -308,7 +308,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.cx(&[QubitId(q1), QubitId(q2)]);
+                    sim.cx(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -323,7 +323,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.cx(&[QubitId(q1), QubitId(q2)]);
+                    sim.cx(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -385,7 +385,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.cz(&[QubitId(q1), QubitId(q2)]);
+                    sim.cz(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -399,7 +399,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.cz(&[QubitId(q1), QubitId(q2)]);
+                    sim.cz(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -424,7 +424,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.swap(&[QubitId(q1), QubitId(q2)]);
+                    sim.swap(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },
@@ -438,7 +438,7 @@ fn bench_dod_comparison<M: Measurement>(c: &mut Criterion<M>) {
                 let q1 = nq / 2;
                 let q2 = q1 + 1;
                 b.iter(|| {
-                    sim.swap(&[QubitId(q1), QubitId(q2)]);
+                    sim.swap(&[(QubitId(q1), QubitId(q2))]);
                     black_box(());
                 });
             },

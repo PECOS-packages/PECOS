@@ -20,9 +20,9 @@ struct SelenePlugin {
 /// All known Selene plugins
 const PLUGINS: &[SelenePlugin] = &[
     SelenePlugin {
-        crate_name: "pecos-selene-stab",
-        lib_name: "pecos_selene_stab",
-        python_pkg_path: "python/selene-plugins/pecos-selene-stab/python/pecos_selene_stab",
+        crate_name: "pecos-selene-stabilizer",
+        lib_name: "pecos_selene_stabilizer",
+        python_pkg_path: "python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer",
         extra_libs: &[],
     },
     SelenePlugin {

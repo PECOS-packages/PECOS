@@ -683,7 +683,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
         }
     }
 
-    fn mz_single(&mut self, qubit: usize) -> MeasurementResult {
+    fn mz_internal(&mut self, qubit: usize) -> MeasurementResult {
         if let Some(result) = self.deterministic_meas(qubit) {
             return result;
         }
@@ -739,15 +739,15 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabColOnly
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.apply_cx(pair[0].index(), pair[1].index());
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            self.apply_cx(control.index(), target.index());
         }
         self
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        qubits.iter().map(|q| self.mz_single(q.index())).collect()
+        qubits.iter().map(|q| self.mz_internal(q.index())).collect()
     }
 }
 
@@ -1213,7 +1213,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
         }
     }
 
-    fn mz_single(&mut self, qubit: usize) -> MeasurementResult {
+    fn mz_internal(&mut self, qubit: usize) -> MeasurementResult {
         if let Some(result) = self.deterministic_meas(qubit) {
             return result;
         }
@@ -1269,15 +1269,15 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStabRowOnly
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.apply_cx(pair[0].index(), pair[1].index());
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            self.apply_cx(control.index(), target.index());
         }
         self
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        qubits.iter().map(|q| self.mz_single(q.index())).collect()
+        qubits.iter().map(|q| self.mz_internal(q.index())).collect()
     }
 }
 
@@ -1656,7 +1656,7 @@ impl SparseColOnly {
         }
     }
 
-    fn mz_single(&mut self, qubit: usize) -> MeasurementResult {
+    fn mz_internal(&mut self, qubit: usize) -> MeasurementResult {
         if let Some(result) = self.deterministic_meas(qubit) {
             return result;
         }
@@ -1723,15 +1723,15 @@ impl CliffordGateable for SparseColOnly {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.apply_cx(pair[0].index(), pair[1].index());
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            self.apply_cx(control.index(), target.index());
         }
         self
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        qubits.iter().map(|q| self.mz_single(q.index())).collect()
+        qubits.iter().map(|q| self.mz_internal(q.index())).collect()
     }
 }
 
@@ -2095,7 +2095,7 @@ impl SparseRowOnly {
         }
     }
 
-    fn mz_single(&mut self, qubit: usize) -> MeasurementResult {
+    fn mz_internal(&mut self, qubit: usize) -> MeasurementResult {
         if let Some(result) = self.deterministic_meas(qubit) {
             return result;
         }
@@ -2162,15 +2162,15 @@ impl CliffordGateable for SparseRowOnly {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        for pair in qubits.chunks_exact(2) {
-            self.apply_cx(pair[0].index(), pair[1].index());
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(control, target) in pairs {
+            self.apply_cx(control.index(), target.index());
         }
         self
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        qubits.iter().map(|q| self.mz_single(q.index())).collect()
+        qubits.iter().map(|q| self.mz_internal(q.index())).collect()
     }
 }
 
@@ -2495,7 +2495,7 @@ mod tests {
     fn test_col_only_bell_state() {
         let mut sim: DenseStabColOnly = DenseStabColOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }
@@ -2504,7 +2504,7 @@ mod tests {
     fn test_row_only_bell_state() {
         let mut sim: DenseStabRowOnly = DenseStabRowOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }
@@ -2514,7 +2514,7 @@ mod tests {
         let mut sim: DenseStabColOnly = DenseStabColOnly::with_seed(5, 123);
         sim.h(&[QubitId(0)]);
         for i in 0..4 {
-            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
         }
         let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
         let first = results[0].outcome;
@@ -2528,7 +2528,7 @@ mod tests {
         let mut sim: DenseStabRowOnly = DenseStabRowOnly::with_seed(5, 123);
         sim.h(&[QubitId(0)]);
         for i in 0..4 {
-            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
         }
         let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
         let first = results[0].outcome;
@@ -2563,7 +2563,7 @@ mod tests {
     fn test_col_only_reset() {
         let mut sim: DenseStabColOnly = DenseStabColOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.reset();
         // After reset, should be back to |00> state
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -2577,7 +2577,7 @@ mod tests {
     fn test_row_only_reset() {
         let mut sim: DenseStabRowOnly = DenseStabRowOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.reset();
         // After reset, should be back to |00> state
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -2592,7 +2592,7 @@ mod tests {
     fn test_sparse_col_only_bell_state() {
         let mut sim: SparseColOnly = SparseColOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }
@@ -2602,7 +2602,7 @@ mod tests {
         let mut sim: SparseColOnly = SparseColOnly::with_seed(5, 123);
         sim.h(&[QubitId(0)]);
         for i in 0..4 {
-            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
         }
         let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
         let first = results[0].outcome;
@@ -2626,7 +2626,7 @@ mod tests {
     fn test_sparse_col_only_reset() {
         let mut sim: SparseColOnly = SparseColOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.reset();
         // After reset, should be back to |00> state
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -2641,7 +2641,7 @@ mod tests {
     fn test_sparse_row_only_bell_state() {
         let mut sim: SparseRowOnly = SparseRowOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
     }
@@ -2651,7 +2651,7 @@ mod tests {
         let mut sim: SparseRowOnly = SparseRowOnly::with_seed(5, 123);
         sim.h(&[QubitId(0)]);
         for i in 0..4 {
-            sim.cx(&[QubitId(i), QubitId(i + 1)]);
+            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
         }
         let results = sim.mz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(4)]);
         let first = results[0].outcome;
@@ -2675,7 +2675,7 @@ mod tests {
     fn test_sparse_row_only_reset() {
         let mut sim: SparseRowOnly = SparseRowOnly::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.reset();
         // After reset, should be back to |00> state
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -3222,8 +3222,8 @@ mod tests {
                     while q1 == q0 {
                         q1 = rng.random_range(0..num_qubits);
                     }
-                    variant.cx(&[QubitId(q0), QubitId(q1)]);
-                    reference.cx(&[QubitId(q0), QubitId(q1)]);
+                    variant.cx(&[(QubitId(q0), QubitId(q1))]);
+                    reference.cx(&[(QubitId(q0), QubitId(q1))]);
                 }
                 5..=7 => {
                     // Forced measurement (mid-circuit)

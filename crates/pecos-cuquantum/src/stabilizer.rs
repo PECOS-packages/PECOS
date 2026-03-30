@@ -630,26 +630,23 @@ impl CliffordGateable for CuStabilizer {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        if qubits.len() >= 2 {
-            self.gates
-                .push(format!("CNOT {} {}", qubits[0].0, qubits[1].0));
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.gates.push(format!("CNOT {} {}", q0.0, q1.0));
         }
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        if qubits.len() >= 2 {
-            self.gates
-                .push(format!("CZ {} {}", qubits[0].0, qubits[1].0));
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.gates.push(format!("CZ {} {}", q0.0, q1.0));
         }
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        if qubits.len() >= 2 {
-            self.gates
-                .push(format!("SWAP {} {}", qubits[0].0, qubits[1].0));
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.gates.push(format!("SWAP {} {}", q0.0, q1.0));
         }
         self
     }
@@ -729,7 +726,7 @@ mod tests {
     fn test_custabilizer_gate_buffering() {
         if let Ok(mut sim) = CuStabilizer::new(3) {
             sim.h(&[QubitId(0)]);
-            sim.cx(&[QubitId(0), QubitId(1)]);
+            sim.cx(&[(QubitId(0), QubitId(1))]);
             assert_eq!(sim.gates.len(), 2);
             assert_eq!(sim.gates[0], "H 0");
             assert_eq!(sim.gates[1], "CNOT 0 1");

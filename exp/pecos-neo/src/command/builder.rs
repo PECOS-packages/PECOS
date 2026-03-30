@@ -23,12 +23,10 @@ use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
 /// use pecos_neo::command::CommandBuilder;
 ///
 /// let commands = CommandBuilder::new()
-///     .pz(0)
-///     .pz(1)
-///     .h(0)
-///     .cx(0, 1)
-///     .mz(0)
-///     .mz(1)
+///     .pz(&[0, 1])
+///     .h(&[0])
+///     .cx(&[(0, 1)])
+///     .mz(&[0, 1])
 ///     .build();
 /// ```
 #[derive(Debug, Default)]
@@ -77,10 +75,10 @@ impl CommandBuilder {
     /// impl_signal!(RoundBoundary);
     ///
     /// let queue = CommandBuilder::new()
-    ///     .pz(0).pz(1)
+    ///     .pz(&[0, 1])
     ///     .signal(RoundBoundary(1))
-    ///     .h(0).h(1)
-    ///     .mz(0).mz(1)
+    ///     .h(&[0, 1])
+    ///     .mz(&[0, 1])
     ///     .build();
     ///
     /// assert!(queue.has_signals());
@@ -93,270 +91,374 @@ impl CommandBuilder {
 
     // Single-qubit gates
 
-    /// Add an identity gate.
+    /// Add identity gates.
     #[must_use]
-    pub fn identity(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::identity(qubit.into()))
+    pub fn identity(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::identity(q.into()));
+        }
+        self
     }
 
-    /// Add a Pauli-X gate.
+    /// Add Pauli-X gates.
     #[must_use]
-    pub fn x(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::x(qubit.into()))
+    pub fn x(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::x(q.into()));
+        }
+        self
     }
 
-    /// Add a Pauli-Y gate.
+    /// Add Pauli-Y gates.
     #[must_use]
-    pub fn y(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::y(qubit.into()))
+    pub fn y(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::y(q.into()));
+        }
+        self
     }
 
-    /// Add a Pauli-Z gate.
+    /// Add Pauli-Z gates.
     #[must_use]
-    pub fn z(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::z(qubit.into()))
+    pub fn z(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::z(q.into()));
+        }
+        self
     }
 
-    /// Add a Hadamard gate.
+    /// Add Hadamard gates.
     #[must_use]
-    pub fn h(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::h(qubit.into()))
+    pub fn h(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::h(q.into()));
+        }
+        self
     }
 
-    /// Add an SX (sqrt-X) gate.
+    /// Add SX (sqrt-X) gates.
     #[must_use]
-    pub fn sx(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SX,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn sx(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::SX,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an `SXdg` (sqrt-X dagger) gate.
+    /// Add `SXdg` (sqrt-X dagger) gates.
     #[must_use]
-    pub fn sxdg(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SXdg,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn sxdg(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::SXdg,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an SY (sqrt-Y) gate.
+    /// Add SY (sqrt-Y) gates.
     #[must_use]
-    pub fn sy(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SY,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn sy(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::SY,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an `SYdg` (sqrt-Y dagger) gate.
+    /// Add `SYdg` (sqrt-Y dagger) gates.
     #[must_use]
-    pub fn sydg(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SYdg,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn sydg(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::SYdg,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an SZ (sqrt-Z) gate.
+    /// Add SZ (sqrt-Z) gates.
     #[must_use]
-    pub fn sz(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::sz(qubit.into()))
+    pub fn sz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::sz(q.into()));
+        }
+        self
     }
 
-    /// Add an `SZdg` (sqrt-Z dagger) gate.
+    /// Add `SZdg` (sqrt-Z dagger) gates.
     #[must_use]
-    pub fn szdg(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SZdg,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn szdg(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::SZdg,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add a T gate.
+    /// Add T gates.
     #[must_use]
-    pub fn t(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::T,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn t(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue
+                .push(GateCommand::new(GateType::T, smallvec::smallvec![q.into()]));
+        }
+        self
     }
 
-    /// Add a Tdg (T dagger) gate.
+    /// Add Tdg (T dagger) gates.
     #[must_use]
-    pub fn tdg(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::Tdg,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn tdg(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::Tdg,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
     // Parameterized single-qubit gates
 
-    /// Add an RX rotation gate.
+    /// Add RX rotation gates with the same angle.
     #[must_use]
-    pub fn rx(self, qubit: impl Into<QubitId>, angle: impl Into<Angle64>) -> Self {
-        self.gate(GateCommand::with_angles(
-            GateType::RX,
-            smallvec::smallvec![qubit.into()],
-            smallvec::smallvec![angle.into()],
-        ))
+    pub fn rx(
+        mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+        angle: impl Into<Angle64> + Copy,
+    ) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::with_angles(
+                GateType::RX,
+                smallvec::smallvec![q.into()],
+                smallvec::smallvec![angle.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an RY rotation gate.
+    /// Add RY rotation gates with the same angle.
     #[must_use]
-    pub fn ry(self, qubit: impl Into<QubitId>, angle: impl Into<Angle64>) -> Self {
-        self.gate(GateCommand::with_angles(
-            GateType::RY,
-            smallvec::smallvec![qubit.into()],
-            smallvec::smallvec![angle.into()],
-        ))
+    pub fn ry(
+        mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+        angle: impl Into<Angle64> + Copy,
+    ) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::with_angles(
+                GateType::RY,
+                smallvec::smallvec![q.into()],
+                smallvec::smallvec![angle.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an RZ rotation gate.
+    /// Add RZ rotation gates with the same angle.
     #[must_use]
-    pub fn rz(self, qubit: impl Into<QubitId>, angle: impl Into<Angle64>) -> Self {
-        self.gate(GateCommand::rz(qubit.into(), angle.into()))
+    pub fn rz(
+        mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+        angle: impl Into<Angle64> + Copy,
+    ) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::rz(q.into(), angle.into()));
+        }
+        self
     }
 
     // Two-qubit gates
 
-    /// Add a CNOT (CX) gate.
+    /// Add CNOT (CX) gates.
     #[must_use]
-    pub fn cx(self, control: impl Into<QubitId>, target: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::cx(control.into(), target.into()))
+    pub fn cx(mut self, pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        for &(control, target) in pairs {
+            self.queue
+                .push(GateCommand::cx(control.into(), target.into()));
+        }
+        self
     }
 
-    /// Add a CY gate.
+    /// Add CY gates.
     #[must_use]
-    pub fn cy(self, control: impl Into<QubitId>, target: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::CY,
-            smallvec::smallvec![control.into(), target.into()],
-        ))
+    pub fn cy(mut self, pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        for &(control, target) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::CY,
+                smallvec::smallvec![control.into(), target.into()],
+            ));
+        }
+        self
     }
 
-    /// Add a CZ gate.
+    /// Add CZ gates.
     #[must_use]
-    pub fn cz(self, qubit0: impl Into<QubitId>, qubit1: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::cz(qubit0.into(), qubit1.into()))
+    pub fn cz(mut self, pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::cz(q0.into(), q1.into()));
+        }
+        self
     }
 
-    /// Add an SZZ gate.
+    /// Add SZZ gates.
     #[must_use]
-    pub fn szz(self, qubit0: impl Into<QubitId>, qubit1: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SZZ,
-            smallvec::smallvec![qubit0.into(), qubit1.into()],
-        ))
+    pub fn szz(mut self, pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SZZ,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
     }
 
-    /// Add a SWAP gate.
+    /// Add SWAP gates.
     #[must_use]
-    pub fn swap(self, qubit0: impl Into<QubitId>, qubit1: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::SWAP,
-            smallvec::smallvec![qubit0.into(), qubit1.into()],
-        ))
+    pub fn swap(
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SWAP,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an RZZ rotation gate.
+    /// Add RZZ rotation gates with the same angle.
     #[must_use]
     pub fn rzz(
-        self,
-        qubit0: impl Into<QubitId>,
-        qubit1: impl Into<QubitId>,
-        angle: impl Into<Angle64>,
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+        angle: impl Into<Angle64> + Copy,
     ) -> Self {
-        self.gate(GateCommand::rzz(qubit0.into(), qubit1.into(), angle.into()))
+        for &(q0, q1) in pairs {
+            self.queue
+                .push(GateCommand::rzz(q0.into(), q1.into(), angle.into()));
+        }
+        self
     }
 
-    /// Add an RXX rotation gate.
+    /// Add RXX rotation gates with the same angle.
     #[must_use]
     pub fn rxx(
-        self,
-        qubit0: impl Into<QubitId>,
-        qubit1: impl Into<QubitId>,
-        angle: impl Into<Angle64>,
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+        angle: impl Into<Angle64> + Copy,
     ) -> Self {
-        self.gate(GateCommand::with_angles(
-            GateType::RXX,
-            smallvec::smallvec![qubit0.into(), qubit1.into()],
-            smallvec::smallvec![angle.into()],
-        ))
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::with_angles(
+                GateType::RXX,
+                smallvec::smallvec![q0.into(), q1.into()],
+                smallvec::smallvec![angle.into()],
+            ));
+        }
+        self
     }
 
-    /// Add an RYY rotation gate.
+    /// Add RYY rotation gates with the same angle.
     #[must_use]
     pub fn ryy(
-        self,
-        qubit0: impl Into<QubitId>,
-        qubit1: impl Into<QubitId>,
-        angle: impl Into<Angle64>,
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+        angle: impl Into<Angle64> + Copy,
     ) -> Self {
-        self.gate(GateCommand::with_angles(
-            GateType::RYY,
-            smallvec::smallvec![qubit0.into(), qubit1.into()],
-            smallvec::smallvec![angle.into()],
-        ))
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::with_angles(
+                GateType::RYY,
+                smallvec::smallvec![q0.into(), q1.into()],
+                smallvec::smallvec![angle.into()],
+            ));
+        }
+        self
     }
 
     // Three-qubit gates
 
-    /// Add a Toffoli (CCX) gate.
+    /// Add Toffoli (CCX) gates.
     #[must_use]
     pub fn ccx(
-        self,
-        control0: impl Into<QubitId>,
-        control1: impl Into<QubitId>,
-        target: impl Into<QubitId>,
+        mut self,
+        triples: &[(
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+        )],
     ) -> Self {
-        self.gate(GateCommand::new(
-            GateType::CCX,
-            smallvec::smallvec![control0.into(), control1.into(), target.into()],
-        ))
+        for &(c0, c1, t) in triples {
+            self.queue.push(GateCommand::new(
+                GateType::CCX,
+                smallvec::smallvec![c0.into(), c1.into(), t.into()],
+            ));
+        }
+        self
     }
 
     // Preparation and measurement
 
-    /// Add a Z-basis state preparation gate.
+    /// Add Z-basis state preparation gates.
     #[must_use]
-    pub fn pz(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::pz(qubit.into()))
+    pub fn pz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::pz(q.into()));
+        }
+        self
     }
 
-    /// Add a qubit allocation.
+    /// Add qubit allocations.
     #[must_use]
-    pub fn qalloc(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::QAlloc,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn qalloc(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::QAlloc,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add a qubit deallocation.
+    /// Add qubit deallocations.
     #[must_use]
-    pub fn qfree(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::QFree,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn qfree(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::QFree,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
-    /// Add a Z-basis measurement.
+    /// Add Z-basis measurements.
     #[must_use]
-    pub fn mz(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::mz(qubit.into()))
+    pub fn mz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::mz(q.into()));
+        }
+        self
     }
 
-    /// Add a measurement that also frees the qubit.
+    /// Add measurements that also free the qubits.
     #[must_use]
-    pub fn measure_free(self, qubit: impl Into<QubitId>) -> Self {
-        self.gate(GateCommand::new(
-            GateType::MeasureFree,
-            smallvec::smallvec![qubit.into()],
-        ))
+    pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::MeasureFree,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
     }
 
     /// Add Z-basis preparation for multiple qubits.
@@ -377,13 +479,21 @@ impl CommandBuilder {
         self
     }
 
-    /// Add an idle period for a qubit.
+    /// Add idle periods for qubits with the same duration.
     ///
     /// The duration is in abstract time units. The interpretation
     /// (nanoseconds, clock cycles, etc.) is defined by the noise model.
     #[must_use]
-    pub fn idle(self, qubit: impl Into<QubitId>, duration: impl Into<TimeUnits>) -> Self {
-        self.gate(GateCommand::idle(qubit.into(), duration.into()))
+    pub fn idle(
+        mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+        duration: impl Into<TimeUnits> + Copy,
+    ) -> Self {
+        for &q in qubits {
+            self.queue
+                .push(GateCommand::idle(q.into(), duration.into()));
+        }
+        self
     }
 
     /// Add idle periods for multiple qubits with the same duration.
@@ -408,12 +518,10 @@ mod tests {
     #[test]
     fn test_builder_fluent_api() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0, 1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0, 1])
             .build();
 
         assert_eq!(commands.len(), 6);
@@ -430,8 +538,8 @@ mod tests {
     #[test]
     fn test_builder_with_angles() {
         let commands = CommandBuilder::new()
-            .rz(0, Angle64::QUARTER_TURN / 2u64) // pi/4
-            .rzz(0, 1, Angle64::QUARTER_TURN) // pi/2
+            .rz(&[0], Angle64::QUARTER_TURN / 2u64) // pi/4
+            .rzz(&[(0, 1)], Angle64::QUARTER_TURN) // pi/2
             .build();
 
         assert_eq!(commands.len(), 2);
@@ -445,7 +553,11 @@ mod tests {
 
     #[test]
     fn test_prep_all_measure_all() {
-        let commands = CommandBuilder::new().pz_all(0..4).h(0).mz_all(0..4).build();
+        let commands = CommandBuilder::new()
+            .pz_all(0..4)
+            .h(&[0])
+            .mz_all(0..4)
+            .build();
 
         assert_eq!(commands.len(), 9); // 4 preps + 1 H + 4 measures
     }

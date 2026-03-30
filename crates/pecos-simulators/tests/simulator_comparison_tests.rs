@@ -1,4 +1,4 @@
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 use pecos_simulators::ArbitraryRotationGateable;
 use pecos_simulators::CliffordGateable;
 use pecos_simulators::DensityMatrix;
@@ -69,8 +69,8 @@ fn test_compare_multiple_gates() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply sequence of gates to create a Bell state
-    sv.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    sv.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }
@@ -107,8 +107,8 @@ fn test_compare_two_qubit_rotations() {
     dm.h(&qid(0)).h(&qid(1));
 
     // Apply ZZ rotation
-    sv.rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
-    dm.rzz(Angle64::from_radians(PI / 4.0), &qid2(0, 1));
+    sv.rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
+    dm.rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }
@@ -121,8 +121,12 @@ fn test_compare_complex_circuit() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Create a GHZ state
-    sv.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
-    dm.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+    sv.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))]);
+    dm.h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .cx(&[(QubitId(1), QubitId(2))]);
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 
@@ -256,8 +260,8 @@ fn test_compare_reset() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply some gates to get to a non-trivial state
-    sv.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    sv.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Reset both simulators
     sv.reset();
@@ -295,22 +299,42 @@ fn test_compare_entangled_states() {
     // Create different entangled states
 
     // Bell state |Φ⁺⟩ = (|00⟩ + |11⟩)/√2
-    sv.h(&qid(0)).cx(&qid2(0, 1));
-    dm.h(&qid(0)).cx(&qid2(0, 1));
+    sv.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+    dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 
     // Reset and create Bell state |Φ⁻⟩ = (|00⟩ - |11⟩)/√2
-    sv.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
-    dm.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
+    sv.reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(1));
+    dm.reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(1));
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 
     // Reset and create Bell state |Ψ⁺⟩ = (|01⟩ + |10⟩)/√2
-    sv.reset().h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
-    dm.reset().h(&qid(0)).cx(&qid2(0, 1)).x(&qid(1));
+    sv.reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .x(&qid(1));
+    dm.reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .x(&qid(1));
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 
     // Reset and create Bell state |Ψ⁻⟩ = (|01⟩ - |10⟩)/√2
-    sv.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
-    dm.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(0)).x(&qid(1));
+    sv.reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(0))
+        .x(&qid(1));
+    dm.reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(0))
+        .x(&qid(1));
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }

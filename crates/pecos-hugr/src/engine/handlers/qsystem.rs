@@ -41,7 +41,7 @@ impl HugrEngine {
                 // Queue the measurement and create a Future handle
                 if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
                     // Queue measurement
-                    self.message_builder.add_measurements(&[qubit_id.0]);
+                    self.message_builder.mz(&[qubit_id.0]);
                     let measurement_index = self.measurement_state.mappings.len();
                     self.measurement_state.mappings.push((node, qubit_id));
 
@@ -70,12 +70,12 @@ impl HugrEngine {
                 // LazyMeasureReset: Qubit -> (Qubit, Future<bool>)
                 if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
                     // Queue measurement
-                    self.message_builder.add_measurements(&[qubit_id.0]);
+                    self.message_builder.mz(&[qubit_id.0]);
                     let measurement_index = self.measurement_state.mappings.len();
                     self.measurement_state.mappings.push((node, qubit_id));
 
                     // Queue reset
-                    self.message_builder.add_prep(&[qubit_id.0]);
+                    self.message_builder.pz(&[qubit_id.0]);
 
                     // Create a Future
                     let future_id = self.extension_state.next_future_id;
@@ -103,7 +103,7 @@ impl HugrEngine {
                 // LazyMeasureLeaked: Qubit -> Future<int[6]>
                 // Same as LazyMeasure but result can be 0, 1, or 2 (leaked)
                 if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
-                    self.message_builder.add_measurements(&[qubit_id.0]);
+                    self.message_builder.mz(&[qubit_id.0]);
                     let measurement_index = self.measurement_state.mappings.len();
                     self.measurement_state.mappings.push((node, qubit_id));
 
@@ -130,11 +130,11 @@ impl HugrEngine {
                 // MeasureReset: Qubit -> (Qubit, bool)
                 // Atomic measure + reset (not lazy)
                 if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
-                    self.message_builder.add_measurements(&[qubit_id.0]);
+                    self.message_builder.mz(&[qubit_id.0]);
                     self.measurement_state.mappings.push((node, qubit_id));
 
                     // Queue reset
-                    self.message_builder.add_prep(&[qubit_id.0]);
+                    self.message_builder.pz(&[qubit_id.0]);
 
                     // Track measurement output wire
                     self.measurement_state.output_wires.insert(node, (node, 1));

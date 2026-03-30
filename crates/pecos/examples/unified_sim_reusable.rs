@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the simulation once
     let built_sim = sim_builder()
         .classical(qasm_engine().program(qasm))
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .noise(DepolarizingNoise { p: 0.001 })
         .seed(42)
         .build()?;
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Build with auto-selected engine
-    let mut sim2 = sim(qasm2).quantum(sparse_stabilizer()).seed(42).build()?;
+    let mut sim2 = sim(qasm2).quantum(sparse_stab()).seed(42).build()?;
 
     // Run parameter sweep
     println!("  Running parameter sweep:");

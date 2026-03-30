@@ -303,7 +303,7 @@ impl ByteMessageBuilder {
     /// # Returns
     ///
     /// A mutable reference to self for method chaining
-    pub fn add_idle(&mut self, duration: f64, qubits: &[usize]) -> &mut Self {
+    pub fn idle(&mut self, duration: f64, qubits: &[usize]) -> &mut Self {
         // Ensure we have qubits to work with
         if qubits.is_empty() {
             return self;
@@ -321,142 +321,85 @@ impl ByteMessageBuilder {
     }
 
     /// Add an X gate
-    pub fn add_x(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::x(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a Y gate
-    pub fn add_y(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::y(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a Z gate
-    pub fn add_z(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::z(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an H gate
-    pub fn add_h(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::h(qubits);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add CX (controlled-X) gates between pairs of qubits
+    /// Add CX (controlled-X) gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the controls and targets arrays do not have the same length.
-    pub fn add_cx(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "Controls and targets arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = controls
-            .iter()
-            .zip(targets.iter())
-            .map(|(&c, &t)| (c, t))
-            .collect();
-        let gate = Gate::cx(&pairs);
+    /// Each tuple is a (control, target) pair.
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::cx(pairs);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add RZZ gates between pairs of qubits
+    /// Add RZZ gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the qubits1 and qubits2 arrays do not have the same length.
-    pub fn add_rzz(&mut self, theta: Angle64, qubits1: &[usize], qubits2: &[usize]) -> &mut Self {
-        assert_eq!(
-            qubits1.len(),
-            qubits2.len(),
-            "Qubit1 and qubit2 arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = qubits1
-            .iter()
-            .zip(qubits2.iter())
-            .map(|(&q1, &q2)| (q1, q2))
-            .collect();
-        let gate = Gate::rzz(theta, &pairs);
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn rzz(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::rzz(theta, pairs);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add SZZ gates between pairs of qubits
+    /// Add SZZ gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the qubits1 and qubits2 arrays do not have the same length.
-    pub fn add_szz(&mut self, qubits1: &[usize], qubits2: &[usize]) -> &mut Self {
-        assert_eq!(
-            qubits1.len(),
-            qubits2.len(),
-            "Qubit1 and qubit2 arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = qubits1
-            .iter()
-            .zip(qubits2.iter())
-            .map(|(&q1, &q2)| (q1, q2))
-            .collect();
-        let gate = Gate::szz(&pairs);
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn szz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::szz(pairs);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add an `SZZdg` gate
+    /// Add `SZZdg` gates between pairs of qubits.
     ///
-    /// # Arguments
-    ///
-    /// * `qubits1` - First set of qubits
-    /// * `qubits2` - Second set of qubits
-    ///
-    /// # Returns
-    ///
-    /// * `&mut Self` - Returns self for method chaining
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if the qubits1 and qubits2 arrays do not have the same length.
-    pub fn add_szzdg(&mut self, qubits1: &[usize], qubits2: &[usize]) -> &mut Self {
-        assert_eq!(
-            qubits1.len(),
-            qubits2.len(),
-            "Qubit1 and qubit2 arrays must have the same length"
-        );
-        let pairs: Vec<(usize, usize)> = qubits1
-            .iter()
-            .zip(qubits2.iter())
-            .map(|(&q1, &q2)| (q1, q2))
-            .collect();
-        let gate = Gate::szzdg(&pairs);
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn szzdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::szzdg(pairs);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an RZ gate
-    pub fn add_rz(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn rz(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::rz(theta, qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an R1XY gate
-    pub fn add_r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::r1xy(theta, phi, qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a U gate
-    pub fn add_u(
+    pub fn u(
         &mut self,
         theta: Angle64,
         phi: Angle64,
@@ -473,10 +416,10 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn add_measurements(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn mz(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
             // Add a measurement as a regular gate command
-            let gate = Gate::measure(&[qubit]);
+            let gate = Gate::mz(&[qubit]);
             self.add_gate_command(&gate);
         }
         self
@@ -484,14 +427,14 @@ impl ByteMessageBuilder {
 
     /// Add measure leakage operations for multiple qubits
     ///
-    /// This behaves like `add_measurements()` but is intended for measuring qubits
+    /// This behaves like `mz()` but is intended for measuring qubits
     /// that may be in a leaked state. In the future, this will output 0, 1, or 2
     /// (where 2 indicates the qubit is leaked).
     ///
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn add_measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
             // Add a measure_leaked as a regular gate command
             let gate = Gate::measure_leaked(&[qubit]);
@@ -501,101 +444,170 @@ impl ByteMessageBuilder {
     }
 
     /// Add a `MeasCrosstalkGlobalPayload`
-    pub fn add_meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::meas_crosstalk_global_payload(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a `MeasCrosstalkLocalPayload`
-    pub fn add_meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::meas_crosstalk_local_payload(qubits);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add a Prep gate
-    pub fn add_prep(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::prep(qubits);
+    /// Add a PZ (preparation/reset) gate
+    pub fn pz(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::pz(qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an SZ (S) gate
-    pub fn add_sz(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
         // S gate is RZ(π/2)
-        self.add_rz(Angle64::QUARTER_TURN, qubits)
+        self.rz(Angle64::QUARTER_TURN, qubits)
     }
 
     /// Add an `SZdg` (S†) gate
-    pub fn add_szdg(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn szdg(&mut self, qubits: &[usize]) -> &mut Self {
         // S† gate is RZ(-π/2)
-        self.add_rz(-Angle64::QUARTER_TURN, qubits)
+        self.rz(-Angle64::QUARTER_TURN, qubits)
     }
 
     /// Add a T gate
-    pub fn add_t(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn t(&mut self, qubits: &[usize]) -> &mut Self {
         // T gate is RZ(π/4)
-        self.add_rz(Angle64::QUARTER_TURN / 2u64, qubits)
+        self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
     }
 
     /// Add a Tdg (T†) gate
-    pub fn add_tdg(&mut self, qubits: &[usize]) -> &mut Self {
+    pub fn tdg(&mut self, qubits: &[usize]) -> &mut Self {
         // T† gate is RZ(-π/4)
-        self.add_rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
+        self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Add an RX gate
-    pub fn add_rx(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn rx(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::rx(theta, qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an RY gate
-    pub fn add_ry(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
+    pub fn ry(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         let gate = Gate::ry(theta, qubits);
         self.add_gate_command(&gate);
         self
     }
 
-    /// Add a CY gate
+    /// Add CY gates between pairs of qubits.
     ///
-    /// # Panics
-    ///
-    /// Panics if the length of `controls` and `targets` are not equal.
-    pub fn add_cy(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
-        // CY = (I ⊗ Sdg) CX (I ⊗ S)
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "Controls and targets must have same length"
-        );
-        for (&c, &t) in controls.iter().zip(targets.iter()) {
-            self.add_szdg(&[t]);
-            self.add_cx(&[c], &[t]);
-            self.add_sz(&[t]);
-        }
+    /// Each tuple is a (control, target) pair.
+    pub fn cy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::cy(pairs);
+        self.add_gate_command(&gate);
         self
     }
 
-    /// Add a CZ gate
+    /// Add CZ gates between pairs of qubits.
     ///
-    /// # Panics
+    /// Each tuple is a (control, target) pair.
+    pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::cz(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an SX (sqrt-X) gate
+    pub fn sx(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sx(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an `SXdg` (sqrt-X dagger) gate
+    pub fn sxdg(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sxdg(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an SY (sqrt-Y) gate
+    pub fn sy(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sy(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an `SYdg` (sqrt-Y dagger) gate
+    pub fn sydg(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::sydg(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add SWAP gates between pairs of qubits.
     ///
-    /// Panics if the length of `controls` and `targets` are not equal.
-    pub fn add_cz(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
-        // CZ = H CX H
-        assert_eq!(
-            controls.len(),
-            targets.len(),
-            "Controls and targets must have same length"
-        );
-        for (&c, &t) in controls.iter().zip(targets.iter()) {
-            self.add_h(&[t]);
-            self.add_cx(&[c], &[t]);
-            self.add_h(&[t]);
-        }
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn swap(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::swap(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add SXX gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn sxx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::sxx(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add `SXXdg` gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn sxxdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::sxxdg(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add SYY gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn syy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::syy(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add `SYYdg` gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn syydg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::syydg(pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add RXX gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn rxx(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::rxx(theta, pairs);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add RYY gates between pairs of qubits.
+    ///
+    /// Each tuple is a (qubit1, qubit2) pair.
+    pub fn ryy(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        let gate = Gate::ryy(theta, pairs);
+        self.add_gate_command(&gate);
         self
     }
 
@@ -637,13 +649,13 @@ impl ByteMessageBuilder {
     ///
     /// // Create first message
     /// let _ = builder.for_quantum_operations();
-    /// builder.add_h(&[0]);
+    /// builder.h(&[0]);
     /// let message1 = builder.build();
     ///
     /// // Reset and configure for next message
     /// builder.reset();
     /// let _ = builder.for_quantum_operations();
-    /// builder.add_h(&[1]);
+    /// builder.h(&[1]);
     /// let message2 = builder.build();
     /// ```
     ///
@@ -755,9 +767,9 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add some gates
-        builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
-        builder.add_measurements(&[2]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[2]);
 
         // Build the message
         let message = builder.build();
@@ -798,13 +810,13 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add various gates
-        builder.add_h(&[0]);
-        builder.add_x(&[1]);
-        builder.add_y(&[2]);
-        builder.add_z(&[3]);
-        builder.add_rz(Angle64::from_radians(0.5), &[4]);
-        builder.add_r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
-        builder.add_measurements(&[6]);
+        builder.h(&[0]);
+        builder.x(&[1]);
+        builder.y(&[2]);
+        builder.z(&[3]);
+        builder.rz(Angle64::from_radians(0.5), &[4]);
+        builder.r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.mz(&[6]);
 
         // Build the message
         let message = builder.build();
@@ -842,7 +854,7 @@ mod tests {
         let _ = builder.for_outcomes();
 
         // Try to add a gate (should panic)
-        builder.add_h(&[0]);
+        builder.h(&[0]);
     }
 
     #[test]
@@ -866,7 +878,7 @@ mod tests {
 
         // Add measurements for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.add_measurements(&qubits);
+        builder.mz(&qubits);
 
         // Build the message
         let message = builder.build();
@@ -890,7 +902,7 @@ mod tests {
 
         // Add measure_leakages for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.add_measure_leakages(&qubits);
+        builder.measure_leakages(&qubits);
 
         // Build the message
         let message = builder.build();
@@ -913,7 +925,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add a gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Build the message
         let message = builder.build();
@@ -937,7 +949,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add a gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Build the message
         let message = builder.build();
@@ -957,8 +969,8 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add some gates
-        builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
 
         // Check the message count
         assert_eq!(builder.message_count(), 2);
@@ -970,7 +982,7 @@ mod tests {
         assert_eq!(builder.message_count(), 0);
 
         // Add a new gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Check the message count again
         assert_eq!(builder.message_count(), 1);
@@ -983,8 +995,8 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add some gates
-        builder.add_h(&[0]);
-        builder.add_cx(&[0], &[1]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
 
         // Check the message count
         assert_eq!(builder.message_count(), 2);
@@ -1005,7 +1017,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         // Add a new gate
-        builder.add_h(&[0]);
+        builder.h(&[0]);
 
         // Check the message count again
         assert_eq!(builder.message_count(), 1);
@@ -1040,7 +1052,7 @@ mod tests {
                     let _ = builder.for_quantum_operations();
 
                     // Add a gate
-                    builder.add_h(&[0]);
+                    builder.h(&[0]);
 
                     // Build the message
                     let _message = builder.build();
@@ -1062,7 +1074,7 @@ mod tests {
                     let _ = builder.for_quantum_operations();
 
                     // Add a gate
-                    builder.add_h(&[0]);
+                    builder.h(&[0]);
 
                     // Build the message
                     let _message = builder.build();

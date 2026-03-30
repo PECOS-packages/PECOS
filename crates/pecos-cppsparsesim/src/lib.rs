@@ -57,12 +57,8 @@ mod ffi {
         fn g2(self: Pin<&mut StateWrapper>, qubit1: u64, qubit2: u64);
         fn sxx(self: Pin<&mut StateWrapper>, qubit1: u64, qubit2: u64);
         fn sxxdg(self: Pin<&mut StateWrapper>, qubit1: u64, qubit2: u64);
-        fn measure(
-            self: Pin<&mut StateWrapper>,
-            qubit: u64,
-            forced_outcome: i32,
-            collapse: bool,
-        ) -> u32;
+        fn mz(self: Pin<&mut StateWrapper>, qubit: u64, forced_outcome: i32, collapse: bool)
+        -> u32;
 
         // Tableau access methods
         fn get_num_qubits(self: &StateWrapper) -> u64;
@@ -146,8 +142,8 @@ impl CppSparseStab {
         self.state.as_mut().unwrap().set_seed(seed_u32);
     }
 
-    /// Internal helper for measurement
-    fn internal_measure(
+    /// Internal helper for Z-basis measurement via FFI
+    fn mz_internal(
         &mut self,
         qubit: usize,
         forced_outcome: Option<bool>,
@@ -163,7 +159,7 @@ impl CppSparseStab {
             .state
             .as_mut()
             .unwrap()
-            .measure(qubit as u64, forced, collapse);
+            .mz(qubit as u64, forced, collapse);
         let outcome = outcome_raw != 0;
 
         // Wrapper doesn't care about determinism - always return false
@@ -198,14 +194,10 @@ impl CliffordGateable for CppSparseStab {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index() as u64;
-            let target = pair[1].index() as u64;
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index() as u64;
+            let target = q1.index() as u64;
             self.state.as_mut().unwrap().cx(control, target);
         }
         self
@@ -214,7 +206,7 @@ impl CliffordGateable for CppSparseStab {
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         qubits
             .iter()
-            .map(|&q| self.internal_measure(q.index(), None, true))
+            .map(|&q| self.mz_internal(q.index(), None, true))
             .collect()
     }
 
@@ -367,41 +359,29 @@ impl CliffordGateable for CppSparseStab {
         self
     }
 
-    fn cy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CY requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let control = pair[0].index() as u64;
-            let target = pair[1].index() as u64;
+    fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let control = q0.index() as u64;
+            let target = q1.index() as u64;
             self.state.as_mut().unwrap().cy(control, target);
         }
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index() as u64;
-            let q2 = pair[1].index() as u64;
-            self.state.as_mut().unwrap().cz(q1, q2);
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let a = q0.index() as u64;
+            let b = q1.index() as u64;
+            self.state.as_mut().unwrap().cz(a, b);
         }
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index() as u64;
-            let q2 = pair[1].index() as u64;
-            self.state.as_mut().unwrap().swap(q1, q2);
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let a = q0.index() as u64;
+            let b = q1.index() as u64;
+            self.state.as_mut().unwrap().swap(a, b);
         }
         self
     }
@@ -413,7 +393,7 @@ impl CppSparseStab {
     pub fn force_measure(&mut self, qubits: &[QubitId], outcome: bool) -> Vec<MeasurementResult> {
         qubits
             .iter()
-            .map(|q| self.internal_measure(q.index(), Some(outcome), true))
+            .map(|q| self.mz_internal(q.index(), Some(outcome), true))
             .collect()
     }
 
@@ -421,7 +401,7 @@ impl CppSparseStab {
     pub fn peek_measure(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         qubits
             .iter()
-            .map(|q| self.internal_measure(q.index(), None, false))
+            .map(|q| self.mz_internal(q.index(), None, false))
             .collect()
     }
 
@@ -430,15 +410,11 @@ impl CppSparseStab {
     /// # Panics
     ///
     /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn g2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "G2 requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index() as u64;
-            let q2 = pair[1].index() as u64;
-            self.state.as_mut().unwrap().g2(q1, q2);
+    pub fn g2(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let a = q0.index() as u64;
+            let b = q1.index() as u64;
+            self.state.as_mut().unwrap().g2(a, b);
         }
         self
     }
@@ -448,15 +424,11 @@ impl CppSparseStab {
     /// # Panics
     ///
     /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn sxx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index() as u64;
-            let q2 = pair[1].index() as u64;
-            self.state.as_mut().unwrap().sxx(q1, q2);
+    pub fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let a = q0.index() as u64;
+            let b = q1.index() as u64;
+            self.state.as_mut().unwrap().sxx(a, b);
         }
         self
     }
@@ -466,15 +438,11 @@ impl CppSparseStab {
     /// # Panics
     ///
     /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
-    pub fn sxxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SXXdg requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index() as u64;
-            let q2 = pair[1].index() as u64;
-            self.state.as_mut().unwrap().sxxdg(q1, q2);
+    pub fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            let a = q0.index() as u64;
+            let b = q1.index() as u64;
+            self.state.as_mut().unwrap().sxxdg(a, b);
         }
         self
     }

@@ -34,6 +34,6 @@ use pecos_random::PecosRng;
 ///
 /// let mut sim = StateVec::new(2);
 /// sim.h(&qid(0));
-/// sim.cx(&[pecos_core::QubitId(0), pecos_core::QubitId(1)]);
+/// sim.cx(&[(pecos_core::QubitId(0), pecos_core::QubitId(1))]);
 /// ```
 pub type StateVec<R = PecosRng> = StateVecSoA<R>;

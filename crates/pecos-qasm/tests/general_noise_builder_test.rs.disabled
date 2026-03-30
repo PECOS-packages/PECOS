@@ -5,7 +5,7 @@ use pecos_engines::noise::GeneralNoiseModel;
 use pecos_qasm::prelude::*;
 use pecos_qasm::qasm_engine;
 use pecos_programs::QasmProgram;
-use pecos_engines::{ClassicalControlEngineBuilder, state_vector, sparse_stabilizer};
+use pecos_engines::{ClassicalControlEngineBuilder, state_vector, sparse_stab};
 use std::collections::BTreeMap;
 
 #[test]
@@ -378,7 +378,7 @@ fn test_general_noise_builder_comparison_with_sim_builder() {
         .seed(42)
         .workers(2)
         .noise(noise_model)
-        .quantum(sparse_stabilizer().qubits(3))
+        .quantum(sparse_stab().qubits(3))
         .build()
         .unwrap();
 

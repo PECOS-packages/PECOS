@@ -30,13 +30,14 @@ pub use noise::{
 };
 pub use pecos_core::errors::PecosError;
 pub use quantum::{
-    CoinTossEngine, DenseStateVecEngine, QuantumEngine, StateVecEngine, StateVectorEngine,
-    StateVectorSimulator,
+    CliffordRzEngine, CoinTossEngine, DenseStateVecEngine, DensityMatrixEngine, QuantumEngine,
+    StabilizerEngine, StateVecEngine, StateVectorEngine, StateVectorSimulator,
 };
 pub use quantum_engine_builder::{
-    CoinTossEngineBuilder, IntoQuantumEngineBuilder, QuantumEngineBuilder,
-    SparseStabilizerEngineBuilder, StateVectorEngineBuilder, coin_toss, sparse_stab,
-    sparse_stabilizer, state_vector,
+    CliffordRzEngineBuilder, CoinTossEngineBuilder, DensityMatrixEngineBuilder,
+    IntoQuantumEngineBuilder, QuantumEngineBuilder, SparseStabEngineBuilder,
+    StabilizerEngineBuilder, StateVectorEngineBuilder, clifford_rz, coin_toss, density_matrix,
+    sparse_stab, stabilizer, state_vector,
 };
 pub use quantum_system::QuantumSystem;
 pub use shot_results::data_vec::DataVecType;

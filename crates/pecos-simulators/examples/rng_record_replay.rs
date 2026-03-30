@@ -8,7 +8,7 @@
 use pecos_core::RngManageable;
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use pecos_random::PecosRng;
-use pecos_simulators::{CliffordGateable, StateVec, qid, qid2};
+use pecos_simulators::{CliffordGateable, QubitId, StateVec, qid};
 
 fn main() {
     println!("=== RNG Recording and Replay Example ===\n");
@@ -21,7 +21,7 @@ fn main() {
     println!("Running circuit with recording RNG:");
 
     // Create a Bell state
-    sim_recording.h(&qid(0)).cx(&qid2(0, 1));
+    sim_recording.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - in a Bell state, results should match
@@ -48,7 +48,7 @@ fn main() {
     let mut sim_replaying = StateVec::with_rng(2, replaying_rng);
 
     // Run the same circuit
-    sim_replaying.h(&qid(0)).cx(&qid2(0, 1));
+    sim_replaying.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - should get the same results as before

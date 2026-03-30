@@ -11,7 +11,7 @@ from pecos_rslib import (
     PhirJson,
     Qasm,
     Qis,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 
@@ -512,7 +512,7 @@ class TestSimAPIFeatures:
 
         # Test with sparse stabilizer backend
         try:
-            shot_vec_ss = sim(program).quantum(sparse_stabilizer()).seed(42).run(100)
+            shot_vec_ss = sim(program).quantum(sparse_stab()).seed(42).run(100)
             results_ss = shot_vec_ss.to_dict()
             assert "c" in results_ss, "Sparse stabilizer backend should produce results"
 

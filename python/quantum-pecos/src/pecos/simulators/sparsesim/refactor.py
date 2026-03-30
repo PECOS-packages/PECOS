@@ -22,14 +22,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseSim
+    from pecos.simulators.sparsesim.state import SparseStabPy
 
 
-def find_stab(state: SparseSim, xs: set[int], zs: set[int]) -> tuple[bool, set[int]]:
+def find_stab(state: SparseStabPy, xs: set[int], zs: set[int]) -> tuple[bool, set[int]]:
     """Find a stabilizer in the stabilizer group.
 
     Args:
-        state (SparseSim): The SparseSim state instance.
+        state (SparseStabPy): The SparseStabPy state instance.
         xs (set[int]): Set of qubit indices with X operators.
         zs (set[int]): Set of qubit indices with Z operators.
     """
@@ -66,7 +66,7 @@ def find_stab(state: SparseSim, xs: set[int], zs: set[int]) -> tuple[bool, set[i
 
 
 def refactor(
-    state: SparseSim,
+    state: SparseStabPy,
     xs: set[int],
     zs: set[int],
     choose: int | None = None,
@@ -76,7 +76,7 @@ def refactor(
     """Find the sign of the logical operator.
 
     Args:
-        state (SparseSim): The SparseSim state instance.
+        state (SparseStabPy): The SparseStabPy state instance.
         xs (set[int]): Set of qubit indices with X operators.
         zs (set[int]): Set of qubit indices with Z operators.
         choose (int | None): Order of stabilizer ids to choose from.

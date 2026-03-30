@@ -352,61 +352,61 @@ impl QisEngine {
         for op in ops {
             match op {
                 QuantumOp::H(qubit) => {
-                    builder.add_h(&[qubit]);
+                    builder.h(&[qubit]);
                 }
                 QuantumOp::X(qubit) => {
-                    builder.add_x(&[qubit]);
+                    builder.x(&[qubit]);
                 }
                 QuantumOp::Y(qubit) => {
-                    builder.add_y(&[qubit]);
+                    builder.y(&[qubit]);
                 }
                 QuantumOp::Z(qubit) => {
-                    builder.add_z(&[qubit]);
+                    builder.z(&[qubit]);
                 }
                 QuantumOp::S(qubit) => {
-                    builder.add_sz(&[qubit]);
+                    builder.sz(&[qubit]);
                 }
                 QuantumOp::Sdg(qubit) => {
-                    builder.add_szdg(&[qubit]);
+                    builder.szdg(&[qubit]);
                 }
                 QuantumOp::T(qubit) => {
-                    builder.add_t(&[qubit]);
+                    builder.t(&[qubit]);
                 }
                 QuantumOp::Tdg(qubit) => {
-                    builder.add_tdg(&[qubit]);
+                    builder.tdg(&[qubit]);
                 }
                 QuantumOp::RX(angle, qubit) => {
-                    builder.add_rx(Angle64::from_radians(angle), &[qubit]);
+                    builder.rx(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RY(angle, qubit) => {
-                    builder.add_ry(Angle64::from_radians(angle), &[qubit]);
+                    builder.ry(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RZ(angle, qubit) => {
-                    builder.add_rz(Angle64::from_radians(angle), &[qubit]);
+                    builder.rz(Angle64::from_radians(angle), &[qubit]);
                 }
                 QuantumOp::RXY(theta, phi, qubit) => {
-                    builder.add_r1xy(
+                    builder.r1xy(
                         Angle64::from_radians(theta),
                         Angle64::from_radians(phi),
                         &[qubit],
                     );
                 }
                 QuantumOp::CX(control, target) => {
-                    builder.add_cx(&[control], &[target]);
+                    builder.cx(&[(control, target)]);
                 }
                 QuantumOp::Measure(qubit, result_id) => {
                     self.measurement_mapping.push(result_id);
-                    builder.add_measurements(&[qubit]);
+                    builder.mz(&[qubit]);
                 }
                 QuantumOp::ZZ(qubit1, qubit2) => {
                     // ZZ gate is the same as SZZ in PECOS
-                    builder.add_szz(&[qubit1], &[qubit2]);
+                    builder.szz(&[(qubit1, qubit2)]);
                 }
                 QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                    builder.add_rzz(Angle64::from_radians(angle), &[qubit1], &[qubit2]);
+                    builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
                 }
                 QuantumOp::Reset(qubit) => {
-                    builder.add_prep(&[qubit]);
+                    builder.pz(&[qubit]);
                 }
                 _ => {
                     // For other operations, we'd need to add more builder methods

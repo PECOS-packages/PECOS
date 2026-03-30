@@ -42,7 +42,7 @@ fn example_depolarizing_noise() {
     println!("--- Depolarizing Noise ---");
 
     // Circuit: |0⟩ → X → measure (should give |1⟩)
-    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     // Test different error rates
     for error_rate in [0.0, 0.05, 0.10, 0.20] {
@@ -82,10 +82,10 @@ fn example_asymmetric_measurement() {
     println!("--- Asymmetric Measurement Errors ---");
 
     // Test measurement of |0⟩
-    let commands_0 = CommandBuilder::new().pz(0).mz(0).build();
+    let commands_0 = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     // Test measurement of |1⟩
-    let commands_1 = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands_1 = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     // Asymmetric: 10% chance of 0→1, 5% chance of 1→0
     let p_0_to_1 = 0.10;
@@ -153,12 +153,12 @@ fn example_multi_channel() {
 
     // Bell state circuit
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Combine multiple noise sources
@@ -206,12 +206,12 @@ fn example_builder_api() {
 
     // Bell state circuit
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     // Build noise model with familiar parameters
@@ -257,11 +257,11 @@ fn example_idle_noise() {
     // Circuit: prep |+⟩, idle, then H to detect Z errors, measure
     // Z errors during idle will flip the measurement outcome
     let commands = CommandBuilder::new()
-        .pz(0)
-        .h(0) // Prepare |+⟩
-        .idle(0, 1000) // Idle for 1000 time units
-        .h(0) // Convert Z errors to bit flips
-        .mz(0)
+        .pz(&[0])
+        .h(&[0]) // Prepare |+⟩
+        .idle(&[0], 1000) // Idle for 1000 time units
+        .h(&[0]) // Convert Z errors to bit flips
+        .mz(&[0])
         .build();
 
     // Configure with nanosecond time scale
@@ -304,11 +304,11 @@ fn example_z_biased_noise() {
     // Circuit: H to create superposition, then gate, then H+measure
     // This makes Z errors detectable
     let commands = CommandBuilder::new()
-        .pz(0)
-        .h(0)
-        .sz(0) // Apply gate with noise
-        .h(0)
-        .mz(0)
+        .pz(&[0])
+        .h(&[0])
+        .sz(&[0]) // Apply gate with noise
+        .h(&[0])
+        .mz(&[0])
         .build();
 
     // Test uniform vs Z-biased noise

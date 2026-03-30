@@ -128,12 +128,12 @@ fn test_monte_carlo_bell_state_no_noise() {
 
     // Run with pecos-neo MonteCarloRunner
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let config = MonteCarloConfig::new()
@@ -214,7 +214,7 @@ fn test_monte_carlo_with_depolarizing_noise() {
     let engines_counts = extract_outcomes_from_shots(&engines_results, "c", 1);
 
     // Run with pecos-neo (create noise model inside closure)
-    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let config = MonteCarloConfig::new()
         .with_shots(NUM_SHOTS)
@@ -291,7 +291,7 @@ fn test_monte_carlo_measurement_errors() {
     let engines_counts = extract_outcomes_from_shots(&engines_results, "c", 1);
 
     // Run with pecos-neo
-    let commands = CommandBuilder::new().pz(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     let config = MonteCarloConfig::new()
         .with_shots(NUM_SHOTS)
@@ -343,7 +343,7 @@ fn test_monte_carlo_measurement_errors() {
 #[test]
 fn test_monte_carlo_parallel_execution() {
     // Test that parallel execution produces consistent results
-    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     // Run with multiple workers
     let config_parallel = MonteCarloConfig::new()
@@ -429,12 +429,12 @@ fn test_monte_carlo_two_qubit_noise() {
 
     // Run with pecos-neo
     let commands = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let config = MonteCarloConfig::new()
@@ -502,7 +502,7 @@ fn test_monte_carlo_two_qubit_noise() {
 fn test_monte_carlo_deterministic_circuit() {
     // Test that deterministic circuits (no measurement randomness) produce consistent results
     // Use X gate which deterministically flips |0> to |1>
-    let commands = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let config = MonteCarloConfig::new()
         .with_shots(100)
@@ -528,7 +528,7 @@ fn test_monte_carlo_deterministic_circuit() {
 #[test]
 fn test_monte_carlo_statistical_consistency() {
     // Test that Hadamard circuit produces roughly 50/50 distribution
-    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let config = MonteCarloConfig::new()
         .with_shots(NUM_SHOTS)
@@ -556,7 +556,7 @@ fn test_monte_carlo_statistical_consistency() {
 #[test]
 fn test_full_seed_determinism() {
     // Test that with_full_seed() produces identical results across runs
-    let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     // Run twice with same full seed - should produce identical results
     let mut state1 = SparseStab::new(1);
@@ -605,9 +605,9 @@ fn test_importance_sampling_matches_standard_monte_carlo() {
     use pecos_neo::sampling::ImportanceSamplingRunner;
 
     let commands = CommandBuilder::new()
-        .pz(0)
-        .identity(0) // Single-qubit gate that triggers noise
-        .mz(0)
+        .pz(&[0])
+        .identity(&[0]) // Single-qubit gate that triggers noise
+        .mz(&[0])
         .build();
 
     let p_error = 0.05; // True error rate
@@ -683,7 +683,11 @@ fn test_importance_sampling_matches_standard_monte_carlo() {
 fn test_importance_sampling_rare_events() {
     use pecos_neo::sampling::ImportanceSamplingRunner;
 
-    let commands = CommandBuilder::new().pz(0).identity(0).mz(0).build();
+    let commands = CommandBuilder::new()
+        .pz(&[0])
+        .identity(&[0])
+        .mz(&[0])
+        .build();
 
     let p_error = 0.01; // 1% error rate (rarer)
     let boost = 50.0; // Aggressive boost
@@ -747,7 +751,11 @@ fn test_importance_sampling_rare_events() {
 fn test_importance_sampling_variance_reduction() {
     use pecos_neo::sampling::ImportanceSamplingRunner;
 
-    let commands = CommandBuilder::new().pz(0).identity(0).mz(0).build();
+    let commands = CommandBuilder::new()
+        .pz(&[0])
+        .identity(&[0])
+        .mz(&[0])
+        .build();
 
     let p_error = 0.01;
     let boost = 20.0;

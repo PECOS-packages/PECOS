@@ -2,8 +2,8 @@ mod helpers;
 
 mod advanced_gates {
     use crate::helpers::assert_states_equal;
-    use pecos_core::Angle64;
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+    use pecos_core::{Angle64, QubitId};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
 
     #[test]
@@ -61,8 +61,8 @@ mod advanced_gates {
         let theta = PI / 3.0;
 
         // Test RYY symmetry
-        q1.ryy(Angle64::from_radians(theta), &qid2(0, 1));
-        q2.ryy(Angle64::from_radians(theta), &qid2(1, 0));
+        q1.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+        q2.ryy(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
 
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
             assert!((a - b).norm() < 1e-10);
@@ -76,8 +76,8 @@ mod advanced_gates {
         q2.h(&qid(0));
         q2.h(&qid(1));
 
-        q1.rzz(Angle64::from_radians(theta), &qid2(0, 1));
-        q2.rzz(Angle64::from_radians(theta), &qid2(1, 0));
+        q1.rzz(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+        q2.rzz(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
 
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
             assert!((a - b).norm() < 1e-10);
@@ -140,9 +140,9 @@ mod advanced_gates {
 
 mod quantum_states {
     use crate::helpers::assert_states_equal;
-    use pecos_core::Angle64;
+    use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{
-        ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, qid, qid2,
+        ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, qid,
     };
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2};
 
@@ -152,7 +152,7 @@ mod quantum_states {
 
         // Prepare Bell State: (|00⟩ + |11⟩) / √2
         state_vec.h(&qid(0));
-        state_vec.cx(&qid2(0, 1));
+        state_vec.cx(&[(QubitId(0), QubitId(1))]);
 
         let expected_amplitude = 1.0 / 2.0_f64.sqrt();
 
@@ -166,7 +166,9 @@ mod quantum_states {
     fn test_ghz_state() {
         // Test creating and verifying a GHZ state
         let mut q = StateVec::new(3);
-        q.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2)); // Create GHZ state
+        q.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(2))]); // Create GHZ state
 
         // Verify properties
         let mut norm_squared = 0.0;
@@ -186,7 +188,7 @@ mod quantum_states {
         let mut q = StateVec::new(2);
 
         // Method 1: H + CNOT
-        q.h(&qid(0)).cx(&qid2(0, 1));
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         let probs1 = [
             q.probability(0),
             q.probability(1),
@@ -197,7 +199,7 @@ mod quantum_states {
         // Method 2: Rotations
         q.reset();
         q.ry(Angle64::from_radians(FRAC_PI_2), &qid(0))
-            .cx(&qid2(0, 1)); // Remove rz(PI) since it just adds phase
+            .cx(&[(QubitId(0), QubitId(1))]); // Remove rz(PI) since it just adds phase
 
         // Compare probability distributions
         assert!((q.probability(0) - probs1[0]).abs() < 1e-10);
@@ -258,7 +260,8 @@ mod quantum_states {
 
 mod gate_sequences {
     use crate::helpers::assert_states_equal;
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+    use pecos_core::QubitId;
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
 
     #[test]
     fn test_operation_chains() {
@@ -267,8 +270,8 @@ mod gate_sequences {
 
         // Create maximally entangled state then disentangle
         q.h(&qid(0))
-            .cx(&qid2(0, 1)) // Create Bell state
-            .cx(&qid2(0, 1))
+            .cx(&[(QubitId(0), QubitId(1))]) // Create Bell state
+            .cx(&[(QubitId(0), QubitId(1))])
             .h(&qid(0)); // Disentangle (apply the same operations in reverse)
 
         // Should be back to |00⟩
@@ -316,10 +319,12 @@ mod gate_sequences {
 
         // Test SWAP decomposition into CNOTs
         q1.x(&qid(0)); // Start with |10⟩
-        q1.swap(&qid2(0, 1)); // Direct SWAP
+        q1.swap(&[(QubitId(0), QubitId(1))]); // Direct SWAP
 
         q2.x(&qid(0)); // Also start with |10⟩
-        q2.cx(&qid2(0, 1)).cx(&qid2(1, 0)).cx(&qid2(0, 1)); // SWAP decomposition
+        q2.cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
+            .cx(&[(QubitId(0), QubitId(1))]); // SWAP decomposition
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -327,7 +332,7 @@ mod gate_sequences {
     #[test]
     fn test_bell_state_preparation() {
         let mut q = StateVec::new(2);
-        q.h(&qid(0)).cx(&qid2(0, 1));
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         assert!((q.probability(0) - 0.5).abs() < 1e-10);
         assert!((q.probability(3) - 0.5).abs() < 1e-10);
     }
@@ -335,15 +340,17 @@ mod gate_sequences {
     #[test]
     fn test_ghz_state_preparation() {
         let mut q = StateVec::new(3);
-        q.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+        q.h(&qid(0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(2))]);
         assert!((q.probability(0) - 0.5).abs() < 1e-10);
         assert!((q.probability(7) - 0.5).abs() < 1e-10);
     }
 }
 
 mod numerical_properties {
-    use pecos_core::Angle64;
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+    use pecos_core::{Angle64, QubitId};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6};
 
     #[test]
@@ -352,8 +359,8 @@ mod numerical_properties {
 
         // Apply multiple gates
         state_vec.h(&qid(0));
-        state_vec.cx(&qid2(0, 1));
-        state_vec.cx(&qid2(1, 2));
+        state_vec.cx(&[(QubitId(0), QubitId(1))]);
+        state_vec.cx(&[(QubitId(1), QubitId(2))]);
 
         // Verify normalization
         let norm: f64 = state_vec
@@ -373,7 +380,7 @@ mod numerical_properties {
             q.rx(Angle64::from_radians(FRAC_PI_3), &qid(0))
                 .ry(Angle64::from_radians(FRAC_PI_4), &qid(1))
                 .rz(Angle64::from_radians(FRAC_PI_6), &qid(2))
-                .cx(&qid2(0, 3));
+                .cx(&[(QubitId(0), QubitId(3))]);
         }
 
         // Check normalization is preserved
@@ -439,8 +446,8 @@ mod numerical_properties {
 }
 
 mod locality_tests {
-    use pecos_core::Angle64;
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+    use pecos_core::{Angle64, QubitId};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
     use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
     #[test]
@@ -478,7 +485,7 @@ mod locality_tests {
         }
 
         // Apply CX between qubits 2,3
-        q.cx(&qid2(2, 3));
+        q.cx(&[(QubitId(2), QubitId(3))]);
 
         println!("\nAfter CX on qubits 2,3:");
         for i in 0..16 {
@@ -513,7 +520,7 @@ mod locality_tests {
         q.h(&qid(0));
 
         // Apply CX on qubits 1 and 2 (no effect on qubit 0)
-        q.cx(&qid2(1, 2));
+        q.cx(&[(QubitId(1), QubitId(2))]);
 
         // Qubit 0 should remain in superposition
         let expected_amp = 1.0 / 2.0_f64.sqrt();
@@ -562,8 +569,8 @@ mod locality_tests {
         let mut q2 = StateVec::new(4);
 
         // Test operations on adjacent vs distant qubits
-        q1.h(&qid(0)).cx(&qid2(0, 1)); // Adjacent qubits
-        q2.h(&qid(0)).cx(&qid2(0, 3)); // Distant qubits
+        q1.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Adjacent qubits
+        q2.h(&qid(0)).cx(&[(QubitId(0), QubitId(3))]); // Distant qubits
 
         // Both should maintain proper normalization
         let norm1: f64 = q1.state().iter().map(num_complex::Complex::norm_sqr).sum();
@@ -644,8 +651,8 @@ mod edge_cases {
 }
 
 mod large_systems {
-    use pecos_core::Angle64;
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+    use pecos_core::{Angle64, QubitId};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
 
     #[test]
     fn test_state_normalization_after_random_gates() {
@@ -653,9 +660,9 @@ mod large_systems {
 
         // Apply a sequence of random gates
         state_vec.h(&qid(0));
-        state_vec.cx(&qid2(0, 1));
+        state_vec.cx(&[(QubitId(0), QubitId(1))]);
         state_vec.rz(Angle64::from_radians(std::f64::consts::PI / 3.0), &qid(2));
-        state_vec.swap(&qid2(1, 2));
+        state_vec.swap(&[(QubitId(1), QubitId(2))]);
 
         // Check if the state is still normalized
         let norm: f64 = state_vec
@@ -669,9 +676,9 @@ mod large_systems {
 
 mod detailed_sq_gate_cases {
     use crate::helpers::assert_states_equal;
-    use pecos_core::Angle64;
+    use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{
-        ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, qid, qid2,
+        ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, qid,
     };
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
 
@@ -1234,8 +1241,14 @@ mod detailed_sq_gate_cases {
             let mut decomposed = StateVec::new(3);
 
             // Create entangled state
-            direct.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
-            decomposed.h(&qid(0)).cx(&qid2(0, 1)).cx(&qid2(1, 2));
+            direct
+                .h(&qid(0))
+                .cx(&[(QubitId(0), QubitId(1))])
+                .cx(&[(QubitId(1), QubitId(2))]);
+            decomposed
+                .h(&qid(0))
+                .cx(&[(QubitId(0), QubitId(1))])
+                .cx(&[(QubitId(1), QubitId(2))]);
 
             direct.sx(&qid(target));
             decomposed.h(&qid(target)).sz(&qid(target)).h(&qid(target));
@@ -1296,8 +1309,8 @@ mod detailed_sq_gate_cases {
             let mut direct = StateVec::new(3);
             let mut decomposed = StateVec::new(3);
 
-            direct.h(&qid(0)).cx(&qid2(0, 1));
-            decomposed.h(&qid(0)).cx(&qid2(0, 1));
+            direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+            decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
             direct.sy(&qid(target));
             decomposed.h(&qid(target)).x(&qid(target));
@@ -1360,8 +1373,11 @@ mod detailed_sq_gate_cases {
             let mut direct = StateVec::new(3);
             let mut decomposed = StateVec::new(3);
 
-            direct.h(&qid(0)).cx(&qid2(0, 1)).h(&qid(2));
-            decomposed.h(&qid(0)).cx(&qid2(0, 1)).h(&qid(2));
+            direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).h(&qid(2));
+            decomposed
+                .h(&qid(0))
+                .cx(&[(QubitId(0), QubitId(1))])
+                .h(&qid(2));
 
             direct.szdg(&qid(target));
             decomposed.z(&qid(target)).sz(&qid(target));
@@ -1571,8 +1587,11 @@ mod detailed_sq_gate_cases {
             let mut direct = StateVec::new(3);
             let mut decomposed = StateVec::new(3);
 
-            direct.h(&qid(0)).cx(&qid2(0, 1)).h(&qid(2));
-            decomposed.h(&qid(0)).cx(&qid2(0, 1)).h(&qid(2));
+            direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]).h(&qid(2));
+            decomposed
+                .h(&qid(0))
+                .cx(&[(QubitId(0), QubitId(1))])
+                .h(&qid(2));
 
             direct.f(&qid(target));
             decomposed.sx(&qid(target)).sz(&qid(target));
@@ -1609,8 +1628,8 @@ mod detailed_sq_gate_cases {
             let mut direct = StateVec::new(3);
             let mut decomposed = StateVec::new(3);
 
-            direct.h(&qid(0)).cx(&qid2(0, 1));
-            decomposed.h(&qid(0)).cx(&qid2(0, 1));
+            direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+            decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
             direct.fdg(&qid(target));
             decomposed.szdg(&qid(target)).sxdg(&qid(target));
@@ -2151,8 +2170,8 @@ mod detailed_sq_gate_cases {
         // F on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.f(&qid(0));
         decomposed.sx(&qid(0)).sz(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2160,8 +2179,8 @@ mod detailed_sq_gate_cases {
         // FDG on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.fdg(&qid(0));
         decomposed.szdg(&qid(0)).sxdg(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2169,8 +2188,8 @@ mod detailed_sq_gate_cases {
         // F2 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.f2(&qid(0));
         decomposed.sxdg(&qid(0)).sy(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2178,8 +2197,8 @@ mod detailed_sq_gate_cases {
         // F3 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.f3(&qid(0));
         decomposed.sxdg(&qid(0)).sz(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2187,8 +2206,8 @@ mod detailed_sq_gate_cases {
         // F4 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.f4(&qid(0));
         decomposed.sz(&qid(0)).sx(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2200,8 +2219,8 @@ mod detailed_sq_gate_cases {
         // H2 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.h2(&qid(0));
         decomposed.sy(&qid(0)).z(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2209,8 +2228,8 @@ mod detailed_sq_gate_cases {
         // H3 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.h3(&qid(0));
         decomposed.sz(&qid(0)).y(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2218,8 +2237,8 @@ mod detailed_sq_gate_cases {
         // H4 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.h4(&qid(0));
         decomposed.sz(&qid(0)).x(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2227,8 +2246,8 @@ mod detailed_sq_gate_cases {
         // H5 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.h5(&qid(0));
         decomposed.sx(&qid(0)).z(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2236,8 +2255,8 @@ mod detailed_sq_gate_cases {
         // H6 on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         direct.h6(&qid(0));
         decomposed.sx(&qid(0)).y(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
@@ -2385,7 +2404,7 @@ mod detailed_tq_gate_cases {
     use crate::helpers::assert_states_equal;
     use num_complex::Complex64;
     use pecos_core::{Angle64, QubitId};
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid, qid2};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, PI};
 
     #[test]
@@ -2397,7 +2416,7 @@ mod detailed_tq_gate_cases {
         let target = 1;
 
         // Apply CX gate
-        state_cx.cx(&qid2(control, target));
+        state_cx.cx(&[(QubitId(control), QubitId(target))]);
 
         // Apply the decomposed gates
         state_decomposed.r1xy(
@@ -2405,7 +2424,10 @@ mod detailed_tq_gate_cases {
             Angle64::from_radians(FRAC_PI_2),
             &qid(target),
         );
-        state_decomposed.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(control, target));
+        state_decomposed.rzz(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(control), QubitId(target))],
+        );
         state_decomposed.rz(Angle64::from_radians(-FRAC_PI_2), &qid(control));
         state_decomposed.r1xy(
             Angle64::from_radians(FRAC_PI_2),
@@ -2427,7 +2449,10 @@ mod detailed_tq_gate_cases {
         let target = 1;
 
         // Apply RXX gate
-        state_rxx.rxx(Angle64::from_radians(FRAC_PI_4), &qid2(control, target));
+        state_rxx.rxx(
+            Angle64::from_radians(FRAC_PI_4),
+            &[(QubitId(control), QubitId(target))],
+        );
 
         // Apply the decomposed gates
         state_decomposed.r1xy(
@@ -2440,7 +2465,10 @@ mod detailed_tq_gate_cases {
             Angle64::from_radians(FRAC_PI_2),
             &qid(target),
         );
-        state_decomposed.rzz(Angle64::from_radians(FRAC_PI_4), &qid2(control, target));
+        state_decomposed.rzz(
+            Angle64::from_radians(FRAC_PI_4),
+            &[(QubitId(control), QubitId(target))],
+        );
         state_decomposed.r1xy(
             Angle64::from_radians(FRAC_PI_2),
             Angle64::from_radians(-FRAC_PI_2),
@@ -2499,22 +2527,22 @@ mod detailed_tq_gate_cases {
 
         // |00⟩ → should remain |00⟩
         state_vec.prepare_computational_basis(0);
-        state_vec.cx(&qid2(1, 0));
+        state_vec.cx(&[(QubitId(1), QubitId(0))]);
         assert!((state_vec.probability(0) - 1.0).abs() < 1e-10);
 
         // |01⟩ → should remain |01⟩
         state_vec.prepare_computational_basis(1);
-        state_vec.cx(&qid2(1, 0));
+        state_vec.cx(&[(QubitId(1), QubitId(0))]);
         assert!((state_vec.probability(1) - 1.0).abs() < 1e-10);
 
         // |10⟩ → should flip to |11⟩
         state_vec.prepare_computational_basis(2);
-        state_vec.cx(&qid2(1, 0));
+        state_vec.cx(&[(QubitId(1), QubitId(0))]);
         assert!((state_vec.probability(3) - 1.0).abs() < 1e-10);
 
         // |11⟩ → should flip to |10⟩
         state_vec.prepare_computational_basis(3);
-        state_vec.cx(&qid2(1, 0));
+        state_vec.cx(&[(QubitId(1), QubitId(0))]);
         assert!((state_vec.probability(2) - 1.0).abs() < 1e-10);
     }
 
@@ -2531,8 +2559,8 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(1));
 
         // Apply gates with different control/target
-        q1.cz(&qid2(0, 1));
-        q2.cz(&qid2(1, 0));
+        q1.cz(&[(QubitId(0), QubitId(1))]);
+        q2.cz(&[(QubitId(1), QubitId(0))]);
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -2550,8 +2578,14 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(1));
 
         // Apply RXX with different qubit orders
-        q1.rxx(Angle64::from_radians(FRAC_PI_3), &qid2(0, 1));
-        q2.rxx(Angle64::from_radians(FRAC_PI_3), &qid2(1, 0));
+        q1.rxx(
+            Angle64::from_radians(FRAC_PI_3),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.rxx(
+            Angle64::from_radians(FRAC_PI_3),
+            &[(QubitId(1), QubitId(0))],
+        );
 
         // Results should be identical
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
@@ -2569,8 +2603,8 @@ mod detailed_tq_gate_cases {
         q1.h(&qid(0)).x(&qid(1)); // Random state
         q2.h(&qid(0)).x(&qid(1)); // Same initial state
 
-        q1.ryy(Angle64::from_radians(theta), &qid2(0, 1));
-        q2.ryy(Angle64::from_radians(theta), &qid2(1, 0));
+        q1.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+        q2.ryy(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
 
         // States should be exactly equal
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
@@ -2590,7 +2624,7 @@ mod detailed_tq_gate_cases {
         q.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3)).h(&qid(4)); // Superposition state
 
         // Apply RYY on qubits 2 and 4
-        q.ryy(Angle64::from_radians(theta), &qid2(2, 4));
+        q.ryy(Angle64::from_radians(theta), &[(QubitId(2), QubitId(4))]);
 
         // Ensure state vector normalization is preserved
         let norm: f64 = q.state().iter().map(num_complex::Complex::norm_sqr).sum();
@@ -2605,7 +2639,7 @@ mod detailed_tq_gate_cases {
         let mut q = StateVec::new(2);
 
         // Apply RYY gate
-        q.ryy(Angle64::from_radians(PI), &qid2(0, 1));
+        q.ryy(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
 
         // Define the expected result for RYY(π)
         let expected = vec![
@@ -2623,7 +2657,7 @@ mod detailed_tq_gate_cases {
     fn test_ryy_global_phase() {
         let mut q = StateVec::new(2);
 
-        q.ryy(Angle64::from_radians(PI), &qid2(0, 1));
+        q.ryy(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
 
         // Define the expected result for RYY(π)
         let expected = vec![
@@ -2644,7 +2678,7 @@ mod detailed_tq_gate_cases {
 
         // Initialize |00⟩
         let initial = q.state().clone();
-        q.ryy(Angle64::from_radians(theta), &qid2(0, 1));
+        q.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
 
         // Expect state to remain close to the initial state
         for (a, b) in q.state().iter().zip(initial.iter()) {
@@ -2670,8 +2704,8 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(0)).h(&qid(1));
 
         // Apply RYY with random qubit order
-        q1.ryy(Angle64::from_radians(theta), &qid2(0, 1));
-        q2.ryy(Angle64::from_radians(theta), &qid2(1, 0));
+        q1.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+        q2.ryy(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
 
         // Compare states
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
@@ -2693,8 +2727,11 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(0));
 
         // Compare direct SZZ vs RZZ(π/2)
-        q1.szz(&qid2(0, 1));
-        q2.rzz(Angle64::from_radians(FRAC_PI_2), &qid2(0, 1));
+        q1.szz(&[(QubitId(0), QubitId(1))]);
+        q2.rzz(
+            Angle64::from_radians(FRAC_PI_2),
+            &[(QubitId(0), QubitId(1))],
+        );
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -2703,7 +2740,7 @@ mod detailed_tq_gate_cases {
         q3.h(&qid(0)); // Same initial state
         q3.h(&qid(0))
             .h(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1));
 
@@ -2720,8 +2757,12 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(0));
 
         // Compare CliffordGateable trait szz vs ArbitraryRotationGateable trait rzz(π/2)
-        CliffordGateable::szz(&mut q1, &qid2(0, 1));
-        ArbitraryRotationGateable::rzz(&mut q2, Angle64::from_radians(PI / 2.0), &qid2(0, 1));
+        CliffordGateable::szz(&mut q1, &[(QubitId(0), QubitId(1))]);
+        ArbitraryRotationGateable::rzz(
+            &mut q2,
+            Angle64::from_radians(PI / 2.0),
+            &[(QubitId(0), QubitId(1))],
+        );
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -2818,8 +2859,10 @@ mod detailed_tq_gate_cases {
         q1.x(&qid(0)); // |10⟩
         q2.x(&qid(0)); // |10⟩
 
-        q1.cx(&qid2(0, 1)).cx(&qid2(1, 0)).cx(&qid2(0, 1)); // SWAP via CNOTs
-        q2.swap(&qid2(0, 1)); // Direct SWAP
+        q1.cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
+            .cx(&[(QubitId(0), QubitId(1))]); // SWAP via CNOTs
+        q2.swap(&[(QubitId(0), QubitId(1))]); // Direct SWAP
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -2835,7 +2878,8 @@ mod detailed_tq_gate_cases {
 
         // Control operations should preserve phases correctly
         let initial = q.state().clone();
-        q.cz(&qid2(0, 1)).cz(&qid2(0, 1)); // CZ^2 = I
+        q.cz(&[(QubitId(0), QubitId(1))])
+            .cz(&[(QubitId(0), QubitId(1))]); // CZ^2 = I
 
         assert_states_equal(q.state(), &initial);
     }
@@ -2846,8 +2890,11 @@ mod detailed_tq_gate_cases {
         // Test on |00⟩
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.cy(&qid2(0, 1));
-        decomposed.szdg(&qid(1)).cx(&qid2(0, 1)).sz(&qid(1));
+        direct.cy(&[(QubitId(0), QubitId(1))]);
+        decomposed
+            .szdg(&qid(1))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .sz(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on |10⟩ (control=1)
@@ -2855,17 +2902,23 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0));
         decomposed.x(&qid(0));
-        direct.cy(&qid2(0, 1));
-        decomposed.szdg(&qid(1)).cx(&qid2(0, 1)).sz(&qid(1));
+        direct.cy(&[(QubitId(0), QubitId(1))]);
+        decomposed
+            .szdg(&qid(1))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .sz(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
-        direct.cy(&qid2(0, 1));
-        decomposed.szdg(&qid(1)).cx(&qid2(0, 1)).sz(&qid(1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        direct.cy(&[(QubitId(0), QubitId(1))]);
+        decomposed
+            .szdg(&qid(1))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .sz(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test with reversed qubit order (target, control)
@@ -2873,8 +2926,11 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(1)); // control=1
         decomposed.x(&qid(1));
-        direct.cy(&qid2(1, 0)); // CY with q1 as control, q0 as target
-        decomposed.szdg(&qid(0)).cx(&qid2(1, 0)).sz(&qid(0));
+        direct.cy(&[(QubitId(1), QubitId(0))]); // CY with q1 as control, q0 as target
+        decomposed
+            .szdg(&qid(0))
+            .cx(&[(QubitId(1), QubitId(0))])
+            .sz(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test in 3-qubit system
@@ -2882,8 +2938,11 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(3);
         direct.h(&qid(0)).h(&qid(1)).h(&qid(2));
         decomposed.h(&qid(0)).h(&qid(1)).h(&qid(2));
-        direct.cy(&qid2(0, 2)); // control=0, target=2
-        decomposed.szdg(&qid(2)).cx(&qid2(0, 2)).sz(&qid(2));
+        direct.cy(&[(QubitId(0), QubitId(2))]); // control=0, target=2
+        decomposed
+            .szdg(&qid(2))
+            .cx(&[(QubitId(0), QubitId(2))])
+            .sz(&qid(2));
         assert_states_equal(direct.state(), decomposed.state());
     }
 
@@ -2893,12 +2952,12 @@ mod detailed_tq_gate_cases {
         // Test on |00⟩
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.sxx(&qid2(0, 1));
+        direct.sxx(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sx(&qid(0))
             .sx(&qid(1))
             .sydg(&qid(0))
-            .cx(&qid2(0, 1))
+            .cx(&[(QubitId(0), QubitId(1))])
             .sy(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -2907,26 +2966,26 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0)).x(&qid(1));
         decomposed.x(&qid(0)).x(&qid(1));
-        direct.sxx(&qid2(0, 1));
+        direct.sxx(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sx(&qid(0))
             .sx(&qid(1))
             .sydg(&qid(0))
-            .cx(&qid2(0, 1))
+            .cx(&[(QubitId(0), QubitId(1))])
             .sy(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
-        direct.sxx(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        direct.sxx(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sx(&qid(0))
             .sx(&qid(1))
             .sydg(&qid(0))
-            .cx(&qid2(0, 1))
+            .cx(&[(QubitId(0), QubitId(1))])
             .sy(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -2935,12 +2994,12 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(3);
         direct.h(&qid(0)).h(&qid(1)).h(&qid(2));
         decomposed.h(&qid(0)).h(&qid(1)).h(&qid(2));
-        direct.sxx(&qid2(0, 2));
+        direct.sxx(&[(QubitId(0), QubitId(2))]);
         decomposed
             .sx(&qid(0))
             .sx(&qid(2))
             .sydg(&qid(0))
-            .cx(&qid2(0, 2))
+            .cx(&[(QubitId(0), QubitId(2))])
             .sy(&qid(0));
         assert_states_equal(direct.state(), decomposed.state());
     }
@@ -2952,21 +3011,24 @@ mod detailed_tq_gate_cases {
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.sxx(&qid2(0, 1)).sxxdg(&qid2(0, 1));
+        q.sxx(&[(QubitId(0), QubitId(1))])
+            .sxxdg(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test SXXDG * SXX = I
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.sxxdg(&qid2(0, 1)).sxx(&qid2(0, 1));
+        q.sxxdg(&[(QubitId(0), QubitId(1))])
+            .sxx(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test on Bell state
         let mut q = StateVec::new(2);
-        q.h(&qid(0)).cx(&qid2(0, 1));
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         let initial = q.state().clone();
-        q.sxx(&qid2(0, 1)).sxxdg(&qid2(0, 1));
+        q.sxx(&[(QubitId(0), QubitId(1))])
+            .sxxdg(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
     }
 
@@ -2976,7 +3038,8 @@ mod detailed_tq_gate_cases {
         // XX = X⊗X swaps |00⟩↔|11⟩ and |01⟩↔|10⟩
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
-        q.sxx(&qid2(0, 1)).sxx(&qid2(0, 1));
+        q.sxx(&[(QubitId(0), QubitId(1))])
+            .sxx(&[(QubitId(0), QubitId(1))]);
         // After SXX^2, compare with X⊗X applied to initial state
         let mut q_xx = StateVec::new(2);
         q_xx.h(&qid(0)).h(&qid(1));
@@ -2999,11 +3062,11 @@ mod detailed_tq_gate_cases {
         // Test on |00⟩
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.syy(&qid2(0, 1));
+        direct.syy(&[(QubitId(0), QubitId(1))]);
         decomposed
             .szdg(&qid(0))
             .szdg(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .sz(&qid(0))
             .sz(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3013,11 +3076,11 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0)).x(&qid(1));
         decomposed.x(&qid(0)).x(&qid(1));
-        direct.syy(&qid2(0, 1));
+        direct.syy(&[(QubitId(0), QubitId(1))]);
         decomposed
             .szdg(&qid(0))
             .szdg(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .sz(&qid(0))
             .sz(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3025,13 +3088,13 @@ mod detailed_tq_gate_cases {
         // Test on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
-        direct.syy(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        direct.syy(&[(QubitId(0), QubitId(1))]);
         decomposed
             .szdg(&qid(0))
             .szdg(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .sz(&qid(0))
             .sz(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3041,11 +3104,11 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(3);
         direct.h(&qid(0)).h(&qid(1)).h(&qid(2));
         decomposed.h(&qid(0)).h(&qid(1)).h(&qid(2));
-        direct.syy(&qid2(0, 2));
+        direct.syy(&[(QubitId(0), QubitId(2))]);
         decomposed
             .szdg(&qid(0))
             .szdg(&qid(2))
-            .sxx(&qid2(0, 2))
+            .sxx(&[(QubitId(0), QubitId(2))])
             .sz(&qid(0))
             .sz(&qid(2));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3058,21 +3121,24 @@ mod detailed_tq_gate_cases {
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.syy(&qid2(0, 1)).syydg(&qid2(0, 1));
+        q.syy(&[(QubitId(0), QubitId(1))])
+            .syydg(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test SYYDG * SYY = I
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.syydg(&qid2(0, 1)).syy(&qid2(0, 1));
+        q.syydg(&[(QubitId(0), QubitId(1))])
+            .syy(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test on Bell state
         let mut q = StateVec::new(2);
-        q.h(&qid(0)).cx(&qid2(0, 1));
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         let initial = q.state().clone();
-        q.syy(&qid2(0, 1)).syydg(&qid2(0, 1));
+        q.syy(&[(QubitId(0), QubitId(1))])
+            .syydg(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
     }
 
@@ -3081,7 +3147,8 @@ mod detailed_tq_gate_cases {
         // SYY^2 = YY (the Pauli YY gate, up to global phase)
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
-        q.syy(&qid2(0, 1)).syy(&qid2(0, 1));
+        q.syy(&[(QubitId(0), QubitId(1))])
+            .syy(&[(QubitId(0), QubitId(1))]);
         // After SYY^2, compare with Y⊗Y applied to initial state
         let mut q_yy = StateVec::new(2);
         q_yy.h(&qid(0)).h(&qid(1));
@@ -3103,11 +3170,11 @@ mod detailed_tq_gate_cases {
         // Test on |00⟩
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.szz(&qid2(0, 1));
+        direct.szz(&[(QubitId(0), QubitId(1))]);
         decomposed
             .h(&qid(0))
             .h(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3117,11 +3184,11 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0)).x(&qid(1));
         decomposed.x(&qid(0)).x(&qid(1));
-        direct.szz(&qid2(0, 1));
+        direct.szz(&[(QubitId(0), QubitId(1))]);
         decomposed
             .h(&qid(0))
             .h(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3129,13 +3196,13 @@ mod detailed_tq_gate_cases {
         // Test on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
-        direct.szz(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        direct.szz(&[(QubitId(0), QubitId(1))]);
         decomposed
             .h(&qid(0))
             .h(&qid(1))
-            .sxx(&qid2(0, 1))
+            .sxx(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3145,11 +3212,11 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(3);
         direct.h(&qid(0)).h(&qid(1)).h(&qid(2));
         decomposed.h(&qid(0)).h(&qid(1)).h(&qid(2));
-        direct.szz(&qid2(0, 2));
+        direct.szz(&[(QubitId(0), QubitId(2))]);
         decomposed
             .h(&qid(0))
             .h(&qid(2))
-            .sxx(&qid2(0, 2))
+            .sxx(&[(QubitId(0), QubitId(2))])
             .h(&qid(0))
             .h(&qid(2));
         assert_states_equal(direct.state(), decomposed.state());
@@ -3162,21 +3229,24 @@ mod detailed_tq_gate_cases {
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.szz(&qid2(0, 1)).szzdg(&qid2(0, 1));
+        q.szz(&[(QubitId(0), QubitId(1))])
+            .szzdg(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test SZZDG * SZZ = I
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.szzdg(&qid2(0, 1)).szz(&qid2(0, 1));
+        q.szzdg(&[(QubitId(0), QubitId(1))])
+            .szz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test on Bell state
         let mut q = StateVec::new(2);
-        q.h(&qid(0)).cx(&qid2(0, 1));
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         let initial = q.state().clone();
-        q.szz(&qid2(0, 1)).szzdg(&qid2(0, 1));
+        q.szz(&[(QubitId(0), QubitId(1))])
+            .szzdg(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
     }
 
@@ -3185,7 +3255,8 @@ mod detailed_tq_gate_cases {
         // SZZ^2 = ZZ (the Pauli ZZ gate, up to global phase)
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
-        q.szz(&qid2(0, 1)).szz(&qid2(0, 1));
+        q.szz(&[(QubitId(0), QubitId(1))])
+            .szz(&[(QubitId(0), QubitId(1))]);
         // After SZZ^2, compare with Z⊗Z applied to initial state
         let mut q_zz = StateVec::new(2);
         q_zz.h(&qid(0)).h(&qid(1));
@@ -3206,13 +3277,13 @@ mod detailed_tq_gate_cases {
         // Test on |00⟩ (should stay |00⟩)
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.iswap(&qid2(0, 1));
+        direct.iswap(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sz(&qid(0))
             .sz(&qid(1))
             .h(&qid(0))
-            .cx(&qid2(0, 1))
-            .cx(&qid2(1, 0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -3221,13 +3292,13 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(1));
         decomposed.x(&qid(1));
-        direct.iswap(&qid2(0, 1));
+        direct.iswap(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sz(&qid(0))
             .sz(&qid(1))
             .h(&qid(0))
-            .cx(&qid2(0, 1))
-            .cx(&qid2(1, 0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -3236,13 +3307,13 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0));
         decomposed.x(&qid(0));
-        direct.iswap(&qid2(0, 1));
+        direct.iswap(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sz(&qid(0))
             .sz(&qid(1))
             .h(&qid(0))
-            .cx(&qid2(0, 1))
-            .cx(&qid2(1, 0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -3251,28 +3322,28 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0)).x(&qid(1));
         decomposed.x(&qid(0)).x(&qid(1));
-        direct.iswap(&qid2(0, 1));
+        direct.iswap(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sz(&qid(0))
             .sz(&qid(1))
             .h(&qid(0))
-            .cx(&qid2(0, 1))
-            .cx(&qid2(1, 0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
-        direct.iswap(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        direct.iswap(&[(QubitId(0), QubitId(1))]);
         decomposed
             .sz(&qid(0))
             .sz(&qid(1))
             .h(&qid(0))
-            .cx(&qid2(0, 1))
-            .cx(&qid2(1, 0))
+            .cx(&[(QubitId(0), QubitId(1))])
+            .cx(&[(QubitId(1), QubitId(0))])
             .h(&qid(1));
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -3281,13 +3352,13 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(3);
         direct.h(&qid(0)).h(&qid(1)).h(&qid(2));
         decomposed.h(&qid(0)).h(&qid(1)).h(&qid(2));
-        direct.iswap(&qid2(0, 2));
+        direct.iswap(&[(QubitId(0), QubitId(2))]);
         decomposed
             .sz(&qid(0))
             .sz(&qid(2))
             .h(&qid(0))
-            .cx(&qid2(0, 2))
-            .cx(&qid2(2, 0))
+            .cx(&[(QubitId(0), QubitId(2))])
+            .cx(&[(QubitId(2), QubitId(0))])
             .h(&qid(2));
         assert_states_equal(direct.state(), decomposed.state());
     }
@@ -3298,7 +3369,8 @@ mod detailed_tq_gate_cases {
         // Two iSWAPs should swap with phase -1
         let mut q = StateVec::new(2);
         q.x(&qid(1)); // Start with |01⟩
-        q.iswap(&qid2(0, 1)).iswap(&qid2(0, 1));
+        q.iswap(&[(QubitId(0), QubitId(1))])
+            .iswap(&[(QubitId(0), QubitId(1))]);
         // After two iSWAPs on |01⟩: i*i*|01⟩ = -|01⟩
         // Check amplitude is at |01⟩ with phase -1
         let state = q.state();
@@ -3314,12 +3386,12 @@ mod detailed_tq_gate_cases {
         // Test on |00⟩
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.g(&qid2(0, 1));
+        direct.g(&[(QubitId(0), QubitId(1))]);
         decomposed
-            .cz(&qid2(0, 1))
+            .cz(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1))
-            .cz(&qid2(0, 1));
+            .cz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on |01⟩
@@ -3327,12 +3399,12 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(1));
         decomposed.x(&qid(1));
-        direct.g(&qid2(0, 1));
+        direct.g(&[(QubitId(0), QubitId(1))]);
         decomposed
-            .cz(&qid2(0, 1))
+            .cz(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1))
-            .cz(&qid2(0, 1));
+            .cz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on |10⟩
@@ -3340,12 +3412,12 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0));
         decomposed.x(&qid(0));
-        direct.g(&qid2(0, 1));
+        direct.g(&[(QubitId(0), QubitId(1))]);
         decomposed
-            .cz(&qid2(0, 1))
+            .cz(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1))
-            .cz(&qid2(0, 1));
+            .cz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on |11⟩
@@ -3353,25 +3425,25 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(2);
         direct.x(&qid(0)).x(&qid(1));
         decomposed.x(&qid(0)).x(&qid(1));
-        direct.g(&qid2(0, 1));
+        direct.g(&[(QubitId(0), QubitId(1))]);
         decomposed
-            .cz(&qid2(0, 1))
+            .cz(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1))
-            .cz(&qid2(0, 1));
+            .cz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test on Bell state
         let mut direct = StateVec::new(2);
         let mut decomposed = StateVec::new(2);
-        direct.h(&qid(0)).cx(&qid2(0, 1));
-        decomposed.h(&qid(0)).cx(&qid2(0, 1));
-        direct.g(&qid2(0, 1));
+        direct.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        decomposed.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        direct.g(&[(QubitId(0), QubitId(1))]);
         decomposed
-            .cz(&qid2(0, 1))
+            .cz(&[(QubitId(0), QubitId(1))])
             .h(&qid(0))
             .h(&qid(1))
-            .cz(&qid2(0, 1));
+            .cz(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(direct.state(), decomposed.state());
 
         // Test in 3-qubit system
@@ -3379,12 +3451,12 @@ mod detailed_tq_gate_cases {
         let mut decomposed = StateVec::new(3);
         direct.h(&qid(0)).h(&qid(1)).h(&qid(2));
         decomposed.h(&qid(0)).h(&qid(1)).h(&qid(2));
-        direct.g(&qid2(0, 2));
+        direct.g(&[(QubitId(0), QubitId(2))]);
         decomposed
-            .cz(&qid2(0, 2))
+            .cz(&[(QubitId(0), QubitId(2))])
             .h(&qid(0))
             .h(&qid(2))
-            .cz(&qid2(0, 2));
+            .cz(&[(QubitId(0), QubitId(2))]);
         assert_states_equal(direct.state(), decomposed.state());
     }
 
@@ -3394,14 +3466,16 @@ mod detailed_tq_gate_cases {
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         let initial = q.state().clone();
-        q.g(&qid2(0, 1)).g(&qid2(0, 1));
+        q.g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
 
         // Test on Bell state
         let mut q = StateVec::new(2);
-        q.h(&qid(0)).cx(&qid2(0, 1));
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         let initial = q.state().clone();
-        q.g(&qid2(0, 1)).g(&qid2(0, 1));
+        q.g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(0), QubitId(1))]);
         assert_states_equal(q.state(), &initial);
     }
 
@@ -3419,10 +3493,12 @@ mod detailed_tq_gate_cases {
         sequential.h(&qid(0)).h(&qid(2));
 
         // Batch: apply CY to both pairs at once
-        batch.cy(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
+        batch.cy(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
 
         // Sequential: apply CY to each pair separately
-        sequential.cy(&qid2(0, 1)).cy(&qid2(2, 3));
+        sequential
+            .cy(&[(QubitId(0), QubitId(1))])
+            .cy(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3436,8 +3512,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.sxx(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.sxx(&qid2(0, 1)).sxx(&qid2(2, 3));
+        batch.sxx(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .sxx(&[(QubitId(0), QubitId(1))])
+            .sxx(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3450,8 +3528,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.sxxdg(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.sxxdg(&qid2(0, 1)).sxxdg(&qid2(2, 3));
+        batch.sxxdg(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .sxxdg(&[(QubitId(0), QubitId(1))])
+            .sxxdg(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3464,8 +3544,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.syy(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.syy(&qid2(0, 1)).syy(&qid2(2, 3));
+        batch.syy(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .syy(&[(QubitId(0), QubitId(1))])
+            .syy(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3478,8 +3560,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.syydg(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.syydg(&qid2(0, 1)).syydg(&qid2(2, 3));
+        batch.syydg(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .syydg(&[(QubitId(0), QubitId(1))])
+            .syydg(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3492,8 +3576,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.szz(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.szz(&qid2(0, 1)).szz(&qid2(2, 3));
+        batch.szz(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .szz(&[(QubitId(0), QubitId(1))])
+            .szz(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3506,8 +3592,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.szzdg(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.szzdg(&qid2(0, 1)).szzdg(&qid2(2, 3));
+        batch.szzdg(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .szzdg(&[(QubitId(0), QubitId(1))])
+            .szzdg(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3520,8 +3608,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.iswap(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.iswap(&qid2(0, 1)).iswap(&qid2(2, 3));
+        batch.iswap(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswap(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3534,8 +3624,10 @@ mod detailed_tq_gate_cases {
         batch.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
-        batch.g(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sequential.g(&qid2(0, 1)).g(&qid2(2, 3));
+        batch.g(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        sequential
+            .g(&[(QubitId(0), QubitId(1))])
+            .g(&[(QubitId(2), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3550,8 +3642,10 @@ mod detailed_tq_gate_cases {
         sequential.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3));
 
         // SXX on non-adjacent pairs
-        batch.sxx(&[QubitId(0), QubitId(2), QubitId(1), QubitId(3)]);
-        sequential.sxx(&qid2(0, 2)).sxx(&qid2(1, 3));
+        batch.sxx(&[(QubitId(0), QubitId(2)), (QubitId(1), QubitId(3))]);
+        sequential
+            .sxx(&[(QubitId(0), QubitId(2))])
+            .sxx(&[(QubitId(1), QubitId(3))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3569,8 +3663,10 @@ mod detailed_tq_gate_cases {
         }
 
         // Apply SYY to pairs (0,3) and (2,5) - large spacing
-        batch.syy(&[QubitId(0), QubitId(3), QubitId(2), QubitId(5)]);
-        sequential.syy(&qid2(0, 3)).syy(&qid2(2, 5));
+        batch.syy(&[(QubitId(0), QubitId(3)), (QubitId(2), QubitId(5))]);
+        sequential
+            .syy(&[(QubitId(0), QubitId(3))])
+            .syy(&[(QubitId(2), QubitId(5))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
@@ -3588,24 +3684,22 @@ mod detailed_tq_gate_cases {
 
         // Apply iSWAP to 3 pairs
         batch.iswap(&[
-            QubitId(0),
-            QubitId(1),
-            QubitId(2),
-            QubitId(3),
-            QubitId(4),
-            QubitId(5),
+            (QubitId(0), QubitId(1)),
+            (QubitId(2), QubitId(3)),
+            (QubitId(4), QubitId(5)),
         ]);
         sequential
-            .iswap(&qid2(0, 1))
-            .iswap(&qid2(2, 3))
-            .iswap(&qid2(4, 5));
+            .iswap(&[(QubitId(0), QubitId(1))])
+            .iswap(&[(QubitId(2), QubitId(3))])
+            .iswap(&[(QubitId(4), QubitId(5))]);
 
         assert_states_equal(batch.state(), sequential.state());
     }
 }
 
 mod detail_meas_cases {
-    use pecos_simulators::{CliffordGateable, QuantumSimulator, StateVec, qid, qid2};
+    use pecos_core::QubitId;
+    use pecos_simulators::{CliffordGateable, QuantumSimulator, StateVec, qid};
 
     #[test]
     fn test_measurement_on_entangled_state() {
@@ -3613,7 +3707,7 @@ mod detail_meas_cases {
 
         // Create Bell state (|00⟩ + |11⟩) / sqrt(2)
         q.h(&qid(0));
-        q.cx(&qid2(0, 1));
+        q.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure the first qubit
         let result1 = q.mz(&qid(0)).into_iter().next().unwrap();
@@ -3642,7 +3736,7 @@ mod detail_meas_cases {
 
         // Test 3: In a Bell state, measurements should correlate
         q.reset();
-        q.h(&qid(0)).cx(&qid2(0, 1)); // Create Bell state
+        q.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Create Bell state
         let result1 = q.mz(&qid(0)).into_iter().next().unwrap();
         let result2 = q.mz(&qid(1)).into_iter().next().unwrap();
         assert_eq!(

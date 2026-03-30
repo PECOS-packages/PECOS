@@ -67,7 +67,7 @@ class TestQasmSimStructuredConfig:
             Qasm,
             biased_depolarizing_noise,
             qasm_engine,
-            sparse_stabilizer,
+            sparse_stab,
         )
 
         qasm = """
@@ -88,7 +88,7 @@ class TestQasmSimStructuredConfig:
             .seed(42)
             .workers(2)
             .noise(biased_depolarizing_noise().with_uniform_probability(0.003))
-            .quantum(sparse_stabilizer())
+            .quantum(sparse_stab())
             .build()
         )
         results = sim.run(100)
@@ -177,7 +177,7 @@ class TestQasmSimStructuredConfig:
             Qasm,
             depolarizing_noise,
             qasm_engine,
-            sparse_stabilizer,
+            sparse_stab,
         )
 
         qasm = """
@@ -198,7 +198,7 @@ class TestQasmSimStructuredConfig:
             .seed(42)
             .workers(4)
             .noise(depolarizing_noise().with_uniform_probability(0.01))
-            .quantum(sparse_stabilizer())
+            .quantum(sparse_stab())
             .build()
         )
         results = sim.run(100)

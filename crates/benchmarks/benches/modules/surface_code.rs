@@ -138,7 +138,7 @@ fn run_circuit_vecset(
 ) {
     // Initialize data qubits in |+> state (typical for X-error detection)
     for i in 0..params.num_data {
-        sim.h(i);
+        sim.h(&[i]);
     }
 
     // Perform syndrome extraction rounds
@@ -157,12 +157,12 @@ fn run_circuit_vecset(
             if a < params.num_ancillas / 2 {
                 // X-type: CNOT with ancilla as control
                 for &data in &neighbors {
-                    sim.cx(ancilla, data);
+                    sim.cx(&[(ancilla, data)]);
                 }
             } else {
                 // Z-type: CNOT with ancilla as target
                 for &data in &neighbors {
-                    sim.cx(data, ancilla);
+                    sim.cx(&[(data, ancilla)]);
                 }
             }
         }
@@ -170,7 +170,7 @@ fn run_circuit_vecset(
         // Measure all ancillas
         for a in 0..params.num_ancillas {
             let ancilla = params.ancilla_start + a;
-            sim.mz(ancilla);
+            sim.mz(&[ancilla]);
         }
     }
 }
@@ -270,11 +270,11 @@ fn run_circuit_sparse_stab<R: Rng + SeedableRng + std::fmt::Debug>(
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId::from(data)]);
+                    sim.cx(&[(ancilla, QubitId::from(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId::from(data), ancilla]);
+                    sim.cx(&[(QubitId::from(data), ancilla)]);
                 }
             }
         }
@@ -290,7 +290,7 @@ fn run_circuit_sparse_stab<R: Rng + SeedableRng + std::fmt::Debug>(
 fn run_circuit_only(sim: &mut SymbolicSparseStab, params: &SurfaceCodeParams, rounds: usize) {
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
-        sim.h(i);
+        sim.h(&[i]);
     }
 
     // Perform syndrome extraction rounds
@@ -301,18 +301,18 @@ fn run_circuit_only(sim: &mut SymbolicSparseStab, params: &SurfaceCodeParams, ro
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(ancilla, data);
+                    sim.cx(&[(ancilla, data)]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(data, ancilla);
+                    sim.cx(&[(data, ancilla)]);
                 }
             }
         }
 
         for a in 0..params.num_ancillas {
             let ancilla = params.ancilla_start + a;
-            sim.mz(ancilla);
+            sim.mz(&[ancilla]);
         }
     }
 }
@@ -461,11 +461,11 @@ fn run_circuit_sparse_stab_vecset<R: Rng + SeedableRng + std::fmt::Debug>(
 
             if a < params.num_ancillas / 2 {
                 for &data in &neighbors {
-                    sim.cx(&[ancilla, QubitId::from(data)]);
+                    sim.cx(&[(ancilla, QubitId::from(data))]);
                 }
             } else {
                 for &data in &neighbors {
-                    sim.cx(&[QubitId::from(data), ancilla]);
+                    sim.cx(&[(QubitId::from(data), ancilla)]);
                 }
             }
         }
@@ -555,7 +555,7 @@ fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> Byte
 
     // Initialize data qubits in |+> state
     for i in 0..params.num_data {
-        builder.add_h(&[i]);
+        builder.h(&[i]);
     }
 
     // Perform syndrome extraction rounds
@@ -568,12 +568,12 @@ fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> Byte
             if a < params.num_ancillas / 2 {
                 // X-type: CNOT with ancilla as control
                 for &data in &neighbors {
-                    builder.add_cx(&[ancilla], &[data]);
+                    builder.cx(&[(ancilla, data)]);
                 }
             } else {
                 // Z-type: CNOT with ancilla as target
                 for &data in &neighbors {
-                    builder.add_cx(&[data], &[ancilla]);
+                    builder.cx(&[(data, ancilla)]);
                 }
             }
         }
@@ -581,7 +581,7 @@ fn build_surface_code_circuit(params: &SurfaceCodeParams, rounds: usize) -> Byte
         // Measure all ancillas
         for a in 0..params.num_ancillas {
             let ancilla = params.ancilla_start + a;
-            builder.add_measurements(&[ancilla]);
+            builder.mz(&[ancilla]);
         }
     }
 

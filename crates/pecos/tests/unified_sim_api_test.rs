@@ -14,7 +14,7 @@ mod tests {
         // The fact that this compiles proves the API is consistent
         let _ = || {
             use pecos::qis_engine;
-            use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stabilizer, state_vector};
+            use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stab, state_vector};
             use pecos_programs::{Qasm, Qis};
             use pecos_qasm::qasm_engine;
 
@@ -39,7 +39,7 @@ mod tests {
                 .auto_workers()
                 .noise(DepolarizingNoise { p: 0.01 })
                 .qubits(1)
-                .quantum(sparse_stabilizer())
+                .quantum(sparse_stab())
                 .run(1000);
         };
     }
@@ -87,7 +87,7 @@ mod tests {
         let _ = || {
             use pecos::qis_engine;
             use pecos::sim;
-            use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stabilizer, state_vector};
+            use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stab, state_vector};
             use pecos_programs::{Qasm, Qis};
             use pecos_qasm::qasm_engine;
 
@@ -101,7 +101,7 @@ mod tests {
             // Pattern 2: Convenience sim() from pecos with auto-selection
             let _results2 = sim(Qasm::from_string("OPENQASM 2.0; qreg q[1];"))
                 .seed(42)
-                .quantum(sparse_stabilizer())
+                .quantum(sparse_stab())
                 .run(100);
 
             // Pattern 3: Override auto-selection with explicit .classical()

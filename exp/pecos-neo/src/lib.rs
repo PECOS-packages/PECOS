@@ -75,12 +75,12 @@
 //!
 //! // Build a Bell state circuit
 //! let commands = CommandBuilder::new()
-//!     .pz(0)
-//!     .pz(1)
-//!     .h(0)
-//!     .cx(0, 1)
-//!     .mz(0)
-//!     .mz(1)
+//!     .pz(&[0])
+//!     .pz(&[1])
+//!     .h(&[0])
+//!     .cx(&[(0, 1)])
+//!     .mz(&[0])
+//!     .mz(&[1])
 //!     .build();
 //!
 //! // Run without noise
@@ -101,9 +101,9 @@
 //! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new()
-//!     .pz(0)
-//!     .h(0)
-//!     .mz(0)
+//!     .pz(&[0])
+//!     .h(&[0])
+//!     .mz(&[0])
 //!     .build();
 //!
 //! // Add depolarizing noise
@@ -129,9 +129,9 @@
 //! use pecos_simulators::StateVec;
 //!
 //! let commands = CommandBuilder::new()
-//!     .pz(0)
-//!     .rx(0, Angle64::HALF_TURN)  // RX(pi) flips |0> to |1>
-//!     .mz(0)
+//!     .pz(&[0])
+//!     .rx(&[0], Angle64::HALF_TURN)  // RX(pi) flips |0> to |1>
+//!     .mz(&[0])
 //!     .build();
 //!
 //! let mut state = StateVec::new(1);
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_prelude_usage() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
@@ -341,12 +341,12 @@ mod tests {
     #[test]
     fn test_bell_state_with_noise() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let noise = ComposableNoiseModel::new()
@@ -368,12 +368,12 @@ mod tests {
     #[test]
     fn test_plugin_based_noise_model() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let noise = ComposableNoiseModel::new()
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_multiple_shots() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);

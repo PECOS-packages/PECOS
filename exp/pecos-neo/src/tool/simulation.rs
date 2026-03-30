@@ -32,7 +32,7 @@
 //! use pecos_neo::prelude::*;
 //!
 //! let circuit = CommandBuilder::new()
-//!     .pz(0).h(0).mz(0)
+//!     .pz(&[0]).h(&[0]).mz(&[0])
 //!     .build();
 //!
 //! let results = sim_neo(circuit)
@@ -102,7 +102,7 @@
 //! use pecos_neo::tool::sim_neo;
 //! use pecos_neo::prelude::*;
 //!
-//! let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //! let mut sim = sim_neo(circuit)
 //!     .shots(1000)
 //!     .build();
@@ -224,7 +224,7 @@ impl From<StateVecBuilder> for QuantumBackend {
 /// use pecos_neo::tool::{sim_neo, sparse_stab};
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit)
 ///     .quantum(sparse_stab())
 ///     .shots(1000)
@@ -247,7 +247,7 @@ pub fn sparse_stab() -> SparseStabBuilder {
 /// use pecos_neo::tool::{sim_neo, state_vector};
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit)
 ///     .quantum(state_vector())
 ///     .shots(1000)
@@ -346,7 +346,7 @@ impl From<CustomBackendBuilder> for QuantumBackend {
 /// use pecos_neo::prelude::*;
 /// use pecos_simulators::SparseStab;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 ///
 /// // Use a custom simulator backend
 /// let results = sim_neo(circuit)
@@ -380,7 +380,7 @@ where
 /// use pecos_neo::prelude::*;
 /// use pecos_simulators::StateVec;
 ///
-/// let circuit = CommandBuilder::new().pz(0).t(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).t(&[0]).mz(&[0]).build();
 ///
 /// let results = sim_neo(circuit)
 ///     .quantum(custom_backend_with_rotations(|n| StateVec::new(n)))
@@ -652,7 +652,7 @@ impl Default for SimConfig {
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit)
 ///     .orchestrator(importance_sampling()
 ///         .with_p1(0.001)
@@ -783,7 +783,7 @@ impl From<ImportanceSamplingBuilder> for Orchestrator {
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit)
 ///     .orchestrator(importance_sampling()
 ///         .with_p1(0.001)
@@ -964,7 +964,7 @@ impl SimulationResults {
     /// use pecos_neo::prelude::*;
     ///
     /// let circuit = CommandBuilder::new()
-    ///     .pz(0).pz(1).h(0).mz(0).mz(1)
+    ///     .pz(&[0]).pz(&[1]).h(&[0]).mz(&[0]).mz(&[1])
     ///     .build();
     ///
     /// let mut reg = RegisterMap::new();
@@ -1012,7 +1012,7 @@ impl SimulationResults {
     /// use pecos_neo::prelude::*;
     ///
     /// let circuit = CommandBuilder::new()
-    ///     .pz(0).h(0).mz(0)
+    ///     .pz(&[0]).h(&[0]).mz(&[0])
     ///     .build();
     ///
     /// let mut reg = RegisterMap::new();
@@ -1249,7 +1249,7 @@ struct CurrentOutcomes(MeasurementOutcomes);
 /// use pecos_neo::tool::sim_neo;
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit)
 ///     .depolarizing(0.01)
 ///     .shots(1000)
@@ -1671,7 +1671,7 @@ impl SimNeoBuilder {
     /// use pecos_neo::tool::{sim_neo, Orchestrator};
     /// use pecos_neo::prelude::*;
     ///
-    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     ///
     /// // Parallel Monte Carlo with 4 workers
     /// let results = sim_neo(circuit.clone())
@@ -1734,7 +1734,7 @@ impl SimNeoBuilder {
     /// use pecos_neo::tool::{sim_neo, sparse_stab, state_vector};
     /// use pecos_neo::prelude::*;
     ///
-    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     ///
     /// // Use sparse stabilizer (default, Clifford-only)
     /// let results = sim_neo(circuit.clone())
@@ -1770,7 +1770,7 @@ impl SimNeoBuilder {
     /// use pecos_neo::prelude::*;
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
     ///
-    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     ///
     /// // Using GeneralNoiseModelBuilder (no .build() needed)
     /// sim_neo(circuit.clone())
@@ -1802,7 +1802,7 @@ impl SimNeoBuilder {
     ///
     /// let defs = GateDefinitions::new(); // core gates included by default
     ///
-    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     /// let results = sim_neo(circuit)
     ///     .gate_definitions(defs)
     ///     .shots(100)
@@ -1828,7 +1828,7 @@ impl SimNeoBuilder {
     /// use pecos_neo::tool::sim_neo;
     /// use pecos_neo::prelude::*;
     ///
-    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     /// let results = sim_neo(circuit)
     ///     .max_decomp_depth(20)
     ///     .shots(100)
@@ -1869,7 +1869,7 @@ impl SimNeoBuilder {
     ///         true
     ///     });
     ///
-    /// let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
     /// let results = sim_neo(circuit)
     ///     .gate_overrides(overrides)
     ///     .shots(100)
@@ -1904,7 +1904,7 @@ impl SimNeoBuilder {
     ///         NoiseResponse::None
     ///     });
     ///
-    /// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     /// let results = sim_neo(circuit)
     ///     .event_handlers(handlers)
     ///     .shots(100)
@@ -2566,7 +2566,7 @@ fn is_sim_post_shot(resources: &mut Resources) {
 /// use pecos_neo::tool::sim_neo;
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let mut sim = sim_neo(circuit).shots(1000).build();
 ///
 /// let results1 = sim.run();
@@ -2798,7 +2798,7 @@ impl Simulation {
 /// use pecos_neo::prelude::*;
 ///
 /// let circuit = CommandBuilder::new()
-///     .pz(0).h(0).mz(0)
+///     .pz(&[0]).h(&[0]).mz(&[0])
 ///     .build();
 ///
 /// let results = sim_neo(circuit)
@@ -2841,7 +2841,7 @@ impl Simulation {
 /// use pecos_neo::tool::sim_neo;
 /// use pecos_neo::prelude::*;
 ///
-/// let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let mut sim = sim_neo(circuit)
 ///     .shots(1000)
 ///     .build();
@@ -2917,9 +2917,9 @@ mod tests {
     #[test]
     fn test_sim_neo_basic() {
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0) // Flip to |1>
-            .mz(0)
+            .pz(&[0])
+            .x(&[0]) // Flip to |1>
+            .mz(&[0])
             .build();
 
         let mut sim = sim_neo(circuit).shots(10).seed(42).build();
@@ -2939,7 +2939,7 @@ mod tests {
 
     #[test]
     fn test_sim_neo_rerun() {
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let mut sim = sim_neo(circuit).shots(5).build();
 
@@ -2955,9 +2955,9 @@ mod tests {
     #[test]
     fn test_sim_neo_deterministic() {
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Superposition - outcome depends on RNG
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Superposition - outcome depends on RNG
+            .mz(&[0])
             .build();
 
         // Same seed should produce same results
@@ -2981,9 +2981,9 @@ mod tests {
         // Z|0> = |0>, so without noise we'd always measure 0
         // But with depolarizing noise on the Z gate, we'll see errors
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .z(0) // Single-qubit gate to trigger noise
-            .mz(0)
+            .pz(&[0])
+            .z(&[0]) // Single-qubit gate to trigger noise
+            .mz(&[0])
             .build();
 
         // Very high error rate - this will definitely flip some outcomes
@@ -3018,9 +3018,9 @@ mod tests {
     fn test_sim_neo_noise_deterministic() {
         // Verify noise is deterministic with same seed
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .z(0) // Single-qubit gate to trigger noise
-            .mz(0)
+            .pz(&[0])
+            .z(&[0]) // Single-qubit gate to trigger noise
+            .mz(&[0])
             .build();
 
         let noise1 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
@@ -3052,7 +3052,7 @@ mod tests {
     #[test]
     fn test_sim_neo_ergonomic_noise() {
         // Test the ergonomic .noise(channel) syntax (without explicit ComposableNoiseModel)
-        let circuit = CommandBuilder::new().pz(0).z(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).z(&[0]).mz(&[0]).build();
 
         // This uses the From<C: NoiseChannel> impl for ComposableNoiseModel
         let results = sim_neo(circuit)
@@ -3079,7 +3079,7 @@ mod tests {
         // Test that GeneralNoiseModelBuilder can be passed directly without .build()
         use crate::noise::GeneralNoiseModelBuilder;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         // Pass builder directly - no .build() needed!
         let results = sim_neo(circuit)
@@ -3108,12 +3108,12 @@ mod tests {
     fn test_sim_neo_convenience_depolarizing() {
         // Test the .depolarizing(p) convenience method
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .x(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .x(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let results = sim_neo(circuit)
@@ -3145,7 +3145,7 @@ mod tests {
         // Test measurement noise via GeneralNoiseModelBuilder
         use crate::noise::GeneralNoiseModelBuilder;
 
-        let circuit = CommandBuilder::new().pz(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .noise(GeneralNoiseModelBuilder::new().with_p_meas_symmetric(0.15))
@@ -3175,7 +3175,7 @@ mod tests {
         // Test prep noise via GeneralNoiseModelBuilder
         use crate::noise::GeneralNoiseModelBuilder;
 
-        let circuit = CommandBuilder::new().pz(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .noise(GeneralNoiseModelBuilder::new().with_p_prep(0.20))
@@ -3294,9 +3294,9 @@ mod tests {
     fn test_sim_neo_monte_carlo_orchestrator() {
         // Test Monte Carlo orchestration with multiple workers
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0) // Flip to |1>
-            .mz(0)
+            .pz(&[0])
+            .x(&[0]) // Flip to |1>
+            .mz(&[0])
             .build();
 
         // Use .workers() convenience method for Monte Carlo
@@ -3317,9 +3317,9 @@ mod tests {
     fn test_sim_neo_monte_carlo_deterministic() {
         // Test that Monte Carlo with same seed produces same results
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Superposition
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Superposition
+            .mz(&[0])
             .build();
 
         let results1 = sim_neo(circuit.clone()).workers(4).shots(50).seed(42).run();
@@ -3341,7 +3341,7 @@ mod tests {
         // Test explicit orchestrator configuration
         use super::Orchestrator;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         // Use explicit Orchestrator enum
         let results = sim_neo(circuit)
@@ -3365,9 +3365,9 @@ mod tests {
         // Critical test: 1 worker and multiple workers should produce identical
         // results with the same seed (they use the same per-shot seeding scheme)
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Superposition - outcome depends on RNG
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Superposition - outcome depends on RNG
+            .mz(&[0])
             .build();
 
         // Run with default (1 worker)
@@ -3400,10 +3400,10 @@ mod tests {
         // Critical test: parallel noisy execution should produce identical results
         // to single-worker noisy execution with the same seed.
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0)
-            .z(0) // Trigger single-qubit noise
-            .mz(0)
+            .pz(&[0])
+            .h(&[0])
+            .z(&[0]) // Trigger single-qubit noise
+            .mz(&[0])
             .build();
 
         let noise_single =
@@ -3449,7 +3449,12 @@ mod tests {
     fn test_sim_neo_noisy_parallel_deterministic() {
         // Two parallel noisy runs with the same seed should produce identical results.
 
-        let circuit = CommandBuilder::new().pz(0).h(0).z(0).mz(0).build();
+        let circuit = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .z(&[0])
+            .mz(&[0])
+            .build();
 
         let noise1 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
         let noise2 = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.3));
@@ -3487,7 +3492,7 @@ mod tests {
         // Test explicitly selecting sparse stabilizer backend
         use super::sparse_stab;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .quantum(sparse_stab())
@@ -3510,7 +3515,7 @@ mod tests {
         // Test state vector backend
         use super::state_vector;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .quantum(state_vector())
@@ -3533,7 +3538,7 @@ mod tests {
         // Test that each backend is internally deterministic (same seed = same results)
         use super::{sparse_stab, state_vector};
 
-        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         // Test sparse_stab determinism
         let sparse1 = sim_neo(circuit.clone())
@@ -3583,7 +3588,7 @@ mod tests {
         // Test state vector with parallel Monte Carlo
         use super::state_vector;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .quantum(state_vector())
@@ -3612,9 +3617,9 @@ mod tests {
         use super::importance_sampling;
 
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Single-qubit gate triggers importance sampling
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Single-qubit gate triggers importance sampling
+            .mz(&[0])
             .build();
 
         let results = sim_neo(circuit)
@@ -3644,7 +3649,7 @@ mod tests {
         // Test the convenience method for uniform error rates
         use super::importance_sampling;
 
-        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .orchestrator(
@@ -3667,9 +3672,9 @@ mod tests {
         use super::importance_sampling;
 
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Creates |+> = (|0> + |1>)/sqrt(2)
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Creates |+> = (|0> + |1>)/sqrt(2)
+            .mz(&[0])
             .build();
 
         // Run with importance sampling (boosting noise that doesn't affect this test)
@@ -3706,7 +3711,7 @@ mod tests {
         // Same seed should produce same results
         use super::importance_sampling;
 
-        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let is_builder = importance_sampling()
             .with_uniform_error(0.01)
@@ -3755,12 +3760,12 @@ mod tests {
         use super::importance_sampling;
 
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1) // Two-qubit gate
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)]) // Two-qubit gate
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let results = sim_neo(circuit)
@@ -3784,7 +3789,7 @@ mod tests {
         // Test the weighted_stats helper method
         use super::importance_sampling;
 
-        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .orchestrator(
@@ -3823,9 +3828,9 @@ mod tests {
     fn test_custom_backend_basic() {
         // Use SparseStab via custom_backend and verify correct results
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0) // Flip to |1>
-            .mz(0)
+            .pz(&[0])
+            .x(&[0]) // Flip to |1>
+            .mz(&[0])
             .build();
 
         let results = sim_neo(circuit)
@@ -3850,9 +3855,9 @@ mod tests {
         // Custom backend with SparseStab should produce identical results
         // to the built-in SparseStab backend with the same seed
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Superposition - outcome depends on RNG
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Superposition - outcome depends on RNG
+            .mz(&[0])
             .build();
 
         let builtin_results = sim_neo(circuit.clone())
@@ -3888,9 +3893,9 @@ mod tests {
     #[test]
     fn test_custom_backend_with_noise() {
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .z(0) // Single-qubit gate triggers noise
-            .mz(0)
+            .pz(&[0])
+            .z(&[0]) // Single-qubit gate triggers noise
+            .mz(&[0])
             .build();
 
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
@@ -3920,7 +3925,7 @@ mod tests {
 
     #[test]
     fn test_custom_backend_deterministic() {
-        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results1 = sim_neo(circuit.clone())
             .quantum(custom_backend(SparseStab::new))
@@ -3946,7 +3951,7 @@ mod tests {
     #[test]
     fn test_custom_backend_state_vector() {
         // Verify StateVec also works via custom_backend
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .quantum(custom_backend(StateVec::new))
@@ -3971,7 +3976,7 @@ mod tests {
     #[test]
     fn test_register_counts() {
         // H gate should produce roughly 50/50 split
-        let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut reg = RegisterMap::new();
         reg.add_register("c", &[QubitId(0)]);
@@ -3993,12 +3998,12 @@ mod tests {
     #[test]
     fn test_register_counts_bell_state() {
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut reg = RegisterMap::new();
@@ -4019,11 +4024,11 @@ mod tests {
     #[test]
     fn test_as_register_columns() {
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .x(0) // qubit 0 -> |1>
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .x(&[0]) // qubit 0 -> |1>
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut reg = RegisterMap::new();
@@ -4048,7 +4053,7 @@ mod tests {
 
     #[test]
     fn test_register_counts_missing_register() {
-        let circuit = CommandBuilder::new().pz(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let mut reg = RegisterMap::new();
         reg.add_register("missing", &[QubitId(5)]); // never measured
@@ -4067,9 +4072,9 @@ mod tests {
         use crate::extensible::GateDefinitions;
 
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0) // Flip to |1>
-            .mz(0)
+            .pz(&[0])
+            .x(&[0]) // Flip to |1>
+            .mz(&[0])
             .build();
 
         let defs = GateDefinitions::new();
@@ -4096,7 +4101,7 @@ mod tests {
     fn test_sim_neo_gate_definitions_with_statevec() {
         use crate::extensible::GateDefinitions;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let defs = GateDefinitions::new();
 
@@ -4123,9 +4128,9 @@ mod tests {
         // T gate is non-Clifford -- needs rotation support.
         // Verify T gate runs without error on StateVec.
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .t(0) // Non-Clifford gate
-            .mz(0)
+            .pz(&[0])
+            .t(&[0]) // Non-Clifford gate
+            .mz(&[0])
             .build();
 
         // This would fail with ProgramRunner::new() (Clifford-only)
@@ -4155,9 +4160,9 @@ mod tests {
         // RZ(pi) on |+> should flip phase, so H then RZ(pi) then H = X (up to global phase)
         // Instead, simpler test: RZ on |0> leaves |0>
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .rz(0, Angle64::from_radians(PI / 4.0)) // arbitrary rotation
-            .mz(0)
+            .pz(&[0])
+            .rz(&[0], Angle64::from_radians(PI / 4.0)) // arbitrary rotation
+            .mz(&[0])
             .build();
 
         let results = sim_neo(circuit)
@@ -4182,9 +4187,9 @@ mod tests {
     fn test_sim_neo_statevec_parallel() {
         // Verify StateVec rotation support works with parallel workers too
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .t(0) // Non-Clifford
-            .mz(0)
+            .pz(&[0])
+            .t(&[0]) // Non-Clifford
+            .mz(&[0])
             .build();
 
         let results = sim_neo(circuit)
@@ -4208,7 +4213,7 @@ mod tests {
     #[test]
     fn test_sim_neo_max_decomp_depth() {
         // Verify that max_decomp_depth builder method works without error
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .max_decomp_depth(20)
@@ -4230,7 +4235,7 @@ mod tests {
     #[test]
     fn test_sim_neo_max_decomp_depth_parallel() {
         // Verify max_decomp_depth works with parallel workers
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .max_decomp_depth(20)
@@ -4253,9 +4258,9 @@ mod tests {
     #[test]
     fn test_sim_neo_custom_backend_with_rotations() {
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .t(0) // Non-Clifford
-            .mz(0)
+            .pz(&[0])
+            .t(&[0]) // Non-Clifford
+            .mz(&[0])
             .build();
 
         let results = sim_neo(circuit)
@@ -4285,9 +4290,9 @@ mod tests {
             GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
         let circuit = CommandBuilder::new()
-            .pz(0)
-            .x(0) // Would flip to |1>, but override makes it a no-op
-            .mz(0)
+            .pz(&[0])
+            .x(&[0]) // Would flip to |1>, but override makes it a no-op
+            .mz(&[0])
             .build();
 
         let results = sim_neo(circuit)
@@ -4317,7 +4322,7 @@ mod tests {
         let overrides =
             GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .gate_overrides(overrides)
@@ -4346,7 +4351,7 @@ mod tests {
         let overrides =
             GateOverrides::<StateVec>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .quantum(state_vector())
@@ -4376,7 +4381,7 @@ mod tests {
             GateOverrides::<StateVec>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
         // SparseStab is the default backend -- StateVec overrides should panic
-        sim_neo(CommandBuilder::new().pz(0).x(0).mz(0).build())
+        sim_neo(CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build())
             .gate_overrides(overrides)
             .shots(1)
             .seed(42)
@@ -4393,7 +4398,7 @@ mod tests {
         let overrides =
             GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
 
-        sim_neo(CommandBuilder::new().pz(0).x(0).mz(0).build())
+        sim_neo(CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build())
             .quantum(state_vector())
             .gate_overrides(overrides)
             .shots(1)
@@ -4416,7 +4421,7 @@ mod tests {
                 true
             });
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
             .gate_overrides(overrides)
@@ -4438,7 +4443,7 @@ mod tests {
     fn test_sim_neo_gate_definitions_parallel() {
         use crate::extensible::GateDefinitions;
 
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let defs = GateDefinitions::new();
 

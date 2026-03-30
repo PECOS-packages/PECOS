@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 def CX(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies the controlled-X gate.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -139,7 +139,7 @@ def CZ(state: PauliProp, qubits: tuple[int, int]) -> None:
     YZ -> YI
     YY -> XX
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -170,7 +170,7 @@ def CY(state: PauliProp, qubits: tuple[int, int]) -> None:
     YZ -> YI
     YY -> XX
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -184,7 +184,7 @@ def CY(state: PauliProp, qubits: tuple[int, int]) -> None:
 def SWAP(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies a SWAP gate.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -200,7 +200,7 @@ def SWAP(state: PauliProp, qubits: tuple[int, int]) -> None:
 def G2(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies a CZ.H(1).H(2).CZ.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -219,7 +219,7 @@ def II(
 ) -> None:
     """Two qubit identity.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -234,7 +234,7 @@ def SXX(
 ) -> None:
     """Applies a square root of XX rotation to generators.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -255,7 +255,7 @@ def SXXdg(
 ) -> None:
     """Applies a square root of XX rotation to generators.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
 
     Returns: None
@@ -320,7 +320,7 @@ def SZZ(
 ) -> None:
     """Applies a square root of ZZ rotation to generators.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
     """
     qubit1, qubit2 = qubits
@@ -338,7 +338,7 @@ def SZZdg(
 ) -> None:
     """Applies an adjoint of square root of ZZ rotation to generators.
 
-    state (SparseSim): Instance representing the stabilizer state.
+    state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
     """
     qubit1, qubit2 = qubits

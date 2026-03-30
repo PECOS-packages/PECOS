@@ -37,7 +37,7 @@
 //! use pecos_neo::prelude::*;
 //! use pecos_simulators::SparseStab;
 //!
-//! let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+//! let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //!
 //! // True error rate: 0.001, boost by 10x for proposal
 //! let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
@@ -651,22 +651,34 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
             // Two-qubit gates
             GateType::CX => {
-                self.simulator.cx(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.cx(&pairs);
             }
             GateType::CY => {
-                self.simulator.cy(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.cy(&pairs);
             }
             GateType::CZ => {
-                self.simulator.cz(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.cz(&pairs);
             }
             GateType::SZZ => {
-                self.simulator.szz(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.szz(&pairs);
             }
             GateType::SZZdg => {
-                self.simulator.szzdg(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.szzdg(&pairs);
             }
             GateType::SWAP => {
-                self.simulator.swap(&qubits);
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.swap(&pairs);
             }
 
             _ => return false,
@@ -728,7 +740,7 @@ where
     /// use pecos_neo::prelude::*;
     /// use pecos_simulators::SparseStab;
     ///
-    /// let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    /// let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     /// let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
     ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
     ///     .with_seed(42);
@@ -851,7 +863,7 @@ mod tests {
 
     #[test]
     fn test_importance_runner_basic() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
 
@@ -864,9 +876,9 @@ mod tests {
     #[test]
     fn test_importance_runner_with_boost() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Single-qubit gate will trigger importance sampling
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Single-qubit gate will trigger importance sampling
+            .mz(&[0])
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
@@ -884,7 +896,7 @@ mod tests {
         // This test verifies that importance sampling produces
         // unbiased estimates of the true error rate
 
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let true_rate = 0.001;
         let boost = 100.0; // Very aggressive boost
@@ -915,11 +927,11 @@ mod tests {
     #[test]
     fn test_two_qubit_importance_sampling() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .cx(0, 1) // Two-qubit gate
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .cx(&[(0, 1)]) // Two-qubit gate
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(2))
@@ -932,7 +944,7 @@ mod tests {
 
     #[test]
     fn test_measurement_importance_sampling() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
             .with_measurement_boost(0.001, 100.0)
@@ -1004,9 +1016,9 @@ mod tests {
         // Key test: biased sampling with reweighting should produce
         // the same expected value as unbiased sampling
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0) // Creates 50/50 superposition
-            .mz(0)
+            .pz(&[0])
+            .h(&[0]) // Creates 50/50 superposition
+            .mz(&[0])
             .build();
 
         let num_shots = 5000;
@@ -1065,7 +1077,7 @@ mod tests {
     fn test_biased_measurement_explores_branches() {
         // Test that biasing actually causes more of the biased outcome to occur
         // (before reweighting)
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let num_shots = 1000;
 
@@ -1096,8 +1108,8 @@ mod tests {
         // Deterministic measurements should not be affected by outcome biasing
         // Prep |0> then measure should always give 0
         let commands = CommandBuilder::new()
-            .pz(0)
-            .mz(0) // No H, so deterministic
+            .pz(&[0])
+            .mz(&[0]) // No H, so deterministic
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))

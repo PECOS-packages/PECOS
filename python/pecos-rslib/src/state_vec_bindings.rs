@@ -373,7 +373,7 @@ impl PyStateVec {
 
         let q1: usize = location.get_item(0)?.extract()?;
         let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[QubitId(q1), QubitId(q2)];
+        let pair = &[(QubitId(q1), QubitId(q2))];
 
         match symbol {
             "CX" | "CNOT" => {

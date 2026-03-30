@@ -9,7 +9,7 @@ Engine classes (from pecos_rslib.engines):
 
 Builder classes (from pecos_rslib.engines):
     - StateVectorEngineBuilder: Builder for state vector engines
-    - SparseStabilizerEngineBuilder: Builder for sparse stabilizer engines
+    - SparseStabEngineBuilder: Builder for sparse stabilizer engines
     - QasmEngineBuilder: Builder for QASM engines (Rust version)
     - QisEngineBuilder: Builder for QIS engines (Rust version)
     - PhirJsonEngineBuilder: Builder for PHIR JSON engines (Rust version)
@@ -63,7 +63,7 @@ from pecos_rslib.engines import (
     QasmEngineBuilder,
     QisEngineBuilder,
     SparseStabEngine,
-    SparseStabilizerEngineBuilder,
+    SparseStabEngineBuilder,
     StateVecEngine,
     StateVectorEngineBuilder,
     phir_engine,
@@ -92,7 +92,7 @@ __all__ = [
     "QisInterfaceBuilder",
     "SimBuilder",
     "SparseStabEngine",
-    "SparseStabilizerEngineBuilder",
+    "SparseStabEngineBuilder",
     "StateVecEngine",
     "StateVectorEngineBuilder",
     "compile_hugr_to_qis",

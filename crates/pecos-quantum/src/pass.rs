@@ -1300,7 +1300,7 @@ mod tests {
     #[test]
     fn dag_simplify_rz_quarter_to_sz() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::QUARTER_TURN, 0);
+        dag.rz(Angle64::QUARTER_TURN, &[0]);
         let nodes = dag.nodes();
         SimplifyRotations.apply_dag(&mut dag);
         let gate = dag.gate(nodes[0]).unwrap();
@@ -1311,7 +1311,7 @@ mod tests {
     #[test]
     fn dag_simplify_rz_half_to_z() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::HALF_TURN, 0);
+        dag.rz(Angle64::HALF_TURN, &[0]);
         let nodes = dag.nodes();
         SimplifyRotations.apply_dag(&mut dag);
         let gate = dag.gate(nodes[0]).unwrap();
@@ -1322,7 +1322,7 @@ mod tests {
     #[test]
     fn dag_simplify_rzz_quarter_to_szz() {
         let mut dag = DagCircuit::new();
-        dag.rzz(Angle64::QUARTER_TURN, 0, 1);
+        dag.rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
         let nodes = dag.nodes();
         SimplifyRotations.apply_dag(&mut dag);
         let gate = dag.gate(nodes[0]).unwrap();
@@ -1333,7 +1333,7 @@ mod tests {
     #[test]
     fn dag_simplify_rzz_half_to_zz() {
         let mut dag = DagCircuit::new();
-        dag.rzz(Angle64::HALF_TURN, 0, 1);
+        dag.rzz(Angle64::HALF_TURN, &[(0, 1)]);
         SimplifyRotations.apply_dag(&mut dag);
         // The old node is removed, two new Z gates are added.
         let nodes = dag.nodes();
@@ -1349,7 +1349,7 @@ mod tests {
     #[test]
     fn dag_non_special_angle_unchanged() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::from_turn_ratio(1, 6), 0);
+        dag.rz(Angle64::from_turn_ratio(1, 6), &[0]);
         let nodes = dag.nodes();
         SimplifyRotations.apply_dag(&mut dag);
         let gate = dag.gate(nodes[0]).unwrap();
@@ -1930,7 +1930,7 @@ mod tests {
     #[test]
     fn dag_remove_identity_rz_zero() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::ZERO, 0);
+        dag.rz(Angle64::ZERO, &[0]);
         RemoveIdentity.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 0);
     }
@@ -1938,7 +1938,7 @@ mod tests {
     #[test]
     fn dag_remove_identity_preserves_h() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
+        dag.h(&[0]);
         RemoveIdentity.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 1);
     }
@@ -1946,9 +1946,9 @@ mod tests {
     #[test]
     fn dag_remove_identity_rewires() {
         let mut dag = DagCircuit::new();
-        dag.h(0);
+        dag.h(&[0]);
         dag.add_gate(Gate::i(&[0]));
-        dag.z(0);
+        dag.z(&[0]);
         let nodes_before = dag.nodes();
         assert_eq!(nodes_before.len(), 3);
         RemoveIdentity.apply_dag(&mut dag);
@@ -2063,7 +2063,7 @@ mod tests {
     #[test]
     fn dag_cancel_h_h() {
         let mut dag = DagCircuit::new();
-        dag.h(0).h(0);
+        dag.h(&[0]).h(&[0]);
         CancelInverses.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 0);
     }
@@ -2071,7 +2071,7 @@ mod tests {
     #[test]
     fn dag_cancel_cx_cx() {
         let mut dag = DagCircuit::new();
-        dag.cx(0, 1).cx(0, 1);
+        dag.cx(&[(0, 1)]).cx(&[(0, 1)]);
         CancelInverses.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 0);
     }
@@ -2080,7 +2080,7 @@ mod tests {
     fn dag_cancel_rz_neg() {
         let angle = Angle64::QUARTER_TURN;
         let mut dag = DagCircuit::new();
-        dag.rz(angle, 0).rz(-angle, 0);
+        dag.rz(angle, &[0]).rz(-angle, &[0]);
         CancelInverses.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 0);
     }
@@ -2088,7 +2088,7 @@ mod tests {
     #[test]
     fn dag_no_cancel_with_intervening_gate() {
         let mut dag = DagCircuit::new();
-        dag.h(0).x(0).h(0);
+        dag.h(&[0]).x(&[0]).h(&[0]);
         CancelInverses.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 3);
     }
@@ -2184,8 +2184,8 @@ mod tests {
     #[test]
     fn dag_merge_rz_rz() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::QUARTER_TURN, 0)
-            .rz(Angle64::QUARTER_TURN, 0);
+        dag.rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::QUARTER_TURN, &[0]);
         MergeAdjacentRotations.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 1);
         let node = dag.nodes()[0];
@@ -2197,9 +2197,9 @@ mod tests {
     #[test]
     fn dag_merge_chain_of_three() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::QUARTER_TURN, 0)
-            .rz(Angle64::QUARTER_TURN, 0)
-            .rz(Angle64::QUARTER_TURN, 0);
+        dag.rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::QUARTER_TURN, &[0]);
         MergeAdjacentRotations.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 1);
         let node = dag.nodes()[0];
@@ -2210,9 +2210,9 @@ mod tests {
     #[test]
     fn dag_no_merge_with_intervening_gate() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::QUARTER_TURN, 0)
-            .h(0)
-            .rz(Angle64::QUARTER_TURN, 0);
+        dag.rz(Angle64::QUARTER_TURN, &[0])
+            .h(&[0])
+            .rz(Angle64::QUARTER_TURN, &[0]);
         MergeAdjacentRotations.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 3);
     }
@@ -2591,7 +2591,7 @@ mod tests {
     #[test]
     fn peephole_dag_h_cx_h_to_cz() {
         let mut dag = DagCircuit::new();
-        dag.h(1).cx(0, 1).h(1);
+        dag.h(&[1]).cx(&[(0, 1)]).h(&[1]);
         PeepholeOptimize.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 1);
         let node = dag.nodes()[0];
@@ -2602,7 +2602,7 @@ mod tests {
     #[test]
     fn peephole_dag_h_cz_h_to_cx() {
         let mut dag = DagCircuit::new();
-        dag.h(0).cz(0, 1).h(0);
+        dag.h(&[0]).cz(&[(0, 1)]).h(&[0]);
         PeepholeOptimize.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 1);
         let node = dag.nodes()[0];
@@ -2616,7 +2616,7 @@ mod tests {
     fn peephole_dag_no_match() {
         // H on CX control qubit does not trigger
         let mut dag = DagCircuit::new();
-        dag.h(0).cx(0, 1).h(0);
+        dag.h(&[0]).cx(&[(0, 1)]).h(&[0]);
         PeepholeOptimize.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 3); // unchanged
     }
@@ -2778,9 +2778,9 @@ mod tests {
     #[test]
     fn dag_absorb_z_after_prep() {
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.z(0);
-        dag.h(0); // non-Z-diagonal anchor
+        dag.pz(&[0]);
+        dag.z(&[0]);
+        dag.h(&[0]); // non-Z-diagonal anchor
         AbsorbBasisGates.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 2); // PZ + H remain
         let topo = dag.topological_order();
@@ -2791,9 +2791,9 @@ mod tests {
     #[test]
     fn dag_absorb_before_measure() {
         let mut dag = DagCircuit::new();
-        dag.h(0); // non-Z-diagonal anchor
-        dag.sz(0);
-        dag.mz(0);
+        dag.h(&[0]); // non-Z-diagonal anchor
+        dag.sz(&[0]);
+        dag.mz(&[0]);
         AbsorbBasisGates.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 2); // H + MZ remain
         let topo = dag.topological_order();
@@ -2857,11 +2857,11 @@ mod tests {
     #[test]
     fn dag_absorb_cz_after_two_preps() {
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.pz(1);
-        dag.cz(0, 1);
-        dag.h(0); // anchor
-        dag.h(1); // anchor
+        dag.pz(&[0]);
+        dag.pz(&[1]);
+        dag.cz(&[(0, 1)]);
+        dag.h(&[0]); // anchor
+        dag.h(&[1]); // anchor
         AbsorbBasisGates.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 4); // 2 PZ + 2 H, CZ removed
     }
@@ -2869,11 +2869,11 @@ mod tests {
     #[test]
     fn dag_absorb_cz_before_two_measures() {
         let mut dag = DagCircuit::new();
-        dag.h(0); // anchor
-        dag.h(1); // anchor
-        dag.cz(0, 1);
-        dag.mz(0);
-        dag.mz(1);
+        dag.h(&[0]); // anchor
+        dag.h(&[1]); // anchor
+        dag.cz(&[(0, 1)]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
         AbsorbBasisGates.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 4); // 2 H + 2 MZ, CZ removed
     }
@@ -2932,11 +2932,11 @@ mod tests {
     #[test]
     fn pipeline_full_dag() {
         let mut dag = DagCircuit::new();
-        dag.pz(0);
-        dag.z(0); // absorbed after prep
-        dag.h(0);
-        dag.h(0); // cancel with previous H
-        dag.mz(0);
+        dag.pz(&[0]);
+        dag.z(&[0]); // absorbed after prep
+        dag.h(&[0]);
+        dag.h(&[0]); // cancel with previous H
+        dag.mz(&[0]);
         let pipeline = PassPipeline::new()
             .then(AbsorbBasisGates)
             .then(CancelInverses);

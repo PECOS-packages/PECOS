@@ -16,7 +16,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, discard, h, measure, qubit
-from pecos_selene_stab import StabPlugin
+from pecos_selene_stabilizer import StabPlugin
 from selene_sim.build import build
 
 
@@ -130,9 +130,9 @@ class TestStabPlugin:
 
         # The path should be a Path object pointing to the expected location
         assert lib_path.name.startswith(
-            "libpecos_selene_stab",
+            "libpecos_selene_stabilizer",
         ) or lib_path.name.startswith(
-            "pecos_selene_stab",
+            "pecos_selene_stabilizer",
         )
 
     def test_init_args(self) -> None:

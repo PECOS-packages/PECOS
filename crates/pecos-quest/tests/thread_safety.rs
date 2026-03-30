@@ -2,7 +2,7 @@
 //! These tests verify that multiple `QuestStateVec` instances can work in parallel
 //! without interfering with each other, which is essential for Monte Carlo simulations.
 
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use pecos_random::PecosRng;
@@ -55,7 +55,7 @@ fn test_parallel_independent_instances() {
                         // Result: (|000> + |011>)/sqrt(2) in |q2 q1 q0> notation
                         // In PECOS (qubit 0 = LSB): states 0b000 = 0 and 0b011 = 3
                         state.reset();
-                        state.h(&qid(0)).cx(&qid2(0, 1));
+                        state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
                         let prob_000 = state.probability(0b000);
                         let prob_011 = state.probability(0b011);
                         assert_relative_eq!(prob_000, 0.5, epsilon = 1e-10);
@@ -103,13 +103,13 @@ fn test_parallel_bell_state_measurements() {
                     QuestStateVec::with_seed(2, thread_id as u64 * 1000);
 
                 // Create Bell state
-                state.h(&qid(0)).cx(&qid2(0, 1));
+                state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
                 // Perform many measurements to verify correlation
                 let mut correlations = Vec::new();
                 for _measurement in 0..20 {
                     // Reset to Bell state for each measurement
-                    state.reset().h(&qid(0)).cx(&qid2(0, 1));
+                    state.reset().h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
                     let outcome0 = state.mz(&qid(0))[0].outcome;
                     let outcome1 = state.mz(&qid(1))[0].outcome;
@@ -206,7 +206,7 @@ fn test_parallel_cloning_and_states() {
             thread::spawn(move || {
                 // Create template state
                 let mut template: QuestStateVec<PecosRng> = QuestStateVec::with_seed(2, 12345); // Same seed
-                template.h(&qid(0)).cx(&qid2(0, 1)); // Bell state
+                template.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]); // Bell state
 
                 // Verify template probabilities
                 let template_00 = template.probability(0b00);

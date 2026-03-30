@@ -1,6 +1,6 @@
 //! Example: Creating and measuring a Bell state using `QuEST` with PECOS-style API
 
-use pecos_core::{qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_quest::{CliffordGateable, QuantumSimulator, QuestStateVec};
 
 fn main() {
@@ -37,7 +37,7 @@ fn main() {
     state.h(&qid(0)); // Apply Hadamard to qubit 0
     println!("Applied Hadamard to qubit 0");
 
-    state.cx(&qid2(0, 1)); // Apply CNOT with control=0, target=1
+    state.cx(&[(QubitId(0), QubitId(1))]); // Apply CNOT with control=0, target=1
     println!("Applied CNOT(0, 1)");
     println!();
 
@@ -65,7 +65,7 @@ fn main() {
     for measurement_round in 1..=5 {
         // Reset and recreate Bell state for each measurement
         let mut measurement_state: QuestStateVec = QuestStateVec::with_seed(2, measurement_round);
-        measurement_state.h(&qid(0)).cx(&qid2(0, 1));
+        measurement_state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
         let result0 = measurement_state.mz(&qid(0))[0].outcome;
         let result1 = measurement_state.mz(&qid(1))[0].outcome;
@@ -109,7 +109,11 @@ fn main() {
 
     // Demonstrate method chaining
     println!("Demonstrating method chaining:");
-    state.reset().h(&qid(0)).cx(&qid2(0, 1)).z(&qid(1));
+    state
+        .reset()
+        .h(&qid(0))
+        .cx(&[(QubitId(0), QubitId(1))])
+        .z(&qid(1));
     println!("Applied: reset().h(&qid(0)).cx(0,1).z(&qid(1))");
     display_state_probabilities(&state);
 }

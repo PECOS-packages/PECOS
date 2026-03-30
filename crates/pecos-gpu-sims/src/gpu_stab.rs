@@ -2142,14 +2142,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Queue measurements without syncing - results accumulate on GPU.
     ///
     /// This is the deferred measurement API. Measurements are dispatched to GPU
-    /// but results are not read back until `flush_deferred_mz()` is called.
+    /// but results are not read back until `mz_fetch()` is called.
     ///
     /// Non-deterministic measurements are handled correctly with full tableau updates.
     /// Note: Measurements are processed sequentially to ensure correctness when
     /// non-deterministic measurements affect subsequent ones.
     ///
     /// Returns the number of measurements queued (for tracking purposes).
-    pub fn queue_mz(&mut self, qubits: &[QubitId]) -> usize {
+    pub fn mz_queue(&mut self, qubits: &[QubitId]) -> usize {
         if qubits.is_empty() {
             return 0;
         }
@@ -2187,9 +2187,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Flush all deferred measurements and return results.
     ///
-    /// This reads back all accumulated measurement results from `queue_mz` calls.
+    /// This reads back all accumulated measurement results from `mz_queue` calls.
     /// If in batch mode, this also ends the batch.
-    pub fn flush_deferred_mz(&mut self) -> Vec<MeasurementResult> {
+    pub fn mz_fetch(&mut self) -> Vec<MeasurementResult> {
         // End batch mode if active
         if self.batch_mode {
             self.end_batch();
@@ -2380,35 +2380,23 @@ impl<R: Rng + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CX requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            self.queue_two_qubit_gate(GATE_CX, pair[0].index() as u32, pair[1].index() as u32);
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.queue_two_qubit_gate(GATE_CX, q0.index() as u32, q1.index() as u32);
         }
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "CZ requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            self.queue_two_qubit_gate(GATE_CZ, pair[0].index() as u32, pair[1].index() as u32);
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.queue_two_qubit_gate(GATE_CZ, q0.index() as u32, q1.index() as u32);
         }
         self
     }
 
-    fn swap(&mut self, qubits: &[QubitId]) -> &mut Self {
-        debug_assert!(
-            qubits.len().is_multiple_of(2),
-            "SWAP requires pairs of qubits"
-        );
-        for pair in qubits.chunks_exact(2) {
-            self.queue_two_qubit_gate(GATE_SWAP, pair[0].index() as u32, pair[1].index() as u32);
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q0, q1) in pairs {
+            self.queue_two_qubit_gate(GATE_SWAP, q0.index() as u32, q1.index() as u32);
         }
         self
     }
@@ -2656,8 +2644,8 @@ mod tests {
         println!("\nTest 3: CY(0,1) (uses Szdg*CX*Sz decomposition)");
         gpu.reset();
         cpu.reset();
-        gpu.cy(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cy(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cy(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cy(&[(QubitId::new(0), QubitId::new(1))]);
         gpu.sync();
         gpu.wait();
 
@@ -2687,9 +2675,9 @@ mod tests {
         gpu.reset();
         cpu.reset();
         gpu.h(&[QubitId::new(0)]);
-        gpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
         cpu.h(&[QubitId::new(0)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
         gpu.sync();
         gpu.wait();
 
@@ -2869,16 +2857,16 @@ mod tests {
                     cpu.z(&[QubitId::new(*q)]);
                 }
                 CliffordGate::CX(c, t) => {
-                    gpu.cx(&[QubitId::new(*c), QubitId::new(*t)]);
-                    cpu.cx(&[QubitId::new(*c), QubitId::new(*t)]);
+                    gpu.cx(&[(QubitId::new(*c), QubitId::new(*t))]);
+                    cpu.cx(&[(QubitId::new(*c), QubitId::new(*t))]);
                 }
                 CliffordGate::CZ(a, b) => {
-                    gpu.cz(&[QubitId::new(*a), QubitId::new(*b)]);
-                    cpu.cz(&[QubitId::new(*a), QubitId::new(*b)]);
+                    gpu.cz(&[(QubitId::new(*a), QubitId::new(*b))]);
+                    cpu.cz(&[(QubitId::new(*a), QubitId::new(*b))]);
                 }
                 CliffordGate::SWAP(a, b) => {
-                    gpu.swap(&[QubitId::new(*a), QubitId::new(*b)]);
-                    cpu.swap(&[QubitId::new(*a), QubitId::new(*b)]);
+                    gpu.swap(&[(QubitId::new(*a), QubitId::new(*b))]);
+                    cpu.swap(&[(QubitId::new(*a), QubitId::new(*b))]);
                 }
                 CliffordGate::SX(q) => {
                     gpu.sx(&[QubitId::new(*q)]);
@@ -2897,8 +2885,8 @@ mod tests {
                     cpu.sydg(&[QubitId::new(*q)]);
                 }
                 CliffordGate::CY(c, t) => {
-                    gpu.cy(&[QubitId::new(*c), QubitId::new(*t)]);
-                    cpu.cy(&[QubitId::new(*c), QubitId::new(*t)]);
+                    gpu.cy(&[(QubitId::new(*c), QubitId::new(*t))]);
+                    cpu.cy(&[(QubitId::new(*c), QubitId::new(*t))]);
                 }
             }
             gpu.sync();
@@ -3189,16 +3177,16 @@ mod tests {
                     cpu.z(&[QubitId::new(*q)]);
                 }
                 CliffordGate::CX(c, t) => {
-                    gpu.cx(&[QubitId::new(*c), QubitId::new(*t)]);
-                    cpu.cx(&[QubitId::new(*c), QubitId::new(*t)]);
+                    gpu.cx(&[(QubitId::new(*c), QubitId::new(*t))]);
+                    cpu.cx(&[(QubitId::new(*c), QubitId::new(*t))]);
                 }
                 CliffordGate::CZ(a, b) => {
-                    gpu.cz(&[QubitId::new(*a), QubitId::new(*b)]);
-                    cpu.cz(&[QubitId::new(*a), QubitId::new(*b)]);
+                    gpu.cz(&[(QubitId::new(*a), QubitId::new(*b))]);
+                    cpu.cz(&[(QubitId::new(*a), QubitId::new(*b))]);
                 }
                 CliffordGate::SWAP(a, b) => {
-                    gpu.swap(&[QubitId::new(*a), QubitId::new(*b)]);
-                    cpu.swap(&[QubitId::new(*a), QubitId::new(*b)]);
+                    gpu.swap(&[(QubitId::new(*a), QubitId::new(*b))]);
+                    cpu.swap(&[(QubitId::new(*a), QubitId::new(*b))]);
                 }
                 CliffordGate::SX(q) => {
                     gpu.sx(&[QubitId::new(*q)]);
@@ -3217,8 +3205,8 @@ mod tests {
                     cpu.sydg(&[QubitId::new(*q)]);
                 }
                 CliffordGate::CY(c, t) => {
-                    gpu.cy(&[QubitId::new(*c), QubitId::new(*t)]);
-                    cpu.cy(&[QubitId::new(*c), QubitId::new(*t)]);
+                    gpu.cy(&[(QubitId::new(*c), QubitId::new(*t))]);
+                    cpu.cy(&[(QubitId::new(*c), QubitId::new(*t))]);
                 }
             }
 
@@ -3383,9 +3371,9 @@ mod tests {
         gpu.reset();
         cpu.reset();
         gpu.h(&[QubitId::new(0)]);
-        gpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
         cpu.h(&[QubitId::new(0)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
         gpu.sync();
         gpu.wait();
 
@@ -3433,11 +3421,11 @@ mod tests {
         gpu.reset();
         cpu.reset();
         gpu.h(&[QubitId::new(0)]);
-        gpu.cx(&[QubitId::new(0), QubitId::new(1)]);
-        gpu.cx(&[QubitId::new(0), QubitId::new(2)]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(2))]);
         cpu.h(&[QubitId::new(0)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(2)]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(2))]);
         gpu.sync();
         gpu.wait();
 
@@ -3821,8 +3809,8 @@ mod tests {
         let mut cpu = SparseStab::new(2);
 
         // CX with control in |0> - target unchanged
-        gpu.cx(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
         let gpu_r0 = gpu.mz_forced(0, false);
         let gpu_r1 = gpu.mz_forced(1, false);
@@ -3847,8 +3835,8 @@ mod tests {
         cpu.reset();
         gpu.x(&[QubitId::new(0)]);
         cpu.x(&[QubitId::new(0)]);
-        gpu.cx(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
         let gpu_r0 = gpu.mz_forced(0, false);
         let gpu_r1 = gpu.mz_forced(1, false);
@@ -3879,8 +3867,8 @@ mod tests {
         // H CX creates Bell state - both measurements non-deterministic but correlated
         gpu.h(&[QubitId::new(0)]);
         cpu.h(&[QubitId::new(0)]);
-        gpu.cx(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cx(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cx(&[(QubitId::new(0), QubitId::new(1))]);
 
         let gpu_r0 = gpu.mz_forced(0, false);
         let cpu_r0 = cpu.mz_forced(0, false);
@@ -3908,8 +3896,8 @@ mod tests {
         let mut cpu = SparseStab::new(2);
 
         // CZ on computational basis - no effect on Z measurement
-        gpu.cz(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cz(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cz(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
         let gpu_r0 = gpu.mz_forced(0, false);
         let gpu_r1 = gpu.mz_forced(1, false);
@@ -3934,8 +3922,8 @@ mod tests {
         gpu.h(&[QubitId::new(1)]);
         cpu.h(&[QubitId::new(0)]);
         cpu.h(&[QubitId::new(1)]);
-        gpu.cz(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.cz(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.cz(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.cz(&[(QubitId::new(0), QubitId::new(1))]);
 
         let gpu_r0 = gpu.mz_forced(0, false);
         let cpu_r0 = cpu.mz_forced(0, false);
@@ -3960,8 +3948,8 @@ mod tests {
         // Set q0 to |1>, q1 to |0>, then swap
         gpu.x(&[QubitId::new(0)]);
         cpu.x(&[QubitId::new(0)]);
-        gpu.swap(&[QubitId::new(0), QubitId::new(1)]);
-        cpu.swap(&[QubitId::new(0), QubitId::new(1)]);
+        gpu.swap(&[(QubitId::new(0), QubitId::new(1))]);
+        cpu.swap(&[(QubitId::new(0), QubitId::new(1))]);
 
         let gpu_r0 = gpu.mz_forced(0, false);
         let gpu_r1 = gpu.mz_forced(1, false);
@@ -4153,8 +4141,8 @@ mod tests {
 
         // Apply some CX gates
         for q in (0..num_qubits - 1).step_by(2) {
-            gpu_seq.cx(&[QubitId(q), QubitId(q + 1)]);
-            gpu_par.cx(&[QubitId(q), QubitId(q + 1)]);
+            gpu_seq.cx(&[(QubitId(q), QubitId(q + 1))]);
+            gpu_par.cx(&[(QubitId(q), QubitId(q + 1))]);
         }
 
         // Apply S gates
@@ -4193,11 +4181,11 @@ mod tests {
 
             // Create Bell state: |00> + |11>
             gpu.h(&[QubitId(0)]);
-            gpu.cx(&[QubitId(0), QubitId(1)]);
+            gpu.cx(&[(QubitId(0), QubitId(1))]);
 
             // Use deferred measurements
-            gpu.queue_mz(&[QubitId(0), QubitId(1)]);
-            let results = gpu.flush_deferred_mz();
+            gpu.mz_queue(&[QubitId(0), QubitId(1)]);
+            let results = gpu.mz_fetch();
 
             // Both qubits should have the same outcome (perfectly correlated)
             if results[0].outcome == results[1].outcome {
@@ -4216,7 +4204,7 @@ mod tests {
 
     #[test]
     fn test_deferred_measurement_multiple_calls() {
-        // Test multiple queue_mz calls followed by a single flush
+        // Test multiple mz_queue calls followed by a single fetch
         let Some(mut gpu) = gpu_sim(4, 42) else {
             return;
         };
@@ -4224,15 +4212,15 @@ mod tests {
         // Prepare states: qubit 0 in |0>, qubit 1 in |1>, qubit 2,3 in Bell state
         gpu.x(&[QubitId(1)]);
         gpu.h(&[QubitId(2)]);
-        gpu.cx(&[QubitId(2), QubitId(3)]);
+        gpu.cx(&[(QubitId(2), QubitId(3))]);
 
         // Queue measurements in separate calls
-        gpu.queue_mz(&[QubitId(0)]); // Should be 0
-        gpu.queue_mz(&[QubitId(1)]); // Should be 1
-        gpu.queue_mz(&[QubitId(2), QubitId(3)]); // Should be correlated
+        gpu.mz_queue(&[QubitId(0)]); // Should be 0
+        gpu.mz_queue(&[QubitId(1)]); // Should be 1
+        gpu.mz_queue(&[QubitId(2), QubitId(3)]); // Should be correlated
 
         // Flush all at once
-        let results = gpu.flush_deferred_mz();
+        let results = gpu.mz_fetch();
 
         assert_eq!(results.len(), 4);
         assert!(!results[0].outcome, "Qubit 0 should measure 0");

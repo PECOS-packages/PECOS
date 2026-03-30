@@ -43,7 +43,7 @@
 //! // Use seeded RNG for determinism
 //! let mut sim: DenseStab = DenseStab::with_seed(2, 42);
 //! sim.h(&[QubitId(0)]);
-//! sim.cx(&[QubitId(0), QubitId(1)]);
+//! sim.cx(&[(QubitId(0), QubitId(1))]);
 //! let results = sim.mz(&[QubitId(0), QubitId(1)]);
 //! // Bell state: both qubits measure the same
 //! assert_eq!(results[0].outcome, results[1].outcome);
@@ -1126,17 +1126,17 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
         self
     }
 
-    fn cx(&mut self, qubits: &[QubitId]) -> &mut Self {
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // DOD optimization: for multiple gates, batch stab updates then destab updates
         // This keeps each data structure hot in cache
-        if qubits.len() > 2 {
+        if pairs.len() > 1 {
             let words_per_row = self.words_per_row;
             let words_per_col = self.words_per_col;
 
             // Process all stabilizer updates first
-            for pair in qubits.chunks_exact(2) {
-                let control = pair[0].index();
-                let target = pair[1].index();
+            for &(control_q, target_q) in pairs {
+                let control = control_q.index();
+                let target = target_q.index();
                 Self::apply_cx_to_gens(
                     &mut self.stab_row_x,
                     &mut self.stab_row_z,
@@ -1150,9 +1150,9 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
             }
 
             // Then process all destabilizer updates
-            for pair in qubits.chunks_exact(2) {
-                let control = pair[0].index();
-                let target = pair[1].index();
+            for &(control_q, target_q) in pairs {
+                let control = control_q.index();
+                let target = target_q.index();
                 Self::apply_cx_to_gens(
                     &mut self.destab_row_x,
                     &mut self.destab_row_z,
@@ -1166,19 +1166,19 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
             }
         } else {
             // Single gate: use normal path
-            for pair in qubits.chunks_exact(2) {
-                self.apply_cx(pair[0].index(), pair[1].index());
+            for &(control_q, target_q) in pairs {
+                self.apply_cx(control_q.index(), target_q.index());
             }
         }
         self
     }
 
-    fn cz(&mut self, qubits: &[QubitId]) -> &mut Self {
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // CZ: X_1 -> X_1 Z_2, X_2 -> Z_1 X_2, Z -> Z
         // Sign: toggle minus for generators with X on both qubits
-        for pair in qubits.chunks_exact(2) {
-            let q1 = pair[0].index();
-            let q2 = pair[1].index();
+        for &(qa, qb) in pairs {
+            let q1 = qa.index();
+            let q2 = qb.index();
 
             let q1_word = q1 / 64;
             let q1_mask = 1u64 << (q1 % 64);
@@ -1460,7 +1460,7 @@ mod tests {
     fn test_bell_state() {
         let mut sim = DenseStab::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         let results = sim.mz(&[QubitId(0), QubitId(1)]);
         assert_eq!(results[0].outcome, results[1].outcome);
@@ -1471,7 +1471,7 @@ mod tests {
         // This mirrors the test suite's verify_bell_state_correlations
         let mut sim = DenseStab::with_seed(2, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure first qubit
         let r0 = sim.mz(&[QubitId(0)]);
@@ -1497,7 +1497,7 @@ mod tests {
         // Test Bell state on first 2 qubits of an 8-qubit simulator
         let mut sim = DenseStab::with_seed(8, 42);
         sim.h(&[QubitId(0)]);
-        sim.cx(&[QubitId(0), QubitId(1)]);
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Measure first qubit
         let r0 = sim.mz(&[QubitId(0)]);
@@ -1587,7 +1587,7 @@ mod tests {
         // should deterministically give the same result.
         let mut dense: DenseStab = DenseStab::new(2);
         dense.h(&[QubitId(0)]);
-        dense.cx(&[QubitId(0), QubitId(1)]);
+        dense.cx(&[(QubitId(0), QubitId(1))]);
         dense.h(&[QubitId(0)]);
         dense.sz(&[QubitId(0)]);
 
@@ -1657,7 +1657,7 @@ mod tests {
                         while q1 == q0 {
                             q1 = rng.random_range(0..num_qubits);
                         }
-                        let pair = &[QubitId(q0), QubitId(q1)];
+                        let pair = &[(QubitId(q0), QubitId(q1))];
                         match gate_type {
                             6 => {
                                 dense.cx(pair);

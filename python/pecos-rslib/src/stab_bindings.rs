@@ -1,6 +1,6 @@
 // Copyright 2026 The PECOS Developers
 use pecos::prelude::*;
-use pecos::simulators::{ForcedMeasurement, Stab, StabilizerTableauSimulator};
+use pecos::simulators::{ForcedMeasurement, Stabilizer, StabilizerTableauSimulator};
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -16,20 +16,20 @@ use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
-#[pyclass(name = "Stab", module = "pecos_rslib")]
-pub struct PyStab {
-    inner: Stab,
+#[pyclass(name = "Stabilizer", module = "pecos_rslib")]
+pub struct PyStabilizer {
+    inner: Stabilizer,
 }
 
 #[pymethods]
-impl PyStab {
+impl PyStabilizer {
     #[new]
     #[pyo3(signature = (num_qubits, seed=None))]
     fn new(num_qubits: usize, seed: Option<u64>) -> Self {
-        PyStab {
+        PyStabilizer {
             inner: match seed {
-                Some(s) => Stab::with_seed(num_qubits, s),
-                None => Stab::new(num_qubits),
+                Some(s) => Stabilizer::with_seed(num_qubits, s),
+                None => Stabilizer::new(num_qubits),
             },
         }
     }
@@ -146,7 +146,7 @@ impl PyStab {
                     })?
                     .call_method0("__bool__")?
                     .extract::<bool>()?;
-                // Stab lacks pz_forced, so use mz_forced + conditional X
+                // Stabilizer lacks pz_forced, so use mz_forced + conditional X
                 let result = self.inner.mz_forced(location, forced_value);
                 if result.outcome {
                     self.inner.x(q);
@@ -292,7 +292,7 @@ impl PyStab {
 
         let q1: usize = location.get_item(0)?.extract()?;
         let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[QubitId(q1), QubitId(q2)];
+        let pair = &[(QubitId(q1), QubitId(q2))];
 
         match symbol {
             "CX" | "CNOT" => {
@@ -379,7 +379,10 @@ impl PyStab {
         self.run_gate_highlevel(symbol, locations, params, py)
     }
 
-    /// High-level `run_gate` method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations.
+    ///
+    /// Uses shared batch dispatch for common Clifford gates to avoid per-location
+    /// overhead. Falls back to per-location dispatch for parameterized gates.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -398,22 +401,34 @@ impl PyStab {
             return Ok(output.into());
         }
 
-        // Convert locations to a vector
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
 
+        // Fast path: batch dispatch for common gates without special params
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+        if !has_special_params
+            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
+                &mut self.inner,
+                symbol,
+                &locations_set,
+                py,
+            )?
+        {
+            return Ok(result);
+        }
+
+        // Fallback: per-location dispatch
         for location in locations_set.iter() {
-            // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
                 location.clone().cast_into()?
             } else {
-                // Single qubit - wrap in tuple
                 PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
-            // Call the underlying run_gate_internal
             let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
 
-            // Only add to output if result is Some (non-zero measurement)
             if let Some(value) = result {
                 output.set_item(location, value)?;
             }

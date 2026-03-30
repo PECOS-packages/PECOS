@@ -14,7 +14,7 @@
 mod qulacs_tests {
     use crate::QulacsStateVec;
     use num_complex::Complex64;
-    use pecos_core::{Angle64, RngManageable, qid, qid2};
+    use pecos_core::{Angle64, QubitId, RngManageable, qid};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
     use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -54,7 +54,7 @@ mod qulacs_tests {
 
         // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         let state = sim.state();
         assert_eq!(state.len(), 4);
@@ -72,8 +72,8 @@ mod qulacs_tests {
 
         // Create GHZ state |GHZ⟩ = (|000⟩ + |111⟩)/√2
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
-        sim.cx(&qid2(1, 2));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
+        sim.cx(&[(QubitId(1), QubitId(2))]);
 
         let state = sim.state();
         assert_eq!(state.len(), 8);
@@ -169,7 +169,7 @@ mod qulacs_tests {
         let mut sim = QulacsStateVec::new(2);
         sim.h(&qid(0));
         sim.h(&qid(1));
-        sim.cz(&qid2(0, 1));
+        sim.cz(&[(QubitId(0), QubitId(1))]);
         let state = sim.state();
         // CZ on |++⟩ gives (|00⟩ + |01⟩ + |10⟩ - |11⟩)/2
         assert!((state[0].norm() - 0.5).abs() < 1e-10);
@@ -184,7 +184,7 @@ mod qulacs_tests {
         let initial_state = sim.state();
         println!("Before SWAP: {initial_state:?}");
 
-        sim.swap(&qid2(0, 1)); // Should become |01⟩
+        sim.swap(&[(QubitId(0), QubitId(1))]); // Should become |01⟩
         let final_state = sim.state();
         println!("After SWAP: {final_state:?}");
 
@@ -242,7 +242,7 @@ mod qulacs_tests {
 
         // Create some non-trivial state
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
 
         // Reset should return to |00⟩
         sim.reset();
@@ -374,9 +374,9 @@ mod qulacs_tests {
 
         // Apply various gates
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.ry(Angle64::from_radians(FRAC_PI_4), &qid(2));
-        sim.cz(&qid2(1, 2));
+        sim.cz(&[(QubitId(1), QubitId(2))]);
         sim.t(&qid(0));
 
         // Check normalization
@@ -397,10 +397,10 @@ mod qulacs_tests {
 
         // Apply gates and their inverses
         sim.h(&qid(0));
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.sz(&qid(1));
         sim.szdg(&qid(1)); // S†
-        sim.cx(&qid2(0, 1));
+        sim.cx(&[(QubitId(0), QubitId(1))]);
         sim.h(&qid(0));
 
         // Should be back to initial state
@@ -414,7 +414,7 @@ mod qulacs_tests {
 
         // Test CY gate implementation
         sim.prepare_computational_basis(0b10); // |10⟩
-        sim.cy(&qid2(1, 0)); // Control on qubit 1, target on qubit 0
+        sim.cy(&[(QubitId(1), QubitId(0))]); // Control on qubit 1, target on qubit 0
 
         // CY|10⟩ = i|11⟩
         let state = sim.state();

@@ -339,8 +339,11 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> RawOps for SparseStabGeneric<S, 
         use crate::CliffordGateable;
         use pecos_core::QubitId;
 
-        let ids: smallvec::SmallVec<[QubitId; 16]> = qubits.iter().map(|&q| QubitId(q)).collect();
-        self.cx(&ids)
+        let pairs: smallvec::SmallVec<[(QubitId, QubitId); 8]> = qubits
+            .chunks_exact(2)
+            .map(|pair| (QubitId(pair[0]), QubitId(pair[1])))
+            .collect();
+        self.cx(&pairs)
     }
 
     #[inline]
@@ -441,18 +444,22 @@ impl CommandBuffer {
     }
 
     /// Adds CX gates to the buffer.
-    ///
-    /// Qubits should be pairs: [ctrl, tgt, ctrl, tgt, ...]
     #[inline]
-    pub fn cx(&mut self, qubits: &[usize]) -> &mut Self {
-        self.cx_qubits.extend_from_slice(qubits);
+    pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(c, t) in pairs {
+            self.cx_qubits.push(c);
+            self.cx_qubits.push(t);
+        }
         self
     }
 
     /// Adds CZ gates to the buffer.
     #[inline]
-    pub fn cz(&mut self, qubits: &[usize]) -> &mut Self {
-        self.cz_qubits.extend_from_slice(qubits);
+    pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.cz_qubits.push(q1);
+            self.cz_qubits.push(q2);
+        }
         self
     }
 
@@ -579,10 +586,10 @@ mod tests {
         }
 
         // Sequential CX
-        sim1.cx(&[QubitId(0), QubitId(1)]);
-        sim1.cx(&[QubitId(2), QubitId(3)]);
-        sim1.cx(&[QubitId(4), QubitId(5)]);
-        sim1.cx(&[QubitId(6), QubitId(7)]);
+        sim1.cx(&[(QubitId(0), QubitId(1))]);
+        sim1.cx(&[(QubitId(2), QubitId(3))]);
+        sim1.cx(&[(QubitId(4), QubitId(5))]);
+        sim1.cx(&[(QubitId(6), QubitId(7))]);
 
         // Batched CX
         sim2.cx_batched(&[0, 1, 2, 3, 4, 5, 6, 7]);
@@ -598,12 +605,12 @@ mod tests {
 
         // Direct calls
         sim1.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
-        sim1.cx(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
+        sim1.cx(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
 
         // Via command buffer
         let mut buffer = CommandBuffer::new();
         buffer.h(&[0, 1, 2, 3]);
-        buffer.cx(&[0, 1, 2, 3]);
+        buffer.cx(&[(0, 1), (2, 3)]);
         buffer.flush(&mut sim2);
 
         assert_eq!(format!("{:?}", sim1.stabs), format!("{:?}", sim2.stabs));

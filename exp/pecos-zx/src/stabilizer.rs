@@ -166,7 +166,7 @@ mod tests {
     fn test_gens_to_pauli_strings_bell_state() {
         let mut stab = SparseStab::new(2);
         stab.h(&[qid(0)]);
-        stab.cx(&[qid(0), qid(1)]);
+        stab.cx(&[(qid(0), qid(1))]);
 
         let strings = gens_to_pauli_strings(stab.stabs(), 2);
         assert_eq!(strings.len(), 2);

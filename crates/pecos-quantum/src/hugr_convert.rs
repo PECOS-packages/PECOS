@@ -1243,7 +1243,7 @@ struct SimpleGate {
 ///
 /// // Create a simple Bell state circuit
 /// let mut dag = DagCircuit::new();
-/// dag.h(0).cx(0, 1);
+/// dag.h(&[0]).cx(&[(0, 1)]);
 ///
 /// // Convert to HUGR
 /// let hugr = dag_circuit_to_hugr(&dag).unwrap();

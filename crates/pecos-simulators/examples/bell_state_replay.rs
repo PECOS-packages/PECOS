@@ -2,7 +2,7 @@
 // for recording and replaying quantum experiments
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
-use pecos_core::{qid, qid2};
+use pecos_core::{QubitId, qid};
 use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::CliffordGateable;
 use pecos_simulators::StateVec;
@@ -38,7 +38,7 @@ impl RecordingSimulator {
 
     // Delegate the cx operation
     fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.simulator.cx(&qid2(control, target));
+        self.simulator.cx(&[(QubitId(control), QubitId(target))]);
         self
     }
 
@@ -95,7 +95,7 @@ impl ReplayingSimulator {
 
     // Delegate the cx operation
     fn cx(&mut self, control: usize, target: usize) -> &mut Self {
-        self.simulator.cx(&qid2(control, target));
+        self.simulator.cx(&[(QubitId(control), QubitId(target))]);
         self
     }
 

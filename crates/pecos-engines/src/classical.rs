@@ -180,7 +180,7 @@ dyn_clone::clone_trait_object!(ClassicalEngine);
 ///         // Generate commands only once in this example
 ///         if !self.commands_generated {
 ///             // Add quantum operations (e.g., H gate on qubit 0)
-///             builder.add_h(&[0]);
+///             builder.h(&[0]);
 ///             self.commands_generated = true;
 ///         }
 ///

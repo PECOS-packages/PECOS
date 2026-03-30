@@ -45,9 +45,9 @@ use pecos_simulators::SparseStab;
 fn demo_path_recording() {
     // A simple circuit with non-deterministic measurement
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .h(0) // Creates |+> superposition
-        .mz(0)
+        .pz(&[0])
+        .h(&[0]) // Creates |+> superposition
+        .mz(&[0])
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
@@ -72,7 +72,7 @@ fn demo_path_recording() {
 /// Demonstrate path replay - forcing specific measurement outcomes.
 #[test]
 fn demo_path_replay() {
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(1));
 
@@ -102,12 +102,12 @@ fn demo_path_replay() {
 fn demo_path_enumeration() {
     // A circuit with 2 non-deterministic measurements
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .h(1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .h(&[1])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(2));
@@ -145,12 +145,12 @@ fn demo_path_enumeration() {
 #[test]
 fn demo_bell_state_paths() {
     let bell_circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1) // Entangle
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)]) // Entangle
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(2));
@@ -195,7 +195,7 @@ fn demo_bell_state_paths() {
 #[test]
 fn demo_importance_sampling_boosted_errors() {
     // Circuit that might see an error
-    let circuit = CommandBuilder::new().pz(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     // True error rate is low (0.1%)
     let p_true: f64 = 0.001;
@@ -240,7 +240,7 @@ fn demo_importance_sampling_boosted_errors() {
 /// Compare importance sampling vs standard Monte Carlo efficiency.
 #[test]
 fn demo_variance_comparison() {
-    let circuit = CommandBuilder::new().pz(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     let p_true: f64 = 0.01;
     let boost: f64 = 20.0;
@@ -333,7 +333,7 @@ fn demo_variance_comparison() {
 #[test]
 fn demo_outcome_biasing() {
     // Circuit that branches based on measurement
-    let prep_and_measure = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let prep_and_measure = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     println!("\nOutcome Biasing Demo:");
     println!("  Biasing measurements to explore rare branches.");
@@ -391,15 +391,15 @@ fn demo_outcome_biasing() {
 #[test]
 fn demo_conditional_program() {
     // Initial circuit: prepare and measure
-    let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     // Branch function: if measured 1, apply X correction
     let branch_fn = |outcomes: &MeasurementOutcomes| {
         if outcomes.get_bit(QubitId(0)) == Some(true) {
             Some(
                 CommandBuilder::new()
-                    .x(0) // Correction
-                    .mz(0)
+                    .x(&[0]) // Correction
+                    .mz(&[0])
                     .build(),
             )
         } else {
@@ -467,9 +467,9 @@ fn demo_repeat_until_success() {
             // Try again: prepare, rotate slightly, measure
             Some(
                 CommandBuilder::new()
-                    .pz(0)
-                    .h(0) // 50% chance of 0
-                    .mz(0)
+                    .pz(&[0])
+                    .h(&[0]) // 50% chance of 0
+                    .mz(&[0])
                     .build(),
             )
         }
@@ -518,16 +518,16 @@ fn demo_combined_path_and_error_analysis() {
     // A syndrome extraction circuit: 2 data qubits + 1 ancilla
     // Measure ancilla to detect errors
     let syndrome_circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .pz(2) // ancilla
-        .h(0)
-        .h(1)
-        .cx(0, 2) // CNOT data -> ancilla
-        .cx(1, 2)
-        .mz(2) // Syndrome measurement
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .pz(&[2]) // ancilla
+        .h(&[0])
+        .h(&[1])
+        .cx(&[(0, 2)]) // CNOT data -> ancilla
+        .cx(&[(1, 2)])
+        .mz(&[2]) // Syndrome measurement
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let mut explorer = PathExplorer::new(SparseStab::new(3));

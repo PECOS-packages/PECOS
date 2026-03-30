@@ -24,18 +24,18 @@ fn build_repetition_code(num_data: usize, num_rounds: usize) -> DagCircuit {
     for _round in 0..num_rounds {
         // Prepare ancillas
         for a in 0..num_ancillas {
-            dag.pz(num_data + a);
+            dag.pz(&[num_data + a]);
         }
 
         // Parity checks: Z_i * Z_{i+1} for each adjacent pair
         for a in 0..num_ancillas {
-            dag.cx(a, num_data + a);
-            dag.cx(a + 1, num_data + a);
+            dag.cx(&[(a, num_data + a)]);
+            dag.cx(&[(a + 1, num_data + a)]);
         }
 
         // Measure ancillas
         for a in 0..num_ancillas {
-            dag.mz(num_data + a);
+            dag.mz(&[num_data + a]);
         }
     }
 
@@ -62,13 +62,13 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
     for _round in 0..num_rounds {
         // Prepare X ancillas in |+>
         for a in 0..num_x_ancillas {
-            dag.pz(x_ancilla_start + a);
-            dag.h(x_ancilla_start + a);
+            dag.pz(&[x_ancilla_start + a]);
+            dag.h(&[x_ancilla_start + a]);
         }
 
         // Prepare Z ancillas in |0>
         for a in 0..num_z_ancillas {
-            dag.pz(z_ancilla_start + a);
+            dag.pz(&[z_ancilla_start + a]);
         }
 
         // X plaquette measurements (CNOT from ancilla to data)
@@ -81,10 +81,10 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
                 let d2 = (row + 1) * distance + col;
                 let d3 = (row + 1) * distance + col + 1;
 
-                dag.cx(ancilla, d0);
-                dag.cx(ancilla, d1);
-                dag.cx(ancilla, d2);
-                dag.cx(ancilla, d3);
+                dag.cx(&[(ancilla, d0)]);
+                dag.cx(&[(ancilla, d1)]);
+                dag.cx(&[(ancilla, d2)]);
+                dag.cx(&[(ancilla, d3)]);
             }
         }
 
@@ -97,22 +97,22 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
                 let d2 = (row + 1) * distance + col;
                 let d3 = (row + 1) * distance + col + 1;
 
-                dag.cx(d0, ancilla);
-                dag.cx(d1, ancilla);
-                dag.cx(d2, ancilla);
-                dag.cx(d3, ancilla);
+                dag.cx(&[(d0, ancilla)]);
+                dag.cx(&[(d1, ancilla)]);
+                dag.cx(&[(d2, ancilla)]);
+                dag.cx(&[(d3, ancilla)]);
             }
         }
 
         // Measure X ancillas (H then MZ)
         for a in 0..num_x_ancillas {
-            dag.h(x_ancilla_start + a);
-            dag.mz(x_ancilla_start + a);
+            dag.h(&[x_ancilla_start + a]);
+            dag.mz(&[x_ancilla_start + a]);
         }
 
         // Measure Z ancillas
         for a in 0..num_z_ancillas {
-            dag.mz(z_ancilla_start + a);
+            dag.mz(&[z_ancilla_start + a]);
         }
     }
 

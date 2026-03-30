@@ -1,6 +1,6 @@
 //! Basic tests for the `QuEST` wrapper using PECOS-style API
 
-use pecos_core::{Angle64, qid, qid2};
+use pecos_core::{Angle64, QubitId, qid};
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use pecos_random::PecosRng;
@@ -141,7 +141,7 @@ fn test_cnot_gate() {
     let mut state = QuestStateVec::new(2);
 
     // CNOT|00> = |00>
-    state.cx(&qid2(0, 1));
+    state.cx(&[(QubitId(0), QubitId(1))]);
     assert_relative_eq!(state.probability(0b00), 1.0, epsilon = 1e-10);
 
     // In PECOS convention (qubit 0 = LSB):
@@ -150,12 +150,12 @@ fn test_cnot_gate() {
 
     // Prepare state with control qubit 0 = 1, apply CNOT(0,1) -> target flips
     state.prepare_computational_basis(0b01); // qubit 0 = 1, qubit 1 = 0
-    state.cx(&qid2(0, 1)); // control=0 is set, so target=1 flips: 0->1
+    state.cx(&[(QubitId(0), QubitId(1))]); // control=0 is set, so target=1 flips: 0->1
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10); // qubit 0 = 1, qubit 1 = 1
 
     // Prepare state with control qubit 0 = 0, apply CNOT(0,1) -> no change
     state.prepare_computational_basis(0b10); // qubit 0 = 0, qubit 1 = 1
-    state.cx(&qid2(0, 1)); // control=0 is clear, target doesn't flip
+    state.cx(&[(QubitId(0), QubitId(1))]); // control=0 is clear, target doesn't flip
     assert_relative_eq!(state.probability(0b10), 1.0, epsilon = 1e-10); // unchanged
 }
 
@@ -164,12 +164,12 @@ fn test_cz_gate() {
     let mut state = QuestStateVec::new(2);
 
     // CZ|00> = |00>
-    state.cz(&qid2(0, 1));
+    state.cz(&[(QubitId(0), QubitId(1))]);
     assert_relative_eq!(state.probability(0b00), 1.0, epsilon = 1e-10);
 
     // CZ|11> = -|11> (same probability)
     state.prepare_computational_basis(0b11);
-    state.cz(&qid2(0, 1));
+    state.cz(&[(QubitId(0), QubitId(1))]);
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10);
 }
 
@@ -178,7 +178,7 @@ fn test_bell_state_creation() {
     let mut state = QuestStateVec::new(2);
 
     // Create Bell state: H(0) then CNOT(0,1)
-    state.h(&qid(0)).cx(&qid2(0, 1));
+    state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
     // Should have equal probability for |00> and |11>
     assert_relative_eq!(state.probability(0b00), 0.5, epsilon = 1e-10);
@@ -253,12 +253,12 @@ fn test_rzz_gate() {
     let mut state = QuestStateVec::new(2);
 
     // RZZ doesn't change computational basis probabilities
-    state.rzz(Angle64::from_radians(PI / 2.0), &qid2(0, 1));
+    state.rzz(Angle64::from_radians(PI / 2.0), &[(QubitId(0), QubitId(1))]);
     assert_relative_eq!(state.probability(0), 1.0, epsilon = 1e-10);
 
     // Test on |11> state
     state.prepare_computational_basis(0b11);
-    state.rzz(Angle64::from_radians(PI / 2.0), &qid2(0, 1));
+    state.rzz(Angle64::from_radians(PI / 2.0), &[(QubitId(0), QubitId(1))]);
     assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10);
 }
 
@@ -270,7 +270,7 @@ fn test_method_chaining() {
     state
         .reset()
         .h(&qid(0))
-        .cx(&qid2(0, 1))
+        .cx(&[(QubitId(0), QubitId(1))])
         .z(&qid(1))
         .rx(Angle64::from_radians(std::f64::consts::PI / 4.0), &qid(0));
 
@@ -326,9 +326,9 @@ fn test_cuda_engine_builder() {
 
     // Create a Bell state circuit: H(0), CNOT(0,1), measure both
     let mut msg_builder = ByteMessage::quantum_operations_builder();
-    msg_builder.add_h(&[0]);
-    msg_builder.add_cx(&[0], &[1]);
-    msg_builder.add_measurements(&[0, 1]);
+    msg_builder.h(&[0]);
+    msg_builder.cx(&[(0, 1)]);
+    msg_builder.mz(&[0, 1]);
     let msg = msg_builder.build();
 
     let result = cpu_engine.process(msg.clone()).expect("CPU process failed");
@@ -357,9 +357,9 @@ fn test_cuda_engine_builder() {
             gpu_engine.reset().expect("Reset failed");
 
             let mut msg_builder = ByteMessage::quantum_operations_builder();
-            msg_builder.add_h(&[0]);
-            msg_builder.add_cx(&[0], &[1]);
-            msg_builder.add_measurements(&[0, 1]);
+            msg_builder.h(&[0]);
+            msg_builder.cx(&[(0, 1)]);
+            msg_builder.mz(&[0, 1]);
             let msg = msg_builder.build();
 
             let result = gpu_engine.process(msg).expect("GPU process failed");

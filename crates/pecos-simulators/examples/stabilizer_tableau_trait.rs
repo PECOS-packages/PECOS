@@ -15,7 +15,7 @@ where
 
     // Create Bell state |00> + |11>
     sim.h(&[QubitId(0)]);
-    sim.cx(&[QubitId(0), QubitId(1)]);
+    sim.cx(&[(QubitId(0), QubitId(1))]);
 
     println!("Number of qubits: {}", sim.num_qubits());
     println!("\nStabilizers:");

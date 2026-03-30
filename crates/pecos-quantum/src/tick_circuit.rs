@@ -1607,19 +1607,12 @@ impl<'a> TickHandle<'a> {
     /// circuit.tick().pz(&[1, 2, 3]);     // Multiple qubits
     /// ```
     pub fn pz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickPrepHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::prep(qubits));
+        let gate_idx = self.add_gate_get_idx(Gate::pz(qubits));
         TickPrepHandle {
             circuit: self.circuit,
             tick_idx: self.tick_idx,
             gate_idx,
         }
-    }
-
-    /// Prepare qubit(s) (alias for pz).
-    ///
-    /// Returns a [`TickPrepHandle`] that allows attaching metadata via `.meta()`.
-    pub fn prep(self, qubits: &[impl Into<QubitId> + Copy]) -> TickPrepHandle<'a> {
-        self.pz(qubits)
     }
 
     /// Measure qubit(s) in the Z basis.
@@ -1637,7 +1630,7 @@ impl<'a> TickHandle<'a> {
     /// circuit.tick().mz(&[1, 2, 3]);     // Multiple qubits
     /// ```
     pub fn mz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::measure(qubits));
+        let gate_idx = self.add_gate_get_idx(Gate::mz(qubits));
         TickMeasureHandle {
             circuit: self.circuit,
             tick_idx: self.tick_idx,
@@ -1655,10 +1648,10 @@ impl<'a> TickHandle<'a> {
     /// use pecos_quantum::TickCircuit;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().measure_free(&[0, 1]);
+    /// circuit.tick().mz_free(&[0, 1]);
     /// ```
-    pub fn measure_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::measure_free(qubits));
+    pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
+        let gate_idx = self.add_gate_get_idx(Gate::mz_free(qubits));
         TickMeasureHandle {
             circuit: self.circuit,
             tick_idx: self.tick_idx,

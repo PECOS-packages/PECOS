@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 import pecos as pc
-from pecos.simulators import SparseSim, SparseSimPy, Stab
+from pecos.simulators import SparseStab, SparseStabPy, Stabilizer
 
 
 def test_random_circuits() -> None:
@@ -60,9 +60,9 @@ def test_random_circuits() -> None:
     except ImportError:
         pass
 
-    state_sims.append(SparseSimPy)
-    state_sims.append(SparseSim)
-    state_sims.append(Stab)
+    state_sims.append(SparseStabPy)
+    state_sims.append(SparseStab)
+    state_sims.append(Stabilizer)
 
     assert run_circuit_test(state_sims, num_qubits=10, circuit_depth=50)
 
@@ -138,7 +138,7 @@ def run_a_circuit(
     state = state_rep(num_qubits)
     measurements = []
 
-    if isinstance(state, SparseSim):
+    if isinstance(state, SparseStab):
         state.bindings["measure Z"] = state.bindings["MZForced"]
         state.bindings["init |0>"] = state.bindings.get(
             "PZForced",

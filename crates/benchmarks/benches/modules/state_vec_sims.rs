@@ -62,7 +62,7 @@ where
         }
         // Two-qubit layer: CX between adjacent qubits
         for q in 0..(num_qubits - 1) {
-            sim.cx(&[QubitId(q), QubitId(q + 1)]);
+            sim.cx(&[(QubitId(q), QubitId(q + 1))]);
         }
     }
 }
@@ -70,6 +70,9 @@ where
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_state_vec_scaling(c);
     bench_individual_gates(c);
+    bench_measurement_scaling(c);
+    bench_subset_measurement(c);
+    bench_flush_scaling(c);
     #[cfg(feature = "parallel")]
     bench_parallel_execution(c);
 }
@@ -162,7 +165,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.cx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -174,7 +177,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.cz(&[QubitId(q), QubitId(q + 1)]);
+                    sim.cz(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -186,7 +189,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.szz(&[QubitId(q), QubitId(q + 1)]);
+                    sim.szz(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -198,7 +201,7 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..gates_per_iter {
                 for q in 0..num_qubits - 1 {
-                    sim.sxx(&[QubitId(q), QubitId(q + 1)]);
+                    sim.sxx(&[(QubitId(q), QubitId(q + 1))]);
                 }
             }
             black_box(());
@@ -236,6 +239,142 @@ fn bench_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
             }
         });
     });
+
+    group.finish();
+}
+
+/// Benchmark measurement performance: sequential (per-qubit) vs batch (all at once).
+///
+/// Sequential: `for q in 0..n { sim.mz(&[QubitId(q)]); }` — 2n passes over state vector.
+/// Batch: `sim.mz(&all_qubits)` — uses joint sampling, 2 passes over state vector.
+fn bench_measurement_scaling<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Measurement Scaling");
+    group.sample_size(20);
+
+    let qubit_counts = [10, 14, 18, 20, 22];
+
+    for &nq in &qubit_counts {
+        // Sequential: one mz() call per qubit (2n passes)
+        group.bench_with_input(BenchmarkId::new("mz_sequential", nq), &nq, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            b.iter(|| {
+                sim.reset();
+                for q in 0..nq {
+                    sim.h(&[QubitId(q)]);
+                }
+                for q in 0..nq {
+                    black_box(sim.mz(&[QubitId(q)]));
+                }
+            });
+        });
+
+        // Batch: one mz() call with all qubits (2 passes via joint sampling)
+        group.bench_with_input(BenchmarkId::new("mz_batch", nq), &nq, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            let all_qubits: Vec<QubitId> = (0..nq).map(QubitId).collect();
+            b.iter(|| {
+                sim.reset();
+                for q in 0..nq {
+                    sim.h(&[QubitId(q)]);
+                }
+                black_box(sim.mz(&all_qubits));
+            });
+        });
+
+        // GPU (sequential per-qubit for comparison)
+        #[cfg(feature = "gpu-sims")]
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            if let Ok(mut sim) = GpuStateVec::new(nq as u32) {
+                group.bench_with_input(BenchmarkId::new("GpuStateVec_wgpu", nq), &nq, |b, &nq| {
+                    b.iter(|| {
+                        sim.reset();
+                        for q in 0..nq {
+                            sim.h(&[QubitId(q)]);
+                        }
+                        for q in 0..nq {
+                            black_box(sim.mz(&[QubitId(q)]));
+                        }
+                    });
+                });
+            }
+        }
+    }
+
+    group.finish();
+}
+
+/// Benchmark subset measurement: measure half the qubits (even-indexed).
+/// Tests the `mz_joint_subset` path (QEC-realistic: measure ancillas, not data qubits).
+fn bench_subset_measurement<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Subset Measurement");
+    group.sample_size(20);
+
+    let qubit_counts = [10, 14, 18, 20, 22];
+
+    for &nq in &qubit_counts {
+        let half: Vec<QubitId> = (0..nq).step_by(2).map(QubitId).collect();
+        let half_count = half.len();
+
+        // Sequential: one mz() per qubit
+        group.bench_with_input(
+            BenchmarkId::new("mz_sequential", format!("{nq}q_{half_count}m")),
+            &nq,
+            |b, &nq| {
+                let mut sim = StateVecSoA::new(nq);
+                b.iter(|| {
+                    sim.reset();
+                    for q in 0..nq {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    for &q in &half {
+                        black_box(sim.mz(&[q]));
+                    }
+                });
+            },
+        );
+
+        // Batch: one mz() with all measured qubits
+        group.bench_with_input(
+            BenchmarkId::new("mz_batch_subset", format!("{nq}q_{half_count}m")),
+            &nq,
+            |b, &nq| {
+                let mut sim = StateVecSoA::new(nq);
+                b.iter(|| {
+                    sim.reset();
+                    for q in 0..nq {
+                        sim.h(&[QubitId(q)]);
+                    }
+                    black_box(sim.mz(&half));
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark flush performance: H on all qubits then flush.
+/// Isolates the cache-blocked flush optimization from measurement.
+fn bench_flush_scaling<M: Measurement>(c: &mut Criterion<M>) {
+    let mut group = c.benchmark_group("Flush Scaling");
+    group.sample_size(20);
+
+    let qubit_counts = [14, 18, 20, 22];
+
+    for &nq in &qubit_counts {
+        group.bench_with_input(BenchmarkId::new("h_all_flush", nq), &nq, |b, &nq| {
+            let mut sim = StateVecSoA::new(nq);
+            b.iter(|| {
+                sim.reset();
+                for q in 0..nq {
+                    sim.h(&[QubitId(q)]);
+                }
+                sim.flush();
+                black_box(());
+            });
+        });
+    }
 
     group.finish();
 }

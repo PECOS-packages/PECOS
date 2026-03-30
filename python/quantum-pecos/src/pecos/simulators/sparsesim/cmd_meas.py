@@ -24,14 +24,14 @@ from typing import TYPE_CHECKING
 import pecos as pc
 
 if TYPE_CHECKING:
-    from pecos.simulators.sparsesim.state import SparseSim
+    from pecos.simulators.sparsesim.state import SparseStabPy
     from pecos.typing import SimulatorGateParams
 
 from pecos.simulators.sparsesim.cmd_one_qubit import H5, H
 
 
 def meas_x(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     *,
     forced_outcome: int = -1,
@@ -41,7 +41,7 @@ def meas_x(
     """Measurement in the X basis.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
@@ -67,7 +67,7 @@ def meas_x(
 
 
 def meas_y(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     *,
     forced_outcome: int = -1,
@@ -77,7 +77,7 @@ def meas_y(
     """Measurement in the Y basis.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
@@ -103,7 +103,7 @@ def meas_y(
 
 
 def meas_z(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     *,
     forced_outcome: int = -1,
@@ -113,7 +113,7 @@ def meas_z(
     """Measurement in the Z basis.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
@@ -178,7 +178,7 @@ def meas_z(
 
 
 def nondeterministic_meas(
-    state: SparseSim,
+    state: SparseStabPy,
     qubit: int,
     anticom_stabs_col: set[int],
     anticom_destabs_col: set[int],
@@ -187,7 +187,7 @@ def nondeterministic_meas(
     """Non-deterministic measurement outcome.
 
     Args:
-        state (SparseSim): Instance representing the stabilizer state.
+        state (SparseStabPy): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         anticom_stabs_col (Set[int]): Set of stabilizer indices that anticommute with measurement.
         anticom_destabs_col (Set[int]): Set of destabilizer indices that anticommute with measurement.
@@ -345,7 +345,7 @@ def nondeterministic_meas(
 
 
 def force_output(
-    _state: SparseSim,
+    _state: SparseStabPy,
     _qubit: int,
     forced_output: int = -1,
     **_params: SimulatorGateParams,
@@ -356,7 +356,7 @@ def force_output(
 
     Args:
     ----
-        _state (SparseSim): Unused state parameter (kept for interface compatibility).
+        _state (SparseStabPy): Unused state parameter (kept for interface compatibility).
         _qubit (int): Unused qubit parameter (kept for interface compatibility).
         forced_output (int): Integer that will be outputted.
         **_params: Unused additional parameters (kept for interface compatibility).

@@ -61,12 +61,12 @@ def recovery_tester(qecc: pc.protocols.QECCProtocol) -> None:
 
     # Run circuits
     # ------------
-    state_zero = pc.simulators.SparseSimPy(qecc.num_qudits)
+    state_zero = pc.simulators.SparseStabPy(qecc.num_qudits)
     output_zero, _ = sim.run(state_zero, initzero)
 
     assert not output_zero
 
-    state_plus = pc.simulators.SparseSimPy(qecc.num_qudits)
+    state_plus = pc.simulators.SparseStabPy(qecc.num_qudits)
     output_plus, _ = sim.run(state_plus, initplus)
 
     assert not output_plus

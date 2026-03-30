@@ -4,7 +4,7 @@
 //! and the convenience `sim()` from the pecos meta-crate.
 
 use pecos::sim;
-use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stabilizer};
+use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stab};
 use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results = sim_builder()
         .classical(qasm_engine().program(qasm))
         .seed(42)
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .noise(DepolarizingNoise { p: 0.001 })
         .run(1000)?;
 
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results2 = sim(qasm2)
         .seed(123)
         .workers(4)
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .run(500)?;
 
     println!("  Ran {} shots", results2.len());

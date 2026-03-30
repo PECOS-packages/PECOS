@@ -325,7 +325,7 @@ mod tests {
         use pecos_simulators::SparseStab;
 
         // Build a simple Hadamard circuit
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         // Create a composite-based noise channel with 100% error rate for testing
         let sq_noise = prob(1.0, pauli());
@@ -356,7 +356,7 @@ mod tests {
         use pecos_simulators::SparseStab;
 
         // Build circuit
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         // Composite-based gate noise
         let gate_noise = prob(0.0, pauli()); // No gate noise
@@ -547,7 +547,13 @@ mod tests {
         use pecos_simulators::SparseStab;
 
         // Create a circuit that measures qubit 0
-        let commands = CommandBuilder::new().pz(0).pz(1).pz(2).h(0).mz(0).build();
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .pz(&[1])
+            .pz(&[2])
+            .h(&[0])
+            .mz(&[0])
+            .build();
 
         // Create crosstalk channel: 100% chance to flip other qubits during measurement
         let crosstalk = CompositeCrosstalkChannel::new("test_crosstalk", inject_x())
@@ -637,13 +643,13 @@ mod tests {
 
         // Build a circuit with repeated H gates
         let commands = CommandBuilder::new()
-            .pz(0)
-            .h(0)
-            .h(0)
-            .h(0)
-            .h(0)
-            .h(0)
-            .mz(0)
+            .pz(&[0])
+            .h(&[0])
+            .h(&[0])
+            .h(&[0])
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
             .build();
 
         // Run both with same seeds and count differences
@@ -712,7 +718,7 @@ mod tests {
 
         let p_meas = 0.1; // 10% measurement error
 
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         // Run many shots and compare flip rates
         let shots = 1000;
@@ -784,7 +790,12 @@ mod tests {
         let p_meas = 0.02;
 
         // Build circuit: prep, several gates, measure
-        let commands = CommandBuilder::new().pz(0).h(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
 
         // Run both and compare error distributions
         let shots = 500;

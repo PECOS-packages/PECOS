@@ -2,7 +2,7 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_engines::noise::GeneralNoiseModel;
-use pecos_engines::prelude::{sparse_stabilizer, state_vector};
+use pecos_engines::prelude::{sparse_stab, state_vector};
 use pecos_engines::sim_builder;
 use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
@@ -387,7 +387,7 @@ fn test_general_noise_builder_comparison_with_sim_builder() {
     // Test full method chaining with simulation builder
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .noise(noise_builder)
         .seed(42)
         .workers(2)

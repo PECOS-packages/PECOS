@@ -177,59 +177,59 @@ impl NoiseUtils {
             // Single-qubit gates that operate directly on qubit lists
             GateType::X => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_x(&qubits_usize);
+                builder.x(&qubits_usize);
             }
             GateType::Y => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_y(&qubits_usize);
+                builder.y(&qubits_usize);
             }
             GateType::Z => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_z(&qubits_usize);
+                builder.z(&qubits_usize);
             }
             GateType::H => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_h(&qubits_usize);
+                builder.h(&qubits_usize);
             }
             GateType::PZ => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_prep(&qubits_usize);
+                builder.pz(&qubits_usize);
             }
 
             // Two-qubit gates that need qubit validation
             GateType::CX if gate.qubits.len() >= 2 => {
-                builder.add_cx(&[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.cx(&[(*gate.qubits[0], *gate.qubits[1])]);
             }
             GateType::SZZ if gate.qubits.len() >= 2 => {
-                builder.add_szz(&[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.szz(&[(*gate.qubits[0], *gate.qubits[1])]);
             }
             GateType::SZZdg if gate.qubits.len() >= 2 => {
-                builder.add_szzdg(&[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.szzdg(&[(*gate.qubits[0], *gate.qubits[1])]);
             }
 
             // Rotation gates - angles are now stored in gate.angles field
             GateType::RX if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_rx(gate.angles[0], &qubits_usize);
+                builder.rx(gate.angles[0], &qubits_usize);
             }
             GateType::RY if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_ry(gate.angles[0], &qubits_usize);
+                builder.ry(gate.angles[0], &qubits_usize);
             }
             GateType::RZ if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_rz(gate.angles[0], &qubits_usize);
+                builder.rz(gate.angles[0], &qubits_usize);
             }
             GateType::RZZ if gate.qubits.len() >= 2 && !gate.angles.is_empty() => {
-                builder.add_rzz(gate.angles[0], &[*gate.qubits[0]], &[*gate.qubits[1]]);
+                builder.rzz(gate.angles[0], &[(*gate.qubits[0], *gate.qubits[1])]);
             }
             GateType::R1XY if gate.angles.len() >= 2 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_r1xy(gate.angles[0], gate.angles[1], &qubits_usize);
+                builder.r1xy(gate.angles[0], gate.angles[1], &qubits_usize);
             }
             GateType::U if gate.angles.len() >= 3 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_u(
+                builder.u(
                     gate.angles[0],
                     gate.angles[1],
                     gate.angles[2],
@@ -240,14 +240,14 @@ impl NoiseUtils {
             // Measurement gates
             GateType::MZ if !gate.qubits.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_measurements(&qubits_usize);
+                builder.mz(&qubits_usize);
             }
 
             // Idle gates need special handling for qubit lists
             GateType::Idle if !gate.params.is_empty() => {
                 // Use gate params for idle time
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_idle(gate.params[0], &qubits_usize);
+                builder.idle(gate.params[0], &qubits_usize);
             }
 
             // Custom is a placeholder (actual gate name is in metadata) -- skip.
@@ -305,7 +305,7 @@ impl NoiseUtils {
     /// * `builder` - The `ByteMessageBuilder` to add the gate to
     /// * `qubit` - The qubit to apply the gate to
     pub fn apply_x(builder: &mut ByteMessageBuilder, qubit: usize) {
-        builder.add_x(&[qubit]);
+        builder.x(&[qubit]);
     }
 
     /// Applies Y gate to a qubit via a builder
@@ -314,7 +314,7 @@ impl NoiseUtils {
     /// * `builder` - The `ByteMessageBuilder` to add the gate to
     /// * `qubit` - The qubit to apply the gate to
     pub fn apply_y(builder: &mut ByteMessageBuilder, qubit: usize) {
-        builder.add_y(&[qubit]);
+        builder.y(&[qubit]);
     }
 
     /// Applies Z gate to a qubit via a builder
@@ -323,7 +323,7 @@ impl NoiseUtils {
     /// * `builder` - The `ByteMessageBuilder` to add the gate to
     /// * `qubit` - The qubit to apply the gate to
     pub fn apply_z(builder: &mut ByteMessageBuilder, qubit: usize) {
-        builder.add_z(&[qubit]);
+        builder.z(&[qubit]);
     }
 
     /// Apply a Pauli gate based on the Pauli string identifier
@@ -379,7 +379,7 @@ impl NoiseUtils {
     /// * `builder` - The `ByteMessageBuilder` to add the gate to
     /// * `qubit` - The qubit to prepare
     pub fn apply_prep_0(builder: &mut ByteMessageBuilder, qubit: usize) {
-        builder.add_prep(&[qubit]);
+        builder.pz(&[qubit]);
     }
 
     /// Prepares a qubit in the |1⟩ state via a builder (applies prep followed by X)
@@ -388,8 +388,8 @@ impl NoiseUtils {
     /// * `builder` - The `ByteMessageBuilder` to add the gate to
     /// * `qubit` - The qubit to prepare
     pub fn apply_prep_1(builder: &mut ByteMessageBuilder, qubit: usize) {
-        builder.add_prep(&[qubit]);
-        builder.add_x(&[qubit]);
+        builder.pz(&[qubit]);
+        builder.x(&[qubit]);
     }
 }
 

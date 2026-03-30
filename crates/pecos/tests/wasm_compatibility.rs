@@ -26,7 +26,7 @@
 //     let mut state = SparseStab::<VecSet<u32>, u32>::new(3);
 //
 //     // Perform some operations
-//     state.h(0);
+//     state.h(&[0]);
 //     state.cx(0, 1);
 //     state.cz(1, 2);
 //

@@ -34,9 +34,9 @@
 //! use pecos_simulators::SparseStab;
 //!
 //! let commands = CommandBuilder::new()
-//!     .pz(0)
-//!     .h(0)
-//!     .mz(0)
+//!     .pz(&[0])
+//!     .h(&[0])
+//!     .mz(&[0])
 //!     .build();
 //!
 //! let mut state = SparseStab::new(1);
@@ -60,6 +60,11 @@ use smallvec::SmallVec;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Convert a flat qubit slice to a vector of pairs.
+fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
+    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+}
 
 // ============================================================================
 // Signal Handler Infrastructure
@@ -657,11 +662,11 @@ impl std::error::Error for ExecutionError {}
 /// use pecos_simulators::SparseStab;
 ///
 /// let commands = CommandBuilder::new()
-///     .pz(0)
-///     .h(0)
-///     .cx(0, 1)
-///     .mz(0)
-///     .mz(1)
+///     .pz(&[0])
+///     .h(&[0])
+///     .cx(&[(0, 1)])
+///     .mz(&[0])
+///     .mz(&[1])
 ///     .build();
 ///
 /// let mut state = SparseStab::new(2);
@@ -1500,27 +1505,33 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 true
             }
             GateType::CX => {
-                sim.cx(qubits);
+                let pairs = flat_to_pairs(qubits);
+                sim.cx(&pairs);
                 true
             }
             GateType::CY => {
-                sim.cy(qubits);
+                let pairs = flat_to_pairs(qubits);
+                sim.cy(&pairs);
                 true
             }
             GateType::CZ => {
-                sim.cz(qubits);
+                let pairs = flat_to_pairs(qubits);
+                sim.cz(&pairs);
                 true
             }
             GateType::SZZ => {
-                sim.szz(qubits);
+                let pairs = flat_to_pairs(qubits);
+                sim.szz(&pairs);
                 true
             }
             GateType::SZZdg => {
-                sim.szzdg(qubits);
+                let pairs = flat_to_pairs(qubits);
+                sim.szzdg(&pairs);
                 true
             }
             GateType::SWAP => {
-                sim.swap(qubits);
+                let pairs = flat_to_pairs(qubits);
+                sim.swap(&pairs);
                 true
             }
             _ => false,
@@ -2264,7 +2275,8 @@ where
             }
             GateType::RXX => {
                 if let Some(&angle) = angles.first() {
-                    sim.rxx(angle, qubits);
+                    let pairs = flat_to_pairs(qubits);
+                    sim.rxx(angle, &pairs);
                     true
                 } else {
                     false
@@ -2272,7 +2284,8 @@ where
             }
             GateType::RYY => {
                 if let Some(&angle) = angles.first() {
-                    sim.ryy(angle, qubits);
+                    let pairs = flat_to_pairs(qubits);
+                    sim.ryy(angle, &pairs);
                     true
                 } else {
                     false
@@ -2280,7 +2293,8 @@ where
             }
             GateType::RZZ => {
                 if let Some(&angle) = angles.first() {
-                    sim.rzz(angle, qubits);
+                    let pairs = flat_to_pairs(qubits);
+                    sim.rzz(angle, &pairs);
                     true
                 } else {
                     false
@@ -2294,9 +2308,9 @@ where
                     let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
                     let half_angle = angle / 2u64;
                     sim.rz(half_angle, &[target]);
-                    sim.cx(&[control, target]);
+                    sim.cx(&[(control, target)]);
                     sim.rz(-half_angle, &[target]);
-                    sim.cx(&[control, target]);
+                    sim.cx(&[(control, target)]);
                     true
                 } else {
                     false
@@ -2309,20 +2323,20 @@ where
                     let c2 = qubits[1];
                     let target = qubits[2];
                     sim.h(&[target]);
-                    sim.cx(&[c2, target]);
+                    sim.cx(&[(c2, target)]);
                     sim.tdg(&[target]);
-                    sim.cx(&[c1, target]);
+                    sim.cx(&[(c1, target)]);
                     sim.t(&[target]);
-                    sim.cx(&[c2, target]);
+                    sim.cx(&[(c2, target)]);
                     sim.tdg(&[target]);
-                    sim.cx(&[c1, target]);
+                    sim.cx(&[(c1, target)]);
                     sim.t(&[c2]);
                     sim.t(&[target]);
                     sim.h(&[target]);
-                    sim.cx(&[c1, c2]);
+                    sim.cx(&[(c1, c2)]);
                     sim.t(&[c1]);
                     sim.tdg(&[c2]);
-                    sim.cx(&[c1, c2]);
+                    sim.cx(&[(c1, c2)]);
                     true
                 } else {
                     false
@@ -2351,7 +2365,7 @@ mod tests {
 
     #[test]
     fn test_basic_execution() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
@@ -2363,12 +2377,12 @@ mod tests {
     #[test]
     fn test_bell_state() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .h(0)
-            .cx(0, 1)
-            .mz(0)
-            .mz(1)
+            .pz(&[0])
+            .pz(&[1])
+            .h(&[0])
+            .cx(&[(0, 1)])
+            .mz(&[0])
+            .mz(&[1])
             .build();
 
         let mut state = SparseStab::new(2);
@@ -2383,7 +2397,7 @@ mod tests {
 
     #[test]
     fn test_with_noise() {
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
 
@@ -2398,7 +2412,7 @@ mod tests {
 
     #[test]
     fn test_apply_circuit_resets_noise() {
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
@@ -2415,7 +2429,7 @@ mod tests {
         use crate::command::GateCommand;
         use crate::noise::leakage::LeakageChannel;
 
-        let mut commands = CommandBuilder::new().pz(0).build();
+        let mut commands = CommandBuilder::new().pz(&[0]).build();
         commands.push(GateCommand::new(
             GateType::MeasureLeaked,
             smallvec::smallvec![QubitId(0)],
@@ -2439,7 +2453,7 @@ mod tests {
     fn test_regular_measure_on_leaked_qubit() {
         use crate::noise::leakage::LeakageChannel;
 
-        let commands = CommandBuilder::new().pz(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         let mut noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
         noise.context_mut().mark_leaked(QubitId(0));
@@ -2460,7 +2474,7 @@ mod tests {
         use crate::command::GateCommand;
         use crate::noise::leakage::LeakageChannel;
 
-        let mut commands = CommandBuilder::new().pz(0).build();
+        let mut commands = CommandBuilder::new().pz(&[0]).build();
         commands.push(GateCommand::new(
             GateType::MeasureLeaked,
             smallvec::smallvec![QubitId(0)],
@@ -2488,7 +2502,7 @@ mod tests {
         use crate::command::GateCommand;
         use pecos_core::Angle64;
 
-        let mut commands = CommandBuilder::new().pz(0).build();
+        let mut commands = CommandBuilder::new().pz(&[0]).build();
         commands.push(GateCommand::with_angles(
             GateType::RX,
             smallvec::smallvec![QubitId(0)],
@@ -2512,17 +2526,17 @@ mod tests {
         use pecos_core::Angle64;
 
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .x(0)
-            .h(1)
+            .pz(&[0])
+            .pz(&[1])
+            .x(&[0])
+            .h(&[1])
             .gate(GateCommand::with_angles(
                 GateType::CRZ,
                 smallvec::smallvec![QubitId(0), QubitId(1)],
                 smallvec::smallvec![Angle64::HALF_TURN],
             ))
-            .h(1)
-            .mz(1)
+            .h(&[1])
+            .mz(&[1])
             .build();
 
         let mut state = StateVec::new(2);
@@ -2539,13 +2553,13 @@ mod tests {
     #[test]
     fn test_ccx_decomposition() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .pz(2)
-            .x(0)
-            .x(1)
-            .ccx(0, 1, 2)
-            .mz(2)
+            .pz(&[0])
+            .pz(&[1])
+            .pz(&[2])
+            .x(&[0])
+            .x(&[1])
+            .ccx(&[(0, 1, 2)])
+            .mz(&[2])
             .build();
 
         let mut state = StateVec::new(3);
@@ -2562,12 +2576,12 @@ mod tests {
     #[test]
     fn test_ccx_no_flip_when_control_zero() {
         let commands = CommandBuilder::new()
-            .pz(0)
-            .pz(1)
-            .pz(2)
-            .x(0)
-            .ccx(0, 1, 2)
-            .mz(2)
+            .pz(&[0])
+            .pz(&[1])
+            .pz(&[2])
+            .x(&[0])
+            .ccx(&[(0, 1, 2)])
+            .mz(&[2])
             .build();
 
         let mut state = StateVec::new(3);
@@ -2585,7 +2599,11 @@ mod tests {
     fn test_idle_time_emission() {
         use crate::noise::idle::IdleChannel;
 
-        let commands = CommandBuilder::new().pz(0).idle(0, 100u64).mz(0).build();
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .idle(&[0], 100u64)
+            .mz(&[0])
+            .build();
 
         let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0));
 
@@ -2612,7 +2630,7 @@ mod tests {
             CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
         );
 
-        let commands = CommandBuilder::new().pz(0).h(0).mz(0).build();
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates)
@@ -2669,11 +2687,11 @@ mod tests {
             let counter_clone = counter.clone();
 
             let commands = CommandBuilder::new()
-                .pz(0)
+                .pz(&[0])
                 .signal(RoundBoundary(1))
-                .h(0)
+                .h(&[0])
                 .signal(RoundBoundary(2))
-                .mz(0)
+                .mz(&[0])
                 .build();
 
             let mut state = SparseStab::new(1);
@@ -2699,11 +2717,11 @@ mod tests {
             let tc = temp_count.clone();
 
             let commands = CommandBuilder::new()
-                .pz(0)
+                .pz(&[0])
                 .signal(RoundBoundary(1))
                 .signal(Temperature(300.0))
-                .h(0)
-                .mz(0)
+                .h(&[0])
+                .mz(&[0])
                 .build();
 
             let mut state = SparseStab::new(1);

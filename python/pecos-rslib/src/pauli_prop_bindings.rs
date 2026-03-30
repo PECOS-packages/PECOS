@@ -116,19 +116,19 @@ impl PyPauliProp {
         self.inner.contains_y(qubit)
     }
 
-    /// Add an X operator to a qubit
-    pub fn add_x(&mut self, qubit: usize) {
-        self.inner.add_x(qubit);
+    /// Track X Pauli(s) on qubit(s)
+    pub fn track_x(&mut self, qubits: Vec<usize>) {
+        self.inner.track_x(&qubits);
     }
 
-    /// Add a Z operator to a qubit
-    pub fn add_z(&mut self, qubit: usize) {
-        self.inner.add_z(qubit);
+    /// Track Z Pauli(s) on qubit(s)
+    pub fn track_z(&mut self, qubits: Vec<usize>) {
+        self.inner.track_z(&qubits);
     }
 
-    /// Add a Y operator to a qubit
-    pub fn add_y(&mut self, qubit: usize) {
-        self.inner.add_y(qubit);
+    /// Track Y Pauli(s) on qubit(s)
+    pub fn track_y(&mut self, qubits: Vec<usize>) {
+        self.inner.track_y(&qubits);
     }
 
     /// Flip the sign of the Pauli string
@@ -207,49 +207,70 @@ impl PyPauliProp {
 
     // Clifford gates
 
-    /// Apply Hadamard gate
-    pub fn h(&mut self, qubit: usize) {
-        self.inner.h(&[QubitId(qubit)]);
+    /// Apply Hadamard gate(s)
+    pub fn h(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.h(&qs);
     }
 
-    /// Apply S gate (sqrt(Z))
-    pub fn sz(&mut self, qubit: usize) {
-        self.inner.sz(&[QubitId(qubit)]);
+    /// Apply S gate(s) (sqrt(Z))
+    pub fn sz(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.sz(&qs);
     }
 
-    /// Apply sqrt(X) gate
-    pub fn sx(&mut self, qubit: usize) {
-        self.inner.sx(&[QubitId(qubit)]);
+    /// Apply sqrt(X) gate(s)
+    pub fn sx(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.sx(&qs);
     }
 
-    /// Apply sqrt(Y) gate
-    pub fn sy(&mut self, qubit: usize) {
-        self.inner.sy(&[QubitId(qubit)]);
+    /// Apply sqrt(Y) gate(s)
+    pub fn sy(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.sy(&qs);
     }
 
-    /// Apply CNOT/CX gate
-    pub fn cx(&mut self, control: usize, target: usize) {
-        self.inner.cx(&[QubitId(control), QubitId(target)]);
+    /// Apply CNOT/CX gate(s)
+    pub fn cx(&mut self, pairs: Vec<(usize, usize)>) {
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(c, t)| (QubitId(c), QubitId(t)))
+            .collect();
+        self.inner.cx(&ps);
     }
 
-    /// Apply CY gate
-    pub fn cy(&mut self, control: usize, target: usize) {
-        self.inner.cy(&[QubitId(control), QubitId(target)]);
+    /// Apply CY gate(s)
+    pub fn cy(&mut self, pairs: Vec<(usize, usize)>) {
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(c, t)| (QubitId(c), QubitId(t)))
+            .collect();
+        self.inner.cy(&ps);
     }
 
-    /// Apply CZ gate
-    pub fn cz(&mut self, control: usize, target: usize) {
-        self.inner.cz(&[QubitId(control), QubitId(target)]);
+    /// Apply CZ gate(s)
+    pub fn cz(&mut self, pairs: Vec<(usize, usize)>) {
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(c, t)| (QubitId(c), QubitId(t)))
+            .collect();
+        self.inner.cz(&ps);
     }
 
-    /// Apply SWAP gate
-    pub fn swap(&mut self, q1: usize, q2: usize) {
-        self.inner.swap(&[QubitId(q1), QubitId(q2)]);
+    /// Apply SWAP gate(s)
+    pub fn swap(&mut self, pairs: Vec<(usize, usize)>) {
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(a, b)| (QubitId(a), QubitId(b)))
+            .collect();
+        self.inner.swap(&ps);
     }
 
     /// Measure in Z basis
-    pub fn mz(&mut self, qubit: usize) -> bool {
-        self.inner.mz(&[QubitId(qubit)])[0].outcome
+    pub fn mz(&mut self, qubits: Vec<usize>) -> Vec<bool> {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.mz(&qs).into_iter().map(|r| r.outcome).collect()
     }
 
     /// Check if this is the identity operator

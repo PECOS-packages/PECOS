@@ -12,6 +12,6 @@
 
 """PECOS Stab simulator plugin for the Selene quantum emulator."""
 
-from pecos_selene_stab.plugin import StabPlugin
+from pecos_selene_stabilizer.plugin import StabPlugin
 
 __all__ = ["StabPlugin"]

@@ -19,9 +19,9 @@
 //!
 //! let mut sim = GpuStateVec::new(4).unwrap();
 //! sim.h(&qid(0));
-//! sim.cx(&qid2(0, 1));
+//! sim.cx(&[(QubitId(0), QubitId(1))]);
 //! ```
 
 pub use crate::{GpuError, GpuStateVec};
-pub use pecos_core::{QubitId, qid, qid2};
+pub use pecos_core::{QubitId, qid};
 pub use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};

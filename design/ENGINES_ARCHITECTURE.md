@@ -613,7 +613,7 @@ pecos-qis-ffi (C ABI for external programs)
 selene-plugins/ (simulator plugins)
     │
     ├── pecos-selene-statevec
-    └── pecos-selene-stab
+    └── pecos-selene-stabilizer
 ```
 
 ## ByteMessage: Binary Protocol for FFI and Plugins
@@ -698,7 +698,7 @@ pub trait SimulatorInterface {
 
 **Available Plugins:**
 - `pecos-selene-statevec` - State vector simulator
-- `pecos-selene-stab` - Stabilizer simulator
+- `pecos-selene-stabilizer` - Stabilizer simulator
 
 ### Python Bindings
 
@@ -709,9 +709,9 @@ from pecos import ByteMessage
 
 # Build a message
 builder = ByteMessage.quantum_operations_builder()
-builder.add_h([0])
-builder.add_cx([(0, 1)])
-builder.add_mz([0])
+builder.h([0])
+builder.cx([(0, 1)])
+builder.mz([0])
 message = builder.build()
 
 # Parse operations
@@ -923,7 +923,7 @@ results = engine.run(program, shots=100)
 │                         │                                    │
 │  ┌──────────────────────┴──────────────────────────────┐    │
 │  │              PyO3 Bindings (pecos-rslib)             │    │
-│  │  - SparseSim, StateVec exposed to Python             │    │
+│  │  - SparseStab, StateVec exposed to Python             │    │
 │  │  - WasmForeignObject for classical co-processors     │    │
 │  │  - Engine builders for Rust-native pipelines         │    │
 │  └──────────────────────┬──────────────────────────────┘    │

@@ -12,13 +12,13 @@ fn test_user_guide_circuit_representation_rust_1() {
 
 // Fluent builder API
 let mut circuit = DagCircuit::new();
-circuit.h(0).cx(0, 1).rz(0.5, 0).mz(0);
+circuit.h(&[0]).cx(&[(0, 1)]).rz(0.5, &[0]).mz(&[0]);
 
 // Query properties
 println!("Gates: {}", circuit.gate_count());
 println!("Depth: {}", circuit.depth());
 println!("Width: {}", circuit.width());
-
+    
 }
 
 
@@ -32,32 +32,32 @@ fn test_user_guide_circuit_representation_rust_2() {
 let mut circuit = DagCircuit::new();
 
 // Single-qubit gates
-circuit.h(0);       // Hadamard
-circuit.x(1);       // Pauli X
-circuit.y(2);       // Pauli Y
-circuit.z(3);       // Pauli Z
-circuit.sz(0);      // S gate
-circuit.szdg(0);    // S-dagger
-circuit.t(0);       // T gate
-circuit.tdg(0);     // T-dagger
+circuit.h(&[0]);       // Hadamard
+circuit.x(&[1]);       // Pauli X
+circuit.y(&[2]);       // Pauli Y
+circuit.z(&[3]);       // Pauli Z
+circuit.sz(&[0]);      // S gate
+circuit.szdg(&[0]);    // S-dagger
+circuit.t(&[0]);       // T gate
+circuit.tdg(&[0]);     // T-dagger
 
 // Rotation gates (angle in radians)
-circuit.rx(3.14159, 0);
-circuit.ry(1.5708, 1);
-circuit.rz(0.7854, 2);
+circuit.rx(3.14159, &[0]);
+circuit.ry(1.5708, &[1]);
+circuit.rz(0.7854, &[2]);
 
 // Two-qubit gates
-circuit.cx(0, 1);
-circuit.szz(0, 1);
-circuit.rzz(0.5, 0, 1);
+circuit.cx(&[(0, 1)]);
+circuit.szz(&[(0, 1)]);
+circuit.rzz(0.5, &[(0, 1)]);
 
 // Measurement and preparation
-circuit.mz(0);
-circuit.pz(1);
+circuit.mz(&[0]);
+circuit.pz(&[1]);
 
 // Chaining
-circuit.h(0).cx(0, 1).h(0).mz(0);
-
+circuit.h(&[0]).cx(&[(0, 1)]).h(&[0]).mz(&[0]);
+    
 }
 
 
@@ -71,14 +71,14 @@ fn test_user_guide_circuit_representation_rust_3() {
 let mut circuit = DagCircuit::new();
 
 // Attach metadata to the last gate
-circuit.h(0).meta("error_rate", Attribute::Float(0.001));
+circuit.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 
 // Multiple metadata entries
-circuit.cx(0, 1).meta("duration_ns", Attribute::Int(50));
+circuit.cx(&[(0, 1)]).meta("duration_ns", Attribute::Int(50));
 
 // Measurements break the chain but still support metadata
-circuit.mz(0).meta("basis", Attribute::String("Z".into()));
-
+circuit.mz(&[0]).meta("basis", Attribute::String("Z".into()));
+    
 }
 
 
@@ -89,10 +89,10 @@ fn test_user_guide_circuit_representation_rust_4() {
     use pecos::digraph::DiGraph;
     use pecos::quantum::{Attribute, DagCircuit, TickCircuit};
     let mut circuit = DagCircuit::new();
-circuit.h(0).cx(0, 1).h(1).cx(1, 2);
-circuit.mz(0);
-circuit.mz(1);
-circuit.mz(2);
+circuit.h(&[0]).cx(&[(0, 1)]).h(&[1]).cx(&[(1, 2)]);
+circuit.mz(&[0]);
+circuit.mz(&[1]);
+circuit.mz(&[2]);
 
 // Basic metrics
 println!("Total gates: {}", circuit.gate_count());
@@ -115,7 +115,7 @@ for node_id in circuit.topological_order() {
 for (i, layer) in circuit.layers().enumerate() {
     println!("Layer {}: {:?}", i, layer);
 }
-
+    
 }
 
 
@@ -138,7 +138,7 @@ circuit.connect(h_node, cx_node, QubitId::from(0)).unwrap();
 // Query connections
 println!("Predecessors of CX: {:?}", circuit.predecessors(cx_node));
 println!("Successors of H: {:?}", circuit.successors(h_node));
-
+    
 }
 
 
@@ -162,7 +162,7 @@ circuit.tick().mz(&[0, 1]);
 
 println!("Number of ticks: {}", circuit.num_ticks());
 println!("Total gates: {}", circuit.gate_count());
-
+    
 }
 
 
@@ -184,7 +184,7 @@ tick.h(&[0]);
 if let Err(e) = tick.try_add_gate(Gate::cx(&[(0, 1)])) {
     println!("Conflict on qubits: {:?}", e.conflicting_qubits);
 }
-
+    
 }
 
 
@@ -203,7 +203,7 @@ tick.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 
 // Circuit-level metadata
 circuit.set_meta("name", Attribute::String("Bell state".into()));
-
+    
 }
 
 
@@ -223,7 +223,7 @@ let dag_circuit = DagCircuit::from(tick_circuit);
 
 // DagCircuit -> TickCircuit
 let tick_circuit2 = TickCircuit::from(dag_circuit);
-
+    
 }
 
 
@@ -251,7 +251,7 @@ println!("Predecessors of n2: {:?}", graph.predecessors(n2));
 println!("Successors of n0: {:?}", graph.successors(n0));
 println!("In-degree of n2: {}", graph.in_degree(n2));
 println!("Out-degree of n0: {}", graph.out_degree(n0));
-
+    
 }
 
 
@@ -288,5 +288,5 @@ println!("Descendants of n0: {:?}", dag.descendants(n0));
 for layer in dag.layers(dag.roots()) {
     println!("Layer: {:?}", layer);
 }
-
+    
 }

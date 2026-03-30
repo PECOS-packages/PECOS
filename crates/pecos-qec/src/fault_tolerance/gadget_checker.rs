@@ -875,9 +875,9 @@ impl<'a> GadgetChecker<'a> {
         let mut prop = PauliProp::new();
         for &(qubit, pauli) in input_faults {
             match pauli {
-                1 => prop.add_x(qubit),
-                2 => prop.add_y(qubit),
-                3 => prop.add_z(qubit),
+                1 => prop.track_x(&[qubit]),
+                2 => prop.track_y(&[qubit]),
+                3 => prop.track_z(&[qubit]),
                 _ => {}
             }
         }
@@ -970,12 +970,12 @@ impl<'a> GadgetChecker<'a> {
                     }
                     pecos_core::gate_type::GateType::CX => {
                         if qubits.len() >= 2 {
-                            prop.cx(&[qubits[0], qubits[1]]);
+                            prop.cx(&[(qubits[0], qubits[1])]);
                         }
                     }
                     pecos_core::gate_type::GateType::CZ => {
                         if qubits.len() >= 2 {
-                            prop.cz(&[qubits[0], qubits[1]]);
+                            prop.cz(&[(qubits[0], qubits[1])]);
                         }
                     }
                     pecos_core::gate_type::GateType::X => {
@@ -1000,10 +1000,10 @@ impl<'a> GadgetChecker<'a> {
     fn merge_pauli_props(&self, target: &mut PauliProp, source: &PauliProp) {
         // XOR the X and Z bits from source into target
         for q in source.get_x_qubits() {
-            target.add_x(q);
+            target.track_x(&[q]);
         }
         for q in source.get_z_qubits() {
-            target.add_z(q);
+            target.track_z(&[q]);
         }
     }
 
@@ -1726,9 +1726,9 @@ impl<'a> GadgetChecker<'a> {
         // Add input faults
         for &(qubit, pauli) in input_faults {
             match pauli {
-                1 => prop.add_x(qubit),
-                2 => prop.add_y(qubit),
-                3 => prop.add_z(qubit),
+                1 => prop.track_x(&[qubit]),
+                2 => prop.track_y(&[qubit]),
+                3 => prop.track_z(&[qubit]),
                 _ => {}
             }
         }
@@ -1745,9 +1745,9 @@ impl<'a> GadgetChecker<'a> {
                     for (i, &p) in fault.paulis.iter().enumerate() {
                         if let Some(&qubit) = fault.location.qubits.get(i) {
                             match p {
-                                1 => prop.add_x(qubit.0),
-                                2 => prop.add_y(qubit.0),
-                                3 => prop.add_z(qubit.0),
+                                1 => prop.track_x(&[qubit.0]),
+                                2 => prop.track_y(&[qubit.0]),
+                                3 => prop.track_z(&[qubit.0]),
                                 _ => {}
                             }
                         }
@@ -1770,12 +1770,12 @@ impl<'a> GadgetChecker<'a> {
                     }
                     pecos_core::gate_type::GateType::CX => {
                         if qubits.len() >= 2 {
-                            prop.cx(&[qubits[0], qubits[1]]);
+                            prop.cx(&[(qubits[0], qubits[1])]);
                         }
                     }
                     pecos_core::gate_type::GateType::CZ => {
                         if qubits.len() >= 2 {
-                            prop.cz(&[qubits[0], qubits[1]]);
+                            prop.cz(&[(qubits[0], qubits[1])]);
                         }
                     }
                     pecos_core::gate_type::GateType::X => {
@@ -1798,9 +1798,9 @@ impl<'a> GadgetChecker<'a> {
                     for (i, &p) in fault.paulis.iter().enumerate() {
                         if let Some(&qubit) = fault.location.qubits.get(i) {
                             match p {
-                                1 => prop.add_x(qubit.0),
-                                2 => prop.add_y(qubit.0),
-                                3 => prop.add_z(qubit.0),
+                                1 => prop.track_x(&[qubit.0]),
+                                2 => prop.track_y(&[qubit.0]),
+                                3 => prop.track_z(&[qubit.0]),
                                 _ => {}
                             }
                         }

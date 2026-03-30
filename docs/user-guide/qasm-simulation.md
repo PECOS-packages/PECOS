@@ -2,7 +2,7 @@
 
 ```hidden-rust
 use pecos::prelude::*;
-use pecos::simulators::{sparse_stabilizer, state_vector};
+use pecos::simulators::{sparse_stab, state_vector};
 use pecos::noise::GeneralNoiseModelBuilder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -317,7 +317,7 @@ PECOS provides different engines optimized for different types of circuits:
 
     ```python
     from pecos import sim, Qasm
-    from pecos_rslib import sparse_stabilizer, state_vector
+    from pecos_rslib import sparse_stab, state_vector
 
     qasm_code = """
         OPENQASM 2.0;
@@ -330,7 +330,7 @@ PECOS provides different engines optimized for different types of circuits:
     """
 
     # Sparse stabilizer (default, efficient for Clifford circuits)
-    results = sim(Qasm(qasm_code)).quantum(sparse_stabilizer()).run(1000)
+    results = sim(Qasm(qasm_code)).quantum(sparse_stab()).run(1000)
 
     # State vector (for non-Clifford circuits)
     results = sim(Qasm(qasm_code)).quantum(state_vector()).run(1000)
@@ -340,7 +340,7 @@ PECOS provides different engines optimized for different types of circuits:
 
     ```rust
     use pecos::prelude::*;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
 
     let qasm_code = r#"
         OPENQASM 2.0;
@@ -356,7 +356,7 @@ PECOS provides different engines optimized for different types of circuits:
 
     // Sparse stabilizer (default, efficient for Clifford circuits)
     let results = sim(program.clone())
-        .quantum(sparse_stabilizer())
+        .quantum(sparse_stab())
         .run(1000)?;
 
     // State vector (for non-Clifford circuits)
@@ -635,7 +635,7 @@ For many shots, you can use multiple CPU cores to speed up simulation:
 
 ### Choosing the Right Engine
 
-- **For Clifford circuits** (H, S, CNOT, measurements): Use `SparseStabilizer` - it's exponentially faster
+- **For Clifford circuits** (H, S, CNOT, measurements): Use `SparseStab` - it's exponentially faster
 - **For circuits with T gates or rotations**: Use `StateVector`
 - **Not sure?** The engine will be chosen based on the gates in your circuit
 

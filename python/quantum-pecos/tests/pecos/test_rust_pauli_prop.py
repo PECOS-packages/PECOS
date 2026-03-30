@@ -21,9 +21,9 @@ def test_rust_pauli_prop_basic() -> None:
     sim = PauliPropRs(num_qubits=4, track_sign=True)
 
     # Add Pauli operators
-    sim.add_x(0)
-    sim.add_z(2)
-    sim.add_y(3)
+    sim.track_x([0])
+    sim.track_z([2])
+    sim.track_y([3])
 
     assert sim.weight() == 3
     assert sim.contains_x(0)
@@ -34,7 +34,7 @@ def test_rust_pauli_prop_basic() -> None:
     assert sim.to_dense_string() == "+XIZY"
 
     # Test Hadamard gate (X -> Z)
-    sim.h(0)
+    sim.h([0])
     assert sim.contains_z(0)
     assert not sim.contains_x(0)
 
@@ -44,14 +44,14 @@ def test_rust_pauli_prop_composition() -> None:
     sim = PauliPropRs(num_qubits=3, track_sign=True)
 
     # X * Z = -iY (applying Z after X)
-    sim.add_x(0)
+    sim.track_x([0])
     sim.add_paulis({"Z": {0}})
 
     assert sim.contains_y(0)
     assert sim.sign_string() == "-i"  # X*Z = -iY
 
     # Y * Y = I
-    sim.add_y(0)
+    sim.track_y([0])
     assert not sim.contains_x(0)
     assert not sim.contains_z(0)
     assert not sim.contains_y(0)
@@ -62,15 +62,15 @@ def test_rust_pauli_prop_gates() -> None:
     sim = PauliPropRs(num_qubits=3, track_sign=False)
 
     # Test CX propagation
-    sim.add_x(0)  # X on control
-    sim.cx(0, 1)  # Should propagate to target
+    sim.track_x([0])  # X on control
+    sim.cx([(0, 1)])  # Should propagate to target
     assert sim.contains_x(0)
     assert sim.contains_x(1)
 
     # Test CZ propagation
     sim2 = PauliPropRs(num_qubits=3, track_sign=False)
-    sim2.add_z(1)  # Z on target
-    sim2.cx(0, 1)  # Should propagate to control
+    sim2.track_z([1])  # Z on target
+    sim2.cx([(0, 1)])  # Should propagate to control
     assert sim2.contains_z(0)
     assert sim2.contains_z(1)
 
@@ -86,10 +86,10 @@ def test_rust_vs_python_consistency() -> None:
     qc.append({"X": {0, 1}, "Z": {2}, "Y": {3}})
     py_sim.add_faults(qc)
 
-    rust_sim.add_x(0)
-    rust_sim.add_x(1)
-    rust_sim.add_z(2)
-    rust_sim.add_y(3)
+    rust_sim.track_x([0])
+    rust_sim.track_x([1])
+    rust_sim.track_z([2])
+    rust_sim.track_y([3])
 
     # Check weights match
     assert rust_sim.weight() == py_sim.fault_wt()
@@ -118,16 +118,16 @@ def test_rust_pauli_prop_weight() -> None:
 
     assert sim.weight() == 0
 
-    sim.add_x(0)
+    sim.track_x([0])
     assert sim.weight() == 1
 
-    sim.add_z(1)
+    sim.track_z([1])
     assert sim.weight() == 2
 
-    sim.add_y(2)
+    sim.track_y([2])
     assert sim.weight() == 3
 
     # Adding X to qubit with Z makes Y (still weight 3)
-    sim.add_x(1)
+    sim.track_x([1])
     assert sim.weight() == 3
     assert sim.contains_y(1)

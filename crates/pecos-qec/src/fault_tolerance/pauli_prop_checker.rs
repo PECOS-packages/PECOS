@@ -258,9 +258,9 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
     for (qubit, &pauli) in fault.location.qubits.iter().zip(&fault.paulis) {
         let q = qubit.index();
         match pauli {
-            1 => prop.add_x(q),
-            2 => prop.add_y(q),
-            3 => prop.add_z(q),
+            1 => prop.track_x(&[q]),
+            2 => prop.track_y(&[q]),
+            3 => prop.track_z(&[q]),
             _ => {} // Identity
         }
     }
@@ -316,9 +316,9 @@ pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> P
         for (qubit, &pauli) in fault.location.qubits.iter().zip(&fault.paulis) {
             let q = qubit.index();
             match pauli {
-                1 => prop.add_x(q),
-                2 => prop.add_y(q),
-                3 => prop.add_z(q),
+                1 => prop.track_x(&[q]),
+                2 => prop.track_y(&[q]),
+                3 => prop.track_z(&[q]),
                 _ => {}
             }
         }
@@ -500,11 +500,11 @@ pub fn extract_output_error(prop: &PauliProp, output_qubits: &[usize]) -> PauliP
 
     for &q in output_qubits {
         if prop.contains_x(q) && prop.contains_z(q) {
-            output.add_y(q);
+            output.track_y(&[q]);
         } else if prop.contains_x(q) {
-            output.add_x(q);
+            output.track_x(&[q]);
         } else if prop.contains_z(q) {
-            output.add_z(q);
+            output.track_z(&[q]);
         }
     }
 
@@ -1036,12 +1036,12 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
     for (qubit, pauli_byte) in fault.location.qubits.iter().zip(fault.paulis.iter()) {
         let qubit_idx = qubit.0;
         match pauli_byte {
-            1 => prop.add_x(qubit_idx), // X
-            2 => prop.add_z(qubit_idx), // Z
+            1 => prop.track_x(&[qubit_idx]), // X
+            2 => prop.track_z(&[qubit_idx]), // Z
             3 => {
                 // Y = iXZ
-                prop.add_x(qubit_idx);
-                prop.add_z(qubit_idx);
+                prop.track_x(&[qubit_idx]);
+                prop.track_z(&[qubit_idx]);
             }
             _ => {} // I
         }
@@ -1066,17 +1066,17 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
             match gate.gate_type {
                 GateType::CX => {
                     if qubits.len() >= 2 {
-                        prop.cx(&[qubits[0], qubits[1]]);
+                        prop.cx(&[(qubits[0], qubits[1])]);
                     }
                 }
                 GateType::CZ => {
                     if qubits.len() >= 2 {
-                        prop.cz(&[qubits[0], qubits[1]]);
+                        prop.cz(&[(qubits[0], qubits[1])]);
                     }
                 }
                 GateType::CY => {
                     if qubits.len() >= 2 {
-                        prop.cy(&[qubits[0], qubits[1]]);
+                        prop.cy(&[(qubits[0], qubits[1])]);
                     }
                 }
                 GateType::H => {
@@ -1101,7 +1101,7 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
                 }
                 GateType::SWAP => {
                     if qubits.len() >= 2 {
-                        prop.swap(&[qubits[0], qubits[1]]);
+                        prop.swap(&[(qubits[0], qubits[1])]);
                     }
                 }
                 _ => {}
@@ -2073,9 +2073,9 @@ impl<'a> PauliPropChecker<'a> {
                     let mut prop = PauliProp::new();
                     for (&qubit, &pauli) in self.io.input_qubits.iter().zip(input_fault.iter()) {
                         match pauli {
-                            1 => prop.add_x(qubit),
-                            2 => prop.add_y(qubit),
-                            3 => prop.add_z(qubit),
+                            1 => prop.track_x(&[qubit]),
+                            2 => prop.track_y(&[qubit]),
+                            3 => prop.track_z(&[qubit]),
                             _ => {} // Identity
                         }
                     }
@@ -2085,9 +2085,9 @@ impl<'a> PauliPropChecker<'a> {
                         for (qubit, &pauli) in fault.location.qubits.iter().zip(&fault.paulis) {
                             let q = qubit.index();
                             match pauli {
-                                1 => prop.add_x(q),
-                                2 => prop.add_y(q),
-                                3 => prop.add_z(q),
+                                1 => prop.track_x(&[q]),
+                                2 => prop.track_y(&[q]),
+                                3 => prop.track_z(&[q]),
                                 _ => {}
                             }
                         }
@@ -2542,10 +2542,10 @@ mod tests {
 
         // Initialize with X on qubit 0, then propagate through CX
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
 
         // Apply CX
-        prop.cx(&[QubitId(0), QubitId(1)]);
+        prop.cx(&[(QubitId(0), QubitId(1))]);
 
         // X should now be on both qubits
         assert!(prop.contains_x(0));
@@ -2556,9 +2556,9 @@ mod tests {
     fn test_propagate_z_through_cx() {
         // Z on target propagates to control: IZ -> ZZ
         let mut prop = PauliProp::new();
-        prop.add_z(1);
+        prop.track_z(&[1]);
 
-        prop.cx(&[QubitId(0), QubitId(1)]);
+        prop.cx(&[(QubitId(0), QubitId(1))]);
 
         // Z should now be on both qubits
         assert!(prop.contains_z(0));
@@ -2569,7 +2569,7 @@ mod tests {
     fn test_propagate_through_h() {
         // H swaps X and Z
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
 
         prop.h(&[QubitId(0)]);
 
@@ -2582,7 +2582,7 @@ mod tests {
     fn test_anticommutes_with_logical() {
         // X error anticommutes with Z logical
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
 
         let logical_xs: &[usize] = &[];
         let logical_zs: &[usize] = &[0];
@@ -2594,7 +2594,7 @@ mod tests {
     fn test_commutes_with_logical() {
         // Z error commutes with Z logical
         let mut prop = PauliProp::new();
-        prop.add_z(0);
+        prop.track_z(&[0]);
 
         let logical_xs: &[usize] = &[];
         let logical_zs: &[usize] = &[0];
@@ -2705,7 +2705,7 @@ mod tests {
     fn test_get_syndrome_flips() {
         // X error on qubit 0 should flip Z-basis measurement on qubit 0
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
 
         let (z_flips, x_flips) = get_syndrome_flips(&prop, &[0, 1], &[]);
         assert_eq!(z_flips, vec![0]);
@@ -2715,7 +2715,7 @@ mod tests {
     #[test]
     fn test_has_syndrome() {
         let mut prop = PauliProp::new();
-        prop.add_x(3); // X on ancilla qubit 3
+        prop.track_x(&[3]); // X on ancilla qubit 3
 
         // Should detect syndrome on qubit 3
         assert!(has_syndrome(&prop, &[3, 4], &[]));
@@ -2795,8 +2795,8 @@ mod tests {
     #[test]
     fn test_propagation_result() {
         let mut prop = PauliProp::new();
-        prop.add_x(0);
-        prop.add_z(1);
+        prop.track_x(&[0]);
+        prop.track_z(&[1]);
 
         let result = PropagationResult {
             propagated_error: prop,
@@ -2829,7 +2829,7 @@ mod tests {
     fn test_classify_fault_detectable() {
         // Error that produces a syndrome is detectable
         let mut prop = PauliProp::new();
-        prop.add_x(0); // X error on qubit 0
+        prop.track_x(&[0]); // X error on qubit 0
 
         // If qubit 0 is measured in Z basis, this is detectable
         let classification = classify_fault(&prop, &[0], &[], &[(&[], &[0])]);
@@ -2840,8 +2840,8 @@ mod tests {
     fn test_classify_fault_undetectable_stabilizer() {
         // Error that produces no syndrome and commutes with logicals
         let mut prop = PauliProp::new();
-        prop.add_x(0);
-        prop.add_x(1); // X0X1 = stabilizer of 3-qubit code
+        prop.track_x(&[0]);
+        prop.track_x(&[1]); // X0X1 = stabilizer of 3-qubit code
 
         // Logical Z = ZZZ, so X0X1 commutes with it
         // No syndrome measurement qubits, so no syndrome
@@ -2853,7 +2853,7 @@ mod tests {
     fn test_classify_fault_undetectable_logical() {
         // Error that produces no syndrome but anticommutes with logical
         let mut prop = PauliProp::new();
-        prop.add_x(0); // X on qubit 0
+        prop.track_x(&[0]); // X on qubit 0
 
         // No syndrome measurement qubits, so no syndrome
         // Logical Z = Z on qubit 0, so X anticommutes
@@ -3802,7 +3802,7 @@ mod tests {
     fn test_compute_stabilizer_syndromes() {
         // Error: X on qubit 0
         let mut prop = PauliProp::new();
-        prop.add_x(0);
+        prop.track_x(&[0]);
 
         // Stabilizers: Z0Z1 (checks X errors on q0 or q1)
         let stabilizers: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
@@ -3812,7 +3812,7 @@ mod tests {
 
         // Error: Z on qubit 0
         let mut prop_z = PauliProp::new();
-        prop_z.add_z(0);
+        prop_z.track_z(&[0]);
 
         let syndromes_z = compute_stabilizer_syndromes(&prop_z, stabilizers);
         assert_eq!(syndromes_z, vec![false]); // Z0 commutes with Z0Z1
@@ -3822,7 +3822,7 @@ mod tests {
     fn test_compute_stabilizer_syndromes_multiple() {
         // Error: X on qubit 1
         let mut prop = PauliProp::new();
-        prop.add_x(1);
+        prop.track_x(&[1]);
 
         // Three-qubit code stabilizers: Z0Z1, Z1Z2
         let stabilizers: &[(&[usize], &[usize])] = &[(&[], &[0, 1]), (&[], &[1, 2])];
@@ -3833,7 +3833,7 @@ mod tests {
 
         // Error: X on qubit 0
         let mut prop_x0 = PauliProp::new();
-        prop_x0.add_x(0);
+        prop_x0.track_x(&[0]);
 
         let syndromes_x0 = compute_stabilizer_syndromes(&prop_x0, stabilizers);
         // X0 anticommutes with Z0Z1 only
@@ -3843,11 +3843,11 @@ mod tests {
     #[test]
     fn test_extract_output_error() {
         let mut prop = PauliProp::new();
-        prop.add_x(0);
-        prop.add_z(1);
-        prop.add_x(2);
-        prop.add_z(2); // Y on qubit 2
-        prop.add_x(5); // Not in output qubits
+        prop.track_x(&[0]);
+        prop.track_z(&[1]);
+        prop.track_x(&[2]);
+        prop.track_z(&[2]); // Y on qubit 2
+        prop.track_x(&[5]); // Not in output qubits
 
         let output_qubits = vec![0, 1, 2, 3];
         let output = extract_output_error(&prop, &output_qubits);

@@ -7,7 +7,7 @@
 fn test_user_guide_qasm_simulation_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -37,7 +37,7 @@ let results = sim(program.clone()).run(1000)?;
 
 // With configuration
 let results = sim(program).seed(42).run(1000)?;
-
+    
     Ok(())
 }
 
@@ -46,7 +46,7 @@ let results = sim(program).seed(42).run(1000)?;
 fn test_user_guide_qasm_simulation_rust_2() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -80,7 +80,7 @@ let results = sim(program)
     .workers(4)  // Explicitly set number of threads
     // .auto_workers()  // Or use all available CPU cores
     .run(1000)?;
-
+    
     Ok(())
 }
 
@@ -89,7 +89,7 @@ let results = sim(program)
 fn test_user_guide_qasm_simulation_rust_3() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -122,7 +122,7 @@ let mut experiment = sim(program)
 // Run multiple times
 let results_100 = experiment.run(100)?;
 let results_1000 = experiment.run(1000)?;
-
+    
     Ok(())
 }
 
@@ -131,7 +131,7 @@ let results_1000 = experiment.run(1000)?;
 fn test_user_guide_qasm_simulation_rust_4() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -160,7 +160,7 @@ let _custom = DepolarizingNoiseModel::builder()
 // Biased depolarizing (asymmetric error distribution)
 let _biased = BiasedDepolarizingNoiseModel::builder()
     .with_uniform_probability(0.01);
-
+    
     Ok(())
 }
 
@@ -169,7 +169,7 @@ let _biased = BiasedDepolarizingNoiseModel::builder()
 fn test_user_guide_qasm_simulation_rust_5() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -192,7 +192,7 @@ let noise = GeneralNoiseModelBuilder::new()
 
 // Use with sim()
 let results = sim(program).noise(noise).run(1000)?;
-
+    
     Ok(())
 }
 
@@ -201,7 +201,7 @@ let results = sim(program).noise(noise).run(1000)?;
 fn test_user_guide_qasm_simulation_rust_6() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -227,14 +227,14 @@ let program = Qasm::from_string(qasm_code);
 
 // Sparse stabilizer (default, efficient for Clifford circuits)
 let results = sim(program.clone())
-    .quantum(sparse_stabilizer())
+    .quantum(sparse_stab())
     .run(1000)?;
 
 // State vector (for non-Clifford circuits)
 let results = sim(program)
     .quantum(state_vector())
     .run(1000)?;
-
+    
     Ok(())
 }
 
@@ -243,7 +243,7 @@ let results = sim(program)
 fn test_user_guide_qasm_simulation_rust_7() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -277,7 +277,7 @@ let shot_map = results.try_as_shot_map()?;
 // Access measurement results by register name
 let c_values = shot_map.try_bits_as_u64("c")?;
 // Returns Vec<u64> where each value is the decimal encoding
-
+    
     Ok(())
 }
 
@@ -286,7 +286,7 @@ let c_values = shot_map.try_bits_as_u64("c")?;
 fn test_user_guide_qasm_simulation_rust_8() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -326,7 +326,7 @@ fn bell_state_example() -> Result<(), PecosError> {
 
     Ok(())
 }
-
+    
     Ok(())
 }
 
@@ -335,7 +335,7 @@ fn bell_state_example() -> Result<(), PecosError> {
 fn test_user_guide_qasm_simulation_rust_9() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -376,7 +376,7 @@ fn ghz_noise_example() -> Result<(), PecosError> {
 
     Ok(())
 }
-
+    
     Ok(())
 }
 
@@ -385,7 +385,7 @@ fn ghz_noise_example() -> Result<(), PecosError> {
 fn test_user_guide_qasm_simulation_rust_10() -> Result<(), Box<dyn std::error::Error>> {
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
-    use pecos::simulators::{sparse_stabilizer, state_vector};
+    use pecos::simulators::{sparse_stab, state_vector};
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -417,6 +417,6 @@ let results = sim(program.clone()).workers(4).run(1000)?;
 
 // Automatically use all available cores
 let results = sim(program).auto_workers().run(1000)?;
-
+    
     Ok(())
 }

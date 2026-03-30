@@ -33,17 +33,17 @@ def bell_state_example() -> None:
 
     # Add gates to create a Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
     print("- Adding Hadamard gate on qubit 0")
-    builder.add_h([0])
+    builder.h([0])
 
     print("- Adding CNOT gate with control=0, target=1")
-    builder.add_cx([(0, 1)])
+    builder.cx([(0, 1)])
 
     # Add measurement operations
     print("- Adding measurement on qubit 0")
-    builder.add_mz([0])
+    builder.mz([0])
 
     print("- Adding measurement on qubit 1")
-    builder.add_mz([1])
+    builder.mz([1])
 
     # Build the message
     message = builder.build()
@@ -75,25 +75,25 @@ def build_custom_message() -> None:
     print("Building custom circuit...")
 
     # Single-qubit gates
-    builder.add_x([0])  # X gate on qubit 0
-    builder.add_y([1])  # Y gate on qubit 1
-    builder.add_z([2])  # Z gate on qubit 2
-    builder.add_h([3])  # H gate on qubit 3
+    builder.x([0])  # X gate on qubit 0
+    builder.y([1])  # Y gate on qubit 1
+    builder.z([2])  # Z gate on qubit 2
+    builder.h([3])  # H gate on qubit 3
 
     # Parameterized gates
-    builder.add_rz(0.5, [0])  # RZ(0.5) on qubit 0
-    builder.add_r1xy(0.1, 0.2, [1])  # R1XY(0.1, 0.2) on qubit 1
+    builder.rz(0.5, [0])  # RZ(0.5) on qubit 0
+    builder.r1xy(0.1, 0.2, [1])  # R1XY(0.1, 0.2) on qubit 1
 
     # Two-qubit gates
-    builder.add_cx([(0, 1)])  # CNOT with control=0, target=1
-    builder.add_szz([(2, 3)])  # SZZ on qubits 2 and 3
-    builder.add_rzz(0.25, [(0, 2)])  # RZZ(0.25) on qubits 0 and 2
+    builder.cx([(0, 1)])  # CNOT with control=0, target=1
+    builder.szz([(2, 3)])  # SZZ on qubits 2 and 3
+    builder.rzz(0.25, [(0, 2)])  # RZZ(0.25) on qubits 0 and 2
 
     # Measurements
-    builder.add_mz([0])  # Measure qubit 0
-    builder.add_mz([1])  # Measure qubit 1
-    builder.add_mz([2])  # Measure qubit 2
-    builder.add_mz([3])  # Measure qubit 3
+    builder.mz([0])  # Measure qubit 0
+    builder.mz([1])  # Measure qubit 1
+    builder.mz([2])  # Measure qubit 2
+    builder.mz([3])  # Measure qubit 3
 
     # Build the message
     message = builder.build()

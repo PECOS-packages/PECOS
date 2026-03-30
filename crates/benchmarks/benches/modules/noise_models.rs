@@ -46,7 +46,7 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
                 let mut builder = ByteMessageBuilder::new();
                 let _ = builder.for_quantum_operations();
                 for i in 0..n {
-                    builder.add_h(&[i % 100]); // Cycle through 100 qubits
+                    builder.h(&[i % 100]); // Cycle through 100 qubits
                 }
                 let input = builder.build();
 
@@ -78,7 +78,7 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
                 for i in 0..n {
                     let q0 = (i * 2) % 100;
                     let q1 = (i * 2 + 1) % 100;
-                    builder.add_cx(&[q0], &[q1]);
+                    builder.cx(&[(q0, q1)]);
                 }
                 let input = builder.build();
 
@@ -110,18 +110,18 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
             for i in 0..n {
                 match i % 4 {
                     0 => {
-                        builder.add_prep(&[i % 100]);
+                        builder.pz(&[i % 100]);
                     }
                     1 => {
-                        builder.add_h(&[i % 100]);
+                        builder.h(&[i % 100]);
                     }
                     2 => {
                         let q0 = (i * 2) % 100;
                         let q1 = (i * 2 + 1) % 100;
-                        builder.add_cx(&[q0], &[q1]);
+                        builder.cx(&[(q0, q1)]);
                     }
                     _ => {
-                        builder.add_measurements(&[i % 100]);
+                        builder.mz(&[i % 100]);
                     }
                 }
             }
@@ -158,7 +158,7 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
                 let mut builder = ByteMessageBuilder::new();
                 let _ = builder.for_quantum_operations();
                 for i in 0..10_000 {
-                    builder.add_h(&[i % 100]);
+                    builder.h(&[i % 100]);
                 }
                 let input = builder.build();
 

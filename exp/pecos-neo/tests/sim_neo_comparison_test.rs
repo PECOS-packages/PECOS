@@ -137,7 +137,7 @@ fn test_sim_neo_vs_sim_deterministic_x() {
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
     // Run with sim_neo() (Tool architecture)
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let neo_results = sim_neo(circuit).shots(NUM_SHOTS).seed(42).build().run();
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
@@ -178,7 +178,7 @@ fn test_sim_neo_vs_sim_hadamard() {
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
     // Run with sim_neo()
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let neo_results = sim_neo(circuit).shots(NUM_SHOTS).seed(42).build().run();
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
@@ -229,12 +229,12 @@ fn test_sim_neo_vs_sim_bell_state() {
 
     // Run with sim_neo()
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let neo_results = sim_neo(circuit).shots(NUM_SHOTS).seed(42).build().run();
@@ -294,7 +294,7 @@ fn test_sim_neo_vs_sim_depolarizing_noise() {
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
     // Run with sim_neo()
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
 
@@ -358,7 +358,7 @@ fn test_sim_neo_vs_sim_measurement_noise() {
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
     // Run with sim_neo()
-    let circuit = CommandBuilder::new().pz(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     let neo_noise = GeneralNoiseModelBuilder::new()
         .with_p_meas(p_meas, p_meas)
@@ -436,15 +436,15 @@ fn test_sim_neo_vs_sim_conditional_x_correction() {
     use pecos_neo::program::{ConditionalProgram, ProgramRunner};
     use pecos_simulators::SparseStab;
 
-    let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let branch = |outcomes: &pecos_neo::outcome::MeasurementOutcomes| {
         // If measured 1, apply X to flip back to 0, then measure again
         if outcomes.get_bit(QubitId(0)) == Some(true) {
-            Some(CommandBuilder::new().x(0).mz(0).build())
+            Some(CommandBuilder::new().x(&[0]).mz(&[0]).build())
         } else {
             // If measured 0, just measure again
-            Some(CommandBuilder::new().mz(0).build())
+            Some(CommandBuilder::new().mz(&[0]).build())
         }
     };
 
@@ -527,13 +527,13 @@ fn test_sim_neo_vs_sim_conditional_with_noise() {
     use pecos_neo::program::{ConditionalProgram, ProgramRunner};
     use pecos_simulators::SparseStab;
 
-    let initial = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let branch = |outcomes: &pecos_neo::outcome::MeasurementOutcomes| {
         if outcomes.get_bit(QubitId(0)) == Some(true) {
-            Some(CommandBuilder::new().x(0).mz(0).build())
+            Some(CommandBuilder::new().x(&[0]).mz(&[0]).build())
         } else {
-            Some(CommandBuilder::new().mz(0).build())
+            Some(CommandBuilder::new().mz(&[0]).build())
         }
     };
 
@@ -672,7 +672,7 @@ fn test_sim_neo_ergonomic_builder_direct() {
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
     // pecos-neo - pass builder directly, no .build()!
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let neo_results = sim_neo(circuit)
         .noise(GeneralNoiseModelBuilder::new().with_p1(p1)) // No .build()!
@@ -697,7 +697,7 @@ fn test_sim_neo_ergonomic_builder_direct() {
 fn test_sim_neo_convenience_methods() {
     // Test the convenience methods like .depolarizing(p)
     // .depolarizing(p) applies noise to gates, prep, and measurement
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     // Using .depolarizing() convenience method
     let results_convenience = sim_neo(circuit.clone())
@@ -747,7 +747,7 @@ fn test_sim_neo_convenience_methods() {
 #[test]
 fn test_sim_neo_reusable() {
     // Test that sim_neo Simulation handle can be rerun with different configs
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let mut sim = sim_neo(circuit).shots(100).seed(42).build();
 
@@ -789,7 +789,7 @@ fn test_sim_neo_reusable() {
 #[test]
 fn test_sim_neo_determinism() {
     // Same seed should produce identical results
-    let circuit = CommandBuilder::new().pz(0).h(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results1 = sim_neo(circuit.clone()).shots(100).seed(42).build().run();
 
@@ -832,12 +832,12 @@ fn test_sim_neo_vs_sim_noiseless_exact() {
 
     // Run with sim_neo() - no noise
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .x(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .x(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let neo_results = sim_neo(circuit).shots(NUM_SHOTS).seed(42).build().run();
@@ -885,7 +885,7 @@ fn test_sim_neo_noise_level_scaling() {
         let eng_err = *engines_counts.get("0").unwrap_or(&0) as f64 / NUM_SHOTS as f64;
 
         // pecos-neo
-        let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
         let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
 
         let neo_results = sim_neo(circuit)
@@ -959,12 +959,12 @@ fn test_sim_neo_vs_sim_zero_noise() {
 
     // Run with sim_neo() with zero-noise model
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let neo_noise = GeneralNoiseModelBuilder::new()
@@ -1020,7 +1020,7 @@ fn test_sim_neo_high_noise_chaos() {
         .unwrap();
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
-    let circuit = CommandBuilder::new().pz(0).x(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
     let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
 
     let neo_results = sim_neo(circuit)
@@ -1089,12 +1089,12 @@ fn test_sim_neo_vs_sim_two_qubit_noise() {
 
     // Run with sim_neo()
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .x(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .x(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let neo_noise = GeneralNoiseModelBuilder::new().with_p2(p2).build();
@@ -1158,7 +1158,7 @@ fn test_sim_neo_vs_sim_preparation_noise() {
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
     // Run with sim_neo()
-    let circuit = CommandBuilder::new().pz(0).mz(0).build();
+    let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
     let neo_noise = GeneralNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
@@ -1229,12 +1229,12 @@ fn test_sim_neo_vs_sim_combined_noise() {
 
     // Run with sim_neo()
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .h(0)
-        .cx(0, 1)
-        .mz(0)
-        .mz(1)
+        .pz(&[0])
+        .pz(&[1])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .mz(&[0])
+        .mz(&[1])
         .build();
 
     let neo_noise = GeneralNoiseModelBuilder::new()
@@ -1311,15 +1311,15 @@ fn test_sim_neo_vs_sim_ghz_state() {
 
     // Run with sim_neo()
     let circuit = CommandBuilder::new()
-        .pz(0)
-        .pz(1)
-        .pz(2)
-        .h(0)
-        .cx(0, 1)
-        .cx(1, 2)
-        .mz(0)
-        .mz(1)
-        .mz(2)
+        .pz(&[0])
+        .pz(&[1])
+        .pz(&[2])
+        .h(&[0])
+        .cx(&[(0, 1)])
+        .cx(&[(1, 2)])
+        .mz(&[0])
+        .mz(&[1])
+        .mz(&[2])
         .build();
 
     let neo_results = sim_neo(circuit).shots(NUM_SHOTS).seed(42).build().run();

@@ -50,7 +50,7 @@ pecos-build = { workspace = true, optional = true }
 cargo_metadata = { workspace = true, optional = true }
 
 # Quantum simulator backends (optional - for Python bindings and advanced users)
-pecos-cppsparsesim = { workspace = true, optional = true }
+pecos-cppsparsestab = { workspace = true, optional = true }
 pecos-quest = { workspace = true, optional = true }
 pecos-qulacs = { workspace = true, optional = true }
 
@@ -110,10 +110,10 @@ hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr", "p
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
-cppsparsesim = ["sim", "dep:pecos-cppsparsesim"]
+cppsparsestab = ["sim", "dep:pecos-cppsparsestab"]
 quest = ["sim", "dep:pecos-quest"]
 qulacs = ["sim", "dep:pecos-qulacs"]
-all-simulators = ["cppsparsesim", "quest", "qulacs"]
+all-simulators = ["cppsparsestab", "quest", "qulacs"]
 
 # NVIDIA CUDA support
 cuda = ["quest", "pecos-quest/cuda"]

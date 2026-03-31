@@ -256,9 +256,5 @@ autodoc_mock_imports = ["cupy", "pecos.slr.std", "pecos.slr.slr"]
 autosummary_mock_imports = [
     "pecos.slr.std",
     "pecos.slr.slr",
-    "pecos.simulators.cuquantum_old",
     "pecos.simulators.custatevec",
-    "pecos.simulators.cysparsesim",
-    "pecos.simulators.cysparsesim_col",
-    "pecos.simulators.cysparsesim_row",
 ]

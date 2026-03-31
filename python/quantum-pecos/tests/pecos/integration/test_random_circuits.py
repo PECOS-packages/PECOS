@@ -25,41 +25,6 @@ def test_random_circuits() -> None:
     """Test random quantum circuits on different simulators."""
     state_sims: list[type[Any]] = []
 
-    # Add wrapped CHP
-    try:
-        from pecos.state_sims.cychp import State as StateCHP
-
-        state_sims.append(StateCHP)
-
-    except ImportError:
-        pass
-
-    # Add wrapped GraphSim
-    try:
-        from pecos.state_sims.cygraphsim import State as StateGraph
-
-        state_sims.append(StateGraph)
-
-    except ImportError:
-        pass
-
-    # Add wrapped C++ version of SparseStabSim
-    try:
-        from pecos.state_sims.cysparsesim import State as StateCySparse
-
-        state_sims.append(StateCySparse)
-
-    except ImportError:
-        pass
-
-    try:
-        from pecos.state_sims.cysparsesim_simple import State as StateCySparseSim
-
-        state_sims.append(StateCySparseSim)
-
-    except ImportError:
-        pass
-
     state_sims.append(SparseStabPy)
     state_sims.append(SparseStab)
     state_sims.append(Stabilizer)

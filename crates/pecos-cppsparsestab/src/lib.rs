@@ -17,7 +17,7 @@ use pecos_simulators::{CliffordGateable, MeasurementResult, QuantumSimulator};
 #[cxx::bridge]
 mod ffi {
     unsafe extern "C++" {
-        include!("pecos-cppsparsesim/src/cxx_shim.h");
+        include!("pecos-cppsparsestab/src/cxx_shim.h");
 
         type StateWrapper;
 

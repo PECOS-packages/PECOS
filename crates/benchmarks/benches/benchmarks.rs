@@ -27,7 +27,7 @@ mod modules {
     pub mod measurement_sampling;
     pub mod native_statevec_comparison;
     pub mod noise_models;
-    #[cfg(feature = "cppsparsesim")]
+    #[cfg(feature = "cppsparsestab")]
     pub mod sparse_stab_vs_cpp;
     pub mod sparse_stab_w_vs_y;
     // TODO: pub mod pauli_ops;
@@ -45,7 +45,7 @@ mod modules {
 use modules::cuquantum;
 #[cfg(feature = "gpu-sims")]
 use modules::gpu_influence_sampler;
-#[cfg(feature = "cppsparsesim")]
+#[cfg(feature = "cppsparsestab")]
 use modules::sparse_stab_vs_cpp;
 use modules::{
     allocation_overhead, clifford_rz, cpu_stabilizer_comparison, dem_sampler, dod_statevec,
@@ -74,7 +74,7 @@ fn all_benchmarks(c: &mut Criterion) {
     sparse_state_vec::benchmarks(c);
     stabilizer_sims::benchmarks(c);
     state_vec_sims::benchmarks(c);
-    #[cfg(feature = "cppsparsesim")]
+    #[cfg(feature = "cppsparsestab")]
     sparse_stab_vs_cpp::benchmarks(c);
     sparse_stab_w_vs_y::benchmarks(c);
     surface_code::benchmarks(c);

@@ -12,7 +12,7 @@
 
 #pragma once
 
-#include "sparsesim.h"
+#include "sparsestab.h"
 #include <memory>
 #include <cstdint>
 

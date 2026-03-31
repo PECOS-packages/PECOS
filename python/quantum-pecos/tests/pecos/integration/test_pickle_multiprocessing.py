@@ -171,7 +171,7 @@ class TestWorkerWrapperPattern:
             assert "pid" in run_info
             assert "i" in run_info
 
-    def test_worker_wrapper_with_sparsesim(self) -> None:
+    def test_worker_wrapper_with_sparsestab(self) -> None:
         """Test the production worker_wrapper pattern with SparseStab."""
         sim = SparseStab(4)
         sim.run_1q_gate("H", 0)

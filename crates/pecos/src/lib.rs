@@ -23,7 +23,7 @@
 //! ### Backends and Extensions
 //! - **`llvm`**: LLVM infrastructure (required by qis)
 //! - **`quest`**: `QuEST` quantum simulator backend
-//! - **`cppsparsesim`**: C++ sparse stabilizer simulator
+//! - **`cppsparsestab`**: C++ sparse stabilizer simulator
 //! - **`qulacs`**: Qulacs quantum simulator backend
 //! - **`wasm`**: WebAssembly foreign object support
 //! - **`ldpc`**: LDPC decoder support
@@ -253,8 +253,8 @@ pub mod simulators {
     };
 
     // Feature-gated backends
-    #[cfg(feature = "cppsparsesim")]
-    pub use pecos_cppsparsesim::CppSparseStab;
+    #[cfg(feature = "cppsparsestab")]
+    pub use pecos_cppsparsestab::CppSparseStab;
 
     #[cfg(feature = "quest")]
     pub use pecos_quest::{
@@ -798,8 +798,8 @@ pub use unified_sim::{ProgrammedSimBuilder, SimBuilderExt, sim};
 pub use engine_type::{DynamicEngineBuilder, EngineType, sim_dynamic};
 
 // Feature-gated quantum backends
-#[cfg(feature = "cppsparsesim")]
-pub use pecos_cppsparsesim::CppSparseStab;
+#[cfg(feature = "cppsparsestab")]
+pub use pecos_cppsparsestab::CppSparseStab;
 
 #[cfg(feature = "quest")]
 pub use pecos_quest::{

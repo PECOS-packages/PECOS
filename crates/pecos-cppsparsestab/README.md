@@ -1,4 +1,4 @@
-# pecos-cppsparsesim
+# pecos-cppsparsestab
 
 C++ sparse stabilizer simulator bindings for PECOS.
 

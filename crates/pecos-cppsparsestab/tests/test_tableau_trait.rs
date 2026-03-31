@@ -1,7 +1,7 @@
 // Test the StabilizerTableauSimulator trait implementation for CppSparseStab
 
 use pecos_core::{QubitId, qid};
-use pecos_cppsparsesim::CppSparseStab;
+use pecos_cppsparsestab::CppSparseStab;
 use pecos_simulators::{CliffordGateable, StabilizerTableauSimulator};
 
 #[test]

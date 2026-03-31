@@ -11,7 +11,7 @@
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-#include "sparsesim.h"
+#include "sparsestab.h"
 
 int_set_vec build_empty(int_num size) {
     int_set_vec matrix(size);

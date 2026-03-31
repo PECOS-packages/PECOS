@@ -204,7 +204,7 @@ pecos-quest = { version = "0.2.0-dev.0", path = "crates/pecos-quest" }
 pecos-qulacs = { version = "0.2.0-dev.0", path = "crates/pecos-qulacs" }
 
 # CppSparseSim simulator wrapper
-pecos-cppsparsesim = { version = "0.2.0-dev.0", path = "crates/pecos-cppsparsesim" }
+pecos-cppsparsestab = { version = "0.2.0-dev.0", path = "crates/pecos-cppsparsestab" }
 
 # Optimize build times
 [profile.dev]

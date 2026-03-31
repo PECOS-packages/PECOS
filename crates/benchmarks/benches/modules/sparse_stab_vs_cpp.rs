@@ -22,7 +22,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
 use pecos::simulators::{SparseStab, Stabilizer};
-use pecos_cppsparsesim::CppSparseStab;
+use pecos_cppsparsestab::CppSparseStab;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {

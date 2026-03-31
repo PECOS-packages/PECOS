@@ -1,5 +1,5 @@
 [package]
-name = "pecos-cppsparsesim"
+name = "pecos-cppsparsestab"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -99,7 +99,7 @@ fn main() {
 
     build
         .cpp(true)
-        .file("src/sparsesim.cpp")
+        .file("src/sparsestab.cpp")
         .file("src/cxx_shim.cpp")
         .include("src");
 
@@ -124,7 +124,7 @@ fn main() {
     // Apply PECOS profile optimization flags
     apply_profile_flags(&mut build, &target);
 
-    build.compile("sparsesim");
+    build.compile("sparsestab");
 
     // Generate cxx bridge code with same C++ standard
     let mut bridge = cxx_build::bridge("src/lib.rs");
@@ -161,7 +161,7 @@ fn main() {
     // Apply PECOS profile optimization flags to bridge
     apply_profile_flags(&mut bridge, &target);
 
-    bridge.compile("cppsparsesim-bridge");
+    bridge.compile("cppsparsestab-bridge");
 
     // On macOS, link against the system C++ library from dyld shared cache
     if target.contains("darwin") {
@@ -172,8 +172,8 @@ fn main() {
 
     // Tell cargo to rerun if source files change
     println!("cargo:rerun-if-changed=src/lib.rs");
-    println!("cargo:rerun-if-changed=src/sparsesim.cpp");
-    println!("cargo:rerun-if-changed=src/sparsesim.h");
+    println!("cargo:rerun-if-changed=src/sparsestab.cpp");
+    println!("cargo:rerun-if-changed=src/sparsestab.h");
     println!("cargo:rerun-if-changed=src/cxx_shim.cpp");
     println!("cargo:rerun-if-changed=src/cxx_shim.h");
 }

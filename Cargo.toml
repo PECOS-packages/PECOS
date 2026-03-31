@@ -5,6 +5,7 @@ members = [
   "python/pecos-rslib-cuda",
   "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
+  "python/selene-plugins/pecos-selene-clifford-rz",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",
   "crates/pecos*",

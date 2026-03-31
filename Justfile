@@ -191,7 +191,7 @@ build-selene:
     set -euo pipefail
     echo "Building Selene plugins..."
 
-    cargo build --release -p pecos-selene-stabilizer -p pecos-selene-statevec
+    cargo build --release -p pecos-selene-stabilizer -p pecos-selene-statevec -p pecos-selene-clifford-rz
 
     # Copy libraries to Python package directories
     echo "Copying libraries to Python packages..."

@@ -18,6 +18,7 @@ members = [
     "python/quantum-pecos",
     "python/selene-plugins/pecos-selene-stabilizer",
     "python/selene-plugins/pecos-selene-statevec",
+    "python/selene-plugins/pecos-selene-clifford-rz",
 ]
 
 [tool.uv.sources]

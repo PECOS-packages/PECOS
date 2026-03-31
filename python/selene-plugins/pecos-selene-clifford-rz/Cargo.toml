@@ -1,0 +1,25 @@
+[package]
+name = "pecos-selene-clifford-rz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "PECOS Clifford+RZ simulator plugin for the Selene quantum emulator"
+
+[lib]
+name = "pecos_selene_clifford_rz"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+pecos-core = { workspace = true }
+pecos-simulators = { workspace = true }
+# selene-core is a git dependency since it's not published to crates.io
+# Use the same revision as the other selene plugins for consistency
+selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "1794e8d1dba26120a18e904940c014f4e034bed6" }
+
+[lints]
+workspace = true

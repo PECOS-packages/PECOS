@@ -4103,6 +4103,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-selene-clifford-rz"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
+ "pecos-core",
+ "pecos-simulators",
+ "selene-core 0.2.1",
+]
+
+[[package]]
 name = "pecos-selene-stabilizer"
 version = "0.2.0-dev.0"
 dependencies = [

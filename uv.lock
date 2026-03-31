@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "pecos-rslib",
     "pecos-rslib-cuda",
+    "pecos-selene-clifford-rz",
     "pecos-selene-stabilizer",
     "pecos-selene-statevec",
     "pecos-workspace",
@@ -2713,6 +2714,30 @@ test = [
 [package.metadata.requires-dev]
 dev = []
 test = [{ name = "pytest", specifier = ">=7.0" }]
+
+[[package]]
+name = "pecos-selene-clifford-rz"
+version = "0.8.0.dev8"
+source = { editable = "python/selene-plugins/pecos-selene-clifford-rz" }
+dependencies = [
+    { name = "selene-core" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "guppylang" },
+    { name = "pytest" },
+    { name = "selene-sim" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
+    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-stabilizer"

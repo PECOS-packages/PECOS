@@ -192,9 +192,12 @@ build-selene:
     echo "Building Selene plugins..."
 
     # Discover and build all selene plugins
-    plugins=$(ls -d python/selene-plugins/pecos-selene-*/ 2>/dev/null | xargs -I{} basename {} | paste -sd' ')
-    if [ -n "$plugins" ]; then
-        cargo build --release $(echo "$plugins" | tr ' ' '\n' | sed 's/^/-p /' | paste -sd' ')
+    CARGO_ARGS=""
+    for DIR in python/selene-plugins/pecos-selene-*/; do
+        CARGO_ARGS="$CARGO_ARGS -p $(basename "$DIR")"
+    done
+    if [ -n "$CARGO_ARGS" ]; then
+        cargo build --release $CARGO_ARGS
     fi
 
     # Copy libraries to Python package directories

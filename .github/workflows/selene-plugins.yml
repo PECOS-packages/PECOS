@@ -68,18 +68,20 @@ jobs:
           fi
 
           # Discover all selene plugins, build, copy libraries, and install
-          PLUGINS=$(ls -d python/selene-plugins/pecos-selene-*/ | xargs -I{} basename {})
-          cargo build --release $(echo "$PLUGINS" | sed 's/^/-p /' | paste -sd' ')
+          CARGO_ARGS=""
+          for DIR in python/selene-plugins/pecos-selene-*/; do
+            PLUGIN=$(basename "$DIR")
+            CARGO_ARGS="$CARGO_ARGS -p $PLUGIN"
+          done
+          cargo build --release $CARGO_ARGS
 
-          for PLUGIN in $PLUGINS; do
+          for DIR in python/selene-plugins/pecos-selene-*/; do
+            PLUGIN=$(basename "$DIR")
             LIB_NAME=$(echo "$PLUGIN" | tr '-' '_')
             DEST="python/selene-plugins/$PLUGIN/python/${LIB_NAME}/_dist/lib"
             mkdir -p "$DEST"
             cp "target/release/lib${LIB_NAME}.$EXT" "$DEST/"
-          done
-
-          for PLUGIN_DIR in python/selene-plugins/pecos-selene-*/; do
-            uv pip install --system -e "${PLUGIN_DIR}[test]"
+            uv pip install --system -e "${DIR}[test]"
           done
 
       - name: Build and install Selene plugins (Windows)

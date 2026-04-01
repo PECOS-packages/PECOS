@@ -33,7 +33,12 @@
 //!   "Simulation of quantum circuits by low-rank stabilizer decompositions."
 //!   arXiv:1808.00128 (2019).
 
-use crate::ch_form::CHFormGeneric;
+pub mod ch_form;
+pub mod exact_scalar;
+pub mod quadratic_form;
+pub mod sparse_binary_matrix;
+
+use ch_form::CHFormGeneric;
 use crate::{ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use num_complex::Complex64;

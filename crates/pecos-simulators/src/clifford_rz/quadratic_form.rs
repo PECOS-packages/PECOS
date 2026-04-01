@@ -28,7 +28,7 @@
 //! Bravyi et al. "Simulation of quantum circuits by low-rank stabilizer
 //! decompositions." arXiv:1808.00128, Section V.
 
-use crate::exact_scalar::ExactScalar;
+use super::exact_scalar::ExactScalar;
 
 /// A quadratic form over GF(2) for exponential sum evaluation.
 ///

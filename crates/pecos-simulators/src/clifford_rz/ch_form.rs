@@ -31,8 +31,8 @@
 //!   "Simulation of quantum circuits by low-rank stabilizer decompositions."
 //!   arXiv:1808.00128 (2019).
 
-use crate::exact_scalar::ExactScalar;
-use crate::sparse_binary_matrix::SparseBinaryMatrix;
+use super::exact_scalar::ExactScalar;
+use super::sparse_binary_matrix::SparseBinaryMatrix;
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use pecos_core::{BitSet, IndexSet, QubitId, RngManageable};
@@ -1009,7 +1009,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                         }
                         rows_u64.push(row);
                     } else {
-                        use crate::quadratic_form::{set_bit as qf_set, words as qf_words};
+                        use super::quadratic_form::{set_bit as qf_set, words as qf_words};
                         let aug_w = qf_words(n + 1);
                         let mut row = vec![0u64; aug_w];
                         for k in st_f.col(j).iter() {
@@ -1059,7 +1059,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                 }
             }
         } else {
-            use crate::quadratic_form::{get_bit as qf_get, xor_words};
+            use super::quadratic_form::{get_bit as qf_get, xor_words};
             for col in 0..n {
                 let mut found = None;
                 for (r, row) in rows_wide.iter().enumerate().skip(pivot_row) {
@@ -1132,7 +1132,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                     basis.push(b);
                 }
             } else {
-                use crate::quadratic_form::get_bit as qf_get;
+                use super::quadratic_form::get_bit as qf_get;
                 for (r, &pc) in pivot_cols.iter().enumerate() {
                     if qf_get(&rows_wide[r], n) {
                         x0 |= 1 << pc;
@@ -1195,7 +1195,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                 }
             }
         } else {
-            use crate::quadratic_form::get_bit as qf_get;
+            use super::quadratic_form::get_bit as qf_get;
             for (r, &pc) in pivot_cols.iter().enumerate() {
                 if qf_get(&rows_wide[r], n) {
                     x0_bits[pc] = true;
@@ -1220,7 +1220,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                 basis_bits.push(b);
             }
         } else {
-            use crate::quadratic_form::get_bit as qf_get;
+            use super::quadratic_form::get_bit as qf_get;
             for c in 0..n {
                 if pivot_flags[c] {
                     continue;
@@ -1280,7 +1280,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         //
         // Quadratic part per pair (p > q):
         //   Q[p,q] = (M2[p,:].F2[q,:] - M1[p,:].F1[q,:])  mod 2
-        use crate::quadratic_form::QuadraticForm;
+        use super::quadratic_form::QuadraticForm;
 
         // Precompute v_and_s masks for f_lin computation (avoids per-bit inner loop).
         let mut vs1 = S::with_capacity(n);
@@ -1385,10 +1385,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                 let d_i = ((e_diff[i] - e0) % 4 + 4) % 4;
                 let d_val = (2 * d_i) % 8;
                 if (d_val / 2) & 1 == 1 {
-                    crate::quadratic_form::set_bit(&mut qf.d1, i);
+                    super::quadratic_form::set_bit(&mut qf.d1, i);
                 }
                 if (d_val / 4) & 1 == 1 {
-                    crate::quadratic_form::set_bit(&mut qf.d2, i);
+                    super::quadratic_form::set_bit(&mut qf.d2, i);
                 }
                 continue;
             }
@@ -1420,10 +1420,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                 let d_i = ((e_diff[i] - e0) % 4 + 4) % 4;
                 let d_val = (2 * d_i) % 8;
                 if (d_val / 2) & 1 == 1 {
-                    crate::quadratic_form::set_bit(&mut qf.d1, i);
+                    super::quadratic_form::set_bit(&mut qf.d1, i);
                 }
                 if (d_val / 4) & 1 == 1 {
-                    crate::quadratic_form::set_bit(&mut qf.d2, i);
+                    super::quadratic_form::set_bit(&mut qf.d2, i);
                 }
             }
         }
@@ -1454,8 +1454,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                         }
                     }
                     if cross & 1 == 1 {
-                        crate::quadratic_form::set_bit(qf.j_row_mut(i), j);
-                        crate::quadratic_form::set_bit(qf.j_row_mut(j), i);
+                        super::quadratic_form::set_bit(qf.j_row_mut(i), j);
+                        super::quadratic_form::set_bit(qf.j_row_mut(j), i);
                     }
                 }
             }
@@ -1503,10 +1503,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                 let d_i = ((e_diff_z_i - e0_z) % 4 + 4) % 4;
                 let d_val = (2 * d_i) % 8;
                 if (d_val / 2) & 1 == 1 {
-                    crate::quadratic_form::set_bit(&mut qf_z.d1, i);
+                    super::quadratic_form::set_bit(&mut qf_z.d1, i);
                 }
                 if (d_val / 4) & 1 == 1 {
-                    crate::quadratic_form::set_bit(&mut qf_z.d2, i);
+                    super::quadratic_form::set_bit(&mut qf_z.d2, i);
                 }
             }
             // J is identical (depends only on M and F, not gamma).

@@ -846,7 +846,13 @@ class Stabilizer:
 class CliffordRz:
     """Rust Clifford+RZ simulator."""
 
-    def __init__(self, num_qubits: int, seed: int | None = None, pruning_threshold: float | None = None, mc_threshold: int | None = 2048) -> None: ...
+    def __init__(
+        self,
+        num_qubits: int,
+        seed: int | None = None,
+        pruning_threshold: float | None = None,
+        mc_threshold: int | None = 2048,
+    ) -> None: ...
     @property
     def num_qubits(self) -> int: ...
     @property

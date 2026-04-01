@@ -1319,12 +1319,8 @@ impl Engine for CliffordRzEngine {
                 }
                 GateType::U => {
                     if cmd.angles.len() >= 3 {
-                        self.simulator.u(
-                            cmd.angles[0],
-                            cmd.angles[1],
-                            cmd.angles[2],
-                            &cmd.qubits,
-                        );
+                        self.simulator
+                            .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
                     }
                 }
                 GateType::RXXRYYRZZ => {
@@ -1389,13 +1385,6 @@ impl Engine for CliffordRzEngine {
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree
                 | GateType::Custom => {}
-
-                _ => {
-                    return Err(PecosError::Processing(format!(
-                        "Gate {:?} is not supported by the Clifford+RZ simulator.",
-                        cmd.gate_type
-                    )));
-                }
             }
             cmd_idx += 1;
         }
@@ -1653,12 +1642,8 @@ impl Engine for DensityMatrixEngine {
                 }
                 GateType::U => {
                     if cmd.angles.len() >= 3 {
-                        self.simulator.u(
-                            cmd.angles[0],
-                            cmd.angles[1],
-                            cmd.angles[2],
-                            &cmd.qubits,
-                        );
+                        self.simulator
+                            .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
                     }
                 }
                 GateType::RXXRYYRZZ => {
@@ -1723,13 +1708,6 @@ impl Engine for DensityMatrixEngine {
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree
                 | GateType::Custom => {}
-
-                _ => {
-                    return Err(PecosError::Processing(format!(
-                        "Gate {:?} is not supported by the density matrix simulator.",
-                        cmd.gate_type
-                    )));
-                }
             }
             cmd_idx += 1;
         }

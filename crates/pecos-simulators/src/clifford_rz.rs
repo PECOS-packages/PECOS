@@ -38,8 +38,8 @@ pub mod exact_scalar;
 pub mod quadratic_form;
 pub mod sparse_binary_matrix;
 
-use ch_form::CHFormGeneric;
 use crate::{ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator};
+use ch_form::CHFormGeneric;
 use core::fmt::Debug;
 use num_complex::Complex64;
 use pecos_core::{Angle64, BitSet, IndexSet, QubitId};
@@ -784,8 +784,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordRzGeneric<S, R> 
                 let same_masked = |a: usize, b: usize| -> bool {
                     let ga = self.terms[a].1.gamma();
                     let gb = self.terms[b].1.gamma();
-                    diff.iter()
-                        .all(|&p| p == q || (ga[p] & 3) == (gb[p] & 3))
+                    diff.iter().all(|&p| p == q || (ga[p] & 3) == (gb[p] & 3))
                 };
 
                 let mut prob = 0.0;
@@ -799,10 +798,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordRzGeneric<S, R> 
                 while group_start < t {
                     let mut group_end = group_start + 1;
                     while group_end < t
-                        && same_masked(
-                            sorted_indices[group_end],
-                            sorted_indices[group_start],
-                        )
+                        && same_masked(sorted_indices[group_end], sorted_indices[group_start])
                     {
                         group_end += 1;
                     }

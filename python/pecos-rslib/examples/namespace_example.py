@@ -20,7 +20,7 @@ def main() -> None:
     # 2. Using the quantum namespace
     print("\n2. Quantum engine builders via namespace:")
     print("   pecos_rslib.quantum.state_vector()")
-    print("   pecos_rslib.quantum.sparse_stabilizer()")
+    print("   pecos_rslib.quantum.sparse_stab()")
     print("   pecos_rslib.quantum.sparse_stab()  # alias")
 
     # 3. Using the noise namespace
@@ -64,7 +64,7 @@ def main() -> None:
         .to_sim()
         .seed(42)  # For reproducibility
         .workers(4)  # Use 4 threads
-        .quantum_engine(pecos_rslib.quantum.sparse_stabilizer())
+        .quantum_engine(pecos_rslib.quantum.sparse_stab())
         .noise(noise_model)
         .run(1000)
     )
@@ -74,7 +74,7 @@ def main() -> None:
 
     # 5. Alternative: Direct imports still work
     print("\n5. Direct imports are still available:")
-    print("   from pecos_rslib import qasm_engine, sparse_stabilizer")
+    print("   from pecos_rslib import qasm_engine, sparse_stab")
 
     # 6. Class-based instantiation
     print("\n6. Direct class instantiation:")

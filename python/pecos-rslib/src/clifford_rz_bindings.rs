@@ -178,6 +178,15 @@ impl PyCliffordRz {
                 Ok(None)
             }
 
+            "T" => {
+                self.inner.t(q);
+                Ok(None)
+            }
+            "Tdg" => {
+                self.inner.tdg(q);
+                Ok(None)
+            }
+
             // Rotation gates
             "RX" => {
                 let angle = extract_angle(params, "RX")?;

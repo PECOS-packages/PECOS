@@ -65,7 +65,7 @@ def namespace_usage_examples() -> None:
     # Example 3: Using quantum namespace
     print("\n3. Creating quantum engines:")
     print("   state_vec = pecos_rslib.quantum.state_vector()")
-    print("   sparse_stab = pecos_rslib.quantum.sparse_stabilizer()")
+    print("   sparse_stab = pecos_rslib.quantum.sparse_stab()")
     print("   # Alias: pecos_rslib.quantum.sparse_stab()")
 
     # Example 4: Complete workflow
@@ -83,7 +83,7 @@ def namespace_usage_examples() -> None:
         .program(prog)\\
         .to_sim()\\
         .seed(42)\\
-        .quantum_engine(quantum.sparse_stabilizer())\\
+        .quantum_engine(quantum.sparse_stab())\\
         .noise(noise.depolarizing()
                .with_prep_probability(0.001)
                .with_p1_probability(0.01))\\
@@ -128,7 +128,7 @@ def run_example_simulations() -> None:
         pecos_rslib.engines.qasm()
         .program(bell_state)
         .to_sim()
-        .quantum_engine(pecos_rslib.quantum.sparse_stabilizer())
+        .quantum_engine(pecos_rslib.quantum.sparse_stab())
         .noise(
             pecos_rslib.noise.depolarizing()
             .with_prep_probability(0.001)
@@ -160,7 +160,7 @@ def compare_with_direct_imports() -> None:
 
     print("\nOld style (direct imports):")
     print(
-        "  from pecos_rslib import qasm_engine, sparse_stabilizer, depolarizing_noise",
+        "  from pecos_rslib import qasm_engine, sparse_stab, depolarizing_noise",
     )
     print("  # Less organized, harder to discover related functions")
 
@@ -170,7 +170,7 @@ def compare_with_direct_imports() -> None:
 
     print("\nBenefit: IDE autocomplete shows related functions:")
     print("  engines.<TAB>  # Shows: qasm, llvm, selene")
-    print("  quantum.<TAB>  # Shows: state_vector, sparse_stabilizer, sparse_stab")
+    print("  quantum.<TAB>  # Shows: state_vector, sparse_stab, sparse_stab")
     print("  noise.<TAB>    # Shows: general, depolarizing, biased_depolarizing")
 
 

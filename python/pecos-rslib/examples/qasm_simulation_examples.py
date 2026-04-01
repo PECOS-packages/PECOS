@@ -12,7 +12,7 @@ from pecos_rslib import (
     biased_depolarizing_noise,
     depolarizing_noise,
     qasm_engine,
-    sparse_stabilizer,
+    sparse_stab,
     state_vector,
 )
 from pecos_rslib.programs import Qasm
@@ -84,7 +84,7 @@ def example_ghz_state() -> None:
 
     # Different ways to specify quantum engine:
     # 1. Using builder function (recommended)
-    #    .quantum_engine(sparse_stabilizer())
+    #    .quantum_engine(sparse_stab())
     # 2. Using builder class
     #    .quantum_engine(SparseStabilizerBuilder())
     # 3. Using string (backward compatibility)
@@ -96,7 +96,7 @@ def example_ghz_state() -> None:
         .to_sim()
         .seed(42)
         .noise(noise)
-        .quantum_engine(sparse_stabilizer())
+        .quantum_engine(sparse_stab())
         .run(1000)
     )
 
@@ -177,7 +177,7 @@ def example_quantum_engines() -> None:
     # This will fail for non-Clifford gates like rz(0.5)
     try:
         results_stab = (
-            qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).quantum_engine(sparse_stabilizer()).run(100)
+            qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).quantum_engine(sparse_stab()).run(100)
         )
         stab_dict = results_stab.to_dict()
         stab_counts = Counter(stab_dict["c"])
@@ -217,7 +217,7 @@ def example_builder_pattern() -> None:
         .to_sim()
         .seed(42)
         .noise(noise)
-        .quantum_engine(sparse_stabilizer())
+        .quantum_engine(sparse_stab())
         .workers(4)
         .build()
     )

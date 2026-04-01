@@ -2169,25 +2169,23 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // SYY = S*S * (H*H*SZZ*H*H) * Sdg*Sdg
         // Uses H-based SXX decomposition for better state structure.
-        let q0 = pairs[0].0;
-        let q1 = pairs[0].1;
-        self.sz(&[q0, q1]);
-        self.h(&[q0, q1]);
+        let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
+        self.sz(&all_qubits);
+        self.h(&all_qubits);
         self.szz(pairs);
-        self.h(&[q0, q1]);
-        self.szdg(&[q0, q1]);
+        self.h(&all_qubits);
+        self.szdg(&all_qubits);
         self
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // SYYdg = S*S * (H*H*SZZdg*H*H) * Sdg*Sdg
-        let q0 = pairs[0].0;
-        let q1 = pairs[0].1;
-        self.sz(&[q0, q1]);
-        self.h(&[q0, q1]);
+        let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
+        self.sz(&all_qubits);
+        self.h(&all_qubits);
         self.szzdg(pairs);
-        self.h(&[q0, q1]);
-        self.szdg(&[q0, q1]);
+        self.h(&all_qubits);
+        self.szdg(&all_qubits);
         self
     }
 

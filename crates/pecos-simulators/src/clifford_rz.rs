@@ -173,39 +173,53 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordRzGeneric<S, R> 
             return;
         }
 
-        // Build key from diff qubits (gamma, 2 bits each) + omega.
-        // Uses (u128, u64) for zero-alloc keys (supports up to 64 diff qubits).
         let diff = &self.gamma_diff_qubits;
-        let make_key = |idx: usize| -> (u128, u64) {
-            let gamma = self.terms[idx].1.gamma();
-            let omega = self.terms[idx].1.omega_exact();
-            let mut gamma_key = 0u128;
-            let mut bit_pos = 0u32;
-            for &p in diff {
-                let g = u128::from(gamma[p] & 3);
-                gamma_key |= g << bit_pos;
-                bit_pos += 2;
-            }
-            let omega_bits = if omega.is_zero() {
-                0u64
-            } else {
-                1 | (u64::from(omega.sign()) << 1)
-                    | (u64::from(omega.phase8()) << 2)
-                    | (((omega.sqrt2_pow() as u64) & 0xFFFF) << 5)
-            };
-            (gamma_key, omega_bits)
-        };
 
-        let keys: Vec<(u128, u64)> = (0..self.terms.len()).map(make_key).collect();
+        // Omega key: compact u64 encoding (fixed-size, no overflow concern).
+        let omega_keys: Vec<u64> = (0..self.terms.len())
+            .map(|idx| {
+                let omega = self.terms[idx].1.omega_exact();
+                if omega.is_zero() {
+                    0u64
+                } else {
+                    1 | (u64::from(omega.sign()) << 1)
+                        | (u64::from(omega.phase8()) << 2)
+                        | (((omega.sqrt2_pow() as u64) & 0xFFFF) << 5)
+                }
+            })
+            .collect();
+
+        // Sort by (gamma on diff qubits, omega) via direct comparison.
+        // Avoids packed key overflow for large diff sets.
         let mut sorted: Vec<usize> = (0..self.terms.len()).collect();
-        sorted.sort_unstable_by_key(|&i| keys[i]);
+        sorted.sort_unstable_by(|&a, &b| {
+            let ga = self.terms[a].1.gamma();
+            let gb = self.terms[b].1.gamma();
+            for &p in diff {
+                match (ga[p] & 3).cmp(&(gb[p] & 3)) {
+                    std::cmp::Ordering::Equal => {}
+                    ord => return ord,
+                }
+            }
+            omega_keys[a].cmp(&omega_keys[b])
+        });
+
+        // Detect identical groups by comparing adjacent sorted elements directly.
+        let same_key = |a: usize, b: usize| -> bool {
+            if omega_keys[a] != omega_keys[b] {
+                return false;
+            }
+            let ga = self.terms[a].1.gamma();
+            let gb = self.terms[b].1.gamma();
+            diff.iter().all(|&p| (ga[p] & 3) == (gb[p] & 3))
+        };
 
         // Merge adjacent groups
         let mut merged: Vec<(Complex64, usize)> = Vec::new(); // (summed coeff, representative idx)
         let mut gs = 0;
         while gs < sorted.len() {
             let mut ge = gs + 1;
-            while ge < sorted.len() && keys[sorted[ge]] == keys[sorted[gs]] {
+            while ge < sorted.len() && same_key(sorted[ge], sorted[gs]) {
                 ge += 1;
             }
             let rep = sorted[gs];
@@ -739,38 +753,35 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordRzGeneric<S, R> 
                     .collect();
                 let diff = &self.gamma_diff_qubits;
 
-                // Build FULL gamma key and sort by it. The full-key sort is a
-                // REFINEMENT of any q-excluded sort (same masked key → adjacent
-                // in full-key order). So we can find q-excluded groups by scanning.
-                let gamma_key_full = |idx: usize| -> u128 {
-                    let gamma = self.terms[idx].1.gamma();
-                    let mut key = 0u128;
-                    let mut bit_pos = 0u32;
-                    for &p in diff {
-                        let g = u128::from(gamma[p] & 3);
-                        key |= g << bit_pos;
-                        bit_pos += 2;
-                    }
-                    key
-                };
-                let full_keys: Vec<u128> = (0..t).map(gamma_key_full).collect();
+                // Sort by (gamma on diff qubits excluding q, then q) via direct
+                // comparison. This groups terms that differ only on qubit q adjacently,
+                // enabling efficient cross-term bucketing. Avoids packed-key overflow
+                // for large diff sets.
                 let mut sorted_indices: Vec<usize> = (0..t).collect();
-                sorted_indices.sort_unstable_by_key(|&i| full_keys[i]);
-
-                // Find q's bit position in the key for masking.
-                let mut q_bit_pos = None;
-                {
-                    let mut bit_pos = 0u32;
+                sorted_indices.sort_unstable_by(|&a, &b| {
+                    let ga = self.terms[a].1.gamma();
+                    let gb = self.terms[b].1.gamma();
+                    // Primary: all diff qubits except q
                     for &p in diff {
                         if p == q {
-                            q_bit_pos = Some(bit_pos);
+                            continue;
                         }
-                        bit_pos += 2;
+                        match (ga[p] & 3).cmp(&(gb[p] & 3)) {
+                            std::cmp::Ordering::Equal => {}
+                            ord => return ord,
+                        }
                     }
-                }
-                let q_mask = q_bit_pos.map_or(!0u128, |bp| !(3u128 << bp));
-                // Masked keys for group detection (O(T) scan, no re-sort needed).
-                let keys: Vec<u128> = full_keys.iter().map(|&k| k & q_mask).collect();
+                    // Secondary: q itself (refines within masked groups)
+                    (ga[q] & 3).cmp(&(gb[q] & 3))
+                });
+
+                // Group detection: same gamma on all diff qubits except q.
+                let same_masked = |a: usize, b: usize| -> bool {
+                    let ga = self.terms[a].1.gamma();
+                    let gb = self.terms[b].1.gamma();
+                    diff.iter()
+                        .all(|&p| p == q || (ga[p] & 3) == (gb[p] & 3))
+                };
 
                 let mut prob = 0.0;
                 let ez = self.terms[0].1.expectation_value_zq(q);
@@ -783,7 +794,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordRzGeneric<S, R> 
                 while group_start < t {
                     let mut group_end = group_start + 1;
                     while group_end < t
-                        && keys[sorted_indices[group_end]] == keys[sorted_indices[group_start]]
+                        && same_masked(
+                            sorted_indices[group_end],
+                            sorted_indices[group_start],
+                        )
                     {
                         group_end += 1;
                     }
@@ -1236,14 +1250,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable
             }
         }
         // SYY = S*S * SXX * Sdg*Sdg
-        let q0 = pairs[0].0;
-        let q1 = pairs[0].1;
+        let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
         self.apply_clifford_structural(|ch| {
-            ch.sz(&[q0, q1]);
+            ch.sz(&all_qubits);
         });
         self.sxx(pairs);
         self.apply_clifford_structural(|ch| {
-            ch.szdg(&[q0, q1]);
+            ch.szdg(&all_qubits);
         });
         self
     }
@@ -1264,14 +1277,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable
                 self.flush_cliff_frame(r);
             }
         }
-        let q0 = pairs[0].0;
-        let q1 = pairs[0].1;
+        let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
         self.apply_clifford_structural(|ch| {
-            ch.sz(&[q0, q1]);
+            ch.sz(&all_qubits);
         });
         self.sxxdg(pairs);
         self.apply_clifford_structural(|ch| {
-            ch.szdg(&[q0, q1]);
+            ch.szdg(&all_qubits);
         });
         self
     }

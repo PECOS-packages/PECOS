@@ -1626,6 +1626,10 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Quantum engine builder functions
     m.add_function(wrap_pyfunction!(self::state_vector, m)?)?;
     m.add_function(wrap_pyfunction!(self::sparse_stab, m)?)?;
+    m.add_function(wrap_pyfunction!(self::stabilizer, m)?)?;
+    m.add_function(wrap_pyfunction!(self::clifford_rz, m)?)?;
+    m.add_function(wrap_pyfunction!(self::density_matrix, m)?)?;
+    m.add_function(wrap_pyfunction!(self::coin_toss, m)?)?;
 
     Ok(())
 }

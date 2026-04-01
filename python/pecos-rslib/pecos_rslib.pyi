@@ -829,6 +829,29 @@ class Qulacs:
     @property
     def probabilities(self) -> list[float]: ...
 
+class SparseStab:
+    """Rust sparse stabilizer simulator."""
+
+    def __init__(self, num_qubits: int, *, seed: int | None = None) -> None: ...
+    @property
+    def num_qubits(self) -> int: ...
+
+class Stabilizer:
+    """Rust stabilizer simulator."""
+
+    def __init__(self, num_qubits: int, *, seed: int | None = None) -> None: ...
+    @property
+    def num_qubits(self) -> int: ...
+
+class CliffordRz:
+    """Rust Clifford+RZ simulator."""
+
+    def __init__(self, num_qubits: int, seed: int | None = None, pruning_threshold: float | None = None, mc_threshold: int | None = 2048) -> None: ...
+    @property
+    def num_qubits(self) -> int: ...
+    @property
+    def num_terms(self) -> int: ...
+
 class CoinToss:
     """Coin toss simulator for random measurement outcomes."""
 
@@ -926,8 +949,28 @@ class StateVectorEngineBuilder:
 
     ...
 
-class SparseStabilizerEngineBuilder:
+class SparseStabEngineBuilder:
     """Builder for sparse stabilizer engines."""
+
+    ...
+
+class StabilizerEngineBuilder:
+    """Builder for stabilizer engines."""
+
+    ...
+
+class CliffordRzEngineBuilder:
+    """Builder for Clifford+RZ engines."""
+
+    ...
+
+class DensityMatrixEngineBuilder:
+    """Builder for density matrix engines."""
+
+    ...
+
+class CoinTossEngineBuilder:
+    """Builder for coin toss engines."""
 
     ...
 
@@ -1212,10 +1255,17 @@ class quantum:
     """Quantum simulation namespace."""
 
     state_vector: Callable[..., StateVectorEngineBuilder]
-    sparse_stabilizer: Callable[..., SparseStabilizerEngineBuilder]
-    sparse_stab: Callable[..., SparseStabilizerEngineBuilder]
+    sparse_stab: Callable[..., SparseStabEngineBuilder]
+    stabilizer: Callable[..., StabilizerEngineBuilder]
+    clifford_rz: Callable[..., CliffordRzEngineBuilder]
+    density_matrix: Callable[..., DensityMatrixEngineBuilder]
+    coin_toss: Callable[..., CoinTossEngineBuilder]
     StateVectorEngineBuilder: type[StateVectorEngineBuilder]
-    SparseStabilizerEngineBuilder: type[SparseStabilizerEngineBuilder]
+    SparseStabEngineBuilder: type[SparseStabEngineBuilder]
+    StabilizerEngineBuilder: type[StabilizerEngineBuilder]
+    CliffordRzEngineBuilder: type[CliffordRzEngineBuilder]
+    DensityMatrixEngineBuilder: type[DensityMatrixEngineBuilder]
+    CoinTossEngineBuilder: type[CoinTossEngineBuilder]
 
 class noise:
     """Noise model namespace."""
@@ -1250,12 +1300,24 @@ def state_vector(**kwargs: object) -> StateVectorEngineBuilder:
     """Create a state vector engine builder."""
     ...
 
-def sparse_stabilizer(**kwargs: object) -> SparseStabilizerEngineBuilder:
+def sparse_stab(**kwargs: object) -> SparseStabEngineBuilder:
     """Create a sparse stabilizer engine builder."""
     ...
 
-def sparse_stab(**kwargs: object) -> SparseStabilizerEngineBuilder:
-    """Create a sparse stabilizer engine builder (alias)."""
+def stabilizer(**kwargs: object) -> StabilizerEngineBuilder:
+    """Create a stabilizer engine builder."""
+    ...
+
+def clifford_rz(**kwargs: object) -> CliffordRzEngineBuilder:
+    """Create a Clifford+RZ engine builder."""
+    ...
+
+def density_matrix(**kwargs: object) -> DensityMatrixEngineBuilder:
+    """Create a density matrix engine builder."""
+    ...
+
+def coin_toss(**kwargs: object) -> CoinTossEngineBuilder:
+    """Create a coin toss engine builder."""
     ...
 
 def general_noise(**kwargs: object) -> GeneralNoiseModelBuilder:

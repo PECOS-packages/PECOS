@@ -114,7 +114,8 @@ PECOS is available in multiple languages:
 
 This documentation is organized to help you get the most out of PECOS:
 
-- **[User Guide](user-guide/getting-started.md)**: Concepts and tutorials for using PECOS
+- **[User Guide](user-guide/getting-started.md)**: Tutorials and guides for using PECOS
+- **[Concepts](concepts/index.md)**: Physics, math, and algorithms behind the simulators
 - **API Reference**: Detailed API documentation
     - [Python API](https://quantum-pecos.readthedocs.io/en/latest/)
     - [Rust API](https://docs.rs/pecos/latest/pecos/)

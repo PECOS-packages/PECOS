@@ -61,6 +61,22 @@ pub fn register_engines_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         "SparseStabEngineBuilder",
         parent.getattr("SparseStabEngineBuilder")?,
     )?;
+    engines.add(
+        "StabilizerEngineBuilder",
+        parent.getattr("StabilizerEngineBuilder")?,
+    )?;
+    engines.add(
+        "CliffordRzEngineBuilder",
+        parent.getattr("CliffordRzEngineBuilder")?,
+    )?;
+    engines.add(
+        "DensityMatrixEngineBuilder",
+        parent.getattr("DensityMatrixEngineBuilder")?,
+    )?;
+    engines.add(
+        "CoinTossEngineBuilder",
+        parent.getattr("CoinTossEngineBuilder")?,
+    )?;
     engines.add("QasmEngineBuilder", parent.getattr("QasmEngineBuilder")?)?;
     engines.add("QisEngineBuilder", parent.getattr("QisEngineBuilder")?)?;
     engines.add(

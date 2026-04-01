@@ -67,6 +67,9 @@ nav:
   - Parallel Execution: user-guide/parallel-execution.md
   - LLVM Setup: user-guide/llvm-setup.md
   - CUDA Setup: user-guide/cuda-setup.md
+- Concepts:
+  - concepts/index.md
+  - Clifford+RZ Simulator: concepts/clifford-rz-simulator.md
 - API:
   - api/api-reference.md
 - Development:

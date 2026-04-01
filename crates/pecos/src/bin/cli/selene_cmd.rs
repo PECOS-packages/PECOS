@@ -8,30 +8,48 @@ use std::path::{Path, PathBuf};
 /// Selene plugin definition
 struct SelenePlugin {
     /// Rust crate name (e.g., "pecos-selene-statevec")
-    crate_name: &'static str,
+    crate_name: String,
     /// Library base name without extension (e.g., `pecos_selene_statevec`)
-    lib_name: &'static str,
+    lib_name: String,
     /// Python package directory relative to repo root
-    python_pkg_path: &'static str,
-    /// Additional libraries to copy (e.g., CUDA backend)
-    extra_libs: &'static [&'static str],
+    python_pkg_path: String,
 }
 
-/// All known Selene plugins
-const PLUGINS: &[SelenePlugin] = &[
-    SelenePlugin {
-        crate_name: "pecos-selene-stabilizer",
-        lib_name: "pecos_selene_stabilizer",
-        python_pkg_path: "python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer",
-        extra_libs: &[],
-    },
-    SelenePlugin {
-        crate_name: "pecos-selene-statevec",
-        lib_name: "pecos_selene_statevec",
-        python_pkg_path: "python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec",
-        extra_libs: &[],
-    },
-];
+/// Discover Selene plugins by scanning python/selene-plugins/ for directories
+/// matching the `pecos-selene-*` pattern. Each plugin follows the convention:
+///   crate name:    pecos-selene-{name}
+///   lib name:      `pecos_selene`_{name}
+///   python path:   python/selene-plugins/pecos-selene-{name}/python/pecos_selene_{name}
+fn discover_plugins(repo_root: &Path) -> Vec<SelenePlugin> {
+    let plugins_dir = repo_root.join("python/selene-plugins");
+    let mut plugins = Vec::new();
+
+    let Ok(entries) = fs::read_dir(&plugins_dir) else {
+        return plugins;
+    };
+
+    for entry in entries.flatten() {
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        if !dir_name.starts_with("pecos-selene-") || !entry.path().is_dir() {
+            continue;
+        }
+
+        let lib_name = dir_name.replace('-', "_");
+        let python_pkg_path = format!("python/selene-plugins/{dir_name}/python/{lib_name}");
+
+        // Only include if the Python package directory exists
+        if repo_root.join(&python_pkg_path).is_dir() {
+            plugins.push(SelenePlugin {
+                crate_name: dir_name,
+                lib_name,
+                python_pkg_path,
+            });
+        }
+    }
+
+    plugins.sort_by(|a, b| a.crate_name.cmp(&b.crate_name));
+    plugins
+}
 
 /// Run the selene subcommand
 pub fn run(command: super::SeleneCommands) -> Result<()> {
@@ -96,21 +114,22 @@ fn get_target_dir(repo_root: &Path, profile: &str) -> PathBuf {
 fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<()> {
     let repo_root = get_repo_root()?;
     let target_dir = get_target_dir(&repo_root, profile);
+    let all_plugins = discover_plugins(&repo_root);
 
     // Filter plugins if a specific one was requested
     let plugins: Vec<&SelenePlugin> = match &plugin {
-        Some(name) => PLUGINS
+        Some(name) => all_plugins
             .iter()
-            .filter(|p| p.crate_name == name || p.lib_name == name.replace('-', "_"))
+            .filter(|p| p.crate_name == *name || p.lib_name == name.replace('-', "_"))
             .collect(),
-        None => PLUGINS.iter().collect(),
+        None => all_plugins.iter().collect(),
     };
 
     if plugins.is_empty() {
         if let Some(name) = plugin {
             eprintln!("Unknown plugin: {name}");
             eprintln!("Available plugins:");
-            for p in PLUGINS {
+            for p in &all_plugins {
                 eprintln!("  {}", p.crate_name);
             }
             return Err(Error::Selene(format!("Plugin '{name}' not found")));
@@ -122,9 +141,9 @@ fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<(
     let mut failed = 0;
 
     for p in plugins {
-        let lib_filename = get_lib_filename(p.lib_name);
+        let lib_filename = get_lib_filename(&p.lib_name);
         let src = target_dir.join(&lib_filename);
-        let dest_dir = repo_root.join(p.python_pkg_path).join("_dist/lib");
+        let dest_dir = repo_root.join(&p.python_pkg_path).join("_dist/lib");
         let dest = dest_dir.join(&lib_filename);
 
         if !src.exists() {
@@ -170,41 +189,6 @@ fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<(
                 failed += 1;
             }
         }
-
-        // Copy extra libraries (e.g., CUDA backend) if they exist
-        for extra_lib in p.extra_libs {
-            let extra_filename = get_lib_filename(extra_lib);
-            let extra_src = target_dir.join(&extra_filename);
-            let extra_dest = dest_dir.join(&extra_filename);
-
-            if extra_src.exists() {
-                if dry_run {
-                    println!(
-                        "Would copy: {} -> {}",
-                        extra_src.display(),
-                        extra_dest.display()
-                    );
-                } else {
-                    match fs::copy(&extra_src, &extra_dest) {
-                        Ok(bytes) => {
-                            println!(
-                                "  + {}: {} ({} bytes)",
-                                extra_lib,
-                                extra_dest.display(),
-                                bytes
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "  Warning: Failed to copy {} to {}: {e}",
-                                extra_src.display(),
-                                extra_dest.display()
-                            );
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // Summary
@@ -228,14 +212,15 @@ fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<(
 #[allow(clippy::collapsible_if)]
 fn run_clean(plugin: Option<String>, venv: bool, dry_run: bool, verbose: u8) -> Result<()> {
     let repo_root = get_repo_root()?;
+    let all_plugins = discover_plugins(&repo_root);
 
     // Filter plugins if a specific one was requested
     let plugins: Vec<&SelenePlugin> = match &plugin {
-        Some(name) => PLUGINS
+        Some(name) => all_plugins
             .iter()
-            .filter(|p| p.crate_name == name || p.lib_name == name.replace('-', "_"))
+            .filter(|p| p.crate_name == *name || p.lib_name == name.replace('-', "_"))
             .collect(),
-        None => PLUGINS.iter().collect(),
+        None => all_plugins.iter().collect(),
     };
 
     if plugins.is_empty() {
@@ -249,7 +234,7 @@ fn run_clean(plugin: Option<String>, venv: bool, dry_run: bool, verbose: u8) -> 
 
     // Clean _dist directories
     for p in &plugins {
-        let dist_dir = repo_root.join(p.python_pkg_path).join("_dist");
+        let dist_dir = repo_root.join(&p.python_pkg_path).join("_dist");
 
         if !dist_dir.exists() {
             skipped += 1;
@@ -346,7 +331,7 @@ fn clean_site_packages(
             for p in plugins {
                 // Match package directory or dist-info directory
                 if name == p.lib_name
-                    || (name.starts_with(p.lib_name) && name.contains(".dist-info"))
+                    || (name.starts_with(&p.lib_name) && name.contains(".dist-info"))
                 {
                     if dry_run {
                         if verbose >= 1 {
@@ -378,16 +363,17 @@ fn clean_site_packages(
 /// List Selene plugins and their installation status
 fn run_list() -> Result<()> {
     let repo_root = get_repo_root()?;
+    let all_plugins = discover_plugins(&repo_root);
 
     println!("Selene Plugins:");
     println!();
 
-    for p in PLUGINS {
+    for p in &all_plugins {
         print!("  {}", p.crate_name);
 
         // Check if library is installed
-        let dist_dir = repo_root.join(p.python_pkg_path).join("_dist/lib");
-        let lib_filename = get_lib_filename(p.lib_name);
+        let dist_dir = repo_root.join(&p.python_pkg_path).join("_dist/lib");
+        let lib_filename = get_lib_filename(&p.lib_name);
         let installed_lib = dist_dir.join(&lib_filename);
 
         if installed_lib.exists() {
@@ -406,11 +392,11 @@ fn run_list() -> Result<()> {
         let target_dir = get_target_dir(&repo_root, profile);
         let mut found = Vec::new();
 
-        for p in PLUGINS {
-            let lib_filename = get_lib_filename(p.lib_name);
+        for p in &all_plugins {
+            let lib_filename = get_lib_filename(&p.lib_name);
             let lib_path = target_dir.join(&lib_filename);
             if lib_path.exists() {
-                found.push(p.crate_name);
+                found.push(p.crate_name.as_str());
             }
         }
 

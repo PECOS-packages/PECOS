@@ -16,9 +16,7 @@ members = [
     "python/pecos-rslib",
     "python/pecos-rslib-cuda",
     "python/quantum-pecos",
-    "python/selene-plugins/pecos-selene-stabilizer",
-    "python/selene-plugins/pecos-selene-statevec",
-    "python/selene-plugins/pecos-selene-clifford-rz",
+    "python/selene-plugins/pecos-selene-*",
 ]
 
 [tool.uv.sources]

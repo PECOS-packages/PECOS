@@ -58,56 +58,48 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Build Selene plugins (Unix)
+      - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
         run: |
-          cargo build --release \
-            -p pecos-selene-stabilizer \
-            -p pecos-selene-statevec \
-            -p pecos-selene-clifford-rz
-
-      - name: Build Selene plugins (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo build --release -p pecos-selene-stabilizer -p pecos-selene-statevec -p pecos-selene-clifford-rz
-
-      - name: Copy libraries to Python packages (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          # Determine library extension
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             EXT="dylib"
           else
             EXT="so"
           fi
 
-          # Copy libraries
-          mkdir -p python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib
-          mkdir -p python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
-          mkdir -p python/selene-plugins/pecos-selene-clifford-rz/python/pecos_selene_clifford_rz/_dist/lib
+          # Discover all selene plugins, build, copy libraries, and install
+          PLUGINS=$(ls -d python/selene-plugins/pecos-selene-*/ | xargs -I{} basename {})
+          cargo build --release $(echo "$PLUGINS" | sed 's/^/-p /' | paste -sd' ')
 
-          cp target/release/libpecos_selene_stabilizer.$EXT python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib/
-          cp target/release/libpecos_selene_statevec.$EXT python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
-          cp target/release/libpecos_selene_clifford_rz.$EXT python/selene-plugins/pecos-selene-clifford-rz/python/pecos_selene_clifford_rz/_dist/lib/
+          for PLUGIN in $PLUGINS; do
+            LIB_NAME=$(echo "$PLUGIN" | tr '-' '_')
+            DEST="python/selene-plugins/$PLUGIN/python/${LIB_NAME}/_dist/lib"
+            mkdir -p "$DEST"
+            cp "target/release/lib${LIB_NAME}.$EXT" "$DEST/"
+          done
 
-      - name: Copy libraries to Python packages (Windows)
+          for PLUGIN_DIR in python/selene-plugins/pecos-selene-*/; do
+            uv pip install --system -e "${PLUGIN_DIR}[test]"
+          done
+
+      - name: Build and install Selene plugins (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
-          New-Item -ItemType Directory -Force -Path python/selene-plugins/pecos-selene-clifford-rz/python/pecos_selene_clifford_rz/_dist/lib
+          $plugins = Get-ChildItem -Directory python/selene-plugins/pecos-selene-* | Select-Object -ExpandProperty Name
+          $cargoArgs = $plugins | ForEach-Object { "-p"; $_ }
+          cargo build --release @cargoArgs
 
-          Copy-Item target/release/pecos_selene_stabilizer.dll python/selene-plugins/pecos-selene-stabilizer/python/pecos_selene_stabilizer/_dist/lib/
-          Copy-Item target/release/pecos_selene_statevec.dll python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
-          Copy-Item target/release/pecos_selene_clifford_rz.dll python/selene-plugins/pecos-selene-clifford-rz/python/pecos_selene_clifford_rz/_dist/lib/
+          foreach ($plugin in $plugins) {
+            $libName = $plugin -replace '-', '_'
+            $dest = "python/selene-plugins/$plugin/python/$libName/_dist/lib"
+            New-Item -ItemType Directory -Force -Path $dest
+            Copy-Item "target/release/$libName.dll" "$dest/"
+          }
 
-      - name: Install Python packages
-        run: |
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-stabilizer[test]
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-statevec[test]
-          uv pip install --system -e ./python/selene-plugins/pecos-selene-clifford-rz[test]
+          foreach ($pluginDir in (Get-ChildItem -Directory python/selene-plugins/pecos-selene-*)) {
+            uv pip install --system -e "$($pluginDir.FullName)[test]"
+          }
 
       - name: Run tests
         run: |

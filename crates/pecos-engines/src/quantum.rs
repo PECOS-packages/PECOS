@@ -29,18 +29,6 @@ fn flat_to_pairs(qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
         .collect()
 }
 
-/// Single-pair optimization: avoids Vec allocation for the common case.
-/// Asserts exactly 2 qubits — use `flat_to_pairs` for multi-pair gates.
-#[inline]
-fn single_pair(qubits: &[QubitId]) -> [(QubitId, QubitId); 1] {
-    assert!(
-        qubits.len() == 2,
-        "single_pair expects exactly 2 qubits, got {} (use flat_to_pairs for multi-pair)",
-        qubits.len()
-    );
-    [(qubits[0], qubits[1])]
-}
-
 /// Process a `ByteMessage` against any Clifford-capable simulator.
 ///
 /// Shared gate dispatch for `SparseStabEngine`, `StabilizerEngine`, etc.
@@ -216,6 +204,261 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                     cmd.gate_type
                 )));
             }
+        }
+        cmd_idx += 1;
+    }
+
+    let mut builder = ByteMessage::outcomes_builder();
+    builder.add_outcomes(&measurements);
+    Ok(builder.build())
+}
+
+/// Process a `ByteMessage` against any simulator supporting full gate set.
+///
+/// Shared gate dispatch for `CliffordRzEngine`, `DensityMatrixEngine`, etc.
+/// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX, CRZ),
+/// preparations, and measurements with MZ batching.
+fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator>(
+    sim: &mut S,
+    message: ByteMessage,
+) -> Result<ByteMessage, PecosError> {
+    let batch = message.quantum_ops()?;
+    let mut measurements: Vec<usize> = Vec::new();
+
+    let mut cmd_idx = 0;
+    while cmd_idx < batch.len() {
+        let cmd = &batch[cmd_idx];
+        match cmd.gate_type {
+            // Single-qubit Clifford gates
+            GateType::X => {
+                sim.x(&cmd.qubits);
+            }
+            GateType::Y => {
+                sim.y(&cmd.qubits);
+            }
+            GateType::Z => {
+                sim.z(&cmd.qubits);
+            }
+            GateType::H => {
+                sim.h(&cmd.qubits);
+            }
+            GateType::SZ => {
+                sim.sz(&cmd.qubits);
+            }
+            GateType::SZdg => {
+                sim.szdg(&cmd.qubits);
+            }
+            GateType::SX => {
+                sim.sx(&cmd.qubits);
+            }
+            GateType::SXdg => {
+                sim.sxdg(&cmd.qubits);
+            }
+            GateType::SY => {
+                sim.sy(&cmd.qubits);
+            }
+            GateType::SYdg => {
+                sim.sydg(&cmd.qubits);
+            }
+            GateType::F => {
+                sim.f(&cmd.qubits);
+            }
+            GateType::Fdg => {
+                sim.fdg(&cmd.qubits);
+            }
+
+            // T gates
+            GateType::T => {
+                sim.t(&cmd.qubits);
+            }
+            GateType::Tdg => {
+                sim.tdg(&cmd.qubits);
+            }
+
+            // Two-qubit Clifford gates
+            GateType::CX => {
+                sim.cx(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::CY => {
+                sim.cy(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::CZ => {
+                sim.cz(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SZZ => {
+                sim.szz(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SZZdg => {
+                sim.szzdg(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SXX => {
+                sim.sxx(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SXXdg => {
+                sim.sxxdg(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SYY => {
+                sim.syy(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SYYdg => {
+                sim.syydg(&flat_to_pairs(&cmd.qubits));
+            }
+            GateType::SWAP => {
+                sim.swap(&flat_to_pairs(&cmd.qubits));
+            }
+
+            // Composite gates (decomposed into primitives)
+            GateType::CH => {
+                for qubits in cmd.qubits.chunks_exact(2) {
+                    let target_slice = &[qubits[1]];
+                    sim.ry(
+                        Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+                        target_slice,
+                    );
+                    sim.cx(&[(qubits[0], qubits[1])]);
+                    sim.ry(
+                        Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
+                        target_slice,
+                    );
+                }
+            }
+            GateType::CCX => {
+                for qubits in cmd.qubits.chunks_exact(3) {
+                    let c0 = qubits[0];
+                    let c1 = qubits[1];
+                    let target = qubits[2];
+                    sim.h(&[target]);
+                    sim.cx(&[(c1, target)]);
+                    sim.tdg(&[target]);
+                    sim.cx(&[(c0, target)]);
+                    sim.t(&[target]);
+                    sim.cx(&[(c1, target)]);
+                    sim.tdg(&[target]);
+                    sim.cx(&[(c0, target)]);
+                    sim.t(&[c1]);
+                    sim.t(&[target]);
+                    sim.cx(&[(c0, c1)]);
+                    sim.h(&[target]);
+                    sim.t(&[c0]);
+                    sim.tdg(&[c1]);
+                    sim.cx(&[(c0, c1)]);
+                }
+            }
+
+            // Rotation gates
+            GateType::RZ => {
+                if !cmd.angles.is_empty() {
+                    sim.rz(cmd.angles[0], &cmd.qubits);
+                }
+            }
+            GateType::RX => {
+                if !cmd.angles.is_empty() {
+                    sim.rx(cmd.angles[0], &cmd.qubits);
+                }
+            }
+            GateType::RY => {
+                if !cmd.angles.is_empty() {
+                    sim.ry(cmd.angles[0], &cmd.qubits);
+                }
+            }
+            GateType::RZZ => {
+                if !cmd.angles.is_empty() {
+                    sim.rzz(cmd.angles[0], &flat_to_pairs(&cmd.qubits));
+                }
+            }
+            GateType::RXX => {
+                if !cmd.angles.is_empty() {
+                    sim.rxx(cmd.angles[0], &flat_to_pairs(&cmd.qubits));
+                }
+            }
+            GateType::RYY => {
+                if !cmd.angles.is_empty() {
+                    sim.ryy(cmd.angles[0], &flat_to_pairs(&cmd.qubits));
+                }
+            }
+            GateType::CRZ => {
+                if !cmd.angles.is_empty() {
+                    let angle = cmd.angles[0];
+                    let half_angle = angle / 2u64;
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        sim.rz(half_angle, &[qubits[1]]);
+                        sim.cx(&[(qubits[0], qubits[1])]);
+                        sim.rz(-half_angle, &[qubits[1]]);
+                        sim.cx(&[(qubits[0], qubits[1])]);
+                    }
+                }
+            }
+            GateType::R1XY => {
+                if cmd.angles.len() >= 2 {
+                    sim.r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
+                }
+            }
+            GateType::U => {
+                if cmd.angles.len() >= 3 {
+                    sim.u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
+                }
+            }
+            GateType::RXXRYYRZZ => {
+                if cmd.angles.len() >= 3 {
+                    sim.rxxryyrzz(
+                        cmd.angles[0],
+                        cmd.angles[1],
+                        cmd.angles[2],
+                        &flat_to_pairs(&cmd.qubits),
+                    );
+                }
+            }
+            GateType::U2q => {
+                if cmd.angles.len() >= 15 {
+                    let before = [
+                        [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                        [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                    ];
+                    let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                    let after = [
+                        [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                        [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                    ];
+                    sim.u2q(before, interaction, after, &flat_to_pairs(&cmd.qubits));
+                }
+            }
+
+            // Batch consecutive MZ commands into one simulator call
+            GateType::MZ | GateType::MeasureLeaked => {
+                let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
+                while cmd_idx + 1 < batch.len()
+                    && matches!(
+                        batch[cmd_idx + 1].gate_type,
+                        GateType::MZ | GateType::MeasureLeaked
+                    )
+                {
+                    cmd_idx += 1;
+                    mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
+                }
+                let meas_results = sim.mz(&mz_qubits);
+                for meas_result in meas_results {
+                    measurements.push(usize::from(meas_result.outcome));
+                }
+            }
+            GateType::MeasureFree => {
+                let meas_results = sim.mz(&cmd.qubits);
+                for meas_result in meas_results {
+                    measurements.push(usize::from(meas_result.outcome));
+                }
+            }
+
+            // State preparation
+            GateType::PZ | GateType::QAlloc => {
+                sim.pz(&cmd.qubits);
+            }
+
+            // No-ops
+            GateType::I
+            | GateType::Idle
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::QFree
+            | GateType::Custom => {}
         }
         cmd_idx += 1;
     }
@@ -1145,253 +1388,7 @@ impl Engine for CliffordRzEngine {
     type Output = ByteMessage;
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
-        let batch = message.quantum_ops()?;
-        let mut measurements: Vec<usize> = Vec::new();
-
-        let mut cmd_idx = 0;
-        while cmd_idx < batch.len() {
-            let cmd = &batch[cmd_idx];
-            match cmd.gate_type {
-                // Single-qubit Clifford gates
-                GateType::X => {
-                    self.simulator.x(&cmd.qubits);
-                }
-                GateType::Y => {
-                    self.simulator.y(&cmd.qubits);
-                }
-                GateType::Z => {
-                    self.simulator.z(&cmd.qubits);
-                }
-                GateType::H => {
-                    self.simulator.h(&cmd.qubits);
-                }
-                GateType::SZ => {
-                    self.simulator.sz(&cmd.qubits);
-                }
-                GateType::SZdg => {
-                    self.simulator.szdg(&cmd.qubits);
-                }
-                GateType::SX => {
-                    self.simulator.sx(&cmd.qubits);
-                }
-                GateType::SXdg => {
-                    self.simulator.sxdg(&cmd.qubits);
-                }
-                GateType::SY => {
-                    self.simulator.sy(&cmd.qubits);
-                }
-                GateType::SYdg => {
-                    self.simulator.sydg(&cmd.qubits);
-                }
-
-                // T gates (non-Clifford, decomposed as RZ(pi/4))
-                GateType::T => {
-                    self.simulator.t(&cmd.qubits);
-                }
-                GateType::Tdg => {
-                    self.simulator.tdg(&cmd.qubits);
-                }
-
-                // Two-qubit Clifford gates (single_pair avoids Vec allocation)
-                GateType::CX => {
-                    self.simulator.cx(&single_pair(&cmd.qubits));
-                }
-                GateType::CZ => {
-                    self.simulator.cz(&single_pair(&cmd.qubits));
-                }
-                GateType::SZZ => {
-                    self.simulator.szz(&single_pair(&cmd.qubits));
-                }
-                GateType::SZZdg => {
-                    self.simulator.szzdg(&single_pair(&cmd.qubits));
-                }
-                GateType::SXX => {
-                    self.simulator.sxx(&single_pair(&cmd.qubits));
-                }
-                GateType::SXXdg => {
-                    self.simulator.sxxdg(&single_pair(&cmd.qubits));
-                }
-                GateType::SYY => {
-                    self.simulator.syy(&single_pair(&cmd.qubits));
-                }
-                GateType::SYYdg => {
-                    self.simulator.syydg(&single_pair(&cmd.qubits));
-                }
-                GateType::CY => {
-                    self.simulator.cy(&single_pair(&cmd.qubits));
-                }
-                GateType::SWAP => {
-                    self.simulator.swap(&single_pair(&cmd.qubits));
-                }
-                GateType::CH => {
-                    for qubits in cmd.qubits.chunks_exact(2) {
-                        let target_slice = &[qubits[1]];
-                        self.simulator.ry(
-                            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
-                        self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        self.simulator.ry(
-                            Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
-                    }
-                }
-                GateType::CCX => {
-                    for qubits in cmd.qubits.chunks_exact(3) {
-                        let c0 = qubits[0];
-                        let c1 = qubits[1];
-                        let target = qubits[2];
-                        self.simulator.h(&[target]);
-                        self.simulator.cx(&[(c1, target)]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[(c0, target)]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[(c1, target)]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[(c0, target)]);
-                        self.simulator.t(&[c1]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[(c0, c1)]);
-                        self.simulator.h(&[target]);
-                        self.simulator.t(&[c0]);
-                        self.simulator.tdg(&[c1]);
-                        self.simulator.cx(&[(c0, c1)]);
-                    }
-                }
-
-                // Single-qubit Clifford extras
-                GateType::F => {
-                    self.simulator.f(&cmd.qubits);
-                }
-                GateType::Fdg => {
-                    self.simulator.fdg(&cmd.qubits);
-                }
-
-                // Rotation gates (non-Clifford -- uses sum-over-Cliffords decomposition)
-                GateType::RZ => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rz(cmd.angles[0], &cmd.qubits);
-                    }
-                }
-                GateType::RX => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rx(cmd.angles[0], &cmd.qubits);
-                    }
-                }
-                GateType::RY => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.ry(cmd.angles[0], &cmd.qubits);
-                    }
-                }
-                GateType::RZZ => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rzz(cmd.angles[0], &single_pair(&cmd.qubits));
-                    }
-                }
-                GateType::RXX => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rxx(cmd.angles[0], &single_pair(&cmd.qubits));
-                    }
-                }
-                GateType::RYY => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.ryy(cmd.angles[0], &single_pair(&cmd.qubits));
-                    }
-                }
-                GateType::CRZ => {
-                    if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0];
-                        let half_angle = angle / 2u64;
-                        for qubits in cmd.qubits.chunks_exact(2) {
-                            self.simulator.rz(half_angle, &[qubits[1]]);
-                            self.simulator.cx(&[(qubits[0], qubits[1])]);
-                            self.simulator.rz(-half_angle, &[qubits[1]]);
-                            self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        }
-                    }
-                }
-                GateType::R1XY => {
-                    if cmd.angles.len() >= 2 {
-                        self.simulator
-                            .r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
-                    }
-                }
-                GateType::U => {
-                    if cmd.angles.len() >= 3 {
-                        self.simulator
-                            .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
-                    }
-                }
-                GateType::RXXRYYRZZ => {
-                    if cmd.angles.len() >= 3 {
-                        self.simulator.rxxryyrzz(
-                            cmd.angles[0],
-                            cmd.angles[1],
-                            cmd.angles[2],
-                            &single_pair(&cmd.qubits),
-                        );
-                    }
-                }
-                GateType::U2q => {
-                    if cmd.angles.len() >= 15 {
-                        let before = [
-                            [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
-                            [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
-                        ];
-                        let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
-                        let after = [
-                            [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
-                            [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
-                        ];
-                        self.simulator
-                            .u2q(before, interaction, after, &single_pair(&cmd.qubits));
-                    }
-                }
-
-                // Batch consecutive MZ commands into one simulator call
-                GateType::MZ | GateType::MeasureLeaked => {
-                    let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
-                    while cmd_idx + 1 < batch.len()
-                        && matches!(
-                            batch[cmd_idx + 1].gate_type,
-                            GateType::MZ | GateType::MeasureLeaked
-                        )
-                    {
-                        cmd_idx += 1;
-                        mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
-                    }
-                    let meas_results = self.simulator.mz(&mz_qubits);
-                    for meas_result in meas_results {
-                        measurements.push(usize::from(meas_result.outcome));
-                    }
-                }
-                GateType::MeasureFree => {
-                    let meas_results = self.simulator.mz(&cmd.qubits);
-                    for meas_result in meas_results {
-                        measurements.push(usize::from(meas_result.outcome));
-                    }
-                }
-
-                // State preparation
-                GateType::PZ | GateType::QAlloc => {
-                    self.simulator.pz(&cmd.qubits);
-                }
-
-                // No-ops
-                GateType::I
-                | GateType::Idle
-                | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree
-                | GateType::Custom => {}
-            }
-            cmd_idx += 1;
-        }
-
-        let mut builder = ByteMessage::outcomes_builder();
-        builder.add_outcomes(&measurements);
-        Ok(builder.build())
+        process_general_message(&mut self.simulator, message)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -1468,253 +1465,7 @@ impl Engine for DensityMatrixEngine {
     type Output = ByteMessage;
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
-        let batch = message.quantum_ops()?;
-        let mut measurements: Vec<usize> = Vec::new();
-
-        let mut cmd_idx = 0;
-        while cmd_idx < batch.len() {
-            let cmd = &batch[cmd_idx];
-            match cmd.gate_type {
-                // Single-qubit Clifford gates
-                GateType::X => {
-                    self.simulator.x(&cmd.qubits);
-                }
-                GateType::Y => {
-                    self.simulator.y(&cmd.qubits);
-                }
-                GateType::Z => {
-                    self.simulator.z(&cmd.qubits);
-                }
-                GateType::H => {
-                    self.simulator.h(&cmd.qubits);
-                }
-                GateType::SZ => {
-                    self.simulator.sz(&cmd.qubits);
-                }
-                GateType::SZdg => {
-                    self.simulator.szdg(&cmd.qubits);
-                }
-                GateType::SX => {
-                    self.simulator.sx(&cmd.qubits);
-                }
-                GateType::SXdg => {
-                    self.simulator.sxdg(&cmd.qubits);
-                }
-                GateType::SY => {
-                    self.simulator.sy(&cmd.qubits);
-                }
-                GateType::SYdg => {
-                    self.simulator.sydg(&cmd.qubits);
-                }
-
-                // T gates
-                GateType::T => {
-                    self.simulator.t(&cmd.qubits);
-                }
-                GateType::Tdg => {
-                    self.simulator.tdg(&cmd.qubits);
-                }
-
-                // Two-qubit Clifford gates
-                GateType::CX => {
-                    self.simulator.cx(&single_pair(&cmd.qubits));
-                }
-                GateType::CY => {
-                    self.simulator.cy(&single_pair(&cmd.qubits));
-                }
-                GateType::CZ => {
-                    self.simulator.cz(&single_pair(&cmd.qubits));
-                }
-                GateType::SZZ => {
-                    self.simulator.szz(&single_pair(&cmd.qubits));
-                }
-                GateType::SZZdg => {
-                    self.simulator.szzdg(&single_pair(&cmd.qubits));
-                }
-                GateType::SXX => {
-                    self.simulator.sxx(&single_pair(&cmd.qubits));
-                }
-                GateType::SXXdg => {
-                    self.simulator.sxxdg(&single_pair(&cmd.qubits));
-                }
-                GateType::SYY => {
-                    self.simulator.syy(&single_pair(&cmd.qubits));
-                }
-                GateType::SYYdg => {
-                    self.simulator.syydg(&single_pair(&cmd.qubits));
-                }
-                GateType::SWAP => {
-                    self.simulator.swap(&single_pair(&cmd.qubits));
-                }
-                GateType::CH => {
-                    for qubits in cmd.qubits.chunks_exact(2) {
-                        let target_slice = &[qubits[1]];
-                        self.simulator.ry(
-                            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
-                        self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        self.simulator.ry(
-                            Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
-                    }
-                }
-                GateType::CCX => {
-                    for qubits in cmd.qubits.chunks_exact(3) {
-                        let c0 = qubits[0];
-                        let c1 = qubits[1];
-                        let target = qubits[2];
-                        self.simulator.h(&[target]);
-                        self.simulator.cx(&[(c1, target)]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[(c0, target)]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[(c1, target)]);
-                        self.simulator.tdg(&[target]);
-                        self.simulator.cx(&[(c0, target)]);
-                        self.simulator.t(&[c1]);
-                        self.simulator.t(&[target]);
-                        self.simulator.cx(&[(c0, c1)]);
-                        self.simulator.h(&[target]);
-                        self.simulator.t(&[c0]);
-                        self.simulator.tdg(&[c1]);
-                        self.simulator.cx(&[(c0, c1)]);
-                    }
-                }
-
-                // Single-qubit Clifford extras
-                GateType::F => {
-                    self.simulator.f(&cmd.qubits);
-                }
-                GateType::Fdg => {
-                    self.simulator.fdg(&cmd.qubits);
-                }
-
-                // Rotation gates
-                GateType::RZ => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rz(cmd.angles[0], &cmd.qubits);
-                    }
-                }
-                GateType::RX => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rx(cmd.angles[0], &cmd.qubits);
-                    }
-                }
-                GateType::RY => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.ry(cmd.angles[0], &cmd.qubits);
-                    }
-                }
-                GateType::RZZ => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rzz(cmd.angles[0], &single_pair(&cmd.qubits));
-                    }
-                }
-                GateType::RXX => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.rxx(cmd.angles[0], &single_pair(&cmd.qubits));
-                    }
-                }
-                GateType::RYY => {
-                    if !cmd.angles.is_empty() {
-                        self.simulator.ryy(cmd.angles[0], &single_pair(&cmd.qubits));
-                    }
-                }
-                GateType::CRZ => {
-                    if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0];
-                        let half_angle = angle / 2u64;
-                        for qubits in cmd.qubits.chunks_exact(2) {
-                            self.simulator.rz(half_angle, &[qubits[1]]);
-                            self.simulator.cx(&[(qubits[0], qubits[1])]);
-                            self.simulator.rz(-half_angle, &[qubits[1]]);
-                            self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        }
-                    }
-                }
-                GateType::R1XY => {
-                    if cmd.angles.len() >= 2 {
-                        self.simulator
-                            .r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
-                    }
-                }
-                GateType::U => {
-                    if cmd.angles.len() >= 3 {
-                        self.simulator
-                            .u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
-                    }
-                }
-                GateType::RXXRYYRZZ => {
-                    if cmd.angles.len() >= 3 {
-                        self.simulator.rxxryyrzz(
-                            cmd.angles[0],
-                            cmd.angles[1],
-                            cmd.angles[2],
-                            &single_pair(&cmd.qubits),
-                        );
-                    }
-                }
-                GateType::U2q => {
-                    if cmd.angles.len() >= 15 {
-                        let before = [
-                            [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
-                            [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
-                        ];
-                        let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
-                        let after = [
-                            [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
-                            [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
-                        ];
-                        self.simulator
-                            .u2q(before, interaction, after, &single_pair(&cmd.qubits));
-                    }
-                }
-
-                // Batch consecutive MZ commands into one simulator call
-                GateType::MZ | GateType::MeasureLeaked => {
-                    let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
-                    while cmd_idx + 1 < batch.len()
-                        && matches!(
-                            batch[cmd_idx + 1].gate_type,
-                            GateType::MZ | GateType::MeasureLeaked
-                        )
-                    {
-                        cmd_idx += 1;
-                        mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
-                    }
-                    let meas_results = self.simulator.mz(&mz_qubits);
-                    for meas_result in meas_results {
-                        measurements.push(usize::from(meas_result.outcome));
-                    }
-                }
-                GateType::MeasureFree => {
-                    let meas_results = self.simulator.mz(&cmd.qubits);
-                    for meas_result in meas_results {
-                        measurements.push(usize::from(meas_result.outcome));
-                    }
-                }
-
-                // State preparation
-                GateType::PZ | GateType::QAlloc => {
-                    self.simulator.pz(&cmd.qubits);
-                }
-
-                // No-ops
-                GateType::I
-                | GateType::Idle
-                | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree
-                | GateType::Custom => {}
-            }
-            cmd_idx += 1;
-        }
-
-        let mut builder = ByteMessage::outcomes_builder();
-        builder.add_outcomes(&measurements);
-        Ok(builder.build())
+        process_general_message(&mut self.simulator, message)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {

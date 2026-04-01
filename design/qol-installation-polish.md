@@ -29,7 +29,7 @@ Requires:
 
 ## 2. Add confirmation prompt to uninstall
 
-**Status:** TODO
+**Status:** DONE
 
 `pecos uninstall --all` deletes multi-GB installations with no warning. Use the new `confirm()` utility to ask before destroying. Show what will be removed and how much space.
 

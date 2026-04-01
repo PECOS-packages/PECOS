@@ -190,6 +190,10 @@ enum Commands {
         /// Uninstall all optional dependencies
         #[arg(long)]
         all: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Upgrade optional dependencies (force reinstall)
     ///
@@ -723,7 +727,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             all,
             no_configure,
         } => cli::run_install(targets, *force, *all, *no_configure)?,
-        Commands::Uninstall { targets, all } => cli::run_uninstall(targets, *all)?,
+        Commands::Uninstall { targets, all, yes } => cli::run_uninstall(targets, *all, *yes)?,
         Commands::Upgrade {
             targets,
             all,

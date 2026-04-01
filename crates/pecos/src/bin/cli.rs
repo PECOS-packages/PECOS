@@ -601,8 +601,8 @@ pub fn run_install(
 /// # Errors
 ///
 /// Returns an error if any target fails to uninstall.
-pub fn run_uninstall(targets: &[String], all: bool) -> pecos_build::Result<()> {
-    uninstall_cmd::run(targets, all)
+pub fn run_uninstall(targets: &[String], all: bool, yes: bool) -> pecos_build::Result<()> {
+    uninstall_cmd::run(targets, all, yes)
 }
 
 /// Run the upgrade command

@@ -63,6 +63,7 @@ pub mod extract;
 pub mod home;
 pub mod llvm;
 pub mod manifest;
+pub mod prompt;
 
 // Re-export main types for convenience
 pub use deps::ensure_dep_ready;

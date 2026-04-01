@@ -175,11 +175,31 @@ setup-cuda: install-cuda install-cuda-python
     @echo "Full CUDA setup complete (toolkit + Python packages)"
 
 # =============================================================================
+# Setup
+# =============================================================================
+
+# Set up build environment (detect and install missing dependencies interactively)
+setup: check-cli
+    {{pecos}} setup
+
+# Set up build environment, accepting all prompts (for CI)
+setup-ci: check-cli
+    {{pecos}} setup --yes
+
+# =============================================================================
 # Building
 # =============================================================================
 
 # Build PECOS (profile: debug, release, native)
-build profile="debug": check-cli installreqs build-selene
+# Runs interactive setup first to ensure dependencies are ready
+build profile="debug": check-cli setup installreqs build-selene
+    {{pecos}} python build --profile {{profile}}
+    # Build FFI crates if tools available (- prefix ignores errors)
+    -{{pecos}} julia build --profile {{profile}}
+    -{{pecos}} go build --profile {{profile}}
+
+# Build PECOS without dependency setup prompts (skips LLVM/CUDA auto-install)
+build-lite profile="debug": check-cli installreqs build-selene
     {{pecos}} python build --profile {{profile}}
     # Build FFI crates if tools available (- prefix ignores errors)
     -{{pecos}} julia build --profile {{profile}}
@@ -208,7 +228,7 @@ build-selene:
     echo "Selene plugins built and installed successfully"
 
 # Build PECOS with CUDA support
-build-cuda profile="debug": installreqs
+build-cuda profile="debug": check-cli setup installreqs
     {{pecos}} python build --profile {{profile}} --cuda
     # Build FFI crates if tools available (- prefix ignores errors)
     -{{pecos}} julia build --profile {{profile}}
@@ -218,6 +238,8 @@ build-cuda profile="debug": installreqs
 build-debug: (build "debug")
 build-release: (build "release")
 build-native: (build "native")
+build-lite-debug: (build-lite "debug")
+build-lite-release: (build-lite "release")
 build-cuda-debug: (build-cuda "debug")
 build-cuda-release: (build-cuda "release")
 build-cuda-native: (build-cuda "native")
@@ -624,9 +646,8 @@ clean-dry-run:
 # Development Workflows
 # =============================================================================
 
-# Verify LLVM configuration before building
-pre-check: check-cli
-    {{pecos}} llvm check
+# Verify build environment before building
+pre-check: check-cli setup
 
 # Dev cycle: incremental build + test (fast, for normal development)
 dev cuda="false": pre-check (build-dev cuda) test

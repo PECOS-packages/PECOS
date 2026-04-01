@@ -22,6 +22,7 @@ pub mod python_cmd;
 pub mod rust_cmd;
 pub mod selene_cmd;
 pub mod self_update_cmd;
+pub mod setup_cmd;
 pub mod uninstall_cmd;
 pub mod upgrade_cmd;
 
@@ -556,6 +557,19 @@ pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
 /// Returns an error if the subcommand fails.
 pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
     manifest_cmd::run(command)
+}
+
+/// Run the setup command
+///
+/// # Errors
+///
+/// Returns an error if setup fails.
+pub fn run_setup(
+    mode: pecos_build::prompt::PromptMode,
+    skip_llvm: bool,
+    skip_cuda: bool,
+) -> pecos_build::Result<()> {
+    setup_cmd::run(mode, skip_llvm, skip_cuda)
 }
 
 /// Run the install command

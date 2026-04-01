@@ -129,6 +129,31 @@ enum Commands {
         #[command(subcommand)]
         command: DepsCommands,
     },
+    /// Set up build environment (detect and install missing dependencies)
+    ///
+    /// Interactively checks for LLVM, CUDA, and cuQuantum and offers to
+    /// install each one that is missing. Use --yes to accept all prompts
+    /// (for CI) or --no to decline all (for a lite build).
+    ///
+    /// Example: pecos setup
+    /// Example: pecos setup --yes
+    Setup {
+        /// Accept all prompts without asking (for CI)
+        #[arg(long, conflicts_with = "no")]
+        yes: bool,
+
+        /// Decline all prompts without asking (lite mode)
+        #[arg(long, conflicts_with = "yes")]
+        no: bool,
+
+        /// Skip LLVM setup
+        #[arg(long)]
+        skip_llvm: bool,
+
+        /// Skip CUDA setup
+        #[arg(long)]
+        skip_cuda: bool,
+    },
     /// Install optional dependencies (cuda, llvm, cuquantum)
     ///
     /// Example: pecos install cuda cuquantum
@@ -671,6 +696,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Selene { command } => cli::run_selene(command.clone())?,
         Commands::Features { command } => cli::run_features(command.clone())?,
         Commands::Deps { command } => cli::run_deps(command.clone())?,
+        Commands::Setup {
+            yes,
+            no,
+            skip_llvm,
+            skip_cuda,
+        } => {
+            let mode = if *yes {
+                pecos_build::prompt::PromptMode::AcceptAll
+            } else if *no {
+                pecos_build::prompt::PromptMode::DeclineAll
+            } else {
+                pecos_build::prompt::PromptMode::Interactive
+            };
+            cli::run_setup(mode, *skip_llvm, *skip_cuda)?;
+        }
         Commands::Install {
             targets,
             force,

@@ -50,7 +50,7 @@ fn print_llvm_not_found_error_extended() {
     eprintln!("  cargo build");
     eprintln!();
     eprintln!("  The installer automatically configures PECOS.");
-    eprintln!("  (Downloads LLVM 14.0.6 to ~/.pecos/llvm/ - ~400MB, ~5 minutes)");
+    eprintln!("  (Downloads LLVM 14.0.6 to ~/.pecos/deps/llvm/ - ~400MB, ~5 minutes)");
     eprintln!();
 
     #[cfg(target_os = "macos")]

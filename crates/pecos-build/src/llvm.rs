@@ -36,18 +36,25 @@ pub const REQUIRED_VERSION: &str = "14";
 /// Find LLVM 14 installation on the system.
 ///
 /// This function searches for LLVM 14 in the following priority order:
-/// 1. Home directory:
-///    - Windows: `~/.pecos/LLVM-14` (new) or `~/.pecos/llvm` (legacy)
-///    - Unix: `~/.pecos/llvm`
-/// 2. Project-local installation (`llvm/` directory relative to repository root)
-/// 3. System installations (platform-specific locations)
+/// 1. PECOS deps directory: `~/.pecos/deps/llvm/`
+/// 2. Legacy PECOS path: `~/.pecos/llvm/` (prints deprecation warning)
+///    - Windows also checks: `~/.pecos/LLVM-14`
+/// 3. Project-local installation (`llvm/` directory relative to repository root)
+/// 4. System installations (platform-specific locations)
 ///
 /// # Returns
 /// - `Some(PathBuf)` if LLVM 14 is found and valid
 /// - `None` if LLVM 14 is not found
 #[must_use]
 pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
-    // 1. Check home directory
+    // 1. Check new deps path: ~/.pecos/deps/llvm/
+    if let Ok(deps_llvm) = crate::home::get_llvm_dir_path()
+        && is_valid_llvm_14(&deps_llvm)
+    {
+        return Some(deps_llvm);
+    }
+
+    // 2. Check legacy top-level path: ~/.pecos/llvm/
     if let Some(home_dir) = dirs::home_dir() {
         let pecos_dir = home_dir.join(".pecos");
 
@@ -55,24 +62,19 @@ pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
         {
             let user_llvm_new = pecos_dir.join("LLVM-14");
             if is_valid_llvm_14(&user_llvm_new) {
+                crate::home::print_legacy_warning("LLVM", &user_llvm_new);
                 return Some(user_llvm_new);
-            }
-            let user_llvm_legacy = pecos_dir.join("llvm");
-            if is_valid_llvm_14(&user_llvm_legacy) {
-                return Some(user_llvm_legacy);
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            let user_llvm = pecos_dir.join("llvm");
-            if is_valid_llvm_14(&user_llvm) {
-                return Some(user_llvm);
-            }
+        let user_llvm_legacy = pecos_dir.join("llvm");
+        if is_valid_llvm_14(&user_llvm_legacy) {
+            crate::home::print_legacy_warning("LLVM", &user_llvm_legacy);
+            return Some(user_llvm_legacy);
         }
     }
 
-    // 2. Check for project-local LLVM
+    // 3. Check for project-local LLVM
     if let Some(root) = repo_root {
         let local_llvm = root.join("llvm");
         if is_valid_llvm_14(&local_llvm) {
@@ -80,9 +82,10 @@ pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
         }
     }
 
-    // 3. Check system installations
+    // 4. Check system installations
     find_system_llvm_14()
 }
+
 
 /// Find LLVM 14 in system-wide locations (platform-specific)
 fn find_system_llvm_14() -> Option<PathBuf> {

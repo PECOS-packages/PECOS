@@ -70,7 +70,10 @@ pub use deps::ensure_dep_ready;
 pub use download::{DownloadInfo, download_all_cached, download_cached};
 pub use errors::{Error, Result};
 pub use extract::{extract_archive, extract_to_deps};
-pub use home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_pecos_home, get_tmp_dir};
+pub use home::{
+    get_cache_dir, get_cuda_dir, get_cuquantum_dir, get_deps_dir, get_llvm_dir, get_pecos_home,
+    get_tmp_dir,
+};
 pub use manifest::Manifest;
 
 /// Check that the C++ toolchain supports C++20 with the CXX crate.

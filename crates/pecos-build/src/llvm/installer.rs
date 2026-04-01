@@ -32,7 +32,7 @@ const LLVM_CHECKSUMS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Install LLVM 14.0.6 to `~/.pecos/llvm/`
+/// Install LLVM 14.0.6 to `~/.pecos/deps/llvm/`
 ///
 /// # Arguments
 /// * `force` - Force reinstall even if already present
@@ -42,10 +42,7 @@ const LLVM_CHECKSUMS: &[(&str, &str)] = &[
 ///
 /// Returns an error if installation fails
 pub fn install_llvm(force: bool, no_configure: bool) -> Result<PathBuf> {
-    let llvm_dir = dirs::home_dir()
-        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?
-        .join(".pecos")
-        .join("llvm");
+    let llvm_dir = crate::home::get_llvm_dir()?;
 
     // Check if already installed
     if !force && llvm_dir.exists() && is_valid_installation(&llvm_dir) {
@@ -387,13 +384,10 @@ fn extract_7z(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
 ///
 /// Returns an error if removal fails
 pub fn uninstall_llvm() -> Result<()> {
-    let llvm_dir = dirs::home_dir()
-        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?
-        .join(".pecos")
-        .join("llvm");
+    let llvm_dir = crate::home::get_llvm_dir_path()?;
 
     if !llvm_dir.exists() {
-        println!("LLVM is not installed in ~/.pecos/llvm/");
+        println!("LLVM is not installed in ~/.pecos/deps/llvm/");
         return Ok(());
     }
 

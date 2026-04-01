@@ -154,6 +154,11 @@ enum Commands {
         #[arg(long)]
         skip_cuda: bool,
     },
+    /// Migrate legacy deps from ~/.pecos/ to ~/.pecos/deps/
+    ///
+    /// Moves LLVM, CUDA, and cuQuantum installations from the old top-level
+    /// paths into the unified deps/ directory.
+    Migrate,
     /// Install optional dependencies (cuda, llvm, cuquantum)
     ///
     /// Example: pecos install cuda cuquantum
@@ -711,6 +716,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             cli::run_setup(mode, *skip_llvm, *skip_cuda)?;
         }
+        Commands::Migrate => cli::run_migrate()?,
         Commands::Install {
             targets,
             force,

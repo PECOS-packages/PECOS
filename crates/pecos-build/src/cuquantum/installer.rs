@@ -1,6 +1,6 @@
 //! cuQuantum SDK installation functionality
 //!
-//! Downloads and installs cuQuantum SDK to `~/.pecos/cuquantum/`
+//! Downloads and installs cuQuantum SDK to `~/.pecos/deps/cuquantum/`
 
 use crate::errors::{Error, Result};
 use sha2::{Digest, Sha256};
@@ -99,8 +99,7 @@ fn get_download_info() -> Result<CuQuantumDownload> {
 /// - Download or extraction fails
 /// - Installation verification fails
 pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
-    let cuquantum_dir = get_pecos_cuquantum_dir()
-        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?;
+    let cuquantum_dir = get_pecos_cuquantum_dir()?;
 
     // Check if already installed
     if !force && cuquantum_dir.exists() && is_valid_cuquantum_installation(&cuquantum_dir) {
@@ -388,18 +387,17 @@ fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Uninstall cuQuantum from ~/.pecos/cuquantum/
+/// Uninstall cuQuantum from `~/.pecos/deps/cuquantum/`
 ///
 /// # Errors
 /// Returns an error if:
 /// - Home directory cannot be determined
 /// - Directory removal fails
 pub fn uninstall_cuquantum() -> Result<()> {
-    let cuquantum_dir = get_pecos_cuquantum_dir()
-        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?;
+    let cuquantum_dir = get_pecos_cuquantum_dir()?;
 
     if !cuquantum_dir.exists() {
-        println!("cuQuantum is not installed in ~/.pecos/cuquantum/");
+        println!("cuQuantum is not installed in ~/.pecos/deps/cuquantum/");
         return Ok(());
     }
 

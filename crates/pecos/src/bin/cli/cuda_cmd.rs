@@ -22,7 +22,7 @@ fn run_check(quiet: bool) -> Result<()> {
     if let Some(cuda_path) = find_cuda() {
         if !quiet {
             // Determine if it's a local or system installation
-            let is_local = get_pecos_cuda_dir().is_some_and(|p| cuda_path.starts_with(&p));
+            let is_local = get_pecos_cuda_dir().is_ok_and(|p| cuda_path.starts_with(&p));
 
             let location = if is_local { "local" } else { "system" };
 
@@ -71,11 +71,11 @@ fn run_version() -> Result<()> {
         println!("Location: {}", cuda_path.display());
 
         // Check if local or system
-        let is_local = get_pecos_cuda_dir().is_some_and(|p| cuda_path.starts_with(&p));
+        let is_local = get_pecos_cuda_dir().is_ok_and(|p| cuda_path.starts_with(&p));
         println!(
             "Type: {}",
             if is_local {
-                "local (~/.pecos/cuda/)"
+                "local (~/.pecos/deps/cuda/)"
             } else {
                 "system"
             }

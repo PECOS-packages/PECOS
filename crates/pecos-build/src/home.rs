@@ -5,10 +5,21 @@
 //! ```text
 //! ~/.pecos/
 //! ├── cache/      # Downloaded archives (tar.gz, 7z, etc.)
-//! ├── deps/       # Extracted & patched sources (ready to build)
-//! ├── llvm/       # LLVM installation
+//! ├── deps/       # All dependencies (LLVM, CUDA, cuQuantum, C++ libs, etc.)
+//! │   ├── llvm/
+//! │   ├── cuda/
+//! │   ├── cuquantum/
+//! │   ├── quest-v4.1.0/
+//! │   └── ...
 //! └── tmp/        # Temporary files during downloads/extraction
 //! ```
+//!
+//! # Legacy paths
+//!
+//! Earlier versions installed LLVM, CUDA, and cuQuantum at the top level
+//! (`~/.pecos/llvm/`, `~/.pecos/cuda/`, `~/.pecos/cuquantum/`). Detection
+//! still checks these paths as a fallback, but new installs go under `deps/`.
+//! Run `pecos migrate` to move legacy installs into `deps/`.
 //!
 //! # Environment Variables
 //!
@@ -107,18 +118,18 @@ pub fn get_deps_dir() -> Result<PathBuf> {
 
 /// Get the LLVM installation directory path (without creating it)
 ///
-/// Returns `$PECOS_HOME/llvm/`
+/// Returns `$PECOS_HOME/deps/llvm/`
 ///
 /// # Errors
 ///
 /// Returns an error if unable to determine the path
 pub fn get_llvm_dir_path() -> Result<PathBuf> {
-    Ok(get_pecos_home_path()?.join("llvm"))
+    Ok(get_deps_dir_path()?.join("llvm"))
 }
 
 /// Get the LLVM installation directory (creates if needed)
 ///
-/// Returns `$PECOS_HOME/llvm/`
+/// Returns `$PECOS_HOME/deps/llvm/`
 ///
 /// # Errors
 ///
@@ -127,6 +138,54 @@ pub fn get_llvm_dir() -> Result<PathBuf> {
     let llvm_dir = get_llvm_dir_path()?;
     fs::create_dir_all(&llvm_dir)?;
     Ok(llvm_dir)
+}
+
+/// Get the CUDA installation directory path (without creating it)
+///
+/// Returns `$PECOS_HOME/deps/cuda/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_cuda_dir_path() -> Result<PathBuf> {
+    Ok(get_deps_dir_path()?.join("cuda"))
+}
+
+/// Get the CUDA installation directory (creates if needed)
+///
+/// Returns `$PECOS_HOME/deps/cuda/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine or create the CUDA directory
+pub fn get_cuda_dir() -> Result<PathBuf> {
+    let cuda_dir = get_cuda_dir_path()?;
+    fs::create_dir_all(&cuda_dir)?;
+    Ok(cuda_dir)
+}
+
+/// Get the cuQuantum installation directory path (without creating it)
+///
+/// Returns `$PECOS_HOME/deps/cuquantum/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_cuquantum_dir_path() -> Result<PathBuf> {
+    Ok(get_deps_dir_path()?.join("cuquantum"))
+}
+
+/// Get the cuQuantum installation directory (creates if needed)
+///
+/// Returns `$PECOS_HOME/deps/cuquantum/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine or create the cuQuantum directory
+pub fn get_cuquantum_dir() -> Result<PathBuf> {
+    let dir = get_cuquantum_dir_path()?;
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 /// Get the cache directory path (without creating it)
@@ -187,6 +246,100 @@ pub fn get_tmp_dir() -> Result<PathBuf> {
     Ok(tmp_dir)
 }
 
+// ── Legacy path helpers ─────────────────────────────────────────────────────
+//
+// Earlier versions installed LLVM/CUDA/cuQuantum at the top level of
+// ~/.pecos/.  These helpers detect the old locations so that detection code
+// can fall back gracefully and `pecos migrate` can move them.
+
+/// Legacy LLVM path: `~/.pecos/llvm/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_legacy_llvm_dir_path() -> Result<PathBuf> {
+    Ok(get_pecos_home_path()?.join("llvm"))
+}
+
+/// Legacy CUDA path: `~/.pecos/cuda/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_legacy_cuda_dir_path() -> Result<PathBuf> {
+    Ok(get_pecos_home_path()?.join("cuda"))
+}
+
+/// Legacy cuQuantum path: `~/.pecos/cuquantum/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_legacy_cuquantum_dir_path() -> Result<PathBuf> {
+    Ok(get_pecos_home_path()?.join("cuquantum"))
+}
+
+/// Print a deprecation warning for a legacy top-level install path.
+pub fn print_legacy_warning(name: &str, old_path: &Path) {
+    eprintln!(
+        "Warning: {name} found at legacy path: {}",
+        old_path.display()
+    );
+    eprintln!("  Run `pecos migrate` to move it to ~/.pecos/deps/");
+}
+
+/// Description of a single legacy dep that can be migrated.
+pub struct LegacyDep {
+    /// Human-readable name (e.g. "LLVM 14")
+    pub name: &'static str,
+    /// Old path
+    pub old: PathBuf,
+    /// New path
+    pub new: PathBuf,
+}
+
+/// Check for legacy top-level installs that should be migrated.
+///
+/// Returns a list of deps whose old path exists but new path does not.
+///
+/// # Errors
+///
+/// Returns an error if unable to determine paths.
+pub fn find_legacy_deps() -> Result<Vec<LegacyDep>> {
+    let mut found = Vec::new();
+    let checks: [(&str, Result<PathBuf>, Result<PathBuf>); 3] = [
+        ("LLVM", get_legacy_llvm_dir_path(), get_llvm_dir_path()),
+        ("CUDA", get_legacy_cuda_dir_path(), get_cuda_dir_path()),
+        (
+            "cuQuantum",
+            get_legacy_cuquantum_dir_path(),
+            get_cuquantum_dir_path(),
+        ),
+    ];
+    for (name, old_result, new_result) in checks {
+        let (Ok(old), Ok(new)) = (old_result, new_result) else {
+            continue;
+        };
+        if old.exists() && !new.exists() {
+            found.push(LegacyDep { name, old, new });
+        }
+    }
+    Ok(found)
+}
+
+/// Migrate a single legacy dep by renaming old -> new.
+///
+/// # Errors
+///
+/// Returns an error if the rename fails.
+pub fn migrate_legacy_dep(dep: &LegacyDep) -> Result<()> {
+    if let Some(parent) = dep.new.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(&dep.old, &dep.new)?;
+    Ok(())
+}
+
 /// Get information about the PECOS home directory
 #[derive(Debug)]
 pub struct HomeInfo {
@@ -196,6 +349,10 @@ pub struct HomeInfo {
     pub deps: PathBuf,
     /// Path to LLVM directory
     pub llvm: PathBuf,
+    /// Path to CUDA directory
+    pub cuda: PathBuf,
+    /// Path to cuQuantum directory
+    pub cuquantum: PathBuf,
     /// Path to cache directory
     pub cache: PathBuf,
     /// Path to tmp directory
@@ -218,6 +375,8 @@ pub fn get_home_info() -> Result<HomeInfo> {
         home: get_pecos_home()?,
         deps: get_deps_dir()?,
         llvm: get_llvm_dir()?,
+        cuda: get_cuda_dir()?,
+        cuquantum: get_cuquantum_dir()?,
         cache: get_cache_dir()?,
         tmp: get_tmp_dir()?,
         home_overridden: std::env::var("PECOS_HOME").is_ok(),

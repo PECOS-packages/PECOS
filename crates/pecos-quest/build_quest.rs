@@ -18,18 +18,24 @@ use std::process::Command;
 /// Returns the CUDA installation path if found
 ///
 /// Search order:
-/// 1. `~/.pecos/cuda/` (local installation via pecos install cuda)
-/// 2. `CUDA_PATH` environment variable
-/// 3. `nvcc` in PATH
-/// 4. Standard system paths
+/// 1. `~/.pecos/deps/cuda/` (new local installation via pecos install cuda)
+/// 2. `~/.pecos/cuda/` (legacy path)
+/// 3. `CUDA_PATH` environment variable
+/// 4. `nvcc` in PATH
+/// 5. Standard system paths
 fn detect_cuda_path() -> Option<String> {
-    // 1. Check ~/.pecos/cuda/ first (local installation via pecos)
+    // 1-2. Check ~/.pecos/deps/cuda/ and legacy ~/.pecos/cuda/
     if let Some(home) = dirs::home_dir() {
-        let pecos_cuda = home.join(".pecos").join("cuda");
-        let nvcc_path = pecos_cuda.join("bin").join("nvcc");
-        if nvcc_path.exists() {
-            info!("Found CUDA in ~/.pecos/cuda/ (installed via pecos)");
-            return Some(pecos_cuda.to_string_lossy().to_string());
+        let paths = [
+            home.join(".pecos").join("deps").join("cuda"),
+            home.join(".pecos").join("cuda"),
+        ];
+        for pecos_cuda in paths {
+            let nvcc_path = pecos_cuda.join("bin").join("nvcc");
+            if nvcc_path.exists() {
+                info!("Found CUDA in {} (installed via pecos)", pecos_cuda.display());
+                return Some(pecos_cuda.to_string_lossy().to_string());
+            }
         }
     }
 

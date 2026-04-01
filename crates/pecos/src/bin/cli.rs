@@ -18,6 +18,7 @@ pub mod julia_cmd;
 pub mod list;
 pub mod llvm_cmd;
 pub mod manifest_cmd;
+pub mod migrate_cmd;
 pub mod python_cmd;
 pub mod rust_cmd;
 pub mod selene_cmd;
@@ -570,6 +571,15 @@ pub fn run_setup(
     skip_cuda: bool,
 ) -> pecos_build::Result<()> {
     setup_cmd::run(mode, skip_llvm, skip_cuda)
+}
+
+/// Run the migrate command
+///
+/// # Errors
+///
+/// Returns an error if migration fails.
+pub fn run_migrate() -> pecos_build::Result<()> {
+    migrate_cmd::run()
 }
 
 /// Run the install command

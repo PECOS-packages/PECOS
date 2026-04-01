@@ -175,34 +175,37 @@ pub fn validate_llvm_config() -> ConfigValidation {
 /// it to `.cargo/config.toml` with `force=true`.
 ///
 /// Priority order:
-/// 1. `~/.pecos/llvm` (PECOS-managed LLVM)
-/// 2. `LLVM_SYS_140_PREFIX` environment variable
-/// 3. System LLVM 14 (Homebrew, system paths, etc.)
+/// 1. `~/.pecos/deps/llvm` (PECOS-managed LLVM, new path)
+/// 2. `~/.pecos/llvm` (legacy path)
+/// 3. `LLVM_SYS_140_PREFIX` environment variable
+/// 4. System LLVM 14 (Homebrew, system paths, etc.)
 ///
 /// # Errors
 ///
 /// Returns an error if no suitable LLVM 14 installation could be found
 pub fn auto_configure_llvm(project_root: Option<PathBuf>) -> Result<PathBuf> {
-    // Priority 1: Check ~/.pecos/ for PECOS-managed LLVM
+    // Priority 1 & 2: Check ~/.pecos/deps/llvm and legacy ~/.pecos/llvm
+    let mut pecos_llvm_paths = Vec::new();
+    if let Ok(deps_llvm) = crate::home::get_llvm_dir_path() {
+        pecos_llvm_paths.push(deps_llvm);
+    }
+    if let Ok(legacy_llvm) = crate::home::get_legacy_llvm_dir_path() {
+        pecos_llvm_paths.push(legacy_llvm);
+    }
+    #[cfg(target_os = "windows")]
     if let Some(home_dir) = dirs::home_dir() {
-        let pecos_dir = home_dir.join(".pecos");
+        pecos_llvm_paths.push(home_dir.join(".pecos").join("LLVM-14"));
+    }
 
-        #[cfg(target_os = "windows")]
-        let pecos_llvm_paths = vec![pecos_dir.join("LLVM-14"), pecos_dir.join("llvm")];
+    for pecos_llvm in pecos_llvm_paths {
+        if is_valid_llvm_14(&pecos_llvm) {
+            let project_root = project_root
+                .or_else(get_repo_root_from_manifest)
+                .or_else(find_cargo_project_root)
+                .ok_or_else(|| Error::Config("Could not find Cargo project root".into()))?;
 
-        #[cfg(not(target_os = "windows"))]
-        let pecos_llvm_paths = vec![pecos_dir.join("llvm")];
-
-        for pecos_llvm in pecos_llvm_paths {
-            if is_valid_llvm_14(&pecos_llvm) {
-                let project_root = project_root
-                    .or_else(get_repo_root_from_manifest)
-                    .or_else(find_cargo_project_root)
-                    .ok_or_else(|| Error::Config("Could not find Cargo project root".into()))?;
-
-                write_cargo_config(&project_root, &pecos_llvm, true)?;
-                return Ok(pecos_llvm);
-            }
+            write_cargo_config(&project_root, &pecos_llvm, true)?;
+            return Ok(pecos_llvm);
         }
     }
 

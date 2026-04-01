@@ -1,7 +1,7 @@
 //! cuQuantum SDK management for PECOS
 //!
 //! This module provides functionality to detect, download, and manage
-//! cuQuantum SDK installations in `~/.pecos/cuquantum/`.
+//! cuQuantum SDK installations in `~/.pecos/deps/cuquantum/`.
 //!
 //! cuQuantum is NVIDIA's SDK for accelerated quantum circuit simulation,
 //! including cuStateVec (state vector) and cuTensorNet (tensor network).
@@ -21,26 +21,43 @@ use crate::errors::{Error, Result};
 /// Note: CUDA 13 support requires version 25.09.0.7 or later
 pub const CUQUANTUM_VERSION: &str = "25.11.1.11";
 
-/// Get the pecos cuQuantum installation directory
-#[must_use]
-pub fn get_pecos_cuquantum_dir() -> Option<PathBuf> {
+/// Get the pecos cuQuantum installation directory (`~/.pecos/deps/cuquantum/`)
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_pecos_cuquantum_dir() -> Result<PathBuf> {
+    crate::home::get_cuquantum_dir_path()
+}
+
+/// Get the legacy cuQuantum installation directory (`~/.pecos/cuquantum/`)
+fn get_legacy_cuquantum_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".pecos").join("cuquantum"))
 }
 
 /// Find cuQuantum installation, checking local first, then system
 ///
 /// Search order:
-/// 1. `~/.pecos/cuquantum/` (local installation)
-/// 2. `CUQUANTUM_ROOT` environment variable
-/// 3. Standard system paths (`/usr/local/cuquantum`, etc.)
-/// 4. Derive from CUDA installation path
+/// 1. `~/.pecos/deps/cuquantum/` (new local installation)
+/// 2. `~/.pecos/cuquantum/` (legacy path, prints deprecation warning)
+/// 3. `CUQUANTUM_ROOT` environment variable
+/// 4. Standard system paths (`/usr/local/cuquantum`, etc.)
+/// 5. Derive from CUDA installation path
 #[must_use]
 pub fn find_cuquantum() -> Option<PathBuf> {
-    // 1. Check ~/.pecos/cuquantum/ first (local installation)
-    if let Some(pecos_cuquantum) = get_pecos_cuquantum_dir()
-        && is_valid_cuquantum_installation(&pecos_cuquantum)
+    // 1. Check new deps path: ~/.pecos/deps/cuquantum/
+    if let Ok(deps_cuquantum) = get_pecos_cuquantum_dir()
+        && is_valid_cuquantum_installation(&deps_cuquantum)
     {
-        return Some(pecos_cuquantum);
+        return Some(deps_cuquantum);
+    }
+
+    // 2. Check legacy top-level path: ~/.pecos/cuquantum/
+    if let Some(legacy_cuquantum) = get_legacy_cuquantum_dir()
+        && is_valid_cuquantum_installation(&legacy_cuquantum)
+    {
+        crate::home::print_legacy_warning("cuQuantum", &legacy_cuquantum);
+        return Some(legacy_cuquantum);
     }
 
     // 2. Check CUQUANTUM_ROOT environment variable

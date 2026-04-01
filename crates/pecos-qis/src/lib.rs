@@ -45,7 +45,7 @@
 //! cargo build
 //! ```
 //!
-//! This takes ~5 minutes, downloads ~400MB, and installs to `~/.pecos/llvm`.
+//! This takes ~5 minutes, downloads ~400MB, and installs to `~/.pecos/deps/llvm`.
 //!
 //! **Don't need QIR?** Disable LLVM:
 //! ```toml

@@ -35,7 +35,7 @@ fn main() {
                 log::info!("cuQuantum not found. Generating stub bindings.");
                 log::info!("To use cuQuantum, either:");
                 log::info!("  1. Set CUQUANTUM_ROOT environment variable");
-                log::info!("  2. Install cuQuantum to ~/.pecos/cuquantum/");
+                log::info!("  2. Install cuQuantum via: pecos install cuquantum");
                 log::info!("  3. Install cuQuantum system-wide");
 
                 generate_stub_bindings();

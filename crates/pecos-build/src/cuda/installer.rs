@@ -1,6 +1,6 @@
 //! CUDA Toolkit installation functionality
 //!
-//! Downloads and installs CUDA Toolkit to `~/.pecos/cuda/`
+//! Downloads and installs CUDA Toolkit to `~/.pecos/deps/cuda/`
 
 #![allow(clippy::case_sensitive_file_extension_comparisons)]
 
@@ -56,7 +56,7 @@ fn get_download_info() -> Result<CudaDownload> {
     }
 }
 
-/// Install CUDA Toolkit to `~/.pecos/cuda/`
+/// Install CUDA Toolkit to `~/.pecos/deps/cuda/`
 ///
 /// # Arguments
 /// * `force` - Force reinstall even if already present
@@ -69,8 +69,7 @@ fn get_download_info() -> Result<CudaDownload> {
 /// - Download or extraction fails
 /// - Installation verification fails
 pub fn install_cuda(force: bool) -> Result<PathBuf> {
-    let cuda_dir = get_pecos_cuda_dir()
-        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?;
+    let cuda_dir = get_pecos_cuda_dir()?;
 
     // Check if already installed
     if !force && cuda_dir.exists() && is_valid_cuda_installation(&cuda_dir) {
@@ -407,18 +406,17 @@ fn extract_windows_exe(archive: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Uninstall CUDA from ~/.pecos/cuda/
+/// Uninstall CUDA from `~/.pecos/deps/cuda/`
 ///
 /// # Errors
 /// Returns an error if:
 /// - Home directory cannot be determined
 /// - Directory removal fails
 pub fn uninstall_cuda() -> Result<()> {
-    let cuda_dir = get_pecos_cuda_dir()
-        .ok_or_else(|| Error::HomeDir("Could not determine home directory".into()))?;
+    let cuda_dir = get_pecos_cuda_dir()?;
 
     if !cuda_dir.exists() {
-        println!("CUDA is not installed in ~/.pecos/cuda/");
+        println!("CUDA is not installed in ~/.pecos/deps/cuda/");
         return Ok(());
     }
 

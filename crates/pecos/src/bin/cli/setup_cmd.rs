@@ -16,6 +16,9 @@ use pecos_build::prompt::{PromptMode, confirm};
 /// - CUDA: default **no** (large download ~4 GB, needs NVIDIA GPU)
 /// - cuQuantum: default **yes** when CUDA is present (small, almost always wanted)
 pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool) -> Result<()> {
+    // Check for legacy installs that should be migrated
+    check_legacy_deps(mode)?;
+
     if !skip_llvm {
         setup_llvm(mode)?;
     }
@@ -33,6 +36,38 @@ pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool) -> Result<()> {
     Ok(())
 }
 
+// ── Migration ──────────────────────────────────────────────────────────────
+
+fn check_legacy_deps(mode: PromptMode) -> Result<()> {
+    let legacy = pecos_build::home::find_legacy_deps()?;
+    if legacy.is_empty() {
+        return Ok(());
+    }
+
+    println!("Found dependencies at legacy paths:");
+    for dep in &legacy {
+        println!("  {} -> {}", dep.old.display(), dep.new.display());
+    }
+
+    if confirm(
+        "Migrate to ~/.pecos/deps/?",
+        true,
+        mode,
+    ) {
+        for dep in &legacy {
+            print!("  Moving {}...", dep.name);
+            pecos_build::home::migrate_legacy_dep(dep)?;
+            println!(" done");
+        }
+        println!();
+    } else {
+        println!("Skipping migration. Run `pecos migrate` later to move them.");
+        println!();
+    }
+
+    Ok(())
+}
+
 // ── LLVM ────────────────────────────────────────────────────────────────────
 
 fn setup_llvm(mode: PromptMode) -> Result<()> {
@@ -43,7 +78,7 @@ fn setup_llvm(mode: PromptMode) -> Result<()> {
     }
 
     if confirm(
-        "LLVM 14 not found. Install to ~/.pecos/llvm/ (~400 MB)?",
+        "LLVM 14 not found. Install to ~/.pecos/deps/llvm/ (~400 MB)?",
         true,
         mode,
     ) {
@@ -70,7 +105,7 @@ fn setup_cuda(mode: PromptMode) -> Result<()> {
     }
 
     if confirm(
-        "CUDA not found. Install to ~/.pecos/cuda/ (~4 GB)?",
+        "CUDA not found. Install to ~/.pecos/deps/cuda/ (~4 GB)?",
         false,
         mode,
     ) {
@@ -90,7 +125,11 @@ fn setup_cuquantum(mode: PromptMode) -> Result<()> {
         return Ok(());
     }
 
-    if confirm("cuQuantum not found. Install to ~/.pecos/cuquantum/?", true, mode) {
+    if confirm(
+        "cuQuantum not found. Install to ~/.pecos/deps/cuquantum/?",
+        true,
+        mode,
+    ) {
         pecos_build::cuquantum::installer::install_cuquantum(false)?;
     } else {
         println!("Skipping cuQuantum.");

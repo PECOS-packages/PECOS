@@ -122,8 +122,8 @@ pub fn validate_cuquantum_config() -> ConfigValidation {
 ///
 /// Returns an error if no suitable cuQuantum installation could be found
 pub fn auto_configure_cuquantum(project_root: Option<PathBuf>) -> Result<PathBuf> {
-    // Priority 1: Check ~/.pecos/cuquantum for PECOS-managed cuQuantum
-    if let Some(pecos_cuquantum) = get_pecos_cuquantum_dir()
+    // Priority 1: Check ~/.pecos/deps/cuquantum for PECOS-managed cuQuantum
+    if let Ok(pecos_cuquantum) = get_pecos_cuquantum_dir()
         && is_valid_cuquantum_installation(&pecos_cuquantum)
     {
         let project_root = project_root

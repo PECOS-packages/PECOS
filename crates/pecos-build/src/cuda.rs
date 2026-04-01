@@ -1,7 +1,7 @@
 //! CUDA Toolkit management for PECOS
 //!
 //! This module provides functionality to download, install, and manage
-//! CUDA Toolkit installations in `~/.pecos/cuda/`.
+//! CUDA Toolkit installations in `~/.pecos/deps/cuda/`.
 
 pub mod installer;
 
@@ -13,26 +13,43 @@ use crate::errors::{Error, Result};
 /// CUDA version we install
 pub const CUDA_VERSION: &str = "12.6.3";
 
-/// Get the pecos CUDA installation directory
-#[must_use]
-pub fn get_pecos_cuda_dir() -> Option<PathBuf> {
+/// Get the pecos CUDA installation directory (`~/.pecos/deps/cuda/`)
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_pecos_cuda_dir() -> Result<PathBuf> {
+    crate::home::get_cuda_dir_path()
+}
+
+/// Get the legacy CUDA installation directory (`~/.pecos/cuda/`)
+fn get_legacy_cuda_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".pecos").join("cuda"))
 }
 
 /// Find CUDA installation, checking local first, then system
 ///
 /// Search order:
-/// 1. `~/.pecos/cuda/` (local installation)
-/// 2. `CUDA_PATH` environment variable
-/// 3. `nvcc` in PATH (derive `CUDA_PATH` from nvcc location)
-/// 4. Standard system paths (`/usr/local/cuda`, etc.)
+/// 1. `~/.pecos/deps/cuda/` (new local installation)
+/// 2. `~/.pecos/cuda/` (legacy path, prints deprecation warning)
+/// 3. `CUDA_PATH` environment variable
+/// 4. `nvcc` in PATH (derive `CUDA_PATH` from nvcc location)
+/// 5. Standard system paths (`/usr/local/cuda`, etc.)
 #[must_use]
 pub fn find_cuda() -> Option<PathBuf> {
-    // 1. Check ~/.pecos/cuda/ first (local installation)
-    if let Some(pecos_cuda) = get_pecos_cuda_dir()
-        && is_valid_cuda_installation(&pecos_cuda)
+    // 1. Check new deps path: ~/.pecos/deps/cuda/
+    if let Ok(deps_cuda) = get_pecos_cuda_dir()
+        && is_valid_cuda_installation(&deps_cuda)
     {
-        return Some(pecos_cuda);
+        return Some(deps_cuda);
+    }
+
+    // 2. Check legacy top-level path: ~/.pecos/cuda/
+    if let Some(legacy_cuda) = get_legacy_cuda_dir()
+        && is_valid_cuda_installation(&legacy_cuda)
+    {
+        crate::home::print_legacy_warning("CUDA", &legacy_cuda);
+        return Some(legacy_cuda);
     }
 
     // 2. Check CUDA_PATH environment variable

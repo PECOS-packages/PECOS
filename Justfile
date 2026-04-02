@@ -3,9 +3,20 @@
 # Install: cargo install just
 # Usage: just <recipe> or just --list
 
-# Default recipe: show help
+# Default recipe: show quick-start guide + recipe list
 default:
-    @just --list --list-heading $'PECOS commands (run `just <recipe>`):\n'
+    @echo "PECOS Development"
+    @echo "================="
+    @echo ""
+    @echo "Quick start:"
+    @echo "  just install-cli    # First time: install the pecos CLI"
+    @echo "  just build          # Build PECOS (auto-installs dependencies)"
+    @echo "  just test           # Run all tests"
+    @echo "  just dev            # Build + test (daily workflow)"
+    @echo "  just lint           # Check formatting and linting"
+    @echo ""
+    @echo "All commands:"
+    @just --list --list-heading ''
 
 # =============================================================================
 # Settings
@@ -47,12 +58,12 @@ setup-ci: check-cli
 
 # Show system information
 [group('setup')]
-sys-info:
+sys-info: check-cli
     {{pecos}} sys-info
 
 # List installed and cached dependencies
 [group('setup')]
-list-deps:
+list-deps: check-cli
     {{pecos}} list -v
 
 # =============================================================================
@@ -244,27 +255,27 @@ docs-test:
 
 # Install LLVM 14
 [group('deps')]
-install-llvm:
+install-llvm: check-cli
     {{pecos}} install llvm
 
 # Install CUDA Toolkit
 [group('deps')]
-install-cuda:
+install-cuda: check-cli
     {{pecos}} install cuda
 
 # Configure LLVM paths in .cargo/config.toml
 [group('deps')]
-configure-llvm:
+configure-llvm: check-cli
     {{pecos}} llvm configure
 
 # Check LLVM 14 installation status
 [group('deps')]
-check-llvm:
+check-llvm: check-cli
     -{{pecos}} llvm check
 
 # Check CUDA installation status
 [group('deps')]
-check-cuda:
+check-cuda: check-cli
     -{{pecos}} cuda check
 
 # =============================================================================
@@ -273,27 +284,27 @@ check-cuda:
 
 # Build Julia FFI library
 [group('julia')]
-julia-build profile="release":
+julia-build profile="release": check-cli
     {{pecos}} julia build --profile {{profile}}
 
 # Run Julia tests
 [group('julia')]
-julia-test:
+julia-test: check-cli
     {{pecos}} julia test
 
 # Format Julia code
 [group('julia')]
-julia-format:
+julia-format: check-cli
     {{pecos}} julia fmt
 
 # Check Julia code formatting
 [group('julia')]
-julia-format-check:
+julia-format-check: check-cli
     {{pecos}} julia fmt --check
 
 # Run Aqua.jl quality checks
 [group('julia')]
-julia-lint:
+julia-lint: check-cli
     {{pecos}} julia lint
 
 # =============================================================================
@@ -302,12 +313,12 @@ julia-lint:
 
 # Build Go FFI library
 [group('go')]
-go-build profile="release":
+go-build profile="release": check-cli
     {{pecos}} go build --profile {{profile}}
 
 # Run Go tests
 [group('go')]
-go-test:
+go-test: check-cli
     {{pecos}} go test
 
 # Format Go code

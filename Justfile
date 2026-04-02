@@ -58,63 +58,19 @@ installreqs-python version:
 # PECOS CLI
 # =============================================================================
 
-# Check if PECOS CLI is installed, fail with helpful message if not
+# Check if PECOS CLI is installed, warn if stale
 [private]
 check-cli:
     #!/usr/bin/env bash
     if ! command -v pecos >/dev/null 2>&1; then
-        echo ""
-        echo "Error: PECOS CLI not found."
-        echo ""
-        echo "Install it with:"
-        echo "  just install-cli"
-        echo ""
-        echo "Or manually:"
-        echo "  cargo install --path crates/pecos --features cli"
-        echo ""
+        echo "Error: PECOS CLI not found. Install with: just install-cli"
         exit 1
     fi
-
-    # Check if the installed CLI might be stale
-    stale=false
-    reasons=()
-
-    # Check 1: version mismatch
-    expected_version=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-    installed_version=$(pecos --version 2>/dev/null | awk '{print $2}')
-    if [[ "$installed_version" != "$expected_version" ]]; then
-        stale=true
-        reasons+=("Version mismatch (installed: ${installed_version:-unknown}, expected: $expected_version)")
-    fi
-
-    # Check 2: missing expected subcommands
-    if ! pecos rust --help >/dev/null 2>&1; then
-        stale=true
-        reasons+=("Missing 'rust' subcommand")
-    fi
-
-    if [[ "$stale" == "true" ]]; then
-        echo ""
-        echo "Warning: PECOS CLI may be outdated."
-        for reason in "${reasons[@]}"; do
-            echo "  - $reason"
-        done
-        echo ""
+    expected=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    installed=$(pecos --version 2>/dev/null | awk '{print $2}')
+    if [[ "$installed" != "$expected" ]]; then
+        echo "Warning: PECOS CLI outdated (installed: ${installed:-unknown}, expected: $expected)"
         echo "  Update with: just reinstall-cli"
-        echo ""
-    fi
-
-    # Informational: suggest CUDA Python packages if toolkit available but cupy isn't
-    if pecos cuda check -q >/dev/null 2>&1; then
-        if ! python -c "import cupy" >/dev/null 2>&1; then
-            echo ""
-            echo "Note: CUDA toolkit detected but Python CUDA packages not installed."
-            echo "      To enable GPU-accelerated simulations:"
-            echo "        pecos cuda setup-python"
-            echo "      Or manually:"
-            echo "        uv sync --group cuda"
-            echo ""
-        fi
     fi
 
 # Install PECOS CLI (required for most recipes)

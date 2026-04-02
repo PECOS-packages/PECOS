@@ -92,50 +92,30 @@ impl ConfigValidation {
 }
 
 /// Read the configured LLVM path from .cargo/config.toml
+///
+/// Handles both TOML formats:
+///   `LLVM_SYS_140_PREFIX = "/path/to/llvm"`
+///   `LLVM_SYS_140_PREFIX = { value = "/path/to/llvm", force = true }`
 #[must_use]
-#[allow(clippy::collapsible_if)]
 pub fn read_configured_llvm_path() -> Option<PathBuf> {
     let project_root = find_cargo_project_root()?;
     let config_path = project_root.join(".cargo").join("config.toml");
-
     let content = fs::read_to_string(&config_path).ok()?;
+    let table: toml::Table = content.parse().ok()?;
 
-    // Parse out LLVM_SYS_140_PREFIX value
-    // Handles both formats:
-    //   LLVM_SYS_140_PREFIX = "/path/to/llvm"
-    //   LLVM_SYS_140_PREFIX = { value = "/path/to/llvm", force = true }
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("LLVM_SYS_140_PREFIX") {
-            if let Some(eq_pos) = trimmed.find('=') {
-                let value_part = trimmed[eq_pos + 1..].trim();
+    let env = table.get("env")?;
+    let entry = env.get("LLVM_SYS_140_PREFIX")?;
 
-                // Check for inline table format: { value = "...", ... }
-                if value_part.starts_with('{') {
-                    if let Some(value_start) = value_part.find("value") {
-                        let after_value = &value_part[value_start + 5..];
-                        if let Some(eq_pos) = after_value.find('=') {
-                            let path_part = after_value[eq_pos + 1..].trim();
-                            // Extract quoted string
-                            if let Some(start) = path_part.find('"') {
-                                if let Some(end) = path_part[start + 1..].find('"') {
-                                    let path = &path_part[start + 1..start + 1 + end];
-                                    return Some(PathBuf::from(path));
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Simple format: "..."
-                    if let Some(start) = value_part.find('"') {
-                        if let Some(end) = value_part[start + 1..].find('"') {
-                            let path = &value_part[start + 1..start + 1 + end];
-                            return Some(PathBuf::from(path));
-                        }
-                    }
-                }
-            }
-        }
+    // Simple string: LLVM_SYS_140_PREFIX = "/path"
+    if let Some(s) = entry.as_str() {
+        return Some(PathBuf::from(s));
+    }
+
+    // Inline table: LLVM_SYS_140_PREFIX = { value = "/path", force = true }
+    if let Some(t) = entry.as_table()
+        && let Some(v) = t.get("value").and_then(|v| v.as_str())
+    {
+        return Some(PathBuf::from(v));
     }
 
     None

@@ -40,7 +40,7 @@ Requires:
 
 ## 3. Fix LLVM config.toml parser fragility
 
-**Status:** TODO
+**Status:** DONE
 
 `crates/pecos-build/src/llvm/config.rs` lines 94-142 use hand-rolled string parsing to read `.cargo/config.toml`. The `toml` crate is already a workspace dependency. Use it instead.
 

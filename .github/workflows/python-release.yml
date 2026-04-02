@@ -192,9 +192,9 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           # Linux configuration - GCC Toolset and CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
+            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
             LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
             CUDA_PATH=/usr/local/cuda-12.6
             MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_LINUX: |
@@ -223,8 +223,8 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
           # macOS configuration
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
             MACOSX_DEPLOYMENT_TARGET=13.2
           CIBW_BEFORE_ALL_MACOS: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
@@ -237,12 +237,12 @@ jobs:
             printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
             chmod +x $HOME/.pecos/bin/codesign
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # Windows configuration - CUDA via Jimver/cuda-toolkit (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\Users\\runneradmin\\.pecos\\llvm\\bin;$PATH"
-            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\llvm"
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin;$PATH"
+            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
             MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
@@ -250,9 +250,9 @@ jobs:
             echo "=== Running pecos install llvm ===" &&
             cargo run --release -p pecos --features cli -- install llvm --force &&
             echo "=== Checking LLVM installation ===" &&
-            (test -d "C:\\Users\\runneradmin\\.pecos\\llvm" && echo "LLVM directory exists" && ls -la "C:\\Users\\runneradmin\\.pecos\\llvm" && (ls -la "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" || echo "bin directory not found")) || (echo "ERROR: LLVM directory not found!" && exit 1) &&
+            (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm" && echo "LLVM directory exists" && ls -la "C:\\Users\\runneradmin\\.pecos\\deps\\llvm" && (ls -la "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" || echo "bin directory not found")) || (echo "ERROR: LLVM directory not found!" && exit 1) &&
             echo "=== Verifying LLVM_SYS_140_PREFIX ===" &&
-            echo "LLVM_SYS_140_PREFIX will be set to: C:\\Users\\runneradmin\\.pecos\\llvm"
+            echo "LLVM_SYS_140_PREFIX will be set to: C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
           # Install delvewheel and patch it to ignore ext-ms-win-* API sets
           # (delvewheel ignores api-ms-win-* but not ext-ms-win-* which are also Windows API sets)
           CIBW_BEFORE_BUILD_WINDOWS: >
@@ -261,7 +261,7 @@ jobs:
           # Note: --no-dll excludes Windows system DLLs that should not be bundled
           # combase.dll and rmclient.dll are core Windows components that fail when bundled
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels

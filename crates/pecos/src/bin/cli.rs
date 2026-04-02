@@ -626,8 +626,13 @@ pub fn run_uninstall(targets: &[String], all: bool, yes: bool) -> pecos_build::R
 /// # Errors
 ///
 /// Returns an error if any target fails to upgrade.
-pub fn run_upgrade(targets: &[String], all: bool, no_configure: bool) -> pecos_build::Result<()> {
-    upgrade_cmd::run(targets, all, no_configure)
+pub fn run_upgrade(
+    targets: &[String],
+    all: bool,
+    no_configure: bool,
+    yes: bool,
+) -> pecos_build::Result<()> {
+    upgrade_cmd::run(targets, all, no_configure, yes)
 }
 
 /// Run the sys-info command

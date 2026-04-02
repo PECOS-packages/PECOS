@@ -235,6 +235,10 @@ enum Commands {
         /// Skip automatic configuration after installation (applies to llvm)
         #[arg(long)]
         no_configure: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Show system tools and project info
     #[command(name = "sys-info")]
@@ -764,7 +768,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             targets,
             all,
             no_configure,
-        } => cli::run_upgrade(targets, *all, *no_configure)?,
+            yes,
+        } => cli::run_upgrade(targets, *all, *no_configure, *yes)?,
         Commands::SysInfo => cli::run_sys_info()?,
         Commands::List { verbose } => cli::run_list(*verbose)?,
         Commands::Self_ { command } => cli::run_self(command.clone())?,

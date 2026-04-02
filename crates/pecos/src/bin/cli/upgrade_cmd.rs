@@ -4,12 +4,13 @@
 
 use pecos_build::Result;
 use pecos_build::errors::Error;
+use pecos_build::prompt::{PromptMode, confirm};
 
 /// Known upgradeable targets
 const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum"];
 
 /// Run the upgrade command
-pub fn run(targets: &[String], all: bool, no_configure: bool) -> Result<()> {
+pub fn run(targets: &[String], all: bool, no_configure: bool, yes: bool) -> Result<()> {
     let targets: Vec<&str> = if all {
         KNOWN_TARGETS.to_vec()
     } else {
@@ -34,6 +35,23 @@ pub fn run(targets: &[String], all: bool, no_configure: bool) -> Result<()> {
         ordered
     };
 
+    println!("This will force-reinstall:");
+    for target in &targets {
+        println!("  {target}");
+    }
+    println!();
+
+    let mode = if yes {
+        PromptMode::AcceptAll
+    } else {
+        PromptMode::Interactive
+    };
+
+    if !confirm("Continue?", false, mode) {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
     let total = targets.len();
     for (i, target) in targets.iter().enumerate() {
         println!("[{}/{}] Upgrading {target}...", i + 1, total);
@@ -42,7 +60,7 @@ pub fn run(targets: &[String], all: bool, no_configure: bool) -> Result<()> {
         println!();
     }
 
-    println!("All done.");
+    println!("All done. Run `just build` to rebuild PECOS.");
     Ok(())
 }
 

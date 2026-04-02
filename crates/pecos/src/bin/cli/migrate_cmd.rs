@@ -28,7 +28,9 @@ pub fn run() -> Result<()> {
     }
 
     println!();
-    println!("Migration complete. You may want to run `pecos llvm configure` to update .cargo/config.toml.");
+    println!(
+        "Migration complete. You may want to run `pecos llvm configure` to update .cargo/config.toml."
+    );
 
     Ok(())
 }

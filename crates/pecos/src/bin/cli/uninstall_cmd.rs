@@ -91,7 +91,9 @@ fn installed_path(target: &str) -> Option<PathBuf> {
 /// Get a human-readable size string for a directory.
 fn dir_size_display(path: &PathBuf) -> String {
     match dir_size(path) {
-        Some(bytes) if bytes >= 1_073_741_824 => format!("{:.1} GB", bytes as f64 / 1_073_741_824.0),
+        Some(bytes) if bytes >= 1_073_741_824 => {
+            format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+        }
         Some(bytes) if bytes >= 1_048_576 => format!("{:.0} MB", bytes as f64 / 1_048_576.0),
         Some(bytes) => format!("{bytes} bytes"),
         None => "unknown size".to_string(),

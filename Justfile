@@ -246,13 +246,12 @@ clippy: check-cli
     {{pecos}} rust clippy --include-ffi
 
 # Check Rust formatting (without fixing)
-fmt: check-cli
-    @echo "==> Running fmt check via pecos..."
-    {{pecos}} rust fmt --check
+fmt:
+    cargo fmt --all -- --check
 
 # Fix Rust formatting issues
-fmt-fix: check-cli
-    {{pecos}} rust fmt
+fmt-fix:
+    cargo fmt --all
 
 # Run all quality checks / linting (check only)
 lint: fmt clippy
@@ -282,7 +281,7 @@ lint-fix:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Fixing Rust formatting and clippy issues..."
-    {{pecos}} rust fmt
+    cargo fmt --all
     {{pecos}} rust clippy --fix --include-ffi
     echo ""
     echo "Running pre-commit fixes..."

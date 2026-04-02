@@ -86,7 +86,6 @@ pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
     find_system_llvm_14()
 }
 
-
 /// Find LLVM 14 in system-wide locations (platform-specific)
 fn find_system_llvm_14() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]

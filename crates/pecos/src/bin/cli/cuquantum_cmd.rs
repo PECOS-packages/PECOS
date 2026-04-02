@@ -24,8 +24,7 @@ fn run_check(quiet: bool) -> Result<()> {
     if let Some(cuquantum_path) = find_cuquantum() {
         if !quiet {
             // Determine if it's a local or system installation
-            let is_local =
-                get_pecos_cuquantum_dir().is_ok_and(|p| cuquantum_path.starts_with(&p));
+            let is_local = get_pecos_cuquantum_dir().is_ok_and(|p| cuquantum_path.starts_with(&p));
 
             let location = if is_local { "local" } else { "system" };
 

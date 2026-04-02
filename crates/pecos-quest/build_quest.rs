@@ -33,7 +33,10 @@ fn detect_cuda_path() -> Option<String> {
         for pecos_cuda in paths {
             let nvcc_path = pecos_cuda.join("bin").join("nvcc");
             if nvcc_path.exists() {
-                info!("Found CUDA in {} (installed via pecos)", pecos_cuda.display());
+                info!(
+                    "Found CUDA in {} (installed via pecos)",
+                    pecos_cuda.display()
+                );
                 return Some(pecos_cuda.to_string_lossy().to_string());
             }
         }

@@ -46,7 +46,7 @@ Requires:
 
 ## 4. Clean up Justfile naming inconsistencies
 
-**Status:** TODO
+**Status:** DONE
 
 - `install-cuda` vs `setup-cuda` is confusing now that `pecos setup` exists
 - Old individual install/check recipes (`install-llvm`, `check-llvm`, `configure-llvm`, `install-cuda`, `check-cuda`, `validate-cuda`, `install-cuda-python`, `setup-cuda`) overlap with `pecos setup` and `pecos install`

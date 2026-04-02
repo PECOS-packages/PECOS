@@ -132,12 +132,11 @@ reinstall-cli:
     @echo "Done!"
 
 # =============================================================================
-# LLVM Setup
+# Individual Dependency Management (prefer `just setup` or `pecos install`)
 # =============================================================================
 
-# Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
+# Install LLVM 14 to ~/.pecos/deps/llvm/
 install-llvm:
-    @echo "Installing LLVM 14..."
     {{pecos}} install llvm
 
 # Check LLVM 14 installation status
@@ -148,16 +147,11 @@ check-llvm:
 configure-llvm:
     {{pecos}} llvm configure
 
-# =============================================================================
-# CUDA Setup
-# =============================================================================
-
-# Install CUDA Toolkit to ~/.pecos/cuda/ (for GPU support, no GPU needed)
+# Install CUDA Toolkit to ~/.pecos/deps/cuda/
 install-cuda:
-    @echo "Installing CUDA Toolkit..."
     {{pecos}} install cuda
 
-# Check CUDA installation status (local or system)
+# Check CUDA installation status
 check-cuda:
     -{{pecos}} cuda check
 
@@ -165,14 +159,13 @@ check-cuda:
 validate-cuda:
     {{pecos}} cuda validate
 
-# Install CUDA Python packages (cupy, cuquantum, pytket-cutensornet)
-# Requires CUDA toolkit to be installed first (just install-cuda or system CUDA)
+# Install CUDA Python packages (requires CUDA toolkit)
 install-cuda-python:
     {{pecos}} cuda setup-python
 
 # Full CUDA setup: toolkit + Python packages
-setup-cuda: install-cuda install-cuda-python
-    @echo "Full CUDA setup complete (toolkit + Python packages)"
+install-cuda-full: install-cuda install-cuda-python
+    @echo "CUDA setup complete (toolkit + Python packages)"
 
 # =============================================================================
 # Setup

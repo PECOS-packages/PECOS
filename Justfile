@@ -226,6 +226,7 @@ devc-full: (dev-full "true")
 
 # Clean build artifacts
 [group('dev')]
+[group('clean')]
 clean:
     uv run python scripts/clean.py
 

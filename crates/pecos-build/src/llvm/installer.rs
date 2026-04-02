@@ -42,7 +42,7 @@ const LLVM_CHECKSUMS: &[(&str, &str)] = &[
 ///
 /// Returns an error if installation fails
 pub fn install_llvm(force: bool, no_configure: bool) -> Result<PathBuf> {
-    let llvm_dir = crate::home::get_llvm_dir()?;
+    let llvm_dir = crate::home::get_llvm_dir_path()?;
 
     // Check if already installed
     if !force && llvm_dir.exists() && is_valid_installation(&llvm_dir) {

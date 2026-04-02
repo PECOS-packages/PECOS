@@ -3,10 +3,13 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use pecos_build::Result;
+use pecos_build::cuda::find_cuda;
+use pecos_build::cuquantum::find_cuquantum;
 use pecos_build::deps::list_dependencies;
-use pecos_build::home::{get_cache_dir, get_deps_dir, get_llvm_dir};
+use pecos_build::home::{get_cache_dir, get_deps_dir};
 use pecos_build::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manifest};
 use std::fs;
+use std::path::Path;
 
 /// Run the list command
 pub fn run(verbose: bool) -> Result<()> {
@@ -15,81 +18,123 @@ pub fn run(verbose: bool) -> Result<()> {
     println!();
 
     // LLVM status
-    println!("LLVM 14:");
     let repo_root = get_repo_root_from_manifest();
     if let Some(llvm_path) = find_llvm_14(repo_root) {
-        print!("  Status: Installed at {}", llvm_path.display());
-        if let Ok(version) = get_llvm_version(&llvm_path) {
-            println!(" (version {version})");
-        } else {
-            println!();
-        }
+        let version = get_llvm_version(&llvm_path)
+            .map(|v| format!(" ({v})"))
+            .unwrap_or_default();
+        println!("LLVM 14:     {}{version}", llvm_path.display());
     } else {
-        println!("  Status: Not found");
-        println!("  Install with: pecos install llvm");
+        println!("LLVM 14:     not found (install with: pecos install llvm)");
+    }
+
+    // CUDA status
+    if let Some(cuda_path) = find_cuda() {
+        println!("CUDA:        {}", cuda_path.display());
+    } else {
+        println!("CUDA:        not found");
+    }
+
+    // cuQuantum status
+    if let Some(cuq_path) = find_cuquantum() {
+        println!("cuQuantum:   {}", cuq_path.display());
+    } else {
+        println!("cuQuantum:   not found");
     }
     println!();
 
-    // List available dependencies
-    println!("Available Dependencies:");
-    for dep in list_dependencies() {
-        println!("  {}: {} - {}", dep.name, dep.version, dep.description);
-    }
-    println!();
-
-    // List extracted sources and cached archives
     if verbose {
-        println!("Extracted Sources (~/.pecos/deps/):");
+        // Extracted deps with sizes
+        println!("Installed (~/.pecos/deps/):");
         if let Ok(deps_dir) = get_deps_dir() {
             if deps_dir.exists() {
-                let mut found = false;
-                if let Ok(entries) = fs::read_dir(&deps_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().is_dir() {
-                            println!("  {}", entry.file_name().to_string_lossy());
-                            found = true;
-                        }
+                let mut entries: Vec<_> = fs::read_dir(&deps_dir)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .collect();
+                entries.sort_by_key(std::fs::DirEntry::file_name);
+
+                if entries.is_empty() {
+                    println!("  (none)");
+                } else {
+                    for entry in &entries {
+                        let size = dir_size_display(&entry.path());
+                        println!("  {:30} {size}", entry.file_name().to_string_lossy());
                     }
                 }
-                if !found {
-                    println!("  (none)");
-                }
             } else {
-                println!("  (deps directory not created yet)");
+                println!("  (not created yet)");
             }
         }
         println!();
 
-        println!("Downloaded Archives (~/.pecos/cache/):");
+        // Cached downloads with sizes
+        println!("Cached downloads (~/.pecos/cache/):");
         if let Ok(cache_dir) = get_cache_dir() {
             if cache_dir.exists() {
-                let mut found = false;
-                if let Ok(entries) = fs::read_dir(&cache_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().is_file() {
-                            println!("  {}", entry.file_name().to_string_lossy());
-                            found = true;
-                        }
+                let mut entries: Vec<_> = fs::read_dir(&cache_dir)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_file())
+                    .collect();
+                entries.sort_by_key(std::fs::DirEntry::file_name);
+
+                if entries.is_empty() {
+                    println!("  (none)");
+                } else {
+                    for entry in &entries {
+                        let size = entry
+                            .metadata()
+                            .map_or_else(|_| "?".to_string(), |m| format_bytes(m.len()));
+                        println!("  {:50} {size}", entry.file_name().to_string_lossy());
                     }
                 }
-                if !found {
-                    println!("  (none)");
-                }
             } else {
-                println!("  (cache directory not created yet)");
+                println!("  (not created yet)");
             }
         }
-        println!();
-
-        println!("LLVM Directory:");
-        if let Ok(llvm_dir) = get_llvm_dir() {
-            if llvm_dir.exists() {
-                println!("  {}", llvm_dir.display());
-            } else {
-                println!("  (not installed)");
-            }
+    } else {
+        // Non-verbose: just list available deps from manifest
+        println!("Available Dependencies:");
+        for dep in list_dependencies() {
+            println!("  {}: {} - {}", dep.name, dep.version, dep.description);
         }
     }
 
     Ok(())
+}
+
+fn dir_size_display(path: &Path) -> String {
+    dir_size(path).map_or_else(|| "?".to_string(), format_bytes)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
+        format!("{:.0} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn dir_size(path: &Path) -> Option<u64> {
+    let mut total = 0u64;
+    for entry in fs::read_dir(path).ok()? {
+        let entry = entry.ok()?;
+        let meta = entry.metadata().ok()?;
+        if meta.is_dir() {
+            total += dir_size(&entry.path())?;
+        } else {
+            total += meta.len();
+        }
+    }
+    Some(total)
 }

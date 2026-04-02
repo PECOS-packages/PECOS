@@ -54,13 +54,13 @@ Requires:
 
 ## 5. Improve error message consistency
 
-**Status:** TODO
+**Status:** SKIPPED -- messages are already actionable across all check commands
 
 Some commands print helpful context on failure, others just say "not available". Audit `llvm_cmd.rs`, `cuda_cmd.rs`, `cuquantum_cmd.rs` check commands and make error output consistently actionable (what failed, why, what to do).
 
 ## 6. Add post-install guidance
 
-**Status:** TODO
+**Status:** DONE
 
 After `pecos install llvm` or `pecos setup` completes, print a summary of what to do next:
 - "Run `just build` to build PECOS"
@@ -70,6 +70,6 @@ Currently the output is terse ("All done.") with no next steps.
 
 ## 7. Show disk usage in `pecos list`
 
-**Status:** TODO
+**Status:** DONE
 
 `pecos list` shows what's installed but not how much space each takes. Useful when deciding what to clean up.

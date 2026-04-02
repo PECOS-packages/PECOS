@@ -52,7 +52,7 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
         println!();
     }
 
-    println!("All done.");
+    println!("All done. Run `just build` to build PECOS.");
     Ok(())
 }
 

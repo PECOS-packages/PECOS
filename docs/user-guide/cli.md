@@ -133,7 +133,7 @@ Checking PECOS installation...
   [OK] PHIR/JSON support: available
   [OK] Selene runtime: available
   [!!] LLVM/QIS support: not compiled (optional)
-  [OK] LLVM 14: 14.0.6 at /home/user/.pecos/llvm
+  [OK] LLVM 14: 14.0.6 at /home/user/.pecos/deps/llvm
   [OK] Test circuit: execution successful
 
 Suggestions:

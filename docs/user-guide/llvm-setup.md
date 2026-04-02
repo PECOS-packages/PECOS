@@ -26,7 +26,7 @@ If you don't need QIS LLVM IR/QIR execution features, you can skip LLVM installa
 Use the `pecos-llvm` CLI tool to automatically download and install LLVM 14.0.6:
 
 ```bash
-# Install LLVM 14.0.6 to ~/.pecos/llvm/ (~400MB, ~5 minutes)
+# Install LLVM 14.0.6 to ~/.pecos/deps/llvm/ (~400MB, ~5 minutes)
 cargo run -p pecos --features cli -- install llvm
 
 # Build PECOS with LLVM support
@@ -36,7 +36,7 @@ cargo build --features llvm
 The `install` command automatically:
 
 - Downloads the correct LLVM binary for your platform
-- Extracts it to `~/.pecos/llvm/`
+- Extracts it to `~/.pecos/deps/llvm/`
 - Configures PECOS by updating `.cargo/config.toml`
 
 This is the **recommended approach** for all platforms, especially Windows where system package managers may not provide LLVM 14 development files.
@@ -116,7 +116,7 @@ The `pecos llvm` CLI tool provides several useful commands:
 
 ### `install`
 
-Download and install LLVM 14.0.6 to `~/.pecos/llvm/`:
+Download and install LLVM 14.0.6 to `~/.pecos/deps/llvm/`:
 
 ```bash
 cargo run -p pecos --features cli -- install llvm
@@ -217,8 +217,8 @@ LLVM_SYS_140_PREFIX = { value = "/path/to/llvm", force = true }
 The `pecos-llvm` tool searches for LLVM 14 in this order:
 
 1. **Home directory:**
-   - Windows: `~/.pecos/LLVM-14` or `~/.pecos/llvm`
-   - Unix: `~/.pecos/llvm`
+   - Windows: `~/.pecos/deps/llvm`
+   - Unix: `~/.pecos/deps/llvm`
 
 2. **Project-local:** `<repo-root>/llvm/`
 
@@ -298,13 +298,15 @@ LLVM_SYS_140_PREFIX = { value = "/path/to/llvm", force = true }
 
 ## PECOS Home Directory
 
-LLVM is installed to `~/.pecos/llvm/`, which is part of the PECOS home directory structure:
+LLVM is installed to `~/.pecos/deps/llvm/`, which is part of the PECOS home directory structure:
 
 ```
 ~/.pecos/
-├── llvm/       # LLVM-14 installation
-├── deps/       # Other C++ dependencies (decoders, simulators)
-└── cache/      # Build artifacts
+├── deps/
+│   ├── llvm/       # LLVM-14 installation
+│   ├── cuda/       # CUDA Toolkit
+│   └── cuquantum/  # cuQuantum SDK
+└── cache/          # Build artifacts
 ```
 
 You can override the PECOS home location using the `PECOS_HOME` environment variable or in `.cargo/config.toml`:

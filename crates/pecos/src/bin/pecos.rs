@@ -163,6 +163,27 @@ enum Commands {
     /// Moves LLVM, CUDA, and cuQuantum installations from the old top-level
     /// paths into the unified deps/ directory.
     Migrate,
+    /// Clean cached downloads and temporary files from ~/.pecos/
+    ///
+    /// Example: pecos clean cache
+    /// Example: pecos clean --all --dry-run
+    Clean {
+        /// What to clean: cache, tmp
+        #[arg(required_unless_present = "all")]
+        targets: Vec<String>,
+
+        /// Clean all targets
+        #[arg(long)]
+        all: bool,
+
+        /// Show what would be removed without removing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
     /// Install optional dependencies (cuda, llvm, cuquantum)
     ///
     /// Example: pecos install cuda cuquantum
@@ -726,6 +747,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli::run_setup(mode, *skip_llvm, *skip_cuda, *quiet)?;
         }
         Commands::Migrate => cli::run_migrate()?,
+        Commands::Clean {
+            targets,
+            all,
+            dry_run,
+            yes,
+        } => cli::run_clean(targets, *all, *dry_run, *yes)?,
         Commands::Install {
             targets,
             force,

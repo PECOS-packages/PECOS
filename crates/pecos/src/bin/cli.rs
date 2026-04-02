@@ -6,6 +6,7 @@
 
 #![allow(clippy::fn_params_excessive_bools)]
 
+pub mod clean_cmd;
 pub mod cuda_cmd;
 pub mod cuquantum_cmd;
 pub mod docs_cmd;
@@ -558,6 +559,20 @@ pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
 /// Returns an error if the subcommand fails.
 pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
     manifest_cmd::run(command)
+}
+
+/// Run the clean command
+///
+/// # Errors
+///
+/// Returns an error if cleaning fails.
+pub fn run_clean(
+    targets: &[String],
+    all: bool,
+    dry_run: bool,
+    yes: bool,
+) -> pecos_build::Result<()> {
+    clean_cmd::run(targets, all, dry_run, yes)
 }
 
 /// Run the setup command

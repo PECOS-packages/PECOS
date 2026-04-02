@@ -153,6 +153,10 @@ enum Commands {
         /// Skip CUDA setup
         #[arg(long)]
         skip_cuda: bool,
+
+        /// Suppress output when all dependencies are already found
+        #[arg(short, long)]
+        quiet: bool,
     },
     /// Migrate legacy deps from ~/.pecos/ to ~/.pecos/deps/
     ///
@@ -710,6 +714,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             no,
             skip_llvm,
             skip_cuda,
+            quiet,
         } => {
             let mode = if *yes {
                 pecos_build::prompt::PromptMode::AcceptAll
@@ -718,7 +723,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 pecos_build::prompt::PromptMode::Interactive
             };
-            cli::run_setup(mode, *skip_llvm, *skip_cuda)?;
+            cli::run_setup(mode, *skip_llvm, *skip_cuda, *quiet)?;
         }
         Commands::Migrate => cli::run_migrate()?,
         Commands::Install {

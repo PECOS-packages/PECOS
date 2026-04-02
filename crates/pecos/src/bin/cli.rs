@@ -569,8 +569,9 @@ pub fn run_setup(
     mode: pecos_build::prompt::PromptMode,
     skip_llvm: bool,
     skip_cuda: bool,
+    quiet: bool,
 ) -> pecos_build::Result<()> {
-    setup_cmd::run(mode, skip_llvm, skip_cuda)
+    setup_cmd::run(mode, skip_llvm, skip_cuda, quiet)
 }
 
 /// Run the migrate command

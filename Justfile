@@ -179,13 +179,18 @@ setup: check-cli
 setup-ci: check-cli
     {{pecos}} setup --yes
 
+# Quiet setup for use as a build prerequisite (only prints when action needed)
+[private]
+setup-quiet: check-cli
+    {{pecos}} setup --quiet
+
 # =============================================================================
 # Building
 # =============================================================================
 
 # Build PECOS (profile: debug, release, native)
-# Runs interactive setup first to ensure dependencies are ready
-build profile="debug": check-cli setup installreqs build-selene
+# Runs quiet setup first to ensure dependencies are ready
+build profile="debug": check-cli setup-quiet installreqs build-selene
     {{pecos}} python build --profile {{profile}}
     # Build FFI crates if tools available (- prefix ignores errors)
     -{{pecos}} julia build --profile {{profile}}
@@ -221,7 +226,7 @@ build-selene:
     echo "Selene plugins built and installed successfully"
 
 # Build PECOS with CUDA support
-build-cuda profile="debug": check-cli setup installreqs
+build-cuda profile="debug": check-cli setup-quiet installreqs
     {{pecos}} python build --profile {{profile}} --cuda
     # Build FFI crates if tools available (- prefix ignores errors)
     -{{pecos}} julia build --profile {{profile}}
@@ -640,7 +645,7 @@ clean-dry-run:
 # =============================================================================
 
 # Verify build environment before building
-pre-check: check-cli setup
+pre-check: check-cli setup-quiet
 
 # Dev cycle: incremental build + test (fast, for normal development)
 dev cuda="false": pre-check (build-dev cuda) test

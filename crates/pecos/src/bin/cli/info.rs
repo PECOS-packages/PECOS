@@ -3,6 +3,8 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use pecos_build::Result;
+use pecos_build::cuda::{find_cuda, get_cuda_version};
+use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
 use pecos_build::home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_pecos_home};
 use pecos_build::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manifest};
 use std::process::Command;
@@ -40,6 +42,24 @@ pub fn run() -> Result<()> {
     if let Ok(llvm_dir) = get_llvm_dir() {
         print!("  LLVM:  {}", llvm_dir.display());
         if llvm_dir.exists() {
+            println!(" (exists)");
+        } else {
+            println!(" (not installed)");
+        }
+    }
+
+    if let Ok(cuda_dir) = pecos_build::home::get_cuda_dir() {
+        print!("  CUDA:  {}", cuda_dir.display());
+        if cuda_dir.exists() {
+            println!(" (exists)");
+        } else {
+            println!(" (not installed)");
+        }
+    }
+
+    if let Ok(cuq_dir) = pecos_build::home::get_cuquantum_dir() {
+        print!("  cuQ:   {}", cuq_dir.display());
+        if cuq_dir.exists() {
             println!(" (exists)");
         } else {
             println!(" (not installed)");
@@ -108,8 +128,20 @@ fn print_toolchain_status() {
     }
 
     // CUDA
-    let cuda_status = detect_cuda();
-    println!("  CUDA:     {cuda_status}");
+    if let Some(cuda_path) = find_cuda() {
+        let version = get_cuda_version(&cuda_path).unwrap_or_else(|_| "unknown".to_string());
+        println!("  CUDA:     {} ({})", version, cuda_path.display());
+    } else {
+        println!("  CUDA:     not found");
+    }
+
+    // cuQuantum
+    if let Some(cuq_path) = find_cuquantum() {
+        let version = get_cuquantum_version(&cuq_path).unwrap_or_else(|_| "unknown".to_string());
+        println!("  cuQuantum: {} ({})", version, cuq_path.display());
+    } else {
+        println!("  cuQuantum: not found");
+    }
 
     // Python
     let python_status = detect_python();
@@ -126,33 +158,6 @@ fn print_toolchain_status() {
     // Go
     let go_status = detect_go();
     println!("  Go:       {go_status}");
-}
-
-/// Detect CUDA availability
-#[allow(clippy::collapsible_if)]
-fn detect_cuda() -> String {
-    // Check for nvcc
-    if let Ok(output) = Command::new("nvcc").arg("--version").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Extract version from output like "Cuda compilation tools, release 12.0, V12.0.140"
-            if let Some(line) = stdout.lines().find(|l| l.contains("release")) {
-                if let Some(version) = line.split("release ").nth(1) {
-                    if let Some(ver) = version.split(',').next() {
-                        return format!("{ver} (nvcc found)");
-                    }
-                }
-            }
-            return "available (nvcc found)".to_string();
-        }
-    }
-
-    // Check for CUDA_PATH environment variable
-    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        return format!("CUDA_PATH={cuda_path}");
-    }
-
-    "not detected".to_string()
 }
 
 /// Detect Python installation

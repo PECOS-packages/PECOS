@@ -236,14 +236,13 @@ docs-test-legacy:
 # Linting / Formatting
 # =============================================================================
 
-# Run cargo check (with GPU features only if CUDA available)
-check: check-cli
-    {{pecos}} rust check --include-ffi
+# Run cargo check
+check:
+    cargo check --workspace --all-targets
 
-# Run cargo clippy (with GPU features only if CUDA available)
-clippy: check-cli
-    @echo "==> Running clippy via pecos..."
-    {{pecos}} rust clippy --include-ffi
+# Run cargo clippy
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
 
 # Check Rust formatting (without fixing)
 fmt:
@@ -282,7 +281,7 @@ lint-fix:
     set -euo pipefail
     echo "Fixing Rust formatting and clippy issues..."
     cargo fmt --all
-    {{pecos}} rust clippy --fix --include-ffi
+    cargo clippy --workspace --all-targets --fix --allow-staged --allow-dirty -- -D warnings
     echo ""
     echo "Running pre-commit fixes..."
     uv run pre-commit run --all-files || true

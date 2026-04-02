@@ -259,7 +259,7 @@ lint: fmt clippy
     echo "==> Running pre-commit..."
     uv run pre-commit run --all-files
 
-    if {{pecos}} julia check -q >/dev/null 2>&1; then
+    if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia formatting check and linting..."
         {{pecos}} julia fmt --check
         {{pecos}} julia lint
@@ -267,10 +267,10 @@ lint: fmt clippy
         echo "Julia not detected, skipping Julia linting"
     fi
 
-    if {{pecos}} go check -q >/dev/null 2>&1; then
+    if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go formatting check and linting..."
-        {{pecos}} go fmt --check
-        {{pecos}} go lint
+        test -z "$(gofmt -l go/pecos)" || (gofmt -l go/pecos && exit 1)
+        cd go/pecos && go vet ./...
     else
         echo "Go not detected, skipping Go linting"
     fi
@@ -287,7 +287,7 @@ lint-fix:
     uv run pre-commit run --all-files || true
     echo ""
 
-    if {{pecos}} julia check -q >/dev/null 2>&1; then
+    if command -v julia >/dev/null 2>&1; then
         echo "Fixing Julia formatting..."
         {{pecos}} julia fmt
         echo ""
@@ -296,9 +296,9 @@ lint-fix:
         echo "Julia not detected, skipping Julia formatting"
     fi
 
-    if {{pecos}} go check -q >/dev/null 2>&1; then
+    if command -v go >/dev/null 2>&1; then
         echo "Fixing Go formatting..."
-        {{pecos}} go fmt
+        gofmt -w go/pecos
     else
         echo "Go not detected, skipping Go formatting"
     fi
@@ -328,25 +328,26 @@ rstest-all: check-cli
     {{pecos}} rust test
 
 # Run Python tests (excluding numpy and optional deps)
-pytest: check-cli
-    {{pecos}} python test
+pytest:
+    uv run pytest python/pecos-rslib/tests -m "not performance and not numpy"
+    uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not numpy"
 
 # Run NumPy/SciPy compatibility tests
-pytest-numpy: check-cli
-    {{pecos}} python test --numpy
+pytest-numpy:
+    uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
 
 # Run performance tests with release build
 pytest-perf: build-release
-    @echo "Running pecos-rslib performance tests with release build..."
-    uv run --group numpy-compat pytest ./python/pecos-rslib/tests/ -m "performance" -v
+    uv run --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
 
 # Run tests for optional dependencies
-pytest-dep: check-cli
-    {{pecos}} python test -m optional_dependency
+pytest-dep:
+    uv run pytest python/pecos-rslib/tests -m "optional_dependency"
+    uv run pytest python/quantum-pecos/tests -m "optional_dependency"
 
 # Run Selene plugin tests
-pytest-selene: check-cli
-    {{pecos}} python test --selene
+pytest-selene:
+    uv run pytest python/selene-plugins
 
 # Run all Python tests (core + numpy compat + selene)
 pytest-all: pytest pytest-numpy pytest-selene
@@ -356,14 +357,14 @@ pytest-all: pytest pytest-numpy pytest-selene
 test: rstest-all pytest-all
     #!/usr/bin/env bash
     set -euo pipefail
-    if {{pecos}} julia check -q >/dev/null 2>&1; then
+    if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
         {{pecos}} julia test
     else
         echo "Julia not detected, skipping Julia tests"
     fi
 
-    if {{pecos}} go check -q >/dev/null 2>&1; then
+    if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
         {{pecos}} go test
     else
@@ -374,7 +375,7 @@ test: rstest-all pytest-all
 test-all: rstest-all pytest-all
     #!/usr/bin/env bash
     set -euo pipefail
-    if {{pecos}} julia check -q >/dev/null 2>&1; then
+    if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
         {{pecos}} julia test
     else
@@ -384,7 +385,7 @@ test-all: rstest-all pytest-all
         echo ""
     fi
 
-    if {{pecos}} go check -q >/dev/null 2>&1; then
+    if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
         {{pecos}} go test
     else
@@ -452,7 +453,7 @@ julia-examples: julia-build-debug
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Running Julia examples..."
-    if {{pecos}} julia check -q >/dev/null 2>&1; then
+    if command -v julia >/dev/null 2>&1; then
         cd julia/PECOS.jl && julia --project=. examples/demo.jl
         cd julia/PECOS.jl && julia --project=. examples/basic_usage.jl
     else
@@ -530,15 +531,15 @@ go-info:
 
 # Format Go code
 go-fmt:
-    {{pecos}} go fmt
+    gofmt -w go/pecos
 
 # Check Go code formatting
 go-fmt-check:
-    {{pecos}} go fmt --check
+    @test -z "$(gofmt -l go/pecos)" || (gofmt -l go/pecos && exit 1)
 
 # Run Go linting with go vet
 go-lint:
-    {{pecos}} go lint
+    cd go/pecos && go vet ./...
 
 # Clean Go build artifacts
 go-clean:
@@ -546,7 +547,7 @@ go-clean:
     set -euo pipefail
     echo "Cleaning Go artifacts..."
     rm -f go/pecos/go.sum || true
-    if {{pecos}} go check -q >/dev/null 2>&1; then
+    if command -v go >/dev/null 2>&1; then
         cd go/pecos && go clean -cache 2>/dev/null || true
     fi
 

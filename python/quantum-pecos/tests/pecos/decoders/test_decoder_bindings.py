@@ -29,7 +29,7 @@ class TestMwpmResult:
 
     def test_result_attributes(self) -> None:
         """Test that MwpmResult has the expected attributes."""
-        from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
@@ -45,7 +45,7 @@ class TestMwpmResult:
 
     def test_result_to_list(self) -> None:
         """Test MwpmResult.to_list() method."""
-        from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
@@ -55,7 +55,7 @@ class TestMwpmResult:
 
     def test_result_indexing(self) -> None:
         """Test MwpmResult supports indexing like a list."""
-        from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
@@ -71,7 +71,7 @@ class TestCheckMatrix:
 
     def test_create_from_dense(self) -> None:
         """Test creating from dense matrix (like PyMatching's Matching(H))."""
-        from pecos_rslib_qec.decoders import CheckMatrix
+        from pecos_rslib.decoders import CheckMatrix
 
         # Repetition code check matrix
         H = [[1, 1, 0], [0, 1, 1]]
@@ -83,7 +83,7 @@ class TestCheckMatrix:
 
     def test_create_from_coo(self) -> None:
         """Test creating from COO format."""
-        from pecos_rslib_qec.decoders import CheckMatrix
+        from pecos_rslib.decoders import CheckMatrix
 
         matrix = CheckMatrix(
             rows=2,
@@ -97,7 +97,7 @@ class TestCheckMatrix:
 
     def test_with_weights(self) -> None:
         """Test adding weights (like PyMatching's weights parameter)."""
-        from pecos_rslib_qec.decoders import CheckMatrix
+        from pecos_rslib.decoders import CheckMatrix
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         weighted = matrix.with_weights([1.0, 2.0, 1.0])
@@ -113,7 +113,7 @@ class TestPyMatchingDecoder:
 
     def test_from_check_matrix(self) -> None:
         """Test construction from check matrix (like Matching(H))."""
-        from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         H = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(H)
@@ -122,7 +122,7 @@ class TestPyMatchingDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial (all-zero) syndrome."""
-        from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         H = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(H)
@@ -134,7 +134,7 @@ class TestPyMatchingDecoder:
 
     def test_decode_single_error(self) -> None:
         """Test decoding syndrome from single error."""
-        from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         # Repetition code: error on qubit 1 gives syndrome [1, 1]
         H = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
@@ -146,7 +146,7 @@ class TestPyMatchingDecoder:
 
     def test_manual_graph_construction(self) -> None:
         """Test building graph manually (like Matching.add_edge)."""
-        from pecos_rslib_qec.decoders import PyMatchingDecoder
+        from pecos_rslib.decoders import PyMatchingDecoder
 
         decoder = PyMatchingDecoder(num_nodes=3, num_observables=1)
         decoder.add_edge(0, 1, observables=[0], weight=1.0)
@@ -163,14 +163,14 @@ class TestFusionBlossomDecoder:
 
     def test_create_decoder(self) -> None:
         """Test basic construction."""
-        from pecos_rslib_qec.decoders import FusionBlossomDecoder
+        from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder(num_nodes=4, num_observables=1)
         assert decoder.num_nodes == 4
 
     def test_from_check_matrix(self) -> None:
         """Test construction from check matrix."""
-        from pecos_rslib_qec.decoders import FusionBlossomDecoder
+        from pecos_rslib.decoders import FusionBlossomDecoder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = FusionBlossomDecoder.from_check_matrix(H)
@@ -179,7 +179,7 @@ class TestFusionBlossomDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib_qec.decoders import FusionBlossomDecoder
+        from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder.from_check_matrix([[1, 1, 0], [0, 1, 1]])
         result = decoder.decode([0, 0])
@@ -188,7 +188,7 @@ class TestFusionBlossomDecoder:
 
     def test_from_standard_code(self) -> None:
         """Test construction for standard codes (like CodeCapacityPlanarCode)."""
-        from pecos_rslib_qec.decoders import FusionBlossomDecoder
+        from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder.from_standard_code(
             code_type="code_capacity_rotated",
@@ -200,7 +200,7 @@ class TestFusionBlossomDecoder:
 
     def test_clear_for_reuse(self) -> None:
         """Test clear() for efficient decoder reuse."""
-        from pecos_rslib_qec.decoders import FusionBlossomDecoder
+        from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder.from_check_matrix([[1, 1, 0], [0, 1, 1]])
 
@@ -216,7 +216,7 @@ class TestBpResult:
 
     def test_result_attributes(self) -> None:
         """Test that BpResult has expected attributes."""
-        from pecos_rslib_qec.decoders import BpOsdBuilder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpOsdBuilder(H, error_rate=0.01).build()
@@ -236,7 +236,7 @@ class TestSparseMatrix:
 
     def test_create_from_dense(self) -> None:
         """Test creation from dense matrix."""
-        from pecos_rslib_qec.decoders import SparseMatrix
+        from pecos_rslib.decoders import SparseMatrix
 
         H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
         matrix = SparseMatrix(H)
@@ -247,7 +247,7 @@ class TestSparseMatrix:
 
     def test_create_from_coo(self) -> None:
         """Test creation from COO format."""
-        from pecos_rslib_qec.decoders import SparseMatrix
+        from pecos_rslib.decoders import SparseMatrix
 
         matrix = SparseMatrix.from_coo(
             rows=2,
@@ -265,7 +265,7 @@ class TestBpOsdDecoder:
 
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
-        from pecos_rslib_qec.decoders import BpOsdBuilder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpOsdBuilder(H, error_rate=0.01).bp_method("product_sum").osd_method("osd0").build()
@@ -274,7 +274,7 @@ class TestBpOsdDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib_qec.decoders import BpOsdBuilder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpOsdBuilder(H, error_rate=0.01).build()
@@ -284,7 +284,7 @@ class TestBpOsdDecoder:
 
     def test_bp_methods(self) -> None:
         """Test different BP methods."""
-        from pecos_rslib_qec.decoders import BpOsdBuilder, SparseMatrix
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 
@@ -304,7 +304,7 @@ class TestBpLsdDecoder:
 
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
-        from pecos_rslib_qec.decoders import BpLsdBuilder, SparseMatrix
+        from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpLsdBuilder(H, error_rate=0.01).lsd_order(0).build()
@@ -313,7 +313,7 @@ class TestBpLsdDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib_qec.decoders import BpLsdBuilder, SparseMatrix
+        from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpLsdBuilder(H, error_rate=0.01).build()
@@ -327,7 +327,7 @@ class TestUnionFindDecoder:
 
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
-        from pecos_rslib_qec.decoders import SparseMatrix, UnionFindBuilder
+        from pecos_rslib.decoders import SparseMatrix, UnionFindBuilder
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = UnionFindBuilder(H).method("inversion").build()
@@ -336,7 +336,7 @@ class TestUnionFindDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding trivial syndrome."""
-        from pecos_rslib_qec.decoders import SparseMatrix, UnionFindBuilder
+        from pecos_rslib.decoders import SparseMatrix, UnionFindBuilder
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = UnionFindBuilder(H).build()
@@ -346,7 +346,7 @@ class TestUnionFindDecoder:
 
     def test_methods(self) -> None:
         """Test different UF methods."""
-        from pecos_rslib_qec.decoders import SparseMatrix, UnionFindBuilder
+        from pecos_rslib.decoders import SparseMatrix, UnionFindBuilder
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 
@@ -364,7 +364,7 @@ class TestMinSumBpDecoder:
 
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
-        from pecos_rslib_qec.decoders import MinSumBpBuilder
+        from pecos_rslib.decoders import MinSumBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
@@ -373,7 +373,7 @@ class TestMinSumBpDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding zero syndrome."""
-        from pecos_rslib_qec.decoders import MinSumBpBuilder
+        from pecos_rslib.decoders import MinSumBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
@@ -384,7 +384,7 @@ class TestMinSumBpDecoder:
 
     def test_decode_single_error(self) -> None:
         """Test decoding a single-error syndrome."""
-        from pecos_rslib_qec.decoders import MinSumBpBuilder
+        from pecos_rslib.decoders import MinSumBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
@@ -395,7 +395,7 @@ class TestMinSumBpDecoder:
 
     def test_builder_chaining(self) -> None:
         """Test builder method chaining."""
-        from pecos_rslib_qec.decoders import MinSumBpBuilder
+        from pecos_rslib.decoders import MinSumBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = MinSumBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).max_iter(100).alpha(0.8).gamma0(0.5).build()
@@ -405,7 +405,7 @@ class TestMinSumBpDecoder:
 
     def test_properties(self) -> None:
         """Test check_count and bit_count properties."""
-        from pecos_rslib_qec.decoders import MinSumBpBuilder
+        from pecos_rslib.decoders import MinSumBpBuilder
 
         H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
         decoder = MinSumBpBuilder(H, error_priors=[0.01, 0.01, 0.01, 0.01]).build()
@@ -419,7 +419,7 @@ class TestRelayBpDecoder:
 
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
-        from pecos_rslib_qec.decoders import RelayBpBuilder
+        from pecos_rslib.decoders import RelayBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).build()
@@ -428,7 +428,7 @@ class TestRelayBpDecoder:
 
     def test_decode_trivial(self) -> None:
         """Test decoding zero syndrome."""
-        from pecos_rslib_qec.decoders import RelayBpBuilder
+        from pecos_rslib.decoders import RelayBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).seed(42).build()
@@ -439,7 +439,7 @@ class TestRelayBpDecoder:
 
     def test_decode_single_error(self) -> None:
         """Test decoding a single-error syndrome."""
-        from pecos_rslib_qec.decoders import RelayBpBuilder
+        from pecos_rslib.decoders import RelayBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003]).seed(42).build()
@@ -450,7 +450,7 @@ class TestRelayBpDecoder:
 
     def test_builder_chaining(self) -> None:
         """Test builder method chaining with relay-specific options."""
-        from pecos_rslib_qec.decoders import RelayBpBuilder
+        from pecos_rslib.decoders import RelayBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = (
@@ -470,7 +470,7 @@ class TestRelayBpDecoder:
 
     def test_properties(self) -> None:
         """Test check_count and bit_count properties."""
-        from pecos_rslib_qec.decoders import RelayBpBuilder
+        from pecos_rslib.decoders import RelayBpBuilder
 
         H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
         decoder = RelayBpBuilder(H, error_priors=[0.01, 0.01, 0.01, 0.01]).build()
@@ -480,7 +480,7 @@ class TestRelayBpDecoder:
 
     def test_seed_reproducibility(self) -> None:
         """Test that same seed gives same results."""
-        from pecos_rslib_qec.decoders import RelayBpBuilder
+        from pecos_rslib.decoders import RelayBpBuilder
 
         H = [[1, 1, 0], [0, 1, 1]]
         priors = [0.003, 0.003, 0.003]

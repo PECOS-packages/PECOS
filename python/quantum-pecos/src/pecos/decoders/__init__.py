@@ -16,7 +16,7 @@ This package provides various decoders for quantum error correction codes.
 # specific language governing permissions and limitations under the License.
 
 # Rust decoders (from pecos_rslib)
-from pecos_rslib_qec.decoders import (
+from pecos_rslib.decoders import (
     BpLsdBuilder,
     BpLsdDecoder,
     BpOsdBuilder,

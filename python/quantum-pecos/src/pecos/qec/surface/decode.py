@@ -874,7 +874,7 @@ class SurfaceDecoder:
         meas_weight = self._compute_weight(p_meas)
 
         if self.decoder_type == DecoderType.PYMATCHING:
-            from pecos_rslib_qec.decoders import CheckMatrix, PyMatchingDecoder
+            from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
             weights = [data_weight] * num_data
             check_matrix = CheckMatrix.from_dense(H.tolist()).with_weights(weights)
@@ -888,7 +888,7 @@ class SurfaceDecoder:
             )
 
         if self.decoder_type == DecoderType.FUSION_BLOSSOM:
-            from pecos_rslib_qec.decoders import FusionBlossomDecoder
+            from pecos_rslib.decoders import FusionBlossomDecoder
 
             # FusionBlossom uses check matrix directly
             # For multi-round, we need to construct the space-time graph manually
@@ -940,12 +940,12 @@ class SurfaceDecoder:
             self._x_dem = dem
 
         if self.decoder_type == DecoderType.PYMATCHING:
-            from pecos_rslib_qec.decoders import PyMatchingDecoder
+            from pecos_rslib.decoders import PyMatchingDecoder
 
             return PyMatchingDecoder.from_dem(dem)
 
         if self.decoder_type == DecoderType.TESSERACT:
-            from pecos_rslib_qec.decoders import TesseractDecoder
+            from pecos_rslib.decoders import TesseractDecoder
 
             # Tesseract's remove_zero_probability_errors() doesn't handle
             # DEM_LOGICAL_OBSERVABLE instructions. Filter them out - the
@@ -963,7 +963,7 @@ class SurfaceDecoder:
         meas_weight: float,
     ) -> Any:
         """Create FusionBlossom decoder with space-time matching graph."""
-        from pecos_rslib_qec.decoders import FusionBlossomDecoder
+        from pecos_rslib.decoders import FusionBlossomDecoder
 
         num_stab = H.shape[0]
         num_data = H.shape[1]
@@ -1023,12 +1023,12 @@ class SurfaceDecoder:
         p_data: float,
     ) -> Any:
         """Create LDPC decoder (BP+OSD, BP+LSD, or UnionFind)."""
-        from pecos_rslib_qec.decoders import SparseMatrix
+        from pecos_rslib.decoders import SparseMatrix
 
         sparse_H = SparseMatrix(H.tolist())
 
         if self.decoder_type == DecoderType.BP_OSD:
-            from pecos_rslib_qec.decoders import BpOsdBuilder
+            from pecos_rslib.decoders import BpOsdBuilder
 
             return (
                 BpOsdBuilder(sparse_H, error_rate=p_data)
@@ -1040,12 +1040,12 @@ class SurfaceDecoder:
             )
 
         if self.decoder_type == DecoderType.BP_LSD:
-            from pecos_rslib_qec.decoders import BpLsdBuilder
+            from pecos_rslib.decoders import BpLsdBuilder
 
             return BpLsdBuilder(sparse_H, error_rate=p_data).max_iter(100).bp_method("product_sum").lsd_order(0).build()
 
         if self.decoder_type == DecoderType.UNION_FIND:
-            from pecos_rslib_qec.decoders import UnionFindBuilder
+            from pecos_rslib.decoders import UnionFindBuilder
 
             return UnionFindBuilder(sparse_H).method("inversion").build()
 
@@ -1059,7 +1059,7 @@ class SurfaceDecoder:
         _p_meas: float,
     ) -> Any:
         """Create Tesseract decoder from check matrix by generating DEM."""
-        from pecos_rslib_qec.decoders import TesseractDecoder
+        from pecos_rslib.decoders import TesseractDecoder
 
         # Determine stabilizer type based on check matrix shape
         z_check = self._get_z_check_matrix()

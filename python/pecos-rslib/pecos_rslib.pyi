@@ -1642,7 +1642,7 @@ class decoders:
             error_rate: Channel error probability.
 
         Example:
-            >>> from pecos_rslib_qec.decoders import BpOsdBuilder, SparseMatrix
+            >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = BpOsdBuilder(H, error_rate=0.01).osd_method("osd_cs").osd_order(7).build()
             >>> result = decoder.decode([0, 0, 0])
@@ -1694,7 +1694,7 @@ class decoders:
             error_rate: Channel error probability.
 
         Example:
-            >>> from pecos_rslib_qec.decoders import BpLsdBuilder, SparseMatrix
+            >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = BpLsdBuilder(H, error_rate=0.01).lsd_order(2).build()
             >>> result = decoder.decode([0, 0, 0])
@@ -1741,7 +1741,7 @@ class decoders:
             pcm: Sparse parity check matrix.
 
         Example:
-            >>> from pecos_rslib_qec.decoders import UnionFindBuilder, SparseMatrix
+            >>> from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = UnionFindBuilder(H).method("peeling").build()
             >>> result = decoder.decode([0, 0, 0])
@@ -1800,7 +1800,7 @@ class decoders:
             error_priors: Prior error probabilities for each bit.
 
         Example:
-            >>> from pecos_rslib_qec.decoders import RelayBpBuilder
+            >>> from pecos_rslib.decoders import RelayBpBuilder
             >>> H = [[1, 1, 0], [0, 1, 1]]
             >>> decoder = RelayBpBuilder(H, [0.003, 0.003, 0.003]).seed(42).build()
             >>> result = decoder.decode([1, 0])
@@ -1888,7 +1888,7 @@ class decoders:
             error_priors: Prior error probabilities for each bit.
 
         Example:
-            >>> from pecos_rslib_qec.decoders import MinSumBpBuilder
+            >>> from pecos_rslib.decoders import MinSumBpBuilder
             >>> H = [[1, 1, 0], [0, 1, 1]]
             >>> decoder = MinSumBpBuilder(H, [0.003, 0.003, 0.003]).max_iter(100).build()
             >>> result = decoder.decode([1, 0])

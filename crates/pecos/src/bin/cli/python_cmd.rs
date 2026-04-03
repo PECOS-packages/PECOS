@@ -130,7 +130,7 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     // Build all rslib crates via maturin (incremental — cargo inside maturin
     // handles change detection, skips recompilation when nothing changed)
-    let crates = ["pecos-rslib", "pecos-rslib-qec", "pecos-rslib-llvm"];
+    let crates = ["pecos-rslib", "pecos-rslib-llvm"];
     for crate_name in crates {
         let crate_dir = repo_root.join(format!("python/{crate_name}"));
         if !crate_dir.exists() {

@@ -94,7 +94,6 @@ jobs:
       with:
         workspaces: |
           python/pecos-rslib
-          python/pecos-rslib-qec
           python/pecos-rslib-llvm
 
     # Cache LLVM installation (fixed version, only varies by OS)

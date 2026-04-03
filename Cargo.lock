@@ -4080,6 +4080,7 @@ dependencies = [
  "pecos-build",
  "pecos-core",
  "pecos-cppsparsestab",
+ "pecos-decoders",
  "pecos-engines",
  "pecos-experimental",
  "pecos-hugr",
@@ -4126,20 +4127,6 @@ dependencies = [
  "pyo3",
  "regex",
  "tempfile",
-]
-
-[[package]]
-name = "pecos-rslib-qec"
-version = "0.2.0-dev.0"
-dependencies = [
- "log",
- "ndarray 0.17.2",
- "pecos-core",
- "pecos-decoders",
- "pecos-random",
- "pyo3",
- "rand 0.10.0",
- "serde_json",
 ]
 
 [[package]]

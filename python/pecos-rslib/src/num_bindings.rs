@@ -5056,8 +5056,8 @@ fn where_array<'py>(
     x: &Bound<'py, PyAny>,
     y: &Bound<'py, PyAny>,
 ) -> PyResult<Py<PyAny>> {
-    use ndarray::{Array, ArrayD, IxDyn};
     use crate::prelude::Where;
+    use ndarray::{Array, ArrayD, IxDyn};
     use pyo3::conversion::IntoPyObjectExt;
 
     // Helper to convert PyAny to either scalar or dynamic array
@@ -5143,7 +5143,8 @@ fn broadcast_to<T: Clone>(
     arr: ndarray::ArrayViewD<'_, T>,
     target_shape: &[usize],
 ) -> PyResult<ArrayD<T>> {
-    pecos_num::array::broadcast_to(arr, target_shape).map_err(pyo3::exceptions::PyValueError::new_err)
+    pecos_num::array::broadcast_to(arr, target_shape)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Kronecker product of two 2D arrays.
@@ -5162,9 +5163,9 @@ fn kron(a: &Array, b: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
     }
 
     let result_data = match (&a.data, &b.data) {
-        (ArrayData::Complex128(a_arr), ArrayData::Complex128(b_arr)) => {
-            ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
-        }
+        (ArrayData::Complex128(a_arr), ArrayData::Complex128(b_arr)) => ArrayData::Complex128(
+            pecos_num::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn(),
+        ),
         (ArrayData::F64(a_arr), ArrayData::F64(b_arr)) => {
             ArrayData::F64(pecos_num::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
         }
@@ -5209,7 +5210,8 @@ fn expm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
         .into_dimensionality::<Ix2>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("expm requires a 2D matrix"))?;
 
-    let result_arr = pecos_num::linalg::expm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result_arr =
+        pecos_num::linalg::expm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let result = ArrayData::Complex128(result_arr.into_dyn());
 
     Ok(Py::new(py, Array::new(result))?.into_any())
@@ -5237,7 +5239,8 @@ fn logm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
         .into_dimensionality::<Ix2>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("logm requires a 2D matrix"))?;
 
-    let result_arr = pecos_num::linalg::logm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result_arr =
+        pecos_num::linalg::logm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let result = ArrayData::Complex128(result_arr.into_dyn());
 
     Ok(Py::new(py, Array::new(result))?.into_any())

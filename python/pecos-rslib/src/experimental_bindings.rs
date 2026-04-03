@@ -17,14 +17,14 @@
 //! 2. Get symbolic measurement dependencies (`MeasurementHistory`)
 //! 3. Sample efficiently using `MeasurementSampler`
 
-use pecos_hugr_qis::read_hugr_envelope;
-use pecos_quantum::hugr_convert::SimpleHugr;
-use pecos_quantum::Circuit;
-use pecos_simulators::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pecos_experimental::{
     DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
     NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler, execute_hugr,
 };
+use pecos_hugr_qis::read_hugr_envelope;
+use pecos_quantum::Circuit;
+use pecos_quantum::hugr_convert::SimpleHugr;
+use pecos_simulators::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};

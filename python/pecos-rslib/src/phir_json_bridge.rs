@@ -1,5 +1,5 @@
-use parking_lot::Mutex;
 use crate::prelude::*;
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeMap;

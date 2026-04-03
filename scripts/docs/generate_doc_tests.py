@@ -1256,7 +1256,10 @@ def main() -> None:
         total_skipped += sum(
             1
             for b in pytest_blocks
-            if b.skip or b.skip_if_no_cuda or b.skip_if_no_cuda_rust or (b.language == "rust" and _rust_is_incomplete(b.code))
+            if b.skip
+            or b.skip_if_no_cuda
+            or b.skip_if_no_cuda_rust
+            or (b.language == "rust" and _rust_is_incomplete(b.code))
         )
 
         # Generate test file

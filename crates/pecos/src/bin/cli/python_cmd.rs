@@ -289,4 +289,3 @@ fn run_pytest_dir(
         Err(e) => Err(Error::Config(format!("Failed to run pytest: {e}"))),
     }
 }
-

@@ -104,34 +104,29 @@ jobs:
         path: ~/.pecos/deps/llvm
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
 
-    # Install CLI first — used for LLVM install and build commands
-    - name: Install PECOS CLI
-      run: cargo install --path crates/pecos --features cli
-
-    # Only install LLVM if not cached
+    # Install LLVM first (needed before CLI install since inkwell requires LLVM_SYS_140_PREFIX)
+    # Use cargo run for LLVM install — only builds pecos+pecos-build, not the full workspace
     - name: Install LLVM ${{ env.LLVM_VERSION }} (Unix)
       if: steps.cache-llvm.outputs.cache-hit != 'true' && runner.os != 'Windows'
-      run: pecos install llvm
+      run: cargo run -p pecos --features cli --release -- install llvm
 
     - name: Install LLVM ${{ env.LLVM_VERSION }} (Windows)
       if: steps.cache-llvm.outputs.cache-hit != 'true' && runner.os == 'Windows'
-      run: pecos install llvm
+      run: cargo run -p pecos --features cli --release -- install llvm
 
-    # Configure LLVM environment
+    # Configure LLVM environment (must happen before CLI install)
     - name: Configure LLVM environment (Unix)
       if: runner.os != 'Windows'
       run: |
-        PECOS_LLVM=$(pecos llvm find 2>/dev/null)
+        PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
         echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
         echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
-        pecos llvm configure
-        pecos llvm check
 
     - name: Configure LLVM environment (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        $env:PECOS_LLVM = (pecos llvm find 2>$null)
+        $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
         $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
         "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -161,7 +156,9 @@ jobs:
           exit 1
         }
 
-        pecos llvm check
+    # Now install CLI (LLVM env is set, inkwell can find it)
+    - name: Install PECOS CLI
+      run: cargo install --path crates/pecos --features cli
 
     # macOS: prevent Homebrew library path issues
     - name: Configure macOS environment

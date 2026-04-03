@@ -1,6 +1,6 @@
 // Copyright 2026 The PECOS Developers
-use pecos::prelude::*;
-use pecos::simulators::{ForcedMeasurement, Stabilizer, StabilizerTableauSimulator};
+use crate::prelude::*;
+use pecos_simulators::{ForcedMeasurement, Stabilizer, StabilizerTableauSimulator};
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at

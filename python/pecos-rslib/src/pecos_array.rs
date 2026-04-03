@@ -3936,18 +3936,18 @@ impl Array {
 
         let result_data = match (&self.data, &other.data) {
             (ArrayData::F64(a), ArrayData::F64(b)) => {
-                ArrayData::F64(pecos::linalg::kron(&to_2d!(a), &to_2d!(b)).into_dyn())
+                ArrayData::F64(pecos_num::linalg::kron(&to_2d!(a), &to_2d!(b)).into_dyn())
             }
             (ArrayData::Complex128(a), ArrayData::Complex128(b)) => {
-                ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a), &to_2d!(b)).into_dyn())
+                ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a), &to_2d!(b)).into_dyn())
             }
             (ArrayData::Complex128(a), ArrayData::F64(b)) => {
                 let b_c = b.mapv(|x| Complex64::new(x, 0.0));
-                ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a), &to_2d!(b_c)).into_dyn())
+                ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a), &to_2d!(b_c)).into_dyn())
             }
             (ArrayData::F64(a), ArrayData::Complex128(b)) => {
                 let a_c = a.mapv(|x| Complex64::new(x, 0.0));
-                ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_c), &to_2d!(b)).into_dyn())
+                ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a_c), &to_2d!(b)).into_dyn())
             }
             _ => {
                 return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -5303,7 +5303,7 @@ impl Array {
 
     /// Format a Pauli array
     fn format_array_pauli(arr: &ArrayD<crate::pauli_bindings::Pauli>) -> String {
-        use pecos::prelude::Pauli as RustPauli;
+        use crate::prelude::Pauli as RustPauli;
         let shape = arr.shape();
         let ndim = shape.len();
 

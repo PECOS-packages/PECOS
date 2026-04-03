@@ -91,7 +91,7 @@ fn get_repo_root() -> Result<PathBuf> {
     }
 }
 
-/// Build pecos-rslib via maturin
+/// Build all pecos rslib crates via maturin
 fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     // Check Python/uv is available first
     if run_check(true).is_err() {
@@ -102,33 +102,9 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     }
 
     let repo_root = get_repo_root()?;
-    let rslib_dir = repo_root.join("python/pecos-rslib");
-
-    if !rslib_dir.exists() {
-        return Err(Error::Config(format!(
-            "pecos-rslib directory not found: {}",
-            rslib_dir.display()
-        )));
-    }
 
     // Determine maturin release flag
     let maturin_release = matches!(profile, "release" | "native");
-
-    println!(
-        "Building pecos-rslib ({}{})...",
-        profile,
-        if cuda { " +cuda" } else { "" }
-    );
-
-    // Build pecos-rslib with maturin
-    let mut cmd = Command::new("uv");
-    cmd.args(["run", "maturin", "develop", "--uv"]);
-
-    if maturin_release {
-        cmd.arg("--release");
-    }
-
-    cmd.current_dir(&rslib_dir);
 
     // Set RUSTFLAGS if provided or for native profile
     let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();
@@ -144,24 +120,64 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         }
         flags.push_str(extra);
     }
-    if !flags.is_empty() {
-        cmd.env("RUSTFLAGS", &flags);
+
+    // Build all rslib crates
+    let crates = ["pecos-rslib", "pecos-rslib-qec", "pecos-rslib-llvm"];
+    for crate_name in crates {
+        let crate_dir = repo_root.join(format!("python/{crate_name}"));
+        if !crate_dir.exists() {
+            continue;
+        }
+
+        println!(
+            "Building {crate_name} ({}{})...",
+            profile,
+            if cuda && crate_name == "pecos-rslib" {
+                " +cuda"
+            } else {
+                ""
+            }
+        );
+
+        // Call maturin directly from the venv to avoid uv run rebuilding
+        // the package before maturin even starts
+        let venv_bin = repo_root.join(".venv/bin");
+        let maturin = venv_bin.join("maturin");
+        let mut cmd = Command::new(&maturin);
+        cmd.args(["develop", "--uv"]);
+        if maturin_release {
+            cmd.arg("--release");
+        }
+        cmd.current_dir(&crate_dir);
+        if !flags.is_empty() {
+            cmd.env("RUSTFLAGS", &flags);
+        }
+        // Ensure venv bin is on PATH so maturin can find patchelf
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{path}", venv_bin.display()));
+        cmd.env_remove("CONDA_PREFIX");
+
+        let status = cmd.status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(_) => {
+                return Err(Error::Config(format!(
+                    "maturin develop failed for {crate_name}"
+                )));
+            }
+            Err(e) => {
+                return Err(Error::Config(format!(
+                    "Failed to run maturin develop for {crate_name}: {e}"
+                )));
+            }
+        }
     }
 
-    // Unset CONDA_PREFIX to avoid interference
-    cmd.env_remove("CONDA_PREFIX");
-
-    let status = cmd.status();
-    match status {
-        Ok(s) if s.success() => {}
-        Ok(_) => return Err(Error::Config("maturin develop failed".to_string())),
-        Err(e) => return Err(Error::Config(format!("Failed to run maturin develop: {e}"))),
-    }
-
-    // Install quantum-pecos in editable mode
+    // Install quantum-pecos in editable mode (--no-deps since rslib crates
+    // are already installed by maturin develop above)
     println!("Installing quantum-pecos...");
     let mut pip_cmd = Command::new("uv");
-    pip_cmd.arg("pip").arg("install").arg("-e");
+    pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
 
     if cuda {
         pip_cmd.arg("./python/quantum-pecos[all,cuda]");

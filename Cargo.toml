@@ -3,6 +3,8 @@ resolver = "2"
 members = [
   "python/pecos-rslib",
   "python/pecos-rslib-cuda",
+  "python/pecos-rslib-qec",
+  "python/pecos-rslib-llvm",
   "python/selene-plugins/pecos-selene-*",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",
@@ -150,6 +152,8 @@ pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
 pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
 pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
+pecos-rslib-qec = { version = "0.2.0-dev.0", path = "python/pecos-rslib-qec" }
+pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
 pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
 pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }
 pecos-quantum = { version = "0.2.0-dev.0", path = "crates/pecos-quantum" }

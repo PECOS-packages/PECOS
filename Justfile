@@ -72,21 +72,21 @@ list-deps: check-cli
 
 # Build PECOS (profile: debug, release, native)
 [group('build')]
-build profile="debug": check-cli setup-quiet installreqs build-selene
+build profile="debug": check-cli setup-quiet sync-deps build-selene
     {{pecos}} python build --profile {{profile}}
     -{{pecos}} julia build --profile {{profile}}
     -{{pecos}} go build --profile {{profile}}
 
-# Build PECOS without dependency setup prompts
+# Build PECOS without dependency setup or sync
 [group('build')]
-build-lite profile="debug": check-cli installreqs build-selene
+build-lite profile="debug": check-cli build-selene
     {{pecos}} python build --profile {{profile}}
     -{{pecos}} julia build --profile {{profile}}
     -{{pecos}} go build --profile {{profile}}
 
 # Build PECOS with CUDA support
 [group('build')]
-build-cuda profile="debug": check-cli setup-quiet installreqs
+build-cuda profile="debug": check-cli setup-quiet
     {{pecos}} python build --profile {{profile}} --cuda
     -{{pecos}} julia build --profile {{profile}}
     -{{pecos}} go build --profile {{profile}}
@@ -210,19 +210,19 @@ fmt-fix:
 
 # Dev cycle: build + test (fast, for normal development)
 [group('dev')]
-dev cuda="false": pre-check (build-dev cuda) test
+dev: build test
 
 # Full dev cycle: clean + build + test + lint (pre-merge)
 [group('dev')]
-dev-full cuda="false": pre-check clean (build-dev cuda) test lint
+dev-full: clean build test lint
 
 # Dev cycle with CUDA support
 [group('dev')]
-devc: (dev "true")
+devc: (build-cuda) test
 
 # Full dev cycle with CUDA support
 [group('dev')]
-devc-full: (dev-full "true")
+devc-full: clean (build-cuda) test lint
 
 # Clean build artifacts
 [group('dev')]
@@ -466,6 +466,18 @@ check-cli:
 setup-quiet: check-cli
     {{pecos}} setup --quiet
 
+# Sync Python deps (fast if already installed, skips maturin rebuilds)
+[private]
+sync-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Quick check: if quantum-pecos is importable, deps are likely fine
+    if uv run --frozen python -c "import pecos" 2>/dev/null; then
+        exit 0
+    fi
+    echo "Python deps not installed, running uv sync..."
+    uv sync --project . --all-packages
+
 [private]
 installreqs:
     #!/usr/bin/env bash
@@ -497,17 +509,6 @@ build-selene:
 [private]
 pre-check: check-cli setup-quiet
 
-[private]
-build-dev cuda="false": installreqs build-selene
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "{{cuda}}" == "true" ]]; then
-        {{pecos}} python build --profile debug --cuda
-    else
-        {{pecos}} python build --profile debug
-    fi
-    {{pecos}} julia build --profile debug 2>/dev/null || true
-    {{pecos}} go build --profile debug 2>/dev/null || true
 
 # Convenience aliases
 [private]

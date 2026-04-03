@@ -1,5 +1,5 @@
 /*!
-use pecos::prelude::*;
+use crate::prelude::*;
 `PyO3` bindings for HUGR/LLVM functionality
 
 This module exposes HUGR compilation and LLVM engine functionality to Python.

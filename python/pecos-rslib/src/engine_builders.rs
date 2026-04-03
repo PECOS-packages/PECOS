@@ -7,14 +7,14 @@
 #![allow(clippy::unnecessary_wraps)]
 
 // Import from pecos metacrate prelude
-use pecos::prelude::*;
+use crate::prelude::*;
 
 // Rename quantum engine builder types for clarity (from pecos prelude)
-type RustQasmEngineBuilder = pecos::QasmEngineBuilder;
-type RustQisEngineBuilder = pecos::QisEngineBuilder;
-type RustPhirJsonEngineBuilder = pecos::PhirJsonEngineBuilder;
-type RustHugrEngineBuilder = pecos::HugrEngineBuilder;
-type RustPhirEngineBuilder = pecos::PhirEngineBuilder;
+type RustQasmEngineBuilder = pecos_qasm::QasmEngineBuilder;
+type RustQisEngineBuilder = pecos_qis::QisEngineBuilder;
+type RustPhirJsonEngineBuilder = pecos_phir_json::PhirJsonEngineBuilder;
+type RustHugrEngineBuilder = pecos_hugr::HugrEngineBuilder;
+type RustPhirEngineBuilder = pecos_phir::PhirEngineBuilder;
 type RustCoinTossEngineBuilder = CoinTossEngineBuilder;
 type RustCliffordRzEngineBuilder = CliffordRzEngineBuilder;
 type RustDensityMatrixEngineBuilder = DensityMatrixEngineBuilder;
@@ -44,7 +44,7 @@ impl PyQasmEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: pecos::qasm_engine(),
+            inner: pecos_qasm::qasm_engine(),
         }
     }
 
@@ -100,7 +100,7 @@ impl PyQisEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: pecos::qis_engine(),
+            inner: pecos_qis::qis_engine(),
         }
     }
 
@@ -141,7 +141,7 @@ impl PyQisEngineBuilder {
 
     /// Use Selene simple runtime
     fn selene_runtime(&mut self) -> PyResult<Self> {
-        let runtime = pecos::selene_simple_runtime().map_err(|e| {
+        let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to load Selene runtime: {e}"
             ))
@@ -161,11 +161,11 @@ impl PyQisEngineBuilder {
         self.inner = self
             .inner
             .clone()
-            .interface(pecos::helios_interface_builder());
+            .interface(pecos_qis::helios_interface_builder());
 
         // Always set Selene runtime to work with Helios interface
         log::debug!("Setting Selene runtime for Helios interface");
-        let runtime = pecos::selene_simple_runtime().map_err(|e| {
+        let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to load Selene runtime: {e}"
             ))
@@ -205,7 +205,7 @@ impl PyPhirJsonEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: pecos::phir_json_engine(),
+            inner: pecos_phir_json::phir_json_engine(),
         }
     }
 
@@ -416,7 +416,7 @@ impl PyPhirEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: pecos::phir_engine(),
+            inner: pecos_phir::phir_engine(),
         }
     }
 
@@ -510,7 +510,7 @@ impl PyHugrEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: pecos::hugr_engine(),
+            inner: pecos_hugr::hugr_engine(),
         }
     }
 
@@ -719,7 +719,7 @@ impl PyPhirJson {
 #[pyfunction]
 pub fn qasm_engine() -> PyQasmEngineBuilder {
     PyQasmEngineBuilder {
-        inner: pecos::qasm_engine(),
+        inner: pecos_qasm::qasm_engine(),
     }
 }
 
@@ -727,20 +727,20 @@ pub fn qasm_engine() -> PyQasmEngineBuilder {
 #[pyfunction]
 pub fn qis_engine() -> PyQisEngineBuilder {
     PyQisEngineBuilder {
-        inner: pecos::qis_engine(),
+        inner: pecos_qis::qis_engine(),
     }
 }
 
 /// Create Selene runtime for QIS Control Engine
 #[pyfunction]
 pub fn selene_runtime() -> PyResult<PyQisEngineBuilder> {
-    let runtime = pecos::selene_simple_runtime().map_err(|e| {
+    let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "Failed to load Selene runtime: {e}"
         ))
     })?;
     Ok(PyQisEngineBuilder {
-        inner: pecos::qis_engine().runtime(runtime),
+        inner: pecos_qis::qis_engine().runtime(runtime),
     })
 }
 
@@ -748,7 +748,7 @@ pub fn selene_runtime() -> PyResult<PyQisEngineBuilder> {
 #[pyfunction]
 pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
     PyPhirJsonEngineBuilder {
-        inner: pecos::phir_json_engine(),
+        inner: pecos_phir_json::phir_json_engine(),
     }
 }
 
@@ -756,7 +756,7 @@ pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
 #[pyfunction]
 pub fn phir_engine() -> PyPhirEngineBuilder {
     PyPhirEngineBuilder {
-        inner: pecos::phir_engine(),
+        inner: pecos_phir::phir_engine(),
     }
 }
 
@@ -1316,7 +1316,7 @@ impl PyStateVectorEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::state_vector()),
+            inner: Some(pecos_engines::state_vector()),
         }
     }
 
@@ -1347,7 +1347,7 @@ impl PySparseStabEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::sparse_stab()),
+            inner: Some(pecos_engines::sparse_stab()),
         }
     }
 
@@ -1390,7 +1390,7 @@ impl PyStabilizerEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::stabilizer()),
+            inner: Some(pecos_engines::stabilizer()),
         }
     }
 
@@ -1427,7 +1427,7 @@ impl PyCliffordRzEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::clifford_rz()),
+            inner: Some(pecos_engines::clifford_rz()),
         }
     }
 
@@ -1464,7 +1464,7 @@ impl PyDensityMatrixEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::density_matrix()),
+            inner: Some(pecos_engines::density_matrix()),
         }
     }
 
@@ -1501,7 +1501,7 @@ impl PyCoinTossEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos::coin_toss()),
+            inner: Some(pecos_engines::coin_toss()),
         }
     }
 
@@ -1550,7 +1550,7 @@ pub struct PyQisInterfaceBuilder {
 pub fn qis_helios_interface() -> PyResult<PyQisInterfaceBuilder> {
     // Use the Helios interface builder from pecos
     Ok(PyQisInterfaceBuilder {
-        inner: Box::new(pecos::helios_interface_builder()),
+        inner: Box::new(pecos_qis::helios_interface_builder()),
     })
 }
 

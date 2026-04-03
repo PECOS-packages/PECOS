@@ -12,6 +12,8 @@ resolution-markers = [
 members = [
     "pecos-rslib",
     "pecos-rslib-cuda",
+    "pecos-rslib-llvm",
+    "pecos-rslib-qec",
     "pecos-selene-clifford-rz",
     "pecos-selene-stabilizer",
     "pecos-selene-statevec",
@@ -2724,6 +2726,38 @@ dev = []
 test = [{ name = "pytest", specifier = ">=7.0" }]
 
 [[package]]
+name = "pecos-rslib-llvm"
+version = "0.8.0.dev8"
+source = { editable = "python/pecos-rslib-llvm" }
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = []
+test = [{ name = "pytest", specifier = ">=7.0" }]
+
+[[package]]
+name = "pecos-rslib-qec"
+version = "0.8.0.dev8"
+source = { editable = "python/pecos-rslib-qec" }
+
+[package.dev-dependencies]
+test = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = []
+test = [{ name = "pytest", specifier = ">=7.0" }]
+
+[[package]]
 name = "pecos-selene-clifford-rz"
 version = "0.8.0.dev8"
 source = { editable = "python/selene-plugins/pecos-selene-clifford-rz" }
@@ -3734,6 +3768,8 @@ dependencies = [
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pecos-rslib" },
+    { name = "pecos-rslib-llvm" },
+    { name = "pecos-rslib-qec" },
     { name = "phir" },
     { name = "selene-sim" },
     { name = "tket" },
@@ -3769,6 +3805,8 @@ requires-dist = [
     { name = "networkx", specifier = ">=2.1.0" },
     { name = "pecos-rslib", editable = "python/pecos-rslib" },
     { name = "pecos-rslib-cuda", marker = "extra == 'cuda'", editable = "python/pecos-rslib-cuda" },
+    { name = "pecos-rslib-llvm", editable = "python/pecos-rslib-llvm" },
+    { name = "pecos-rslib-qec", editable = "python/pecos-rslib-qec" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = "~=5.9.0" },
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=0.12.0" },

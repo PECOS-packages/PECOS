@@ -15,6 +15,8 @@ cuda = [
 members = [
     "python/pecos-rslib",
     "python/pecos-rslib-cuda",
+    "python/pecos-rslib-qec",
+    "python/pecos-rslib-llvm",
     "python/quantum-pecos",
     "python/selene-plugins/pecos-selene-*",
 ]
@@ -63,7 +65,7 @@ default-groups = ["dev", "test"]
 # Prevent uv from caching pecos-rslib wheels - always use freshly built version
 # This fixes stale code issues when uv sync/run reinstalls cached old wheels
 # See: https://github.com/astral-sh/uv/issues/11390
-reinstall-package = ["pecos-rslib", "pecos-rslib-cuda"]
+reinstall-package = ["pecos-rslib", "pecos-rslib-cuda", "pecos-rslib-qec", "pecos-rslib-llvm"]
 
 [tool.black]
 line-length = 120

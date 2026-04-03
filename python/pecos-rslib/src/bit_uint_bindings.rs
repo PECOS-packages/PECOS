@@ -14,7 +14,7 @@
 
 use crate::bit_conversion;
 use crate::bit_int_bindings::PyBitInt;
-use pecos::prelude::BitUInt;
+use crate::prelude::BitUInt;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::PyInt;

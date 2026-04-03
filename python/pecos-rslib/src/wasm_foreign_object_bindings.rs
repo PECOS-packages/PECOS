@@ -15,7 +15,7 @@
 //! This module provides Python bindings for the Rust `WasmForeignObject` implementation,
 //! allowing Python code to use the Rust Wasmtime runtime instead of the Python wasmtime package.
 
-use pecos::wasm::{ForeignObject, WasmForeignObject};
+use pecos_wasm::{ForeignObject, WasmForeignObject};
 use pyo3::exceptions::{PyException, PyFileNotFoundError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;

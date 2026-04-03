@@ -20,7 +20,8 @@ test files. This allows running doc tests with standard pytest commands:
 
 Supported markers in markdown:
     <!--skip--> or <!--skip: reason-->     - Skip this block
-    <!--skip-if-no-cuda-->                 - Skip if CUDA not available
+    <!--skip-if-no-cuda-->                 - Skip if CUDA+cupy not available
+    <!--skip-if-no-cuda-rust-->            - Skip if CUDA Rust bindings not available
     <!--expect-error: pattern-->           - Expect error matching regex pattern
     <!--expect-output: text-->             - Expect stdout to contain text
     <!--test-name: my_test-->              - Name the test function
@@ -65,6 +66,7 @@ class CodeBlock:
     skip: bool = False
     skip_reason: str | None = None
     skip_if_no_cuda: bool = False
+    skip_if_no_cuda_rust: bool = False
     expect_error: str | None = None
     expect_output: str | None = None
     test_name: str | None = None
@@ -191,6 +193,7 @@ def _parse_marker_comment(comment: str) -> dict:
         "skip": False,
         "skip_reason": None,
         "skip_if_no_cuda": False,
+        "skip_if_no_cuda_rust": False,
         "expect_error": None,
         "expect_output": None,
         "test_name": None,
@@ -213,8 +216,12 @@ def _parse_marker_comment(comment: str) -> dict:
         result["preamble_reset"] = True
         return result
 
+    # Check for skip-if-no-cuda-rust (must check before skip-if-no-cuda)
+    if "skip-if-no-cuda-rust" in comment_lower:
+        result["skip_if_no_cuda_rust"] = True
+
     # Check for skip-if-no-cuda (must check before generic skip)
-    if "skip-if-no-cuda" in comment_lower:
+    elif "skip-if-no-cuda" in comment_lower:
         result["skip_if_no_cuda"] = True
 
     # Check for regular skip
@@ -383,6 +390,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             skip=block_skip,
             skip_reason=block_skip_reason,
             skip_if_no_cuda=attrs["skip_if_no_cuda"],
+            skip_if_no_cuda_rust=attrs["skip_if_no_cuda_rust"],
             expect_error=attrs["expect_error"],
             expect_output=attrs["expect_output"],
             test_name=attrs["test_name"],
@@ -419,7 +427,11 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
         )
     elif block.skip_if_no_cuda:
         lines.append(
-            '@pytest.mark.skipif(not cuda_available(), reason="CUDA not available")',
+            '@pytest.mark.skipif(not cuda_available(), reason="CUDA (cupy) not available")',
+        )
+    elif block.skip_if_no_cuda_rust:
+        lines.append(
+            '@pytest.mark.skipif(not cuda_rust_available(), reason="CUDA Rust bindings not available")',
         )
 
     lines.extend(f"@pytest.mark.{mark}" for mark in block.marks)
@@ -745,6 +757,7 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
 
     # Check if any block needs CUDA checking
     needs_cuda_check = any(b.skip_if_no_cuda for b in blocks)
+    needs_cuda_rust_check = any(b.skip_if_no_cuda_rust for b in blocks)
 
     lines = [
         f'"""Auto-generated tests from {file_path}. DO NOT EDIT."""',
@@ -792,6 +805,34 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
                 "    if _CUDA_RESULT is None:",
                 "        _CUDA_RESULT = _check_cuda()",
                 "    return _CUDA_RESULT",
+                "",
+            ],
+        )
+
+    # Only include cuda_rust_available if needed
+    if needs_cuda_rust_check:
+        lines.extend(
+            [
+                "",
+                "",
+                "def _check_cuda_rust() -> bool:",
+                '    """Return True if CUDA Rust bindings (pecos_rslib_cuda) are available."""',
+                "    try:",
+                "        from pecos_rslib_cuda import is_cuquantum_available",
+                "        return is_cuquantum_available()",
+                "    except ImportError:",
+                "        return False",
+                "",
+                "",
+                "_CUDA_RUST_RESULT: bool | None = None",
+                "",
+                "",
+                "def cuda_rust_available() -> bool:",
+                '    """Return cached CUDA Rust bindings availability."""',
+                "    global _CUDA_RUST_RESULT  # noqa: PLW0603",
+                "    if _CUDA_RUST_RESULT is None:",
+                "        _CUDA_RUST_RESULT = _check_cuda_rust()",
+                "    return _CUDA_RUST_RESULT",
                 "",
             ],
         )
@@ -1215,7 +1256,7 @@ def main() -> None:
         total_skipped += sum(
             1
             for b in pytest_blocks
-            if b.skip or b.skip_if_no_cuda or (b.language == "rust" and _rust_is_incomplete(b.code))
+            if b.skip or b.skip_if_no_cuda or b.skip_if_no_cuda_rust or (b.language == "rust" and _rust_is_incomplete(b.code))
         )
 
         # Generate test file

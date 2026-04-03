@@ -5,7 +5,7 @@
 //! Rust `pecos::sim()` function.
 
 // Import from pecos metacrate prelude
-use pecos::prelude::*;
+use crate::prelude::*;
 
 // Import QASM WASM support
 use pecos_qasm::QasmEngineWasm;
@@ -79,7 +79,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
     // Try to extract each program type and create the appropriate builder
     if let Ok(qasm_prog) = program.extract::<PyQasm>(py) {
         // Create QASM engine builder with program
-        let engine_builder = pecos::qasm_engine().program(qasm_prog.inner);
+        let engine_builder = pecos_qasm::qasm_engine().program(qasm_prog.inner);
         Ok(PySimBuilder {
             inner: SimBuilderInner::Qasm(PyQasmSimBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(engine_builder))),
@@ -109,7 +109,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
 
         log::debug!("Creating QIS engine with Helios interface...");
         let helios_builder = helios_interface_builder();
-        let builder = pecos::qis_engine();
+        let builder = pecos_qis::qis_engine();
         let builder = builder.runtime(selene_runtime);
         let builder = builder.interface(helios_builder);
 
@@ -145,7 +145,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
 
         // Create HUGR engine builder with the HUGR bytes
         let hugr_bytes = hugr_prog.inner.hugr.clone();
-        let engine_builder = pecos::hugr_engine().hugr_bytes(hugr_bytes.clone());
+        let engine_builder = pecos_hugr::hugr_engine().hugr_bytes(hugr_bytes.clone());
         log::info!("HUGR program loaded successfully via direct interpreter");
 
         Ok(PySimBuilder {
@@ -163,7 +163,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
         })
     } else if let Ok(phir_prog) = program.extract::<PyPhirJson>(py) {
         // Create PHIR JSON engine builder with program
-        let engine_builder = pecos::phir_json_engine().program(phir_prog.inner);
+        let engine_builder = pecos_phir_json::phir_json_engine().program(phir_prog.inner);
         Ok(PySimBuilder {
             inner: SimBuilderInner::PhirJson(PyPhirJsonSimBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(engine_builder))),
@@ -612,7 +612,7 @@ impl PySimBuilder {
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
 
                 // Use the Rust sim_builder API directly (from pecos prelude)
-                let mut sim_builder = pecos::sim_builder().classical(engine_builder);
+                let mut sim_builder = pecos_engines::sim_builder().classical(engine_builder);
 
                 if let Some(seed) = builder.seed {
                     sim_builder = sim_builder.seed(seed);
@@ -1117,7 +1117,7 @@ impl PySimBuilder {
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
 
                     // Use the Rust sim_builder API directly (from pecos prelude)
-                    let mut sim_builder = pecos::sim_builder().classical(engine_builder);
+                    let mut sim_builder = pecos_engines::sim_builder().classical(engine_builder);
 
                     if let Some(seed) = builder.seed {
                         sim_builder = sim_builder.seed(seed);

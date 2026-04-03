@@ -16,7 +16,7 @@
 //! It defines traits that both concrete engines should implement.
 
 use crate::byte_message_bindings::PyByteMessage;
-use pecos::prelude::*;
+use crate::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;

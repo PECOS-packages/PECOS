@@ -12,7 +12,7 @@
 
 //! Python bindings for `StabilizerCode`.
 
-use pecos::qec::StabilizerCode as RustCode;
+use pecos_qec::StabilizerCode as RustCode;
 use pyo3::prelude::*;
 
 use crate::pauli_bindings::PauliString;

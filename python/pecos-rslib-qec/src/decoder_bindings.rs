@@ -178,7 +178,7 @@ impl PyBpResult {
 // PyMatching Decoder
 // =============================================================================
 
-use pecos::decoders::{
+use pecos_decoders::{
     CheckMatrix as RustCheckMatrix, CheckMatrixConfig as RustCheckMatrixConfig,
     PyMatchingConfig as RustPyMatchingConfig, PyMatchingDecoder as RustPyMatchingDecoder,
 };
@@ -192,7 +192,7 @@ use pecos::decoders::{
 /// # Construction
 ///
 /// ```python
-/// from pecos_rslib.decoders import CheckMatrix
+/// from pecos_rslib_qec.decoders import CheckMatrix
 ///
 /// # From dense matrix (like PyMatching)
 /// H = [[1, 1, 0], [0, 1, 1]]
@@ -315,7 +315,7 @@ impl PyCheckMatrix {
 /// # Construction
 ///
 /// ```python
-/// from pecos_rslib.decoders import PyMatchingDecoder, CheckMatrix
+/// from pecos_rslib_qec.decoders import PyMatchingDecoder, CheckMatrix
 ///
 /// # From check matrix (like PyMatching's Matching(H))
 /// H = [[1, 1, 0], [0, 1, 1]]
@@ -557,7 +557,7 @@ impl PyPyMatchingDecoder {
 // Fusion Blossom Decoder
 // =============================================================================
 
-use pecos::decoders::{
+use pecos_decoders::{
     FusionBlossomConfig as RustFusionBlossomConfig,
     FusionBlossomDecoder as RustFusionBlossomDecoder, SolverType as RustSolverType,
     StandardCode as RustStandardCode, SyndromeData as RustSyndromeData,
@@ -571,7 +571,7 @@ use pecos::decoders::{
 /// # Construction
 ///
 /// ```python
-/// from pecos_rslib.decoders import FusionBlossomDecoder
+/// from pecos_rslib_qec.decoders import FusionBlossomDecoder
 ///
 /// # From check matrix
 /// H = [[1, 1, 0], [0, 1, 1]]
@@ -854,7 +854,7 @@ impl PyFusionBlossomDecoder {
 // LDPC Decoders
 // =============================================================================
 
-use pecos::decoders::{
+use pecos_decoders::{
     BpLsdDecoder as RustBpLsdDecoder, BpMethod as RustBpMethod, BpOsdDecoder as RustBpOsdDecoder,
     BpSchedule as RustBpSchedule, InputVectorType as RustInputVectorType,
     OsdMethod as RustOsdMethod, SparseMatrix as RustSparseMatrix, UfMethod as RustUfMethod,
@@ -866,7 +866,7 @@ use pecos::decoders::{
 /// # Construction
 ///
 /// ```python
-/// from pecos_rslib.decoders import SparseMatrix
+/// from pecos_rslib_qec.decoders import SparseMatrix
 ///
 /// # From dense matrix
 /// H = [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]
@@ -992,7 +992,7 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+/// from pecos_rslib_qec.decoders import BpOsdBuilder, SparseMatrix
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 /// decoder = BpOsdBuilder(H, error_rate=0.1).osd_method("osd_cs").osd_order(7).build()
@@ -1138,7 +1138,7 @@ impl PyBpOsdDecoder {
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
+/// from pecos_rslib_qec.decoders import BpLsdBuilder, SparseMatrix
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 /// decoder = BpLsdBuilder(H, error_rate=0.1).lsd_order(2).build()
@@ -1268,7 +1268,7 @@ impl PyBpLsdDecoder {
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
+/// from pecos_rslib_qec.decoders import UnionFindBuilder, SparseMatrix
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 /// decoder = UnionFindBuilder(H).method("peeling").build()
@@ -1373,7 +1373,7 @@ impl PyUnionFindDecoder {
 // Tesseract Decoder
 // =============================================================================
 
-use pecos::decoders::{
+use pecos_decoders::{
     TesseractConfig as RustTesseractConfig, TesseractDecoder as RustTesseractDecoder,
 };
 
@@ -1425,7 +1425,7 @@ impl PyTesseractResult {
 /// # Construction
 ///
 /// ```python
-/// from pecos_rslib.decoders import TesseractDecoder
+/// from pecos_rslib_qec.decoders import TesseractDecoder
 ///
 /// # From Stim Detector Error Model string
 /// dem = '''
@@ -1582,7 +1582,7 @@ impl PyTesseractDecoder {
 // Relay BP Decoders
 // =============================================================================
 
-use pecos::decoders::{
+use pecos_decoders::{
     MinSumBpBuilder as RustMinSumBpBuilder, MinSumBpDecoder as RustMinSumBpDecoder,
     RelayBpBuilder as RustRelayBpBuilder, RelayBpDecoder as RustRelayBpDecoder,
     StoppingCriterion as RustStoppingCriterion,
@@ -1648,7 +1648,7 @@ fn dense_check_matrix_to_array2(check_matrix: &[Vec<u8>]) -> PyResult<Array2<u8>
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import RelayBpBuilder
+/// from pecos_rslib_qec.decoders import RelayBpBuilder
 ///
 /// H = [[1, 1, 0], [0, 1, 1]]
 /// decoder = (
@@ -1815,7 +1815,7 @@ impl PyRelayBpBuilder {
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import RelayBpBuilder
+/// from pecos_rslib_qec.decoders import RelayBpBuilder
 ///
 /// decoder = RelayBpBuilder([[1,1,0],[0,1,1]], [0.003]*3).seed(42).build()
 /// result = decoder.decode([1, 0])
@@ -1879,7 +1879,7 @@ impl PyRelayBpDecoder {
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import MinSumBpBuilder
+/// from pecos_rslib_qec.decoders import MinSumBpBuilder
 ///
 /// H = [[1, 1, 0], [0, 1, 1]]
 /// decoder = MinSumBpBuilder(H, [0.003, 0.003, 0.003]).max_iter(100).build()
@@ -1978,7 +1978,7 @@ impl PyMinSumBpBuilder {
 /// # Example
 ///
 /// ```python
-/// from pecos_rslib.decoders import MinSumBpBuilder
+/// from pecos_rslib_qec.decoders import MinSumBpBuilder
 ///
 /// decoder = MinSumBpBuilder([[1,1,0],[0,1,1]], [0.003]*3).build()
 /// result = decoder.decode([1, 0])
@@ -2078,7 +2078,7 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     // Register in sys.modules for proper import
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
-    modules.set_item("pecos_rslib.decoders", &decoders_module)?;
+    modules.set_item("pecos_rslib_qec.decoders", &decoders_module)?;
 
     Ok(())
 }

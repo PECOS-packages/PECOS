@@ -25,7 +25,7 @@
 #![allow(clippy::wrong_self_convention)] // to_* methods are correct in this context
 
 use num_complex::Complex64;
-use pecos::core::Angle64;
+use pecos_core::Angle64;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::PyBool;

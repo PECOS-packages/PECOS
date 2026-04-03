@@ -12,7 +12,7 @@
 
 //! Python bindings for `PauliSequence` — ordered collection with GF(2) analysis.
 
-use pecos::quantum::PauliSequence as RustPauliSequence;
+use pecos_quantum::PauliSequence as RustPauliSequence;
 use pyo3::prelude::*;
 
 use crate::pauli_bindings::PauliString;
@@ -68,7 +68,7 @@ impl PyPauliSequence {
     #[staticmethod]
     fn from_str(s: &str) -> PyResult<Self> {
         let seq: RustPauliSequence =
-            s.parse().map_err(|e: pecos::core::ParsePauliStringError| {
+            s.parse().map_err(|e: pecos_core::ParsePauliStringError| {
                 pyo3::exceptions::PyValueError::new_err(format!("Failed to parse: {e}"))
             })?;
         Ok(Self { inner: seq })

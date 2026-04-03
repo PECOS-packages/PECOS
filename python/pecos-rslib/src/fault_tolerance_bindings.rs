@@ -42,7 +42,7 @@
 //! has_syndrome, causes_logical = influence_map.classify_fault(0, 1)  # loc 0, X fault
 //! ```
 
-use pecos::qec::fault_tolerance::dem_builder::{
+use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod, DemBuilder as RustDemBuilder,
     DetectorErrorModel as RustDetectorErrorModel, EquivalenceResult as RustEquivalenceResult,
     MeasurementNoiseModel as RustMeasurementNoiseModel, MemBuilder as RustMemBuilder,
@@ -50,12 +50,12 @@ use pecos::qec::fault_tolerance::dem_builder::{
     compare_dems_statistical as rust_compare_dems_statistical,
     verify_dem_equivalence as rust_verify_dem_equivalence,
 };
-use pecos::qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
-use pecos::qec::fault_tolerance::propagator::{
+use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
+use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer as RustDagFaultAnalyzer, DagFaultInfluenceMap as RustDagFaultInfluenceMap,
     DagSpacetimeLocation, Pauli,
 };
-use pecos::quantum::DagCircuit;
+use pecos_quantum::DagCircuit;
 use pyo3::Py;
 use pyo3::prelude::*;
 
@@ -129,7 +129,7 @@ impl From<&DagSpacetimeLocation> for PyFaultLocation {
     fn from(loc: &DagSpacetimeLocation) -> Self {
         Self {
             node: loc.node,
-            qubits: loc.qubits.iter().map(pecos::QubitId::index).collect(),
+            qubits: loc.qubits.iter().map(pecos_core::QubitId::index).collect(),
             before: loc.before,
             gate_type: format!("{:?}", loc.gate_type),
         }
@@ -1327,7 +1327,7 @@ impl PyNoisySampler {
         p_init: f64,
         seed: Option<u64>,
     ) -> Self {
-        use pecos::quantum::GateType;
+        use pecos_quantum::GateType;
         use rand::RngExt;
 
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
@@ -1373,7 +1373,7 @@ impl PyNoisySampler {
     ///     Tuple of (`detector_flips`, `logical_flips`) where each is a list of
     ///     indices that flipped.
     fn sample_one(&mut self) -> (Vec<u32>, Vec<u32>) {
-        use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
+        use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
 
         let noise_model = PerLocationNoiseModel::new(self.per_location_probs.clone());
         let mut sampler = NoisySampler::new(&self.influence_map, noise_model, self.seed);
@@ -1396,7 +1396,7 @@ impl PyNoisySampler {
     ///     - `detection_events`: List of lists, each inner list contains bool per detector
     ///     - `observable_flips`: List of lists, each inner list contains bool per observable
     fn sample_batch(&mut self, num_shots: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
-        use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
+        use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
 
         let noise_model = PerLocationNoiseModel::new(self.per_location_probs.clone());
         let mut sampler = NoisySampler::new(&self.influence_map, noise_model, self.seed);
@@ -1460,7 +1460,7 @@ impl PyNoisySampler {
         num_shots: usize,
         py: Python<'_>,
     ) -> PyResult<Py<pyo3::types::PyDict>> {
-        use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
+        use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
 
         let noise_model = PerLocationNoiseModel::new(self.per_location_probs.clone());
         let mut sampler = NoisySampler::new(&self.influence_map, noise_model, self.seed);
@@ -1527,7 +1527,7 @@ impl PyNoisySampler {
         observables_json: &str,
         measurement_order: Option<Vec<usize>>,
     ) -> PyResult<BatchSampleResult> {
-        use pecos::qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
+        use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, PerLocationNoiseModel};
         use std::collections::HashMap;
 
         let detector_records = parse_detector_records(detectors_json)?;
@@ -1829,7 +1829,7 @@ impl PyMemBuilder {
 /// ```
 #[pyclass(name = "DemSampler", module = "pecos_rslib.qec")]
 pub struct PyDemSampler {
-    inner: pecos::qec::fault_tolerance::dem_builder::DemSampler,
+    inner: pecos_qec::fault_tolerance::dem_builder::DemSampler,
 }
 
 #[pymethods]
@@ -2019,7 +2019,7 @@ impl PyDemSamplerBuilder {
 
     /// Build the `DemSampler`.
     fn build(&self) -> PyResult<PyDemSampler> {
-        use pecos::qec::fault_tolerance::dem_builder::DemSamplerBuilder;
+        use pecos_qec::fault_tolerance::dem_builder::DemSamplerBuilder;
 
         let mut builder = DemSamplerBuilder::new(&self.influence_map).with_noise(
             self.p1,

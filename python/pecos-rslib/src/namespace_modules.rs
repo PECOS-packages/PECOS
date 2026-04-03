@@ -132,29 +132,9 @@ pub fn register_noise_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Register the 'llvm' namespace module
-/// Contains LLVM IR generation compatible with llvmlite API
-pub fn register_llvm_namespace_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = parent.py();
-    let llvm = PyModule::new(py, "llvm")?;
-
-    // Add references to ir and binding modules
-    llvm.add("ir", parent.getattr("ir")?)?;
-    llvm.add("binding", parent.getattr("binding")?)?;
-
-    // Register in sys.modules
-    let sys = py.import("sys")?;
-    let modules = sys.getattr("modules")?;
-    modules.set_item("pecos_rslib.llvm", &llvm)?;
-
-    parent.add_submodule(&llvm)?;
-    Ok(())
-}
-
 /// Register all namespace modules
 pub fn register_namespace_modules(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_quantum_module(m)?;
     register_noise_module(m)?;
-    register_llvm_namespace_module(m)?;
     Ok(())
 }

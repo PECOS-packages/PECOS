@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 
 # Optional LLVM dependency - imported at module level for efficiency
 try:
-    from pecos_rslib.llvm import ir as llvm_ir
+    from pecos_rslib_llvm import ir as llvm_ir
 
     LLVM_AVAILABLE = True
 except ImportError:

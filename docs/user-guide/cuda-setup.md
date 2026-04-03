@@ -395,6 +395,7 @@ maturin develop --release
 
 ### Using Rust CUDA Simulators
 
+<!--skip-if-no-cuda-rust-->
 ```python
 # Check availability
 from pecos_rslib_cuda import is_cuquantum_available
@@ -486,6 +487,7 @@ To use GPU simulators in PECOS:
    maturin develop --release
    ```
 5. **Verify GPU simulators**:
+   <!--skip-if-no-cuda-rust-->
    ```python
    from pecos_rslib_cuda import is_cuquantum_available
 

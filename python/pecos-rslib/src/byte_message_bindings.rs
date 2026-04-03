@@ -11,7 +11,7 @@
 // the License.
 
 use crate::dtypes::AngleParam;
-use pecos::prelude::*;
+use crate::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyType};
@@ -302,7 +302,7 @@ impl PyByteMessage {
                 let angles_radians: Vec<f64> = op
                     .angles
                     .iter()
-                    .map(pecos::core::Angle::to_radians)
+                    .map(pecos_core::Angle::to_radians)
                     .collect();
                 dict.set_item("angles", angles_radians)?;
             }

@@ -1,4 +1,4 @@
-use pecos::prelude::*;
+use crate::prelude::*;
 use pyo3::prelude::*;
 
 // use core::prelude::rng_pcg::PCGRandom;

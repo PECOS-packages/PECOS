@@ -11,13 +11,13 @@
 // the License.
 
 use crate::dtypes::AngleParam;
-use pecos::prelude::*;
+use crate::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
 // Import the Rust types with renamed aliases to distinguish from Python wrapper types
 // These are re-exported by pecos::prelude when the quest feature is enabled
-use pecos::prelude::{
+use crate::prelude::{
     QuestDensityMatrix as RustQuestDensityMatrix, QuestStateVec as RustQuestStateVec,
 };
 

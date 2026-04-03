@@ -12,7 +12,7 @@
 
 //! Python bindings for `CliffordRep` — Heisenberg-picture Clifford gate representation.
 
-use pecos::core::clifford_rep::CliffordRep as RustCliffordRep;
+use pecos_core::clifford_rep::CliffordRep as RustCliffordRep;
 use pyo3::prelude::*;
 
 use crate::pauli_bindings::PauliString;

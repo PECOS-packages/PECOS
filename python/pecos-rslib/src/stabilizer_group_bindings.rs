@@ -12,8 +12,8 @@
 
 //! Python bindings for `PauliStabilizerGroup`.
 
-use pecos::prelude::PauliString as RustPauliString;
-use pecos::quantum::PauliStabilizerGroup as RustGroup;
+use crate::prelude::PauliString as RustPauliString;
+use pecos_quantum::PauliStabilizerGroup as RustGroup;
 use pyo3::prelude::*;
 
 use crate::pauli_bindings::PauliString;

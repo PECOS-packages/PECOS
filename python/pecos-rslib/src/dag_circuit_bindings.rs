@@ -24,8 +24,8 @@
 
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
-use pecos::core::{Angle64, GateQubits, GateSignature, TimeUnits};
-use pecos::quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
+use pecos_core::{Angle64, GateQubits, GateSignature, TimeUnits};
+use pecos_quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::collections::HashMap;
@@ -584,7 +584,7 @@ impl PyGate {
         self.inner
             .angles
             .iter()
-            .map(pecos::core::Angle::to_radians)
+            .map(pecos_core::Angle::to_radians)
             .collect()
     }
 
@@ -1495,7 +1495,8 @@ pyo3::create_exception!(
 #[pyfunction]
 #[pyo3(name = "hugr_to_dag_circuit")]
 fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCircuit> {
-    use pecos::quantum::{hugr_to_dag_circuit, read_hugr_envelope};
+    use pecos_hugr_qis::read_hugr_envelope;
+    use pecos_quantum::hugr_convert::hugr_to_dag_circuit;
 
     let bytes = hugr_bytes.as_bytes();
 
@@ -1521,7 +1522,7 @@ fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCirc
 #[pyfunction]
 #[pyo3(name = "hugr_op_to_gate_type")]
 fn py_hugr_op_to_gate_type(op_name: &str) -> Option<PyGateType> {
-    use pecos::quantum::hugr_op_to_gate_type;
+    use pecos_quantum::hugr_convert::hugr_op_to_gate_type;
     hugr_op_to_gate_type(op_name).map(|gt| PyGateType { inner: gt })
 }
 
@@ -1535,7 +1536,7 @@ fn py_hugr_op_to_gate_type(op_name: &str) -> Option<PyGateType> {
 #[pyfunction]
 #[pyo3(name = "gate_type_to_hugr_op")]
 fn py_gate_type_to_hugr_op(gate_type: PyGateType) -> Option<String> {
-    use pecos::quantum::gate_type_to_hugr_op;
+    use pecos_quantum::hugr_convert::gate_type_to_hugr_op;
     gate_type_to_hugr_op(gate_type.inner).map(String::from)
 }
 
@@ -1549,7 +1550,7 @@ fn py_gate_type_to_hugr_op(gate_type: PyGateType) -> Option<String> {
 #[pyfunction]
 #[pyo3(name = "is_quantum_operation")]
 fn py_is_quantum_operation(op_name: &str) -> bool {
-    use pecos::quantum::is_quantum_operation;
+    use pecos_quantum::hugr_convert::is_quantum_operation;
     is_quantum_operation(op_name)
 }
 

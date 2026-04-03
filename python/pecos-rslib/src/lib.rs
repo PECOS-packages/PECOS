@@ -16,6 +16,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+mod prelude;
+
 mod array_buffer;
 mod bit_conversion;
 mod bit_int_bindings;
@@ -25,7 +27,6 @@ mod clifford_rep_bindings;
 mod clifford_rz_bindings;
 mod coin_toss_bindings;
 mod dag_circuit_bindings;
-mod decoder_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
@@ -39,16 +40,13 @@ mod pauli_prop_bindings;
 mod pauli_sequence_bindings;
 mod stabilizer_code_bindings;
 mod stabilizer_group_bindings;
-// mod pcg_bindings;
 mod hugr_compilation_bindings;
 mod namespace_modules;
 mod pecos_array;
 mod pecos_random_bindings;
 mod phir_json_bridge;
-// mod qir_bindings;  // Removed - replaced by llvm_bindings
 mod engines_module;
 mod gate_registry_bindings;
-mod llvm_bindings;
 mod programs_module;
 mod quest_bindings;
 mod qulacs_bindings;
@@ -100,7 +98,7 @@ use wasm_foreign_object_bindings::PyWasmForeignObject;
 /// Returns None if the tool is not found.
 #[pyfunction]
 fn find_llvm_tool(tool_name: &str) -> Option<String> {
-    pecos::find_tool(tool_name).map(|p| p.to_string_lossy().into_owned())
+    pecos_build::llvm::find_tool(tool_name).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Set up the `QuEST` CUDA backend path environment variable for runtime loading.
@@ -256,12 +254,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register HUGR compilation functions
     hugr_compilation_bindings::register_hugr_compilation_functions(m)?;
 
-    // Register LLVM IR generation module (compatible with Python's llvmlite API)
-    llvm_bindings::register_llvm_module(m)?;
-
-    // Register binding module for LLVM bitcode generation
-    llvm_bindings::register_binding_module(m)?;
-
     // Register numerical computing module (scipy.optimize replacements)
     num_bindings::register_num_module(m)?;
 
@@ -279,9 +271,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register graph module (graph algorithms for MWPM)
     graph_bindings::register_graph_module(m)?;
-
-    // Register decoders module (QEC decoders: PyMatching, Fusion Blossom, LDPC, etc.)
-    decoder_bindings::register_decoders_module(m)?;
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;

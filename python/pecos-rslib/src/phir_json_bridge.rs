@@ -1,12 +1,12 @@
 use parking_lot::Mutex;
-use pecos::prelude::*;
+use crate::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeMap;
 
 // Import the Rust PhirJsonEngine with a renamed alias to distinguish from Python wrapper
 // Re-exported by pecos::prelude when the phir feature is enabled
-use pecos::prelude::PhirJsonEngine as RustPhirJsonEngine;
+use crate::prelude::PhirJsonEngine as RustPhirJsonEngine;
 
 #[pyclass(module = "pecos_rslib", from_py_object)]
 #[derive(Debug)]

@@ -15,9 +15,9 @@
 //! This module provides Python bindings for graph data structures and algorithms,
 //! particularly for MWPM (Minimum Weight Perfect Matching) used in quantum error correction.
 
-use pecos::dag::DAG as RustDAG;
-use pecos::digraph::DiGraph as RustDiGraph;
-use pecos::graph::{Attribute, Attribute as RustAttribute, EdgeAttrs, Graph as RustGraph};
+use pecos_num::dag::DAG as RustDAG;
+use pecos_num::digraph::DiGraph as RustDiGraph;
+use pecos_num::graph::{Attribute, Attribute as RustAttribute, EdgeAttrs, Graph as RustGraph};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::{BTreeMap, BTreeSet};
@@ -193,7 +193,7 @@ impl PyGraph {
         let node_b = self.resolve_node_id(b)?;
 
         // Create edge data with default weight (1.0 is the default)
-        let edge_data = pecos::graph::EdgeAttrs::new();
+        let edge_data = pecos_num::graph::EdgeAttrs::new();
 
         self.inner.add_edge_with_data(node_a, node_b, edge_data);
         Ok(())
@@ -1736,7 +1736,7 @@ impl PyDAG {
     ///
     /// Returns (`node_id`, `edge_id`).
     fn add_child(&mut self, parent: usize) -> (usize, usize) {
-        use pecos::graph::NodeAttrs;
+        use pecos_num::graph::NodeAttrs;
         self.inner
             .add_child(parent, EdgeAttrs::new(), NodeAttrs::default())
     }
@@ -1747,7 +1747,7 @@ impl PyDAG {
     ///
     /// Returns (`node_id`, `edge_id`).
     fn add_parent(&mut self, child: usize) -> (usize, usize) {
-        use pecos::graph::NodeAttrs;
+        use pecos_num::graph::NodeAttrs;
         self.inner
             .add_parent(child, EdgeAttrs::new(), NodeAttrs::default())
     }

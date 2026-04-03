@@ -13,7 +13,7 @@
 //! Python bindings for the `BitInt` fixed-width signed integer type.
 
 use crate::bit_conversion;
-use pecos::prelude::BitInt;
+use crate::prelude::BitInt;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::PyInt;

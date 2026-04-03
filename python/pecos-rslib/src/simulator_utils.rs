@@ -224,8 +224,8 @@ pub fn register_simulator_utils(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 // --- Shared batch dispatch for simulator bindings ---
 
-use pecos::core::QubitId;
-use pecos::simulators::{CliffordGateable, MeasurementResult};
+use pecos_core::QubitId;
+use pecos_simulators::{CliffordGateable, MeasurementResult};
 use pyo3::types::{PySet, PyTuple};
 
 /// Extract a single qubit index from a Python location.

@@ -1,5 +1,5 @@
 // Python bindings for HUGR to LLVM compilation
-use pecos::prelude::*;
+use crate::prelude::*;
 use std::fs;
 
 use pyo3::prelude::*;

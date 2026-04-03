@@ -50,7 +50,7 @@ use crate::pecos_random_bindings::RngPcg;
 
 // Import numerical computing types from pecos prelude
 // Functions are accessed via pecos::prelude module
-use pecos::prelude::{
+use crate::prelude::{
     BrentqOptions, CurveFitError, CurveFitOptions, NewtonOptions, Poly1d as RustPoly1d,
 };
 
@@ -127,7 +127,7 @@ fn brentq(
     };
 
     // Call Rust implementation
-    pecos::prelude::brentq(func, a, b, Some(opts))
+    crate::prelude::brentq(func, a, b, Some(opts))
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("brentq failed: {e}")))
 }
 
@@ -193,10 +193,10 @@ fn newton(
                     .unwrap_or(f64::NAN)
             })
         };
-        pecos::prelude::newton(f, x0, Some(fprime_closure), Some(opts))
+        crate::prelude::newton(f, x0, Some(fprime_closure), Some(opts))
     } else {
         // Use numerical derivative
-        pecos::prelude::newton(f, x0, None::<fn(f64) -> f64>, Some(opts))
+        crate::prelude::newton(f, x0, None::<fn(f64) -> f64>, Some(opts))
     };
 
     result.map_err(|e| {
@@ -260,7 +260,7 @@ fn polyfit(
     if return_cov {
         // Call polyfit_with_cov and return tuple (coeffs, cov_matrix)
         let (coeffs, cov_matrix) =
-            pecos::prelude::polyfit_with_cov(x_view, y_view, deg).map_err(|e| {
+            crate::prelude::polyfit_with_cov(x_view, y_view, deg).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("polyfit failed: {e}"))
             })?;
 
@@ -271,7 +271,7 @@ fn polyfit(
         Ok(PyTuple::new(py, &tuple_items)?.into())
     } else {
         // Call regular polyfit and return just coefficients
-        let coeffs = pecos::prelude::polyfit(x_view, y_view, deg).map_err(|e| {
+        let coeffs = crate::prelude::polyfit(x_view, y_view, deg).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("polyfit failed: {e}"))
         })?;
 
@@ -513,7 +513,7 @@ fn curve_fit_array(
     };
 
     // Call Rust implementation
-    let result = pecos::prelude::curve_fit(func, xdata_view, ydata_view, p0_view, Some(opts))
+    let result = crate::prelude::curve_fit(func, xdata_view, ydata_view, p0_view, Some(opts))
         .map_err(map_curve_fit_error)?;
 
     // Convert results to Python arrays
@@ -705,7 +705,7 @@ fn curve_fit_tuple<'py>(
 
     // Call Rust implementation with index-based xdata
     let result =
-        pecos::prelude::curve_fit(func, xdata_indices.view(), ydata_view, p0_view, Some(opts))
+        crate::prelude::curve_fit(func, xdata_indices.view(), ydata_view, p0_view, Some(opts))
             .map_err(map_curve_fit_error)?;
 
     // Convert results to Python arrays
@@ -752,11 +752,11 @@ fn random(py: Python<'_>, size: Option<usize>) -> PyResult<Py<PyAny>> {
     match size {
         None => {
             // Return a single float scalar (like numpy.random.random())
-            let result = pecos::prelude::random::random(1);
+            let result = crate::prelude::random::random(1);
             Ok(result[0].into_py_any(py)?)
         }
         Some(n) => {
-            let result = pecos::prelude::random::random(n);
+            let result = crate::prelude::random::random(n);
             Ok(Py::new(py, Array::from_array_f64(result.into_dyn()))?.into_any())
         }
     }
@@ -816,17 +816,17 @@ fn randint(
             } else {
                 None
             };
-            let result = pecos::prelude::random::randint(low_i32, high_i32, n);
+            let result = crate::prelude::random::randint(low_i32, high_i32, n);
             Ok(Py::new(py, Array::from_array_i32(result.into_dyn()))?.into_any())
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let result = pecos::prelude::random::randint(low, high, n);
+            let result = crate::prelude::random::randint(low, high, n);
             Ok(Py::new(py, Array::from_array_i64(result.into_dyn()))?.into_any())
         }
     } else {
         // Return scalar
-        let result = pecos::prelude::random::randint_scalar(low, high);
+        let result = crate::prelude::random::randint_scalar(low, high);
         Ok(result.into_pyobject(py)?.into_any().unbind())
     }
 }
@@ -853,7 +853,7 @@ fn randint(
 ///     True
 #[pyfunction]
 fn seed(seed_value: u64) {
-    pecos::prelude::random::seed(seed_value);
+    crate::prelude::random::seed(seed_value);
 }
 
 /// Generate a random sample from a given array.
@@ -949,7 +949,7 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
 
     if let Some(n) = size {
         // Sample indices instead of objects
-        let sampled_indices = pecos::prelude::random::choice(&indices, n, replace);
+        let sampled_indices = crate::prelude::random::choice(&indices, n, replace);
 
         // Build result list by indexing array once per sample
         let py_list = pyo3::types::PyList::empty(py);
@@ -959,7 +959,7 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
         Ok(py_list.into())
     } else {
         // Return single sample
-        let idx = pecos::prelude::random::choice_scalar(&indices);
+        let idx = crate::prelude::random::choice_scalar(&indices);
         Ok(array[idx].clone_ref(py))
     }
 }
@@ -997,7 +997,7 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
 /// ```
 #[pyfunction]
 fn compare_any(size: usize, threshold: f64) -> bool {
-    pecos::prelude::random::compare_any(size, threshold)
+    crate::prelude::random::compare_any(size, threshold)
 }
 
 /// Fused operation: Get indices where random values are less than threshold.
@@ -1039,7 +1039,7 @@ fn compare_any(size: usize, threshold: f64) -> bool {
 /// ```
 #[pyfunction]
 fn compare_indices(py: Python<'_>, size: usize, threshold: f64) -> PyResult<Py<PyAny>> {
-    let indices = pecos::prelude::random::compare_indices(size, threshold);
+    let indices = crate::prelude::random::compare_indices(size, threshold);
 
     // Convert Vec<usize> to Python list
     let py_list = pyo3::types::PyList::empty(py);
@@ -1097,7 +1097,7 @@ fn mean(py: Python<'_>, a: &Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<P
             if flat.is_empty() {
                 return Ok(f64::NAN.into_pyobject(py)?.into_any().unbind());
             }
-            let result = pecos::prelude::mean(&flat);
+            let result = crate::prelude::mean(&flat);
             Ok(result.into_pyobject(py)?.into_any().unbind())
         }
         Some(axis_val) => {
@@ -1125,7 +1125,7 @@ fn mean(py: Python<'_>, a: &Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<P
 
             // Call Rust implementation
             let result =
-                pecos::prelude::mean_axis(&array.view(), Axis(axis_usize)).ok_or_else(|| {
+                crate::prelude::mean_axis(&array.view(), Axis(axis_usize)).ok_or_else(|| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "mean_axis returned None - array may be empty along the specified axis",
                     )
@@ -1167,7 +1167,7 @@ fn mean(py: Python<'_>, a: &Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<P
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
 fn isnan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::IsNan;
+    use crate::prelude::IsNan;
 
     // Try scalar float
     if let Ok(val) = x.extract::<f64>() {
@@ -1225,7 +1225,7 @@ fn isnan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 /// ```
 #[pyfunction]
 fn floor(x: f64) -> f64 {
-    pecos::prelude::floor(x)
+    crate::prelude::floor(x)
 }
 
 /// Return the ceiling of x as a float.
@@ -1251,7 +1251,7 @@ fn floor(x: f64) -> f64 {
 /// ```
 #[pyfunction]
 fn ceil(x: f64) -> f64 {
-    pecos::prelude::ceil(x)
+    crate::prelude::ceil(x)
 }
 
 /// Round a number to the nearest integer as a float.
@@ -1331,7 +1331,7 @@ fn isclose(
     atol: f64,
 ) -> PyResult<Py<PyAny>> {
     use crate::pecos_array::ArrayData;
-    use pecos::prelude::IsClose;
+    use crate::prelude::IsClose;
 
     // Try scalar floats
     if let (Ok(a_val), Ok(b_val)) = (a.extract::<f64>(), b.extract::<f64>()) {
@@ -1484,7 +1484,7 @@ fn allclose(
     equal_nan: bool,
 ) -> PyResult<bool> {
     use crate::pecos_array::ArrayData;
-    use pecos::prelude::allclose as rust_allclose;
+    use crate::prelude::allclose as rust_allclose;
 
     // Try to convert inputs to PECOS Arrays if they're not already
     // This handles NumPy arrays, lists, etc. at the boundary by converting them to PECOS Arrays
@@ -1585,7 +1585,7 @@ fn assert_allclose(
     atol: f64,
     equal_nan: bool,
 ) -> PyResult<()> {
-    use pecos::prelude::assert_allclose as rust_assert_allclose;
+    use crate::prelude::assert_allclose as rust_assert_allclose;
 
     // Try to convert inputs to PECOS Arrays if they're not already
     let a_pecos = if let Ok(arr) = a.extract::<Py<Array>>() {
@@ -1712,7 +1712,7 @@ fn assert_allclose(
 #[pyo3(signature = (a, b, equal_nan=false))]
 fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyResult<bool> {
     use crate::pecos_array::ArrayData;
-    use pecos::prelude::array_equal as rust_array_equal;
+    use crate::prelude::array_equal as rust_array_equal;
 
     // First try PECOS Array objects
     if let (Ok(a_arr), Ok(b_arr)) = (a.extract::<Py<Array>>(), b.extract::<Py<Array>>()) {
@@ -2014,7 +2014,7 @@ fn std(
             if flat.is_empty() || flat.len() <= ddof {
                 return Ok(f64::NAN.into_pyobject(py)?.into_any().unbind());
             }
-            let result = pecos::prelude::std(&flat, ddof);
+            let result = crate::prelude::std(&flat, ddof);
             Ok(result.into_pyobject(py)?.into_any().unbind())
         }
         Some(axis_val) => {
@@ -2041,7 +2041,7 @@ fn std(
             };
 
             // Call Rust implementation (ddof is usize, function expects f64)
-            let result = pecos::prelude::std_axis(&array.view(), Axis(axis_usize), ddof as f64);
+            let result = crate::prelude::std_axis(&array.view(), Axis(axis_usize), ddof as f64);
 
             // Convert back to Python Array
             Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
@@ -2104,7 +2104,7 @@ fn mean_axis(py: Python<'_>, arr: &Bound<'_, PyAny>, axis: isize) -> PyResult<Py
     };
 
     // Call Rust implementation
-    let result = pecos::prelude::mean_axis(&array.view(), Axis(axis_usize)).ok_or_else(|| {
+    let result = crate::prelude::mean_axis(&array.view(), Axis(axis_usize)).ok_or_else(|| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "mean_axis returned None - array may be empty along the specified axis",
         )
@@ -2176,7 +2176,7 @@ fn std_axis(
     };
 
     // Call Rust implementation
-    let result = pecos::prelude::std_axis(&array.view(), Axis(axis_usize), ddof as f64);
+    let result = crate::prelude::std_axis(&array.view(), Axis(axis_usize), ddof as f64);
 
     // Convert back to Python
     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
@@ -2207,7 +2207,7 @@ fn std_axis(
 #[allow(clippy::needless_pass_by_value)]
 #[pyfunction]
 fn weighted_mean(data: Vec<(f64, f64)>) -> f64 {
-    pecos::prelude::weighted_mean(&data)
+    crate::prelude::weighted_mean(&data)
 }
 
 /// Generate jackknife resamples from 1D data.
@@ -2236,7 +2236,7 @@ fn weighted_mean(data: Vec<(f64, f64)>) -> f64 {
 /// ```
 #[pyfunction]
 fn jackknife_resamples(py: Python<'_>, data: Vec<f64>) -> PyResult<Py<Array>> {
-    let resamples = pecos::prelude::jackknife_resamples(&data);
+    let resamples = crate::prelude::jackknife_resamples(&data);
     Ok(Py::new(py, Array::from_array_f64(resamples.into_dyn()))?)
 }
 
@@ -2266,7 +2266,7 @@ fn jackknife_resamples(py: Python<'_>, data: Vec<f64>) -> PyResult<Py<Array>> {
 #[allow(clippy::needless_pass_by_value)]
 #[pyfunction]
 fn jackknife_stats(estimates: Vec<f64>) -> (f64, f64) {
-    pecos::prelude::jackknife_stats(&estimates)
+    crate::prelude::jackknife_stats(&estimates)
 }
 
 /// Compute jackknife statistics along an axis of a 2D array.
@@ -2330,7 +2330,7 @@ fn jackknife_stats_axis(
                 "estimates must be 2D array: {e}"
             ))
         })?;
-    let (means, stds) = pecos::prelude::jackknife_stats_axis(&estimates_view, Axis(axis));
+    let (means, stds) = crate::prelude::jackknife_stats_axis(&estimates_view, Axis(axis));
     Ok((
         array_buffer::f64_array_to_py(py, &means),
         array_buffer::f64_array_to_py(py, &stds),
@@ -2372,7 +2372,7 @@ fn jackknife_stats_axis(
 #[allow(clippy::needless_pass_by_value)]
 #[pyfunction]
 fn jackknife_weighted(data: Vec<(f64, f64)>) -> (f64, f64) {
-    pecos::prelude::jackknife_weighted(&data)
+    crate::prelude::jackknife_weighted(&data)
 }
 
 /// Drop-in replacement for `numpy.diag()`.
@@ -2393,7 +2393,7 @@ fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                     .map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
                     })?;
-                let result = pecos::array::diag_matrix(arr1);
+                let result = pecos_num::array::diag_matrix(arr1);
                 Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
             }
             ArrayData::Complex128(a) if a.ndim() == 1 => {
@@ -2403,7 +2403,7 @@ fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                     .map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
                     })?;
-                let result = pecos::array::diag_matrix(arr1);
+                let result = pecos_num::array::diag_matrix(arr1);
                 Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
             }
             ArrayData::F64(a) if a.ndim() == 2 => {
@@ -2413,7 +2413,7 @@ fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                     .map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
                     })?;
-                let result = pecos::array::diag(arr2);
+                let result = pecos_num::array::diag(arr2);
                 Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
             }
             ArrayData::Complex128(a) if a.ndim() == 2 => {
@@ -2423,7 +2423,7 @@ fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                     .map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}"))
                     })?;
-                let result = pecos::array::diag(arr2);
+                let result = pecos_num::array::diag(arr2);
                 Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
             }
             _ => Err(pyo3::exceptions::PyValueError::new_err(
@@ -2439,14 +2439,14 @@ fn diag(py: Python<'_>, v: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
             .view()
             .into_dimensionality::<ndarray::Ix1>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}")))?;
-        let result = pecos::array::diag_matrix(arr1);
+        let result = pecos_num::array::diag_matrix(arr1);
         Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
     } else if f64_arr.ndim() == 2 {
         let arr2 = f64_arr
             .view()
             .into_dimensionality::<ndarray::Ix2>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("internal error: {e}")))?;
-        let result = pecos::array::diag(arr2);
+        let result = pecos_num::array::diag(arr2);
         Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
     } else {
         Err(pyo3::exceptions::PyValueError::new_err(
@@ -2490,7 +2490,7 @@ fn linspace(
     num: usize,
     endpoint: bool,
 ) -> PyResult<Py<Array>> {
-    let result = pecos::prelude::linspace(start, stop, num, endpoint);
+    let result = crate::prelude::linspace(start, stop, num, endpoint);
     Py::new(py, Array::from_array_f64(result.into_dyn()))
 }
 
@@ -2581,7 +2581,7 @@ fn arange(
     let step_f64: f64 = step_param.extract()?;
 
     // Generate the range using Rust implementation
-    let result_f64 = pecos::prelude::arange(start_f64, stop_f64, step_f64);
+    let result_f64 = crate::prelude::arange(start_f64, stop_f64, step_f64);
 
     // Return appropriate dtype based on inference
     if all_ints {
@@ -2666,9 +2666,9 @@ fn zeros(
     match dtype_str {
         "float64" | "float" => {
             let arr = match shape_vec.len() {
-                1 => pecos::prelude::zeros(shape_vec[0]).into_dyn(),
-                2 => pecos::prelude::zeros((shape_vec[0], shape_vec[1])).into_dyn(),
-                3 => pecos::prelude::zeros((shape_vec[0], shape_vec[1], shape_vec[2])).into_dyn(),
+                1 => crate::prelude::zeros(shape_vec[0]).into_dyn(),
+                2 => crate::prelude::zeros((shape_vec[0], shape_vec[1])).into_dyn(),
+                3 => crate::prelude::zeros((shape_vec[0], shape_vec[1], shape_vec[2])).into_dyn(),
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "only 1D, 2D, and 3D arrays are currently supported",
@@ -2859,9 +2859,9 @@ fn ones(
     match dtype_str {
         "float64" | "float" => {
             let arr = match shape_vec.len() {
-                1 => pecos::prelude::ones(shape_vec[0]).into_dyn(),
-                2 => pecos::prelude::ones((shape_vec[0], shape_vec[1])).into_dyn(),
-                3 => pecos::prelude::ones((shape_vec[0], shape_vec[1], shape_vec[2])).into_dyn(),
+                1 => crate::prelude::ones(shape_vec[0]).into_dyn(),
+                2 => crate::prelude::ones((shape_vec[0], shape_vec[1])).into_dyn(),
+                3 => crate::prelude::ones((shape_vec[0], shape_vec[1], shape_vec[2])).into_dyn(),
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "only 1D, 2D, and 3D arrays are currently supported",
@@ -3344,7 +3344,7 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
             ));
         };
 
-        let result = pecos::prelude::delete(&arr_1d, index);
+        let result = crate::prelude::delete(&arr_1d, index);
         return Ok(Py::new(py, Array::from_array_f64(result.into_dyn()))?.into_any());
     }
 
@@ -3367,7 +3367,7 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
             ));
         };
 
-        let result = pecos::prelude::delete(&arr_1d, index);
+        let result = crate::prelude::delete(&arr_1d, index);
         return Ok(Py::new(py, Array::from_array_c128(result.into_dyn()))?.into_any());
     }
 
@@ -3391,7 +3391,7 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
             ));
         };
 
-        let result = pecos::prelude::delete(&arr_1d, index);
+        let result = crate::prelude::delete(&arr_1d, index);
         return Ok(Py::new(py, Array::from_array_i64(result.into_dyn()))?.into_any());
     }
 
@@ -4020,7 +4020,7 @@ macro_rules! apply_unary_math_fn {
 /// - `$complex_method`: Method to call on complex values (e.g., `sinh`)
 macro_rules! apply_buffer_math_fn {
     ($fn_name:expr, $py:expr, $x:expr, $trait_name:ident, $f64_method:ident, $complex_method:ident) => {{
-        use pecos::prelude::$trait_name;
+        use crate::prelude::$trait_name;
 
         // Try arrays first (handles NumPy scalars and arrays)
         // This must come before scalar extraction to preserve dtype information
@@ -4124,7 +4124,7 @@ fn ln(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
 fn log(py: Python<'_>, x: Bound<'_, PyAny>, base: f64) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::LogBase;
+    use crate::prelude::LogBase;
 
     // Try Array type first (our custom array wrapper) - return Array
     if let Ok(arr) = x.extract::<Py<Array>>() {
@@ -4219,7 +4219,7 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             )));
         }
 
-        let result = pecos::prelude::all_axis(&bool_arr, ndarray::Axis(normalized_axis));
+        let result = crate::prelude::all_axis(&bool_arr, ndarray::Axis(normalized_axis));
         return Ok(Py::new(py, Array::from_array_bool(result.into_dyn()))?.into_any());
     }
 
@@ -4285,7 +4285,7 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             )));
         }
 
-        let result = pecos::prelude::any_axis(&bool_arr, ndarray::Axis(normalized_axis));
+        let result = crate::prelude::any_axis(&bool_arr, ndarray::Axis(normalized_axis));
         return Ok(Py::new(py, Array::from_array_bool(result.into_dyn()))?.into_any());
     }
 
@@ -4329,7 +4329,7 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 #[allow(clippy::needless_pass_by_value)]
 fn norm(_py: Python<'_>, x: Bound<'_, PyAny>, ord: Option<f64>) -> PyResult<f64> {
     use crate::pecos_array::Array;
-    use pecos::prelude::{norm as norm_fn, norm_complex};
+    use crate::prelude::{norm as norm_fn, norm_complex};
 
     // Try Array first - extract underlying data directly
     if let Ok(pecos_arr) = x.cast::<Array>() {
@@ -4446,7 +4446,7 @@ fn power(
     base: Bound<'_, PyAny>,
     exponent: Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::{Array1, Power};
+    use crate::prelude::{Array1, Power};
 
     // Try to extract exponent as scalar first (most common case)
     if let Ok(exp_val) = exponent.extract::<f64>() {
@@ -4533,7 +4533,7 @@ fn sin(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 fn tan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     // Import trait to enable .tan() method
     #[allow(unused_imports)]
-    use pecos::prelude::Tan;
+    use crate::prelude::Tan;
 
     // Try Array type first (our custom array wrapper) - return Array
     if let Ok(arr) = x.extract::<Py<Array>>() {
@@ -4629,7 +4629,7 @@ fn tanh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn asin(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Asin;
+    use crate::prelude::Asin;
 
     if let Ok(val) = x.extract::<f64>() {
         return Ok(val.asin().into_py_any(py).unwrap());
@@ -4657,7 +4657,7 @@ fn asin(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn acos(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Acos;
+    use crate::prelude::Acos;
 
     if let Ok(val) = x.extract::<f64>() {
         return Ok(val.acos().into_py_any(py).unwrap());
@@ -4685,7 +4685,7 @@ fn acos(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn atan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Atan;
+    use crate::prelude::Atan;
 
     if let Ok(val) = x.extract::<f64>() {
         return Ok(val.atan().into_py_any(py).unwrap());
@@ -4713,7 +4713,7 @@ fn atan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn asinh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Asinh;
+    use crate::prelude::Asinh;
 
     if let Ok(val) = x.extract::<f64>() {
         return Ok(val.asinh().into_py_any(py).unwrap());
@@ -4741,7 +4741,7 @@ fn asinh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn acosh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Acosh;
+    use crate::prelude::Acosh;
 
     if let Ok(val) = x.extract::<f64>() {
         return Ok(val.acosh().into_py_any(py).unwrap());
@@ -4769,7 +4769,7 @@ fn acosh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn atanh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Atanh;
+    use crate::prelude::Atanh;
 
     if let Ok(val) = x.extract::<f64>() {
         return Ok(val.atanh().into_py_any(py).unwrap());
@@ -4799,7 +4799,7 @@ fn atanh(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn atan2(py: Python<'_>, y: Bound<'_, PyAny>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-    use pecos::prelude::Atan2;
+    use crate::prelude::Atan2;
 
     // Scalar-scalar case: f64, f64 -> f64
     if let (Ok(y_val), Ok(x_val)) = (y.extract::<f64>(), x.extract::<f64>()) {
@@ -4841,7 +4841,7 @@ fn atan2(py: Python<'_>, y: Bound<'_, PyAny>, x: Bound<'_, PyAny>) -> PyResult<P
 fn abs(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     // Import trait to enable .abs() method
     #[allow(unused_imports)]
-    use pecos::prelude::Abs;
+    use crate::prelude::Abs;
 
     // Try f64 array first (includes numpy float scalars which are 0-dim arrays)
     if let Ok(arr) = array_buffer::extract_f64_array(&x) {
@@ -5010,7 +5010,7 @@ fn abs(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 /// ```
 #[pyfunction]
 fn where_(condition: bool, x: f64, y: f64) -> f64 {
-    pecos::prelude::where_(condition, x, y)
+    crate::prelude::where_(condition, x, y)
 }
 
 /// Conditional selection with full broadcasting support.
@@ -5057,7 +5057,7 @@ fn where_array<'py>(
     y: &Bound<'py, PyAny>,
 ) -> PyResult<Py<PyAny>> {
     use ndarray::{Array, ArrayD, IxDyn};
-    use pecos::prelude::Where;
+    use crate::prelude::Where;
     use pyo3::conversion::IntoPyObjectExt;
 
     // Helper to convert PyAny to either scalar or dynamic array
@@ -5134,7 +5134,7 @@ fn where_array<'py>(
 
 // Helper function to compute broadcast shape
 fn broadcast_shapes(shapes: &[&[usize]]) -> PyResult<Vec<usize>> {
-    pecos::array::broadcast_shapes(shapes).map_err(pyo3::exceptions::PyValueError::new_err)
+    pecos_num::array::broadcast_shapes(shapes).map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 // Helper function to broadcast array to target shape
@@ -5143,7 +5143,7 @@ fn broadcast_to<T: Clone>(
     arr: ndarray::ArrayViewD<'_, T>,
     target_shape: &[usize],
 ) -> PyResult<ArrayD<T>> {
-    pecos::array::broadcast_to(arr, target_shape).map_err(pyo3::exceptions::PyValueError::new_err)
+    pecos_num::array::broadcast_to(arr, target_shape).map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Kronecker product of two 2D arrays.
@@ -5163,18 +5163,18 @@ fn kron(a: &Array, b: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
 
     let result_data = match (&a.data, &b.data) {
         (ArrayData::Complex128(a_arr), ArrayData::Complex128(b_arr)) => {
-            ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
+            ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
         }
         (ArrayData::F64(a_arr), ArrayData::F64(b_arr)) => {
-            ArrayData::F64(pecos::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
+            ArrayData::F64(pecos_num::linalg::kron(&to_2d!(a_arr), &to_2d!(b_arr)).into_dyn())
         }
         (ArrayData::Complex128(a_arr), ArrayData::F64(b_arr)) => {
             let b_c = b_arr.mapv(|x| Complex64::new(x, 0.0));
-            ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_arr), &to_2d!(b_c)).into_dyn())
+            ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a_arr), &to_2d!(b_c)).into_dyn())
         }
         (ArrayData::F64(a_arr), ArrayData::Complex128(b_arr)) => {
             let a_c = a_arr.mapv(|x| Complex64::new(x, 0.0));
-            ArrayData::Complex128(pecos::linalg::kron(&to_2d!(a_c), &to_2d!(b_arr)).into_dyn())
+            ArrayData::Complex128(pecos_num::linalg::kron(&to_2d!(a_c), &to_2d!(b_arr)).into_dyn())
         }
         _ => {
             return Err(PyTypeError::new_err(format!(
@@ -5209,7 +5209,7 @@ fn expm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
         .into_dimensionality::<Ix2>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("expm requires a 2D matrix"))?;
 
-    let result_arr = pecos::linalg::expm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result_arr = pecos_num::linalg::expm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let result = ArrayData::Complex128(result_arr.into_dyn());
 
     Ok(Py::new(py, Array::new(result))?.into_any())
@@ -5237,7 +5237,7 @@ fn logm(a: &Array, py: Python<'_>) -> PyResult<Py<PyAny>> {
         .into_dimensionality::<Ix2>()
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("logm requires a 2D matrix"))?;
 
-    let result_arr = pecos::linalg::logm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result_arr = pecos_num::linalg::logm(&arr2).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let result = ArrayData::Complex128(result_arr.into_dyn());
 
     Ok(Py::new(py, Array::new(result))?.into_any())
@@ -5277,12 +5277,12 @@ fn matrix_power(a: &Array, n: i32, py: Python<'_>) -> PyResult<Py<PyAny>> {
     match &a.data {
         ArrayData::F64(arr) => {
             let arr2 = validate_2d_square!(arr);
-            let result = pecos::linalg::matrix_power_f64(&arr2, exp);
+            let result = pecos_num::linalg::matrix_power_f64(&arr2, exp);
             Ok(Py::new(py, Array::new(ArrayData::F64(result.into_dyn())))?.into_any())
         }
         ArrayData::Complex128(arr) => {
             let arr2 = validate_2d_square!(arr);
-            let result = pecos::linalg::matrix_power_c64(&arr2, exp);
+            let result = pecos_num::linalg::matrix_power_c64(&arr2, exp);
             Ok(Py::new(py, Array::new(ArrayData::Complex128(result.into_dyn())))?.into_any())
         }
         _ => Err(PyTypeError::new_err(
@@ -5337,25 +5337,25 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     math_module.add_function(wrap_pyfunction!(round, &math_module)?)?;
 
     // Add mathematical constants to math submodule
-    math_module.add("pi", pecos::prelude::PI)?;
-    math_module.add("tau", pecos::prelude::TAU)?;
-    math_module.add("e", pecos::prelude::E)?;
+    math_module.add("pi", crate::prelude::PI)?;
+    math_module.add("tau", crate::prelude::TAU)?;
+    math_module.add("e", crate::prelude::E)?;
     math_module.add("inf", f64::INFINITY)?;
     math_module.add("nan", f64::NAN)?;
-    math_module.add("FRAC_PI_2", pecos::prelude::FRAC_PI_2)?;
-    math_module.add("FRAC_PI_3", pecos::prelude::FRAC_PI_3)?;
-    math_module.add("FRAC_PI_4", pecos::prelude::FRAC_PI_4)?;
-    math_module.add("FRAC_PI_6", pecos::prelude::FRAC_PI_6)?;
-    math_module.add("FRAC_PI_8", pecos::prelude::FRAC_PI_8)?;
-    math_module.add("FRAC_1_PI", pecos::prelude::FRAC_1_PI)?;
-    math_module.add("FRAC_2_PI", pecos::prelude::FRAC_2_PI)?;
-    math_module.add("FRAC_2_SQRT_PI", pecos::prelude::FRAC_2_SQRT_PI)?;
-    math_module.add("SQRT_2", pecos::prelude::SQRT_2)?;
-    math_module.add("FRAC_1_SQRT_2", pecos::prelude::FRAC_1_SQRT_2)?;
-    math_module.add("LN_2", pecos::prelude::LN_2)?;
-    math_module.add("LN_10", pecos::prelude::LN_10)?;
-    math_module.add("LOG2_E", pecos::prelude::LOG2_E)?;
-    math_module.add("LOG10_E", pecos::prelude::LOG10_E)?;
+    math_module.add("FRAC_PI_2", crate::prelude::FRAC_PI_2)?;
+    math_module.add("FRAC_PI_3", crate::prelude::FRAC_PI_3)?;
+    math_module.add("FRAC_PI_4", crate::prelude::FRAC_PI_4)?;
+    math_module.add("FRAC_PI_6", crate::prelude::FRAC_PI_6)?;
+    math_module.add("FRAC_PI_8", crate::prelude::FRAC_PI_8)?;
+    math_module.add("FRAC_1_PI", crate::prelude::FRAC_1_PI)?;
+    math_module.add("FRAC_2_PI", crate::prelude::FRAC_2_PI)?;
+    math_module.add("FRAC_2_SQRT_PI", crate::prelude::FRAC_2_SQRT_PI)?;
+    math_module.add("SQRT_2", crate::prelude::SQRT_2)?;
+    math_module.add("FRAC_1_SQRT_2", crate::prelude::FRAC_1_SQRT_2)?;
+    math_module.add("LN_2", crate::prelude::LN_2)?;
+    math_module.add("LN_10", crate::prelude::LN_10)?;
+    math_module.add("LOG2_E", crate::prelude::LOG2_E)?;
+    math_module.add("LOG10_E", crate::prelude::LOG10_E)?;
     num_module.add_submodule(&math_module)?;
 
     // Create compare submodule
@@ -5488,46 +5488,46 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add_function(wrap_pyfunction!(curve_fit, &num_module)?)?;
 
     // Also expose constants at top level
-    num_module.add("pi", pecos::prelude::PI)?;
-    num_module.add("tau", pecos::prelude::TAU)?;
-    num_module.add("e", pecos::prelude::E)?;
+    num_module.add("pi", crate::prelude::PI)?;
+    num_module.add("tau", crate::prelude::TAU)?;
+    num_module.add("e", crate::prelude::E)?;
     num_module.add("inf", f64::INFINITY)?;
     num_module.add("nan", f64::NAN)?;
-    num_module.add("FRAC_PI_2", pecos::prelude::FRAC_PI_2)?;
-    num_module.add("FRAC_PI_3", pecos::prelude::FRAC_PI_3)?;
-    num_module.add("FRAC_PI_4", pecos::prelude::FRAC_PI_4)?;
-    num_module.add("FRAC_PI_6", pecos::prelude::FRAC_PI_6)?;
-    num_module.add("FRAC_PI_8", pecos::prelude::FRAC_PI_8)?;
-    num_module.add("FRAC_1_PI", pecos::prelude::FRAC_1_PI)?;
-    num_module.add("FRAC_2_PI", pecos::prelude::FRAC_2_PI)?;
-    num_module.add("FRAC_2_SQRT_PI", pecos::prelude::FRAC_2_SQRT_PI)?;
-    num_module.add("SQRT_2", pecos::prelude::SQRT_2)?;
-    num_module.add("FRAC_1_SQRT_2", pecos::prelude::FRAC_1_SQRT_2)?;
-    num_module.add("LN_2", pecos::prelude::LN_2)?;
-    num_module.add("LN_10", pecos::prelude::LN_10)?;
-    num_module.add("LOG2_E", pecos::prelude::LOG2_E)?;
-    num_module.add("LOG10_E", pecos::prelude::LOG10_E)?;
+    num_module.add("FRAC_PI_2", crate::prelude::FRAC_PI_2)?;
+    num_module.add("FRAC_PI_3", crate::prelude::FRAC_PI_3)?;
+    num_module.add("FRAC_PI_4", crate::prelude::FRAC_PI_4)?;
+    num_module.add("FRAC_PI_6", crate::prelude::FRAC_PI_6)?;
+    num_module.add("FRAC_PI_8", crate::prelude::FRAC_PI_8)?;
+    num_module.add("FRAC_1_PI", crate::prelude::FRAC_1_PI)?;
+    num_module.add("FRAC_2_PI", crate::prelude::FRAC_2_PI)?;
+    num_module.add("FRAC_2_SQRT_PI", crate::prelude::FRAC_2_SQRT_PI)?;
+    num_module.add("SQRT_2", crate::prelude::SQRT_2)?;
+    num_module.add("FRAC_1_SQRT_2", crate::prelude::FRAC_1_SQRT_2)?;
+    num_module.add("LN_2", crate::prelude::LN_2)?;
+    num_module.add("LN_10", crate::prelude::LN_10)?;
+    num_module.add("LOG2_E", crate::prelude::LOG2_E)?;
+    num_module.add("LOG10_E", crate::prelude::LOG10_E)?;
 
     // f32 precision constants
-    num_module.add("pi_f32", pecos::prelude::PI_F32)?;
-    num_module.add("tau_f32", pecos::prelude::TAU_F32)?;
-    num_module.add("e_f32", pecos::prelude::E_F32)?;
+    num_module.add("pi_f32", crate::prelude::PI_F32)?;
+    num_module.add("tau_f32", crate::prelude::TAU_F32)?;
+    num_module.add("e_f32", crate::prelude::E_F32)?;
     num_module.add("inf_f32", f32::INFINITY)?;
     num_module.add("nan_f32", f32::NAN)?;
-    num_module.add("FRAC_PI_2_F32", pecos::prelude::FRAC_PI_2_F32)?;
-    num_module.add("FRAC_PI_3_F32", pecos::prelude::FRAC_PI_3_F32)?;
-    num_module.add("FRAC_PI_4_F32", pecos::prelude::FRAC_PI_4_F32)?;
-    num_module.add("FRAC_PI_6_F32", pecos::prelude::FRAC_PI_6_F32)?;
-    num_module.add("FRAC_PI_8_F32", pecos::prelude::FRAC_PI_8_F32)?;
-    num_module.add("FRAC_1_PI_F32", pecos::prelude::FRAC_1_PI_F32)?;
-    num_module.add("FRAC_2_PI_F32", pecos::prelude::FRAC_2_PI_F32)?;
-    num_module.add("FRAC_2_SQRT_PI_F32", pecos::prelude::FRAC_2_SQRT_PI_F32)?;
-    num_module.add("SQRT_2_F32", pecos::prelude::SQRT_2_F32)?;
-    num_module.add("FRAC_1_SQRT_2_F32", pecos::prelude::FRAC_1_SQRT_2_F32)?;
-    num_module.add("LN_2_F32", pecos::prelude::LN_2_F32)?;
-    num_module.add("LN_10_F32", pecos::prelude::LN_10_F32)?;
-    num_module.add("LOG2_E_F32", pecos::prelude::LOG2_E_F32)?;
-    num_module.add("LOG10_E_F32", pecos::prelude::LOG10_E_F32)?;
+    num_module.add("FRAC_PI_2_F32", crate::prelude::FRAC_PI_2_F32)?;
+    num_module.add("FRAC_PI_3_F32", crate::prelude::FRAC_PI_3_F32)?;
+    num_module.add("FRAC_PI_4_F32", crate::prelude::FRAC_PI_4_F32)?;
+    num_module.add("FRAC_PI_6_F32", crate::prelude::FRAC_PI_6_F32)?;
+    num_module.add("FRAC_PI_8_F32", crate::prelude::FRAC_PI_8_F32)?;
+    num_module.add("FRAC_1_PI_F32", crate::prelude::FRAC_1_PI_F32)?;
+    num_module.add("FRAC_2_PI_F32", crate::prelude::FRAC_2_PI_F32)?;
+    num_module.add("FRAC_2_SQRT_PI_F32", crate::prelude::FRAC_2_SQRT_PI_F32)?;
+    num_module.add("SQRT_2_F32", crate::prelude::SQRT_2_F32)?;
+    num_module.add("FRAC_1_SQRT_2_F32", crate::prelude::FRAC_1_SQRT_2_F32)?;
+    num_module.add("LN_2_F32", crate::prelude::LN_2_F32)?;
+    num_module.add("LN_10_F32", crate::prelude::LN_10_F32)?;
+    num_module.add("LOG2_E_F32", crate::prelude::LOG2_E_F32)?;
+    num_module.add("LOG10_E_F32", crate::prelude::LOG10_E_F32)?;
 
     // Add missing functions at top level
     num_module.add_function(wrap_pyfunction!(ln, &num_module)?)?;

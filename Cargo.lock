@@ -4072,19 +4072,33 @@ name = "pecos-rslib"
 version = "0.2.0-dev.0"
 dependencies = [
  "dirs",
- "inkwell",
  "libc",
  "log",
  "ndarray 0.17.2",
  "num-complex 0.4.6",
  "parking_lot",
- "pecos",
+ "pecos-build",
+ "pecos-core",
+ "pecos-cppsparsestab",
+ "pecos-engines",
  "pecos-experimental",
+ "pecos-hugr",
+ "pecos-hugr-qis",
+ "pecos-num",
+ "pecos-phir",
+ "pecos-phir-json",
+ "pecos-programs",
  "pecos-qasm",
+ "pecos-qec",
+ "pecos-qis",
+ "pecos-quantum",
+ "pecos-quest",
+ "pecos-qulacs",
  "pecos-random",
+ "pecos-simulators",
+ "pecos-wasm",
  "pyo3",
  "rand 0.10.0",
- "regex",
  "serde_json",
  "tempfile",
 ]
@@ -4100,6 +4114,32 @@ dependencies = [
  "pecos-cuquantum",
  "pecos-simulators",
  "pyo3",
+]
+
+[[package]]
+name = "pecos-rslib-llvm"
+version = "0.2.0-dev.0"
+dependencies = [
+ "inkwell",
+ "log",
+ "pecos-llvm",
+ "pyo3",
+ "regex",
+ "tempfile",
+]
+
+[[package]]
+name = "pecos-rslib-qec"
+version = "0.2.0-dev.0"
+dependencies = [
+ "log",
+ "ndarray 0.17.2",
+ "pecos-core",
+ "pecos-decoders",
+ "pecos-random",
+ "pyo3",
+ "rand 0.10.0",
+ "serde_json",
 ]
 
 [[package]]

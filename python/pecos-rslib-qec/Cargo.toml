@@ -1,0 +1,30 @@
+[package]
+name = "pecos-rslib-qec"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "QEC decoder Python bindings for PECOS."
+publish = false
+
+[lib]
+name = "pecos_rslib_qec"
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+pecos-core.workspace = true
+pecos-decoders = { workspace = true, features = ["all"] }
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
+log.workspace = true
+ndarray.workspace = true
+pecos-random.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

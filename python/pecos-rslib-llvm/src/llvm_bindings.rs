@@ -22,13 +22,13 @@
 //!
 //! Usage in Python:
 //! ```python
-//! from pecos_rslib.llvm import ir, binding
+//! from pecos_rslib_llvm import ir, binding
 //!
 //! module = ir.Module("my_module")
 //! # Create LLVM IR using a familiar API
 //! ```
 
-use pecos::prelude::*;
+use pecos_llvm::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use regex::Regex;
@@ -1557,6 +1557,12 @@ pub fn register_llvm_module(parent: &Bound<'_, pyo3::types::PyModule>) -> PyResu
     ir_module.add_function(wrap_pyfunction!(Constant, &ir_module)?)?;
 
     parent.add_submodule(&ir_module)?;
+
+    // Register in sys.modules for proper import
+    let sys = parent.py().import("sys")?;
+    let modules = sys.getattr("modules")?;
+    modules.set_item("pecos_rslib_llvm.ir", &ir_module)?;
+
     Ok(())
 }
 
@@ -1662,5 +1668,11 @@ pub fn register_binding_module(parent: &Bound<'_, pyo3::types::PyModule>) -> PyR
     binding_module.add_function(wrap_pyfunction!(shutdown, &binding_module)?)?;
 
     parent.add_submodule(&binding_module)?;
+
+    // Register in sys.modules for proper import
+    let sys = parent.py().import("sys")?;
+    let modules = sys.getattr("modules")?;
+    modules.set_item("pecos_rslib_llvm.binding", &binding_module)?;
+
     Ok(())
 }

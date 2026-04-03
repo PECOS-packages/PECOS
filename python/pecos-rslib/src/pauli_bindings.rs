@@ -16,7 +16,7 @@
 //! to Python, allowing quantum error models to use native Pauli representations
 //! instead of string-based arrays.
 
-use pecos::prelude::{
+use crate::prelude::{
     Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
 };
 use pyo3::prelude::*;

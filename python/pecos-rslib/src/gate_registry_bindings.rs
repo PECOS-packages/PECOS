@@ -12,9 +12,9 @@
 
 //! Python bindings for the gate registration system.
 
-use pecos::core::Value;
-use pecos::core::gate_type::GateType;
-use pecos::core::{Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId};
+use pecos_core::Value;
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
 use std::collections::HashMap;

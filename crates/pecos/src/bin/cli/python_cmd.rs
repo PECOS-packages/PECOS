@@ -121,7 +121,15 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         flags.push_str(extra);
     }
 
-    // Build all rslib crates
+    let venv_bin = repo_root.join(".venv/bin");
+    let path_with_venv = format!(
+        "{}:{}",
+        venv_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    // Build all rslib crates via maturin (incremental — cargo inside maturin
+    // handles change detection, skips recompilation when nothing changed)
     let crates = ["pecos-rslib", "pecos-rslib-qec", "pecos-rslib-llvm"];
     for crate_name in crates {
         let crate_dir = repo_root.join(format!("python/{crate_name}"));
@@ -139,9 +147,6 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             }
         );
 
-        // Call maturin directly from the venv to avoid uv run rebuilding
-        // the package before maturin even starts
-        let venv_bin = repo_root.join(".venv/bin");
         let maturin = venv_bin.join("maturin");
         let mut cmd = Command::new(&maturin);
         cmd.args(["develop", "--uv"]);
@@ -152,9 +157,7 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         if !flags.is_empty() {
             cmd.env("RUSTFLAGS", &flags);
         }
-        // Ensure venv bin is on PATH so maturin can find patchelf
-        let path = std::env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", format!("{}:{path}", venv_bin.display()));
+        cmd.env("PATH", &path_with_venv);
         cmd.env_remove("CONDA_PREFIX");
 
         let status = cmd.status();
@@ -286,3 +289,4 @@ fn run_pytest_dir(
         Err(e) => Err(Error::Config(format!("Failed to run pytest: {e}"))),
     }
 }
+

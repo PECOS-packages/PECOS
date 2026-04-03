@@ -74,22 +74,18 @@ list-deps: check-cli
 [group('build')]
 build profile="debug": check-cli setup-quiet sync-deps build-selene
     {{pecos}} python build --profile {{profile}}
-    -{{pecos}} julia build --profile {{profile}}
-    -{{pecos}} go build --profile {{profile}}
+    @command -v julia >/dev/null 2>&1 && {{pecos}} julia build --profile {{profile}} || true
+    @command -v go >/dev/null 2>&1 && {{pecos}} go build --profile {{profile}} || true
 
 # Build PECOS without dependency setup or sync
 [group('build')]
 build-lite profile="debug": check-cli build-selene
     {{pecos}} python build --profile {{profile}}
-    -{{pecos}} julia build --profile {{profile}}
-    -{{pecos}} go build --profile {{profile}}
 
 # Build PECOS with CUDA support
 [group('build')]
 build-cuda profile="debug": check-cli setup-quiet
     {{pecos}} python build --profile {{profile}} --cuda
-    -{{pecos}} julia build --profile {{profile}}
-    -{{pecos}} go build --profile {{profile}}
 
 # =============================================================================
 # Testing
@@ -494,6 +490,27 @@ installreqs:
 build-selene:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Check if any selene source changed since last install
+    NEEDS_BUILD=false
+    for DIR in python/selene-plugins/pecos-selene-*/; do
+        PKG=$(basename "$DIR")
+        DEST="$DIR/python/${PKG//-/_}/_dist/lib/"
+        SO=$(find "$DEST" -name "*.so" 2>/dev/null | head -1)
+        if [ -z "$SO" ]; then
+            NEEDS_BUILD=true
+            break
+        fi
+        # Check if any Rust source is newer than the installed .so
+        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$SO" 2>/dev/null | head -1)
+        if [ -n "$NEWER" ]; then
+            NEEDS_BUILD=true
+            break
+        fi
+    done
+    if [ "$NEEDS_BUILD" = false ]; then
+        echo "Selene plugins: up to date"
+        exit 0
+    fi
     echo "Building Selene plugins..."
     CARGO_ARGS=""
     for DIR in python/selene-plugins/pecos-selene-*/; do

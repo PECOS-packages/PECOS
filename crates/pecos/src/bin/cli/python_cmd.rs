@@ -121,10 +121,16 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         flags.push_str(extra);
     }
 
-    let venv_bin = repo_root.join(".venv/bin");
+    let venv_bin = if cfg!(windows) {
+        repo_root.join(".venv/Scripts")
+    } else {
+        repo_root.join(".venv/bin")
+    };
+    let path_sep = if cfg!(windows) { ";" } else { ":" };
     let path_with_venv = format!(
-        "{}:{}",
+        "{}{}{}",
         venv_bin.display(),
+        path_sep,
         std::env::var("PATH").unwrap_or_default()
     );
 

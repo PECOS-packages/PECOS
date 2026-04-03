@@ -603,6 +603,12 @@ macro_rules! impl_extract_array {
             let data_info: (usize, bool) = data_tuple.extract()?;
             let ptr = data_info.0 as *const $dtype;
 
+            // Handle zero-sized arrays (e.g., shape (0, 5)) — ndarray panics
+            // on to_owned() with zero-element arrays due to stride validation
+            if shape.iter().any(|&d| d == 0) {
+                return Ok(ArrayD::default(IxDyn(&shape)));
+            }
+
             // Create ArrayView from raw parts
             // SAFETY: __array_interface__ protocol guarantees data validity
             // We immediately convert to owned array to avoid lifetime issues

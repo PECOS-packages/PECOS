@@ -15,6 +15,7 @@ env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
+  LLVM_VERSION: "14.0.6"
 
 jobs:
   docs-ci:
@@ -39,50 +40,38 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: python/pecos-rslib
+          workspaces: |
+            python/pecos-rslib
+            python/pecos-rslib-qec
+            python/pecos-rslib-llvm
 
-      - name: Install LLVM 14.0.6 using pecos-llvm
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: ~/.pecos/deps/llvm
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: cargo run -p pecos --features cli --release -- install llvm
+
+      - name: Configure LLVM
         run: |
-          echo "Installing LLVM using pecos..."
-          cargo run -p pecos --features cli --release -- install llvm
-
-          echo "Setting LLVM environment variables..."
-          export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
-          export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
-
+          PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
-          echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
+          echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
 
-          echo "Verifying LLVM installation..."
-          cargo run -p pecos --features cli --release -- llvm check
-
-      - name: Generate lockfile and install dependencies
+      - name: Install dependencies and build
         run: |
           uv lock --project .
           uv sync --project .
-
-      - name: Install pecos-rslib with maturin
-        run: |
-          cd python/pecos-rslib
-          uv run maturin develop --uv
-
-      - name: Install quantum-pecos from local source
-        run: |
-          cd python/quantum-pecos
-          uv pip install -e .
+          cargo install --path crates/pecos --features cli
+          just build-lite
 
       - name: Test working documentation examples
-        run: |
-          uv run python scripts/docs/test_working_examples.py
-
-      # TODO: Re-enable documentation code examples testing once documentation is updated
-      # Currently skipped due to outdated code examples with missing imports and API changes
-      - name: Test all code examples
-        if: false  # Temporarily disabled - see TODO above
-        run: |
-          uv run python scripts/docs/test_code_examples.py
+        run: uv run python scripts/docs/test_working_examples.py
 
       - name: Build documentation
         if: success()
-        run: |
-          uv run mkdocs build
+        run: uv run mkdocs build

@@ -24,7 +24,7 @@ use pecos_build::cuda::find_cuda;
 #[cfg(feature = "runtime")]
 use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
 #[cfg(feature = "runtime")]
-use pecos_build::llvm::{find_llvm_14, get_llvm_version};
+use pecos_build::llvm::get_llvm_version;
 #[cfg(feature = "runtime")]
 use std::io::Write;
 
@@ -866,56 +866,139 @@ impl InfoPrinter {
 /// Run diagnostic checks on PECOS installation
 #[cfg(feature = "runtime")]
 fn run_doctor() {
-    println!("Checking PECOS installation...");
+    println!("PECOS Doctor");
+    println!("============");
     println!();
 
-    let mut all_ok = true;
-    let mut warnings = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+    let mut hints: Vec<String> = Vec::new();
 
-    // Check 1: Version
-    print_check(
-        "PECOS CLI",
-        true,
-        &format!("v{}", env!("CARGO_PKG_VERSION")),
-    );
-
-    // Check 2: Compiled capabilities (runtime feature enables all)
-    print_check("QASM support", true, "available");
-    print_check("PHIR/JSON support", true, "available");
-    print_check("QIS/Selene support", true, "available");
-
-    // Check 3: LLVM 14 installation
-    if let Some(llvm_path) = find_llvm_14(None) {
-        let version = get_llvm_version(&llvm_path).unwrap_or_else(|_| "unknown".into());
-        print_check(
-            "LLVM 14",
-            true,
-            &format!("{version} at {}", llvm_path.display()),
-        );
+    // --- LLVM 14 ---
+    println!("LLVM 14:");
+    let llvm_config = pecos_build::llvm::config::validate_llvm_config();
+    if let Some(ref path) = llvm_config.detected_path {
+        let version = get_llvm_version(path).unwrap_or_else(|_| "unknown".into());
+        print_check("installed", true, &format!("{version} at {}", path.display()));
     } else {
-        print_check("LLVM 14", false, "not found (run 'pecos install llvm')");
-        warnings.push("LLVM 14 not found. To install: pecos install llvm");
+        print_check("installed", false, "not found");
+        problems.push("LLVM 14 not installed. Run: pecos install llvm".into());
     }
 
-    // Check 7: CUDA installation
+    if let Some(ref path) = llvm_config.configured_path {
+        if llvm_config.path_is_valid_llvm14 {
+            print_check(".cargo/config.toml", true, &format!("{}", path.display()));
+        } else if !llvm_config.path_exists {
+            print_check(
+                ".cargo/config.toml",
+                false,
+                &format!("configured path does not exist: {}", path.display()),
+            );
+            problems.push("LLVM path in .cargo/config.toml points to missing directory. Run: pecos llvm configure".into());
+        } else {
+            print_check(
+                ".cargo/config.toml",
+                false,
+                &format!("path exists but is not valid LLVM 14: {}", path.display()),
+            );
+            problems.push("LLVM path in .cargo/config.toml is not valid LLVM 14. Run: pecos llvm configure".into());
+        }
+    } else {
+        print_check(".cargo/config.toml", false, "LLVM_SYS_140_PREFIX not set");
+        if llvm_config.detected_path.is_some() {
+            problems.push(
+                "LLVM installed but not configured. Run: pecos llvm configure".into(),
+            );
+        }
+    }
+
+    if let Ok(env_val) = std::env::var("LLVM_SYS_140_PREFIX") {
+        let env_path = std::path::Path::new(&env_val);
+        if env_path.exists() {
+            print_check("LLVM_SYS_140_PREFIX env", true, &env_val);
+        } else {
+            print_check(
+                "LLVM_SYS_140_PREFIX env",
+                false,
+                &format!("set but path missing: {env_val}"),
+            );
+            problems.push(format!("LLVM_SYS_140_PREFIX={env_val} but path does not exist"));
+        }
+    }
+    println!();
+
+    // --- Python / uv ---
+    println!("Python:");
+    match std::process::Command::new("uv")
+        .args(["--version"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            print_check("uv", true, version.trim());
+        }
+        _ => {
+            print_check("uv", false, "not found");
+            problems.push("uv not installed. See: https://docs.astral.sh/uv/".into());
+        }
+    }
+
+    // Check pecos is importable
+    match std::process::Command::new("uv")
+        .args(["run", "python", "-c", "import pecos; print(pecos.__version__)"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            print_check("import pecos", true, &format!("v{}", version.trim()));
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let short = stderr.lines().last().unwrap_or("import failed");
+            print_check("import pecos", false, short);
+            problems.push(
+                "Cannot import pecos. Run: just build (or pecos python build)".into(),
+            );
+        }
+        _ => {
+            print_check("import pecos", false, "uv run failed");
+        }
+    }
+
+    // Check pecos_rslib native library loads
+    match std::process::Command::new("uv")
+        .args([
+            "run",
+            "python",
+            "-c",
+            "import pecos_rslib; print(pecos_rslib.__version__)",
+        ])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            print_check("pecos_rslib", true, &format!("v{}", version.trim()));
+        }
+        Ok(_) => {
+            print_check("pecos_rslib", false, "native library failed to load");
+            hints.push(
+                "pecos_rslib not loadable. Rebuild with: just build".into(),
+            );
+        }
+        _ => {}
+    }
+    println!();
+
+    // --- CUDA (optional) ---
+    println!("CUDA (optional):");
     if let Some(cuda_path) = find_cuda() {
         let version =
             pecos_build::cuda::get_cuda_version(&cuda_path).unwrap_or_else(|_| "unknown".into());
-        print_check(
-            "CUDA",
-            true,
-            &format!("{version} at {}", cuda_path.display()),
-        );
+        print_check("CUDA toolkit", true, &format!("{version} at {}", cuda_path.display()));
     } else {
-        print_check(
-            "CUDA",
-            false,
-            "not found (optional, run 'pecos install cuda')",
-        );
-        // CUDA is optional, so just a suggestion not a warning
+        print_check("CUDA toolkit", false, "not found");
+        hints.push("Install CUDA with: pecos install cuda".into());
     }
 
-    // Check 8: cuQuantum installation
     if let Some(cuquantum_path) = find_cuquantum() {
         let version = get_cuquantum_version(&cuquantum_path).unwrap_or_else(|_| "unknown".into());
         print_check(
@@ -924,43 +1007,40 @@ fn run_doctor() {
             &format!("{version} at {}", cuquantum_path.display()),
         );
     } else {
-        print_check(
-            "cuQuantum",
-            false,
-            "not found (optional, run 'pecos install cuquantum')",
-        );
-        // cuQuantum is optional, so just a suggestion not a warning
+        print_check("cuQuantum", false, "not found");
     }
+    println!();
 
-    // Check 9: Test basic circuit execution
-    print!("  ");
+    // --- Smoke test ---
+    println!("Smoke test:");
     let test_result = test_basic_execution();
     match test_result {
         Ok(()) => {
-            print_check("Test circuit", true, "execution successful");
+            print_check("Bell state circuit", true, "executed successfully");
         }
         Err(e) => {
-            print_check("Test circuit", false, &format!("failed: {e}"));
-            all_ok = false;
+            print_check("Bell state circuit", false, &format!("{e}"));
+            problems.push(format!("Smoke test failed: {e}"));
         }
     }
-
     println!();
 
-    // Print warnings
-    if !warnings.is_empty() {
-        println!("Suggestions:");
-        for warning in &warnings {
-            println!("  - {warning}");
+    // --- Summary ---
+    if problems.is_empty() {
+        println!("No problems found.");
+    } else {
+        println!("Problems:");
+        for problem in &problems {
+            println!("  - {problem}");
         }
-        println!();
     }
 
-    // Final status
-    if all_ok {
-        println!("All checks passed! PECOS is ready to use.");
-    } else {
-        println!("Some checks failed. See above for details.");
+    if !hints.is_empty() {
+        println!();
+        println!("Hints:");
+        for hint in &hints {
+            println!("  - {hint}");
+        }
     }
 }
 

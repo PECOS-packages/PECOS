@@ -219,6 +219,7 @@ split-debuginfo = "unpacked"
 opt-level = 3     # Maximum optimization
 lto = true        # Link-time optimization (same as "fat")
 codegen-units = 1 # Single codegen unit for better optimization
+strip = true      # Strip debug symbols for smaller binaries
 
 # Native profile: release + CPU-specific optimizations
 # Use with: cargo build --profile native

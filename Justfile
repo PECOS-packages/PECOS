@@ -423,11 +423,6 @@ go-lint: (go-build "release")
 # Additional Testing
 # =============================================================================
 
-# Run NumPy/SciPy compatibility tests
-[group('test')]
-pytest-numpy:
-    uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-
 # Run performance tests with release build
 [group('test')]
 pytest-perf: build-release

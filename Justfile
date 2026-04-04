@@ -439,10 +439,6 @@ pytest-dep:
     uv run pytest python/pecos-rslib/tests -m "optional_dependency"
     uv run pytest python/quantum-pecos/tests -m "optional_dependency"
 
-# Run Selene plugin tests
-[group('test')]
-pytest-selene:
-    uv run pytest python/selene-plugins
 
 
 

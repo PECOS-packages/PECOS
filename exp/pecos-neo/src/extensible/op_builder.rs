@@ -487,11 +487,12 @@ impl OpBuilder {
         let if_one = Self::run_branch(if_one_fn);
         let if_zero = Self::run_branch(if_zero_fn);
 
-        self.ops.push(AdaptedOp::Conditional(Box::new(ConditionalOp {
-            condition,
-            if_one,
-            if_zero,
-        })));
+        self.ops
+            .push(AdaptedOp::Conditional(Box::new(ConditionalOp {
+                condition,
+                if_one,
+                if_zero,
+            })));
         self
     }
 

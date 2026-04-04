@@ -45,7 +45,7 @@ pub enum MeasBasis {
 ///
 /// Boxed inside `AdaptedOp::Conditional` to break the recursive enum layout.
 /// Without the Box, the compiler generates incorrect drop glue for the
-/// SmallVec union + recursive Vec combination at opt-level >= 2, causing
+/// `SmallVec` union + recursive Vec combination at opt-level >= 2, causing
 /// a double-free or use-after-free during drop.
 #[derive(Clone, Debug)]
 pub struct ConditionalOp {

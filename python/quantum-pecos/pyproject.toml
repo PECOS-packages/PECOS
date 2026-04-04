@@ -29,6 +29,7 @@ license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
     "pecos-rslib==0.8.0.dev8",
+    "pecos-rslib-llvm==0.8.0.dev8",
     "phir>=0.3.3",
     "networkx>=2.1.0",
     "guppylang>=0.21.6",
@@ -64,13 +65,9 @@ visualization = [
     "matplotlib>=2.2.0",
     "plotly~=5.9.0",
 ]
-llvm = [
-    "pecos-rslib-llvm==0.8.0.dev8",
-]
 all = [
     "quantum-pecos[visualization]",
     "quantum-pecos[stim]",
-    "quantum-pecos[llvm]",
 ]
 
 # CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions

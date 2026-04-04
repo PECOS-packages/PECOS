@@ -264,11 +264,67 @@ jobs:
             delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
-      - name: Upload wheels
+      - name: Upload pecos-rslib wheels
         uses: actions/upload-artifact@v7
         with:
           name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse/*.whl
+
+      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
+      - name: Build pecos-rslib-llvm wheels
+        uses: pypa/cibuildwheel@v3.3.1
+        with:
+          package-dir: python/pecos-rslib-llvm
+          output-dir: wheelhouse-llvm
+        env:
+          CIBW_BUILD: "cp310-*"
+          CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
+          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
+          CIBW_ENVIRONMENT_LINUX: >
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
+          CIBW_BEFORE_ALL_LINUX: |
+            curl -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            cargo run --release -p pecos --features cli -- install llvm --force
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            auditwheel repair -w {dest_dir} {wheel} &&
+            pipx run abi3audit --strict --report {wheel}
+          CIBW_ENVIRONMENT_MACOS: >
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
+            MACOSX_DEPLOYMENT_TARGET=13.2
+          CIBW_BEFORE_ALL_MACOS: |
+            curl -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            rustup update
+            cargo run --release -p pecos --features cli -- install llvm --force
+            mkdir -p $HOME/.pecos/bin
+            printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
+            chmod +x $HOME/.pecos/bin/codesign
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
+            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            pipx run abi3audit --strict --report {wheel}
+          CIBW_ENVIRONMENT_WINDOWS: >
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin;$PATH"
+            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
+          CIBW_BEFORE_ALL_WINDOWS: >
+            rustup update &&
+            cargo run --release -p pecos --features cli -- install llvm --force
+          CIBW_BEFORE_BUILD_WINDOWS: >
+            pip install delvewheel &&
+            python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
+            pipx run abi3audit --strict --report {wheel}
+
+      - name: Upload pecos-rslib-llvm wheels
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel-pecos-rslib-llvm-${{ matrix.os }}-${{ matrix.architecture }}
+          path: ./wheelhouse-llvm/*.whl
 
   test_abi3_wheels:
     needs: build_wheelspecos_rslib
@@ -371,8 +427,16 @@ jobs:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
-      - name: Install pecos-rslib
-        run: pip install ./pecos-rslib-wheel/*.whl
+      - name: Download pecos-rslib-llvm wheel
+        uses: actions/download-artifact@v7
+        with:
+          name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
+          path: ./pecos-rslib-llvm-wheel
+
+      - name: Install pecos-rslib and pecos-rslib-llvm
+        run: |
+          pip install ./pecos-rslib-wheel/*.whl
+          pip install ./pecos-rslib-llvm-wheel/*.whl
 
       - name: Install build dependencies
         run: pip install build
@@ -416,8 +480,16 @@ jobs:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
-      - name: Install pecos-rslib
-        run: pip install ./pecos-rslib-wheel/*.whl
+      - name: Download pecos-rslib-llvm wheel
+        uses: actions/download-artifact@v7
+        with:
+          name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
+          path: ./pecos-rslib-llvm-wheel
+
+      - name: Install pecos-rslib and pecos-rslib-llvm
+        run: |
+          pip install ./pecos-rslib-wheel/*.whl
+          pip install ./pecos-rslib-llvm-wheel/*.whl
 
       - name: Install build dependencies
         run: pip install build
@@ -464,7 +536,14 @@ jobs:
           echo "=== Downloaded artifacts structure ==="
           ls -la temp-artifacts/
 
-          # Move pecos-rslib wheels to distribution directory
+          # Move pecos-rslib and pecos-rslib-llvm wheels to distribution directory
+          mkdir -p dist/pecos-rslib-llvm
+          for artifact in temp-artifacts/wheel-pecos-rslib-llvm-*/; do
+            if [ -d "$artifact" ]; then
+              echo "Processing $artifact"
+              mv "$artifact"*.whl dist/pecos-rslib-llvm/ 2>/dev/null || true
+            fi
+          done
           for artifact in temp-artifacts/wheel-pecos-rslib-*/; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"

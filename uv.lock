@@ -3751,6 +3751,7 @@ dependencies = [
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pecos-rslib" },
+    { name = "pecos-rslib-llvm" },
     { name = "phir" },
     { name = "selene-sim" },
     { name = "tket" },
@@ -3759,7 +3760,6 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "matplotlib" },
-    { name = "pecos-rslib-llvm" },
     { name = "plotly" },
     { name = "stim" },
 ]
@@ -3768,9 +3768,6 @@ cuda = [
     { name = "cuquantum-python-cu13", marker = "python_full_version >= '3.11'" },
     { name = "pecos-rslib-cuda" },
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11'" },
-]
-llvm = [
-    { name = "pecos-rslib-llvm" },
 ]
 stim = [
     { name = "stim" },
@@ -3790,18 +3787,17 @@ requires-dist = [
     { name = "networkx", specifier = ">=2.1.0" },
     { name = "pecos-rslib", editable = "python/pecos-rslib" },
     { name = "pecos-rslib-cuda", marker = "extra == 'cuda'", editable = "python/pecos-rslib-cuda" },
-    { name = "pecos-rslib-llvm", marker = "extra == 'llvm'", editable = "python/pecos-rslib-llvm" },
+    { name = "pecos-rslib-llvm", editable = "python/pecos-rslib-llvm" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = "~=5.9.0" },
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=0.12.0" },
-    { name = "quantum-pecos", extras = ["llvm"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
     { name = "quantum-pecos", extras = ["stim"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
     { name = "quantum-pecos", extras = ["visualization"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
     { name = "selene-sim", specifier = "~=0.2.0" },
     { name = "stim", marker = "extra == 'stim'", specifier = ">=1.12.0" },
     { name = "tket", specifier = "<0.12.16" },
 ]
-provides-extras = ["stim", "visualization", "llvm", "all", "cuda"]
+provides-extras = ["stim", "visualization", "all", "cuda"]
 
 [[package]]
 name = "qwasm"

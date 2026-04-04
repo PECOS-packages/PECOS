@@ -16,11 +16,7 @@ import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-try:
-    from pecos_rslib_llvm import binding, ir
-except ImportError:
-    binding = None  # type: ignore[assignment]
-    ir = None  # type: ignore[assignment]
+from pecos_rslib_llvm import binding, ir
 
 from pecos.slr import Block, If, Repeat
 from pecos.slr.cops import (

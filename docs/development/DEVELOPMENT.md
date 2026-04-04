@@ -105,9 +105,10 @@ Clean commands are cross-platform (Windows, macOS, Linux):
 
 ```sh
 just clean              # Clean project build artifacts (includes selene)
-just clean-cache        # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
-just clean-deps         # Clean ~/.pecos/deps/ (LLVM, CUDA, cuQuantum)
-just clean-all          # Everything above
+just clean cache        # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
+just clean deps         # Clean ~/.pecos/deps/ (LLVM, CUDA, cuQuantum)
+just clean all          # Everything above
+just clean dry-run      # Preview what would be cleaned
 ```
 
 You can also run the cleaning script directly:

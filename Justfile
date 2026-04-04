@@ -299,11 +299,11 @@ devc: (build-cuda) test
 [group('dev')]
 devc-full: clean (build-cuda) test lint
 
-# Clean build artifacts
+# Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('dev')]
 [group('clean')]
-clean:
-    uv run python scripts/clean.py
+clean *target:
+    uv run python scripts/clean.py {{ if target == "cache" { "--cache" } else if target == "deps" { "--deps" } else if target == "all" { "--all" } else if target == "dry-run" { "--dry-run" } else { "" } }}
 
 # =============================================================================
 # Documentation
@@ -498,29 +498,6 @@ pytest-selene:
     uv run pytest python/selene-plugins
 
 
-# =============================================================================
-# Cleaning
-# =============================================================================
-
-# Clean ~/.pecos/cache/ and ~/.pecos/tmp/
-[group('clean')]
-clean-cache:
-    uv run python scripts/clean.py --cache
-
-# Clean ~/.pecos/deps/ (extracted C++ dependencies)
-[group('clean')]
-clean-deps:
-    uv run python scripts/clean.py --deps
-
-# Clean everything (build artifacts, selene, cache, deps, legacy paths)
-[group('clean')]
-clean-all:
-    uv run python scripts/clean.py --all
-
-# Preview what would be cleaned
-[group('clean')]
-clean-dry-run:
-    uv run python scripts/clean.py --dry-run
 
 # =============================================================================
 # Private / Internal Recipes

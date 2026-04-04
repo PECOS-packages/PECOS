@@ -292,14 +292,6 @@ dev: build test
 [group('dev')]
 dev-full: clean build test lint
 
-# Dev cycle with CUDA support
-[group('dev')]
-devc: (build-cuda) test
-
-# Full dev cycle with CUDA support
-[group('dev')]
-devc-full: clean (build-cuda) test lint
-
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('dev')]
 [group('clean')]

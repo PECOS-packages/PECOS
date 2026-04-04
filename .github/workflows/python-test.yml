@@ -199,7 +199,7 @@ jobs:
         fi
 
     - name: Run Python tests
-      run: just pytest-all
+      run: just pytest
 
     - name: Run linting
-      run: just lint
+      run: just lint check

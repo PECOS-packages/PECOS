@@ -169,7 +169,6 @@ impl<I, O, EI, EO> ControlEngine
         &mut self,
         input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-
         (**self).start(input)
     }
 
@@ -177,12 +176,10 @@ impl<I, O, EI, EO> ControlEngine
         &mut self,
         result: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-
         (**self).continue_processing(result)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-
         (**self).reset()
     }
 }

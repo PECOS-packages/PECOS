@@ -159,9 +159,7 @@ fn detect_tool(cmd: &str, arg: &str) -> String {
                 // Some tools (python) output to stderr
                 String::from_utf8_lossy(&o.stderr).trim().to_string()
             } else {
-                out.strip_prefix("go version ")
-                    .unwrap_or(out)
-                    .to_string()
+                out.strip_prefix("go version ").unwrap_or(out).to_string()
             }
         }
         _ => "not found".to_string(),

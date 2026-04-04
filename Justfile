@@ -14,6 +14,7 @@ default:
     @echo "  just test           # Run all tests"
     @echo "  just dev            # Build + test (daily workflow)"
     @echo "  just lint           # Check formatting and linting"
+    @echo "  just doctor         # Diagnose environment problems"
     @echo ""
     @echo "All commands:"
     @just --list --list-heading ''

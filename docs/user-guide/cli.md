@@ -5,14 +5,14 @@ PECOS provides a command-line interface for running quantum simulations without 
 ## Installation
 
 ```bash
-# Install with default features (recommended)
-cargo install pecos
+# Install the CLI (dev tools: dependency management, CUDA-aware builds, inspection)
+cargo install --path crates/pecos-cli
 
-# Install with LLVM/QIS support (requires LLVM 14)
-cargo install pecos --features llvm
+# Or using the Justfile:
+just install-cli
 
-# Install with all simulator backends
-cargo install pecos --features full
+# Install with runtime commands (pecos run, compile, doctor, info, examples)
+cargo install --path crates/pecos-cli --features runtime
 ```
 
 ## Quick Start
@@ -120,27 +120,30 @@ Noise Models:
   general      - Configurable per-operation error rates
 ```
 
-### `pecos doctor`
+### `pecos doctor` / `just doctor`
 
 Check installation and diagnose common issues.
 
+For quick checks without compilation, use `just doctor`:
+
 ```bash
-$ pecos doctor
-Checking PECOS installation...
+$ just doctor
+LLVM 14:
+  [OK] installed: 14.0.6 at /home/user/.pecos/deps/llvm
+  [OK] .cargo/config.toml: LLVM_SYS_140_PREFIX configured
 
-  [OK] PECOS CLI: v0.1.1
-  [OK] QASM support: available
-  [OK] PHIR/JSON support: available
-  [OK] Selene runtime: available
-  [!!] LLVM/QIS support: not compiled (optional)
-  [OK] LLVM 14: 14.0.6 at /home/user/.pecos/deps/llvm
-  [OK] Test circuit: execution successful
+Python:
+  [OK] uv: uv 0.11.3
+  [OK] import pecos: v0.8.0.dev8
+  [OK] pecos_rslib: v0.2.0-dev.0
 
-Suggestions:
-  - LLVM support not compiled. To enable: cargo install pecos --features llvm
+CUDA (optional):
+  [--] CUDA: not found (optional)
 
-All checks passed! PECOS is ready to use.
+No problems found.
 ```
+
+For a full check including a simulation smoke test, use `pecos doctor` (requires the `runtime` feature).
 
 ### `pecos examples`
 

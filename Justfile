@@ -55,6 +55,59 @@ setup: check-cli
 setup-ci: check-cli
     {{pecos}} setup --yes
 
+# Check development environment for common problems
+[group('setup')]
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROBLEMS=0
+    ok()   { echo "  [OK] $1: $2"; }
+    fail() { echo "  [!!] $1: $2"; PROBLEMS=$((PROBLEMS + 1)); }
+
+    echo "LLVM 14:"
+    if [ -d "$HOME/.pecos/deps/llvm/bin" ]; then
+        VERSION=$("$HOME/.pecos/deps/llvm/bin/llvm-config" --version 2>/dev/null || echo "unknown")
+        ok "installed" "$VERSION at $HOME/.pecos/deps/llvm"
+    else
+        fail "installed" "not found (run: pecos install llvm)"
+    fi
+    if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_140_PREFIX" .cargo/config.toml 2>/dev/null; then
+        ok ".cargo/config.toml" "LLVM_SYS_140_PREFIX configured"
+    else
+        fail ".cargo/config.toml" "LLVM_SYS_140_PREFIX not set (run: pecos llvm configure)"
+    fi
+    echo ""
+
+    echo "Python:"
+    if command -v uv >/dev/null 2>&1; then
+        ok "uv" "$(uv --version)"
+    else
+        fail "uv" "not found (see: https://docs.astral.sh/uv/)"
+    fi
+    PECOS_VER=$(uv run python -c "import pecos; print(pecos.__version__)" 2>/dev/null) \
+        && ok "import pecos" "v$PECOS_VER" \
+        || fail "import pecos" "failed (run: just build)"
+    RSLIB_VER=$(uv run python -c "import pecos_rslib; print(pecos_rslib.__version__)" 2>/dev/null) \
+        && ok "pecos_rslib" "v$RSLIB_VER" \
+        || fail "pecos_rslib" "native library failed to load (run: just build)"
+    echo ""
+
+    echo "CUDA (optional):"
+    NVCC=$(command -v nvcc 2>/dev/null || echo /usr/local/cuda/bin/nvcc)
+    if [ -x "$NVCC" ]; then
+        CUDA_VER=$("$NVCC" --version 2>/dev/null | grep release | sed 's/.*release //' | sed 's/,.*//')
+        ok "CUDA" "$CUDA_VER"
+    else
+        echo "  [--] CUDA: not found (optional)"
+    fi
+    echo ""
+
+    if [ "$PROBLEMS" -eq 0 ]; then
+        echo "No problems found."
+    else
+        echo "$PROBLEMS problem(s) found. See above for fixes."
+    fi
+
 # Show system information
 [group('setup')]
 sys-info: check-cli

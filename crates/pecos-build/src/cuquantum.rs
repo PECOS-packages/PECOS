@@ -183,12 +183,13 @@ pub fn get_cuquantum_version(cuquantum_path: &Path) -> Result<String> {
     let mut patch = None;
 
     for line in content.lines() {
-        if line.contains("CUSTATEVEC_VER_MAJOR") {
-            major = extract_version_number(line);
-        } else if line.contains("CUSTATEVEC_VER_MINOR") {
-            minor = extract_version_number(line);
-        } else if line.contains("CUSTATEVEC_VER_PATCH") {
-            patch = extract_version_number(line);
+        let trimmed = line.trim();
+        if trimmed.starts_with("#define CUSTATEVEC_VER_MAJOR ") {
+            major = extract_version_number(trimmed);
+        } else if trimmed.starts_with("#define CUSTATEVEC_VER_MINOR ") {
+            minor = extract_version_number(trimmed);
+        } else if trimmed.starts_with("#define CUSTATEVEC_VER_PATCH ") {
+            patch = extract_version_number(trimmed);
         }
     }
 
@@ -218,8 +219,9 @@ pub fn get_cuquantum_version(cuquantum_path: &Path) -> Result<String> {
 
 /// Extract version number from a #define line
 fn extract_version_number(line: &str) -> Option<u32> {
+    // Parse "#define NAME 123 //comment" -- the number is the 3rd token
     line.split_whitespace()
-        .last()
+        .nth(2)
         .and_then(|s| s.parse::<u32>().ok())
 }
 

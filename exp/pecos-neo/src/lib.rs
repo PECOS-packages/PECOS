@@ -175,6 +175,7 @@ pub use extensible::{
     CompositeAdaptor,
     CompositeExtendedAdaptor,
     CompositeValidator,
+    ConditionalOp,
     CustomAdaptor,
     ExactAngleValidator,
     ExtendedAdaptor,

@@ -27,7 +27,7 @@
 use super::GateId;
 use super::gates;
 use super::operation::{
-    AdaptedOp, AdaptedSequence, AncillaRequirements, MeasBasis, PrepBasis, ResultId,
+    AdaptedOp, AdaptedSequence, AncillaRequirements, ConditionalOp, MeasBasis, PrepBasis, ResultId,
 };
 use super::pauli::{PauliString, StabilizerMeasurement, StabilizerPreparation};
 use crate::command::{CommandQueue, GateCommand, GateType};
@@ -484,15 +484,28 @@ impl OpBuilder {
         F1: FnOnce(OpBuilder) -> OpBuilder,
         F2: FnOnce(OpBuilder) -> OpBuilder,
     {
-        let if_one = if_one_fn(OpBuilder::new()).ops;
-        let if_zero = if_zero_fn(OpBuilder::new()).ops;
+        let if_one = Self::run_branch(if_one_fn);
+        let if_zero = Self::run_branch(if_zero_fn);
 
-        self.ops.push(AdaptedOp::Conditional {
+        self.ops.push(AdaptedOp::Conditional(Box::new(ConditionalOp {
             condition,
             if_one,
             if_zero,
-        });
+        })));
         self
+    }
+
+    /// Run a branch closure and extract the resulting ops.
+    ///
+    /// Factored out to avoid a miscompilation at opt-level >= 2 where
+    /// the partial move of `.ops` from the builder temporary within
+    /// `if_then_else` causes a double-free during drop.
+    #[inline(never)]
+    fn run_branch<F>(f: F) -> Vec<AdaptedOp>
+    where
+        F: FnOnce(OpBuilder) -> OpBuilder,
+    {
+        f(OpBuilder::new()).build().ops
     }
 
     /// Execute operations if measurement result is 1.
@@ -738,7 +751,7 @@ impl OpBuilder {
                     }
                 }
 
-                AdaptedOp::Conditional { .. } => {
+                AdaptedOp::Conditional(_) => {
                     return Err(ConversionError::ConditionalNotSupported { position: idx });
                 }
 
@@ -812,15 +825,11 @@ fn remap_op(op: &AdaptedOp, map: &HashMap<QubitId, QubitId>) -> AdaptedOp {
             basis: *basis,
             result: *result,
         },
-        AdaptedOp::Conditional {
-            condition,
-            if_one,
-            if_zero,
-        } => AdaptedOp::Conditional {
-            condition: *condition,
-            if_one: if_one.iter().map(|o| remap_op(o, map)).collect(),
-            if_zero: if_zero.iter().map(|o| remap_op(o, map)).collect(),
-        },
+        AdaptedOp::Conditional(cond) => AdaptedOp::Conditional(Box::new(ConditionalOp {
+            condition: cond.condition,
+            if_one: cond.if_one.iter().map(|o| remap_op(o, map)).collect(),
+            if_zero: cond.if_zero.iter().map(|o| remap_op(o, map)).collect(),
+        })),
         AdaptedOp::XorResult { target, source } => AdaptedOp::XorResult {
             target: *target,
             source: *source,

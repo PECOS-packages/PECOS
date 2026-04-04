@@ -41,6 +41,22 @@ pub enum MeasBasis {
     Y,
 }
 
+/// Data for a conditional operation.
+///
+/// Boxed inside `AdaptedOp::Conditional` to break the recursive enum layout.
+/// Without the Box, the compiler generates incorrect drop glue for the
+/// SmallVec union + recursive Vec combination at opt-level >= 2, causing
+/// a double-free or use-after-free during drop.
+#[derive(Clone, Debug)]
+pub struct ConditionalOp {
+    /// The measurement result to check.
+    pub condition: ResultId,
+    /// Operations to execute if result is 1 (true).
+    pub if_one: Vec<AdaptedOp>,
+    /// Operations to execute if result is 0 (false).
+    pub if_zero: Vec<AdaptedOp>,
+}
+
 /// An operation in an adapted sequence.
 ///
 /// This extends `AdaptedGate` to support the full range of operations
@@ -65,15 +81,9 @@ pub enum AdaptedOp {
         result: ResultId,
     },
 
-    /// Operations conditioned on a measurement result.
-    Conditional {
-        /// The measurement result to check.
-        condition: ResultId,
-        /// Operations to execute if result is 1 (true).
-        if_one: Vec<AdaptedOp>,
-        /// Operations to execute if result is 0 (false).
-        if_zero: Vec<AdaptedOp>,
-    },
+    /// Operations conditioned on a measurement result (boxed to break
+    /// recursive enum layout -- see `ConditionalOp` for details).
+    Conditional(Box<ConditionalOp>),
 
     /// XOR a measurement result into another (classical operation).
     ///
@@ -159,21 +169,21 @@ impl AdaptedOp {
     /// Create a conditional X gate (correction based on measurement).
     #[must_use]
     pub fn conditional_x(condition: ResultId, qubit: QubitId) -> Self {
-        Self::Conditional {
+        Self::Conditional(Box::new(ConditionalOp {
             condition,
             if_one: vec![Self::gate1(gates::X, qubit)],
             if_zero: vec![],
-        }
+        }))
     }
 
     /// Create a conditional Z gate (correction based on measurement).
     #[must_use]
     pub fn conditional_z(condition: ResultId, qubit: QubitId) -> Self {
-        Self::Conditional {
+        Self::Conditional(Box::new(ConditionalOp {
             condition,
             if_one: vec![Self::gate1(gates::Z, qubit)],
             if_zero: vec![],
-        }
+        }))
     }
 }
 
@@ -237,11 +247,9 @@ impl AdaptedSequence {
                 AdaptedOp::Measure { result, .. } | AdaptedOp::OutputResult { result } => {
                     max_id = max_id.max(result.0 as usize + 1);
                 }
-                AdaptedOp::Conditional {
-                    if_one, if_zero, ..
-                } => {
-                    max_id = max_id.max(Self::count_results(if_one));
-                    max_id = max_id.max(Self::count_results(if_zero));
+                AdaptedOp::Conditional(cond) => {
+                    max_id = max_id.max(Self::count_results(&cond.if_one));
+                    max_id = max_id.max(Self::count_results(&cond.if_zero));
                 }
                 AdaptedOp::XorResult { target, source } => {
                     max_id = max_id.max(target.0 as usize + 1);
@@ -341,14 +349,10 @@ mod tests {
     fn test_conditional_x() {
         let cond_x = AdaptedOp::conditional_x(ResultId(0), QubitId(1));
         match cond_x {
-            AdaptedOp::Conditional {
-                condition,
-                if_one,
-                if_zero,
-            } => {
-                assert_eq!(condition, ResultId(0));
-                assert_eq!(if_one.len(), 1);
-                assert!(if_zero.is_empty());
+            AdaptedOp::Conditional(cond) => {
+                assert_eq!(cond.condition, ResultId(0));
+                assert_eq!(cond.if_one.len(), 1);
+                assert!(cond.if_zero.is_empty());
             }
             _ => panic!("Expected Conditional"),
         }

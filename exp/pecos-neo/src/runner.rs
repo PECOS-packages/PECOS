@@ -1370,20 +1370,16 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             } => {
                 self.execute_measure(sim, *qubit, *basis, *result);
             }
-            AdaptedOp::Conditional {
-                condition,
-                if_one,
-                if_zero,
-            } => {
+            AdaptedOp::Conditional(cond) => {
                 let result_val = self
                     .results
-                    .get(condition.0 as usize)
+                    .get(cond.condition.0 as usize)
                     .copied()
                     .unwrap_or(false);
                 if result_val {
-                    self.execute_ops(sim, if_one, depth)?;
+                    self.execute_ops(sim, &cond.if_one, depth)?;
                 } else {
-                    self.execute_ops(sim, if_zero, depth)?;
+                    self.execute_ops(sim, &cond.if_zero, depth)?;
                 }
             }
             AdaptedOp::XorResult { target, source } => {

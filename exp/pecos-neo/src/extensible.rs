@@ -51,7 +51,7 @@ pub use gate_spec::{GateCategory, GateSpec};
 pub use noise_integration::{DecompositionNoiseStrategy, GateIdNoiseConfig, GateNoiseParams};
 pub use op_builder::{ConversionError, GateLibrary, OpBuilder, Subcircuit};
 pub use operation::{
-    AdaptedOp, AdaptedSequence, AncillaRequirements, MeasBasis, PrepBasis, ResultId,
+    AdaptedOp, AdaptedSequence, AncillaRequirements, ConditionalOp, MeasBasis, PrepBasis, ResultId,
 };
 pub use pauli::{Pauli, PauliString, StabilizerMeasurement, StabilizerPreparation};
 pub use plugin::{

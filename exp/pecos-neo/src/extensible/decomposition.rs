@@ -775,21 +775,17 @@ impl<'a> CircuitResolver<'a> {
                 });
             }
 
-            AdaptedOp::Conditional {
-                condition,
-                if_one,
-                if_zero,
-            } => {
-                let mut resolved_one = Vec::with_capacity(if_one.len());
-                let mut resolved_zero = Vec::with_capacity(if_zero.len());
-                for op in if_one {
+            AdaptedOp::Conditional(cond) => {
+                let mut resolved_one = Vec::with_capacity(cond.if_one.len());
+                let mut resolved_zero = Vec::with_capacity(cond.if_zero.len());
+                for op in &cond.if_one {
                     self.resolve_op(op, &mut resolved_one)?;
                 }
-                for op in if_zero {
+                for op in &cond.if_zero {
                     self.resolve_op(op, &mut resolved_zero)?;
                 }
                 out.push(ResolvedOp::Conditional {
-                    condition: *condition,
+                    condition: cond.condition,
                     if_one: resolved_one,
                     if_zero: resolved_zero,
                 });
@@ -1207,18 +1203,18 @@ mod tests {
 
     #[test]
     fn test_resolver_handles_conditionals() {
-        use super::super::{AdaptedOp, AdaptedSequence, ResultId};
+        use super::super::{AdaptedOp, AdaptedSequence, ConditionalOp, ResultId};
 
         let registry = DecompositionRegistry::new();
         let sim_support = GateSupportSet::from_iter([gates::X, gates::Z]);
 
         let resolver = CircuitResolver::new(&registry, &sim_support);
 
-        let seq = AdaptedSequence::new(vec![AdaptedOp::Conditional {
+        let seq = AdaptedSequence::new(vec![AdaptedOp::Conditional(Box::new(ConditionalOp {
             condition: ResultId(0),
             if_one: vec![AdaptedOp::gate1(gates::X, QubitId(0))],
             if_zero: vec![AdaptedOp::gate1(gates::Z, QubitId(0))],
-        }]);
+        }))]);
 
         let resolved = resolver.resolve(&seq).unwrap();
         assert_eq!(resolved.len(), 1);

@@ -444,15 +444,20 @@ pytest-dep:
 [private]
 check-cli:
     #!/usr/bin/env bash
+    NEEDS_INSTALL=false
     if ! command -v pecos >/dev/null 2>&1; then
-        echo "Error: PECOS CLI not found. Install with: just install-cli"
-        exit 1
+        NEEDS_INSTALL=true
+    else
+        expected=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+        installed=$(pecos --version 2>/dev/null | awk '{print $2}')
+        if [[ "$installed" != "$expected" ]]; then
+            echo "PECOS CLI outdated (installed: ${installed:-unknown}, expected: $expected)"
+            NEEDS_INSTALL=true
+        fi
     fi
-    expected=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-    installed=$(pecos --version 2>/dev/null | awk '{print $2}')
-    if [[ "$installed" != "$expected" ]]; then
-        echo "Warning: PECOS CLI outdated (installed: ${installed:-unknown}, expected: $expected)"
-        echo "  Update with: just install-cli"
+    if [ "$NEEDS_INSTALL" = true ]; then
+        echo "Installing PECOS CLI..."
+        cargo install --path crates/pecos-cli --force --quiet
     fi
 
 [private]

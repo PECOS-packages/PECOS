@@ -16,7 +16,7 @@ members = [
 version = "0.2.0-dev.0"
 edition = "2024"
 readme = "README.md"
-authors = ["The PECOS Developers", "Ciaran Ryan-Anderson<ciaranra@gmail.com>"]
+authors = ["The PECOS Developers", "Ciaran Ryan-Anderson <ciaranra@gmail.com>"]
 homepage = "https://pecos.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 license = "Apache-2.0"
@@ -207,19 +207,12 @@ pecos-qulacs = { version = "0.2.0-dev.0", path = "crates/pecos-qulacs" }
 # CppSparseSim simulator wrapper
 pecos-cppsparsestab = { version = "0.2.0-dev.0", path = "crates/pecos-cppsparsestab" }
 
-# Optimize build times
+# Faster linking on supported platforms (everything else is cargo's default)
 [profile.dev]
-opt-level = 0                # No optimization for faster compilation
-debug = true                 # Include debug info
-incremental = true           # Enable incremental compilation
-split-debuginfo = "unpacked" # Faster linking on supported platforms
+split-debuginfo = "unpacked"
 
-# For tests, use no optimization for the fastest compilation
 [profile.test]
-opt-level = 0                # No optimization for the fastest compilation
-debug = true                 # Include debug info
-incremental = true           # Enable incremental compilation
-split-debuginfo = "unpacked" # Faster linking on supported platforms
+split-debuginfo = "unpacked"
 
 # The release profile
 [profile.release]

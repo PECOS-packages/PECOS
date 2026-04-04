@@ -135,12 +135,12 @@ build profile="debug": check-cli setup-quiet sync-deps build-selene
         echo "Skipping Go build (go not found)"
     fi
 
-# Build PECOS without dependency setup or sync
+# Build PECOS without dependency setup or sync (profile: debug, release, native)
 [group('build')]
 build-lite profile="debug": check-cli build-selene
     {{pecos}} python build --profile {{profile}}
 
-# Build PECOS with CUDA support
+# Build PECOS with CUDA Python extras (profile: debug, release, native)
 [group('build')]
 build-cuda profile="debug": check-cli setup-quiet
     {{pecos}} python build --profile {{profile}} --cuda
@@ -243,7 +243,7 @@ clippy:
 fmt:
     cargo fmt --all -- --check
 
-# Run benchmarks (profile: release or native)
+# Run benchmarks (profile: release/native; features: optional; pattern: filter)
 [group('test')]
 bench profile="release" features="" pattern="":
     #!/usr/bin/env bash
@@ -280,7 +280,7 @@ clean *target:
 # Documentation
 # =============================================================================
 
-# Serve documentation and open in browser
+# Serve documentation locally (port: default 8000)
 [group('docs')]
 docs port="8000":
     uv run mkdocs serve -a "127.0.0.1:{{port}}"
@@ -329,7 +329,7 @@ check-cuda: check-cli
 # Julia Bindings
 # =============================================================================
 
-# Build Julia FFI library
+# Build Julia FFI library (profile: debug, release, native; rustflags: optional)
 [group('julia')]
 julia-build profile="release" rustflags="":
     #!/usr/bin/env bash
@@ -374,7 +374,7 @@ julia-lint: (julia-build "release")
 # Go Bindings
 # =============================================================================
 
-# Build Go FFI library
+# Build Go FFI library (profile: debug, release, native; rustflags: optional)
 [group('go')]
 go-build profile="release" rustflags="":
     #!/usr/bin/env bash

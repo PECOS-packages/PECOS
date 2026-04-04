@@ -691,10 +691,3 @@ go-info:
 go-clean:
     rm -f go/pecos/go.sum || true
 
-[private]
-clean-llvm:
-    uv run python scripts/clean.py --llvm
-
-[private]
-clean-cuda:
-    uv run python scripts/clean.py --cuda

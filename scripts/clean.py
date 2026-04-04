@@ -9,11 +9,9 @@ Usage:
 
 Options:
     --cache     Clean ~/.pecos/cache/ and ~/.pecos/tmp/
-    --deps      Clean ~/.pecos/deps/
-    --llvm      Clean ~/.pecos/llvm/ (WARNING: slow to reinstall)
-    --cuda      Clean ~/.pecos/cuda/ (WARNING: slow to reinstall)
+    --deps      Clean ~/.pecos/deps/ (LLVM, CUDA, cuQuantum)
     --selene    Clean only Selene plugin artifacts
-    --all       Clean everything including LLVM and CUDA
+    --all       Clean everything (project + selene + cache + deps)
     --dry-run   Show what would be deleted without deleting
 """
 
@@ -72,7 +70,6 @@ def find_and_remove_dirs(
 
     for path in root.rglob(name):
         if path.is_dir() and ".git" not in path.parts:
-            # Optionally skip .venv directories (third-party packages)
             if skip_venv and ".venv" in path.parts:
                 continue
             if rmtree_safe(path, dry_run=dry_run):
@@ -94,7 +91,6 @@ def find_and_remove_files(
 
     for path in root.rglob(pattern):
         if path.is_file():
-            # Optionally skip .venv directories (third-party packages)
             if skip_venv and ".venv" in path.parts:
                 continue
             if rm_safe(path, dry_run=dry_run):
@@ -200,11 +196,7 @@ def clean_selene(root: Path, *, dry_run: bool = False) -> None:
             print(f"  Removed {count} _dist directories")
 
 
-def clean_pecos_home(
-    what: str = "cache",
-    *,
-    dry_run: bool = False,
-) -> None:
+def clean_pecos_home(what: str, *, dry_run: bool = False) -> None:
     """Clean ~/.pecos/ directories."""
     pecos_home = Path.home() / ".pecos"
 
@@ -215,14 +207,6 @@ def clean_pecos_home(
     elif what == "deps":
         print("Cleaning ~/.pecos/deps/...")
         rmtree_safe(pecos_home / "deps", dry_run=dry_run)
-    elif what == "llvm":
-        print("Cleaning ~/.pecos/llvm/...")
-        if rmtree_safe(pecos_home / "llvm", dry_run=dry_run):
-            print("  Run 'just install-llvm' to reinstall LLVM")
-    elif what == "cuda":
-        print("Cleaning ~/.pecos/cuda/...")
-        if rmtree_safe(pecos_home / "cuda", dry_run=dry_run):
-            print("  Run 'just install-cuda' to reinstall CUDA")
 
 
 def main() -> int:
@@ -238,17 +222,7 @@ def main() -> int:
     parser.add_argument(
         "--deps",
         action="store_true",
-        help="Clean ~/.pecos/deps/",
-    )
-    parser.add_argument(
-        "--llvm",
-        action="store_true",
-        help="Clean ~/.pecos/llvm/ (WARNING: slow to reinstall)",
-    )
-    parser.add_argument(
-        "--cuda",
-        action="store_true",
-        help="Clean ~/.pecos/cuda/ (WARNING: slow to reinstall)",
+        help="Clean ~/.pecos/deps/ (LLVM, CUDA, cuQuantum)",
     )
     parser.add_argument(
         "--selene",
@@ -258,7 +232,7 @@ def main() -> int:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Clean everything including LLVM and CUDA",
+        help="Clean everything (project + selene + cache + deps)",
     )
     parser.add_argument(
         "--dry-run",
@@ -277,26 +251,18 @@ def main() -> int:
     if args.dry_run:
         print("DRY RUN - showing what would be deleted\n")
 
-    # Determine what to clean
     if args.all:
         clean_project(root, dry_run=args.dry_run)
         clean_selene(root, dry_run=args.dry_run)
         clean_pecos_home("cache", dry_run=args.dry_run)
         clean_pecos_home("deps", dry_run=args.dry_run)
-        clean_pecos_home("llvm", dry_run=args.dry_run)
-        clean_pecos_home("cuda", dry_run=args.dry_run)
     elif args.selene:
         clean_selene(root, dry_run=args.dry_run)
-    elif args.cache or args.deps or args.llvm or args.cuda:
-        # Only clean specified ~/.pecos/ subdirectories
+    elif args.cache or args.deps:
         if args.cache:
             clean_pecos_home("cache", dry_run=args.dry_run)
         if args.deps:
             clean_pecos_home("deps", dry_run=args.dry_run)
-        if args.llvm:
-            clean_pecos_home("llvm", dry_run=args.dry_run)
-        if args.cuda:
-            clean_pecos_home("cuda", dry_run=args.dry_run)
     else:
         # Default: clean project artifacts only
         clean_project(root, dry_run=args.dry_run)

@@ -288,6 +288,7 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
+            dnf install libffi-devel -y
             cargo run --release -p pecos --features cli -- install llvm --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&

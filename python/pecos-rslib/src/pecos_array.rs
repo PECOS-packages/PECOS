@@ -2299,7 +2299,7 @@ impl Array {
         Ok(shape)
     }
 
-    /// Flatten a nested sequence into a 1D vector
+    #[allow(clippy::too_many_arguments)] // type-discriminated output buffers for polymorphic parsing
     fn flatten_sequence(
         data: &Bound<'_, PyAny>,
         flat_f64: &mut Vec<f64>,
@@ -2474,7 +2474,7 @@ impl Array {
         Ok(())
     }
 
-    /// Extract value and convert to explicit dtype
+    #[allow(clippy::too_many_arguments)] // type-discriminated output buffers for polymorphic parsing
     fn extract_and_convert_value(
         data: &Bound<'_, PyAny>,
         target_type: ElemType,
@@ -2533,7 +2533,7 @@ impl Array {
         Ok(())
     }
 
-    /// Extract value and infer type automatically
+    #[allow(clippy::too_many_arguments)] // type-discriminated output buffers for polymorphic parsing
     fn extract_and_infer_type(
         data: &Bound<'_, PyAny>,
         elem_type: &mut ElemType,

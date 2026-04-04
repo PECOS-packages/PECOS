@@ -544,6 +544,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// lower overhead. For larger states, the two-pointer merge produces two
     /// sorted output streams (bit=0 and bit=1 results), which are merged in O(k)
     /// instead of requiring an O(k log k) sort.
+    #[allow(clippy::too_many_arguments)] // 2x2 unitary matrix elements (re/im pairs)
     #[inline]
     fn apply_single_qubit_gate(
         &mut self,
@@ -911,6 +912,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     }
 
     /// Binary search path for small states (<= 8 amplitudes).
+    #[allow(clippy::too_many_arguments)] // SoA hot path: src/dst arrays + 2x2 unitary elements
     #[inline]
     fn apply_gate_binary_search(
         src_indices: &[usize],

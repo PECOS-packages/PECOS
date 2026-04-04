@@ -1161,7 +1161,7 @@ impl<'a> GadgetChecker<'a> {
         )
     }
 
-    /// Helper to analyze internal faults for decoder analysis.
+    #[allow(clippy::too_many_arguments)] // accumulator pattern with mutable counters
     fn analyze_decoder_internal(
         &self,
         input_faults: &[(usize, u8)],

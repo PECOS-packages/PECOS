@@ -2576,7 +2576,7 @@ mod tests {
         );
     }
 
-    /// Compare CH state against expected reference values.
+    #[allow(clippy::too_many_arguments)] // test helper comparing all CH form components
     fn assert_ch_state_matches(
         ch: &CHForm,
         label: &str,

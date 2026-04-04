@@ -417,6 +417,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)] // tableau bitwise ops need separate X/Z arrays + dimensions
     #[inline(always)]
     fn apply_cx_to_gens(
         row_x: &mut [u64],
@@ -504,6 +505,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)] // tableau bitwise ops need separate X/Z arrays + dimensions
     #[inline(always)]
     fn apply_h_to_gens(
         row_x: &mut [u64],
@@ -578,6 +580,7 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)] // tableau bitwise ops need separate X/Z arrays + dimensions
     #[inline(always)]
     fn apply_s_to_gens(
         row_x: &mut [u64],

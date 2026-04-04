@@ -1006,6 +1006,7 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// * `visited` - Work buffer for visited nodes (reusable)
     /// * `active_qubits` - Work buffer for active qubits (reusable)
     /// * `heap` - Work heap for traversal (reusable)
+    #[allow(clippy::too_many_arguments)] // reusable work buffers passed to avoid allocation
     pub fn propagate_from_measurement_generic<R: InfluenceRecorder>(
         &self,
         meas_node: usize,

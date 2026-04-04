@@ -502,11 +502,6 @@ pytest-selene:
 # Cleaning
 # =============================================================================
 
-# Clean Selene plugin build artifacts
-[group('clean')]
-clean-selene:
-    uv run python scripts/clean.py --selene
-
 # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
 [group('clean')]
 clean-cache:

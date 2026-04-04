@@ -104,11 +104,10 @@ Note: For the Rust side of the project, you can use `cargo` to run tests, benchm
 Clean commands are cross-platform (Windows, macOS, Linux):
 
 ```sh
-just clean              # Clean project build artifacts
-just clean-selene       # Clean Selene plugin artifacts only
+just clean              # Clean project build artifacts (includes selene)
 just clean-cache        # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
-just clean-deps         # Clean ~/.pecos/deps/
-just clean-all          # Everything: artifacts, selene, cache, deps, legacy paths
+just clean-deps         # Clean ~/.pecos/deps/ (LLVM, CUDA, cuQuantum)
+just clean-all          # Everything above
 ```
 
 You can also run the cleaning script directly:

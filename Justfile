@@ -193,56 +193,43 @@ pytest-all: pytest pytest-numpy pytest-selene
 # Linting / Formatting
 # =============================================================================
 
-# Run all quality checks (fmt + clippy + pre-commit + Julia/Go if available)
+# Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint: fmt clippy
+lint mode="fix":
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "==> Running pre-commit..."
-    uv run pre-commit run --all-files
-
-    if command -v julia >/dev/null 2>&1; then
-        echo "Julia detected, running Julia formatting check and linting..."
-        just julia-fmt-check
-        just julia-lint
+    if [ "{{mode}}" = "check" ]; then
+        echo "==> Checking Rust formatting..."
+        cargo fmt --all -- --check
+        echo "==> Running clippy..."
+        cargo clippy --workspace --all-targets -- -D warnings
+        echo "==> Running pre-commit..."
+        uv run pre-commit run --all-files
+        if command -v julia >/dev/null 2>&1; then
+            echo "==> Checking Julia formatting..."
+            just julia-fmt-check
+            just julia-lint
+        fi
+        if command -v go >/dev/null 2>&1; then
+            echo "==> Checking Go formatting..."
+            just go-fmt-check
+            just go-lint
+        fi
     else
-        echo "Julia not detected, skipping Julia linting"
+        echo "==> Fixing Rust formatting and clippy..."
+        cargo fmt --all
+        cargo clippy --workspace --all-targets --fix --allow-staged --allow-dirty -- -D warnings
+        echo "==> Running pre-commit..."
+        uv run pre-commit run --all-files || true
+        if command -v julia >/dev/null 2>&1; then
+            echo "==> Fixing Julia formatting..."
+            just julia-fmt
+        fi
+        if command -v go >/dev/null 2>&1; then
+            echo "==> Fixing Go formatting..."
+            just go-fmt
+        fi
     fi
-
-    if command -v go >/dev/null 2>&1; then
-        echo "Go detected, running Go formatting check and linting..."
-        just go-fmt-check
-        just go-lint
-    else
-        echo "Go not detected, skipping Go linting"
-    fi
-
-# Fix all auto-fixable linting issues
-[group('lint')]
-lint-fix:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Fixing Rust formatting and clippy issues..."
-    cargo fmt --all
-    cargo clippy --workspace --all-targets --fix --allow-staged --allow-dirty -- -D warnings
-    echo ""
-    echo "Running pre-commit fixes..."
-    uv run pre-commit run --all-files || true
-    echo ""
-    if command -v julia >/dev/null 2>&1; then
-        echo "Fixing Julia formatting..."
-        just julia-fmt
-    else
-        echo "Julia not detected, skipping Julia formatting"
-    fi
-    if command -v go >/dev/null 2>&1; then
-        echo "Fixing Go formatting..."
-        just go-fmt
-    else
-        echo "Go not detected, skipping Go formatting"
-    fi
-    echo ""
-    echo "Linting fixes applied! Run 'just lint' to check for remaining issues."
 
 # Run cargo check
 [group('lint')]
@@ -285,7 +272,7 @@ dev: build test
 
 # Full dev cycle: clean + build + test + lint (pre-merge)
 [group('dev')]
-dev-full: clean build test lint
+dev-full: clean build test (lint "check")
 
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('dev')]

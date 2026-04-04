@@ -267,9 +267,9 @@ bench profile="release" features="" pattern="":
 [group('dev')]
 dev: build test
 
-# Build + test + lint check (run before opening a PR)
+# Clean build + test + lint check (run before opening a PR)
 [group('dev')]
-check-all: build test (lint "check")
+check-all: clean build test (lint "check")
 
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('clean')]
@@ -485,13 +485,13 @@ build-selene:
     for DIR in python/selene-plugins/pecos-selene-*/; do
         PKG=$(basename "$DIR")
         DEST="$DIR/python/${PKG//-/_}/_dist/lib/"
-        SO=$(find "$DEST" -name "*.so" 2>/dev/null | head -1)
+        SO=$(find "$DEST" -name "*.so" 2>/dev/null | head -1 || true)
         if [ -z "$SO" ]; then
             NEEDS_BUILD=true
             break
         fi
         # Check if any Rust source is newer than the installed .so
-        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$SO" 2>/dev/null | head -1)
+        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$SO" 2>/dev/null | head -1 || true)
         if [ -n "$NEWER" ]; then
             NEEDS_BUILD=true
             break

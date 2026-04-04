@@ -149,7 +149,7 @@ build-cuda profile="debug": check-cli setup-quiet
 # Testing
 # =============================================================================
 
-# Run Python tests (core)
+# Run Python tests (or: just pytest <custom args>)
 [group('test')]
 pytest *args:
     #!/usr/bin/env bash
@@ -157,8 +157,10 @@ pytest *args:
     if [ -n "{{args}}" ]; then
         uv run pytest {{args}}
     else
-        uv run pytest python/pecos-rslib/tests -m "not performance and not numpy"
-        uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not numpy"
+        uv run pytest python/pecos-rslib/tests -m "not performance"
+        uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
+        uv run pytest python/quantum-pecos/tests -m "not optional_dependency"
+        uv run pytest python/selene-plugins
     fi
 
 # Run Rust tests (CUDA-aware, release mode)
@@ -168,7 +170,7 @@ rstest: check-cli
 
 # Run all tests (Rust + Python + Julia + Go if available)
 [group('test')]
-test: rstest pytest-all
+test: rstest pytest
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
@@ -183,11 +185,6 @@ test: rstest pytest-all
     else
         echo "Go not detected, skipping Go tests"
     fi
-
-# Run all Python tests (core + numpy compat + selene)
-[group('test')]
-pytest-all: pytest pytest-numpy pytest-selene
-    @echo "All Python tests completed"
 
 # =============================================================================
 # Linting / Formatting

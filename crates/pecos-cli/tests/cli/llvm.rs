@@ -50,7 +50,6 @@ fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compilation succeeded (checked above). Log output may or may not
     // be present depending on log level propagation -- don't assert on it.
-    );
 
     // Test execution
     let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))

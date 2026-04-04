@@ -223,35 +223,30 @@ strip = true      # Strip debug symbols for smaller binaries
 inherits = "release"
 
 [workspace.lints.clippy]
-# For more details see: https://doc.rust-lang.org/clippy/lints.html
 suspicious = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-# restriction = "warn"
 cargo = { level = "warn", priority = -1 }
-multiple-crate-versions = "allow"         # TODO: remove when possible
-# Allow more function arguments for PyO3 bindings (many parameters needed for Python interop)
-too-many-arguments = "allow"
-# Numeric casts are pervasive in quantum sim code; values are known to fit
+# Dependency version conflicts we can't control
+multiple-crate-versions = "allow"
+# Numeric casts are pervasive in quantum sim code (qubit indices, bitwise ops);
+# values are bounded by construction. Localize #[allow] for non-obvious cases.
 cast-possible-truncation = "allow"
 cast-precision-loss = "allow"
 cast-sign-loss = "allow"
 cast-possible-wrap = "allow"
-# Math/physics code uses short, similar variable names (sx/sz, stab/destab, x/z/r/s/p)
+# Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
 similar-names = "allow"
 many-single-char-names = "allow"
-# Complex quantum algorithms are inherently long
-too-many-lines = "allow"
-# Often needed for trait conformance or API consistency
-needless-pass-by-value = "allow"
-# Error conditions and panics are self-evident from types
-missing-errors-doc = "allow"
-missing-panics-doc = "allow"
-# Common pattern in this codebase for local helpers
-items-after-statements = "allow"
-# Trait implementations require &self even when unused
-unused-self = "allow"
-# Prevents false positives on type names matching module
+# Type names matching module names is common (e.g., pecos_core::PecosError)
 module-name-repetitions = "allow"
+# TODO: localize these allows to specific crates/modules and fix where possible
+needless-pass-by-value = "allow"  # 126 hits -- many are trait conformance, review individually
+items-after-statements = "allow"  # 50 hits -- local helper pattern, review individually
+missing-errors-doc = "allow"      # 35 hits -- need meaningful error docs
+missing-panics-doc = "allow"      # 31 hits -- need meaningful panic docs
+too-many-arguments = "allow"      # 12 hits -- mostly PyO3 bindings
+too-many-lines = "allow"          # ~40 hits -- long functions to refactor
+unused-self = "allow"             # 41 hits -- review: make associated fn or add local allow

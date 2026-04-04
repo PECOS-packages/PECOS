@@ -267,9 +267,9 @@ bench profile="release" features="" pattern="":
 [group('dev')]
 dev: build test
 
-# Clean build + test + lint check (run before opening a PR)
+# Build + test + lint check (run before opening a PR)
 [group('dev')]
-check-all: clean build test (lint "check")
+check-all: build test (lint "check")
 
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('clean')]

@@ -815,13 +815,13 @@ impl InfoPrinter {
 
         // Program Formats
         info_lines.push(self.cyan("Program Formats:"));
-        let (line, missing) = self.capability("QASM circuits", cfg!(feature = "qasm"));
+        let (line, missing) = self.capability("QASM circuits", cfg!(feature = "runtime"));
         info_lines.push(format!("  {line}"));
         has_missing |= missing;
-        let (line, missing) = self.capability("PHIR/JSON programs", cfg!(feature = "phir"));
+        let (line, missing) = self.capability("PHIR/JSON programs", cfg!(feature = "runtime"));
         info_lines.push(format!("  {line}"));
         has_missing |= missing;
-        let (line, missing) = self.capability("QIS programs", cfg!(feature = "llvm"));
+        let (line, missing) = self.capability("QIS programs", cfg!(feature = "runtime"));
         info_lines.push(format!("  {line}"));
         has_missing |= missing;
         info_lines.push(String::new());
@@ -838,10 +838,10 @@ impl InfoPrinter {
             self.green("[x]"),
             self.dim("(built-in)")
         ));
-        let (line, missing) = self.capability("QuEST", cfg!(feature = "quest"));
+        let (line, missing) = self.capability("QuEST", cfg!(feature = "runtime"));
         info_lines.push(format!("  {line}"));
         has_missing |= missing;
-        let (line, missing) = self.capability("Qulacs", cfg!(feature = "qulacs"));
+        let (line, missing) = self.capability("Qulacs", cfg!(feature = "runtime"));
         info_lines.push(format!("  {line}"));
         has_missing |= missing;
         info_lines.push(String::new());
@@ -901,7 +901,7 @@ fn run_doctor() {
     );
 
     // Check 2: QASM support
-    let qasm_ok = cfg!(feature = "qasm");
+    let qasm_ok = cfg!(feature = "runtime");
     print_check(
         "QASM support",
         qasm_ok,
@@ -912,7 +912,7 @@ fn run_doctor() {
     }
 
     // Check 3: PHIR support
-    let phir_ok = cfg!(feature = "phir");
+    let phir_ok = cfg!(feature = "runtime");
     print_check(
         "PHIR/JSON support",
         phir_ok,
@@ -923,7 +923,7 @@ fn run_doctor() {
     }
 
     // Check 4: Selene runtime
-    let selene_ok = cfg!(feature = "llvm");
+    let selene_ok = cfg!(feature = "runtime");
     print_check(
         "Selene runtime",
         selene_ok,
@@ -935,7 +935,7 @@ fn run_doctor() {
     );
 
     // Check 5: LLVM/QIS support
-    let llvm_ok = cfg!(feature = "llvm");
+    let llvm_ok = cfg!(feature = "runtime");
     if llvm_ok {
         print_check("LLVM/QIS support", true, "available");
     } else {

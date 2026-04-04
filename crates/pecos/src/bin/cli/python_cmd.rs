@@ -130,6 +130,16 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         }
         cmd.env("PATH", &path_with_venv);
         cmd.env_remove("CONDA_PREFIX");
+        // On macOS, prevent Homebrew library paths from polluting the linker
+        // (causes @rpath/libc++.1.dylib errors in the built .so)
+        #[cfg(target_os = "macos")]
+        {
+            cmd.env_remove("LIBRARY_PATH");
+            cmd.env_remove("LD_LIBRARY_PATH");
+            cmd.env_remove("DYLD_LIBRARY_PATH");
+            cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
+            cmd.env("LIBRARY_PATH", "/usr/lib");
+        }
 
         let status = cmd.status();
         match status {

@@ -859,7 +859,6 @@ impl InfoPrinter {
             "{}",
             self.dim("Documentation: https://github.com/PECOS-Developers/PECOS")
         );
-
     }
 }
 
@@ -878,7 +877,11 @@ fn run_doctor() {
     let llvm_config = pecos_build::llvm::config::validate_llvm_config();
     if let Some(ref path) = llvm_config.detected_path {
         let version = get_llvm_version(path).unwrap_or_else(|_| "unknown".into());
-        print_check("installed", true, &format!("{version} at {}", path.display()));
+        print_check(
+            "installed",
+            true,
+            &format!("{version} at {}", path.display()),
+        );
     } else {
         print_check("installed", false, "not found");
         problems.push("LLVM 14 not installed. Run: pecos install llvm".into());
@@ -900,14 +903,15 @@ fn run_doctor() {
                 false,
                 &format!("path exists but is not valid LLVM 14: {}", path.display()),
             );
-            problems.push("LLVM path in .cargo/config.toml is not valid LLVM 14. Run: pecos llvm configure".into());
+            problems.push(
+                "LLVM path in .cargo/config.toml is not valid LLVM 14. Run: pecos llvm configure"
+                    .into(),
+            );
         }
     } else {
         print_check(".cargo/config.toml", false, "LLVM_SYS_140_PREFIX not set");
         if llvm_config.detected_path.is_some() {
-            problems.push(
-                "LLVM installed but not configured. Run: pecos llvm configure".into(),
-            );
+            problems.push("LLVM installed but not configured. Run: pecos llvm configure".into());
         }
     }
 
@@ -921,7 +925,9 @@ fn run_doctor() {
                 false,
                 &format!("set but path missing: {env_val}"),
             );
-            problems.push(format!("LLVM_SYS_140_PREFIX={env_val} but path does not exist"));
+            problems.push(format!(
+                "LLVM_SYS_140_PREFIX={env_val} but path does not exist"
+            ));
         }
     }
     println!();
@@ -944,7 +950,12 @@ fn run_doctor() {
 
     // Check pecos is importable
     match std::process::Command::new("uv")
-        .args(["run", "python", "-c", "import pecos; print(pecos.__version__)"])
+        .args([
+            "run",
+            "python",
+            "-c",
+            "import pecos; print(pecos.__version__)",
+        ])
         .output()
     {
         Ok(output) if output.status.success() => {
@@ -955,9 +966,7 @@ fn run_doctor() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let short = stderr.lines().last().unwrap_or("import failed");
             print_check("import pecos", false, short);
-            problems.push(
-                "Cannot import pecos. Run: just build (or pecos python build)".into(),
-            );
+            problems.push("Cannot import pecos. Run: just build (or pecos python build)".into());
         }
         _ => {
             print_check("import pecos", false, "uv run failed");
@@ -980,9 +989,7 @@ fn run_doctor() {
         }
         Ok(_) => {
             print_check("pecos_rslib", false, "native library failed to load");
-            hints.push(
-                "pecos_rslib not loadable. Rebuild with: just build".into(),
-            );
+            hints.push("pecos_rslib not loadable. Rebuild with: just build".into());
         }
         _ => {}
     }
@@ -993,7 +1000,11 @@ fn run_doctor() {
     if let Some(cuda_path) = find_cuda() {
         let version =
             pecos_build::cuda::get_cuda_version(&cuda_path).unwrap_or_else(|_| "unknown".into());
-        print_check("CUDA toolkit", true, &format!("{version} at {}", cuda_path.display()));
+        print_check(
+            "CUDA toolkit",
+            true,
+            &format!("{version} at {}", cuda_path.display()),
+        );
     } else {
         print_check("CUDA toolkit", false, "not found");
         hints.push("Install CUDA with: pecos install cuda".into());

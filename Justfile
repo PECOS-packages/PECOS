@@ -270,9 +270,9 @@ bench profile="release" features="" pattern="":
 [group('dev')]
 dev: build test
 
-# Pre-merge check: clean + build + test + lint (run before opening a PR)
+# Clean build + test + lint check (run before opening a PR)
 [group('dev')]
-premerge: clean build test (lint "check")
+check-all: clean build test (lint "check")
 
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('dev')]

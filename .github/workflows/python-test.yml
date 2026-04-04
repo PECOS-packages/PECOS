@@ -158,7 +158,7 @@ jobs:
 
     # Now install CLI (LLVM env is set, inkwell can find it)
     - name: Install PECOS CLI
-      run: cargo install --path crates/pecos-cli
+      run: cargo install --path crates/pecos-cli --force
 
     # macOS: prevent Homebrew library path issues
     - name: Configure macOS environment

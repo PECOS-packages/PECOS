@@ -68,7 +68,7 @@ jobs:
         run: |
           uv lock --project .
           uv sync --project . --all-packages
-          cargo install --path crates/pecos-cli
+          cargo install --path crates/pecos-cli --force
           pecos python build --profile debug
 
       - name: Test working documentation examples

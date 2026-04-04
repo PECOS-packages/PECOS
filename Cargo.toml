@@ -30,24 +30,41 @@ keywords = [
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
-pyo3 = { version = "0.28", features = ["extension-module"] }
-rayon = "1"
-clap = { version = "4", features = ["derive"] }
-clap_complete = "4.5"
+
+# --- Serialization & config ---
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-parking_lot = "0.12"
-criterion = "0.8"
-libloading = "0.9"
+ron = "0.12"
+toml = "1"
+
+# --- CLI ---
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4.5"
+cargo_metadata = "0.23"
+
+# --- Python bindings ---
+pyo3 = { version = "0.28", features = ["extension-module"] }
+
+# --- C/C++ FFI & build ---
+bindgen = "0.72"
+cc = "1"
+cxx = "1"
+cxx-build = "1"
 libc = "0.2"
-bytemuck = { version = "1", features = ["derive"] }
-bitflags = "2"
-dyn-clone = "1"
-regex = "1"
-pest = "2"
-pest_derive = "2"
-tempfile = "3"
-assert_cmd = "2"
+libloading = "0.9"
+
+# --- LLVM ---
+inkwell = "0.8"
+
+# --- HUGR / tket ---
+tket = { version = "0.17", default-features = false }
+tket-qsystem = { version = "0.23", default-features = false }
+# Pin hugr-core to 0.25.6: hugr-core 0.25.7 widened strum to >=0.27.2,<0.29 which lets the
+# resolver pick strum 0.28, conflicting with tket 0.17 (requires strum ^0.27).
+# Remove this pin once tket updates to strum 0.28+.
+hugr-core = "=0.25.6"
+
+# --- WebAssembly ---
 wasmtime = { version = "42", default-features = false, features = [
   "cranelift",
   "runtime",
@@ -55,158 +72,135 @@ wasmtime = { version = "42", default-features = false, features = [
   "std",
 ] }
 wat = "1"
-ron = "0.12"
-tket = { version = "0.17", default-features = false }
-tket-qsystem = { version = "0.23", default-features = false }
-# Pin hugr-core to 0.25.6: hugr-core 0.25.7 widened strum to >=0.27.2,<0.29 which lets the
-# resolver pick strum 0.28, conflicting with tket 0.17 (requires strum ^0.27).
-# hugr-core 0.25.6 uses strum ^0.27.2 so there's no conflict.
-# Remove this pin once tket updates to strum 0.28+.
-hugr-core = "=0.25.6"
-bindgen = "0.72"
-cc = "1"
-cxx = "1"
-cxx-build = "1"
-reqwest = { version = "0.13", default-features = false, features = [
-  "blocking",
-  "rustls",
-] }
-flate2 = "1"
-sha2 = "0.10"
-dirs = "6"
-inkwell = "0.8"
-cargo_metadata = "0.23"
-random_tester = "0.1"
-toml = "1"
-wide = "1"
 
-# Archive handling
-xz2 = "0.1"
-bzip2 = "0.6"
-tar = "0.4"
-sevenz-rust = "0.6"
+# --- Parsing ---
+pest = "2"
+pest_derive = "2"
+regex = "1"
 
-# Logging
-log = "0.4"
-env_logger = "0.11"
-
-# Error handling
-anyhow = "1"
-thiserror = "2"
-
-# ZX calculus
-quizx = "0.3"
-
-# Small vector optimization
-smallvec = "1"
-
-# Iterator utilities
-itertools = "0.14"
-
-# Numerical computing
+# --- Numerical computing ---
 levenberg-marquardt = "0.15"
 nalgebra = "0.34"
-rustworkx-core = "0.17"
 num = "0.4"
 num-complex = "0.4"
 num-traits = "0.2"
 num-bigint = { version = "0.4", features = ["serde"] }
-bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
+wide = "1"
 
-# RNG
+# --- RNG ---
 fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
 rapidhash = { version = "4", features = ["rng"] }
 
-# Concurrency
-crossbeam-channel = "0.5"
+# --- Data structures ---
+bitflags = "2"
+bitvec = { version = "1", features = ["serde"] }
+bytemuck = { version = "1", features = ["derive"] }
+dyn-clone = "1"
+itertools = "0.14"
+smallvec = "1"
 
-# GPU
+# --- Concurrency ---
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+rayon = "1"
+
+# --- GPU ---
 wgpu = "28"
 pollster = "0.4"
 
-# Testing
+# --- Graph algorithms ---
+petgraph = "0.8"
+rustworkx-core = "0.17"
+
+# --- Networking & archive handling ---
+reqwest = { version = "0.13", default-features = false, features = [
+  "blocking",
+  "rustls",
+] }
+flate2 = "1"
+sha2 = "0.10"
+tar = "0.4"
+xz2 = "0.1"
+bzip2 = "0.6"
+sevenz-rust = "0.6"
+
+# --- Logging ---
+log = "0.4"
+env_logger = "0.11"
+
+# --- Error handling ---
+anyhow = "1"
+thiserror = "2"
+
+# --- Filesystem ---
+dirs = "6"
+tempfile = "3"
+
+# --- Testing ---
 approx = "0.5"
+assert_cmd = "2"
+criterion = "0.8"
 paste = "1"
+random_tester = "0.1"
 
-# Internal crates
-pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }
-pecos-core = { version = "0.2.0-dev.0", path = "crates/pecos-core" }
-pecos = { version = "0.2.0-dev.0", path = "crates/pecos", default-features = false }
-pecos-programs = { version = "0.2.0-dev.0", path = "crates/pecos-programs" }
-pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
-pecos-qasm = { version = "0.2.0-dev.0", path = "crates/pecos-qasm" }
-pecos-phir-json = { version = "0.2.0-dev.0", path = "crates/pecos-phir-json" }
-pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
-pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
-pecos-phir = { version = "0.2.0-dev.0", path = "crates/pecos-phir" }
-pecos-qec = { version = "0.2.0-dev.0", path = "crates/pecos-qec" }
-pecos-random = { version = "0.2.0-dev.0", path = "crates/pecos-random" }
-pecos-qis-ffi = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi" }
-pecos-qis-ffi-types = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi-types" }
-pecos-qis = { version = "0.2.0-dev.0", path = "crates/pecos-qis" }
-pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
-pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
-pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
-pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
-pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
-pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
-pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }
-pecos-quantum = { version = "0.2.0-dev.0", path = "crates/pecos-quantum" }
-pecos-zx = { version = "0.2.0-dev.0", path = "exp/pecos-zx" }
-pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
-pecos-cuquantum = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum" }
-pecos-neo = { version = "0.2.0-dev.0", path = "exp/pecos-neo" }
-pecos-cuquantum-sys = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum-sys" }
+# --- ZX calculus ---
+quizx = "0.3"
 
-# Decoder crates
-pecos-decoder-core = { version = "0.2.0-dev.0", path = "crates/pecos-decoder-core" }
-pecos-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-decoders" }
-
-# ldpc decoder wrapper (https://github.com/quantumgizmos/ldpc)
-pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
-
-# PyMatching decoder wrapper (https://github.com/oscarhiggott/PyMatching)
-pecos-pymatching = { version = "0.2.0-dev.0", path = "crates/pecos-pymatching" }
-
-# Tesseract decoder wrapper (https://github.com/quantumlib/tesseract-decoder)
-pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }
-
-# Chromobius decoder wrapper (https://github.com/quantumlib/chromobius)
-pecos-chromobius = { version = "0.2.0-dev.0", path = "crates/pecos-chromobius" }
-
-# Fusion Blossom decoder wrapper (pure Rust MWPM)
-pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
-
-# Relay BP decoder wrapper (pure Rust BP for qLDPC codes)
-pecos-relay-bp = { version = "0.2.0-dev.0", path = "crates/pecos-relay-bp" }
-
-# Fusion Blossom library (pure Rust MWPM decoder)
+# --- Decoder libraries ---
 fusion-blossom = "0.2"
-
-# Relay BP library (pure Rust belief propagation decoder)
 relay-bp = "0.2"
-
-# ndarray 0.16 for relay-bp compatibility (relay-bp uses ndarray 0.16, PECOS uses 0.17)
+# ndarray 0.16 for relay-bp compat (relay-bp uses ndarray 0.16, PECOS uses 0.17)
 ndarray-016 = { package = "ndarray", version = "0.16" }
-
-# sprs for sparse matrix construction (pinned to 0.11.3 for ndarray 0.16 compat with relay-bp)
+# sprs pinned to 0.11.3 for ndarray 0.16 compat with relay-bp
 sprs = "=0.11.3"
 
-# petgraph for graph algorithms (used by pymatching)
-petgraph = "0.8"
+# =============================================================================
+# Internal crates (alphabetical)
+# =============================================================================
 
-# QuEST simulator wrapper (https://github.com/quest-kit/QuEST)
-pecos-quest = { version = "0.2.0-dev.0", path = "crates/pecos-quest" }
-
-# Qulacs simulator wrapper (https://github.com/qulacs/qulacs)
-pecos-qulacs = { version = "0.2.0-dev.0", path = "crates/pecos-qulacs" }
-
-# CppSparseSim simulator wrapper
+pecos = { version = "0.2.0-dev.0", path = "crates/pecos", default-features = false }
+pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }
+pecos-chromobius = { version = "0.2.0-dev.0", path = "crates/pecos-chromobius" }
+pecos-core = { version = "0.2.0-dev.0", path = "crates/pecos-core" }
 pecos-cppsparsestab = { version = "0.2.0-dev.0", path = "crates/pecos-cppsparsestab" }
+pecos-cuquantum = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum" }
+pecos-cuquantum-sys = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum-sys" }
+pecos-decoder-core = { version = "0.2.0-dev.0", path = "crates/pecos-decoder-core" }
+pecos-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-decoders" }
+pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
+pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
+pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
+pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
+pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
+pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
+pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
+pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
+pecos-neo = { version = "0.2.0-dev.0", path = "exp/pecos-neo" }
+pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }
+pecos-phir = { version = "0.2.0-dev.0", path = "crates/pecos-phir" }
+pecos-phir-json = { version = "0.2.0-dev.0", path = "crates/pecos-phir-json" }
+pecos-programs = { version = "0.2.0-dev.0", path = "crates/pecos-programs" }
+pecos-pymatching = { version = "0.2.0-dev.0", path = "crates/pecos-pymatching" }
+pecos-qasm = { version = "0.2.0-dev.0", path = "crates/pecos-qasm" }
+pecos-qec = { version = "0.2.0-dev.0", path = "crates/pecos-qec" }
+pecos-qis = { version = "0.2.0-dev.0", path = "crates/pecos-qis" }
+pecos-qis-ffi = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi" }
+pecos-qis-ffi-types = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi-types" }
+pecos-quantum = { version = "0.2.0-dev.0", path = "crates/pecos-quantum" }
+pecos-quest = { version = "0.2.0-dev.0", path = "crates/pecos-quest" }
+pecos-qulacs = { version = "0.2.0-dev.0", path = "crates/pecos-qulacs" }
+pecos-random = { version = "0.2.0-dev.0", path = "crates/pecos-random" }
+pecos-relay-bp = { version = "0.2.0-dev.0", path = "crates/pecos-relay-bp" }
+pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
+pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
+pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
+pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }
+pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
+pecos-zx = { version = "0.2.0-dev.0", path = "exp/pecos-zx" }
 
 # Faster linking on supported platforms (everything else is cargo's default)
 [profile.dev]

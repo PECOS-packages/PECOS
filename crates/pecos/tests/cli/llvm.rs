@@ -48,8 +48,20 @@ fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         "Compilation should succeed. Error: {stderr}"
     );
 
-    // Compilation succeeded (checked above). Log output may or may not
-    // be present depending on log level propagation -- don't assert on it.
+    // Verify compilation worked by checking logs
+    // With the new QIS control engine, we may see different log messages
+    assert!(
+        stderr.contains("Starting compilation")
+            || stderr.contains("Compilation successful")
+            || stderr.contains("compilation verified")
+            || stderr.contains("engine ready for execution")
+            || stderr.contains("Loading interface")
+            || stderr.contains("Found built Selene runtime")
+            || stderr.contains("Using Selene simple runtime")
+            || stderr.contains("Building QisInterface from Qis using JIT compiler")
+            || stderr.contains("JIT interface created")
+            || stderr.contains("Creating QisEngine"),
+        "Should show compilation or loading activity. Got stderr: {stderr}"
     );
 
     // Test execution

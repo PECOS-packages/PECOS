@@ -3,8 +3,8 @@ use env_logger::Env;
 
 mod cli;
 use cli::{
-    CuQuantumCommands, CudaCommands, DepsCommands, FeaturesCommands, GoCommands, GpuCommands,
-    JuliaCommands, LlvmCommands, PythonCommands, RustCommands, SeleneCommands,
+    CuQuantumCommands, CudaCommands, DepsCommands, FeaturesCommands, GpuCommands, LlvmCommands,
+    PythonCommands, RustCommands, SeleneCommands,
 };
 
 // Runtime-only imports
@@ -97,17 +97,6 @@ enum Commands {
     Gpu {
         #[command(subcommand)]
         command: GpuCommands,
-    },
-    /// Julia build and test commands
-    #[command(visible_alias = "jl")]
-    Julia {
-        #[command(subcommand)]
-        command: JuliaCommands,
-    },
-    /// Go build and test commands
-    Go {
-        #[command(subcommand)]
-        command: GoCommands,
     },
     /// LLVM 14 inspection, validation, and configuration
     Llvm {
@@ -728,8 +717,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Cuda { command } => cli::run_cuda(command.clone())?,
         Commands::CuQuantum { command } => cli::run_cuquantum(command.clone())?,
         Commands::Gpu { command } => cli::run_gpu(command)?,
-        Commands::Julia { command } => cli::run_julia(command)?,
-        Commands::Go { command } => cli::run_go(command)?,
         Commands::Llvm { command } => cli::run_llvm(command.clone())?,
         Commands::Selene { command } => cli::run_selene(command.clone())?,
         Commands::Features { command } => cli::run_features(command.clone())?,

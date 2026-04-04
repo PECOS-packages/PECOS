@@ -74,8 +74,8 @@ list-deps: check-cli
 [group('build')]
 build profile="debug": check-cli setup-quiet sync-deps build-selene
     {{pecos}} python build --profile {{profile}}
-    @command -v julia >/dev/null 2>&1 && {{pecos}} julia build --profile {{profile}} || true
-    @command -v go >/dev/null 2>&1 && {{pecos}} go build --profile {{profile}} || true
+    @command -v julia >/dev/null 2>&1 && just julia-build {{profile}} || true
+    @command -v go >/dev/null 2>&1 && just go-build {{profile}} || true
 
 # Build PECOS without dependency setup or sync
 [group('build')]
@@ -93,9 +93,15 @@ build-cuda profile="debug": check-cli setup-quiet
 
 # Run Python tests (core)
 [group('test')]
-pytest:
-    uv run pytest python/pecos-rslib/tests -m "not performance and not numpy"
-    uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not numpy"
+pytest *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{args}}" ]; then
+        uv run pytest {{args}}
+    else
+        uv run pytest python/pecos-rslib/tests -m "not performance and not numpy"
+        uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not numpy"
+    fi
 
 # Run Rust tests (CUDA-aware, release mode)
 [group('test')]
@@ -109,13 +115,13 @@ test: rstest-all pytest-all
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
-        {{pecos}} julia test
+        just julia-test
     else
         echo "Julia not detected, skipping Julia tests"
     fi
     if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
-        {{pecos}} go test
+        just go-test
     else
         echo "Go not detected, skipping Go tests"
     fi
@@ -139,16 +145,16 @@ lint: fmt clippy
 
     if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia formatting check and linting..."
-        {{pecos}} julia fmt --check
-        {{pecos}} julia lint
+        just julia-fmt-check
+        just julia-lint
     else
         echo "Julia not detected, skipping Julia linting"
     fi
 
     if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go formatting check and linting..."
-        test -z "$(gofmt -l go/pecos)" || (gofmt -l go/pecos && exit 1)
-        cd go/pecos && go vet ./...
+        just go-fmt-check
+        just go-lint
     else
         echo "Go not detected, skipping Go linting"
     fi
@@ -167,13 +173,13 @@ lint-fix:
     echo ""
     if command -v julia >/dev/null 2>&1; then
         echo "Fixing Julia formatting..."
-        {{pecos}} julia fmt
+        just julia-fmt
     else
         echo "Julia not detected, skipping Julia formatting"
     fi
     if command -v go >/dev/null 2>&1; then
         echo "Fixing Go formatting..."
-        gofmt -w go/pecos
+        just go-fmt
     else
         echo "Go not detected, skipping Go formatting"
     fi
@@ -281,28 +287,44 @@ check-cuda: check-cli
 
 # Build Julia FFI library
 [group('julia')]
-julia-build profile="release": check-cli
-    {{pecos}} julia build --profile {{profile}}
+julia-build profile="release" rustflags="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{rustflags}}" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} {{rustflags}}"
+    fi
+    case "{{profile}}" in
+        native)  cargo build --profile native -p pecos-julia-ffi ;;
+        release) cargo build --release -p pecos-julia-ffi ;;
+        dev|debug) cargo build -p pecos-julia-ffi ;;
+        *) echo "Unknown profile: {{profile}}"; exit 1 ;;
+    esac
 
 # Run Julia tests
 [group('julia')]
-julia-test: check-cli
-    {{pecos}} julia test
+julia-test: (julia-build "release")
+    cd julia/PECOS.jl && julia --project=. -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'
 
 # Format Julia code
 [group('julia')]
-julia-format: check-cli
-    {{pecos}} julia fmt
+julia-fmt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    julia -e 'using Pkg; Pkg.activate(); haskey(Pkg.project().dependencies, "JuliaFormatter") || Pkg.add("JuliaFormatter")'
+    cd julia/PECOS.jl && julia -e 'using JuliaFormatter; format("."; verbose=true)'
 
 # Check Julia code formatting
 [group('julia')]
-julia-format-check: check-cli
-    {{pecos}} julia fmt --check
+julia-fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    julia -e 'using Pkg; Pkg.activate(); haskey(Pkg.project().dependencies, "JuliaFormatter") || Pkg.add("JuliaFormatter")'
+    cd julia/PECOS.jl && julia -e 'using JuliaFormatter; format("."; verbose=false, overwrite=false) || (println("Run just julia-fmt to fix."); exit(1))'
 
 # Run Aqua.jl quality checks
 [group('julia')]
-julia-lint: check-cli
-    {{pecos}} julia lint
+julia-lint: (julia-build "release")
+    cd julia/PECOS.jl && julia --project=. test/aqua_tests.jl
 
 # =============================================================================
 # Go Bindings
@@ -310,13 +332,26 @@ julia-lint: check-cli
 
 # Build Go FFI library
 [group('go')]
-go-build profile="release": check-cli
-    {{pecos}} go build --profile {{profile}}
+go-build profile="release" rustflags="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{rustflags}}" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} {{rustflags}}"
+    fi
+    case "{{profile}}" in
+        native)  cargo build --profile native -p pecos-go-ffi ;;
+        release) cargo build --release -p pecos-go-ffi ;;
+        dev|debug) cargo build -p pecos-go-ffi ;;
+        *) echo "Unknown profile: {{profile}}"; exit 1 ;;
+    esac
 
 # Run Go tests
 [group('go')]
-go-test: check-cli
-    {{pecos}} go test
+go-test: (go-build "release")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export LD_LIBRARY_PATH="$(pwd)/target/release:${LD_LIBRARY_PATH:-}"
+    cd go/pecos && go test -v
 
 # Format Go code
 [group('go')]
@@ -394,7 +429,7 @@ test-all: rstest-all pytest-all
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
-        {{pecos}} julia test
+        just julia-test
     else
         echo ""
         echo "WARNING: Julia is not installed. Skipping Julia tests."
@@ -403,7 +438,7 @@ test-all: rstest-all pytest-all
     fi
     if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
-        {{pecos}} go test
+        just go-test
     else
         echo ""
         echo "WARNING: Go is not installed. Skipping Go tests."
@@ -610,11 +645,7 @@ docs-test-legacy:
 
 # Julia/Go extras
 [private]
-julia-build-debug:
-    {{pecos}} julia build --profile debug
-
-[private]
-julia-examples: julia-build-debug
+julia-examples: (julia-build "debug")
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
@@ -633,8 +664,7 @@ julia-clean:
     rm -f julia/PECOS.jl/Manifest.toml julia/PECOS.jl/dev/PECOS_julia_jll/Manifest.toml || true
 
 [private]
-go-build-debug:
-    {{pecos}} go build --profile debug
+go-build-debug: (go-build "debug")
 
 [private]
 go-info:

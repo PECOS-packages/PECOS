@@ -11,11 +11,9 @@ pub mod cuda_cmd;
 pub mod cuquantum_cmd;
 pub mod docs_cmd;
 pub mod features_cmd;
-pub mod go_cmd;
 pub mod gpu_cmd;
 pub mod info;
 pub mod install_cmd;
-pub mod julia_cmd;
 pub mod list;
 pub mod llvm_cmd;
 pub mod manifest_cmd;
@@ -96,13 +94,6 @@ pub enum RustCommands {
 
 #[derive(Subcommand, Clone)]
 pub enum PythonCommands {
-    /// Check if Python/uv is available
-    Check {
-        /// Suppress output (exit code only)
-        #[arg(short, long)]
-        quiet: bool,
-    },
-
     /// Build pecos-rslib and quantum-pecos
     ///
     /// Uses maturin to build the Rust library and installs quantum-pecos
@@ -119,25 +110,6 @@ pub enum PythonCommands {
         /// Build with CUDA support
         #[arg(long)]
         cuda: bool,
-    },
-
-    /// Run Python tests with pytest
-    Test {
-        /// Pytest markers to filter tests (e.g., "not slow")
-        #[arg(short, long)]
-        markers: Option<String>,
-
-        /// Increase verbosity (-v, -vv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-
-        /// Run Selene plugin tests instead of core tests
-        #[arg(long)]
-        selene: bool,
-
-        /// Run NumPy/SciPy compatibility tests
-        #[arg(long)]
-        numpy: bool,
     },
 }
 
@@ -229,82 +201,6 @@ pub enum GpuCommands {
         #[arg(long)]
         json: bool,
     },
-}
-
-// ============================================================================
-// Julia Commands
-// ============================================================================
-
-#[derive(Subcommand, Clone)]
-pub enum JuliaCommands {
-    /// Check if Julia is available
-    Check {
-        /// Suppress output (exit code only)
-        #[arg(short, long)]
-        quiet: bool,
-    },
-
-    /// Build Julia FFI library
-    Build {
-        /// Build profile (dev/debug, release, native)
-        #[arg(long, default_value = "dev")]
-        profile: String,
-
-        /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
-        #[arg(long)]
-        rustflags: Option<String>,
-    },
-
-    /// Run Julia tests
-    Test,
-
-    /// Format Julia code
-    Fmt {
-        /// Check formatting without modifying files
-        #[arg(long)]
-        check: bool,
-    },
-
-    /// Run Julia linting (Aqua.jl)
-    Lint,
-}
-
-// ============================================================================
-// Go Commands
-// ============================================================================
-
-#[derive(Subcommand, Clone)]
-pub enum GoCommands {
-    /// Check if Go is available
-    Check {
-        /// Suppress output (exit code only)
-        #[arg(short, long)]
-        quiet: bool,
-    },
-
-    /// Build Go FFI library
-    Build {
-        /// Build profile (dev/debug, release, native)
-        #[arg(long, default_value = "dev")]
-        profile: String,
-
-        /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
-        #[arg(long)]
-        rustflags: Option<String>,
-    },
-
-    /// Run Go tests
-    Test,
-
-    /// Format Go code
-    Fmt {
-        /// Check formatting without modifying files
-        #[arg(long)]
-        check: bool,
-    },
-
-    /// Run Go linting (go vet)
-    Lint,
 }
 
 // ============================================================================
@@ -505,24 +401,6 @@ pub fn run_cuquantum(command: CuQuantumCommands) -> pecos_build::Result<()> {
 /// Returns an error if the subcommand fails.
 pub fn run_gpu(command: &GpuCommands) -> pecos_build::Result<()> {
     gpu_cmd::run(command)
-}
-
-/// Run a Julia subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_julia(command: &JuliaCommands) -> pecos_build::Result<()> {
-    julia_cmd::run(command)
-}
-
-/// Run a Go subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_go(command: &GoCommands) -> pecos_build::Result<()> {
-    go_cmd::run(command)
 }
 
 /// Run a Selene subcommand

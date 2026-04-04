@@ -259,11 +259,6 @@ clippy:
 fmt:
     cargo fmt --all -- --check
 
-# Fix Rust formatting
-[group('lint')]
-fmt-fix:
-    cargo fmt --all
-
 # Run benchmarks (profile: release or native)
 [group('test')]
 bench profile="release" features="" pattern="":

@@ -517,7 +517,7 @@ clean-cache:
 clean-deps:
     uv run python scripts/clean.py --deps
 
-# Clean everything including LLVM and CUDA
+# Clean everything (build artifacts, selene, cache, deps, legacy paths)
 [group('clean')]
 clean-all:
     uv run python scripts/clean.py --all

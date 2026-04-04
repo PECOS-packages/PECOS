@@ -108,7 +108,7 @@ just clean              # Clean project build artifacts
 just clean-selene       # Clean Selene plugin artifacts only
 just clean-cache        # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
 just clean-deps         # Clean ~/.pecos/deps/
-just clean-all          # Nuclear option: includes LLVM and CUDA
+just clean-all          # Everything: artifacts, selene, cache, deps, legacy paths
 ```
 
 You can also run the cleaning script directly:

@@ -275,7 +275,6 @@ dev: build test
 check-all: clean build test (lint "check")
 
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
-[group('dev')]
 [group('clean')]
 clean *target:
     uv run python scripts/clean.py {{ if target == "cache" { "--cache" } else if target == "deps" { "--deps" } else if target == "all" { "--all" } else if target == "dry-run" { "--dry-run" } else { "" } }}

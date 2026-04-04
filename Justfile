@@ -424,30 +424,6 @@ go-lint: (go-build "release")
     cd go/pecos && go vet ./...
 
 # =============================================================================
-# Decoders
-# =============================================================================
-
-# Build all decoder crates
-[group('decoders')]
-build-decoders:
-    cargo build --package pecos-decoders --all-features
-
-# Test all decoder crates
-[group('decoders')]
-test-decoders:
-    cargo test --package pecos-decoders --all-features
-
-# Build specific decoder (e.g., just build-decoder ldpc)
-[group('decoders')]
-build-decoder decoder:
-    cargo build --package pecos-decoders --features {{decoder}}
-
-# Test specific decoder
-[group('decoders')]
-test-decoder decoder:
-    cargo test --package pecos-decoders --features {{decoder}}
-
-# =============================================================================
 # Additional Testing
 # =============================================================================
 

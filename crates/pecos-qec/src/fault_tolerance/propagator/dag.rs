@@ -61,6 +61,13 @@ use pecos_simulators::PauliProp;
 use smallvec::SmallVec;
 use std::collections::BinaryHeap;
 
+/// Reusable work buffers for propagation, avoiding per-call allocation.
+pub struct PropagationBuffers {
+    pub visited: Vec<bool>,
+    pub active_qubits: Vec<bool>,
+    pub heap: BinaryHeap<(usize, usize)>,
+}
+
 // ============================================================================
 // Fault Locations (SoA Layout)
 // ============================================================================
@@ -1006,7 +1013,6 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// * `visited` - Work buffer for visited nodes (reusable)
     /// * `active_qubits` - Work buffer for active qubits (reusable)
     /// * `heap` - Work heap for traversal (reusable)
-    #[allow(clippy::too_many_arguments)] // reusable work buffers passed to avoid allocation
     pub fn propagate_from_measurement_generic<R: InfluenceRecorder>(
         &self,
         meas_node: usize,
@@ -1014,10 +1020,11 @@ impl<'a> DagFaultAnalyzer<'a> {
         basis: u8,
         detector_idx: usize,
         recorder: &mut R,
-        visited: &mut [bool],
-        active_qubits: &mut [bool],
-        heap: &mut BinaryHeap<(usize, usize)>,
+        work: &mut PropagationBuffers,
     ) {
+        let visited = &mut work.visited;
+        let active_qubits = &mut work.active_qubits;
+        let heap = &mut work.heap;
         // Clear work arrays
         visited.fill(false);
         active_qubits.fill(false);
@@ -1166,21 +1173,15 @@ impl<'a> DagFaultAnalyzer<'a> {
     pub fn propagate_all<R: InfluenceRecorder>(&self, recorder: &mut R) {
         let measurements = self.extract_measurements();
 
-        // Pre-allocate work arrays
-        let mut visited = vec![false; self.propagator.max_node() + 1];
-        let mut active_qubits = vec![false; self.propagator.max_qubit() + 1];
-        let mut heap: BinaryHeap<(usize, usize)> = BinaryHeap::with_capacity(64);
+        let mut work = PropagationBuffers {
+            visited: vec![false; self.propagator.max_node() + 1],
+            active_qubits: vec![false; self.propagator.max_qubit() + 1],
+            heap: BinaryHeap::with_capacity(64),
+        };
 
         for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
             self.propagate_from_measurement_generic(
-                node,
-                qubit,
-                basis,
-                detector_idx,
-                recorder,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
+                node, qubit, basis, detector_idx, recorder, &mut work,
             );
         }
     }

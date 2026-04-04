@@ -69,6 +69,14 @@ use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 use std::collections::{BTreeSet, HashMap};
 
+/// Accumulates decoder analysis results across fault combinations.
+struct DecoderAccumulator {
+    syndrome_map: HashMap<Vec<u8>, (usize, usize)>,
+    undetectable_logical_errors: usize,
+    undetectable_stabilizers: usize,
+    total_tested: usize,
+}
+
 /// Configuration for gadget-level fault tolerance checking.
 #[derive(Debug, Clone)]
 pub struct GadgetConfig {
@@ -1122,13 +1130,13 @@ impl<'a> GadgetChecker<'a> {
     /// undetectable logical errors and no ambiguous syndromes.
     #[must_use]
     pub fn analyze_decoder_requirements(&self, max_weight: usize) -> GadgetDecoderAnalysis {
-        // Map from syndrome pattern to (correctable_count, uncorrectable_count)
-        let mut syndrome_map: HashMap<Vec<u8>, (usize, usize)> = HashMap::new();
-        let mut undetectable_logical_errors = 0;
-        let mut undetectable_stabilizers = 0;
-        let mut total_tested = 0;
+        let mut stats = DecoderAccumulator {
+            syndrome_map: HashMap::new(),
+            undetectable_logical_errors: 0,
+            undetectable_stabilizers: 0,
+            total_tested: 0,
+        };
 
-        // Enumerate all (input_weight, internal_weight) combinations
         for input_weight in 0..=max_weight {
             let max_internal = max_weight - input_weight;
 
@@ -1142,35 +1150,21 @@ impl<'a> GadgetChecker<'a> {
                         &input_faults,
                         input_weight,
                         internal_weight,
-                        &mut syndrome_map,
-                        &mut undetectable_logical_errors,
-                        &mut undetectable_stabilizers,
-                        &mut total_tested,
+                        &mut stats,
                     );
                 }
             }
         }
 
-        // Convert syndrome_map to analysis
-        self.build_decoder_analysis(
-            max_weight,
-            total_tested,
-            syndrome_map,
-            undetectable_logical_errors,
-            undetectable_stabilizers,
-        )
+        self.build_decoder_analysis(max_weight, stats)
     }
 
-    #[allow(clippy::too_many_arguments)] // accumulator pattern with mutable counters
     fn analyze_decoder_internal(
         &self,
         input_faults: &[(usize, u8)],
         input_weight: usize,
         internal_weight: usize,
-        syndrome_map: &mut HashMap<Vec<u8>, (usize, usize)>,
-        undetectable_logical_errors: &mut usize,
-        undetectable_stabilizers: &mut usize,
-        total_tested: &mut usize,
+        stats: &mut DecoderAccumulator,
     ) {
         let fault_config = FaultCheckConfig {
             max_weight: internal_weight,
@@ -1190,13 +1184,8 @@ impl<'a> GadgetChecker<'a> {
                 &FaultConfiguration::new(),
                 0,
             );
-            self.record_decoder_result(
-                &result,
-                syndrome_map,
-                undetectable_logical_errors,
-                undetectable_stabilizers,
-            );
-            *total_tested += 1;
+            self.record_decoder_result(&result, stats);
+            stats.total_tested += 1;
         } else {
             let fault_iter = PauliFaultIterator::new(
                 self.internal_locations.clone(),
@@ -1211,25 +1200,13 @@ impl<'a> GadgetChecker<'a> {
                     &internal_config,
                     internal_weight,
                 );
-                self.record_decoder_result(
-                    &result,
-                    syndrome_map,
-                    undetectable_logical_errors,
-                    undetectable_stabilizers,
-                );
-                *total_tested += 1;
+                self.record_decoder_result(&result, stats);
+                stats.total_tested += 1;
             }
         }
     }
 
-    /// Record a fault result for decoder analysis.
-    fn record_decoder_result(
-        &self,
-        result: &GadgetFaultResult,
-        syndrome_map: &mut HashMap<Vec<u8>, (usize, usize)>,
-        undetectable_logical_errors: &mut usize,
-        undetectable_stabilizers: &mut usize,
-    ) {
+    fn record_decoder_result(&self, result: &GadgetFaultResult, stats: &mut DecoderAccumulator) {
         // Build syndrome key
         let syndrome = self.build_syndrome_key(&result.z_syndrome_flips, &result.x_syndrome_flips);
         let has_logical_error = result.logical_errors.iter().any(|&e| e);
@@ -1239,19 +1216,16 @@ impl<'a> GadgetChecker<'a> {
 
         if has_syndrome {
             // Detectable - group by syndrome
-            let entry = syndrome_map.entry(syndrome).or_insert((0, 0));
+            let entry = stats.syndrome_map.entry(syndrome).or_insert((0, 0));
             if has_logical_error {
-                entry.1 += 1; // uncorrectable
+                entry.1 += 1;
             } else {
-                entry.0 += 1; // correctable
+                entry.0 += 1;
             }
+        } else if has_logical_error {
+            stats.undetectable_logical_errors += 1;
         } else {
-            // Undetectable
-            if has_logical_error {
-                *undetectable_logical_errors += 1;
-            } else {
-                *undetectable_stabilizers += 1;
-            }
+            stats.undetectable_stabilizers += 1;
         }
     }
 
@@ -1276,11 +1250,14 @@ impl<'a> GadgetChecker<'a> {
     fn build_decoder_analysis(
         &self,
         max_weight: usize,
-        total_tested: usize,
-        syndrome_map: HashMap<Vec<u8>, (usize, usize)>,
-        undetectable_logical_errors: usize,
-        undetectable_stabilizers: usize,
+        stats: DecoderAccumulator,
     ) -> GadgetDecoderAnalysis {
+        let DecoderAccumulator {
+            syndrome_map,
+            undetectable_logical_errors,
+            undetectable_stabilizers,
+            total_tested,
+        } = stats;
         let mut syndromes = Vec::new();
         let mut correctable_syndromes = 0;
         let mut detected_uncorrectable_syndromes = 0;
@@ -1340,10 +1317,12 @@ impl<'a> GadgetChecker<'a> {
         max_weight: usize,
         follow_up: &GadgetFollowUpConfig,
     ) -> GadgetDecoderAnalysis {
-        let mut syndrome_map: HashMap<Vec<u8>, (usize, usize)> = HashMap::new();
-        let mut undetectable_logical_errors = 0;
-        let mut undetectable_stabilizers = 0;
-        let mut total_tested = 0;
+        let mut stats = DecoderAccumulator {
+            syndrome_map: HashMap::new(),
+            undetectable_logical_errors: 0,
+            undetectable_stabilizers: 0,
+            total_tested: 0,
+        };
 
         for input_weight in 0..=max_weight {
             let max_internal = max_weight - input_weight;
@@ -1359,36 +1338,22 @@ impl<'a> GadgetChecker<'a> {
                         input_weight,
                         internal_weight,
                         follow_up,
-                        &mut syndrome_map,
-                        &mut undetectable_logical_errors,
-                        &mut undetectable_stabilizers,
-                        &mut total_tested,
+                        &mut stats,
                     );
                 }
             }
         }
 
-        self.build_decoder_analysis(
-            max_weight,
-            total_tested,
-            syndrome_map,
-            undetectable_logical_errors,
-            undetectable_stabilizers,
-        )
+        self.build_decoder_analysis(max_weight, stats)
     }
 
-    /// Helper for follow-up analysis.
-    #[allow(clippy::too_many_arguments)]
     fn analyze_follow_up_internal(
         &self,
         input_faults: &[(usize, u8)],
         input_weight: usize,
         internal_weight: usize,
         follow_up: &GadgetFollowUpConfig,
-        syndrome_map: &mut HashMap<Vec<u8>, (usize, usize)>,
-        undetectable_logical_errors: &mut usize,
-        undetectable_stabilizers: &mut usize,
-        total_tested: &mut usize,
+        stats: &mut DecoderAccumulator,
     ) {
         let fault_config = FaultCheckConfig {
             max_weight: internal_weight,
@@ -1408,14 +1373,8 @@ impl<'a> GadgetChecker<'a> {
                 &FaultConfiguration::new(),
                 0,
             );
-            self.record_follow_up_result(
-                &result,
-                follow_up,
-                syndrome_map,
-                undetectable_logical_errors,
-                undetectable_stabilizers,
-            );
-            *total_tested += 1;
+            self.record_follow_up_result(&result, follow_up, stats);
+            stats.total_tested += 1;
         } else {
             let fault_iter = PauliFaultIterator::new(
                 self.internal_locations.clone(),
@@ -1430,26 +1389,17 @@ impl<'a> GadgetChecker<'a> {
                     &internal_config,
                     internal_weight,
                 );
-                self.record_follow_up_result(
-                    &result,
-                    follow_up,
-                    syndrome_map,
-                    undetectable_logical_errors,
-                    undetectable_stabilizers,
-                );
-                *total_tested += 1;
+                self.record_follow_up_result(&result, follow_up, stats);
+                stats.total_tested += 1;
             }
         }
     }
 
-    /// Record a result with follow-up syndrome.
     fn record_follow_up_result(
         &self,
         result: &GadgetFaultResult,
         follow_up: &GadgetFollowUpConfig,
-        syndrome_map: &mut HashMap<Vec<u8>, (usize, usize)>,
-        undetectable_logical_errors: &mut usize,
-        undetectable_stabilizers: &mut usize,
+        stats: &mut DecoderAccumulator,
     ) {
         // Build gadget syndrome
         let mut full_syndrome =
@@ -1477,16 +1427,16 @@ impl<'a> GadgetChecker<'a> {
         let has_syndrome = full_syndrome.iter().any(|&s| s != 0);
 
         if has_syndrome {
-            let entry = syndrome_map.entry(full_syndrome).or_insert((0, 0));
+            let entry = stats.syndrome_map.entry(full_syndrome).or_insert((0, 0));
             if has_logical_error {
                 entry.1 += 1;
             } else {
                 entry.0 += 1;
             }
         } else if has_logical_error {
-            *undetectable_logical_errors += 1;
+            stats.undetectable_logical_errors += 1;
         } else {
-            *undetectable_stabilizers += 1;
+            stats.undetectable_stabilizers += 1;
         }
     }
 

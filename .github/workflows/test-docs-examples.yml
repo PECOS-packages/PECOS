@@ -67,7 +67,7 @@ jobs:
       - name: Install dependencies and build
         run: |
           uv lock --project .
-          uv sync --project .
+          uv sync --project . --all-packages
           cargo install --path crates/pecos --features cli
           pecos python build --profile debug
 

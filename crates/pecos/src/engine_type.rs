@@ -232,7 +232,7 @@ impl DynamicEngineBuilder {
     ///
     /// This creates a default builder for the specified engine type.
     /// You'll need to configure it further with engine-specific methods.
-    #[cfg(all(feature = "qasm", feature = "llvm", feature = "llvm"))]
+    #[cfg(all(feature = "qasm", feature = "qis"))]
     #[must_use]
     pub fn from_type(engine_type: EngineType) -> Self {
         match engine_type {

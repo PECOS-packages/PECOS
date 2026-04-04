@@ -79,11 +79,11 @@ jobs:
 
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: cargo run -p pecos --features cli --release -- install llvm
+        run: cargo run -p pecos-cli --release -- install llvm
 
       - name: Configure LLVM
         run: |
-          PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+          PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
           echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
 
@@ -186,16 +186,16 @@ jobs:
 
       - name: Install LLVM ${{ env.LLVM_VERSION }} (Unix)
         if: steps.cache-llvm.outputs.cache-hit != 'true' && matrix.os != 'windows-latest'
-        run: cargo run -p pecos --features cli --release -- install llvm
+        run: cargo run -p pecos-cli --release -- install llvm
 
       - name: Install LLVM ${{ env.LLVM_VERSION }} (Windows)
         if: steps.cache-llvm.outputs.cache-hit != 'true' && matrix.os == 'windows-latest'
-        run: cargo run -p pecos --features cli --release -- install llvm
+        run: cargo run -p pecos-cli --release -- install llvm
 
       - name: Configure LLVM (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+          PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
           echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
 
@@ -203,7 +203,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
+          $env:PECOS_LLVM = (cargo run -p pecos-cli --release -- llvm find 2>$null)
           $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
           "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

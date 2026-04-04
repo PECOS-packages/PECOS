@@ -26,12 +26,6 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
             release,
             include_ffi,
         } => run_test(*release, *include_ffi),
-        super::RustCommands::Fmt { check } => run_fmt(*check),
-        super::RustCommands::Bench {
-            profile,
-            features,
-            pattern,
-        } => run_bench(profile, features.as_deref(), pattern.as_deref()),
     }
 }
 
@@ -590,74 +584,5 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
 
     println!();
     println!("cargo test completed successfully");
-    Ok(())
-}
-
-/// Run cargo fmt
-fn run_fmt(check: bool) -> Result<()> {
-    let mut args = vec!["fmt", "--all"];
-    if check {
-        args.extend(&["--", "--check"]);
-    }
-
-    if !run_cargo_command(&args) {
-        if check {
-            return Err(Error::Config(
-                "cargo fmt check failed - formatting issues found".to_string(),
-            ));
-        }
-        return Err(Error::Config("cargo fmt failed".to_string()));
-    }
-
-    if check {
-        println!("All Rust code is properly formatted");
-    } else {
-        println!("Rust code formatted successfully");
-    }
-    Ok(())
-}
-
-/// Run cargo bench with configurable profile and features
-fn run_bench(profile: &str, features: Option<&str>, pattern: Option<&str>) -> Result<()> {
-    let mut cmd = Command::new("cargo");
-    cmd.args(["bench", "-p", "benchmarks", "--bench", "benchmarks"]);
-
-    match profile {
-        "native" => {
-            println!("Running benchmarks with native CPU optimizations...");
-            cmd.arg("--profile=native");
-            // Preserve any existing RUSTFLAGS while adding target-cpu=native
-            let mut rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-            if !rustflags.is_empty() {
-                rustflags.push(' ');
-            }
-            rustflags.push_str("-C target-cpu=native");
-            cmd.env("RUSTFLAGS", rustflags);
-        }
-        "release" => {
-            println!("Running benchmarks in release mode...");
-        }
-        other => {
-            return Err(Error::Config(format!(
-                "Unknown bench profile '{other}'. Use 'release' or 'native'."
-            )));
-        }
-    }
-
-    if let Some(feat) = features {
-        cmd.arg(format!("--features={feat}"));
-    }
-
-    if let Some(pat) = pattern {
-        cmd.args(["--", pat]);
-    }
-
-    let status = cmd.status();
-    if !matches!(status, Ok(s) if s.success()) {
-        return Err(Error::Config("cargo bench failed".to_string()));
-    }
-
-    println!();
-    println!("Benchmarks completed successfully");
     Ok(())
 }

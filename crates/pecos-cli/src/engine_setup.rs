@@ -1,9 +1,9 @@
 use log::debug;
 use pecos::DynamicEngineBuilder;
-#[cfg(feature = "phir")]
+#[cfg(feature = "runtime")]
 use pecos::phir_json_engine;
 use pecos::prelude::*;
-#[cfg(feature = "qis")]
+#[cfg(feature = "runtime")]
 use pecos::{helios_interface_builder, qis_engine, selene_simple_runtime};
 use std::path::Path;
 
@@ -37,7 +37,7 @@ pub fn setup_cli_engine(
         ProgramType::QIS => {
             debug!("Setting up QIS engine");
 
-            #[cfg(feature = "qis")]
+            #[cfg(feature = "runtime")]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
@@ -55,7 +55,7 @@ pub fn setup_cli_engine(
 
                 Ok(Box::new(engine))
             }
-            #[cfg(not(feature = "qis"))]
+            #[cfg(not(feature = "runtime"))]
             {
                 Err(PecosError::Input(
                     "QIS support not compiled in. Please rebuild with --features llvm".to_string(),
@@ -90,7 +90,7 @@ pub fn setup_cli_engine_builder(
     match program_type {
         ProgramType::QIS => {
             debug!("Setting up QIS engine builder");
-            #[cfg(feature = "qis")]
+            #[cfg(feature = "runtime")]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
@@ -107,7 +107,7 @@ pub fn setup_cli_engine_builder(
 
                 Ok(DynamicEngineBuilder::new(engine_builder))
             }
-            #[cfg(not(feature = "qis"))]
+            #[cfg(not(feature = "runtime"))]
             {
                 Err(PecosError::Input(
                     "QIS support not compiled in. Please rebuild with --features llvm".to_string(),
@@ -116,13 +116,13 @@ pub fn setup_cli_engine_builder(
         }
         ProgramType::PHIR => {
             debug!("Setting up PHIR-JSON engine builder");
-            #[cfg(feature = "phir")]
+            #[cfg(feature = "runtime")]
             {
                 Ok(DynamicEngineBuilder::new(
                     phir_json_engine().file(program_path)?,
                 ))
             }
-            #[cfg(not(feature = "phir"))]
+            #[cfg(not(feature = "runtime"))]
             {
                 Err(PecosError::Input(
                     "PHIR support not compiled in".to_string(),
@@ -131,14 +131,14 @@ pub fn setup_cli_engine_builder(
         }
         ProgramType::QASM => {
             debug!("Setting up QASM engine builder");
-            #[cfg(feature = "qasm")]
+            #[cfg(feature = "runtime")]
             {
                 use pecos::qasm_engine;
                 let qasm_content = std::fs::read_to_string(program_path)
                     .map_err(|e| PecosError::Input(format!("Failed to read QASM file: {e}")))?;
                 Ok(DynamicEngineBuilder::new(qasm_engine().qasm(qasm_content)))
             }
-            #[cfg(not(feature = "qasm"))]
+            #[cfg(not(feature = "runtime"))]
             {
                 Err(PecosError::Input(
                     "QASM support not compiled in".to_string(),

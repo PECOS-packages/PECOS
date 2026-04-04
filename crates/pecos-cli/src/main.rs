@@ -3,8 +3,8 @@ use env_logger::Env;
 
 mod cli;
 use cli::{
-    CuQuantumCommands, CudaCommands, DepsCommands, FeaturesCommands, GpuCommands, LlvmCommands,
-    PythonCommands, RustCommands, SeleneCommands,
+    CuQuantumCommands, CudaCommands, DepsCommands, GpuCommands, LlvmCommands, PythonCommands,
+    RustCommands, SeleneCommands,
 };
 
 // Runtime-only imports
@@ -29,7 +29,6 @@ use pecos_build::llvm::{find_llvm_14, get_llvm_version};
 use std::io::Write;
 
 #[cfg(feature = "runtime")]
-#[path = "engine_setup.rs"]
 mod engine_setup;
 #[cfg(feature = "runtime")]
 use engine_setup::{setup_cli_engine, setup_cli_engine_builder};
@@ -76,7 +75,7 @@ enum Commands {
         #[command(subcommand)]
         command: RustCommands,
     },
-    /// Python build and test commands
+    /// Python build commands (maturin + quantum-pecos)
     #[command(visible_alias = "py")]
     Python {
         #[command(subcommand)]
@@ -107,11 +106,6 @@ enum Commands {
     Selene {
         #[command(subcommand)]
         command: SeleneCommands,
-    },
-    /// Query package features
-    Features {
-        #[command(subcommand)]
-        command: FeaturesCommands,
     },
     /// Dependency manifest management (pecos.toml)
     Deps {
@@ -152,27 +146,6 @@ enum Commands {
     /// Moves LLVM, CUDA, and cuQuantum installations from the old top-level
     /// paths into the unified deps/ directory.
     Migrate,
-    /// Clean cached downloads and temporary files from ~/.pecos/
-    ///
-    /// Example: pecos clean cache
-    /// Example: pecos clean --all --dry-run
-    Clean {
-        /// What to clean: cache, tmp
-        #[arg(required_unless_present = "all")]
-        targets: Vec<String>,
-
-        /// Clean all targets
-        #[arg(long)]
-        all: bool,
-
-        /// Show what would be removed without removing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip confirmation prompt
-        #[arg(long, short)]
-        yes: bool,
-    },
     /// Install optional dependencies (cuda, llvm, cuquantum)
     ///
     /// Example: pecos install cuda cuquantum
@@ -237,22 +210,6 @@ enum Commands {
         /// Show detailed information
         #[arg(short, long)]
         verbose: bool,
-    },
-    /// Manage the pecos CLI itself
-    #[command(name = "self")]
-    Self_ {
-        #[command(subcommand)]
-        command: cli::SelfCommands,
-    },
-    /// Serve documentation locally and open in browser
-    Docs {
-        /// Port to serve on
-        #[arg(short, long, default_value_t = 8000)]
-        port: u16,
-
-        /// Don't open browser automatically
-        #[arg(long)]
-        no_browser: bool,
     },
 }
 
@@ -719,7 +676,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Gpu { command } => cli::run_gpu(command)?,
         Commands::Llvm { command } => cli::run_llvm(command.clone())?,
         Commands::Selene { command } => cli::run_selene(command.clone())?,
-        Commands::Features { command } => cli::run_features(command.clone())?,
         Commands::Deps { command } => cli::run_deps(command.clone())?,
         Commands::Setup {
             yes,
@@ -738,12 +694,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli::run_setup(mode, *skip_llvm, *skip_cuda, *quiet)?;
         }
         Commands::Migrate => cli::run_migrate()?,
-        Commands::Clean {
-            targets,
-            all,
-            dry_run,
-            yes,
-        } => cli::run_clean(targets, *all, *dry_run, *yes)?,
         Commands::Install {
             targets,
             force,
@@ -759,8 +709,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => cli::run_upgrade(targets, *all, *no_configure, *yes)?,
         Commands::SysInfo => cli::run_sys_info()?,
         Commands::List { verbose } => cli::run_list(*verbose)?,
-        Commands::Self_ { command } => cli::run_self(command.clone())?,
-        Commands::Docs { port, no_browser } => cli::run_docs(*port, *no_browser)?,
     }
 
     Ok(())

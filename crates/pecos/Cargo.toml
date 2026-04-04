@@ -10,20 +10,13 @@ keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
 description = "Main PECOS metacrate providing unified access to quantum simulation and error correction"
-# Disable auto-discovery of binaries (we only want pecos binary, not engine_setup helper module)
-autobins = false
 
 [lib]
 doctest = true
 test = true
 
-[[bin]]
-name = "pecos"
-path = "src/bin/pecos.rs"
-required-features = ["cli"]
-
 [dependencies]
-# Core simulation library dependencies (optional - for runtime commands)
+# Core simulation library dependencies (optional)
 pecos-core = { workspace = true, optional = true }
 pecos-quantum = { workspace = true, optional = true }
 pecos-simulators = { workspace = true, optional = true }
@@ -42,13 +35,6 @@ log = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
-# CLI dependencies (optional)
-clap = { workspace = true, optional = true }
-clap_complete = { workspace = true, optional = true }
-env_logger = { workspace = true, optional = true }
-pecos-build = { workspace = true, optional = true }
-cargo_metadata = { workspace = true, optional = true }
-
 # Quantum simulator backends (optional - for Python bindings and advanced users)
 pecos-cppsparsestab = { workspace = true, optional = true }
 pecos-quest = { workspace = true, optional = true }
@@ -64,18 +50,7 @@ pecos-decoders = { workspace = true, optional = true }
 pecos-qec = { workspace = true, optional = true }
 
 [features]
-# Default: CLI dev tools + core types for library users
-default = ["cli", "core"]
-
-# CLI binary with dev tools (lightweight - no simulation dependencies)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "build-tools", "dep:cargo_metadata", "dep:serde_json"]
-
-# Build tools (LLVM detection, installation, etc.) - very lightweight
-build-tools = ["dep:pecos-build"]
-
-# Runtime: enables full simulation library with QASM and PHIR support
-# Use this for CLI runtime commands (run, compile, info, doctor, examples)
-runtime = ["sim", "qasm", "phir"]
+default = ["core"]
 
 # Core types and error handling (very lightweight)
 core = ["dep:pecos-core"]
@@ -93,6 +68,9 @@ sim = [
     "dep:pecos-phir",
     "dep:log", "dep:tempfile", "dep:serde_json"
 ]
+
+# Runtime: enables full simulation library with QASM and PHIR support
+runtime = ["sim", "qasm", "phir"]
 
 # Program formats (require sim)
 qasm = ["sim", "dep:pecos-qasm"]
@@ -146,10 +124,6 @@ pecos-phir-json.workspace = true
 pecos-random.workspace = true
 log.workspace = true
 serde_json.workspace = true
-
-[[test]]
-name = "cli"
-required-features = ["runtime", "qis"]
 
 [[test]]
 name = "unified_sim_api_test"

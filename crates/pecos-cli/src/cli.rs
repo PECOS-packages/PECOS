@@ -1,16 +1,16 @@
-//! CLI command definitions and handlers for PECOS developer tools
+//! PECOS CLI — dependency management, CUDA-aware builds, and system inspection.
 //!
-//! This module contains the command definitions and implementations for all
-//! dev tool commands. The command enums are designed to be embedded in the
-//! main pecos CLI.
+//! The CLI owns things that need real program logic: detecting CUDA/LLVM/GPU,
+//! installing dependencies, introspecting cargo features, and building with
+//! platform-specific flags (e.g., macOS rpath handling in `python build`).
+//!
+//! Daily dev workflows (fmt, test, lint, bench, docs) live in the Justfile,
+//! which is transparent, editable, and doesn't require compiling anything.
 
 #![allow(clippy::fn_params_excessive_bools)]
 
-pub mod clean_cmd;
 pub mod cuda_cmd;
 pub mod cuquantum_cmd;
-pub mod docs_cmd;
-pub mod features_cmd;
 pub mod gpu_cmd;
 pub mod info;
 pub mod install_cmd;
@@ -21,7 +21,6 @@ pub mod migrate_cmd;
 pub mod python_cmd;
 pub mod rust_cmd;
 pub mod selene_cmd;
-pub mod self_update_cmd;
 pub mod setup_cmd;
 pub mod uninstall_cmd;
 pub mod upgrade_cmd;
@@ -64,27 +63,6 @@ pub enum RustCommands {
         /// Also test FFI crates
         #[arg(long)]
         include_ffi: bool,
-    },
-
-    /// Run cargo fmt
-    Fmt {
-        /// Check formatting without modifying files
-        #[arg(long)]
-        check: bool,
-    },
-
-    /// Run benchmarks
-    Bench {
-        /// Build profile: release (default) or native (adds -C target-cpu=native)
-        #[arg(long, default_value = "release")]
-        profile: String,
-
-        /// Additional cargo features (e.g., "qulacs", "quest")
-        #[arg(long)]
-        features: Option<String>,
-
-        /// Benchmark filter pattern (e.g., "`SoA` Comparison", "DOD")
-        pattern: Option<String>,
     },
 }
 
@@ -248,28 +226,6 @@ pub enum SeleneCommands {
 }
 
 // ============================================================================
-// Features Commands
-// ============================================================================
-
-#[derive(Subcommand, Clone)]
-pub enum FeaturesCommands {
-    /// List features for a package
-    List {
-        /// Package name (e.g., pecos, pecos-quest)
-        #[arg(short, long)]
-        package: String,
-
-        /// Features to exclude (comma-separated, e.g., "gpu,cuda")
-        #[arg(short, long)]
-        exclude: Option<String>,
-
-        /// Output as JSON array
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-// ============================================================================
 // LLVM Commands
 // ============================================================================
 
@@ -306,18 +262,6 @@ pub enum LlvmCommands {
         /// Name of the tool (e.g., llvm-as, clang)
         name: String,
     },
-}
-
-// ============================================================================
-// Self Commands
-// ============================================================================
-
-#[derive(Subcommand, Clone)]
-pub enum SelfCommands {
-    /// Rebuild and reinstall the pecos CLI from the repo
-    Upgrade,
-    /// Uninstall the pecos CLI
-    Uninstall,
 }
 
 // ============================================================================
@@ -412,15 +356,6 @@ pub fn run_selene(command: SeleneCommands) -> pecos_build::Result<()> {
     selene_cmd::run(command)
 }
 
-/// Run a Features subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_features(command: FeaturesCommands) -> pecos_build::Result<()> {
-    features_cmd::run(command)
-}
-
 /// Run an LLVM subcommand
 ///
 /// # Errors
@@ -437,20 +372,6 @@ pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
 /// Returns an error if the subcommand fails.
 pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
     manifest_cmd::run(command)
-}
-
-/// Run the clean command
-///
-/// # Errors
-///
-/// Returns an error if cleaning fails.
-pub fn run_clean(
-    targets: &[String],
-    all: bool,
-    dry_run: bool,
-    yes: bool,
-) -> pecos_build::Result<()> {
-    clean_cmd::run(targets, all, dry_run, yes)
 }
 
 /// Run the setup command
@@ -529,25 +450,4 @@ pub fn run_sys_info() -> pecos_build::Result<()> {
 /// Returns an error if component status cannot be determined.
 pub fn run_list(verbose: bool) -> pecos_build::Result<()> {
     list::run(verbose)
-}
-
-/// Run the docs command
-///
-/// # Errors
-///
-/// Returns an error if the documentation server cannot be started.
-pub fn run_docs(port: u16, no_browser: bool) -> pecos_build::Result<()> {
-    docs_cmd::run(port, no_browser)
-}
-
-/// Run a self subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_self(command: SelfCommands) -> pecos_build::Result<()> {
-    match command {
-        SelfCommands::Upgrade => self_update_cmd::run(),
-        SelfCommands::Uninstall => self_update_cmd::run_uninstall(),
-    }
 }

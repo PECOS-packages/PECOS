@@ -36,14 +36,14 @@ pecos := "pecos"
 [group('setup')]
 install-cli:
     @echo "Installing PECOS CLI..."
-    cargo install --path crates/pecos --features cli
+    cargo install --path crates/pecos-cli
     @echo ""
     @echo "Done! You can now run: just build"
 
 # Reinstall PECOS CLI (run after changing CLI code)
 [group('setup')]
 reinstall-cli:
-    cargo install --path crates/pecos --features cli --force
+    cargo install --path crates/pecos-cli --force
 
 # Set up build environment (detect and install missing dependencies)
 [group('setup')]
@@ -215,6 +215,22 @@ fmt:
 fmt-fix:
     cargo fmt --all
 
+# Run benchmarks (profile: release or native)
+[group('test')]
+bench profile="release" features="" pattern="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ARGS="bench -p benchmarks --bench benchmarks"
+    if [ "{{profile}}" = "native" ]; then
+        ARGS="$ARGS --profile=native"
+        export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
+    elif [ "{{profile}}" != "release" ]; then
+        echo "Unknown profile: {{profile}}. Use release or native."; exit 1
+    fi
+    if [ -n "{{features}}" ]; then ARGS="$ARGS --features={{features}}"; fi
+    if [ -n "{{pattern}}" ]; then ARGS="$ARGS -- {{pattern}}"; fi
+    cargo $ARGS
+
 # =============================================================================
 # Dev Workflows
 # =============================================================================
@@ -247,8 +263,8 @@ clean:
 
 # Serve documentation and open in browser
 [group('docs')]
-docs port="8000": check-cli
-    {{pecos}} docs --port {{port}}
+docs port="8000":
+    uv run mkdocs serve -a "127.0.0.1:{{port}}"
 
 # Build documentation
 [group('docs')]

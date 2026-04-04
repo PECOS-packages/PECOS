@@ -122,7 +122,7 @@ pecos = "0.x.x"  # Replace with the latest version
 
   ```sh
   # Quick setup with automated installer (recommended):
-  cargo run -p pecos --features cli -- install llvm
+  cargo run -p pecos-cli -- install llvm
   cargo build
   ```
 

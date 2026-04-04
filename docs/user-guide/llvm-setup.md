@@ -27,7 +27,7 @@ Use the `pecos-llvm` CLI tool to automatically download and install LLVM 14.0.6:
 
 ```bash
 # Install LLVM 14.0.6 to ~/.pecos/deps/llvm/ (~400MB, ~5 minutes)
-cargo run -p pecos --features cli -- install llvm
+cargo run -p pecos-cli -- install llvm
 
 # Build PECOS with LLVM support
 cargo build --features llvm
@@ -48,7 +48,7 @@ Install LLVM 14 using your system's package manager, then configure PECOS:
 === "macOS"
     ```bash
     brew install llvm@14
-    cargo run -p pecos --features cli -- llvm configure
+    cargo run -p pecos-cli -- llvm configure
     cargo build --features llvm
     ```
 
@@ -58,21 +58,21 @@ Install LLVM 14 using your system's package manager, then configure PECOS:
     ```bash
     sudo apt update
     sudo apt install llvm-14 llvm-14-dev
-    cargo run -p pecos --features cli -- llvm configure
+    cargo run -p pecos-cli -- llvm configure
     cargo build --features llvm
     ```
 
 === "Linux (Fedora/RHEL)"
     ```bash
     sudo dnf install llvm14 llvm14-devel
-    cargo run -p pecos --features cli -- llvm configure
+    cargo run -p pecos-cli -- llvm configure
     cargo build --features llvm
     ```
 
 === "Linux (Arch)"
     ```bash
     yay -S llvm14  # May need to build from AUR
-    cargo run -p pecos --features cli -- llvm configure
+    cargo run -p pecos-cli -- llvm configure
     cargo build --features llvm
     ```
 
@@ -91,7 +91,7 @@ Install LLVM 14 using your system's package manager, then configure PECOS:
 
     ```cmd
     set LLVM_SYS_140_PREFIX=C:\LLVM
-    cargo run -p pecos --features cli -- llvm configure
+    cargo run -p pecos-cli -- llvm configure
     cargo build --features llvm
     ```
 
@@ -101,13 +101,13 @@ After installing LLVM, you can verify the installation using these commands:
 
 ```bash
 # Check if LLVM 14 is detected
-cargo run -p pecos --features cli -- llvm check
+cargo run -p pecos-cli -- llvm check
 
 # Show LLVM version and path
-cargo run -p pecos --features cli -- llvm version
+cargo run -p pecos-cli -- llvm version
 
 # Find LLVM installation path
-cargo run -p pecos --features cli -- llvm find
+cargo run -p pecos-cli -- llvm find
 ```
 
 ## pecos-llvm CLI Reference
@@ -119,13 +119,13 @@ The `pecos llvm` CLI tool provides several useful commands:
 Download and install LLVM 14.0.6 to `~/.pecos/deps/llvm/`:
 
 ```bash
-cargo run -p pecos --features cli -- install llvm
+cargo run -p pecos-cli -- install llvm
 
 # Reinstall even if already present
-cargo run -p pecos --features cli -- install llvm --force
+cargo run -p pecos-cli -- install llvm --force
 
 # Skip automatic configuration after install
-cargo run -p pecos --features cli -- install llvm --no-configure
+cargo run -p pecos-cli -- install llvm --no-configure
 ```
 
 ### `configure`
@@ -133,7 +133,7 @@ cargo run -p pecos --features cli -- install llvm --no-configure
 Auto-configure PECOS to use detected LLVM installation:
 
 ```bash
-cargo run -p pecos --features cli -- llvm configure
+cargo run -p pecos-cli -- llvm configure
 ```
 
 This updates `.cargo/config.toml` with the LLVM path.
@@ -143,10 +143,10 @@ This updates `.cargo/config.toml` with the LLVM path.
 Verify LLVM 14 is available:
 
 ```bash
-cargo run -p pecos --features cli -- llvm check
+cargo run -p pecos-cli -- llvm check
 
 # Suppress output messages
-cargo run -p pecos --features cli -- llvm check --quiet
+cargo run -p pecos-cli -- llvm check --quiet
 ```
 
 Exit code: 0 if found, 1 if not found.
@@ -156,7 +156,7 @@ Exit code: 0 if found, 1 if not found.
 Show LLVM version information:
 
 ```bash
-cargo run -p pecos --features cli -- llvm version
+cargo run -p pecos-cli -- llvm version
 ```
 
 ### `find`
@@ -165,10 +165,10 @@ Locate LLVM installation:
 
 ```bash
 # Print LLVM path
-cargo run -p pecos --features cli -- llvm find
+cargo run -p pecos-cli -- llvm find
 
 # Print export command for shell evaluation
-cargo run -p pecos --features cli -- llvm find --export
+cargo run -p pecos-cli -- llvm find --export
 ```
 
 ### `validate`
@@ -176,7 +176,7 @@ cargo run -p pecos --features cli -- llvm find --export
 Verify LLVM installation integrity:
 
 ```bash
-cargo run -p pecos --features cli -- llvm validate /path/to/llvm
+cargo run -p pecos-cli -- llvm validate /path/to/llvm
 ```
 
 Checks for critical files, libraries, headers, and runtime functionality.
@@ -186,9 +186,9 @@ Checks for critical files, libraries, headers, and runtime functionality.
 Find specific LLVM tools:
 
 ```bash
-cargo run -p pecos --features cli -- llvm tool llvm-as
-cargo run -p pecos --features cli -- llvm tool clang
-cargo run -p pecos --features cli -- llvm tool llvm-link
+cargo run -p pecos-cli -- llvm tool llvm-as
+cargo run -p pecos-cli -- llvm tool clang
+cargo run -p pecos-cli -- llvm tool llvm-link
 ```
 
 ## Technical Details
@@ -257,7 +257,7 @@ All downloaded LLVM packages are verified with SHA256 checksums to ensure integr
 Run the `configure` command to update `.cargo/config.toml`:
 
 ```bash
-cargo run -p pecos --features cli -- llvm configure
+cargo run -p pecos-cli -- llvm configure
 ```
 
 ### Build fails with LLVM errors
@@ -265,8 +265,8 @@ cargo run -p pecos --features cli -- llvm configure
 Verify LLVM is correctly installed and detected:
 
 ```bash
-cargo run -p pecos --features cli -- llvm check
-cargo run -p pecos --features cli -- llvm version
+cargo run -p pecos-cli -- llvm check
+cargo run -p pecos-cli -- llvm version
 ```
 
 ### Wrong LLVM version detected
@@ -274,7 +274,7 @@ cargo run -p pecos --features cli -- llvm version
 PECOS requires LLVM 14.x. If you have multiple LLVM versions installed, the tool will prioritize LLVM 14. Use the `find` command to see which installation is detected:
 
 ```bash
-cargo run -p pecos --features cli -- llvm find
+cargo run -p pecos-cli -- llvm find
 ```
 
 ### Manual configuration

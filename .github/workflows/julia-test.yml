@@ -58,34 +58,34 @@ jobs:
     #   if: runner.os != 'Windows'
     #   run: |
     #     echo "Installing LLVM using pecos..."
-    #     cargo run -p pecos --features cli --release -- install llvm
+    #     cargo run -p pecos-cli --release -- install llvm
     #
     #     echo "Setting LLVM environment variables..."
-    #     export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+    #     export PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
     #     export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
     #
     #     echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
     #     echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
     #
     #     echo "Verifying LLVM installation..."
-    #     cargo run -p pecos --features cli --release -- llvm check
+    #     cargo run -p pecos-cli --release -- llvm check
     #
     # - name: Install LLVM 14.0.6 using pecos (Windows)
     #   if: runner.os == 'Windows'
     #   shell: pwsh
     #   run: |
     #     Write-Host "Installing LLVM using pecos..."
-    #     cargo run -p pecos --features cli --release -- install llvm
+    #     cargo run -p pecos-cli --release -- install llvm
     #
     #     Write-Host "Setting LLVM environment variables..."
-    #     $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
+    #     $env:PECOS_LLVM = (cargo run -p pecos-cli --release -- llvm find 2>$null)
     #     $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
     #
     #     "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     #     "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     #
     #     Write-Host "Verifying LLVM installation..."
-    #     cargo run -p pecos --features cli --release -- llvm check
+    #     cargo run -p pecos-cli --release -- llvm check
 
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2

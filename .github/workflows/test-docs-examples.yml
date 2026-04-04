@@ -56,11 +56,11 @@ jobs:
 
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: cargo run -p pecos --features cli --release -- install llvm
+        run: cargo run -p pecos-cli --release -- install llvm
 
       - name: Configure LLVM
         run: |
-          PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+          PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
           echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
 
@@ -68,7 +68,7 @@ jobs:
         run: |
           uv lock --project .
           uv sync --project . --all-packages
-          cargo install --path crates/pecos --features cli
+          cargo install --path crates/pecos-cli
           pecos python build --profile debug
 
       - name: Test working documentation examples

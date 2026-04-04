@@ -290,7 +290,7 @@ main() {
     # Build the CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos --features cli --quiet || {
+    cargo build -p pecos-cli --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }

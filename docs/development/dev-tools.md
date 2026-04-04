@@ -4,23 +4,22 @@ PECOS provides development tools through the `pecos` CLI and the `Justfile`.
 
 ## pecos CLI Commands
 
-The `pecos` CLI includes commands for building, testing, and managing dependencies:
+The `pecos` CLI handles dependency management, CUDA-aware builds, and system inspection.
+Daily dev workflows (fmt, test, lint, bench) live in the Justfile.
 
 ```bash
 # Show all available commands
 pecos --help
 
 # Rust commands (CUDA-aware)
-pecos rust check              # Run cargo check
-pecos rust clippy             # Run cargo clippy
-pecos rust test               # Run cargo test
-pecos rust fmt                # Run cargo fmt
+pecos rust check              # Run cargo check (auto-excludes CUDA if unavailable)
+pecos rust clippy             # Run cargo clippy (CUDA-aware)
+pecos rust test               # Run cargo test (CUDA-aware)
 
-# Python commands
+# Python build (maturin + quantum-pecos)
 pecos python build            # Build pecos-rslib with maturin
-pecos python test             # Run pytest
 
-# Dependency installation (apt-like)
+# Dependency installation
 pecos install llvm            # Install LLVM 14 to ~/.pecos/deps/llvm/
 pecos install cuda            # Install CUDA Toolkit to ~/.pecos/deps/cuda/
 pecos install cuquantum       # Install cuQuantum SDK to ~/.pecos/deps/cuquantum/
@@ -28,37 +27,25 @@ pecos install --all           # Install all optional dependencies
 pecos uninstall llvm          # Uninstall LLVM
 pecos upgrade llvm            # Upgrade (force reinstall) LLVM
 
-# LLVM inspection
+# Inspection
 pecos llvm check              # Check LLVM installation status
 pecos llvm configure          # Configure .cargo/config.toml
-
-# CUDA inspection
 pecos cuda check              # Check CUDA availability
-
-# Julia commands
-pecos julia build             # Build Julia FFI library
-pecos julia test              # Run Julia tests
-
-# Go commands
-pecos go build                # Build Go FFI library
-pecos go test                 # Run Go tests
+pecos sys-info                # Show toolchain and environment info
 
 # Selene plugin management
 pecos selene install          # Install Selene plugins
 pecos selene list             # List plugin status
 
-# Dependency management
+# Dependency manifests
 pecos deps list               # List available dependencies
 pecos deps sync               # Sync dependency manifests
-
-# System info
-pecos sys-info                # Show toolchain and environment info
 ```
 
 When running from the repository:
 ```bash
-cargo run -p pecos --features cli -- install llvm
-cargo run -p pecos --features cli -- rust clippy
+cargo run -p pecos-cli -- install llvm
+cargo run -p pecos-cli -- rust clippy
 ```
 
 ## Build and Test Commands (Justfile)

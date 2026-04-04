@@ -1,0 +1,49 @@
+[package]
+name = "pecos-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "PECOS CLI — dependency management, CUDA-aware builds, and system inspection"
+readme = "README.md"
+
+[[bin]]
+name = "pecos"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { workspace = true }
+clap_complete = { workspace = true }
+env_logger = { workspace = true }
+serde_json = { workspace = true }
+
+# Build tools (LLVM/CUDA detection, installation)
+pecos-build = { workspace = true }
+
+# Cargo workspace introspection (for CUDA-aware feature handling)
+cargo_metadata = { workspace = true }
+
+# Runtime commands (pecos run, compile, info, doctor, examples)
+# These use the pecos simulation library directly.
+pecos = { path = "../pecos", optional = true }
+pecos-core = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+
+[features]
+# Runtime: enables simulation commands (run, compile, info, doctor, examples)
+runtime = ["dep:pecos", "pecos/runtime", "pecos/qis", "dep:pecos-core", "dep:log"]
+
+[dev-dependencies]
+assert_cmd.workspace = true
+
+[[test]]
+name = "cli"
+required-features = ["runtime"]
+
+[lints]
+workspace = true

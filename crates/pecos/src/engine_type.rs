@@ -327,7 +327,7 @@ macro_rules! create_engine_builder {
                 {
                     $crate::DynamicEngineBuilder::new(pecos_qis::qis_engine())
                 }
-                #[cfg(not(feature = "llvm"))]
+                #[cfg(not(feature = "qis"))]
                 {
                     panic!("LLVM engine not available. Enable the 'llvm' feature.")
                 }
@@ -338,7 +338,7 @@ macro_rules! create_engine_builder {
                     // Selene removed - use QIS control engine instead
                     $crate::DynamicEngineBuilder::new(pecos_qis::qis_engine())
                 }
-                #[cfg(not(feature = "llvm"))]
+                #[cfg(not(feature = "qis"))]
                 {
                     panic!("Selene engine not available. Enable the 'selene' feature.")
                 }

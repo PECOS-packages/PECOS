@@ -55,7 +55,7 @@ pub fn setup_cli_engine(
 
                 Ok(Box::new(engine))
             }
-            #[cfg(not(feature = "llvm"))]
+            #[cfg(not(feature = "qis"))]
             {
                 Err(PecosError::Input(
                     "QIS support not compiled in. Please rebuild with --features llvm".to_string(),
@@ -107,7 +107,7 @@ pub fn setup_cli_engine_builder(
 
                 Ok(DynamicEngineBuilder::new(engine_builder))
             }
-            #[cfg(not(feature = "llvm"))]
+            #[cfg(not(feature = "qis"))]
             {
                 Err(PecosError::Input(
                     "QIS support not compiled in. Please rebuild with --features llvm".to_string(),

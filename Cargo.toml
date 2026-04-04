@@ -20,7 +20,13 @@ authors = ["The PECOS Developers", "Ciaran Ryan-Anderson <ciaranra@gmail.com>"]
 homepage = "https://pecos.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 license = "Apache-2.0"
-keywords = ["quantum", "QEC", "error-correction", "simulation", "quantum-computing"]
+keywords = [
+  "quantum",
+  "QEC",
+  "error-correction",
+  "simulation",
+  "quantum-computing",
+]
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
@@ -125,11 +131,6 @@ pollster = "0.4"
 # Testing
 approx = "0.5"
 paste = "1"
-
-# Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
-# MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
-# The legacy feature compiles old zstd formats (v0.1-v0.7) that PECOS doesn't need
-# zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
 
 # Internal crates
 pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }

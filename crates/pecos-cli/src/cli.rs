@@ -27,16 +27,9 @@ pub mod upgrade_cmd;
 
 use clap::Subcommand;
 
-// ============================================================================
-// Rust Commands
-// ============================================================================
-
 #[derive(Subcommand, Clone)]
 pub enum RustCommands {
     /// Run cargo check with CUDA-aware feature handling
-    ///
-    /// If CUDA is not available, automatically excludes GPU features from
-    /// pecos and pecos-quest packages.
     Check {
         /// Also check FFI crates (pecos-rslib, pecos-julia-ffi, pecos-go-ffi)
         #[arg(long)]
@@ -66,22 +59,15 @@ pub enum RustCommands {
     },
 }
 
-// ============================================================================
-// Python Commands
-// ============================================================================
-
 #[derive(Subcommand, Clone)]
 pub enum PythonCommands {
-    /// Build pecos-rslib and quantum-pecos
-    ///
-    /// Uses maturin to build the Rust library and installs quantum-pecos
-    /// in editable mode.
+    /// Build pecos-rslib and quantum-pecos via maturin
     Build {
         /// Build profile (dev/debug, release, native)
         #[arg(long, default_value = "dev")]
         profile: String,
 
-        /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
+        /// Additional RUSTFLAGS
         #[arg(long)]
         rustflags: Option<String>,
 
@@ -91,363 +77,124 @@ pub enum PythonCommands {
     },
 }
 
-// ============================================================================
-// CUDA Commands
-// ============================================================================
-
 #[derive(Subcommand, Clone)]
 pub enum CudaCommands {
-    /// Check if CUDA is available (local or system)
+    /// Check if CUDA is available
     Check {
-        /// Suppress output (exit code only)
         #[arg(short, long)]
         quiet: bool,
     },
-
     /// Find CUDA installation path
     Find {
-        /// Print export command for shell evaluation
         #[arg(long)]
         export: bool,
     },
-
-    /// Show CUDA version information
+    /// Show CUDA version
     Version,
-
-    /// Validate CUDA installation integrity
-    Validate {
-        /// Path to CUDA installation (uses detected path if not specified)
-        path: Option<String>,
-    },
-
+    /// Validate CUDA installation
+    Validate { path: Option<String> },
     /// Install CUDA Python packages (cupy, cuquantum, pytket-cutensornet)
-    ///
-    /// Requires CUDA toolkit to be installed first (pecos install cuda or system CUDA).
-    /// Installs quantum-pecos[cuda] which includes cupy, cuquantum, and pytket-cutensornet.
     SetupPython,
 }
 
-// ============================================================================
-// cuQuantum Commands
-// ============================================================================
-
 #[derive(Subcommand, Clone)]
 pub enum CuQuantumCommands {
-    /// Check if cuQuantum is available (local or system)
+    /// Check if cuQuantum is available
     Check {
-        /// Suppress output (exit code only)
         #[arg(short, long)]
         quiet: bool,
     },
-
     /// Find cuQuantum installation path
     Find {
-        /// Print export command for shell evaluation
         #[arg(long)]
         export: bool,
     },
-
-    /// Show cuQuantum version information
+    /// Show cuQuantum version
     Version,
-
-    /// Validate cuQuantum installation integrity
-    Validate {
-        /// Path to cuQuantum installation (uses detected path if not specified)
-        path: Option<String>,
-    },
-
+    /// Validate cuQuantum installation
+    Validate { path: Option<String> },
     /// Configure .cargo/config.toml with cuQuantum path
-    ///
-    /// Automatically detects cuQuantum installation and updates
-    /// .cargo/config.toml with `CUQUANTUM_ROOT`.
     Configure,
 }
-
-// ============================================================================
-// GPU Commands (wgpu-based GPU detection)
-// ============================================================================
 
 #[derive(Subcommand, Clone)]
 pub enum GpuCommands {
     /// Check if a GPU (wgpu adapter) is available
     Check {
-        /// Suppress output (exit code only)
         #[arg(short, long)]
         quiet: bool,
-
-        /// Print machine-readable JSON output
         #[arg(long)]
         json: bool,
     },
 }
 
-// ============================================================================
-// Selene Commands
-// ============================================================================
-
 #[derive(Subcommand, Clone)]
 pub enum SeleneCommands {
     /// Install Selene plugins by copying built libraries to Python packages
     Install {
-        /// Specific plugin to install (default: all)
         #[arg(short, long)]
         plugin: Option<String>,
-
-        /// Build profile to use (dev/debug, release, native)
         #[arg(long, default_value = "dev")]
         profile: String,
-
-        /// Show what would be copied without copying
         #[arg(long)]
         dry_run: bool,
     },
-
     /// Clean Selene plugin _dist directories and venv installations
     Clean {
-        /// Specific plugin to clean (default: all)
         #[arg(short, long)]
         plugin: Option<String>,
-
-        /// Also clean plugins from .venv/lib/*/site-packages/
         #[arg(long)]
         venv: bool,
-
-        /// Show what would be deleted without deleting
         #[arg(long)]
         dry_run: bool,
-
-        /// Increase verbosity (-v, -vv, -vvv)
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbose: u8,
     },
-
     /// List Selene plugins and their installation status
     List,
 }
-
-// ============================================================================
-// LLVM Commands
-// ============================================================================
 
 #[derive(Subcommand, Clone)]
 pub enum LlvmCommands {
     /// Check if LLVM 14 is available
     Check {
-        /// Suppress output messages
         #[arg(short, long)]
         quiet: bool,
     },
-
     /// Configure .cargo/config.toml with LLVM path
     Configure,
-
     /// Find LLVM installation path
     Find {
-        /// Print export command for shell evaluation
         #[arg(long)]
         export: bool,
     },
-
-    /// Show LLVM version information
+    /// Show LLVM version
     Version,
-
-    /// Validate LLVM installation integrity
-    Validate {
-        /// Path to LLVM installation (uses detected path if not specified)
-        path: Option<String>,
-    },
-
-    /// Find a specific LLVM tool
-    Tool {
-        /// Name of the tool (e.g., llvm-as, clang)
-        name: String,
-    },
+    /// Validate LLVM installation
+    Validate { path: Option<String> },
+    /// Find a specific LLVM tool (e.g., llvm-as, clang)
+    Tool { name: String },
 }
-
-// ============================================================================
-// Deps Commands
-// ============================================================================
 
 #[derive(Subcommand, Clone)]
 pub enum DepsCommands {
     /// Initialize a new pecos.toml manifest
     Init {
-        /// Overwrite existing manifest
         #[arg(long)]
         force: bool,
     },
-
     /// Show current manifest status
     Status,
-
     /// Sync crate manifests from workspace manifest
     Sync {
-        /// Show what would be changed without making changes
         #[arg(long)]
         dry_run: bool,
     },
-
-    /// Verify dependency checksums by downloading and checking
+    /// Verify dependency checksums
     Verify {
-        /// Only verify specific dependencies (comma-separated)
         #[arg(short, long)]
         deps: Option<String>,
     },
-
     /// List available dependencies
     List,
-}
-
-// ============================================================================
-// Command Runners
-// ============================================================================
-
-/// Run a Rust subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_rust(command: &RustCommands) -> pecos_build::Result<()> {
-    rust_cmd::run(command)
-}
-
-/// Run a Python subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_python(command: &PythonCommands) -> pecos_build::Result<()> {
-    python_cmd::run(command)
-}
-
-/// Run a CUDA subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_cuda(command: CudaCommands) -> pecos_build::Result<()> {
-    cuda_cmd::run(command)
-}
-
-/// Run a cuQuantum subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_cuquantum(command: CuQuantumCommands) -> pecos_build::Result<()> {
-    cuquantum_cmd::run(command)
-}
-
-/// Run a GPU subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_gpu(command: &GpuCommands) -> pecos_build::Result<()> {
-    gpu_cmd::run(command)
-}
-
-/// Run a Selene subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_selene(command: SeleneCommands) -> pecos_build::Result<()> {
-    selene_cmd::run(command)
-}
-
-/// Run an LLVM subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
-    llvm_cmd::run(command)
-}
-
-/// Run a Deps subcommand
-///
-/// # Errors
-///
-/// Returns an error if the subcommand fails.
-pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
-    manifest_cmd::run(command)
-}
-
-/// Run the setup command
-///
-/// # Errors
-///
-/// Returns an error if setup fails.
-pub fn run_setup(
-    mode: pecos_build::prompt::PromptMode,
-    skip_llvm: bool,
-    skip_cuda: bool,
-    quiet: bool,
-) -> pecos_build::Result<()> {
-    setup_cmd::run(mode, skip_llvm, skip_cuda, quiet)
-}
-
-/// Run the migrate command
-///
-/// # Errors
-///
-/// Returns an error if migration fails.
-pub fn run_migrate() -> pecos_build::Result<()> {
-    migrate_cmd::run()
-}
-
-/// Run the install command
-///
-/// # Errors
-///
-/// Returns an error if any target fails to install.
-pub fn run_install(
-    targets: &[String],
-    force: bool,
-    all: bool,
-    no_configure: bool,
-) -> pecos_build::Result<()> {
-    install_cmd::run(targets, force, all, no_configure)
-}
-
-/// Run the uninstall command
-///
-/// # Errors
-///
-/// Returns an error if any target fails to uninstall.
-pub fn run_uninstall(targets: &[String], all: bool, yes: bool) -> pecos_build::Result<()> {
-    uninstall_cmd::run(targets, all, yes)
-}
-
-/// Run the upgrade command
-///
-/// # Errors
-///
-/// Returns an error if any target fails to upgrade.
-pub fn run_upgrade(
-    targets: &[String],
-    all: bool,
-    no_configure: bool,
-    yes: bool,
-) -> pecos_build::Result<()> {
-    upgrade_cmd::run(targets, all, no_configure, yes)
-}
-
-/// Run the sys-info command
-///
-/// # Errors
-///
-/// Returns an error if system information cannot be gathered.
-pub fn run_sys_info() -> pecos_build::Result<()> {
-    info::run()
-}
-
-/// Run the list command
-///
-/// # Errors
-///
-/// Returns an error if component status cannot be determined.
-pub fn run_list(verbose: bool) -> pecos_build::Result<()> {
-    list::run(verbose)
 }

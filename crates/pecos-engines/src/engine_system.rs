@@ -28,52 +28,19 @@ pub trait ControlEngine: DynClone + Send + Sync {
     type EngineInput;
     type EngineOutput;
 
-    /// Start processing new input
-    ///
-    /// # Parameters
-    /// * `input` - Initial input to process
-    ///
-    /// # Returns
-    /// * `NeedsProcessing(input)` if more processing needed
-    /// * `Complete(output)` if processing finished
-    ///
-    /// # Errors
-    /// This function may return an error if:
-    /// - There is an error during the start of processing.
-    /// - The input cannot be serialized or deserialized.
-    /// - An operation fails during initialization.
+    /// Start processing new input. Returns `NeedsProcessing` or `Complete`.
     fn start(
         &mut self,
         input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
-    /// Continue processing with result from controlled engine
-    ///
-    /// # Parameters
-    /// * `result` - Result from previous engine processing
-    ///
-    /// # Returns
-    /// * `NeedsProcessing(input)` if more processing needed
-    /// * `Complete(output)` if processing finished
-    ///
-    /// # Errors
-    /// This function may return an error if:
-    /// - The result cannot be deserialized or processed.
-    /// - There is an error during the continuation of processing.
-    /// - Any operation fails while handling the result.
+    /// Continue processing with result from controlled engine.
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
-    /// Reset engine state for reuse
-    ///
-    /// This allows engines to be reused for multiple simulation runs
-    /// by resetting any internal state to initial conditions.
-    ///
-    /// # Errors
-    /// This function may return an error if:
-    /// - There is an error during resetting the engine state.
+    /// Reset engine state for reuse between simulation runs.
     fn reset(&mut self) -> Result<(), PecosError>;
 }
 
@@ -202,7 +169,7 @@ impl<I, O, EI, EO> ControlEngine
         &mut self,
         input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-        // Delegate to the underlying ControlEngine
+
         (**self).start(input)
     }
 
@@ -210,12 +177,12 @@ impl<I, O, EI, EO> ControlEngine
         &mut self,
         result: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-        // Delegate to the underlying ControlEngine
+
         (**self).continue_processing(result)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Delegate to the underlying ControlEngine
+
         (**self).reset()
     }
 }

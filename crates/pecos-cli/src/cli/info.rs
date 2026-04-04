@@ -143,80 +143,27 @@ fn print_toolchain_status() {
         println!("  cuQuantum: not found");
     }
 
-    // Python
-    let python_status = detect_python();
-    println!("  Python:   {python_status}");
-
-    // uv
-    let uv_status = detect_uv();
-    println!("  uv:       {uv_status}");
-
-    // Julia
-    let julia_status = detect_julia();
-    println!("  Julia:    {julia_status}");
-
-    // Go
-    let go_status = detect_go();
-    println!("  Go:       {go_status}");
+    println!("  Python:   {}", detect_tool("python3", "--version"));
+    println!("  uv:       {}", detect_tool("uv", "--version"));
+    println!("  Julia:    {}", detect_tool("julia", "--version"));
+    println!("  Go:       {}", detect_tool("go", "version"));
 }
 
-/// Detect Python installation
-#[allow(clippy::collapsible_if)]
-fn detect_python() -> String {
-    for cmd in ["python3", "python"] {
-        if let Ok(output) = Command::new(cmd).arg("--version").output() {
-            if output.status.success() {
-                let version = String::from_utf8_lossy(&output.stdout);
-                let version = version.trim();
-                if version.is_empty() {
-                    // Some systems output to stderr
-                    let version = String::from_utf8_lossy(&output.stderr);
-                    return version.trim().to_string();
-                }
-                return version.to_string();
+fn detect_tool(cmd: &str, arg: &str) -> String {
+    let output = Command::new(cmd).arg(arg).output().ok();
+    match output {
+        Some(o) if o.status.success() => {
+            let out = String::from_utf8_lossy(&o.stdout);
+            let out = out.trim();
+            if out.is_empty() {
+                // Some tools (python) output to stderr
+                String::from_utf8_lossy(&o.stderr).trim().to_string()
+            } else {
+                out.strip_prefix("go version ")
+                    .unwrap_or(out)
+                    .to_string()
             }
         }
+        _ => "not found".to_string(),
     }
-    "not found".to_string()
-}
-
-/// Detect uv installation
-#[allow(clippy::collapsible_if)]
-fn detect_uv() -> String {
-    if let Ok(output) = Command::new("uv").arg("--version").output() {
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout);
-            return version.trim().to_string();
-        }
-    }
-    "not found".to_string()
-}
-
-/// Detect Julia installation
-#[allow(clippy::collapsible_if)]
-fn detect_julia() -> String {
-    if let Ok(output) = Command::new("julia").arg("--version").output() {
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout);
-            return version.trim().to_string();
-        }
-    }
-    "not found".to_string()
-}
-
-/// Detect Go installation
-#[allow(clippy::collapsible_if)]
-fn detect_go() -> String {
-    if let Ok(output) = Command::new("go").arg("version").output() {
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout);
-            // Output is like "go version go1.21.0 linux/amd64"
-            let version = version.trim();
-            if let Some(ver) = version.strip_prefix("go version ") {
-                return ver.to_string();
-            }
-            return version.to_string();
-        }
-    }
-    "not found".to_string()
 }

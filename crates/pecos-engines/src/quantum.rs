@@ -494,12 +494,12 @@ impl Engine for Box<dyn QuantumEngine> {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        // Delegate to the underlying QuantumEngine
+
         (**self).process(input)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Delegate to the underlying QuantumEngine
+
         (**self).reset()
     }
 }

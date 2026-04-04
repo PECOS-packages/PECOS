@@ -669,14 +669,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Examples(args) => handle_examples(args)?,
 
         // Dev tool commands (always available)
-        Commands::Rust { command } => cli::run_rust(command)?,
-        Commands::Python { command } => cli::run_python(command)?,
-        Commands::Cuda { command } => cli::run_cuda(command.clone())?,
-        Commands::CuQuantum { command } => cli::run_cuquantum(command.clone())?,
-        Commands::Gpu { command } => cli::run_gpu(command)?,
-        Commands::Llvm { command } => cli::run_llvm(command.clone())?,
-        Commands::Selene { command } => cli::run_selene(command.clone())?,
-        Commands::Deps { command } => cli::run_deps(command.clone())?,
+        Commands::Rust { command } => cli::rust_cmd::run(command)?,
+        Commands::Python { command } => cli::python_cmd::run(command)?,
+        Commands::Cuda { command } => cli::cuda_cmd::run(command.clone())?,
+        Commands::CuQuantum { command } => cli::cuquantum_cmd::run(command.clone())?,
+        Commands::Gpu { command } => cli::gpu_cmd::run(command)?,
+        Commands::Llvm { command } => cli::llvm_cmd::run(command.clone())?,
+        Commands::Selene { command } => cli::selene_cmd::run(command.clone())?,
+        Commands::Deps { command } => cli::manifest_cmd::run(command.clone())?,
         Commands::Setup {
             yes,
             no,
@@ -691,24 +691,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 pecos_build::prompt::PromptMode::Interactive
             };
-            cli::run_setup(mode, *skip_llvm, *skip_cuda, *quiet)?;
+            cli::setup_cmd::run(mode, *skip_llvm, *skip_cuda, *quiet)?;
         }
-        Commands::Migrate => cli::run_migrate()?,
+        Commands::Migrate => cli::migrate_cmd::run()?,
         Commands::Install {
             targets,
             force,
             all,
             no_configure,
-        } => cli::run_install(targets, *force, *all, *no_configure)?,
-        Commands::Uninstall { targets, all, yes } => cli::run_uninstall(targets, *all, *yes)?,
+        } => cli::install_cmd::run(targets, *force, *all, *no_configure)?,
+        Commands::Uninstall { targets, all, yes } => {
+            cli::uninstall_cmd::run(targets, *all, *yes)?;
+        }
         Commands::Upgrade {
             targets,
             all,
             no_configure,
             yes,
-        } => cli::run_upgrade(targets, *all, *no_configure, *yes)?,
-        Commands::SysInfo => cli::run_sys_info()?,
-        Commands::List { verbose } => cli::run_list(*verbose)?,
+        } => cli::upgrade_cmd::run(targets, *all, *no_configure, *yes)?,
+        Commands::SysInfo => cli::info::run()?,
+        Commands::List { verbose } => cli::list::run(*verbose)?,
     }
 
     Ok(())

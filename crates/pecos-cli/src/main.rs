@@ -802,8 +802,6 @@ impl InfoPrinter {
 
         // Build info lines
         let mut info_lines: Vec<String> = Vec::new();
-        let mut has_missing = false;
-
         // Title and version
         info_lines.push(self.bold("PECOS - Quantum Error Correction Simulator"));
         info_lines.push(format!(
@@ -815,35 +813,24 @@ impl InfoPrinter {
 
         // Program Formats
         info_lines.push(self.cyan("Program Formats:"));
-        let (line, missing) = self.capability("QASM circuits", cfg!(feature = "runtime"));
+        let (line, _) = self.capability("QASM circuits", true);
         info_lines.push(format!("  {line}"));
-        has_missing |= missing;
-        let (line, missing) = self.capability("PHIR/JSON programs", cfg!(feature = "runtime"));
+        let (line, _) = self.capability("PHIR/JSON programs", true);
         info_lines.push(format!("  {line}"));
-        has_missing |= missing;
-        let (line, missing) = self.capability("QIS programs", cfg!(feature = "runtime"));
+        let (line, _) = self.capability("QIS programs", true);
         info_lines.push(format!("  {line}"));
-        has_missing |= missing;
         info_lines.push(String::new());
 
         // Simulators
         info_lines.push(self.cyan("Simulators:"));
-        info_lines.push(format!(
-            "  {} StateVector {}",
-            self.green("[x]"),
-            self.dim("(built-in)")
-        ));
-        info_lines.push(format!(
-            "  {} Stabilizer {}",
-            self.green("[x]"),
-            self.dim("(built-in)")
-        ));
-        let (line, missing) = self.capability("QuEST", cfg!(feature = "runtime"));
+        let (line, _) = self.capability("StateVector", true);
         info_lines.push(format!("  {line}"));
-        has_missing |= missing;
-        let (line, missing) = self.capability("Qulacs", cfg!(feature = "runtime"));
+        let (line, _) = self.capability("Stabilizer", true);
         info_lines.push(format!("  {line}"));
-        has_missing |= missing;
+        let (line, _) = self.capability("QuEST", true);
+        info_lines.push(format!("  {line}"));
+        let (line, _) = self.capability("Qulacs", true);
+        info_lines.push(format!("  {line}"));
         info_lines.push(String::new());
 
         // Noise Models
@@ -873,14 +860,6 @@ impl InfoPrinter {
             self.dim("Documentation: https://github.com/PECOS-Developers/PECOS")
         );
 
-        // Suggest doctor for missing capabilities
-        if has_missing {
-            println!();
-            println!(
-                "{}",
-                self.dim("Tip: Run 'pecos doctor' to learn how to enable missing capabilities.")
-            );
-        }
     }
 }
 
@@ -900,50 +879,12 @@ fn run_doctor() {
         &format!("v{}", env!("CARGO_PKG_VERSION")),
     );
 
-    // Check 2: QASM support
-    let qasm_ok = cfg!(feature = "runtime");
-    print_check(
-        "QASM support",
-        qasm_ok,
-        if qasm_ok { "available" } else { "not compiled" },
-    );
-    if !qasm_ok {
-        warnings.push("QASM support not compiled. Reinstall with default features.");
-    }
+    // Check 2: Compiled capabilities (runtime feature enables all)
+    print_check("QASM support", true, "available");
+    print_check("PHIR/JSON support", true, "available");
+    print_check("QIS/Selene support", true, "available");
 
-    // Check 3: PHIR support
-    let phir_ok = cfg!(feature = "runtime");
-    print_check(
-        "PHIR/JSON support",
-        phir_ok,
-        if phir_ok { "available" } else { "not compiled" },
-    );
-    if !phir_ok {
-        warnings.push("PHIR support not compiled. Reinstall with default features.");
-    }
-
-    // Check 4: Selene runtime
-    let selene_ok = cfg!(feature = "runtime");
-    print_check(
-        "Selene runtime",
-        selene_ok,
-        if selene_ok {
-            "available"
-        } else {
-            "not compiled"
-        },
-    );
-
-    // Check 5: LLVM/QIS support
-    let llvm_ok = cfg!(feature = "runtime");
-    if llvm_ok {
-        print_check("LLVM/QIS support", true, "available");
-    } else {
-        print_check("LLVM/QIS support", false, "not compiled (optional)");
-        warnings.push("LLVM support not compiled. To enable: cargo install pecos --features llvm");
-    }
-
-    // Check 6: LLVM 14 installation
+    // Check 3: LLVM 14 installation
     if let Some(llvm_path) = find_llvm_14(None) {
         let version = get_llvm_version(&llvm_path).unwrap_or_else(|_| "unknown".into());
         print_check(

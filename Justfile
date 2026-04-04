@@ -519,7 +519,7 @@ clean-deps:
 
 # Clean everything including LLVM and CUDA
 [group('clean')]
-clean-everything:
+clean-all:
     uv run python scripts/clean.py --all
 
 # Preview what would be cleaned

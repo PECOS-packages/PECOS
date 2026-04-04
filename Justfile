@@ -593,29 +593,12 @@ build-selene:
     {{pecos}} selene install --profile release
     echo "Selene plugins built and installed successfully"
 
-[private]
-pre-check: check-cli setup-quiet
-
 
 # Convenience aliases
 [private]
 build-debug: (build "debug")
 [private]
 build-release: (build "release")
-[private]
-build-native: (build "native")
-[private]
-build-lite-debug: (build-lite "debug")
-[private]
-build-lite-release: (build-lite "release")
-[private]
-build-cuda-debug: (build-cuda "debug")
-[private]
-build-cuda-release: (build-cuda "release")
-[private]
-build-cuda-native: (build-cuda "native")
-
-# Remaining utility recipes
 
 # Generate/update lockfiles
 [group('setup')]
@@ -628,34 +611,12 @@ updatereqs:
 install-cuda-python:
     {{pecos}} cuda setup-python
 
-# Full CUDA setup: toolkit + Python packages
-[private]
-install-cuda-full: install-cuda install-cuda-python
-
 # Validate CUDA installation integrity
 [private]
 validate-cuda:
     {{pecos}} cuda validate
 
-# Docs extras
-[private]
-docs-test-slow:
-    uv run python scripts/docs/generate_doc_tests.py
-    uv run pytest python/quantum-pecos/tests/docs/generated -v -k "not rust"
-
-[private]
-docs-test-generate:
-    uv run python scripts/docs/generate_doc_tests.py
-
-[private]
-docs-test-run *args:
-    uv run pytest python/quantum-pecos/tests/docs/generated {{args}}
-
-[private]
-docs-test-legacy:
-    uv run python scripts/docs/test_code_examples.py
-
-# Julia/Go extras
+# Run Julia examples
 [private]
 julia-examples: (julia-build "debug")
     #!/usr/bin/env bash
@@ -666,23 +627,4 @@ julia-examples: (julia-build "debug")
     else
         echo "Julia not found."; exit 1
     fi
-
-[private]
-julia-info:
-    @echo "Julia: julia/PECOS.jl | FFI: julia/pecos-julia-ffi"
-
-[private]
-julia-clean:
-    rm -f julia/PECOS.jl/Manifest.toml julia/PECOS.jl/dev/PECOS_julia_jll/Manifest.toml || true
-
-[private]
-go-build-debug: (go-build "debug")
-
-[private]
-go-info:
-    @echo "Go: go/pecos | FFI: go/pecos-go-ffi"
-
-[private]
-go-clean:
-    rm -f go/pecos/go.sum || true
 

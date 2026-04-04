@@ -528,9 +528,9 @@ build-debug: (build "debug")
 [private]
 build-release: (build "release")
 
-# Generate/update lockfiles
+# Update uv and regenerate lockfiles
 [group('setup')]
-updatereqs:
+updatelocks:
     uv self update
     uv lock --project .
 

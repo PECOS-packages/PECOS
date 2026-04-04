@@ -82,7 +82,7 @@ impl ProgrammedSimBuilder {
 
                         self.base_builder.classical(engine_builder).build()
                     }
-                    #[cfg(not(feature = "llvm"))]
+                    #[cfg(not(feature = "qis"))]
                     {
                         let _ = qis; // Mark as used to avoid warning
                         Err(PecosError::Generic(
@@ -108,7 +108,7 @@ impl ProgrammedSimBuilder {
 
                         self.base_builder.classical(engine_builder).build()
                     }
-                    #[cfg(not(feature = "llvm"))]
+                    #[cfg(not(feature = "qis"))]
                     {
                         let _ = hugr; // Mark as used to avoid warning
                         Err(PecosError::Generic(
@@ -172,7 +172,7 @@ impl ProgrammedSimBuilder {
 
                         self.base_builder.classical(engine_builder).run(shots)
                     }
-                    #[cfg(not(feature = "llvm"))]
+                    #[cfg(not(feature = "qis"))]
                     {
                         let _ = qis; // Mark as used to avoid warning
                         Err(PecosError::Generic(
@@ -198,7 +198,7 @@ impl ProgrammedSimBuilder {
 
                         self.base_builder.classical(engine_builder).run(shots)
                     }
-                    #[cfg(not(feature = "llvm"))]
+                    #[cfg(not(feature = "qis"))]
                     {
                         let _ = hugr; // Mark as used to avoid warning
                         Err(PecosError::Generic(

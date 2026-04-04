@@ -32,18 +32,13 @@ pecos := "pecos"
 # Getting Started
 # =============================================================================
 
-# Install PECOS CLI (required for most recipes)
+# Install or update the PECOS CLI
 [group('setup')]
 install-cli:
     @echo "Installing PECOS CLI..."
-    cargo install --path crates/pecos-cli
+    cargo install --path crates/pecos-cli --force
     @echo ""
     @echo "Done! You can now run: just build"
-
-# Reinstall PECOS CLI (run after changing CLI code)
-[group('setup')]
-reinstall-cli:
-    cargo install --path crates/pecos-cli --force
 
 # Set up build environment (detect and install missing dependencies)
 [group('setup')]
@@ -568,7 +563,7 @@ check-cli:
     installed=$(pecos --version 2>/dev/null | awk '{print $2}')
     if [[ "$installed" != "$expected" ]]; then
         echo "Warning: PECOS CLI outdated (installed: ${installed:-unknown}, expected: $expected)"
-        echo "  Update with: just reinstall-cli"
+        echo "  Update with: just install-cli"
     fi
 
 [private]

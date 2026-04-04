@@ -9,6 +9,7 @@
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) - Python package manager
 - [just](https://github.com/casey/just) - Command runner
 - [pecos](https://crates.io/crates/pecos) - PECOS dev tools CLI
+- **Windows**: [Git for Windows](https://git-scm.com/download/win) (provides Git Bash, required by Justfile recipes) or WSL
 
 **Pure Rust development** (Rust crates only):
 

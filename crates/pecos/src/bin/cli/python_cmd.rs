@@ -125,13 +125,21 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             cmd.arg("--release");
         }
         cmd.current_dir(&crate_dir);
+        // On macOS, add rpath for system libc++ and clean Homebrew paths
+        // (cdylibs linking inkwell/LLVM reference @rpath/libc++.1.dylib)
+        #[cfg(target_os = "macos")]
+        {
+            if !flags.contains("-rpath") {
+                let rpath_flag = " -C link-arg=-Wl,-rpath,/usr/lib";
+                flags.push_str(rpath_flag);
+            }
+        }
+
         if !flags.is_empty() {
             cmd.env("RUSTFLAGS", &flags);
         }
         cmd.env("PATH", &path_with_venv);
         cmd.env_remove("CONDA_PREFIX");
-        // On macOS, prevent Homebrew library paths from polluting the linker
-        // (causes @rpath/libc++.1.dylib errors in the built .so)
         #[cfg(target_os = "macos")]
         {
             cmd.env_remove("LIBRARY_PATH");

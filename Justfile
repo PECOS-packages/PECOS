@@ -22,9 +22,8 @@ default:
 # Settings
 # =============================================================================
 
-# Use bash by default (Windows users should use Git Bash, WSL, or PowerShell recipes)
+# Requires bash (Windows: use Git Bash from https://git-scm.com or WSL)
 set shell := ["bash", "-cu"]
-set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
 # PECOS CLI - must be installed (run 'just install-cli' first)
 pecos := "pecos"
@@ -73,9 +72,19 @@ list-deps: check-cli
 # Build PECOS (profile: debug, release, native)
 [group('build')]
 build profile="debug": check-cli setup-quiet sync-deps build-selene
+    #!/usr/bin/env bash
+    set -euo pipefail
     {{pecos}} python build --profile {{profile}}
-    @command -v julia >/dev/null 2>&1 && just julia-build {{profile}} || true
-    @command -v go >/dev/null 2>&1 && just go-build {{profile}} || true
+    if command -v julia >/dev/null 2>&1; then
+        just julia-build {{profile}}
+    else
+        echo "Skipping Julia build (julia not found)"
+    fi
+    if command -v go >/dev/null 2>&1; then
+        just go-build {{profile}}
+    else
+        echo "Skipping Go build (go not found)"
+    fi
 
 # Build PECOS without dependency setup or sync
 [group('build')]

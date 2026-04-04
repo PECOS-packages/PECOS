@@ -167,7 +167,7 @@ rstest: check-cli
 
 # Run all tests (Rust + Python + Julia + Go if available)
 [group('test')]
-test: rstest-all pytest-all
+test: rstest pytest-all
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
@@ -423,7 +423,9 @@ go-build profile="release" rustflags="":
 go-test: (go-build "release")
     #!/usr/bin/env bash
     set -euo pipefail
-    export LD_LIBRARY_PATH="$(pwd)/target/release:${LD_LIBRARY_PATH:-}"
+    LIB_DIR="$(pwd)/target/release"
+    export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
+    export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"
     cd go/pecos && go test -v
 
 # Format Go code
@@ -438,7 +440,12 @@ go-fmt-check:
 
 # Run Go linting with go vet
 [group('go')]
-go-lint:
+go-lint: (go-build "release")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LIB_DIR="$(pwd)/target/release"
+    export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
+    export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"
     cd go/pecos && go vet ./...
 
 # =============================================================================
@@ -469,11 +476,6 @@ test-decoder decoder:
 # Additional Testing
 # =============================================================================
 
-# Run Rust tests in default cargo profile
-[private]
-rstest-all: check-cli
-    {{pecos}} rust test
-
 # Run NumPy/SciPy compatibility tests
 [group('test')]
 pytest-numpy:
@@ -495,29 +497,6 @@ pytest-dep:
 pytest-selene:
     uv run pytest python/selene-plugins
 
-# Run all tests with warnings for missing tools
-[group('test')]
-test-all: rstest-all pytest-all
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if command -v julia >/dev/null 2>&1; then
-        echo "Julia detected, running Julia tests..."
-        just julia-test
-    else
-        echo ""
-        echo "WARNING: Julia is not installed. Skipping Julia tests."
-        echo "   To run Julia tests, please install Julia from https://julialang.org/downloads/"
-        echo ""
-    fi
-    if command -v go >/dev/null 2>&1; then
-        echo "Go detected, running Go tests..."
-        just go-test
-    else
-        echo ""
-        echo "WARNING: Go is not installed. Skipping Go tests."
-        echo "   To run Go tests, please install Go from https://go.dev/dl/"
-        echo ""
-    fi
 
 # =============================================================================
 # Cleaning
@@ -581,18 +560,6 @@ sync-deps:
     fi
     echo "Python deps not installed, running uv sync..."
     uv sync --project . --all-packages
-
-[private]
-installreqs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Installing requirements..."
-    if python -c "import cupy" >/dev/null 2>&1; then
-        echo "(including CUDA packages)"
-        uv sync --project . --all-packages --group cuda
-    else
-        uv sync --project . --all-packages
-    fi
 
 [private]
 build-selene:
@@ -661,29 +628,6 @@ updatereqs:
     uv self update
     uv lock --project .
 
-# Install requirements with specific Python version
-[private]
-installreqs-python version:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if python -c "import cupy" >/dev/null 2>&1; then
-        uv sync --project . --all-packages --python "{{version}}" --group cuda
-    else
-        uv sync --project . --all-packages --python "{{version}}"
-    fi
-
-# Install uv using pip
-[group('setup')]
-pip-install-uv:
-    python -m pip install --upgrade uv
-    uv sync
-
-# Normalize line endings according to .gitattributes
-[private]
-normalize-line-endings:
-    -git rm --cached -r .
-    git reset --hard
-
 # Install CUDA Python packages (requires CUDA toolkit)
 [private]
 install-cuda-python:
@@ -748,28 +692,9 @@ go-clean:
     rm -f go/pecos/go.sum || true
 
 [private]
-decoder-info:
-    @echo "Decoders: ldpc (BP-OSD, MBP). See DECODERS.md"
-
-[private]
-decoder-cache-status:
-    {{pecos}} list -v
-
-[private]
-decoder-cache-clean: clean-cache
-
-[private]
 clean-llvm:
     uv run python scripts/clean.py --llvm
 
 [private]
 clean-cuda:
     uv run python scripts/clean.py --cuda
-
-[private]
-clean-pecos-home:
-    uv run python scripts/clean.py --cache --deps
-
-[private]
-clean-all:
-    uv run python scripts/clean.py --cache --deps

@@ -528,11 +528,12 @@ build-debug: (build "debug")
 [private]
 build-release: (build "release")
 
-# Update uv and regenerate lockfiles
+# Regenerate all lockfiles from scratch
 [group('setup')]
 updatelocks:
-    uv self update
+    rm -f uv.lock Cargo.lock
     uv lock --project .
+    cargo generate-lockfile
 
 # Install CUDA Python packages (requires CUDA toolkit)
 [private]

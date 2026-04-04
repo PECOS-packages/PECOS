@@ -297,10 +297,13 @@ jobs:
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
             MACOSX_DEPLOYMENT_TARGET=13.2
           CIBW_BEFORE_ALL_MACOS: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
-            rustup update
-            cargo run --release -p pecos --features cli -- install llvm --force
+            source $HOME/.cargo/env 2>/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env; }
+            if [ ! -d "$HOME/.pecos/deps/llvm/bin" ]; then
+              rustup update
+              cargo run --release -p pecos --features cli -- install llvm --force
+            else
+              echo "LLVM already installed from pecos-rslib build, skipping"
+            fi
             mkdir -p $HOME/.pecos/bin
             printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
             chmod +x $HOME/.pecos/bin/codesign
@@ -312,7 +315,7 @@ jobs:
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
           CIBW_BEFORE_ALL_WINDOWS: >
             rustup update &&
-            cargo run --release -p pecos --features cli -- install llvm --force
+            if not exist "C:\Users\runneradmin\.pecos\deps\llvm\bin" (cargo run --release -p pecos --features cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"

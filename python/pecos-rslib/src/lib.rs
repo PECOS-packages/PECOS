@@ -173,32 +173,42 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
         log::debug!("Unix detected, attempting Selene runtime preload...");
 
-        // Try to find libselene_simple_runtime.so
-        let possible_paths = [
-            "/home/ciaranra/Repos/cl_projects/gup/selene/target/debug/libselene_simple_runtime.so",
-            "/home/ciaranra/Repos/cl_projects/gup/selene/target/release/libselene_simple_runtime.so",
-            "../selene/target/debug/libselene_simple_runtime.so",
-            "../selene/target/release/libselene_simple_runtime.so",
-        ];
+        // Build search paths for libselene_simple_runtime.so:
+        // 1. PECOS_SELENE_PRELOAD env var (explicit override)
+        // 2. ~/.pecos/lib/
+        // 3. Relative development paths (target/debug, target/release)
+        let mut possible_paths: Vec<std::path::PathBuf> = Vec::new();
+
+        if let Ok(path) = std::env::var("PECOS_SELENE_PRELOAD") {
+            possible_paths.push(std::path::PathBuf::from(path));
+        }
+
+        if let Some(home) = dirs::home_dir() {
+            possible_paths.push(home.join(".pecos/lib/libselene_simple_runtime.so"));
+        }
+
+        possible_paths.push("target/debug/libselene_simple_runtime.so".into());
+        possible_paths.push("target/release/libselene_simple_runtime.so".into());
 
         log::debug!("Checking for Selene runtime libraries...");
         for path in &possible_paths {
-            log::trace!("Checking path: {path}");
-            if std::path::Path::new(path).exists() {
-                log::debug!("Found Selene runtime! Attempting to preload: {path}");
+            let path_str = path.to_string_lossy();
+            log::trace!("Checking path: {path_str}");
+            if path.exists() {
+                log::debug!("Found Selene runtime! Attempting to preload: {path_str}");
 
                 unsafe {
-                    let path_cstr = CString::new(path.as_bytes()).unwrap();
+                    let path_cstr = CString::new(path_str.as_bytes()).unwrap();
                     let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
                     if handle.is_null() {
                         let error_ptr = libc::dlerror();
                         if !error_ptr.is_null() {
                             let error = std::ffi::CStr::from_ptr(error_ptr).to_string_lossy();
-                            log::warn!("Failed to preload {path}: {error}");
+                            log::warn!("Failed to preload {path_str}: {error}");
                         }
                     } else {
                         log::info!(
-                            "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path}"
+                            "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path_str}"
                         );
                         break;
                     }

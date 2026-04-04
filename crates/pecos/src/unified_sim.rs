@@ -8,7 +8,22 @@ use pecos_engines::{ClassicalControlEngineBuilder, MonteCarloEngine, SimBuilder,
 use pecos_programs::Program;
 use pecos_qasm::qasm_engine;
 #[cfg(feature = "qis")]
-use pecos_qis::qis_engine;
+use pecos_qis::{IntoQisInterface, qis_engine};
+
+/// Set up a QIS engine with Selene runtime and Helios interface for the given program.
+#[cfg(feature = "qis")]
+fn build_qis_engine<P: IntoQisInterface + 'static>(
+    program: P,
+) -> Result<pecos_qis::QisEngineBuilder, PecosError> {
+    let selene_runtime = crate::selene_simple_runtime()
+        .map_err(|e| PecosError::Generic(format!("Failed to load Selene runtime: {e}")))?;
+    let helios_builder = crate::helios_interface_builder();
+    qis_engine()
+        .runtime(selene_runtime)
+        .interface(helios_builder)
+        .try_program(program)
+        .map_err(|e| PecosError::Generic(format!("Failed to load program: {e}")))
+}
 
 /// Extension trait for `SimBuilder` to add program-based methods
 pub trait SimBuilderExt {
@@ -43,10 +58,58 @@ pub struct ProgrammedSimBuilder {
 }
 
 impl ProgrammedSimBuilder {
+    /// Auto-select the classical engine based on program type, returning a configured `SimBuilder`.
+    fn configure_engine(self) -> Result<SimBuilder, PecosError> {
+        if self.override_classical {
+            return Ok(self.base_builder);
+        }
+
+        match self.program {
+            Program::Qasm(qasm) => Ok(self.base_builder.classical(qasm_engine().program(qasm))),
+            Program::Qis(qis) => {
+                #[cfg(feature = "qis")]
+                {
+                    let engine_builder = build_qis_engine(qis)?;
+                    Ok(self.base_builder.classical(engine_builder))
+                }
+                #[cfg(not(feature = "qis"))]
+                {
+                    let _ = qis;
+                    Err(PecosError::Generic(
+                        "QIS programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
+                    ))
+                }
+            }
+            Program::Hugr(hugr) => {
+                #[cfg(feature = "qis")]
+                {
+                    let engine_builder = build_qis_engine(hugr)?;
+                    Ok(self.base_builder.classical(engine_builder))
+                }
+                #[cfg(not(feature = "qis"))]
+                {
+                    let _ = hugr;
+                    Err(PecosError::Generic(
+                        "HUGR programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
+                    ))
+                }
+            }
+            Program::Wasm(_) => Err(PecosError::Input(
+                "WASM programs are not yet supported in unified simulation".to_string(),
+            )),
+            Program::Wat(_) => Err(PecosError::Input(
+                "WAT programs are not yet supported in unified simulation".to_string(),
+            )),
+            Program::PhirJson(_) => Err(PecosError::Input(
+                "PHIR JSON programs are not yet supported in unified simulation".to_string(),
+            )),
+            Program::SeleneInterface(_) => Err(PecosError::Input(
+                "SeleneInterface programs are not yet supported in unified simulation".to_string(),
+            )),
+        }
+    }
+
     /// Build the simulation with automatic engine selection
-    ///
-    /// This selects an engine based on the program type and builds the simulation,
-    /// unless a classical engine was already explicitly set.
     ///
     /// # Errors
     ///
@@ -54,89 +117,10 @@ impl ProgrammedSimBuilder {
     /// - The program type is not yet supported (WASM, WAT, PHIR JSON, `SeleneInterface`)
     /// - Engine building fails
     pub fn build(self) -> Result<MonteCarloEngine, PecosError> {
-        if self.override_classical {
-            // Classical engine was already set, just build
-            self.base_builder.build()
-        } else {
-            // Auto-select engine based on program type
-            match self.program {
-                Program::Qasm(qasm) => self
-                    .base_builder
-                    .classical(qasm_engine().program(qasm))
-                    .build(),
-                Program::Qis(qis) => {
-                    // Use Selene runtime and Helios interface
-                    #[cfg(feature = "qis")]
-                    {
-                        let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
-                            PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
-                        })?;
-                        let helios_builder = crate::helios_interface_builder();
-                        let engine_builder = qis_engine()
-                            .runtime(selene_runtime)
-                            .interface(helios_builder)
-                            .try_program(qis)
-                            .map_err(|e| {
-                                PecosError::Generic(format!("Failed to load QIS program: {e}"))
-                            })?;
-
-                        self.base_builder.classical(engine_builder).build()
-                    }
-                    #[cfg(not(feature = "qis"))]
-                    {
-                        let _ = qis; // Mark as used to avoid warning
-                        Err(PecosError::Generic(
-                            "QIS programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
-                        ))
-                    }
-                }
-                Program::Hugr(hugr) => {
-                    // Use Selene runtime and Helios interface for HUGR programs
-                    #[cfg(feature = "qis")]
-                    {
-                        let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
-                            PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
-                        })?;
-                        let helios_builder = crate::helios_interface_builder();
-                        let engine_builder = qis_engine()
-                            .runtime(selene_runtime)
-                            .interface(helios_builder)
-                            .try_program(hugr)
-                            .map_err(|e| {
-                                PecosError::Generic(format!("Failed to load HUGR program: {e}"))
-                            })?;
-
-                        self.base_builder.classical(engine_builder).build()
-                    }
-                    #[cfg(not(feature = "qis"))]
-                    {
-                        let _ = hugr; // Mark as used to avoid warning
-                        Err(PecosError::Generic(
-                            "HUGR programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
-                        ))
-                    }
-                }
-                Program::Wasm(_) => Err(PecosError::Input(
-                    "WASM programs are not yet supported in unified simulation".to_string(),
-                )),
-                Program::Wat(_) => Err(PecosError::Input(
-                    "WAT programs are not yet supported in unified simulation".to_string(),
-                )),
-                Program::PhirJson(_) => Err(PecosError::Input(
-                    "PHIR JSON programs are not yet supported in unified simulation".to_string(),
-                )),
-                Program::SeleneInterface(_) => Err(PecosError::Input(
-                    "SeleneInterface programs are not yet supported in unified simulation"
-                        .to_string(),
-                )),
-            }
-        }
+        self.configure_engine()?.build()
     }
 
     /// Build and run the simulation with automatic engine selection
-    ///
-    /// This selects an engine based on the program type and runs the simulation,
-    /// unless a classical engine was already explicitly set.
     ///
     /// # Errors
     ///
@@ -144,83 +128,7 @@ impl ProgrammedSimBuilder {
     /// - The program type is not yet supported (WASM, WAT, PHIR JSON, `SeleneInterface`)
     /// - Engine building or running fails
     pub fn run(self, shots: usize) -> Result<pecos_engines::shot_results::ShotVec, PecosError> {
-        if self.override_classical {
-            // Classical engine was already set, just run
-            self.base_builder.run(shots)
-        } else {
-            // Auto-select engine based on program type
-            match self.program {
-                Program::Qasm(qasm) => self
-                    .base_builder
-                    .classical(qasm_engine().program(qasm))
-                    .run(shots),
-                Program::Qis(qis) => {
-                    // Use Selene runtime and Helios interface
-                    #[cfg(feature = "qis")]
-                    {
-                        let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
-                            PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
-                        })?;
-                        let helios_builder = crate::helios_interface_builder();
-                        let engine_builder = qis_engine()
-                            .runtime(selene_runtime)
-                            .interface(helios_builder)
-                            .try_program(qis)
-                            .map_err(|e| {
-                                PecosError::Generic(format!("Failed to load QIS program: {e}"))
-                            })?;
-
-                        self.base_builder.classical(engine_builder).run(shots)
-                    }
-                    #[cfg(not(feature = "qis"))]
-                    {
-                        let _ = qis; // Mark as used to avoid warning
-                        Err(PecosError::Generic(
-                            "QIS programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
-                        ))
-                    }
-                }
-                Program::Hugr(hugr) => {
-                    // Use Selene runtime and Helios interface for HUGR programs
-                    #[cfg(feature = "qis")]
-                    {
-                        let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
-                            PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
-                        })?;
-                        let helios_builder = crate::helios_interface_builder();
-                        let engine_builder = qis_engine()
-                            .runtime(selene_runtime)
-                            .interface(helios_builder)
-                            .try_program(hugr)
-                            .map_err(|e| {
-                                PecosError::Generic(format!("Failed to load HUGR program: {e}"))
-                            })?;
-
-                        self.base_builder.classical(engine_builder).run(shots)
-                    }
-                    #[cfg(not(feature = "qis"))]
-                    {
-                        let _ = hugr; // Mark as used to avoid warning
-                        Err(PecosError::Generic(
-                            "HUGR programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
-                        ))
-                    }
-                }
-                Program::Wasm(_) => Err(PecosError::Input(
-                    "WASM programs are not yet supported in unified simulation".to_string(),
-                )),
-                Program::Wat(_) => Err(PecosError::Input(
-                    "WAT programs are not yet supported in unified simulation".to_string(),
-                )),
-                Program::PhirJson(_) => Err(PecosError::Input(
-                    "PHIR JSON programs are not yet supported in unified simulation".to_string(),
-                )),
-                Program::SeleneInterface(_) => Err(PecosError::Input(
-                    "SeleneInterface programs are not yet supported in unified simulation"
-                        .to_string(),
-                )),
-            }
-        }
+        self.configure_engine()?.run(shots)
     }
 
     /// Override the classical engine selection

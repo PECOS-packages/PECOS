@@ -257,7 +257,7 @@ Comprehensive tests are available in:
 - `python/tests/pecos/unit/test_parallel_optimizer_verification.py` - Transformation verification
 - `python/tests/pecos/regression/test_qasm/random_cases/test_control_flow.py` - QASM generation tests
 
-## Best Practices
+## Tips
 
 1. **Use Parallel blocks for independent operations**: Only wrap operations that can truly execute in parallel
 2. **Group related operations**: Use nested blocks for logical grouping (e.g., Bell pairs)

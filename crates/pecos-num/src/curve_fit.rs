@@ -14,7 +14,7 @@
 
 //! Non-linear curve fitting using Levenberg-Marquardt algorithm.
 //!
-//! This module provides a Rust implementation of `scipy.optimize.curve_fit`
+//! Rust implementation of `scipy.optimize.curve_fit`
 //! using the well-tested `levenberg-marquardt` crate.
 //!
 //! Note: We use `levenberg-marquardt` instead of Peroxide's optimizer because

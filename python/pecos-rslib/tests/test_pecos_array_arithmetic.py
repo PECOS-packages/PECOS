@@ -1,14 +1,4 @@
-"""Comprehensive tests comparing Array arithmetic operations with numpy.
-
-This test suite ensures our Array arithmetic operations (+, -, *, /)
-match numpy's behavior across all operand combinations:
-- Array + scalar, scalar + array
-- Array + array (Array, numpy array)
-- Different dtypes (int64, float64, complex128)
-- Broadcasting behavior
-- Commutative operations (addition, multiplication)
-- Non-commutative operations (subtraction, division)
-"""
+"""Tests comparing Array arithmetic operations with numpy."""
 
 import numpy as np
 import pytest

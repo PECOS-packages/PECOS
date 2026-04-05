@@ -9,16 +9,9 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Comprehensive seed determinism tests for all PECOS backend simulators.
+"""Seed determinism tests for PECOS backend simulators.
 
-This test file verifies that all PECOS backend simulators properly support
-deterministic simulation when seeds are provided. This is a regression test
-for issue #89 (https://github.com/PECOS-packages/PECOS/issues/89).
-
-The test uses a Bell state circuit with error models to verify that:
-1. Same seed produces identical results (determinism)
-2. Different seeds produce different results (proper randomness)
-3. All backends behave consistently
+Regression test for issue #89 (https://github.com/PECOS-packages/PECOS/issues/89).
 """
 
 import pytest

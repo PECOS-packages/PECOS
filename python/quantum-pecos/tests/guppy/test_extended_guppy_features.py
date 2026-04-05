@@ -1,14 +1,4 @@
-"""Extended comprehensive test suite for Guppy language features.
-
-This test suite builds on test_comprehensive_guppy_features.py to provide
-additional coverage of Guppy language capabilities, including:
-    pass
-- Advanced quantum operations (rotations, phase gates)
-- Complex data types (arrays, tuples, lists)
-- Advanced control flow (nested loops, complex conditionals)
-- Function composition and higher-order functions
-- Error handling and edge cases
-"""
+"""Additional Guppy feature tests (rotations, phase gates, data types, control flow)."""
 
 from typing import TYPE_CHECKING, Any
 

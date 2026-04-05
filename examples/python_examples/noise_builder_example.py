@@ -149,7 +149,7 @@ def ion_trap_noise() -> None:
     counts = Counter(results_dict["c"])
 
     print(f"Ion trap Bell state: {dict(counts)}")
-    print("Note: Two-qubit gate errors dominate in ion traps")
+    print("Two-qubit gate errors dominate in ion traps")
 
 
 def noiseless_gates_example() -> None:
@@ -234,9 +234,9 @@ def scaled_noise_example() -> None:
     print("Scaling makes it easy to test noise sensitivity")
 
 
-def comprehensive_example() -> None:
+def full_noise_model_example() -> None:
     """Complete example using many builder features."""
-    print("\n=== Comprehensive Noise Model ===")
+    print("\n=== Full Noise Model ===")
 
     # 4-qubit GHZ circuit
     qasm = """
@@ -307,7 +307,7 @@ def main() -> None:
     ion_trap_noise()
     noiseless_gates_example()
     scaled_noise_example()
-    comprehensive_example()
+    full_noise_model_example()
 
     print("\n" + "=" * 50)
     print("Examples completed!")

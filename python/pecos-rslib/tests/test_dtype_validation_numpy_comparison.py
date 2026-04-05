@@ -1,12 +1,7 @@
-"""
-Comprehensive dtype validation tests comparing PECOS operations with NumPy.
+"""Dtype validation tests comparing PECOS math operations with NumPy.
 
-This test suite systematically verifies that all math operations work correctly
-across all supported dtypes (f32, f64, Complex32, Complex64) for both scalars
-and arrays, comparing results with NumPy to catch any dtype-related bugs.
-
-This was created in response to a critical bug where pc.abs([0+1j]) returned [0.0]
-instead of [1.0] due to missing dtype validation in the array extraction macro.
+Created after a bug where pc.abs([0+1j]) returned [0.0] instead of [1.0]
+due to missing dtype validation in the array extraction macro.
 """
 
 import sys

@@ -1,16 +1,4 @@
-/// # LLVM Tests
-///
-/// This file contains comprehensive tests for LLVM (Low Level Virtual Machine)
-/// functionality in the PECOS simulator. These tests ensure that LLVM programs:
-///
-/// 1. Produce correct quantum mechanical behavior (e.g., Bell state distributions)
-/// 2. Generate deterministic results with the same seed
-/// 3. Work correctly with various noise models
-/// 4. Produce results consistent with PHIR and QASM implementations
-///
-/// Note: These tests require LLVM compilation capabilities which depend on
-/// LLVM toolchain availability. If tests fail due to missing dependencies,
-/// ensure that the LLVM toolchain is properly installed.
+// Requires LLVM toolchain to be installed.
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

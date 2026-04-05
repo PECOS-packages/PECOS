@@ -14,7 +14,7 @@
 
 //! Statistical functions for numerical analysis.
 //!
-//! This module provides drop-in replacements for numpy/scipy statistical functions.
+//! Drop-in replacements for numpy/scipy statistical functions.
 //!
 //! # Functions
 //!

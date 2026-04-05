@@ -54,7 +54,7 @@ use super::builder::MonteCarloEngineBuilder;
 ///   - Base seed → Worker seeds → Component seeds
 /// - **Noise Integration**: Applies noise before quantum operations
 ///
-/// # Best Practices
+/// # Tips
 ///
 /// - **Noise Levels**: 0.001-0.01 (0.1-1%) for hardware-like simulations
 /// - **Shot Count**: 1000+ for noisy simulations

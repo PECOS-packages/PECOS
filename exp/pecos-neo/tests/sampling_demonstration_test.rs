@@ -10,16 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Comprehensive demonstration of all sampling techniques in pecos-neo.
-//!
-//! This test file demonstrates:
-//! 1. Path exploration on static circuits (`CommandQueue`)
-//! 2. Importance sampling for rare event estimation
-//! 3. Measurement outcome biasing for branch exploration
-//! 4. Integration with programs using classical control flow
-//! 5. Subset simulation for very rare event estimation (Au & Beck algorithm)
-//!
-//! Each technique is shown with practical examples relevant to quantum error correction.
+//! Tests for sampling techniques: path exploration, importance sampling,
+//! outcome biasing, classical control flow integration, and subset simulation.
 #![allow(clippy::float_cmp)]
 
 use pecos_core::QubitId;

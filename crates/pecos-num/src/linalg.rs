@@ -12,7 +12,7 @@
 
 //! Linear algebra operations for quantum computing.
 //!
-//! This module provides drop-in replacements for numpy.linalg functions.
+//! Drop-in replacements for numpy.linalg functions.
 
 use ndarray::{Array2, ArrayBase, Data, Dimension, LinalgScalar};
 use num_complex::Complex64;

@@ -14,7 +14,7 @@
 
 //! Array operations for numerical analysis.
 //!
-//! This module provides drop-in replacements for numpy array operations.
+//! Drop-in replacements for numpy array operations.
 //!
 //! # Design Philosophy
 //!

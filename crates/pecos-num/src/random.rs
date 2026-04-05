@@ -14,7 +14,7 @@
 
 //! Random number generation compatible with numpy.random.
 //!
-//! This module provides drop-in replacements for commonly used numpy.random functions,
+//! Drop-in replacements for commonly used numpy.random functions,
 //! with the same API and statistical properties. Functions use the Rust standard
 //! library's random number generation.
 //!

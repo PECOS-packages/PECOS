@@ -466,7 +466,7 @@ class TestIsCloseMixedTypes:
 class TestIsCloseMixedArrays:
     """Test isclose() with mixed float/complex array types.
 
-    NumPy seamlessly handles mixed array types by promoting floats to complex.
+    NumPy handles mixed array types by promoting floats to complex.
     Our implementation should do the same.
     """
 

@@ -1,4 +1,4 @@
-"""Comprehensive tests for llvmlite compatibility covering all major features."""
+"""Tests for llvmlite compatibility covering major features."""
 
 import pytest
 

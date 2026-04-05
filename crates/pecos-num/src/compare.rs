@@ -14,16 +14,15 @@
 
 //! Comparison and validation functions for numerical analysis.
 //!
-//! This module provides trait-based comparison operations that work
-//! across scalars, complex numbers, and arrays.
+//! Trait-based comparison operations across scalars, complex numbers,
+//! and arrays.
 
 use ndarray::{Array, ArrayBase, Axis, Data, Dimension, RemoveAxis};
 use num_complex::Complex64;
 
 /// Trait for checking if values are NaN (Not a Number).
 ///
-/// This trait provides a uniform interface for NaN checking across
-/// different numeric types.
+/// Uniform interface for NaN checking across different numeric types.
 ///
 /// # Examples
 ///
@@ -106,8 +105,9 @@ where
 
 /// Trait for checking if values are close within a tolerance.
 ///
-/// This trait provides a uniform interface for tolerance-based comparison
-/// across different numeric types. The tolerance check follows `NumPy`'s convention:
+/// Tolerance-based comparison across different numeric types.
+///
+/// The tolerance check follows `NumPy`'s convention:
 /// `|a - b| <= (atol + rtol * |b|)`
 ///
 /// # Examples

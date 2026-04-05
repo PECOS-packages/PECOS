@@ -14,8 +14,7 @@
 
 //! Mathematical functions for numerical analysis.
 //!
-//! This module provides trait-based mathematical operations that work
-//! across scalars, complex numbers, and arrays.
+//! Trait-based math operations across scalars, complex numbers, and arrays.
 
 use ndarray::{Array, ArrayBase, Data, Dimension};
 use num_complex::{Complex, Complex32, Complex64};
@@ -25,9 +24,6 @@ use num_complex::{Complex, Complex32, Complex64};
 // ============================================================================
 
 /// Trait for calculating exponential (e^x).
-///
-/// This trait provides a uniform interface for exponential operations across
-/// different numeric types.
 ///
 /// # Examples
 ///
@@ -57,8 +53,6 @@ pub trait Exp {
 
 /// Trait for calculating square root.
 ///
-/// This trait provides a uniform interface for square root operations.
-///
 /// # Examples
 ///
 /// ```
@@ -80,8 +74,6 @@ pub trait Sqrt {
 }
 
 /// Trait for calculating power (base^exponent).
-///
-/// This trait provides a uniform interface for power operations.
 ///
 /// # Examples
 ///
@@ -106,8 +98,6 @@ pub trait Power {
 
 /// Trait for calculating cosine.
 ///
-/// This trait provides a uniform interface for cosine operations.
-///
 /// # Examples
 ///
 /// ```
@@ -130,8 +120,6 @@ pub trait Cos {
 }
 
 /// Trait for calculating sine.
-///
-/// This trait provides a uniform interface for sine operations.
 ///
 /// # Examples
 ///
@@ -156,8 +144,6 @@ pub trait Sin {
 
 /// Trait for calculating tangent.
 ///
-/// This trait provides a uniform interface for tangent operations.
-///
 /// # Examples
 ///
 /// ```
@@ -181,8 +167,6 @@ pub trait Tan {
 
 /// Trait for calculating hyperbolic sine.
 ///
-/// This trait provides a uniform interface for hyperbolic sine operations.
-///
 /// # Examples
 ///
 /// ```
@@ -201,8 +185,6 @@ pub trait Sinh {
 
 /// Trait for calculating hyperbolic cosine.
 ///
-/// This trait provides a uniform interface for hyperbolic cosine operations.
-///
 /// # Examples
 ///
 /// ```
@@ -220,8 +202,6 @@ pub trait Cosh {
 }
 
 /// Trait for calculating hyperbolic tangent.
-///
-/// This trait provides a uniform interface for hyperbolic tangent operations.
 ///
 /// # Examples
 ///
@@ -517,9 +497,6 @@ pub trait LogBase {
 }
 
 /// Trait for calculating absolute value.
-///
-/// This trait provides a uniform interface for absolute value operations
-/// across different numeric types.
 ///
 /// # Examples
 ///

@@ -1,4 +1,4 @@
-"""Comprehensive tests for QASM simulations covering all features and edge cases."""
+"""Tests for QASM simulations covering features and edge cases."""
 
 from collections import Counter
 
@@ -6,7 +6,7 @@ import pytest
 
 
 class TestQasmSimComprehensive:
-    """Comprehensive tests for all qasm_engine features."""
+    """Tests for qasm_engine features."""
 
     def test_no_noise_deterministic(self) -> None:
         """Test no noise produces deterministic results."""

@@ -1,11 +1,4 @@
-"""Comprehensive tests comparing pecos_rslib.where() with numpy.where().
-
-This test suite ensures our where() implementation matches numpy's behavior
-across all parameter combinations:
-- Scalar vs array for condition, x, y
-- Broadcasting behavior
-- Different dtypes and shapes
-"""
+"""Tests comparing pecos_rslib.where() with numpy.where()."""
 
 import numpy as np
 

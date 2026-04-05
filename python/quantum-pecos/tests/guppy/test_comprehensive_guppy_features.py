@@ -1,9 +1,4 @@
-"""Comprehensive testing of Guppy language features across both HUGR-LLVM and PHIR pipelines.
-
-This test suite systematically validates that both compilation pipelines can handle
-the full spectrum of Guppy language capabilities, from basic quantum operations
-to advanced classical-quantum hybrid programs.
-"""
+"""Tests for Guppy features on HUGR-LLVM and PHIR pipelines."""
 
 from typing import TYPE_CHECKING, Any
 

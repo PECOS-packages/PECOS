@@ -1,8 +1,4 @@
-"""Comprehensive gate verification tests for the HUGR interpreter.
-
-Tests that all Guppy quantum gate types execute correctly and produce
-the expected quantum state transformations.
-"""
+"""Gate verification tests for the HUGR interpreter."""
 
 import pytest
 from guppylang import guppy

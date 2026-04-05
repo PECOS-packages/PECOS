@@ -149,7 +149,7 @@ Parallel(
 )
 ```
 
-## Best Practices
+## Tips
 
 1. **Use Parallel for truly independent operations**: Only group operations that act on different qubits
 2. **Consider hardware limitations**: Real devices have constraints on which gates can run in parallel

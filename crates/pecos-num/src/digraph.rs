@@ -14,7 +14,7 @@
 
 //! Directed graph implementation for PECOS.
 //!
-//! This module provides a directed graph data structure built on top of petgraph's
+//! Directed graph data structure built on petgraph's
 //! `StableGraph`. It follows the same API patterns as the undirected `Graph` type
 //! but adds directed-specific operations like predecessors, successors, and
 //! in/out degree queries.

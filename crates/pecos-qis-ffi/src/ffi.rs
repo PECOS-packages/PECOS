@@ -26,9 +26,7 @@ fn i64_to_usize(value: i64) -> usize {
     usize::try_from(value).expect("Invalid ID: value must be non-negative and fit in usize")
 }
 
-// =============================================================================
-// Single-Qubit Gates
-// =============================================================================
+// --- Single-Qubit Gates ---
 
 /// Hadamard gate operation
 ///
@@ -148,9 +146,7 @@ pub unsafe extern "C" fn __quantum__qis__tdg__body(qubit: i64) {
     });
 }
 
-// =============================================================================
-// Two-Qubit Gates
-// =============================================================================
+// --- Two-Qubit Gates ---
 
 /// Controlled-X (CNOT) gate operation
 ///
@@ -219,9 +215,7 @@ pub unsafe extern "C" fn __quantum__qis__ch__body(control: i64, target: i64) {
     });
 }
 
-// =============================================================================
-// Rotation Gates
-// =============================================================================
+// --- Rotation Gates ---
 
 /// Rotation around X-axis
 ///
@@ -303,9 +297,7 @@ pub unsafe extern "C" fn __quantum__qis__crz__body(theta: f64, control: i64, tar
     });
 }
 
-// =============================================================================
-// Three-Qubit Gates
-// =============================================================================
+// --- Three-Qubit Gates ---
 
 /// Toffoli (CCX) gate operation
 ///
@@ -322,9 +314,7 @@ pub unsafe extern "C" fn __quantum__qis__ccx__body(control1: i64, control2: i64,
     });
 }
 
-// =============================================================================
-// ZZ Interaction
-// =============================================================================
+// --- ZZ Interaction ---
 
 /// ZZ interaction gate
 ///
@@ -340,9 +330,7 @@ pub unsafe extern "C" fn __quantum__qis__zz__body(qubit1: i64, qubit2: i64) {
     });
 }
 
-// =============================================================================
-// Measurement and Reset
-// =============================================================================
+// --- Measurement and Reset ---
 
 /// Measure a qubit and store result
 ///
@@ -373,9 +361,7 @@ pub unsafe extern "C" fn __quantum__qis__reset__body(qubit: i64) {
     });
 }
 
-// =============================================================================
-// Allocation and Deallocation
-// =============================================================================
+// --- Allocation and Deallocation ---
 
 /// Allocate a new qubit
 ///
@@ -422,9 +408,7 @@ pub unsafe extern "C" fn __quantum__rt__result_allocate() -> i64 {
     })
 }
 
-// =============================================================================
-// Result Retrieval (placeholder - actual implementation in runtime)
-// =============================================================================
+// --- Result Retrieval ---
 
 /// Get measurement result (returns 1 if result is One, 0 otherwise)
 ///
@@ -470,9 +454,7 @@ pub unsafe extern "C" fn __quantum__rt__result_get_one(result: i64) -> i32 {
     }
 }
 
-// =============================================================================
-// Utility Functions
-// =============================================================================
+// --- Utility Functions ---
 
 /// Log a message from quantum program
 ///
@@ -504,13 +486,11 @@ pub unsafe extern "C" fn __quantum__rt__record(data: *const std::ffi::c_char) {
     }
 }
 
-// =============================================================================
-// Selene-style FFI Functions
+// --- Selene-style FFI Functions ---
 //
 // These functions match the naming convention used by Selene's hugr-qis compiler.
 // They provide the same functionality as the QIS-style functions above but with
 // different names to support Selene-generated LLVM IR.
-// =============================================================================
 
 /// Reset operation (Selene-style)
 ///
@@ -822,9 +802,7 @@ pub unsafe extern "C" fn __quantum__rt__result_record_output(
     });
 }
 
-// =============================================================================
-// QIS measurement functions
-// =============================================================================
+// --- QIS measurement functions ---
 
 // QIS measurement functions - mz is measurement in Z basis
 /// Measure a qubit in the Z basis
@@ -838,9 +816,7 @@ pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
     unsafe { __quantum__qis__m__body(qubit, qubit) }
 }
 
-// =============================================================================
-// Result printing functions
-// =============================================================================
+// --- Result printing functions ---
 
 /// Print a boolean result with a label
 ///
@@ -1002,13 +978,11 @@ pub unsafe extern "C" fn print_bool_arr(
     }
 }
 
-// =============================================================================
-// Selene-compatible print functions
+// --- Selene-compatible print functions ---
 //
 // The Selene runtime uses a different string format (selene_string_t has direct
 // data pointer, not tket2's {len: u8, data: [u8]} format). These functions are
 // called from the selene_shim.c and expect direct string data.
-// =============================================================================
 
 /// Print a boolean result with a label (Selene-compatible format)
 ///
@@ -1116,9 +1090,7 @@ pub unsafe extern "C" fn print_bool_arr_selene(
     }
 }
 
-// =============================================================================
-// Interface Management (C exports for dlsym access)
-// =============================================================================
+// --- Interface Management (C exports for dlsym access) ---
 
 /// Reset the thread-local interface
 /// Exported as C function so it can be called via dlsym from the cdylib
@@ -1177,9 +1149,7 @@ pub unsafe extern "C" fn pecos_qis_set_measurements(pairs_ptr: *const (usize, bo
     });
 }
 
-// =============================================================================
-// Heap Management Functions (Selene compatibility)
-// =============================================================================
+// --- Heap Management Functions (Selene compatibility) ---
 
 /// Allocate heap memory
 ///
@@ -1244,9 +1214,7 @@ mod tests {
         reset_interface();
     }
 
-    // =========================================================================
-    // Single-qubit gate tests
-    // =========================================================================
+    // --- Single-qubit gate tests ---
 
     #[test]
     fn test_h_gate() {
@@ -1330,9 +1298,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Two-qubit gate tests
-    // =========================================================================
+    // --- Two-qubit gate tests ---
 
     #[test]
     fn test_cx_gate() {
@@ -1385,9 +1351,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Rotation gate tests
-    // =========================================================================
+    // --- Rotation gate tests ---
 
     #[test]
     fn test_rx_gate() {
@@ -1474,9 +1438,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Three-qubit gate tests
-    // =========================================================================
+    // --- Three-qubit gate tests ---
 
     #[test]
     fn test_ccx_gate() {
@@ -1491,9 +1453,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // ZZ interaction tests
-    // =========================================================================
+    // --- ZZ interaction tests ---
 
     #[test]
     fn test_zz_gate() {
@@ -1505,9 +1465,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Measurement and reset tests
-    // =========================================================================
+    // --- Measurement and reset tests ---
 
     #[test]
     fn test_measurement() {
@@ -1550,9 +1508,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Allocation tests
-    // =========================================================================
+    // --- Allocation tests ---
 
     #[test]
     fn test_qubit_allocate() {
@@ -1596,9 +1552,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Selene-style function tests
-    // =========================================================================
+    // --- Selene-style function tests ---
 
     #[test]
     fn test_selene_reset() {
@@ -1691,9 +1645,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Lazy measure and future tests
-    // =========================================================================
+    // --- Lazy measure and future tests ---
 
     #[test]
     fn test_lazy_measure() {
@@ -1745,9 +1697,7 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Setup/teardown tests
-    // =========================================================================
+    // --- Setup/teardown tests ---
 
     #[test]
     fn test_setup() {
@@ -1762,9 +1712,7 @@ mod tests {
         assert_eq!(result, 0);
     }
 
-    // =========================================================================
-    // Result retrieval tests
-    // =========================================================================
+    // --- Result retrieval tests ---
 
     #[test]
     fn test_result_get_one_with_stored_result() {
@@ -1787,9 +1735,7 @@ mod tests {
         assert_eq!(result, 0);
     }
 
-    // =========================================================================
-    // Heap allocation tests
-    // =========================================================================
+    // --- Heap allocation tests ---
 
     #[test]
     fn test_heap_alloc_and_free() {
@@ -1818,9 +1764,7 @@ mod tests {
         unsafe { heap_free(std::ptr::null_mut()) };
     }
 
-    // =========================================================================
-    // Message and record tests
-    // =========================================================================
+    // --- Message and record tests ---
 
     #[test]
     fn test_message_null() {
@@ -1846,9 +1790,7 @@ mod tests {
         unsafe { __quantum__rt__record(data.as_ptr()) };
     }
 
-    // =========================================================================
-    // Result record output tests
-    // =========================================================================
+    // --- Result record output tests ---
 
     #[test]
     fn test_result_record_output() {
@@ -1893,9 +1835,7 @@ mod tests {
         });
     }
 
-    // =========================================================================
-    // Interface management tests (C exports)
-    // =========================================================================
+    // --- Interface management tests (C exports) ---
 
     #[test]
     fn test_pecos_qis_reset_interface() {
@@ -1951,9 +1891,7 @@ mod tests {
         unsafe { pecos_qis_set_measurements(std::ptr::null(), 5) };
     }
 
-    // =========================================================================
-    // Multiple operations sequence test
-    // =========================================================================
+    // --- Multiple operations sequence test ---
 
     #[test]
     fn test_bell_state_circuit() {

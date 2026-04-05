@@ -276,7 +276,7 @@ for state, count in counts.most_common(5):
     print(f"|{binary}>: {count}")
 ```
 
-## Best Practices
+## Tips
 
 1. **Use Average Probabilities**: They're more intuitive and match experimental error rates.
 

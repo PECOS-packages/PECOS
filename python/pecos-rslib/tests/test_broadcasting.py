@@ -1,11 +1,4 @@
-"""
-Comprehensive tests for array broadcasting in pecos_rslib.
-
-This module tests that our Array implementation follows NumPy's broadcasting rules:
-- Arrays with different shapes can be operated on if they are compatible
-- Broadcasting allows element-wise operations between arrays of different sizes
-- Rules: dimensions are compatible if they are equal or one of them is 1
-"""
+"""Tests for array broadcasting in pecos_rslib."""
 
 import numpy as np
 import pytest

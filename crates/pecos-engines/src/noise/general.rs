@@ -96,9 +96,9 @@ use pecos_random::PecosRng;
 use std::any::Any;
 use std::collections::BTreeSet;
 
-/// General noise model implementation that includes parameterized error channels for various quantum operations
+/// General noise model with parameterized error channels.
 ///
-/// This comprehensive noise model for quantum computers includes:
+/// Includes:
 /// - **Initialization errors**: Errors during qubit preparation to |0⟩
 /// - **Measurement errors**: Asymmetric bit flip errors during measurements
 /// - **Gate errors**: Depolarizing and coherent errors during single and two-qubit operations

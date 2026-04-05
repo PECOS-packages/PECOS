@@ -1,15 +1,4 @@
-"""
-Comprehensive tests for complex number edge cases in pecos_rslib.
-
-This test suite validates that all pecos.num functions work correctly with
-complex numbers, particularly for quantum computing use cases:
-- Quantum state vectors (complex amplitudes)
-- Phase calculations (e^(iθ))
-- Gate matrix operations
-- Normalization checks
-
-Based on quantum-pecos usage patterns identified in codebase analysis.
-"""
+"""Tests for complex number edge cases in pecos_rslib."""
 
 import numpy as np
 

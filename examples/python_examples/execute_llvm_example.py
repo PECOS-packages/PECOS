@@ -32,8 +32,6 @@ def main() -> None:
     print("  - compile_hugr_file_to_string(hugr_path) -> str")
     print("  - compile_hugr_file_to_file(hugr_path, output_path)")
 
-    print("\nThis integrates seamlessly with PECOS's Guppy frontend!")
-
 
 if __name__ == "__main__":
     main()

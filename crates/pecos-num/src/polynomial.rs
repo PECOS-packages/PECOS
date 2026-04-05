@@ -14,7 +14,7 @@
 
 //! Polynomial fitting and evaluation.
 //!
-//! This module provides implementations of polynomial operations,
+//! Polynomial operations,
 //! compatible with numpy.polyfit and numpy.poly1d API.
 //!
 //! Uses nalgebra for linear algebra operations.

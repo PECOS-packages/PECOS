@@ -1,4 +1,4 @@
-"""Comprehensive tests for quantum operations based on guppylang patterns."""
+"""Tests for quantum operations based on guppylang patterns."""
 
 from typing import Any
 

@@ -14,7 +14,7 @@
 
 //! Root finding and optimization algorithms.
 //!
-//! This module provides implementations of common numerical optimization
+//! Common numerical optimization
 //! algorithms, compatible with scipy.optimize API.
 
 use std::fmt;

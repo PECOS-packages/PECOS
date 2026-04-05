@@ -1,19 +1,3 @@
-/// # Bell State Tests
-///
-/// This file contains tests that verify the quantum mechanical behavior of Bell states
-/// in the PECOS simulator. Key aspects tested include:
-///
-/// 1. Proper 50/50 Distribution: Bell states should produce a quantum superposition
-///    with equal probability of measuring |00⟩ and |11⟩ states
-///
-/// 2. Cross-Implementation Validation: Ensuring consistency between different
-///    file formats (PHIR, QASM)
-///
-/// 3. Noise Effects: Analyzing how adding noise affects the Bell state probability
-///    distribution by introducing |01⟩ and |10⟩ outcomes
-///
-/// These tests help verify that the quantum simulator correctly implements
-/// quantum entanglement, superposition, and noise models.
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

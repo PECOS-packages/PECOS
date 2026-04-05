@@ -14,7 +14,7 @@
 
 //! Graph algorithms for PECOS quantum error correction.
 //!
-//! This module provides graph data structures and algorithms needed for quantum error
+//! Graph data structures and algorithms needed for quantum error
 //! correction, particularly for the MWPM (Minimum Weight Perfect Matching) decoder.
 //!
 //! Built on top of rustworkx-core and petgraph, providing both Rust and Python APIs.

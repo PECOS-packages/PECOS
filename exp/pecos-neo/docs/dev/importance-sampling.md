@@ -268,7 +268,7 @@ ESS = (Σ wᵢ)² / Σ wᵢ²
 
 Low ESS indicates high weight variance and potential issues.
 
-## Best Practices
+## Tips
 
 1. **Match bias to target**: Bias toward outcomes you're trying to estimate
 

@@ -713,7 +713,7 @@ wasm.init()  # Re-initialize
     }
     ```
 
-## Best Practices
+## Tips
 
 1. **Keep WASM modules focused**: Each module should do one thing well
 2. **Use `shot_reinit()`**: If your module has state, implement reset logic

@@ -227,7 +227,7 @@ Standard Rust documentation markers are also supported:
 \```
 ```
 
-## Best Practices
+## Tips
 
 ### Do
 

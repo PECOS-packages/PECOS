@@ -9,11 +9,9 @@
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//! Wasmtime-based WebAssembly foreign object implementation
+//! Wasmtime-based WebAssembly foreign object implementation.
 //!
-//! This module provides a thread-safe, production-ready WebAssembly foreign object
-//! implementation using the Wasmtime runtime. It supports timeout handling, proper
-//! resource cleanup, and type conversions.
+//! Uses the Wasmtime runtime with timeout handling and type conversions.
 
 use crate::foreign_object::ForeignObject;
 use log::{debug, warn};

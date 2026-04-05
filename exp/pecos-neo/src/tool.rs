@@ -74,7 +74,7 @@
 //! }
 //!
 //! let mut tool = Tool::new()
-//!     .add_plugin(CounterPlugin { initial: 10 });
+//!     .add_plugin(&CounterPlugin { initial: 10 });
 //!
 //! tool.run();
 //! assert_eq!(*tool.resource::<u32>(), 11);

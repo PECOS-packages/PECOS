@@ -38,9 +38,9 @@ use pecos_random::PecosRng;
 /// use pecos_neo::noise::plugins::*;
 ///
 /// let noise = ComposableNoiseModel::new()
-///     .add_plugin(CorePlugin)           // State tracking
-///     .add_plugin(LeakagePlugin::new()) // Leakage handling
-///     .add_plugin(DepolarizingPlugin::new(0.01, 0.02));
+///     .add_plugin(&CorePlugin)           // State tracking
+///     .add_plugin(&LeakagePlugin::new()) // Leakage handling
+///     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02));
 /// ```
 ///
 /// # Direct Channel Usage (Legacy)
@@ -180,7 +180,7 @@ impl ComposableNoiseModel {
     /// Plugins can register event handlers, channels, and observers.
     /// This is the recommended way to configure the noise model.
     #[must_use]
-    pub fn add_plugin(mut self, plugin: impl NoisePlugin + 'static) -> Self {
+    pub fn add_plugin(mut self, plugin: &(impl NoisePlugin + 'static)) -> Self {
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 
@@ -343,9 +343,9 @@ impl ComposableNoiseModel {
     /// 2. Run noise channels (produce responses)
     /// 3. Apply state changes from responses (leakage)
     /// 4. Notify observers of state changes
-    pub fn emit(&mut self, event: NoiseEvent<'_>, rng: &mut PecosRng) -> NoiseResponse {
+    pub fn emit(&mut self, event: &NoiseEvent<'_>, rng: &mut PecosRng) -> NoiseResponse {
         // 1. Run event handlers for state updates
-        self.run_event_handlers(&event);
+        self.run_event_handlers(event);
 
         // 2. Collect responses from noise channels using try_apply for efficiency
         let mut combined = NoiseResponse::None;
@@ -353,7 +353,7 @@ impl ComposableNoiseModel {
             // try_apply combines responds_to + apply in one call
             // filter out NoiseResponse::None to avoid unnecessary combine calls
             if let Some(response) = channel
-                .try_apply(&event, &mut self.context, rng)
+                .try_apply(event, &mut self.context, rng)
                 .filter(|r| !r.is_none())
             {
                 combined = combined.combine(response);
@@ -582,7 +582,7 @@ mod tests {
         };
 
         let mut rng = PecosRng::seed_from_u64(42);
-        let response = model.emit(event, &mut rng);
+        let response = model.emit(&event, &mut rng);
 
         assert!(matches!(response, NoiseResponse::InjectGates(_)));
     }
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn test_plugin_based_model() {
         let model = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(TestChannel { probability: 1.0 });
 
         assert_eq!(model.event_handler_count(), 2); // Prep + Meas handlers
@@ -599,14 +599,14 @@ mod tests {
 
     #[test]
     fn test_core_plugin_state_tracking() {
-        let mut model = ComposableNoiseModel::new().add_plugin(CorePlugin);
+        let mut model = ComposableNoiseModel::new().add_plugin(&CorePlugin);
 
         // Emit preparation event
         let qubits = [QubitId(0)];
         let prep_event = NoiseEvent::AfterPreparation { qubits: &qubits };
 
         let mut rng = PecosRng::seed_from_u64(42);
-        model.emit(prep_event, &mut rng);
+        model.emit(&prep_event, &mut rng);
 
         // Qubit should now be tracked as active
         assert!(model.context().is_active(QubitId(0)));
@@ -618,7 +618,7 @@ mod tests {
             qubits: &qubits,
             outcomes: &outcomes,
         };
-        model.emit(meas_event, &mut rng);
+        model.emit(&meas_event, &mut rng);
 
         // Qubit should now be inactive
         assert!(!model.context().is_active(QubitId(0)));

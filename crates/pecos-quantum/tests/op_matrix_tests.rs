@@ -21,20 +21,20 @@ use pecos_core::op;
 use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix, unitaries_equiv};
 
 /// Verify a 1-qubit Clifford Op's `UnitaryRep` matches a reference `UnitaryRep`.
-fn check_1q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
+fn check_1q_clifford(gate: pecos_core::Op, reference: &pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
     assert!(
-        unitaries_equiv(&ur, &reference),
+        unitaries_equiv(&ur, reference),
         "{name}: UnitaryRep decomposition does not match reference"
     );
 }
 
 /// Verify a 2-qubit Clifford Op's `UnitaryRep` by checking unitarity and
 /// that the matrix matches a reference.
-fn check_2q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, name: &str) {
+fn check_2q_clifford(gate: pecos_core::Op, reference: &pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
     assert!(
-        unitaries_equiv(&ur, &reference),
+        unitaries_equiv(&ur, reference),
         "{name}: UnitaryRep decomposition does not match reference"
     );
 }
@@ -45,37 +45,37 @@ fn check_2q_clifford(gate: pecos_core::Op, reference: pecos_core::UnitaryRep, na
 
 #[test]
 fn op_h_matches_unitary_rep() {
-    check_1q_clifford(op::H(0), pecos_core::unitary_rep::H(0), "H");
+    check_1q_clifford(op::H(0), &pecos_core::unitary_rep::H(0), "H");
 }
 
 #[test]
 fn op_sx_matches_unitary_rep() {
-    check_1q_clifford(op::SX(0), pecos_core::unitary_rep::SX(0), "SX");
+    check_1q_clifford(op::SX(0), &pecos_core::unitary_rep::SX(0), "SX");
 }
 
 #[test]
 fn op_sxdg_matches_unitary_rep() {
-    check_1q_clifford(op::SXdg(0), pecos_core::unitary_rep::SX(0).dg(), "SXdg");
+    check_1q_clifford(op::SXdg(0), &pecos_core::unitary_rep::SX(0).dg(), "SXdg");
 }
 
 #[test]
 fn op_sy_matches_unitary_rep() {
-    check_1q_clifford(op::SY(0), pecos_core::unitary_rep::SY(0), "SY");
+    check_1q_clifford(op::SY(0), &pecos_core::unitary_rep::SY(0), "SY");
 }
 
 #[test]
 fn op_sydg_matches_unitary_rep() {
-    check_1q_clifford(op::SYdg(0), pecos_core::unitary_rep::SY(0).dg(), "SYdg");
+    check_1q_clifford(op::SYdg(0), &pecos_core::unitary_rep::SY(0).dg(), "SYdg");
 }
 
 #[test]
 fn op_sz_matches_unitary_rep() {
-    check_1q_clifford(op::SZ(0), pecos_core::unitary_rep::SZ(0), "SZ");
+    check_1q_clifford(op::SZ(0), &pecos_core::unitary_rep::SZ(0), "SZ");
 }
 
 #[test]
 fn op_szdg_matches_unitary_rep() {
-    check_1q_clifford(op::SZdg(0), pecos_core::unitary_rep::SZ(0).dg(), "SZdg");
+    check_1q_clifford(op::SZdg(0), &pecos_core::unitary_rep::SZ(0).dg(), "SZdg");
 }
 
 // ============================================================================
@@ -86,35 +86,35 @@ fn op_szdg_matches_unitary_rep() {
 fn op_h2_decomposition_correct() {
     // H2 = Z * SY (apply SY first, then Z)
     let reference = pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SY(0);
-    check_1q_clifford(op::H2(0), reference, "H2");
+    check_1q_clifford(op::H2(0), &reference, "H2");
 }
 
 #[test]
 fn op_h3_decomposition_correct() {
     // H3 = Y * SZ (apply SZ first, then Y)
     let reference = pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SZ(0);
-    check_1q_clifford(op::H3(0), reference, "H3");
+    check_1q_clifford(op::H3(0), &reference, "H3");
 }
 
 #[test]
 fn op_h4_decomposition_correct() {
     // H4 = X * SZ (apply SZ first, then X)
     let reference = pecos_core::unitary_rep::X(0) * pecos_core::unitary_rep::SZ(0);
-    check_1q_clifford(op::H4(0), reference, "H4");
+    check_1q_clifford(op::H4(0), &reference, "H4");
 }
 
 #[test]
 fn op_h5_decomposition_correct() {
     // H5 = Z * SX (apply SX first, then Z)
     let reference = pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SX(0);
-    check_1q_clifford(op::H5(0), reference, "H5");
+    check_1q_clifford(op::H5(0), &reference, "H5");
 }
 
 #[test]
 fn op_h6_decomposition_correct() {
     // H6 = Y * SX (apply SX first, then Y)
     let reference = pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SX(0);
-    check_1q_clifford(op::H6(0), reference, "H6");
+    check_1q_clifford(op::H6(0), &reference, "H6");
 }
 
 // ============================================================================
@@ -125,55 +125,55 @@ fn op_h6_decomposition_correct() {
 fn op_f_decomposition_correct() {
     // F = SZ * SX (apply SX first, then SZ)
     let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0);
-    check_1q_clifford(op::F(0), reference, "F");
+    check_1q_clifford(op::F(0), &reference, "F");
 }
 
 #[test]
 fn op_fdg_decomposition_correct() {
     let reference = (pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0)).dg();
-    check_1q_clifford(op::Fdg(0), reference, "Fdg");
+    check_1q_clifford(op::Fdg(0), &reference, "Fdg");
 }
 
 #[test]
 fn op_f2_decomposition_correct() {
     // F2 = SY * SXdg (apply SXdg first, then SY)
     let reference = pecos_core::unitary_rep::SY(0) * pecos_core::unitary_rep::SX(0).dg();
-    check_1q_clifford(op::F2(0), reference, "F2");
+    check_1q_clifford(op::F2(0), &reference, "F2");
 }
 
 #[test]
 fn op_f2dg_decomposition_correct() {
     // F2dg = SX * SYdg (apply SYdg first, then SX)
     let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SY(0).dg();
-    check_1q_clifford(op::F2dg(0), reference, "F2dg");
+    check_1q_clifford(op::F2dg(0), &reference, "F2dg");
 }
 
 #[test]
 fn op_f3_decomposition_correct() {
     // F3 = SZ * SXdg (apply SXdg first, then SZ)
     let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0).dg();
-    check_1q_clifford(op::F3(0), reference, "F3");
+    check_1q_clifford(op::F3(0), &reference, "F3");
 }
 
 #[test]
 fn op_f3dg_decomposition_correct() {
     // F3dg = SX * SZdg (apply SZdg first, then SX)
     let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0).dg();
-    check_1q_clifford(op::F3dg(0), reference, "F3dg");
+    check_1q_clifford(op::F3dg(0), &reference, "F3dg");
 }
 
 #[test]
 fn op_f4_decomposition_correct() {
     // F4 = SX * SZ (apply SZ first, then SX)
     let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0);
-    check_1q_clifford(op::F4(0), reference, "F4");
+    check_1q_clifford(op::F4(0), &reference, "F4");
 }
 
 #[test]
 fn op_f4dg_decomposition_correct() {
     // F4dg = SZdg * SXdg (apply SXdg first, then SZdg)
     let reference = pecos_core::unitary_rep::SZ(0).dg() * pecos_core::unitary_rep::SX(0).dg();
-    check_1q_clifford(op::F4dg(0), reference, "F4dg");
+    check_1q_clifford(op::F4dg(0), &reference, "F4dg");
 }
 
 // ============================================================================
@@ -182,29 +182,29 @@ fn op_f4dg_decomposition_correct() {
 
 #[test]
 fn op_cx_matches_unitary_rep() {
-    check_2q_clifford(op::CX(0, 1), pecos_core::unitary_rep::CX(0, 1), "CX");
+    check_2q_clifford(op::CX(0, 1), &pecos_core::unitary_rep::CX(0, 1), "CX");
 }
 
 #[test]
 fn op_cy_matches_unitary_rep() {
-    check_2q_clifford(op::CY(0, 1), pecos_core::unitary_rep::CY(0, 1), "CY");
+    check_2q_clifford(op::CY(0, 1), &pecos_core::unitary_rep::CY(0, 1), "CY");
 }
 
 #[test]
 fn op_cz_matches_unitary_rep() {
-    check_2q_clifford(op::CZ(0, 1), pecos_core::unitary_rep::CZ(0, 1), "CZ");
+    check_2q_clifford(op::CZ(0, 1), &pecos_core::unitary_rep::CZ(0, 1), "CZ");
 }
 
 #[test]
 fn op_swap_matches_unitary_rep() {
-    check_2q_clifford(op::SWAP(0, 1), pecos_core::unitary_rep::SWAP(0, 1), "SWAP");
+    check_2q_clifford(op::SWAP(0, 1), &pecos_core::unitary_rep::SWAP(0, 1), "SWAP");
 }
 
 #[test]
 fn op_sxx_matches_rxx_quarter() {
     check_2q_clifford(
         op::SXX(0, 1),
-        pecos_core::unitary_rep::RXX(Angle64::QUARTER_TURN, 0, 1),
+        &pecos_core::unitary_rep::RXX(Angle64::QUARTER_TURN, 0, 1),
         "SXX",
     );
 }
@@ -213,7 +213,7 @@ fn op_sxx_matches_rxx_quarter() {
 fn op_sxxdg_matches_rxx_three_quarters() {
     check_2q_clifford(
         op::SXXdg(0, 1),
-        pecos_core::unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, 0, 1),
+        &pecos_core::unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, 0, 1),
         "SXXdg",
     );
 }
@@ -222,7 +222,7 @@ fn op_sxxdg_matches_rxx_three_quarters() {
 fn op_syy_matches_ryy_quarter() {
     check_2q_clifford(
         op::SYY(0, 1),
-        pecos_core::unitary_rep::RYY(Angle64::QUARTER_TURN, 0, 1),
+        &pecos_core::unitary_rep::RYY(Angle64::QUARTER_TURN, 0, 1),
         "SYY",
     );
 }
@@ -231,21 +231,21 @@ fn op_syy_matches_ryy_quarter() {
 fn op_syydg_matches_ryy_three_quarters() {
     check_2q_clifford(
         op::SYYdg(0, 1),
-        pecos_core::unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, 0, 1),
+        &pecos_core::unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, 0, 1),
         "SYYdg",
     );
 }
 
 #[test]
 fn op_szz_matches_unitary_rep() {
-    check_2q_clifford(op::SZZ(0, 1), pecos_core::unitary_rep::SZZ(0, 1), "SZZ");
+    check_2q_clifford(op::SZZ(0, 1), &pecos_core::unitary_rep::SZZ(0, 1), "SZZ");
 }
 
 #[test]
 fn op_szzdg_matches_unitary_rep() {
     check_2q_clifford(
         op::SZZdg(0, 1),
-        pecos_core::unitary_rep::SZZ(0, 1).dg(),
+        &pecos_core::unitary_rep::SZZ(0, 1).dg(),
         "SZZdg",
     );
 }

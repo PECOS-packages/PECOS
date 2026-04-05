@@ -160,7 +160,7 @@ impl<'a> RelayBpBuilder<'a> {
             seed: self.seed,
         };
 
-        RelayBpDecoder::new(&self.check_matrix, ms_config, relay_config)
+        RelayBpDecoder::new(&self.check_matrix, &ms_config, &relay_config)
     }
 }
 
@@ -252,7 +252,7 @@ impl<'a> MinSumBpBuilder<'a> {
             gamma0: self.gamma0,
         };
 
-        MinSumBpDecoder::new(&self.check_matrix, config)
+        MinSumBpDecoder::new(&self.check_matrix, &config)
     }
 }
 

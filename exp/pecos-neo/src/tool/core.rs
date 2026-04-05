@@ -70,13 +70,13 @@ impl Tool {
     ///
     /// Plugins configure the tool with resources and systems.
     #[must_use]
-    pub fn add_plugin<P: Plugin + 'static>(mut self, plugin: P) -> Self {
+    pub fn add_plugin<P: Plugin + 'static>(mut self, plugin: &P) -> Self {
         plugin.build(&mut self);
         self
     }
 
     /// Add a plugin to the tool (mutable version).
-    pub fn add_plugin_mut<P: Plugin + 'static>(&mut self, plugin: P) {
+    pub fn add_plugin_mut<P: Plugin + 'static>(&mut self, plugin: &P) {
         plugin.build(self);
     }
 
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_tool_plugin() {
-        let tool = Tool::new().add_plugin(TestPlugin { value: 42 });
+        let tool = Tool::new().add_plugin(&TestPlugin { value: 42 });
 
         assert_eq!(*tool.resource::<u32>(), 42);
     }

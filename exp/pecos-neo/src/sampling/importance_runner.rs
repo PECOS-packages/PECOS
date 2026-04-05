@@ -532,7 +532,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
                 command.qubits.as_slice(),
                 command.angles.as_slice(),
             );
-            let response = noise.emit(event, &mut self.rng);
+            let response = noise.emit(&event, &mut self.rng);
             let should_skip = response.should_skip_gate();
             self.apply_noise_response(response);
             return should_skip;
@@ -544,7 +544,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     fn emit_after_preparation(&mut self, qubits: &[QubitId]) {
         if let Some(ref mut noise) = self.noise {
             let event = NoiseEvent::AfterPreparation { qubits };
-            let response = noise.emit(event, &mut self.rng);
+            let response = noise.emit(&event, &mut self.rng);
             self.apply_noise_response(response);
         }
     }

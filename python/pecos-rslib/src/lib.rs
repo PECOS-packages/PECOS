@@ -1,3 +1,4 @@
+#![allow(clippy::needless_pass_by_value)] // PyO3 requires owned values from Python
 #![doc(html_root_url = "https://docs.rs/pecos-rslib")]
 // Disable doctests since they don't work with our workspace setup
 #![cfg_attr(docsrs, feature(doc_cfg))]

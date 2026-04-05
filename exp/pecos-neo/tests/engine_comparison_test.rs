@@ -143,7 +143,7 @@ fn test_monte_carlo_bell_state_no_noise() {
 
     let neo_results = MonteCarloRunner::run(
         &commands,
-        config,
+        &config,
         || (CircuitRunner::new(), SparseStab::new(2)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -223,7 +223,7 @@ fn test_monte_carlo_with_depolarizing_noise() {
 
     let neo_results = MonteCarloRunner::run(
         &commands,
-        config,
+        &config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
             (
@@ -300,7 +300,7 @@ fn test_monte_carlo_measurement_errors() {
 
     let neo_results = MonteCarloRunner::run(
         &commands,
-        config,
+        &config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new()
                 .with_p_meas(p_meas, p_meas)
@@ -353,7 +353,7 @@ fn test_monte_carlo_parallel_execution() {
 
     let results_parallel = MonteCarloRunner::run(
         &commands,
-        config_parallel,
+        &config_parallel,
         || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
@@ -366,7 +366,7 @@ fn test_monte_carlo_parallel_execution() {
 
     let results_single = MonteCarloRunner::run(
         &commands,
-        config_single,
+        &config_single,
         || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
@@ -444,7 +444,7 @@ fn test_monte_carlo_two_qubit_noise() {
 
     let neo_results = MonteCarloRunner::run(
         &commands,
-        config,
+        &config,
         || {
             let neo_noise = GeneralNoiseModelBuilder::new().with_p2(p2).build();
             (
@@ -511,7 +511,7 @@ fn test_monte_carlo_deterministic_circuit() {
 
     let results: Vec<bool> = MonteCarloRunner::run(
         &commands,
-        config,
+        &config,
         || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     )
@@ -537,7 +537,7 @@ fn test_monte_carlo_statistical_consistency() {
 
     let results: Vec<bool> = MonteCarloRunner::run(
         &commands,
-        config,
+        &config,
         || (CircuitRunner::new(), SparseStab::new(1)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     )

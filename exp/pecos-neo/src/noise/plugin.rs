@@ -29,9 +29,9 @@
 //! use pecos_neo::noise::plugins::{CorePlugin, DepolarizingPlugin, LeakagePlugin};
 //!
 //! let model = ComposableNoiseModel::new()
-//!     .add_plugin(CorePlugin)           // Fundamental state tracking
-//!     .add_plugin(LeakagePlugin::new()) // Leakage handling
-//!     .add_plugin(DepolarizingPlugin::new(0.01, 0.02));
+//!     .add_plugin(&CorePlugin)           // Fundamental state tracking
+//!     .add_plugin(&LeakagePlugin::new()) // Leakage handling
+//!     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02));
 //! ```
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};

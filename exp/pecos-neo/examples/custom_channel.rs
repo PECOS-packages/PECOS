@@ -112,7 +112,7 @@ fn example_amplitude_damping() {
 
     for gamma in [0.0, 0.1, 0.3, 0.5] {
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(AmplitudeDampingChannel::new(gamma));
 
         let mut state = SparseStab::new(1);
@@ -246,7 +246,7 @@ fn example_gate_specific_noise() {
         .build();
 
     let noise_h = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(
             GateSpecificChannel::new()
                 .with_rate(GateType::H, 0.20)
@@ -277,7 +277,7 @@ fn example_gate_specific_noise() {
         .build();
 
     let noise_sz = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(
             GateSpecificChannel::new()
                 .with_rate(GateType::H, 0.20)
@@ -401,7 +401,7 @@ fn example_correlated_noise() {
 
     for correlation in [0.0, 0.5, 0.9] {
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(CorrelatedNoiseChannel::new(0.1, correlation));
 
         // Bell state circuit
@@ -524,7 +524,7 @@ fn example_context_aware_noise() {
 
     // Test with active qubits (normal circuit)
     let active_noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(ContextAwareChannel::new(0.05, 0.50)); // 5% active, 50% leaked
 
     let commands = CommandBuilder::new()
@@ -590,7 +590,7 @@ fn example_builtin_gate_dependent() {
         .build();
 
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(gate_noise.clone());
 
     let mut state = SparseStab::new(1);
@@ -616,7 +616,7 @@ fn example_builtin_gate_dependent() {
         .build();
 
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(gate_noise);
 
     let mut state = SparseStab::new(1);
@@ -660,7 +660,7 @@ fn example_builtin_correlated() {
 
     for correlation in [0.0, 0.5, 0.9] {
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(CorrelatedNoiseChannel::new(0.1, correlation));
 
         // Bell state circuit

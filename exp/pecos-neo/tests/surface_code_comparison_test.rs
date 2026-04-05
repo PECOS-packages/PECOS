@@ -285,7 +285,7 @@ impl ComposableNoiseConfig {
 /// Run repetition code with `ComposableNoiseModel`.
 fn run_composable_noise_repetition(
     code: &RepetitionCodeD3,
-    noise_config: ComposableNoiseConfig,
+    noise_config: &ComposableNoiseConfig,
     num_rounds: usize,
     num_shots: usize,
 ) -> SyndromeStatistics {
@@ -440,7 +440,7 @@ fn test_repetition_code_logical_error_vs_rounds() {
             run_general_noise_repetition(&code, general_model.clone(), num_rounds, NUM_SHOTS);
         let composable_stats = run_composable_noise_repetition(
             &code,
-            composable_config.clone(),
+            &composable_config,
             num_rounds,
             NUM_SHOTS,
         );
@@ -493,7 +493,7 @@ fn test_repetition_code_syndrome_rates() {
 
     let general_stats = run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
     let composable_stats =
-        run_composable_noise_repetition(&code, composable_config, num_rounds, NUM_SHOTS);
+        run_composable_noise_repetition(&code, &composable_config, num_rounds, NUM_SHOTS);
 
     println!("\nRepetition Code Syndrome Rates ({num_rounds} rounds):");
     println!("  p1={p1}, p2={p2}, p_meas={p_meas}");
@@ -558,7 +558,7 @@ fn test_repetition_code_syndrome_correlations() {
 
     let general_stats = run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
     let composable_stats =
-        run_composable_noise_repetition(&code, composable_config, num_rounds, NUM_SHOTS);
+        run_composable_noise_repetition(&code, &composable_config, num_rounds, NUM_SHOTS);
 
     println!("\nRepetition Code Syndrome Correlations ({num_rounds} rounds):");
     println!("  p1={p1}, p2={p2}, p_meas={p_meas}");
@@ -641,7 +641,7 @@ fn test_repetition_code_error_scaling() {
         let general_stats =
             run_general_noise_repetition(&code, general_model, num_rounds, NUM_SHOTS);
         let composable_stats =
-            run_composable_noise_repetition(&code, composable_config, num_rounds, NUM_SHOTS);
+            run_composable_noise_repetition(&code, &composable_config, num_rounds, NUM_SHOTS);
 
         let general_rate = general_stats.logical_error_rate();
         let composable_rate = composable_stats.logical_error_rate();

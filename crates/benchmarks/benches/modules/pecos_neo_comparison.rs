@@ -80,7 +80,7 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
 
                 b.iter(|| {
                     let noise = ComposableNoiseModel::new()
-                        .add_plugin(CorePlugin)
+                        .add_plugin(&CorePlugin)
                         .add_channel(SingleQubitChannel::depolarizing(0.001));
                     let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)
@@ -162,7 +162,7 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
 
         b.iter(|| {
             let noise = ComposableNoiseModel::new()
-                .add_plugin(CorePlugin)
+                .add_plugin(&CorePlugin)
                 .add_channel(SingleQubitChannel::depolarizing(0.001))
                 .add_channel(TwoQubitChannel::depolarizing(0.001));
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -189,7 +189,7 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
 
         b.iter(|| {
             let noise = ComposableNoiseModel::new()
-                .add_plugin(CorePlugin)
+                .add_plugin(&CorePlugin)
                 .add_channel(PreparationChannel::new(0.001))
                 .add_channel(SingleQubitChannel::depolarizing(0.001))
                 .add_channel(TwoQubitChannel::depolarizing(0.01))
@@ -259,7 +259,7 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
 
                     let result = MonteCarloRunner::run(
                         &commands,
-                        config,
+                        &config,
                         || (CircuitRunner::new(), SparseStab::new(2)),
                         |outcomes| {
                             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -343,7 +343,7 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
 
             let result = MonteCarloRunner::run(
                 &commands,
-                config,
+                &config,
                 || {
                     let noise = NeoNoiseModelBuilder::new()
                         .with_p1(0.01)

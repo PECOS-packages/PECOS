@@ -454,7 +454,7 @@ where
         new_state[idx] = Complex64::new(1.0, 0.0);
 
         // Update the state vector
-        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
         *self.state_vector_mut() = new_sv;
 
         self
@@ -507,7 +507,7 @@ where
         }
 
         // Update the state vector
-        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
         *self.state_vector_mut() = new_sv;
 
         self
@@ -617,7 +617,7 @@ where
             }
         }
 
-        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
         *self.state_vector_mut() = new_sv;
     }
 
@@ -692,7 +692,7 @@ where
         }
 
         // Update the state vector
-        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
         *self.state_vector_mut() = new_sv;
 
         self
@@ -759,7 +759,7 @@ where
         }
 
         // Update the state vector
-        let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
         *self.state_vector_mut() = new_sv;
 
         self
@@ -1098,7 +1098,7 @@ where
             }
 
             // Update the state vector
-            let new_sv = StateVec::from_state(new_state, self.state_vector.rng().clone());
+            let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
             *self.state_vector_mut() = new_sv;
 
             results.push(MeasurementResult {

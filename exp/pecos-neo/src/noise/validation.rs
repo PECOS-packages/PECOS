@@ -70,7 +70,7 @@ impl ValidationError {
 
     /// Add the invalid value to the error.
     #[must_use]
-    pub fn with_value(mut self, value: impl ToString) -> Self {
+    pub fn with_value(mut self, value: &impl ToString) -> Self {
         self.value = Some(value.to_string());
         self
     }
@@ -94,19 +94,19 @@ pub type ValidationResult<T> = Result<T, ValidationError>;
 pub fn validate_probability(p: f64, field: &str) -> ValidationResult<f64> {
     if p.is_nan() {
         return Err(ValidationError::new(field, "probability cannot be NaN")
-            .with_value(p)
+            .with_value(&p)
             .with_suggestion("Check for division by zero or invalid computations"));
     }
     if p < 0.0 {
         return Err(
             ValidationError::new(field, "probability cannot be negative")
-                .with_value(p)
+                .with_value(&p)
                 .with_suggestion("Use a value between 0.0 and 1.0"),
         );
     }
     if p > 1.0 {
         return Err(ValidationError::new(field, "probability cannot exceed 1.0")
-            .with_value(p)
+            .with_value(&p)
             .with_suggestion("Use a value between 0.0 and 1.0"));
     }
     Ok(p)
@@ -131,13 +131,13 @@ pub fn validate_weights(weights: &[f64], field: &str) -> ValidationResult<()> {
     for (i, &w) in weights.iter().enumerate() {
         if w.is_nan() {
             return Err(
-                ValidationError::new(field, format!("weight[{i}] cannot be NaN")).with_value(w),
+                ValidationError::new(field, format!("weight[{i}] cannot be NaN")).with_value(&w),
             );
         }
         if w < 0.0 {
             return Err(
                 ValidationError::new(field, format!("weight[{i}] cannot be negative"))
-                    .with_value(w)
+                    .with_value(&w)
                     .with_suggestion("Use non-negative weights"),
             );
         }
@@ -156,7 +156,7 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
     if sum <= 0.0 {
         return Err(
             ValidationError::new(field, "weights must sum to a positive value")
-                .with_value(sum)
+                .with_value(&sum)
                 .with_suggestion("Ensure at least one weight is positive"),
         );
     }
@@ -170,11 +170,11 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
 /// Returns an error if the rate is negative or NaN.
 pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
     if rate.is_nan() {
-        return Err(ValidationError::new(field, "rate cannot be NaN").with_value(rate));
+        return Err(ValidationError::new(field, "rate cannot be NaN").with_value(&rate));
     }
     if rate < 0.0 {
         return Err(ValidationError::new(field, "rate cannot be negative")
-            .with_value(rate)
+            .with_value(&rate)
             .with_suggestion("Use a non-negative rate"));
     }
     Ok(rate)
@@ -187,11 +187,11 @@ pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
 /// Returns an error if the value is not positive.
 pub fn validate_positive(value: f64, field: &str) -> ValidationResult<f64> {
     if value.is_nan() {
-        return Err(ValidationError::new(field, "value cannot be NaN").with_value(value));
+        return Err(ValidationError::new(field, "value cannot be NaN").with_value(&value));
     }
     if value <= 0.0 {
         return Err(ValidationError::new(field, "value must be positive")
-            .with_value(value)
+            .with_value(&value)
             .with_suggestion("Use a value greater than 0"));
     }
     Ok(value)
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn test_validation_error_display() {
         let err = ValidationError::new("probability", "value out of range")
-            .with_value(1.5)
+            .with_value(&1.5)
             .with_suggestion("Use a value between 0 and 1");
 
         let msg = err.to_string();

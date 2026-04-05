@@ -242,9 +242,9 @@ fn test_user_guide_quantum_operator_algebra_rust_13() {
     use pecos_core::pauli::constructors::*;
     use pecos_quantum::PauliSet;
     let mut set = PauliSet::new();
-    set.insert(X(0));
-    set.insert(Z(1));
-    set.insert(X(0));  // duplicate, ignored
+    set.insert(&X(0));
+    set.insert(&Z(1));
+    set.insert(&X(0));  // duplicate, ignored
 
     assert_eq!(set.len(), 2);
     assert!(set.contains(&X(0)));

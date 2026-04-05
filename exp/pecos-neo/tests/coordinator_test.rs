@@ -81,7 +81,7 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
 
     let mc_results = MonteCarloRunner::run(
         &commands,
-        mc_config,
+        &mc_config,
         || (CircuitRunner::new(), SparseStab::new(2)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
@@ -184,7 +184,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
 
     let mc_results = MonteCarloRunner::run(
         &commands,
-        mc_config,
+        &mc_config,
         || {
             let noise =
                 ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));

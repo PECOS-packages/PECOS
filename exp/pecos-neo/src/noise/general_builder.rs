@@ -506,7 +506,7 @@ impl GeneralNoiseModelBuilder {
     /// Returns a [`ComposableNoiseModel`] with all the configured channels.
     #[must_use]
     pub fn build(self) -> ComposableNoiseModel {
-        let mut model = ComposableNoiseModel::new().add_plugin(CorePlugin);
+        let mut model = ComposableNoiseModel::new().add_plugin(&CorePlugin);
 
         // Set time scale if configured
         if let Some(scale) = self.time_scale {

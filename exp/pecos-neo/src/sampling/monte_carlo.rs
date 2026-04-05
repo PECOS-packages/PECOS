@@ -53,7 +53,7 @@
 //! // Count 1-outcomes
 //! let count_ones = MonteCarloRunner::run(
 //!     &commands,
-//!     config,
+//!     &config,
 //!     || (CircuitRunner::new(), SparseStab::new(1)),
 //!     |outcomes| if outcomes.get_bit(QubitId(0)).unwrap_or(false) { 1u64 } else { 0u64 },
 //! );
@@ -193,7 +193,7 @@ impl MonteCarloRunner {
     /// Panics if gate execution fails during a Monte Carlo shot.
     pub fn run<S, F, G, T>(
         commands: &CommandQueue,
-        config: MonteCarloConfig,
+        config: &MonteCarloConfig,
         make_runner: F,
         process_result: G,
     ) -> MonteCarloResults<T>
@@ -273,7 +273,7 @@ impl MonteCarloRunner {
     /// Weighted statistics aggregated across all shots.
     pub fn run_importance<S, F, G>(
         commands: &CommandQueue,
-        config: MonteCarloConfig,
+        config: &MonteCarloConfig,
         make_runner: F,
         process_result: G,
     ) -> ImportanceSamplingResults
@@ -398,7 +398,7 @@ mod tests {
 
         let results = MonteCarloRunner::run(
             &commands,
-            config,
+            &config,
             || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -432,7 +432,7 @@ mod tests {
 
         let results = MonteCarloRunner::run(
             &commands,
-            config,
+            &config,
             || {
                 let noise =
                     ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
@@ -457,7 +457,7 @@ mod tests {
 
         let results = MonteCarloRunner::run_importance(
             &commands,
-            config,
+            &config,
             || {
                 ImportanceSamplingRunner::new(SparseStab::new(1))
                     .with_single_qubit_boost(0.001, 10.0)
@@ -499,7 +499,7 @@ mod tests {
         // Since we're just doing prep+measure (no H gate), all results should be false
         let results = MonteCarloRunner::run(
             &commands,
-            config,
+            &config,
             || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -534,14 +534,14 @@ mod tests {
         // Run twice with identical configuration
         let results1 = MonteCarloRunner::run(
             &commands,
-            config1,
+            &config1,
             || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
         let results2 = MonteCarloRunner::run(
             &commands,
-            config2,
+            &config2,
             || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -574,14 +574,14 @@ mod tests {
 
         let results1 = MonteCarloRunner::run(
             &commands,
-            config1,
+            &config1,
             || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
         let results2 = MonteCarloRunner::run(
             &commands,
-            config2,
+            &config2,
             || (CircuitRunner::new(), SparseStab::new(1)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );

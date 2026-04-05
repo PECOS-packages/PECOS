@@ -135,7 +135,7 @@ impl QisIrParser {
         }
 
         // Convert raw blocks to PHIR blocks (phi -> block args)
-        let blocks = self.convert_raw_to_phir(raw_blocks);
+        let blocks = self.convert_raw_to_phir(&raw_blocks);
 
         // Determine region kind based on block count
         let kind = if blocks.len() <= 1 {
@@ -374,14 +374,14 @@ impl QisIrParser {
     // Pass 3: convert RawBlocks to PHIR Blocks
     // ----------------------------------------------------------------
 
-    fn convert_raw_to_phir(&mut self, raw_blocks: Vec<RawBlock>) -> Vec<Block> {
+    fn convert_raw_to_phir(&mut self, raw_blocks: &[RawBlock]) -> Vec<Block> {
         // Build phi argument map:
         // phi_args[target_label][pred_label] = vec of SSAValues to pass
-        let phi_args = self.build_phi_arg_map(&raw_blocks);
+        let phi_args = self.build_phi_arg_map(raw_blocks);
 
         let mut blocks = Vec::with_capacity(raw_blocks.len());
 
-        for raw in &raw_blocks {
+        for raw in raw_blocks {
             // Block arguments from phi nodes
             let arguments: Vec<BlockArgument> = raw
                 .phis

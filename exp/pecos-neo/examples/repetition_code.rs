@@ -181,7 +181,7 @@ fn example_with_noise(code: &RepetitionCode) {
     let p_error = 0.02; // 2% error rate
 
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(p_error))
         .add_channel(TwoQubitChannel::depolarizing(p_error * 2.0))
         .add_channel(MeasurementChannel::symmetric(p_error));
@@ -265,7 +265,7 @@ fn example_error_scaling(code: &RepetitionCode) {
 
     for p_phys in [0.005, 0.01, 0.02, 0.03, 0.05] {
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(SingleQubitChannel::depolarizing(p_phys))
             .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
             .add_channel(MeasurementChannel::symmetric(p_phys));
@@ -323,7 +323,7 @@ fn example_round_scaling(code: &RepetitionCode) {
         let commands = code.build_circuit(num_rounds);
 
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(SingleQubitChannel::depolarizing(p_phys))
             .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
             .add_channel(MeasurementChannel::symmetric(p_phys));

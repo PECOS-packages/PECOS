@@ -37,8 +37,8 @@ impl RelayBpDecoder {
     /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
     pub fn new(
         check_matrix: &ArrayView2<u8>,
-        min_sum_config: MinSumConfig,
-        relay_config: RelayConfig,
+        min_sum_config: &MinSumConfig,
+        relay_config: &RelayConfig,
     ) -> Result<Self> {
         let num_checks = check_matrix.nrows();
         let num_bits = check_matrix.ncols();
@@ -120,7 +120,7 @@ impl MinSumBpDecoder {
     /// # Errors
     ///
     /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
-    pub fn new(check_matrix: &ArrayView2<u8>, config: MinSumConfig) -> Result<Self> {
+    pub fn new(check_matrix: &ArrayView2<u8>, config: &MinSumConfig) -> Result<Self> {
         let num_checks = check_matrix.nrows();
         let num_bits = check_matrix.ncols();
 
@@ -194,7 +194,7 @@ mod tests {
     fn test_min_sum_decoder() {
         let h = repetition_code_matrix();
         let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
         // Syndrome [1, 0] corresponds to error on first bit
         let syndrome = Array1::from_vec(vec![1u8, 0]);
@@ -209,7 +209,7 @@ mod tests {
         let h = repetition_code_matrix();
         let ms_config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
         let relay_config = RelayConfig::default();
-        let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+        let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
         let syndrome = Array1::from_vec(vec![1u8, 0]);
         let result = decoder.decode(&syndrome.view()).unwrap();
@@ -222,7 +222,7 @@ mod tests {
     fn test_zero_syndrome() {
         let h = repetition_code_matrix();
         let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
         let syndrome = Array1::from_vec(vec![0u8, 0]);
         let result = decoder.decode(&syndrome.view()).unwrap();
@@ -237,7 +237,7 @@ mod tests {
     fn test_invalid_syndrome_length() {
         let h = repetition_code_matrix();
         let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
         let syndrome = Array1::from_vec(vec![1u8, 0, 1]);
         let result = decoder.decode(&syndrome.view());
@@ -248,7 +248,7 @@ mod tests {
     fn test_check_and_bit_count() {
         let h = repetition_code_matrix();
         let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+        let decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
         assert_eq!(decoder.check_count(), 2);
         assert_eq!(decoder.bit_count(), 3);

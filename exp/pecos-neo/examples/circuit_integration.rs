@@ -132,7 +132,7 @@ fn example_tick_with_noise() {
 
     // Add depolarizing noise
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.01))
         .add_channel(TwoQubitChannel::depolarizing(0.02));
 
@@ -268,7 +268,7 @@ fn example_qec_style_circuit() {
 
     // Run with noise
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.005))
         .add_channel(TwoQubitChannel::depolarizing(0.01))
         .add_channel(MeasurementChannel::symmetric(0.005));

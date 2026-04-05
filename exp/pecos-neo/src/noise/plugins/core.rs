@@ -38,7 +38,7 @@ use crate::noise::{NoiseContext, NoiseEvent};
 /// use pecos_neo::noise::plugins::CorePlugin;
 ///
 /// let model = ComposableNoiseModel::new()
-///     .add_plugin(CorePlugin);  // Always add first
+///     .add_plugin(&CorePlugin);  // Always add first
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CorePlugin;

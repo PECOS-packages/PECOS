@@ -36,7 +36,7 @@ fn main() {
 
     // Build noise model once
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.001))
         .add_channel(TwoQubitChannel::depolarizing(0.001));
 

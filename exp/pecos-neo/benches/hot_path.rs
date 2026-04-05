@@ -61,7 +61,7 @@ fn bench_noise_emission(c: &mut Criterion) {
                 angles: &[],
                 gate_id: None,
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 
@@ -73,7 +73,7 @@ fn bench_noise_emission(c: &mut Criterion) {
                 angles: &[],
                 gate_id: None,
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 
@@ -83,7 +83,7 @@ fn bench_noise_emission(c: &mut Criterion) {
                 qubits: &qubits,
                 outcomes: &[false],
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 
@@ -636,7 +636,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 
                 let results = MonteCarloRunner::run(
                     &bell_commands,
-                    config,
+                    &config,
                     || (CircuitRunner::new(), SparseStab::new(2)),
                     |outcomes| {
                         black_box((
@@ -695,7 +695,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 
             let results = MonteCarloRunner::run(
                 &bell_commands,
-                config,
+                &config,
                 || {
                     let noise = GeneralNoiseModelBuilder::new()
                         .with_p1(0.001)
@@ -771,7 +771,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
 
             let results = MonteCarloRunner::run(
                 &large_commands,
-                config,
+                &config,
                 || (CircuitRunner::new(), SparseStab::new(10)),
                 |outcomes| {
                     let mut sum = 0u32;
@@ -846,7 +846,7 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 angles: &[],
                 gate_id: None,
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 
@@ -865,7 +865,7 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 angles: &[],
                 gate_id: None,
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 
@@ -884,7 +884,7 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 angles: &[],
                 gate_id: None,
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 
@@ -903,7 +903,7 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
                 angles: &[],
                 gate_id: None,
             };
-            black_box(noise.emit(event, &mut rng))
+            black_box(noise.emit(&event, &mut rng))
         });
     });
 

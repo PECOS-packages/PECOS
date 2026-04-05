@@ -2053,13 +2053,13 @@ impl SimNeoBuilder {
 
         match &self.orchestrator {
             Orchestrator::ImportanceSampling { config: is_config } => {
-                tool = tool.add_plugin(ImportanceSamplingSimPlugin {
+                tool = tool.add_plugin(&ImportanceSamplingSimPlugin {
                     is_config: is_config.clone(),
                     explicit_num_qubits: self.explicit_num_qubits,
                 });
             }
             Orchestrator::MonteCarlo { .. } => {
-                tool = tool.add_plugin(UnifiedSimulationPlugin {
+                tool = tool.add_plugin(&UnifiedSimulationPlugin {
                     explicit_num_qubits: self.explicit_num_qubits,
                 });
             }

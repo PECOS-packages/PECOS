@@ -1934,7 +1934,7 @@ where
     /// # Panics
     /// Panics if `state.len()` is not a power of 2.
     #[must_use]
-    pub fn from_complex_state(state: Vec<Complex64>, rng: R) -> Self {
+    pub fn from_complex_state(state: &[Complex64], rng: R) -> Self {
         let num_qubits = state.len().trailing_zeros() as usize;
         let size = state.len();
         assert_eq!(1 << num_qubits, size, "Invalid state vector size");
@@ -1960,7 +1960,7 @@ where
     ///
     /// Alias for `from_complex_state` for API compatibility.
     #[must_use]
-    pub fn from_state(state: Vec<Complex64>, rng: R) -> Self {
+    pub fn from_state(state: &[Complex64], rng: R) -> Self {
         Self::from_complex_state(state, rng)
     }
 
@@ -5661,7 +5661,7 @@ mod tests {
             Complex64::new(0.5, 0.0),
         ];
 
-        let mut opt: StateVecSoA = StateVecSoA::from_complex_state(state.clone(), rand::make_rng());
+        let mut opt: StateVecSoA = StateVecSoA::from_complex_state(&state, rand::make_rng());
 
         for (i, expected) in state.iter().enumerate() {
             let actual = opt.get_amplitude(i);
@@ -5823,7 +5823,7 @@ mod tests {
         // Convert to complex vec and back
         let complex_state = opt.to_complex_vec();
         let mut opt2: StateVecSoA =
-            StateVecSoA::from_complex_state(complex_state, rand::make_rng());
+            StateVecSoA::from_complex_state(&complex_state, rand::make_rng());
 
         assert_opts_match(&mut opt, &mut opt2, "roundtrip complex state");
     }

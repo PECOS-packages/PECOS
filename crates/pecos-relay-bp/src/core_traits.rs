@@ -97,7 +97,7 @@ impl CheckMatrixDecoder for RelayBpDecoder {
         let ms_config = MinSumConfig::new(error_priors);
         let relay_config = RelayConfig::default();
 
-        RelayBpDecoder::new(check_matrix, ms_config, relay_config)
+        RelayBpDecoder::new(check_matrix, &ms_config, &relay_config)
             .map_err(pecos_decoder_core::DecoderError::from)
     }
 
@@ -129,7 +129,7 @@ impl CheckMatrixDecoder for MinSumBpDecoder {
 
         let config = MinSumConfig::new(error_priors);
 
-        MinSumBpDecoder::new(check_matrix, config).map_err(pecos_decoder_core::DecoderError::from)
+        MinSumBpDecoder::new(check_matrix, &config).map_err(pecos_decoder_core::DecoderError::from)
     }
 
     fn from_sparse_matrix_with_config(
@@ -178,7 +178,7 @@ mod tests {
         let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
         let ms_config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
         let relay_config = RelayConfig::default();
-        let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+        let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
         let syndrome = Array1::from_vec(vec![1u8, 0]);
         let result = <RelayBpDecoder as Decoder>::decode(&mut decoder, &syndrome.view()).unwrap();
@@ -191,7 +191,7 @@ mod tests {
     fn test_decoder_trait_min_sum() {
         let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
         let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
         let syndrome = Array1::from_vec(vec![0u8, 1]);
         let result = <MinSumBpDecoder as Decoder>::decode(&mut decoder, &syndrome.view()).unwrap();
@@ -217,7 +217,7 @@ mod tests {
     fn test_batch_decoder_trait() {
         let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
         let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
         let s1 = Array1::from_vec(vec![1u8, 0]);
         let s2 = Array1::from_vec(vec![0u8, 1]);

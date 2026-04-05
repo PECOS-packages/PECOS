@@ -37,9 +37,9 @@
 //! use pecos_core::pauli::constructors::*;
 //!
 //! let mut set = PauliSet::new();
-//! set.insert(X(0));
-//! set.insert(Z(1));
-//! set.insert(X(0)); // duplicate, ignored
+//! set.insert(&X(0));
+//! set.insert(&Z(1));
+//! set.insert(&X(0)); // duplicate, ignored
 //!
 //! assert_eq!(set.len(), 2);
 //! assert!(set.contains(&X(0)));
@@ -139,8 +139,8 @@ impl PauliSet {
     }
 
     /// Inserts a Pauli string. Returns `true` if it was not already present.
-    pub fn insert(&mut self, pauli: PauliString) -> bool {
-        self.inner.insert(PauliKey::from_pauli_string(&pauli))
+    pub fn insert(&mut self, pauli: &PauliString) -> bool {
+        self.inner.insert(PauliKey::from_pauli_string(pauli))
     }
 
     /// Removes a Pauli string. Returns `true` if it was present.
@@ -427,9 +427,9 @@ mod tests {
     #[test]
     fn test_insert_and_contains() {
         let mut set = PauliSet::new();
-        assert!(set.insert(X(0)));
-        assert!(set.insert(Z(1)));
-        assert!(!set.insert(X(0))); // duplicate
+        assert!(set.insert(&X(0)));
+        assert!(set.insert(&Z(1)));
+        assert!(!set.insert(&X(0))); // duplicate
 
         assert_eq!(set.len(), 2);
         assert!(set.contains(&X(0)));
@@ -450,8 +450,8 @@ mod tests {
     fn test_phase_distinguishes() {
         // +X and -X are distinct elements
         let mut set = PauliSet::new();
-        set.insert(X(0));
-        set.insert(-X(0));
+        set.insert(&X(0));
+        set.insert(&-X(0));
         assert_eq!(set.len(), 2);
     }
 
@@ -548,9 +548,9 @@ mod tests {
     #[test]
     fn test_multi_qubit() {
         let mut set = PauliSet::new();
-        set.insert(X(0) & Z(1));
-        set.insert(Zs([0, 1, 2]));
-        set.insert(X(0) & Z(1)); // duplicate
+        set.insert(&(X(0) & Z(1)));
+        set.insert(&Zs([0, 1, 2]));
+        set.insert(&(X(0) & Z(1))); // duplicate
         assert_eq!(set.len(), 2);
     }
 
@@ -574,8 +574,8 @@ mod tests {
     fn test_sparse_high_qubit() {
         // Sparse Pauli on a high qubit index -- should work fine
         let mut set = PauliSet::new();
-        set.insert(PauliString::x(10000));
-        set.insert(PauliString::z(50000));
+        set.insert(&PauliString::x(10000));
+        set.insert(&PauliString::z(50000));
         assert_eq!(set.len(), 2);
         assert!(set.contains(&PauliString::x(10000)));
     }

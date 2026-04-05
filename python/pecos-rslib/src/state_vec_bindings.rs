@@ -801,7 +801,7 @@ impl PyStateVec {
 
         let rng: PecosRng = rand::make_rng();
         Ok(PyStateVec {
-            inner: StateVec::from_state(state, rng),
+            inner: StateVec::from_state(&state, rng),
         })
     }
 

@@ -793,7 +793,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         let all_random_bits = std::mem::take(&mut self.meas_queue_random_bits);
 
         // Process measurements using the GPU implementation
-        let results = self.mz_gpu_sequential(&qubits, all_random_bits);
+        let results = self.mz_gpu_sequential(&qubits, &all_random_bits);
 
         // Store results for later retrieval via mz_fetch()
         self.meas_pending_results.push(results);
@@ -1439,14 +1439,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         // For now, fall back to the working sequential implementation
         drop(results);
         let qubit_indices: Vec<usize> = qubits.iter().map(pecos_core::QubitId::index).collect();
-        self.mz_gpu_sequential(&qubit_indices, all_random_bits)
+        self.mz_gpu_sequential(&qubit_indices, &all_random_bits)
     }
 
     /// Sequential GPU measurement implementation (internal)
     fn mz_gpu_sequential(
         &mut self,
         qubits: &[usize],
-        all_random_bits: Vec<Vec<u32>>,
+        all_random_bits: &[Vec<u32>],
     ) -> Vec<Vec<bool>> {
         let batch_shots = self.shots_per_batch;
         let num_qubits_measured = qubits.len();
@@ -1713,7 +1713,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
         // Process measurements using the GPU implementation
         // Note: mz_gpu_sequential already increments measurement_count
-        let results = self.mz_gpu_sequential(&qubits, all_random_bits);
+        let results = self.mz_gpu_sequential(&qubits, &all_random_bits);
 
         // Combine with any previously accumulated results
         let mut combined: Vec<Vec<bool>> = vec![vec![]; batch_shots];

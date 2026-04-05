@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_importance_sampling_plugin() {
-        let tool = Tool::new().add_plugin(ImportanceSamplingPlugin::new(0.001, 10.0));
+        let tool = Tool::new().add_plugin(&ImportanceSamplingPlugin::new(0.001, 10.0));
 
         assert!(tool.contains_resource::<ImportanceSamplingConfig>());
         assert!(tool.contains_resource::<CurrentShotWeight>());

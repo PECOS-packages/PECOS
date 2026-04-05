@@ -1,3 +1,4 @@
+#![allow(clippy::needless_pass_by_value)] // PyO3 requires owned values from Python
 //! CUDA/cuQuantum Python bindings for PECOS quantum simulators.
 //!
 //! This crate provides PyO3-based Python bindings for the Rust cuQuantum wrappers,

@@ -36,7 +36,7 @@ fn flat_to_pairs(qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
 /// (non-Clifford angles produce an error via `CliffordRotation::try_*`).
 fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimulator>(
     sim: &mut S,
-    message: ByteMessage,
+    message: &ByteMessage,
 ) -> Result<ByteMessage, PecosError> {
     let batch = message.quantum_ops()?;
     let mut measurements: Vec<usize> = Vec::new();
@@ -220,7 +220,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 /// preparations, and measurements with MZ batching.
 fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator>(
     sim: &mut S,
-    message: ByteMessage,
+    message: &ByteMessage,
 ) -> Result<ByteMessage, PecosError> {
     let batch = message.quantum_ops()?;
     let mut measurements: Vec<usize> = Vec::new();
@@ -1220,7 +1220,7 @@ impl Engine for SparseStabEngine {
     type Output = ByteMessage;
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
-        process_clifford_message(&mut self.simulator, message)
+        process_clifford_message(&mut self.simulator, &message)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -1309,7 +1309,7 @@ impl Engine for StabilizerEngine {
     type Output = ByteMessage;
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
-        process_clifford_message(&mut self.simulator, message)
+        process_clifford_message(&mut self.simulator, &message)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -1386,7 +1386,7 @@ impl Engine for CliffordRzEngine {
     type Output = ByteMessage;
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
-        process_general_message(&mut self.simulator, message)
+        process_general_message(&mut self.simulator, &message)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -1463,7 +1463,7 @@ impl Engine for DensityMatrixEngine {
     type Output = ByteMessage;
 
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
-        process_general_message(&mut self.simulator, message)
+        process_general_message(&mut self.simulator, &message)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {

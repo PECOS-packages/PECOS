@@ -42,89 +42,89 @@ impl GateRegistry {
         // Single-qubit Paulis
         self.set_core(
             gates::I,
-            GateSpec::new("I").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("I").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::X,
-            GateSpec::new("X").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("X").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::Y,
-            GateSpec::new("Y").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("Y").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::Z,
-            GateSpec::new("Z").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("Z").with_category(GateCategory::SingleQubitUnitary),
         );
 
         // Single-qubit Cliffords
         self.set_core(
             gates::H,
-            GateSpec::new("H").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("H").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::SX,
-            GateSpec::new("SX").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("SX").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::SXdg,
-            GateSpec::new("SXdg").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("SXdg").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::SY,
-            GateSpec::new("SY").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("SY").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::SYdg,
-            GateSpec::new("SYdg").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("SYdg").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::SZ,
-            GateSpec::new("SZ").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("SZ").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::SZdg,
-            GateSpec::new("SZdg").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("SZdg").with_category(GateCategory::SingleQubitUnitary),
         );
 
         // T gates
         self.set_core(
             gates::T,
-            GateSpec::new("T").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("T").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::Tdg,
-            GateSpec::new("Tdg").with_category(GateCategory::SingleQubitUnitary),
+            &GateSpec::new("Tdg").with_category(GateCategory::SingleQubitUnitary),
         );
 
         // Single-qubit rotations
         self.set_core(
             gates::RX,
-            GateSpec::new("RX")
+            &GateSpec::new("RX")
                 .with_angle_arity(1)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::RY,
-            GateSpec::new("RY")
+            &GateSpec::new("RY")
                 .with_angle_arity(1)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::RZ,
-            GateSpec::new("RZ")
+            &GateSpec::new("RZ")
                 .with_angle_arity(1)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::U,
-            GateSpec::new("U")
+            &GateSpec::new("U")
                 .with_angle_arity(3)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::R1XY,
-            GateSpec::new("R1XY")
+            &GateSpec::new("R1XY")
                 .with_angle_arity(2)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
@@ -132,31 +132,31 @@ impl GateRegistry {
         // Two-qubit gates
         self.set_core(
             gates::CX,
-            GateSpec::new("CX")
+            &GateSpec::new("CX")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::CY,
-            GateSpec::new("CY")
+            &GateSpec::new("CY")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::CZ,
-            GateSpec::new("CZ")
+            &GateSpec::new("CZ")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::SWAP,
-            GateSpec::new("SWAP")
+            &GateSpec::new("SWAP")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::ISWAP,
-            GateSpec::new("ISWAP")
+            &GateSpec::new("ISWAP")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
@@ -164,37 +164,37 @@ impl GateRegistry {
         // Two-qubit Clifford rotations
         self.set_core(
             gates::SXX,
-            GateSpec::new("SXX")
+            &GateSpec::new("SXX")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::SXXdg,
-            GateSpec::new("SXXdg")
+            &GateSpec::new("SXXdg")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::SYY,
-            GateSpec::new("SYY")
+            &GateSpec::new("SYY")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::SYYdg,
-            GateSpec::new("SYYdg")
+            &GateSpec::new("SYYdg")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::SZZ,
-            GateSpec::new("SZZ")
+            &GateSpec::new("SZZ")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::SZZdg,
-            GateSpec::new("SZZdg")
+            &GateSpec::new("SZZdg")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
@@ -202,28 +202,28 @@ impl GateRegistry {
         // Two-qubit parameterized gates
         self.set_core(
             gates::CRZ,
-            GateSpec::new("CRZ")
+            &GateSpec::new("CRZ")
                 .with_quantum_arity(2)
                 .with_angle_arity(1)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::RXX,
-            GateSpec::new("RXX")
+            &GateSpec::new("RXX")
                 .with_quantum_arity(2)
                 .with_angle_arity(1)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::RYY,
-            GateSpec::new("RYY")
+            &GateSpec::new("RYY")
                 .with_quantum_arity(2)
                 .with_angle_arity(1)
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::RZZ,
-            GateSpec::new("RZZ")
+            &GateSpec::new("RZZ")
                 .with_quantum_arity(2)
                 .with_angle_arity(1)
                 .with_category(GateCategory::TwoQubitUnitary),
@@ -232,19 +232,19 @@ impl GateRegistry {
         // Three-qubit gates
         self.set_core(
             gates::CCX,
-            GateSpec::new("CCX")
+            &GateSpec::new("CCX")
                 .with_quantum_arity(3)
                 .with_category(GateCategory::MultiQubitUnitary),
         );
         self.set_core(
             gates::CCZ,
-            GateSpec::new("CCZ")
+            &GateSpec::new("CCZ")
                 .with_quantum_arity(3)
                 .with_category(GateCategory::MultiQubitUnitary),
         );
         self.set_core(
             gates::CSWAP,
-            GateSpec::new("CSWAP")
+            &GateSpec::new("CSWAP")
                 .with_quantum_arity(3)
                 .with_category(GateCategory::MultiQubitUnitary),
         );
@@ -252,19 +252,19 @@ impl GateRegistry {
         // Measurement
         self.set_core(
             gates::MZ,
-            GateSpec::new("MZ")
+            &GateSpec::new("MZ")
                 .with_returns_result(true)
                 .with_category(GateCategory::Measurement),
         );
         self.set_core(
             gates::MEASURE_LEAKED,
-            GateSpec::new("MeasureLeaked")
+            &GateSpec::new("MeasureLeaked")
                 .with_returns_result(true)
                 .with_category(GateCategory::Measurement),
         );
         self.set_core(
             gates::MEASURE_FREE,
-            GateSpec::new("MeasureFree")
+            &GateSpec::new("MeasureFree")
                 .with_returns_result(true)
                 .with_category(GateCategory::Measurement),
         );
@@ -272,31 +272,31 @@ impl GateRegistry {
         // State preparation
         self.set_core(
             gates::PZ,
-            GateSpec::new("PZ").with_category(GateCategory::Preparation),
+            &GateSpec::new("PZ").with_category(GateCategory::Preparation),
         );
         self.set_core(
             gates::PX,
-            GateSpec::new("PrepX").with_category(GateCategory::Preparation),
+            &GateSpec::new("PrepX").with_category(GateCategory::Preparation),
         );
         self.set_core(
             gates::PY,
-            GateSpec::new("PrepY").with_category(GateCategory::Preparation),
+            &GateSpec::new("PrepY").with_category(GateCategory::Preparation),
         );
 
         // Qubit management
         self.set_core(
             gates::QALLOC,
-            GateSpec::new("QAlloc").with_category(GateCategory::QubitManagement),
+            &GateSpec::new("QAlloc").with_category(GateCategory::QubitManagement),
         );
         self.set_core(
             gates::QFREE,
-            GateSpec::new("QFree").with_category(GateCategory::QubitManagement),
+            &GateSpec::new("QFree").with_category(GateCategory::QubitManagement),
         );
 
         // Idle
         self.set_core(
             gates::IDLE,
-            GateSpec::new("Idle")
+            &GateSpec::new("Idle")
                 .with_param_arity(1) // duration
                 .with_category(GateCategory::Idle),
         );
@@ -306,7 +306,7 @@ impl GateRegistry {
     }
 
     /// Set a core gate specification.
-    fn set_core(&mut self, id: GateId, spec: GateSpec) {
+    fn set_core(&mut self, id: GateId, spec: &GateSpec) {
         debug_assert!(id.is_core(), "set_core called with user-defined gate ID");
         let idx = id.0 as usize;
         self.core_specs[idx] = Some(spec.clone());

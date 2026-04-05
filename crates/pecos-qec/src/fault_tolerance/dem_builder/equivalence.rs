@@ -889,12 +889,12 @@ fn compute_correlation(a: &[f64], b: &[f64]) -> f64 {
 pub fn verify_dem_equivalence(
     dem_str1: &str,
     dem_str2: &str,
-    method: ComparisonMethod,
+    method: &ComparisonMethod,
 ) -> Result<bool, DemParseError> {
     let dem1 = ParsedDem::from_str(dem_str1)?;
     let dem2 = ParsedDem::from_str(dem_str2)?;
 
-    let result = match method {
+    let result = match *method {
         ComparisonMethod::Exact { prob_tolerance } => {
             compare_dems_exact(&dem1, &dem2, prob_tolerance)
         }

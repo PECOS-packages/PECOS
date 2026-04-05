@@ -2455,7 +2455,7 @@ fn verify_dem_equivalence(
         }
     };
 
-    rust_verify_dem_equivalence(dem1, dem2, comparison_method)
+    rust_verify_dem_equivalence(dem1, dem2, &comparison_method)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
 }
 

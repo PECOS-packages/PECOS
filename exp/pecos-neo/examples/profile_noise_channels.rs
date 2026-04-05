@@ -43,7 +43,7 @@ fn main() {
 
     // Single channel with event check
     let mut noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.001));
     let mut rng = PecosRng::seed_from_u64(42);
 
@@ -55,7 +55,7 @@ fn main() {
             angles: &angles,
             gate_id: None,
         };
-        let response = noise.emit(event, &mut rng);
+        let response = noise.emit(&event, &mut rng);
         black_box(response);
     }
     let single_channel_time = start.elapsed();
@@ -67,7 +67,7 @@ fn main() {
 
     // Multiple channels
     let mut noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.001))
         .add_channel(SingleQubitChannel::depolarizing(0.001))
         .add_channel(SingleQubitChannel::depolarizing(0.001));
@@ -81,7 +81,7 @@ fn main() {
             angles: &angles,
             gate_id: None,
         };
-        let response = noise.emit(event, &mut rng);
+        let response = noise.emit(&event, &mut rng);
         black_box(response);
     }
     let multi_channel_time = start.elapsed();
@@ -95,7 +95,7 @@ fn main() {
     let start = std::time::Instant::now();
     for _ in 0..iterations {
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
+            .add_plugin(&CorePlugin)
             .add_channel(SingleQubitChannel::depolarizing(0.001));
         black_box(noise);
     }

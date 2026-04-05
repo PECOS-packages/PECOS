@@ -67,7 +67,7 @@ fn default_priors(n: usize) -> Vec<f64> {
 fn min_sum_decoding_satisfies_syndrome_repetition_3() {
     let h = repetition_3_matrix();
     let config = MinSumConfig::new(default_priors(3));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // All single-bit error patterns for the repetition code
     let errors: Vec<Array1<u8>> = vec![
@@ -95,7 +95,7 @@ fn relay_decoding_satisfies_syndrome_repetition_3() {
     let h = repetition_3_matrix();
     let ms_config = MinSumConfig::new(default_priors(3));
     let relay_config = RelayConfig::default();
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let errors: Vec<Array1<u8>> = vec![
         Array1::from_vec(vec![1, 0, 0]),
@@ -120,7 +120,7 @@ fn relay_decoding_satisfies_syndrome_repetition_3() {
 fn min_sum_decoding_satisfies_syndrome_repetition_5() {
     let h = repetition_5_matrix();
     let config = MinSumConfig::new(default_priors(5));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // Test all single-bit errors
     for bit in 0..5 {
@@ -146,7 +146,7 @@ fn min_sum_decoding_satisfies_syndrome_hamming_7_4() {
     // single-bit errors are decoded correctly.
     let h = hamming_7_4_matrix();
     let config = MinSumConfig::new(default_priors(7));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     assert_eq!(decoder.check_count(), 3);
     assert_eq!(decoder.bit_count(), 7);
@@ -182,7 +182,7 @@ fn relay_decoding_satisfies_syndrome_hamming_7_4() {
         num_sets: 50,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let mut converged_count = 0;
     for bit in 0..7 {
@@ -214,7 +214,7 @@ fn relay_decoding_satisfies_syndrome_hamming_7_4() {
 fn zero_syndrome_produces_zero_decoding() {
     let h = repetition_5_matrix();
     let config = MinSumConfig::new(default_priors(5));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     let syndrome = Array1::zeros(4);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -232,7 +232,7 @@ fn relay_zero_syndrome_produces_zero_decoding() {
     let h = hamming_7_4_matrix();
     let ms_config = MinSumConfig::new(default_priors(7));
     let relay_config = RelayConfig::default();
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let syndrome = Array1::zeros(3);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -252,7 +252,7 @@ fn relay_zero_syndrome_produces_zero_decoding() {
 fn min_sum_sequential_decodes_are_independent() {
     let h = repetition_3_matrix();
     let config = MinSumConfig::new(default_priors(3));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // Decode several different syndromes in sequence
     let syndromes = vec![
@@ -288,7 +288,7 @@ fn relay_sequential_decodes_are_independent() {
         seed: 42,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     for _ in 0..10 {
         let syndrome = Array1::from_vec(vec![1u8, 0]);
@@ -308,7 +308,7 @@ fn min_sum_with_alpha_scaling() {
     let mut config = MinSumConfig::new(default_priors(7));
     config.alpha = Some(0.0);
     config.alpha_iteration_scaling_factor = 0.0;
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     let mut error = Array1::zeros(7);
     error[3] = 1;
@@ -324,7 +324,7 @@ fn min_sum_with_memory_bp() {
     let h = hamming_7_4_matrix();
     let mut config = MinSumConfig::new(default_priors(7));
     config.gamma0 = Some(0.15);
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     let mut error = Array1::zeros(7);
     error[0] = 1;
@@ -340,7 +340,7 @@ fn min_sum_low_max_iter() {
     let h = repetition_3_matrix();
     let mut config = MinSumConfig::new(default_priors(3));
     config.max_iter = 1;
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // Even with 1 iteration, BP on a simple code should work
     let syndrome = Array1::from_vec(vec![1u8, 0]);
@@ -358,7 +358,7 @@ fn relay_with_stopping_criterion_all() {
         seed: 123,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![1u8, 0]);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -376,7 +376,7 @@ fn relay_with_stopping_criterion_pre_iter() {
         stopping_criterion: StoppingCriterion::PreIter,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![0u8, 1]);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -394,7 +394,7 @@ fn relay_with_custom_gamma_interval() {
         seed: 7,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let mut error = Array1::zeros(7);
     error[5] = 1;
@@ -410,7 +410,7 @@ fn different_error_priors() {
     let h = repetition_3_matrix();
     // Non-uniform priors: middle bit has higher error probability
     let config = MinSumConfig::new(vec![0.01, 0.3, 0.01]);
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // Syndrome [1, 1] is ambiguous (could be bit 0+2 or bit 1 alone).
     // With high prior on bit 1, the decoder should prefer the single-bit solution.
@@ -439,7 +439,7 @@ fn batch_decoding_matches_sequential() {
 
     let h = repetition_3_matrix();
     let config = MinSumConfig::new(default_priors(3));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     let syndromes = [
         Array1::from_vec(vec![1u8, 0]),
@@ -596,7 +596,7 @@ fn check_matrix_decoder_default_priors() {
 fn invalid_syndrome_length_min_sum() {
     let h = repetition_3_matrix();
     let config = MinSumConfig::new(default_priors(3));
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // Too long
     let syndrome = Array1::from_vec(vec![1u8, 0, 1]);
@@ -612,7 +612,7 @@ fn invalid_syndrome_length_relay() {
     let h = repetition_3_matrix();
     let ms_config = MinSumConfig::new(default_priors(3));
     let relay_config = RelayConfig::default();
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![1u8, 0, 1, 0]);
     assert!(decoder.decode(&syndrome.view()).is_err());
@@ -629,7 +629,7 @@ fn builder_missing_error_priors() {
 fn invalid_matrix_empty() {
     let h = Array2::<u8>::zeros((0, 0));
     let config = MinSumConfig::new(vec![]);
-    assert!(MinSumBpDecoder::new(&h.view(), config).is_err());
+    assert!(MinSumBpDecoder::new(&h.view(), &config).is_err());
 }
 
 // ============================================================================
@@ -681,7 +681,7 @@ fn decoding_result_failed() {
 fn min_sum_exact_decoding_repetition_3_low_priors() {
     let h = repetition_3_matrix();
     let config = MinSumConfig::new(vec![0.003, 0.003, 0.003]);
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // All 4 possible syndrome patterns for the [3,1,3] rep code
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
@@ -726,7 +726,7 @@ fn relay_exact_decoding_repetition_3_low_priors() {
         seed: 42,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -765,7 +765,7 @@ fn relay_exact_decoding_repetition_3_low_priors() {
 fn min_sum_exact_decoding_repetition_5_low_priors() {
     let h = repetition_5_matrix();
     let config = MinSumConfig::new(vec![0.003; 5]);
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // All single-bit error patterns
     for bit in 0..5 {
@@ -799,7 +799,7 @@ fn relay_num_sets_zero_is_pure_bp_passthrough() {
         stopping_criterion: StoppingCriterion::PreIter,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -845,7 +845,7 @@ fn min_sum_membp_exact_decoding_repetition_3() {
     let h = repetition_3_matrix();
     let mut config = MinSumConfig::new(vec![0.003, 0.003, 0.003]);
     config.gamma0 = Some(0.15);
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -886,7 +886,7 @@ fn relay_with_membp_exact_decoding_repetition_3() {
         seed: 42,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -933,7 +933,7 @@ fn min_sum_alpha_zero_exact_decoding_repetition_3() {
     let mut config = MinSumConfig::new(vec![0.003, 0.003, 0.003]);
     config.alpha = Some(0.0);
     config.alpha_iteration_scaling_factor = 0.0;
-    let mut decoder = MinSumBpDecoder::new(&h.view(), config).unwrap();
+    let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     // alpha=0 with scaling_factor=0 should still converge on the simple rep code
     for (syndrome, expected_error) in [(vec![1u8, 0], vec![1u8, 0, 0]), (vec![0, 1], vec![0, 0, 1])]
@@ -968,7 +968,7 @@ fn relay_seed_gives_deterministic_results() {
             num_sets: 30,
             ..Default::default()
         };
-        let mut decoder = RelayBpDecoder::new(&h.view(), ms_config, relay_config).unwrap();
+        let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
         let result = decoder.decode(&syndrome.view()).unwrap();
         results.push(result);
     }

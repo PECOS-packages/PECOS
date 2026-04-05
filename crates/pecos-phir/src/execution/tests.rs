@@ -281,10 +281,10 @@ fn instr(
 }
 
 /// Run a sequence of instructions through the processor, returning the processor state
-fn run_instructions(instructions: Vec<Instruction>) -> PhirProcessor {
+fn run_instructions(instructions: &[Instruction]) -> PhirProcessor {
     let mut processor = PhirProcessor::new();
     let mut builder = ByteMessageBuilder::new();
-    for instr in &instructions {
+    for instr in instructions {
         processor
             .process_instruction(instr, &mut builder)
             .expect("instruction should succeed");
@@ -579,7 +579,7 @@ fn test_processor_init_zero() {
 
 #[test]
 fn test_processor_const_int() {
-    let processor = run_instructions(vec![instr(
+    let processor = run_instructions(&[instr(
         Operation::Classical(ClassicalOp::ConstInt(42)),
         vec![],
         vec![0],
@@ -593,7 +593,7 @@ fn test_processor_const_int() {
 
 #[test]
 fn test_processor_const_float() {
-    let processor = run_instructions(vec![instr(
+    let processor = run_instructions(&[instr(
         Operation::Classical(ClassicalOp::ConstFloat(1.234)),
         vec![],
         vec![0],
@@ -607,7 +607,7 @@ fn test_processor_const_float() {
 
 #[test]
 fn test_processor_const_bool() {
-    let processor = run_instructions(vec![instr(
+    let processor = run_instructions(&[instr(
         Operation::Classical(ClassicalOp::ConstBool(true)),
         vec![],
         vec![0],
@@ -621,7 +621,7 @@ fn test_processor_const_bool() {
 
 #[test]
 fn test_processor_add() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(10)),
             vec![],
@@ -649,7 +649,7 @@ fn test_processor_add() {
 
 #[test]
 fn test_processor_sub() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(30)),
             vec![],
@@ -677,7 +677,7 @@ fn test_processor_sub() {
 
 #[test]
 fn test_processor_mul() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(6)),
             vec![],
@@ -705,7 +705,7 @@ fn test_processor_mul() {
 
 #[test]
 fn test_processor_div_and_mod() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(17)),
             vec![],
@@ -743,7 +743,7 @@ fn test_processor_div_and_mod() {
 
 #[test]
 fn test_processor_div_by_zero() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(42)),
             vec![],
@@ -776,7 +776,7 @@ fn test_processor_div_by_zero() {
 
 #[test]
 fn test_processor_bitwise_and_or_xor() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(0b1100)),
             vec![],
@@ -824,7 +824,7 @@ fn test_processor_bitwise_and_or_xor() {
 
 #[test]
 fn test_processor_shl_shr() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(1)),
             vec![],
@@ -863,7 +863,7 @@ fn test_processor_shl_shr() {
 #[test]
 fn test_processor_shl_shr_binary_mode() {
     // Test Shl/Shr with two operands (binary mode), matching how the QIS parser emits them
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(1)),
             vec![],
@@ -915,7 +915,7 @@ fn test_processor_shl_shr_binary_mode() {
 
 #[test]
 fn test_processor_not() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstBool(true)),
             vec![],
@@ -937,7 +937,7 @@ fn test_processor_not() {
 
 #[test]
 fn test_processor_neg_float() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstFloat(42.0)),
             vec![],
@@ -963,7 +963,7 @@ fn test_processor_neg_float() {
 
 #[test]
 fn test_processor_comparisons() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(10)),
             vec![],
@@ -1041,7 +1041,7 @@ fn test_processor_comparisons() {
 
 #[test]
 fn test_processor_comparisons_equal() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(5)),
             vec![],
@@ -1093,7 +1093,7 @@ fn test_processor_comparisons_equal() {
 
 #[test]
 fn test_processor_select() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstBool(true)),
             vec![],
@@ -1127,7 +1127,7 @@ fn test_processor_select() {
 
 #[test]
 fn test_processor_select_false() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstBool(false)),
             vec![],
@@ -1165,7 +1165,7 @@ fn test_processor_select_false() {
 
 #[test]
 fn test_processor_float_arithmetic() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstFloat(3.0)),
             vec![],
@@ -1223,7 +1223,7 @@ fn test_processor_float_arithmetic() {
 
 #[test]
 fn test_processor_fneg() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstFloat(7.5)),
             vec![],
@@ -1245,7 +1245,7 @@ fn test_processor_fneg() {
 
 #[test]
 fn test_processor_fdiv_by_zero() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstFloat(1.0)),
             vec![],
@@ -1277,7 +1277,7 @@ fn test_processor_fdiv_by_zero() {
 
 #[test]
 fn test_processor_memory_alloc_store_load() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         // alloca i64 -> ptr %0
         instr(
             Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(Type::Int(
@@ -1316,7 +1316,7 @@ fn test_processor_memory_alloc_store_load() {
 
 #[test]
 fn test_processor_memory_overwrite() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(Type::Int(
                 crate::types::IntWidth::I64,
@@ -1371,7 +1371,7 @@ fn test_processor_memory_overwrite() {
 
 #[test]
 fn test_processor_assign() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstInt(42)),
             vec![],
@@ -1397,7 +1397,7 @@ fn test_processor_assign() {
 
 #[test]
 fn test_processor_bitcast_bool_to_int_true() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstBool(true)),
             vec![],
@@ -1419,7 +1419,7 @@ fn test_processor_bitcast_bool_to_int_true() {
 
 #[test]
 fn test_processor_bitcast_bool_to_int_false() {
-    let processor = run_instructions(vec![
+    let processor = run_instructions(&[
         instr(
             Operation::Classical(ClassicalOp::ConstBool(false)),
             vec![],

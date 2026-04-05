@@ -35,7 +35,7 @@
 //! use pecos_neo::noise::plugins::CorePlugin;
 //!
 //! let noise = ComposableNoiseModel::new()
-//!     .add_plugin(CorePlugin)
+//!     .add_plugin(&CorePlugin)
 //!     .add_channel(SingleQubitChannel::depolarizing(0.001))
 //!     .add_channel(TwoQubitChannel::depolarizing(0.01))
 //!     .add_channel(MeasurementChannel::asymmetric(0.02, 0.03));
@@ -378,10 +378,10 @@ mod tests {
             .build();
 
         let noise = ComposableNoiseModel::new()
-            .add_plugin(CorePlugin)
-            .add_plugin(LeakagePlugin::new())
-            .add_plugin(DepolarizingPlugin::new(0.0, 0.0))
-            .add_plugin(MeasurementNoisePlugin::symmetric(0.0));
+            .add_plugin(&CorePlugin)
+            .add_plugin(&LeakagePlugin::new())
+            .add_plugin(&DepolarizingPlugin::new(0.0, 0.0))
+            .add_plugin(&MeasurementNoisePlugin::symmetric(0.0));
 
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new()

@@ -81,7 +81,7 @@ impl CommandQueueValidation for CommandQueue {
 /// Returns the index and `SnapError` of the first angle that cannot be snapped.
 pub fn snap_command_queue(
     commands: &CommandQueue,
-    policy: SnapPolicy,
+    policy: &SnapPolicy,
     snapper: &AngleSnapper,
 ) -> Result<CommandQueue, (usize, SnapError)> {
     let mut result = CommandQueue::with_capacity(commands.len());
@@ -280,7 +280,7 @@ mod tests {
             .build();
 
         let snapper = AngleSnapper::clifford(1e-9);
-        let snapped = snap_command_queue(&commands, SnapPolicy::Exact, &snapper).unwrap();
+        let snapped = snap_command_queue(&commands, &SnapPolicy::Exact, &snapper).unwrap();
 
         // Exact policy doesn't change anything
         assert_eq!(snapped.len(), commands.len());

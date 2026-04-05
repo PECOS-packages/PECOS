@@ -91,7 +91,7 @@ fn bench_with_noise(num_qubits: usize, shots: usize) -> f64 {
     let num_gates = commands.len();
 
     let noise = ComposableNoiseModel::new()
-        .add_plugin(CorePlugin)
+        .add_plugin(&CorePlugin)
         .add_channel(SingleQubitChannel::depolarizing(0.001))
         .add_channel(TwoQubitChannel::depolarizing(0.01));
 

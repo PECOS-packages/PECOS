@@ -78,7 +78,7 @@ fn run_general_noise_model(
 /// Run a circuit with `ComposableNoiseModel` and count results.
 fn run_composable_noise_model(
     noise_model: ComposableNoiseModel,
-    commands: CommandQueue,
+    commands: &CommandQueue,
     num_qubits: usize,
     num_shots: usize,
 ) -> BTreeMap<String, usize> {
@@ -94,7 +94,7 @@ fn run_composable_noise_model(
 
     for _ in 0..num_shots {
         state.reset();
-        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
 
         // Convert outcomes to bitstring
         let result = if let Some(bits) = outcomes.bitstring(&qubits) {
@@ -166,7 +166,7 @@ fn test_single_qubit_depolarizing_comparison() {
     // Circuit for ComposableNoiseModel
     let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
-    let composable_counts = run_composable_noise_model(composable_model, commands, 1, NUM_SHOTS);
+    let composable_counts = run_composable_noise_model(composable_model, &commands, 1, NUM_SHOTS);
 
     // Calculate |0⟩ percentages (errors, since X gate should give |1⟩)
     let general_zero = outcome_percentage(&general_counts, "0", NUM_SHOTS);
@@ -238,7 +238,7 @@ fn test_two_qubit_depolarizing_comparison() {
         .mz(&[1])
         .build();
 
-    let composable_counts = run_composable_noise_model(composable_model, commands, 2, NUM_SHOTS);
+    let composable_counts = run_composable_noise_model(composable_model, &commands, 2, NUM_SHOTS);
 
     // Calculate |11⟩ percentages (correct outcome)
     let general_correct = outcome_percentage(&general_counts, "11", NUM_SHOTS);
@@ -297,7 +297,7 @@ fn test_measurement_error_comparison() {
     // Circuit for ComposableNoiseModel
     let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
-    let composable_counts = run_composable_noise_model(composable_model, commands, 1, NUM_SHOTS);
+    let composable_counts = run_composable_noise_model(composable_model, &commands, 1, NUM_SHOTS);
 
     // Calculate |1⟩ percentages (measurement errors)
     let general_one = outcome_percentage(&general_counts, "1", NUM_SHOTS);
@@ -364,7 +364,7 @@ fn test_preparation_error_comparison() {
     // Circuit for ComposableNoiseModel
     let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
-    let composable_counts = run_composable_noise_model(composable_model, commands, 1, NUM_SHOTS);
+    let composable_counts = run_composable_noise_model(composable_model, &commands, 1, NUM_SHOTS);
 
     // Calculate |1⟩ percentages (preparation errors)
     let general_one = outcome_percentage(&general_counts, "1", NUM_SHOTS);
@@ -436,7 +436,7 @@ fn test_combined_noise_comparison() {
         .mz(&[1])
         .build();
 
-    let composable_counts = run_composable_noise_model(composable_model, commands, 2, NUM_SHOTS);
+    let composable_counts = run_composable_noise_model(composable_model, &commands, 2, NUM_SHOTS);
 
     // For Bell state, ideal is 50% |00⟩ and 50% |11⟩
     // With noise, we expect some |01⟩ and |10⟩ (anti-correlated)
@@ -526,7 +526,7 @@ fn test_general_noise_model_builder_comparison() {
         .mz(&[1])
         .build();
 
-    let composable_counts = run_composable_noise_model(builder_model, commands, 2, NUM_SHOTS);
+    let composable_counts = run_composable_noise_model(builder_model, &commands, 2, NUM_SHOTS);
 
     // Expected: |11⟩ with some errors
     let general_11 = outcome_percentage(&general_counts, "11", NUM_SHOTS);

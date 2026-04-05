@@ -457,10 +457,12 @@ impl FromStr for ParsedDem {
                 // Update max IDs
                 for comp in &mech.components {
                     for &d in &comp.detectors {
-                        max_det = max_det.max(d as i32);
+                        #[allow(clippy::cast_possible_wrap)] // detector ID fits in i32
+                        { max_det = max_det.max(d as i32); }
                     }
                     for &o in &comp.observables {
-                        max_obs = max_obs.max(o as i32);
+                        #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
+                        { max_obs = max_obs.max(o as i32); }
                     }
                 }
 
@@ -469,14 +471,16 @@ impl FromStr for ParsedDem {
             // Parse detector declarations
             else if line.starts_with("detector") {
                 if let Some(id) = Self::extract_detector_id(line) {
-                    max_det = max_det.max(id as i32);
+                    #[allow(clippy::cast_possible_wrap)] // detector ID fits in i32
+                    { max_det = max_det.max(id as i32); }
                 }
             }
             // Parse observable declarations
             else if line.starts_with("logical_observable")
                 && let Some(id) = Self::extract_observable_id(line)
             {
-                max_obs = max_obs.max(id as i32);
+                #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
+                { max_obs = max_obs.max(id as i32); }
             }
         }
 

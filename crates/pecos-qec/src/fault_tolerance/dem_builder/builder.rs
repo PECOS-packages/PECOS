@@ -510,6 +510,7 @@ impl<'a> DemBuilder<'a> {
         for det in &self.detectors {
             for &rec in &det.records {
                 // Convert negative record offset to absolute measurement index in TickCircuit order
+                #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
                 #[allow(clippy::cast_sign_loss)] // negative offset + total count yields valid index
                 let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
 
@@ -525,6 +526,7 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             for &rec in &obs.records {
+                #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
                 #[allow(clippy::cast_sign_loss)] // negative offset + total count yields valid index
                 let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
 

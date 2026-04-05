@@ -265,7 +265,8 @@ pub type DistanceFn = fn(QubitId, QubitId) -> f64;
 /// Distance = |i - j|
 #[must_use]
 pub fn chain_distance(a: QubitId, b: QubitId) -> f64 {
-    (a.0 as i64 - b.0 as i64).unsigned_abs() as f64
+    #[allow(clippy::cast_possible_wrap)] // qubit indices fit in i64
+    { (a.0 as i64 - b.0 as i64).unsigned_abs() as f64 }
 }
 
 /// Create a Manhattan distance function for a 2D grid.

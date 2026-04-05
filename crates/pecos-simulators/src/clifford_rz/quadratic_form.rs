@@ -173,6 +173,7 @@ macro_rules! exp_sum_fixed {
         } else {
             !zero
         };
+        #[allow(clippy::cast_possible_wrap)] // m = n+1 where n is qubit count, fits in i32
         let mut n_active = m as i32;
 
         while n_active >= 1 {
@@ -440,6 +441,7 @@ impl QuadraticForm {
         for i in 0..m {
             set_bit(&mut active, i);
         }
+        #[allow(clippy::cast_possible_wrap)] // m = n+1 where n is qubit count, fits in i32
         let mut n_active = m as i32;
 
         // Pre-allocate scratch buffers.

@@ -142,9 +142,13 @@ impl PauliOperator for PauliBitmap {
         // Phase formula derived from the Weyl convention: P(a,c) = i^{a·c} X^a Z^c
         // Product phase = i^{y_self + y_other - y_result} * (-1)^{z_self · x_other}
         // where y = popcount(x & z) counts Y positions.
+        #[allow(clippy::cast_possible_wrap)] // count_ones() <= 64, fits in i32
         let y_self = (self.x_bits & self.z_bits).count_ones() as i32;
+        #[allow(clippy::cast_possible_wrap)] // count_ones() <= 64, fits in i32
         let y_other = (other.x_bits & other.z_bits).count_ones() as i32;
+        #[allow(clippy::cast_possible_wrap)] // count_ones() <= 64, fits in i32
         let y_result = (x_result & z_result).count_ones() as i32;
+        #[allow(clippy::cast_possible_wrap)] // count_ones() <= 64, fits in i32
         let commute = (self.z_bits & other.x_bits).count_ones() as i32;
 
         // Combined exponent of i (using (-1) = i^2)

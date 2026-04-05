@@ -297,6 +297,7 @@ impl ClassicalEngine for PhirEngine {
                 TypedValue::U64(v) => Data::U64(v),
                 TypedValue::F64(v) => {
                     // Convert f64 to i64 bits for transport
+                    #[allow(clippy::cast_possible_wrap)] // intentional bit-reinterpretation
                     Data::I64(v.to_bits() as i64)
                 }
                 TypedValue::Bool(v) => Data::U32(u32::from(v)),
@@ -676,10 +677,9 @@ mod tests {
 
         let shot = engine.get_results().unwrap();
         // F64 is transported as I64 via to_bits
-        assert_eq!(
-            shot.data.get("float_val"),
-            Some(&Data::I64(f64_val.to_bits() as i64))
-        );
+        #[allow(clippy::cast_possible_wrap)] // intentional bit-reinterpretation
+        let expected = Data::I64(f64_val.to_bits() as i64);
+        assert_eq!(shot.data.get("float_val"), Some(&expected));
     }
 
     #[test]

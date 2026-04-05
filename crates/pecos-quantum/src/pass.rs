@@ -1031,6 +1031,7 @@ impl CircuitPass for CompactTicks {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)]
 mod tests {
     use super::*;
 

@@ -186,6 +186,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// Get the sparsity ratio
     #[inline]
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // sparsity ratio
     pub fn sparsity(&self) -> f64 {
         self.len as f64 / (1usize << self.num_qubits) as f64
     }
@@ -241,6 +242,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// Takes precomputed cos(theta/2) and sin(theta/2).
     /// Branch-free with SIMD (f64x4) for the inner loop.
     #[inline]
+    #[allow(clippy::cast_precision_loss)] // bit extraction (0 or 1) as f64
     fn apply_rz_kernel(&mut self, q: usize, cos: f64, sin: f64) {
         let shift = q;
         let len = self.len;
@@ -1726,6 +1728,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// Prepare all qubits in the |+> state, creating an equal superposition of all basis states.
     ///
     /// Creates a dense state with 2^n amplitudes, each equal to 1/sqrt(2^n).
+    #[allow(clippy::cast_precision_loss)] // normalization factor
     pub fn prepare_plus_state(&mut self) -> &mut Self {
         // Reset all frames to identity
         for f in &mut self.frames {

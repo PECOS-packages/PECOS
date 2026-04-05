@@ -119,7 +119,11 @@ impl UniformNoiseModel {
     /// Create a uniform noise model with the given error probability.
     #[must_use]
     pub fn new(p_error: f64) -> Self {
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss
+        )]
         // probability in [0,1] so product fits in u64
         let threshold = (p_error * u64::MAX as f64) as u64;
         Self { p_error, threshold }
@@ -170,7 +174,11 @@ impl PerLocationNoiseModel {
         let thresholds = probabilities
             .iter()
             .map(|&p| {
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                #[allow(
+                    clippy::cast_sign_loss,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_precision_loss
+                )]
                 // probability in [0,1] so product fits in u64
                 {
                     (p * u64::MAX as f64) as u64
@@ -391,6 +399,7 @@ impl SamplingStatistics {
 
     /// Logical error rate.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn logical_error_rate(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -401,6 +410,7 @@ impl SamplingStatistics {
 
     /// Syndrome rate (fraction of shots with non-trivial syndrome).
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn syndrome_rate(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -411,6 +421,7 @@ impl SamplingStatistics {
 
     /// Undetectable error rate.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn undetectable_rate(&self) -> f64 {
         if self.total_shots == 0 {
             0.0
@@ -421,6 +432,7 @@ impl SamplingStatistics {
 
     /// Average faults per shot.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn average_faults(&self) -> f64 {
         if self.total_shots == 0 {
             0.0

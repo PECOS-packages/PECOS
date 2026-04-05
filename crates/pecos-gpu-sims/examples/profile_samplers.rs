@@ -521,6 +521,7 @@ impl GpuProfile {
     }
 }
 
+#[allow(clippy::cast_precision_loss)] // profiling calculations use count as f64
 fn main() {
     println!("CPU vs GPU Influence Sampler Profiling");
     println!("======================================\n");

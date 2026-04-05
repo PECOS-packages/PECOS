@@ -2,6 +2,7 @@ use pecos_core::QubitId;
 use pecos_simulators::CliffordGateable;
 use std::time::Instant;
 
+#[allow(clippy::cast_precision_loss)] // profiling calculation
 fn main() {
     type Sim = pecos_simulators::CHForm;
     type GateFn<S> = Box<dyn Fn(&mut S)>;

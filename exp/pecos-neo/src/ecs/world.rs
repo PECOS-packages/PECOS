@@ -469,6 +469,7 @@ impl<S: CliffordGateable> World<S> {
     /// 3. Adjusts weights to maintain unbiased estimation
     ///
     /// Returns the number of entities after resampling.
+    #[allow(clippy::cast_precision_loss)] // weight calculation
     pub fn resample_by_weight(&mut self, target_count: usize, rng: &mut PecosRng) -> usize
     where
         S: Clone,

@@ -224,6 +224,7 @@ fn bench_cx_scaling<M: Measurement>(c: &mut Criterion<M>) {
 /// Benchmark the overhead of temporary allocations in `two_qubit_unitary`.
 ///
 /// This measures the cost of allocating a full state vector copy per gate.
+#[allow(clippy::cast_precision_loss)] // small index as f64
 fn bench_allocation_overhead<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("DOD StateVec Allocation Overhead");
     group.sample_size(30);

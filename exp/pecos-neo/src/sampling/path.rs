@@ -155,6 +155,7 @@ impl MeasurementPath {
     ///
     /// Returns the probability as a `SampleWeight` for numerical stability.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // count as f64 for log calculation
     pub fn probability(&self) -> SampleWeight {
         let num_random = self.num_random_measurements();
         if num_random == 0 {
@@ -334,6 +335,7 @@ impl EnumeratedPath {
 
     /// Get the probability as a `SampleWeight`.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // count as f64 for log calculation
     pub fn probability_weight(&self) -> SampleWeight {
         let log_prob = -(self.len as f64) * std::f64::consts::LN_2;
         SampleWeight::from_log(log_prob)

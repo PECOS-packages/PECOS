@@ -1932,6 +1932,7 @@ pub fn verify_equal_superposition<S: StateVectorSimulator + ArbitraryRotationGat
 
     // Should be equal superposition of first 8 basis states
     let n_super = 1 << 3;
+    #[allow(clippy::cast_precision_loss)]
     let expected_amp = 1.0 / (n_super as f64).sqrt();
     for i in 0..n_super {
         assert!(

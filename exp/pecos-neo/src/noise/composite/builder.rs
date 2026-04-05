@@ -1282,6 +1282,7 @@ impl CompositeNoiseModelBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;

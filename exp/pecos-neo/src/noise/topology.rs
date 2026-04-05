@@ -264,6 +264,7 @@ pub type DistanceFn = fn(QubitId, QubitId) -> f64;
 ///
 /// Distance = |i - j|
 #[must_use]
+#[allow(clippy::cast_precision_loss)] // distance value
 pub fn chain_distance(a: QubitId, b: QubitId) -> f64 {
     #[allow(clippy::cast_possible_wrap)] // qubit indices fit in i64
     {
@@ -274,6 +275,7 @@ pub fn chain_distance(a: QubitId, b: QubitId) -> f64 {
 /// Create a Manhattan distance function for a 2D grid.
 ///
 /// Distance = `|row_a - row_b| + |col_a - col_b|`
+#[allow(clippy::cast_precision_loss)] // distance value
 pub fn grid_distance(cols: usize) -> impl Fn(QubitId, QubitId) -> f64 + Send + Sync + 'static {
     move |a: QubitId, b: QubitId| {
         let row_a = a.0 / cols;

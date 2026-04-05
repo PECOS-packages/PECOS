@@ -10,6 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+// profiling calculations use count as f64
+#![allow(clippy::cast_precision_loss)]
 //! Profile `VecSet` operations to identify optimization opportunities.
 //!
 //! Run with:

@@ -209,6 +209,7 @@ pub mod prelude {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::prelude::*;
     use crate::noise::NoiseContext;

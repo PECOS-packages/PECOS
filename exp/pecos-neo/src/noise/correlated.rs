@@ -227,6 +227,7 @@ impl CorrelationStats {
     /// - Zero: independent errors
     /// - Negative: errors tend to be anti-correlated
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn observed_correlation(&self) -> f64 {
         if self.total_events == 0 {
             return 0.0;

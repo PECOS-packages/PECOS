@@ -1188,7 +1188,7 @@ impl CompositeChannelBuilder {
 }
 
 #[cfg(test)]
-#[allow(clippy::float_cmp)]
+#[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
     use super::*;
     use crate::command::GateType;

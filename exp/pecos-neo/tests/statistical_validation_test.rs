@@ -10,6 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+// statistical tests use count as f64
+#![allow(clippy::cast_precision_loss)]
 //! Comprehensive statistical validation tests with high sample sizes.
 //!
 //! These tests run larger numbers of shots to get statistically significant

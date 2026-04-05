@@ -80,6 +80,7 @@ fn bench_clifford_gate_throughput<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Measure the cost of RZ gates (term doubling) at various term counts.
+#[allow(clippy::cast_precision_loss)] // small loop index as f64
 fn bench_rz_term_growth<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("RZ Term Growth");
     group.sample_size(20);
@@ -107,6 +108,7 @@ fn bench_rz_term_growth<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Benchmark state vector computation at various qubit counts and term counts.
+#[allow(clippy::cast_precision_loss)] // small loop index as f64
 fn bench_state_vector<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("State Vector Computation");
     group.sample_size(20);
@@ -158,6 +160,7 @@ fn bench_state_vector<M: Measurement>(c: &mut Criterion<M>) {
 }
 
 /// Benchmark measurement cost.
+#[allow(clippy::cast_precision_loss)] // small loop index as f64
 fn bench_measurement<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("CliffordRz Measurement");
     group.sample_size(20);

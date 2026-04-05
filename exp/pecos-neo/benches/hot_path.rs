@@ -324,6 +324,7 @@ fn bench_entity_operations(c: &mut Criterion) {
 // Redistribution Benchmarks
 // ============================================================================
 
+#[allow(clippy::cast_precision_loss)] // small index as f64
 fn bench_redistribution(c: &mut Criterion) {
     let mut group = c.benchmark_group("redistribution");
 

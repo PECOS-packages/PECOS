@@ -89,6 +89,7 @@ fn installed_path(target: &str) -> Option<PathBuf> {
 }
 
 /// Get a human-readable size string for a directory.
+#[allow(clippy::cast_precision_loss)] // byte count as f64 for display
 fn dir_size_display(path: &PathBuf) -> String {
     match dir_size(path) {
         Some(bytes) if bytes >= 1_073_741_824 => {

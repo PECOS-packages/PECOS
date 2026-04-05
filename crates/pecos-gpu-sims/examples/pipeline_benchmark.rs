@@ -136,10 +136,12 @@ impl BenchmarkResult {
         self.cpu_time.as_secs_f64() / self.gpu_time.as_secs_f64()
     }
 
+    #[allow(clippy::cast_precision_loss)] // throughput calculation
     fn cpu_throughput(&self) -> f64 {
         self.num_shots as f64 / self.cpu_time.as_secs_f64() / 1_000_000.0
     }
 
+    #[allow(clippy::cast_precision_loss)] // throughput calculation
     fn gpu_throughput(&self) -> f64 {
         self.num_shots as f64 / self.gpu_time.as_secs_f64() / 1_000_000.0
     }
@@ -359,12 +361,14 @@ fn main() {
     println!("{:-<70}", "");
 
     for r in results.iter().chain(surface_results.iter()) {
+        #[allow(clippy::cast_precision_loss)]
+        let throughput = r.num_locations as f64 / (r.build_time.as_secs_f64() * 1000.0);
         println!(
             "{:<25} {:>10} {:>12.2} {:>15.1}",
             r.name,
             r.num_locations,
             r.build_time.as_secs_f64() * 1000.0,
-            r.num_locations as f64 / (r.build_time.as_secs_f64() * 1000.0)
+            throughput
         );
     }
 

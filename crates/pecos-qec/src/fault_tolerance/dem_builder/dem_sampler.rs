@@ -261,7 +261,11 @@ impl DemSampler {
             observables.sort_unstable();
 
             // Precompute u64 threshold: p * u64::MAX
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::cast_precision_loss
+            )]
             let threshold = (prob * (u64::MAX as f64)) as u64;
             thresholds.push(threshold);
 
@@ -1307,18 +1311,21 @@ impl SamplingStatistics {
 
     /// Logical error rate.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn logical_error_rate(&self) -> f64 {
         self.logical_error_count as f64 / self.total_shots as f64
     }
 
     /// Syndrome rate (fraction of shots with non-trivial syndrome).
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn syndrome_rate(&self) -> f64 {
         self.syndrome_count as f64 / self.total_shots as f64
     }
 
     /// Undetectable error rate.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn undetectable_rate(&self) -> f64 {
         self.undetectable_count as f64 / self.total_shots as f64
     }
@@ -1526,7 +1533,11 @@ impl<'a> DemSamplerBuilder<'a> {
         for (mech, prob) in aggregated {
             // Precompute u64 threshold: p * u64::MAX
             // This avoids f64 comparison during sampling
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::cast_precision_loss
+            )]
             let threshold = (prob * (u64::MAX as f64)) as u64;
             thresholds.push(threshold);
 

@@ -10,6 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+// statistical tests use count as f64
+#![allow(clippy::cast_precision_loss)]
 //! Comparison tests between `sim_neo()` (Tool architecture) and `sim()` (pecos-engines).
 //!
 //! These tests verify that the new Tool architecture produces equivalent results

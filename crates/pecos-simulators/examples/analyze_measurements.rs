@@ -126,6 +126,7 @@ fn analyze_measurements(params: &SurfaceCodeParams, rounds: usize) -> (usize, us
     (total_measurements, deterministic, nondeterministic)
 }
 
+#[allow(clippy::cast_precision_loss)] // percentage calculation
 fn main() {
     println!("=== Surface Code Measurement Analysis ===\n");
 

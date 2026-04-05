@@ -1445,6 +1445,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> pecos_core::RngManageabl
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
     use crate::StateVec;

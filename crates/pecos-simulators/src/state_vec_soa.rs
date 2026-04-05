@@ -2171,6 +2171,7 @@ where
     /// Instead of 2n passes (probability + collapse per qubit), this does:
     /// 1. One pass to build CDF, sample outcome, and compute marginal probabilities
     /// 2. One pass to collapse to the sampled basis state
+    #[allow(clippy::cast_precision_loss)] // bit extraction (0 or 1) as f64
     fn mz_joint_all(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         let n = self.real.len();
         let num_qubits = self.num_qubits;
@@ -2278,6 +2279,7 @@ where
     ///
     /// Builds a 2^k probability table in one pass over the state vector, samples
     /// a joint outcome, then collapses the state in one pass using bitmask matching.
+    #[allow(clippy::cast_precision_loss)] // bit extraction (0 or 1) as f64
     fn mz_joint_subset(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         let k = qubits.len();
         let n = self.real.len();

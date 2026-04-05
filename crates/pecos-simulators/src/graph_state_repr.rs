@@ -900,6 +900,7 @@ impl GraphState {
     ///
     /// Returns (x, y) pairs for each vertex, centered at (`cx`, `cy`) with
     /// the given `radius`. Single-vertex graphs place the vertex at center.
+    #[allow(clippy::cast_precision_loss)] // layout coordinate calculations
     fn circular_layout(n: usize, cx: f64, cy: f64, radius: f64) -> Vec<(f64, f64)> {
         if n == 0 {
             return Vec::new();
@@ -1008,6 +1009,7 @@ impl GraphStateRenderer<'_> {
 
     /// Render as a standalone SVG string.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // SVG coordinate calculations
     pub fn svg(&self) -> String {
         let n = self.graph.num_qubits();
         let node_radius = 20.0;
@@ -1143,6 +1145,7 @@ impl GraphStateRenderer<'_> {
     }
 
     /// Append an SVG legend derived from the style palette.
+    #[allow(clippy::cast_precision_loss)] // SVG coordinate calculations
     fn svg_legend(&self, svg: &mut String, width: f64, height: f64, legend_height: f64) {
         let y_top = height - legend_height + 8.0;
         let r = 6.0;
@@ -1228,6 +1231,7 @@ impl GraphStateRenderer<'_> {
 
     /// Render as a `TikZ` `tikzpicture` environment.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // TikZ coordinate calculations
     pub fn tikz(&self) -> String {
         let n = self.graph.num_qubits();
         let radius = if n <= 2 { 1.5 } else { 1.0 + 0.5 * n as f64 };

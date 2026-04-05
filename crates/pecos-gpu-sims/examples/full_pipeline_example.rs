@@ -140,6 +140,7 @@ fn main() {
 
     let result = sampler.sample_uniform(num_shots, p_error);
     let logical_errors = result.count_logical_errors();
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     let error_rate = logical_errors as f64 / f64::from(num_shots);
 
     println!(
@@ -205,6 +206,7 @@ fn main() {
 
     let result = sampler.sample_uniform(num_shots, p_error);
     let logical_errors = result.count_logical_errors();
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     let error_rate = logical_errors as f64 / f64::from(num_shots);
 
     println!(

@@ -10,6 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+// statistical calculations use count as f64
+#![allow(clippy::cast_precision_loss)]
 //! Repetition code example demonstrating quantum error correction.
 //!
 //! This example shows:

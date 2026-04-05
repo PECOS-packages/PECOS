@@ -114,7 +114,11 @@ impl GeometricSampler {
             "Probability must be in (0, 1), got {probability}"
         );
 
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss
+        )]
         // probability in (0,1) maps to [0, u64::MAX]
         let threshold_u64 = (probability * (u64::MAX as f64)) as u64;
         Self {

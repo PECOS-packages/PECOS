@@ -137,6 +137,7 @@ impl SampleWeight {
     ///
     /// Each clone gets weight / n.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // count as f64 for log calculation
     pub fn split(&self, n: usize) -> SampleWeight {
         SampleWeight {
             log_weight: self.log_weight - (n as f64).ln(),
@@ -276,6 +277,7 @@ impl WeightedStatistics {
 
     /// Get the standard error of the weighted mean.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // count as f64 for statistics
     pub fn standard_error(&self) -> f64 {
         if self.count < 2 {
             return f64::INFINITY;
@@ -296,6 +298,7 @@ impl WeightedStatistics {
     ///
     /// Low ESS indicates weight degeneracy (few samples dominate).
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // count as f64
     pub fn effective_sample_size(&self) -> f64 {
         if self.count == 0 {
             return 0.0;

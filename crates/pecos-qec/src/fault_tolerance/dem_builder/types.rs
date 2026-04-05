@@ -1265,6 +1265,7 @@ impl DetectorErrorModel {
                     }
                 } else {
                     // Split probability across decompositions
+                    #[allow(clippy::cast_precision_loss)]
                     let split_prob = *total_prob / decompositions.len() as f64;
                     for decomp in decompositions {
                         let targets = decomp

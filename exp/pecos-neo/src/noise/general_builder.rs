@@ -622,6 +622,7 @@ pub fn general_noise() -> GeneralNoiseModelBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
 

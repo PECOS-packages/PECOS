@@ -1,3 +1,5 @@
+// profiling calculations use count as f64
+#![allow(clippy::cast_precision_loss)]
 use pecos_core::{Angle64, QubitId};
 use pecos_neo::GateType;
 use pecos_neo::noise::composite::channel::CompositeChannel;

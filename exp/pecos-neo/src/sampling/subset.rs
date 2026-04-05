@@ -303,6 +303,7 @@ where
     }
 
     /// Run the subset simulation.
+    #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
     pub fn run(&self) -> SubsetResult {
         let mut rng = PecosRng::seed_from_u64(resolve_seed(self.config.seed));
 
@@ -568,6 +569,7 @@ impl BernoulliSubsetSimulation {
     ///
     /// Returns a [`SubsetResult`] with a single level containing the direct MC estimate.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
     pub fn run(&self) -> SubsetResult {
         let mut rng = PecosRng::seed_from_u64(resolve_seed(self.config.seed));
 
@@ -616,6 +618,7 @@ impl BernoulliSubsetSimulation {
 
     /// Run direct Monte Carlo (for comparison).
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn run_direct_mc(&self, num_samples: usize, seed: u64) -> f64 {
         let mut rng = PecosRng::seed_from_u64(seed);
         let mut failures = 0;
@@ -664,6 +667,7 @@ impl BernoulliSubsetSimulation {
     }
 }
 /// Binomial probability mass function: C(n,k) * p^k * (1-p)^(n-k)
+#[allow(clippy::cast_precision_loss)] // mathematical calculation
 fn binomial_pmf(n: usize, k: usize, p: f64) -> f64 {
     if k > n {
         return 0.0;
@@ -690,6 +694,7 @@ fn log_binomial_coefficient(n: usize, k: usize) -> f64 {
 }
 
 /// Log factorial using Stirling's approximation for large n.
+#[allow(clippy::cast_precision_loss)] // mathematical calculation
 fn log_factorial(n: usize) -> f64 {
     if n <= 1 {
         return 0.0;
@@ -855,6 +860,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
     /// 2. Return the criticality score increment for this round
     ///
     /// The `is_failure_fn` checks if the accumulated score indicates failure.
+    #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
     pub fn run_round<F, G>(&mut self, round_fn: F, is_failure_fn: G) -> RoundResult
     where
         F: Fn(&mut World<S>, EntityId) -> f64,
@@ -1178,6 +1184,7 @@ impl ProperSubsetSimulation {
 
     /// Run the subset simulation.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
     pub fn run(mut self) -> SubsetResult {
         let n = self.config.samples_per_level;
         let p0 = self.config.threshold_fraction;
@@ -1364,6 +1371,7 @@ impl ProperSubsetSimulation {
     ///
     /// Returns `None` if the failure threshold is unreachable (max score < threshold).
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
     pub fn run_adaptive(mut self) -> SubsetResult {
         let n = self.config.samples_per_level;
         let p0 = self.config.threshold_fraction;
@@ -1599,6 +1607,7 @@ impl ProperSubsetSimulation {
 
     /// Run direct Monte Carlo for comparison.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn run_direct_mc(&self, num_samples: usize) -> f64 {
         let mut failures = 0;
 
@@ -1664,6 +1673,7 @@ impl SyndromeScore {
     }
 
     /// Add syndrome measurements from one round.
+    #[allow(clippy::cast_precision_loss)] // score is count as f64
     pub fn add_round(&mut self, syndrome_bits: &[bool]) {
         let weight: usize = syndrome_bits.iter().filter(|&&b| b).count();
         self.total_weight += weight;
@@ -1942,6 +1952,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
     /// ## Parameters
     /// - `p_syndrome`: Probability that each ancilla triggers per round
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
     pub fn run_proper(mut self, p_syndrome: f64) -> SubsetResult {
         // Data structure to track trajectory history
         #[allow(dead_code)]
@@ -2223,7 +2234,7 @@ pub fn phase_flip_syndrome_circuit() -> CommandQueue {
 }
 
 #[cfg(test)]
-#[allow(clippy::float_cmp)]
+#[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
     use super::*;
 

@@ -114,6 +114,7 @@ pub fn total_weight<S: CliffordGateable>(workers: &[WorkerState<S>]) -> f64 {
 /// - Total weight is preserved
 ///
 /// Returns statistics about the redistribution.
+#[allow(clippy::cast_precision_loss)] // statistical weight calculation
 pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
     workers: &mut [WorkerState<S>],
     target_per_worker: usize,
@@ -285,6 +286,7 @@ pub fn balance_entity_counts<S: CliffordGateable + Clone>(workers: &mut [WorkerS
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)]
 mod tests {
     use super::*;
     use pecos_simulators::SparseStab;

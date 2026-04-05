@@ -467,6 +467,7 @@ impl FaultCategoryAnalysis {
 
     /// Returns the fraction of faults that are detectable.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)] // rate calculation
     pub fn detection_rate(&self) -> f64 {
         if self.total_tested == 0 {
             1.0
@@ -925,6 +926,7 @@ impl<'a> FaultChecker<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
     use pecos_simulators::SparseStab;

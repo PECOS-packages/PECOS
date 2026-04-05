@@ -113,6 +113,7 @@ fn dir_size_display(path: &Path) -> String {
     dir_size(path).map_or_else(|| "?".to_string(), format_bytes)
 }
 
+#[allow(clippy::cast_precision_loss)] // byte count as f64 for display
 fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_073_741_824 {
         format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)

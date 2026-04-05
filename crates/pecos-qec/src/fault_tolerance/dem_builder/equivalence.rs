@@ -694,6 +694,7 @@ pub fn compare_dems_exact(
 /// # Returns
 ///
 /// `EquivalenceResult` with comparison statistics.
+#[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
 pub fn compare_dems_statistical(
     dem1: &ParsedDem,
     dem2: &ParsedDem,
@@ -867,6 +868,7 @@ pub fn compare_dems_statistical(
 }
 
 /// Computes Pearson correlation coefficient.
+#[allow(clippy::cast_precision_loss)] // length as f64 for mean calculation
 fn compute_correlation(a: &[f64], b: &[f64]) -> f64 {
     if a.is_empty() || b.is_empty() || a.len() != b.len() {
         return 0.0;

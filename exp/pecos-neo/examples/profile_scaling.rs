@@ -10,6 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+// profiling calculations use count as f64
+#![allow(clippy::cast_precision_loss)]
 //! Scaling profiling for pecos-neo: measures per-operation cost at different qubit counts.
 //!
 //! Run with: `cargo run --release --example profile_scaling -p pecos-neo`

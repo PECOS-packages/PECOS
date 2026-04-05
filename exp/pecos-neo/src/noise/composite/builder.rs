@@ -48,9 +48,7 @@ use crate::noise::{
 };
 use pecos_core::TimeScale;
 
-// ============================================================================
-// Validation helpers
-// ============================================================================
+// --- Validation helpers ---
 
 /// Validate that a probability is in [0.0, 1.0] and warn if not.
 /// Returns the clamped value.
@@ -210,9 +208,7 @@ impl CompositeNoiseModelBuilder {
         Self::default()
     }
 
-    // ========================================================================
-    // Single-qubit gate parameters
-    // ========================================================================
+    // --- Single-qubit gate parameters ---
 
     /// Set the single-qubit gate error probability.
     ///
@@ -285,9 +281,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Two-qubit gate parameters
-    // ========================================================================
+    // --- Two-qubit gate parameters ---
 
     /// Set the two-qubit gate error probability.
     ///
@@ -411,9 +405,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Preparation parameters
-    // ========================================================================
+    // --- Preparation parameters ---
 
     /// Set the preparation error probability.
     ///
@@ -441,9 +433,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Measurement parameters
-    // ========================================================================
+    // --- Measurement parameters ---
 
     /// Set asymmetric measurement error probabilities.
     ///
@@ -465,9 +455,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Crosstalk parameters
-    // ========================================================================
+    // --- Crosstalk parameters ---
 
     /// Set global crosstalk probability during measurements.
     ///
@@ -557,9 +545,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // MeasureLeaked handling
-    // ========================================================================
+    // --- MeasureLeaked handling ---
 
     /// Enable handling of `MeasureLeaked` gates.
     ///
@@ -574,9 +560,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Idle noise parameters (T1/T2)
-    // ========================================================================
+    // --- Idle noise parameters (T1/T2) ---
 
     /// Set the linear idle noise rate (T1-like relaxation).
     ///
@@ -647,9 +631,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Leakage convenience methods
-    // ========================================================================
+    // --- Leakage convenience methods ---
 
     /// Set leakage and seepage probabilities for all gate types.
     ///
@@ -682,9 +664,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Noiseless gates
-    // ========================================================================
+    // --- Noiseless gates ---
 
     /// Mark a gate type as noiseless.
     #[must_use]
@@ -700,9 +680,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Time scale
-    // ========================================================================
+    // --- Time scale ---
 
     /// Set the time scale for interpreting physical time parameters.
     ///
@@ -765,9 +743,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Custom channels
-    // ========================================================================
+    // --- Custom channels ---
 
     /// Add a custom noise channel (composite or traditional).
     ///
@@ -791,9 +767,7 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    // ========================================================================
-    // Build
-    // ========================================================================
+    // --- Build ---
 
     /// Build the configured noise model.
     ///
@@ -1813,9 +1787,7 @@ mod tests {
         assert_eq!(model.channel_count(), 1);
     }
 
-    // ========================================================================
-    // Builder Comparison Tests (CompositeNoiseModelBuilder vs GeneralNoiseModelBuilder)
-    // ========================================================================
+    // --- Builder Comparison Tests ---
 
     /// Compare `CompositeNoiseModelBuilder` with `GeneralNoiseModelBuilder` for basic depolarizing.
     #[test]
@@ -2024,9 +1996,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // New Feature Tests: Local Crosstalk, Crosstalk Model, MeasureLeaked
-    // ========================================================================
+    // --- Crosstalk and MeasureLeaked Tests ---
 
     #[test]
     fn test_local_crosstalk_builder() {
@@ -2135,9 +2105,7 @@ mod tests {
         assert_eq!(model.channel_count(), 6);
     }
 
-    // ========================================================================
-    // TimeScale Tests
-    // ========================================================================
+    // --- TimeScale Tests ---
 
     #[test]
     fn test_time_scale_configuration() {
@@ -2187,9 +2155,7 @@ mod tests {
             .build();
     }
 
-    // ========================================================================
-    // Validation Tests
-    // ========================================================================
+    // --- Validation Tests ---
 
     #[test]
     fn test_validation_clamps_negative_probability() {
@@ -2230,9 +2196,7 @@ mod tests {
         assert_eq!(model.channel_count(), 0);
     }
 
-    // ========================================================================
-    // Emission Model Tests
-    // ========================================================================
+    // --- Emission Model Tests ---
 
     #[test]
     fn test_p1_emission_model_builder() {
@@ -2314,9 +2278,7 @@ mod tests {
         assert!(outcomes_different >= 0);
     }
 
-    // ========================================================================
-    // Two-Qubit Pauli Model Tests
-    // ========================================================================
+    // --- Two-Qubit Pauli Model Tests ---
 
     #[test]
     fn test_p2_pauli_model_builder() {
@@ -2363,9 +2325,7 @@ mod tests {
         assert_eq!(model.channel_count(), 1);
     }
 
-    // ========================================================================
-    // Statistical Comparison: Emission Models
-    // ========================================================================
+    // --- Statistical Comparison: Emission Models ---
 
     #[test]
     fn test_emission_model_comparison_with_general_builder() {

@@ -34,9 +34,7 @@ use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, PI};
 
-// ============================================================================
-// State Vector Simulator Marker Trait
-// ============================================================================
+// --- State Vector Simulator Marker Trait ---
 
 /// Marker trait for state vector simulators that support quantum simulation.
 ///
@@ -162,9 +160,7 @@ macro_rules! full_state_vector_test_suite {
     };
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
+// --- Helper Functions ---
 
 const TOLERANCE: f64 = 1e-9;
 
@@ -198,9 +194,7 @@ fn assert_probability_eq(actual: f64, expected: f64, msg: &str) {
     );
 }
 
-// ============================================================================
-// Basic Tests
-// ============================================================================
+// --- Basic Tests ---
 
 /// Verify the initial state is |0...0⟩.
 pub fn verify_initial_state<S: StateVectorSimulator>(sim: &mut S) {
@@ -390,9 +384,7 @@ pub fn verify_unitarity_two_qubit<S: StateVectorSimulator>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Single-Qubit Clifford Gate Tests
-// ============================================================================
+// --- Single-Qubit Clifford Gate Tests ---
 
 /// Verify X gate: X|0⟩ = |1⟩, X|1⟩ = |0⟩.
 pub fn verify_x_gate<S: StateVectorSimulator>(sim: &mut S) {
@@ -539,9 +531,7 @@ pub fn verify_sy_gate<S: StateVectorSimulator>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Two-Qubit Clifford Gate Tests
-// ============================================================================
+// --- Two-Qubit Clifford Gate Tests ---
 
 /// Verify CX (CNOT) gate.
 pub fn verify_cx_gate<S: StateVectorSimulator>(sim: &mut S) {
@@ -657,9 +647,7 @@ pub fn verify_iswap_gate<S: StateVectorSimulator>(sim: &mut S) {
     assert_amplitude_eq(sim.get_amplitude(0b10), Complex64::i(), "iSWAP|10⟩ = i|01⟩");
 }
 
-// ============================================================================
-// Rotation Gate Tests
-// ============================================================================
+// --- Rotation Gate Tests ---
 
 /// Verify RX gate.
 pub fn verify_rx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
@@ -794,9 +782,7 @@ pub fn verify_rzz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
     );
 }
 
-// ============================================================================
-// Measurement Tests
-// ============================================================================
+// --- Measurement Tests ---
 
 /// Verify measurement of deterministic states.
 ///
@@ -837,9 +823,7 @@ pub fn verify_measurement_collapse<S: StateVectorSimulator>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// State Preparation Tests
-// ============================================================================
+// --- State Preparation Tests ---
 
 /// Verify pz (prepare |0⟩) operation.
 pub fn verify_pz<S: StateVectorSimulator>(sim: &mut S) {
@@ -946,9 +930,7 @@ pub fn verify_mz_detailed<S: StateVectorSimulator>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// Gate Identity Tests
-// ============================================================================
+// --- Gate Identity Tests ---
 
 /// Verify various gate identities.
 pub fn verify_gate_identities<S: StateVectorSimulator>(sim: &mut S) {
@@ -997,9 +979,7 @@ pub fn verify_gate_identities<S: StateVectorSimulator>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Batch Operation Tests
-// ============================================================================
+// --- Batch Operation Tests ---
 
 /// Verify batch single-qubit gates produce same result as sequential application.
 pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
@@ -1568,9 +1548,7 @@ pub fn verify_single_qubit_rotation<S: StateVectorSimulator + ArbitraryRotationG
     }
 }
 
-// ============================================================================
-// Locality Tests
-// ============================================================================
+// --- Locality Tests ---
 
 /// Verify single-qubit gates only affect the target qubit.
 pub fn verify_single_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
@@ -1673,9 +1651,7 @@ pub fn verify_two_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// Adjoint Gate Tests
-// ============================================================================
+// --- Adjoint Gate Tests ---
 
 /// Verify that adjoint (dagger) gates are inverses of the corresponding gates.
 pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
@@ -1843,9 +1819,7 @@ pub fn verify_adjoint_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// State Preparation Tests
-// ============================================================================
+// --- State Preparation Tests ---
 
 /// Verify Bell state preparation via standard circuit.
 pub fn verify_bell_state_preparation<S: StateVectorSimulator>(sim: &mut S) {
@@ -1942,9 +1916,7 @@ pub fn verify_equal_superposition<S: StateVectorSimulator + ArbitraryRotationGat
     }
 }
 
-// ============================================================================
-// Gate Decomposition Tests
-// ============================================================================
+// --- Gate Decomposition Tests ---
 
 /// Verify standard gate decompositions hold.
 pub fn verify_gate_decompositions<S: StateVectorSimulator>(sim: &mut S) {
@@ -2111,9 +2083,7 @@ pub fn verify_y_xz_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Commutativity Tests
-// ============================================================================
+// --- Commutativity Tests ---
 
 /// Verify that non-commuting gates produce different results when reordered.
 pub fn verify_non_commutativity<S: StateVectorSimulator>(sim: &mut S) {
@@ -2215,9 +2185,7 @@ pub fn verify_commutativity<S: StateVectorSimulator>(sim: &mut S) {
     assert!(differs, "XZ and ZX should produce different states on |+⟩");
 }
 
-// ============================================================================
-// Face Gate Tests
-// ============================================================================
+// --- Face Gate Tests ---
 
 /// Verify face gates: F·Fdg = I and F^3 = I (cyclic permutation of Paulis).
 pub fn verify_face_gates<S: StateVectorSimulator>(sim: &mut S) {
@@ -2304,9 +2272,7 @@ pub fn verify_face_gate_adjoints<S: StateVectorSimulator>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// Hadamard Variant Tests
-// ============================================================================
+// --- Hadamard Variant Tests ---
 
 /// Verify Hadamard variants are involutions: Hi^2 = I (up to global phase).
 pub fn verify_hadamard_variants<S: StateVectorSimulator>(sim: &mut S) {
@@ -2418,9 +2384,7 @@ pub fn verify_hadamard_variants_distinct<S: StateVectorSimulator>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Multi-Gate Sequence / Random Circuit Tests
-// ============================================================================
+// --- Multi-Gate Sequence / Random Circuit Tests ---
 
 /// Verify normalization is preserved through long gate sequences.
 /// Verify that a long gate sequence and its inverse returns to the initial state.
@@ -2546,9 +2510,7 @@ pub fn verify_rotation_circuit_inverse<S: StateVectorSimulator + ArbitraryRotati
     }
 }
 
-// ============================================================================
-// Suite Runner Functions
-// ============================================================================
+// --- Suite Runner Functions ---
 
 /// Run basic state vector tests.
 pub fn run_basic_state_vector_test_suite<S: StateVectorSimulator>(sim: &mut S) {
@@ -2682,9 +2644,7 @@ pub fn run_full_state_vector_test_suite<S: StateVectorSimulator + ArbitraryRotat
     run_measurement_test_suite(sim);
 }
 
-// ============================================================================
-// Trait Implementations
-// ============================================================================
+// --- Trait Implementations ---
 
 use crate::{SparseStateVecAoS, SparseStateVecSoA, StateVecAoS, StateVecSoA};
 
@@ -2746,9 +2706,7 @@ impl StateVectorSimulator for SparseStateVecSoA {
     }
 }
 
-// ============================================================================
-// Module Tests
-// ============================================================================
+// --- Module Tests ---
 
 #[cfg(test)]
 mod tests {

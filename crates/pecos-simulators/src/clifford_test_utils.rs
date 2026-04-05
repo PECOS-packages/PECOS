@@ -34,9 +34,7 @@
 use crate::CliffordGateable;
 use pecos_core::{QubitId, qid};
 
-// ============================================================================
-// Helper: deterministic measurement assertion
-// ============================================================================
+// --- Helper: deterministic measurement assertion ---
 
 /// Assert that measuring qubit `q` in Z basis gives a deterministic result with the expected outcome.
 fn assert_mz<S: CliffordGateable>(sim: &mut S, q: usize, expected: bool, msg: &str) {
@@ -68,9 +66,7 @@ fn assert_my<S: CliffordGateable>(sim: &mut S, q: usize, expected: bool, msg: &s
     assert_eq!(result[0].outcome, expected, "{msg}: wrong outcome");
 }
 
-// ============================================================================
-// Single-Qubit Gate Identity Tests
-// ============================================================================
+// --- Single-Qubit Gate Identity Tests ---
 
 /// Verify H^2 = I by testing on |0>, |1>, and |+>.
 pub fn verify_h_squared<S: CliffordGateable>(sim: &mut S) {
@@ -172,9 +168,7 @@ pub fn verify_sy_squared_is_y<S: CliffordGateable>(sim: &mut S) {
     assert_mz(sim, 0, true, "SY^2|0> = Y|0> should measure 1");
 }
 
-// ============================================================================
-// Single-Qubit Adjoint Pair Tests
-// ============================================================================
+// --- Single-Qubit Adjoint Pair Tests ---
 
 /// Helper: verify G * Gdg = I on |0>, |1>, and |+>.
 fn verify_adjoint_pair<S: CliffordGateable>(
@@ -302,9 +296,7 @@ pub fn verify_f4_adjoint<S: CliffordGateable>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Hadamard Variant Tests
-// ============================================================================
+// --- Hadamard Variant Tests ---
 
 /// Verify Hi^2 = I (up to global phase, invisible to measurement) for H2..H6.
 pub fn verify_hadamard_variant_involutions<S: CliffordGateable>(sim: &mut S) {
@@ -350,9 +342,7 @@ pub fn verify_hadamard_variant_involutions<S: CliffordGateable>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// Face Gate Tests
-// ============================================================================
+// --- Face Gate Tests ---
 
 /// Verify F^3 = I (up to global phase, invisible to measurement).
 ///
@@ -399,9 +389,7 @@ pub fn verify_face_gate_axis_rotation<S: CliffordGateable>(sim: &mut S) {
     assert_my(sim, 0, false, "F|+> should be Y+ eigenstate");
 }
 
-// ============================================================================
-// Basic Gate Behavior Tests
-// ============================================================================
+// --- Basic Gate Behavior Tests ---
 
 /// Verify initial state is |0...0>.
 pub fn verify_initial_state<S: CliffordGateable>(sim: &mut S, num_qubits: usize) {
@@ -470,9 +458,7 @@ pub fn verify_szdg_maps_plus_to_minus_y<S: CliffordGateable>(sim: &mut S) {
     assert_my(sim, 0, true, "SZdg|+> should be |-Y>");
 }
 
-// ============================================================================
-// Two-Qubit Gate Tests
-// ============================================================================
+// --- Two-Qubit Gate Tests ---
 
 /// Verify CX^2 = I.
 pub fn verify_cx_squared<S: CliffordGateable>(sim: &mut S) {
@@ -619,9 +605,7 @@ pub fn verify_iswap_behavior<S: CliffordGateable>(sim: &mut S) {
     assert_mz(sim, 1, false, "iSWAP|00>: q1 = 0");
 }
 
-// ============================================================================
-// Two-Qubit Adjoint Pair Tests
-// ============================================================================
+// --- Two-Qubit Adjoint Pair Tests ---
 
 /// Verify SXX * `SXXdg` = I on a Bell state.
 pub fn verify_sxx_adjoint<S: CliffordGateable>(sim: &mut S) {
@@ -681,9 +665,7 @@ pub fn verify_szz_adjoint<S: CliffordGateable>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Entanglement Tests
-// ============================================================================
+// --- Entanglement Tests ---
 
 /// Verify Bell state |Phi+> = (|00> + |11>)/sqrt(2) has correct correlations.
 pub fn verify_bell_state_correlations<S: CliffordGateable>(sim: &mut S) {
@@ -736,9 +718,7 @@ pub fn verify_ghz_correlations<S: CliffordGateable>(sim: &mut S, num_qubits: usi
     }
 }
 
-// ============================================================================
-// Gate Decomposition Tests (deterministic inputs)
-// ============================================================================
+// --- Gate Decomposition Tests (deterministic inputs) ---
 
 /// Verify SWAP = CX(0,1) CX(1,0) CX(0,1) on all 4 basis states.
 pub fn verify_swap_decomposition<S: CliffordGateable>(sim: &mut S) {
@@ -874,9 +854,7 @@ pub fn verify_z_from_s_squared<S: CliffordGateable>(sim: &mut S) {
     assert_eq!(z_r[0].outcome, s2_r[0].outcome, "Z=S^2 on |+>: mismatch");
 }
 
-// ============================================================================
-// Commutativity Tests
-// ============================================================================
+// --- Commutativity Tests ---
 
 /// Verify that gates on different qubits commute.
 ///
@@ -928,9 +906,7 @@ pub fn verify_same_qubit_non_commutativity<S: CliffordGateable>(sim: &mut S) {
     assert_mx(sim, 0, false, "HZ|0> should be |+>");
 }
 
-// ============================================================================
-// Measurement Property Tests
-// ============================================================================
+// --- Measurement Property Tests ---
 
 /// Verify measurement idempotence: measuring twice gives same result.
 pub fn verify_measurement_idempotence<S: CliffordGateable>(sim: &mut S) {
@@ -997,9 +973,7 @@ pub fn verify_measurement_then_gate<S: CliffordGateable>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Identity Gate
-// ============================================================================
+// --- Identity Gate ---
 
 /// Verify that the identity gate does not change the state.
 pub fn verify_identity_gate<S: CliffordGateable>(sim: &mut S) {
@@ -1021,9 +995,7 @@ pub fn verify_identity_gate<S: CliffordGateable>(sim: &mut S) {
     assert_mx(sim, 0, false, "identity|+>");
 }
 
-// ============================================================================
-// G Gate Tests
-// ============================================================================
+// --- G Gate Tests ---
 
 /// Verify G^2 = I on all computational basis states and a superposition.
 ///
@@ -1070,9 +1042,7 @@ pub fn verify_g_gate_creates_superposition<S: CliffordGateable>(sim: &mut S) {
     assert_mz_superposition(sim, 0, "G|00>: q0 should be in superposition");
 }
 
-// ============================================================================
-// Preparation Gate Tests
-// ============================================================================
+// --- Preparation Gate Tests ---
 
 /// Verify `px` prepares the |+> state.
 pub fn verify_px_prepares_plus<S: CliffordGateable>(sim: &mut S) {
@@ -1116,9 +1086,7 @@ pub fn verify_pnz_prepares_one<S: CliffordGateable>(sim: &mut S) {
     assert_mz(sim, 0, true, "pnz prepares |1>");
 }
 
-// ============================================================================
-// Measure-and-Prepare Gate Tests
-// ============================================================================
+// --- Measure-and-Prepare Gate Tests ---
 
 /// Verify `mpx` always prepares |+> regardless of initial state.
 pub fn verify_mpx_prepares_plus<S: CliffordGateable>(sim: &mut S) {
@@ -1206,9 +1174,7 @@ pub fn verify_mpnz_prepares_one<S: CliffordGateable>(sim: &mut S) {
     assert_mz(sim, 0, true, "mpnz from |1> prepares |1>");
 }
 
-// ============================================================================
-// Negative Measurement Tests
-// ============================================================================
+// --- Negative Measurement Tests ---
 
 /// Verify `mnx` on eigenstates gives the flipped outcome compared to `mx`.
 pub fn verify_mnx_on_eigenstates<S: CliffordGateable>(sim: &mut S) {
@@ -1299,9 +1265,7 @@ pub fn verify_mnz_on_eigenstates<S: CliffordGateable>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Measurement Statistics
-// ============================================================================
+// --- Measurement Statistics ---
 
 /// Verify that measuring a superposition state produces non-trivial statistics.
 pub fn verify_measurement_statistics<S: CliffordGateable>(sim: &mut S) {
@@ -1324,9 +1288,7 @@ pub fn verify_measurement_statistics<S: CliffordGateable>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Y Gate Behavior
-// ============================================================================
+// --- Y Gate Behavior ---
 
 /// Verify explicit Y gate behavior on computational and non-computational bases.
 pub fn verify_y_gate_behavior<S: CliffordGateable>(sim: &mut S) {
@@ -1349,9 +1311,7 @@ pub fn verify_y_gate_behavior<S: CliffordGateable>(sim: &mut S) {
     assert_mx(sim, 0, true, "Y|+> should be |-> in X basis");
 }
 
-// ============================================================================
-// Controlled Gate Truth Tables
-// ============================================================================
+// --- Controlled Gate Truth Tables ---
 
 /// Verify the CX truth table on all 4 computational basis states.
 pub fn verify_cx_truth_table<S: CliffordGateable>(sim: &mut S) {
@@ -1448,9 +1408,7 @@ pub fn verify_cz_truth_table<S: CliffordGateable>(sim: &mut S) {
     assert_mz(sim, 1, false, "CZ|+0> q1 should be |0>");
 }
 
-// ============================================================================
-// iSWAP Identity
-// ============================================================================
+// --- iSWAP Identity ---
 
 /// Verify iSWAP^2 behavior via its effect on entangled states.
 ///
@@ -1489,9 +1447,7 @@ pub fn verify_iswap_fourth<S: CliffordGateable>(sim: &mut S) {
     assert_mz(sim, 1, false, "iSWAP^4|+0> q1 should be |0>");
 }
 
-// ============================================================================
-// Additional Decompositions
-// ============================================================================
+// --- Additional Decompositions ---
 
 /// Verify Y = iZX (global phase invisible to measurement) on computational basis.
 pub fn verify_y_from_zx<S: CliffordGateable>(sim: &mut S) {
@@ -1527,9 +1483,7 @@ pub fn verify_y_from_zx<S: CliffordGateable>(sim: &mut S) {
     assert_mx(sim, 0, false, "(ZX)^2|+> should be |+>");
 }
 
-// ============================================================================
-// Aggregator
-// ============================================================================
+// --- Aggregator ---
 
 /// Run all measurement-based Clifford gate tests.
 ///
@@ -1661,9 +1615,7 @@ pub fn run_clifford_gate_tests<S: CliffordGateable>(sim: &mut S, num_qubits: usi
     }
 }
 
-// ============================================================================
-// Test Suite Macro
-// ============================================================================
+// --- Test Suite Macro ---
 
 /// Generates a measurement-based Clifford test suite for any `CliffordGateable` simulator.
 ///

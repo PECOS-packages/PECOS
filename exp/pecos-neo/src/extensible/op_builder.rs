@@ -195,9 +195,7 @@ impl OpBuilder {
         &self.ancillas
     }
 
-    // ========================================================================
-    // Ancilla management
-    // ========================================================================
+    // --- Ancilla management ---
 
     /// Allocate a clean ancilla qubit.
     pub fn alloc_ancilla(&mut self) -> QubitId {
@@ -215,9 +213,7 @@ impl OpBuilder {
         anc
     }
 
-    // ========================================================================
-    // Raw operation insertion
-    // ========================================================================
+    // --- Raw operation insertion ---
 
     /// Add a raw operation.
     #[must_use]
@@ -233,9 +229,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Preparations
-    // ========================================================================
+    // --- Preparations ---
 
     /// Prepare a qubit in the Z basis (|0⟩).
     #[must_use]
@@ -268,9 +262,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Measurements
-    // ========================================================================
+    // --- Measurements ---
 
     /// Measure a qubit in the Z basis.
     #[must_use]
@@ -312,9 +304,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Single-qubit gates
-    // ========================================================================
+    // --- Single-qubit gates ---
 
     /// Apply an identity gate.
     #[must_use]
@@ -389,9 +379,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Single-qubit rotations
-    // ========================================================================
+    // --- Single-qubit rotations ---
 
     /// Apply an RX rotation.
     #[must_use]
@@ -418,9 +406,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Two-qubit gates
-    // ========================================================================
+    // --- Two-qubit gates ---
 
     /// Apply a CNOT (CX) gate.
     #[must_use]
@@ -453,9 +439,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Multi-qubit gates
-    // ========================================================================
+    // --- Multi-qubit gates ---
 
     /// Apply an arbitrary gate with any number of qubits and angles.
     #[must_use]
@@ -468,9 +452,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Control flow
-    // ========================================================================
+    // --- Control flow ---
 
     /// Execute operations conditionally based on a measurement result.
     #[must_use]
@@ -541,9 +523,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Result operations
-    // ========================================================================
+    // --- Result operations ---
 
     /// XOR one result into another.
     #[must_use]
@@ -559,9 +539,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Subcircuits and custom gates
-    // ========================================================================
+    // --- Subcircuits and custom gates ---
 
     /// Inline a subcircuit with qubit remapping.
     ///
@@ -614,9 +592,7 @@ impl OpBuilder {
         self.call(sub, qubits)
     }
 
-    // ========================================================================
-    // Stabilizer operations
-    // ========================================================================
+    // --- Stabilizer operations ---
 
     /// Measure an arbitrary stabilizer (Pauli string).
     ///
@@ -691,9 +667,7 @@ impl OpBuilder {
         self
     }
 
-    // ========================================================================
-    // Conversion to CommandQueue
-    // ========================================================================
+    // --- Conversion to CommandQueue ---
 
     /// Convert to a `CommandQueue` for execution.
     ///
@@ -1330,9 +1304,7 @@ mod proptest_tests {
 mod negative_tests {
     use super::*;
 
-    // =========================================================================
-    // CommandQueue conversion errors
-    // =========================================================================
+    // --- CommandQueue conversion errors ---
 
     #[test]
     fn conditional_fails_command_queue_conversion() {
@@ -1380,9 +1352,7 @@ mod negative_tests {
         assert!(result.is_err());
     }
 
-    // =========================================================================
-    // Subcircuit errors (should panic)
-    // =========================================================================
+    // --- Subcircuit errors ---
 
     #[test]
     #[should_panic(expected = "expects 2 qubits, got 1")]
@@ -1421,9 +1391,7 @@ mod negative_tests {
             .build();
     }
 
-    // =========================================================================
-    // Invalid stabilizer strings (should panic)
-    // =========================================================================
+    // --- Invalid stabilizer strings ---
 
     #[test]
     #[should_panic(expected = "Invalid Pauli string")]
@@ -1474,9 +1442,7 @@ mod negative_tests {
             .build();
     }
 
-    // =========================================================================
-    // Edge cases that should NOT panic
-    // =========================================================================
+    // --- Edge cases ---
 
     #[test]
     fn empty_ghz_produces_empty_sequence() {

@@ -30,18 +30,14 @@ use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
 use tket::hugr::Node;
 
-// ============================================================================
-// Wire Tracking Types
-// ============================================================================
+// --- Wire Tracking Types ---
 
 /// Key for tracking qubit wire flow: (node, `output_port_index`).
 ///
 /// Used to map output ports to qubit IDs as values flow through the HUGR graph.
 pub type WireKey = (Node, usize);
 
-// ============================================================================
-// State Grouping Types (ECS-like)
-// ============================================================================
+// --- State Grouping Types (ECS-like) ---
 
 use std::collections::BTreeMap;
 
@@ -149,9 +145,7 @@ pub type FutureId = usize;
 /// Unique identifier for an RNG context.
 pub type RngContextId = usize;
 
-// ============================================================================
-// Quantum Operation Types
-// ============================================================================
+// --- Quantum Operation Types ---
 
 /// Information about a quantum operation extracted from HUGR.
 ///
@@ -172,9 +166,7 @@ pub struct QuantumOp {
     pub params: Vec<f64>,
 }
 
-// ============================================================================
-// Classical Operation Types
-// ============================================================================
+// --- Classical Operation Types ---
 
 /// Type of classical operation.
 ///
@@ -261,9 +253,7 @@ pub struct ClassicalOp {
     pub const_value: Option<ClassicalValue>,
 }
 
-// ============================================================================
-// Classical Value Types
-// ============================================================================
+// --- Classical Value Types ---
 
 /// Represents a classical value that can flow through wires.
 ///
@@ -457,9 +447,7 @@ impl ClassicalValue {
     }
 }
 
-// ============================================================================
-// Result Capture Types
-// ============================================================================
+// --- Result Capture Types ---
 
 /// A captured result from a tket.result operation.
 ///
@@ -493,9 +481,7 @@ pub enum ResultValue {
     ArrayFloat(Vec<f64>),
 }
 
-// ============================================================================
-// Future/Lazy Measurement Types
-// ============================================================================
+// --- Future/Lazy Measurement Types ---
 
 /// State of a Future (lazy measurement result).
 ///
@@ -518,9 +504,7 @@ pub enum FutureState {
     Resolved(u32),
 }
 
-// ============================================================================
-// Container Type Classification
-// ============================================================================
+// --- Container Type Classification ---
 
 /// Container type for determining wire mapping behavior.
 ///
@@ -548,9 +532,7 @@ pub enum ContainerType {
     Other,
 }
 
-// ============================================================================
-// RNG Support Types
-// ============================================================================
+// --- RNG Support Types ---
 
 /// State of an RNG context for random number generation.
 ///
@@ -600,9 +582,7 @@ impl RngContextState {
     }
 }
 
-// ============================================================================
-// Conditional Control Flow Types
-// ============================================================================
+// --- Conditional Control Flow Types ---
 
 /// Information about a Conditional node for control flow.
 ///
@@ -630,9 +610,7 @@ pub struct ActiveCaseInfo {
     pub ops_in_case: BTreeSet<Node>,
 }
 
-// ============================================================================
-// CFG Control Flow Types
-// ============================================================================
+// --- CFG Control Flow Types ---
 
 /// Information about a CFG (Control Flow Graph) node.
 ///
@@ -707,9 +685,7 @@ pub struct ActiveCfgInfo {
     pub completed_blocks: BTreeSet<Node>,
 }
 
-// ============================================================================
-// Function Call Types
-// ============================================================================
+// --- Function Call Types ---
 
 /// Information about a `FuncDefn` (function definition) node.
 #[derive(Debug, Clone)]
@@ -742,9 +718,7 @@ pub struct ActiveCallInfo {
     pub func_defn_node: Node,
 }
 
-// ============================================================================
-// TailLoop Control Flow Types
-// ============================================================================
+// --- TailLoop Control Flow Types ---
 
 /// Information about a `TailLoop` node.
 ///

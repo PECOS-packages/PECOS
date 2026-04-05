@@ -48,9 +48,7 @@ pub trait ForcedMeasurement {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult;
 }
 
-// ============================================================================
-// Stabilizer Simulator Marker Trait
-// ============================================================================
+// --- Stabilizer Simulator Marker Trait ---
 
 /// Marker trait for stabilizer simulators that support full Clifford simulation.
 ///
@@ -131,9 +129,7 @@ macro_rules! stabilizer_test_suite {
     };
 }
 
-// ============================================================================
-// ForcedMeasurement-Specific Tests
-// ============================================================================
+// --- ForcedMeasurement-Specific Tests ---
 
 /// Verify CZ is symmetric: CZ(a,b) = CZ(b,a).
 ///
@@ -177,9 +173,7 @@ pub fn verify_cz_symmetric<S: CliffordGateable + QuantumSimulator + ForcedMeasur
     );
 }
 
-// ============================================================================
-// Gate Decomposition Tests
-// ============================================================================
+// --- Gate Decomposition Tests ---
 
 /// Verify SWAP = CX(0,1) CX(1,0) CX(0,1).
 pub fn verify_swap_decomposition<
@@ -368,9 +362,7 @@ pub fn verify_all_gate_decompositions<
     verify_y_decomposition(sim, num_qubits);
 }
 
-// ============================================================================
-// Gate Decomposition Tests (Direct - no Clone required)
-// ============================================================================
+// --- Gate Decomposition Tests (Direct - no Clone required) ---
 
 /// Verify SWAP = CX(0,1) CX(1,0) CX(0,1) using direct comparison.
 ///
@@ -623,9 +615,7 @@ pub fn verify_all_gate_decompositions_direct<
     verify_y_decomposition_direct(sim1, sim2, num_qubits);
 }
 
-// ============================================================================
-// Commutation Relation Tests
-// ============================================================================
+// --- Commutation Relation Tests ---
 
 /// Verify that X and Z on different qubits commute.
 ///
@@ -829,9 +819,7 @@ pub fn verify_all_commutation_relations_extended<
     }
 }
 
-// ============================================================================
-// Probability Comparison Against DensityMatrix
-// ============================================================================
+// --- Probability Comparison Against DensityMatrix ---
 
 /// Calculate the probability of measuring a specific basis state using forced measurements.
 ///
@@ -901,9 +889,7 @@ pub fn verify_circuit_matches_density_matrix<
     verify_probabilities_match_density_matrix(sim, dm, num_qubits);
 }
 
-// ============================================================================
-// Random Circuit Comparison Tests
-// ============================================================================
+// --- Random Circuit Comparison Tests ---
 
 /// Enumeration of Clifford gates for random circuit generation.
 #[derive(Debug, Clone, Copy)]
@@ -1211,9 +1197,7 @@ pub fn compare_simulators_on_random_circuits<
     }
 }
 
-// ============================================================================
-// Mid-Circuit Measurement Tests
-// ============================================================================
+// --- Mid-Circuit Measurement Tests ---
 
 /// Verify mid-circuit measurement followed by more gates.
 ///
@@ -1331,9 +1315,7 @@ pub fn compare_mid_circuit_measurement<
     }
 }
 
-// ============================================================================
-// Reset Mid-Circuit Tests
-// ============================================================================
+// --- Reset Mid-Circuit Tests ---
 
 /// Verify reset mid-circuit followed by more gates.
 ///
@@ -1426,9 +1408,7 @@ pub fn compare_reset_behavior<
     }
 }
 
-// ============================================================================
-// Measurement Order Independence Tests
-// ============================================================================
+// --- Measurement Order Independence Tests ---
 
 /// Verify that measuring qubits in different orders produces consistent probability distributions.
 ///
@@ -1495,9 +1475,7 @@ pub fn verify_measurement_order_independence<
     }
 }
 
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
+// --- Edge Case Tests ---
 
 /// Verify behavior with an empty circuit (no gates applied).
 pub fn verify_empty_circuit<S: CliffordGateable + QuantumSimulator>(
@@ -1629,9 +1607,7 @@ pub fn verify_two_qubit_only_circuit<
     verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
 }
 
-// ============================================================================
-// Comprehensive Test Suite
-// ============================================================================
+// --- Comprehensive Test Suite ---
 
 /// Run the basic stabilizer test suite on a simulator.
 ///
@@ -1669,20 +1645,20 @@ pub fn run_full_stabilizer_test_suite<
     sim: &mut S,
     num_qubits: usize,
 ) {
-    // ========== Basic Tests (includes shared Clifford gate tests) ==========
+    // --- Basic Tests (includes shared Clifford gate tests) ---
     run_basic_stabilizer_test_suite(sim, num_qubits);
 
-    // ========== ForcedMeasurement-specific gate tests ==========
+    // --- ForcedMeasurement-specific gate tests ---
     // CZ symmetry test requires ForcedMeasurement; other specific gate tests
     // and measurement idempotence are covered by the shared Clifford suite.
     verify_cz_symmetric(sim);
 
-    // ========== Gate Decomposition Tests ==========
+    // --- Gate Decomposition Tests ---
     if num_qubits >= 2 {
         verify_all_gate_decompositions(sim, num_qubits);
     }
 
-    // ========== Commutation Relation Tests ==========
+    // --- Commutation Relation Tests ---
     if num_qubits >= 2 {
         verify_all_commutation_relations(sim);
     }
@@ -1690,7 +1666,7 @@ pub fn run_full_stabilizer_test_suite<
         verify_all_commutation_relations_extended(sim, num_qubits);
     }
 
-    // ========== Probability Comparison Tests ==========
+    // --- Probability Comparison Tests ---
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Test initial state
@@ -1729,25 +1705,25 @@ pub fn run_full_stabilizer_test_suite<
         verify_probabilities_match_density_matrix(sim, &mut dm, num_qubits);
     }
 
-    // ========== Mid-Circuit Measurement Tests ==========
+    // --- Mid-Circuit Measurement Tests ---
     verify_mid_circuit_measurement(sim, num_qubits, 42);
 
-    // ========== Reset Tests ==========
+    // --- Reset Tests ---
     verify_reset_mid_circuit(sim, num_qubits, 42);
 
-    // ========== Measurement Order Independence ==========
+    // --- Measurement Order Independence ---
     if num_qubits >= 2 {
         verify_measurement_order_independence(sim, num_qubits, 42);
     }
 
-    // ========== Edge Case Tests ==========
+    // --- Edge Case Tests ---
     verify_empty_circuit(sim, num_qubits);
     verify_single_qubit_only_circuit(sim, num_qubits, 42);
     if num_qubits >= 2 {
         verify_two_qubit_only_circuit(sim, num_qubits, 42);
     }
 
-    // ========== Random Circuit Tests ==========
+    // --- Random Circuit Tests ---
     verify_random_circuits(sim, num_qubits, 20, 10, 12345);
 }
 
@@ -1758,9 +1734,7 @@ mod tests {
 
     // Note: ForcedMeasurement for SparseStab variants is implemented in sparse_stab.rs
 
-    // ========================================================================
-    // Cross-Variant Random Circuit Comparison Tests
-    // ========================================================================
+    // --- Cross-Variant Random Circuit Comparison Tests ---
 
     #[test]
     fn test_compare_bitset_vs_vecset() {
@@ -1786,9 +1760,7 @@ mod tests {
         compare_simulators_on_random_circuits(&mut sim1, &mut sim2, 3, 30, 10, 131_415);
     }
 
-    // ========================================================================
-    // Cross-Variant Direct Comparison Tests (no Clone required)
-    // ========================================================================
+    // --- Cross-Variant Direct Comparison Tests (no Clone required) ---
 
     #[test]
     fn test_compare_direct_bitset_vs_vecset() {
@@ -1832,9 +1804,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Cross-Variant Mid-Circuit Measurement Comparison Tests
-    // ========================================================================
+    // --- Cross-Variant Mid-Circuit Measurement Comparison Tests ---
 
     #[test]
     fn test_mid_circuit_measurement_compare_bitset_vecset() {
@@ -1863,9 +1833,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Cross-Variant Reset Comparison Tests
-    // ========================================================================
+    // --- Cross-Variant Reset Comparison Tests ---
 
     #[test]
     fn test_reset_compare_all_variants() {
@@ -1880,9 +1848,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Cross-Variant Gate Decomposition Tests
-    // ========================================================================
+    // --- Cross-Variant Gate Decomposition Tests ---
 
     #[test]
     fn test_gate_decompositions_direct_bitset_vs_vecset() {
@@ -1891,9 +1857,7 @@ mod tests {
         verify_all_gate_decompositions_direct(&mut bitset, &mut vecset, 2);
     }
 
-    // ========================================================================
-    // All-Simulators Random Circuit Comparison
-    // ========================================================================
+    // --- All-Simulators Random Circuit Comparison ---
 
     /// Compare all local stabilizer simulators on the same random circuits.
     ///

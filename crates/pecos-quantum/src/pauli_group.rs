@@ -500,9 +500,7 @@ impl PauliGroup {
         }
     }
 
-    // ========================================================================
-    // Mutation methods
-    // ========================================================================
+    // --- Mutation methods ---
 
     /// Adds a generator to the group.
     ///
@@ -559,9 +557,7 @@ impl PauliGroup {
     }
 }
 
-// ============================================================================
-// Conversions
-// ============================================================================
+// --- Conversions ---
 
 impl From<PauliStabilizerGroup> for PauliGroup {
     /// Extracts the underlying `PauliGroup` from a stabilizer group.
@@ -663,9 +659,7 @@ impl From<PauliStabilizerGroup> for PauliSet {
     }
 }
 
-// ============================================================================
-// Display and FromStr
-// ============================================================================
+// --- Display and FromStr ---
 
 impl FromStr for PauliGroup {
     type Err = Box<dyn std::error::Error>;
@@ -690,9 +684,7 @@ mod tests {
     use pecos_core::pauli::algebra::i;
     use pecos_core::pauli::constructors::*;
 
-    // ========================================================================
-    // Construction and basic properties
-    // ========================================================================
+    // --- Construction and basic properties ---
 
     #[test]
     fn real_phase_generators() {
@@ -743,9 +735,7 @@ mod tests {
         assert_eq!(group.group_order(), 8); // 4 * 2
     }
 
-    // ========================================================================
-    // contains_minus_identity
-    // ========================================================================
+    // --- contains_minus_identity ---
 
     #[test]
     fn contains_minus_identity_with_imaginary() {
@@ -773,9 +763,7 @@ mod tests {
         assert!(group.contains_minus_identity());
     }
 
-    // ========================================================================
-    // Element enumeration
-    // ========================================================================
+    // --- Element enumeration ---
 
     #[test]
     fn elements_real_generators() {
@@ -848,9 +836,7 @@ mod tests {
         assert_eq!(group.element(&[5]), group.element(&[1]));
     }
 
-    // ========================================================================
-    // contains / contains_with_phase
-    // ========================================================================
+    // --- contains / contains_with_phase ---
 
     #[test]
     fn contains_body() {
@@ -892,9 +878,7 @@ mod tests {
         assert!(!group.contains_with_phase(&(i * Z(0)))); // iZ not in group of {I, Z}
     }
 
-    // ========================================================================
-    // Conversions
-    // ========================================================================
+    // --- Conversions ---
 
     #[test]
     fn from_stabilizer_group() {
@@ -933,9 +917,7 @@ mod tests {
         assert_eq!(stab.num_qubits(), stab2.num_qubits());
     }
 
-    // ========================================================================
-    // Mutation
-    // ========================================================================
+    // --- Mutation ---
 
     #[test]
     fn add_generator_commuting() {
@@ -981,9 +963,7 @@ mod tests {
         assert!(g1.merge(&g2).is_err());
     }
 
-    // ========================================================================
-    // Display, FromStr, apply_clifford
-    // ========================================================================
+    // --- Display, FromStr, apply_clifford ---
 
     #[test]
     fn display() {
@@ -1053,9 +1033,7 @@ mod tests {
         assert!(!group.has_real_phases());
     }
 
-    // ========================================================================
-    // contains_with_phase: multiple imaginary generators
-    // ========================================================================
+    // --- contains_with_phase: multiple imaginary generators ---
 
     #[test]
     fn contains_with_phase_two_imaginary_generators() {
@@ -1109,9 +1087,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // contains_with_phase: consistency with contains()
-    // ========================================================================
+    // --- contains_with_phase: consistency with contains() ---
 
     #[test]
     fn contains_with_phase_implies_contains() {
@@ -1128,9 +1104,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // element() panic conditions
-    // ========================================================================
+    // --- element() panic conditions ---
 
     #[test]
     #[should_panic(expected = "expected 1 exponents, got 2")]
@@ -1139,9 +1113,7 @@ mod tests {
         let _ = group.element(&[0, 1]);
     }
 
-    // ========================================================================
-    // String representations
-    // ========================================================================
+    // --- String representations ---
 
     #[test]
     fn to_dense_str_format() {
@@ -1160,9 +1132,7 @@ mod tests {
         assert!(sparse.contains("Z1"));
     }
 
-    // ========================================================================
-    // Dependent generators with imaginary phases
-    // ========================================================================
+    // --- Dependent generators with imaginary phases ---
 
     #[test]
     fn dependent_generators_imaginary() {
@@ -1173,9 +1143,7 @@ mod tests {
         assert!(group.contains_minus_identity());
     }
 
-    // ========================================================================
-    // Generator order doesn't change group
-    // ========================================================================
+    // --- Generator order doesn't change group ---
 
     #[test]
     fn generator_order_invariant() {
@@ -1193,9 +1161,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // commutation_matrix for valid group
-    // ========================================================================
+    // --- commutation_matrix for valid group ---
 
     #[test]
     fn commutation_matrix_all_true() {
@@ -1211,9 +1177,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // TryFrom<PauliSequence> and try_from_set
-    // ========================================================================
+    // --- TryFrom<PauliSequence> and try_from_set ---
 
     #[test]
     fn try_from_sequence_independent() {
@@ -1308,9 +1272,7 @@ mod tests {
         ));
     }
 
-    // ========================================================================
-    // Into PauliSequence / PauliSet
-    // ========================================================================
+    // --- Into PauliSequence / PauliSet ---
 
     #[test]
     fn group_into_sequence() {

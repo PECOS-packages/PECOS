@@ -66,9 +66,7 @@ fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
     qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect()
 }
 
-// ============================================================================
-// Signal Handler Infrastructure
-// ============================================================================
+// --- Signal Handler Infrastructure ---
 
 /// Type-erased observe-only signal handler.
 type ErasedHandler = Arc<dyn Fn(&dyn Any) + Send + Sync>;
@@ -146,10 +144,6 @@ impl SignalHandlerRegistry {
     }
 }
 
-// ============================================================================
-// Dispatch Context
-// ============================================================================
-
 /// Context provided to gate event dispatch handlers.
 ///
 /// Contains the event data relevant to the current dispatch point,
@@ -175,9 +169,7 @@ pub struct DispatchContext<'a> {
     pub noise_context: Option<&'a NoiseContext>,
 }
 
-// ============================================================================
-// Gate Event Handlers
-// ============================================================================
+// --- Gate Event Handlers ---
 
 /// Type-erased gate event handler.
 type ErasedGateHandler = Arc<dyn Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync>;
@@ -235,10 +227,6 @@ impl GateEventHandlers {
     }
 }
 
-// ============================================================================
-// EventHandlers (public, cloneable handler collection for sim_neo)
-// ============================================================================
-
 /// A cloneable collection of gate event and signal handlers.
 ///
 /// `EventHandlers` lets you register handlers once and pass them through
@@ -287,9 +275,7 @@ impl EventHandlers {
             && self.signal_handlers.response_handlers.is_empty()
     }
 
-    // ================================================================
-    // Gate event handler registration (builder pattern)
-    // ================================================================
+    // --- Gate event handler registration ---
 
     /// Register a handler called before each gate is applied.
     #[must_use]
@@ -449,9 +435,7 @@ impl EventHandlers {
         self
     }
 
-    // ================================================================
-    // Signal handler registration (builder pattern)
-    // ================================================================
+    // --- Signal handler registration ---
 
     /// Register a handler that will be called when a signal of type `Sig` is dispatched.
     #[must_use]
@@ -499,9 +483,7 @@ struct SignalCursor {
     len: usize,
 }
 
-// ============================================================================
-// Gate Overrides
-// ============================================================================
+// --- Gate Overrides ---
 
 /// Function signature for custom gate executors.
 ///
@@ -604,10 +586,6 @@ impl<S> GateOverrides<S> {
     }
 }
 
-// ============================================================================
-// Execution Error
-// ============================================================================
-
 /// Errors during execution.
 #[derive(Debug, Clone)]
 pub enum ExecutionError {
@@ -631,10 +609,6 @@ impl std::fmt::Display for ExecutionError {
 }
 
 impl std::error::Error for ExecutionError {}
-
-// ============================================================================
-// CircuitRunner
-// ============================================================================
 
 /// Stateless quantum simulation runner.
 ///
@@ -695,9 +669,7 @@ pub struct CircuitRunner<S: CliffordGateable> {
     results: Vec<bool>,
 }
 
-// ============================================================================
-// Constructors and Configuration
-// ============================================================================
+// --- Constructors and Configuration ---
 
 impl<S: CliffordGateable> Default for CircuitRunner<S> {
     fn default() -> Self {
@@ -879,9 +851,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         &self.definitions
     }
 
-    // ================================================================
-    // Signal handler registration
-    // ================================================================
+    // --- Signal handler registration ---
 
     /// Register a handler that will be called when a signal of type `Sig` is dispatched.
     ///
@@ -921,9 +891,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         self
     }
 
-    // ================================================================
-    // Gate event handler registration
-    // ================================================================
+    // --- Gate event handler registration ---
 
     /// Register a handler called before each gate is applied.
     ///
@@ -1076,9 +1044,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         self
     }
 
-    // ================================================================
-    // CommandQueue execution
-    // ================================================================
+    // --- CommandQueue execution ---
 
     /// Apply a circuit to the given simulator state, returning measurement outcomes.
     ///
@@ -1115,9 +1081,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         Ok(outcomes)
     }
 
-    // ================================================================
-    // Outcome access
-    // ================================================================
+    // --- Outcome access ---
 
     /// Take the accumulated measurement outcomes, leaving the buffer empty.
     ///
@@ -1146,9 +1110,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
     }
 
-    // ================================================================
-    // Single gate execution (interpreter mode)
-    // ================================================================
+    // --- Single gate execution (interpreter mode) ---
 
     /// Execute a single gate through the full pipeline.
     ///
@@ -1169,9 +1131,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         self.execute_queue_command(state, &command)
     }
 
-    // ================================================================
-    // Direct noise injection
-    // ================================================================
+    // --- Direct noise injection ---
 
     /// Apply a noise event directly to the simulator state.
     ///
@@ -1304,9 +1264,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         Ok(())
     }
 
-    // ================================================================
-    // AdaptedSequence execution
-    // ================================================================
+    // --- AdaptedSequence execution ---
 
     /// Apply an `AdaptedSequence` circuit to the given simulator state.
     ///
@@ -1410,9 +1368,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         Ok(())
     }
 
-    // ================================================================
-    // Core gate execution (unified precedence chain)
-    // ================================================================
+    // --- Core gate execution ---
 
     /// Execute a gate using the unified precedence chain:
     /// overrides -> Clifford -> rotation -> decomposition.
@@ -1571,9 +1527,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         Ok(())
     }
 
-    // ================================================================
-    // Multi-basis prep/measure (for AdaptedSequence)
-    // ================================================================
+    // --- Multi-basis prep/measure ---
 
     /// Execute preparation in a given basis.
     fn execute_prep(sim: &mut S, qubit: QubitId, basis: PrepBasis) {
@@ -1638,9 +1592,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
     }
 
-    // ================================================================
-    // Dispatch coordination (user handlers + noise model)
-    // ================================================================
+    // --- Dispatch coordination ---
 
     /// Build a `DispatchContext` for signal dispatch (no gate info).
     fn signal_context(&self) -> DispatchContext<'_> {
@@ -1834,9 +1786,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         self.apply_noise_response(sim, combined);
     }
 
-    // ================================================================
-    // Noise emission methods (for AdaptedSequence path via execute_gate)
-    // ================================================================
+    // --- Noise emission (AdaptedSequence path) ---
 
     /// Emit before-gate to noise model (`AdaptedSequence` path). Returns `true` if gate should be skipped.
     fn emit_before_gate(
@@ -1888,9 +1838,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         self.apply_noise_response(sim, response);
     }
 
-    // ================================================================
-    // Noise emission methods (for CommandQueue path)
-    // ================================================================
+    // --- Noise emission (CommandQueue path) ---
 
     /// Emit before-gate noise for a gate identified by `GateId`. Returns `true` if gate should be skipped.
     fn emit_before_gate_noise_for_id(
@@ -2013,9 +1961,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         NoiseResponse::None
     }
 
-    // ================================================================
-    // Signal dispatch
-    // ================================================================
+    // --- Signal dispatch ---
 
     /// Dispatch all signals at a given command position.
     fn dispatch_signals_at(
@@ -2072,9 +2018,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
     }
 
-    // ================================================================
-    // Measurement recording and noise response application
-    // ================================================================
+    // --- Measurement recording and noise response ---
 
     /// Record measurement results with leakage awareness.
     fn record_measurements(
@@ -2166,9 +2110,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 }
 
-// ============================================================================
-// RNG management (for simulators with RngManageable)
-// ============================================================================
+// --- RNG management ---
 
 impl<S> CircuitRunner<S>
 where
@@ -2199,9 +2141,7 @@ where
     }
 }
 
-// ============================================================================
-// Rotation gate support (for ArbitraryRotationGateable simulators)
-// ============================================================================
+// --- Rotation gate support ---
 
 impl<S> CircuitRunner<S>
 where
@@ -2354,10 +2294,6 @@ where
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2366,9 +2302,7 @@ mod tests {
     use crate::noise::single_qubit::SingleQubitChannel;
     use pecos_simulators::{SparseStab, StateVec};
 
-    // ================================================================
-    // Basic execution tests
-    // ================================================================
+    // --- Basic execution tests ---
 
     #[test]
     fn test_basic_execution() {
@@ -2500,9 +2434,7 @@ mod tests {
         assert!(!outcome.outcome);
     }
 
-    // ================================================================
-    // Rotation gate tests
-    // ================================================================
+    // --- Rotation gate tests ---
 
     #[test]
     fn test_rotation_gates() {
@@ -2669,9 +2601,7 @@ mod tests {
         assert_eq!(runner.definitions().name(custom_id), Some("CustomGate"));
     }
 
-    // ================================================================
-    // Signal dispatch tests
-    // ================================================================
+    // --- Signal dispatch tests ---
 
     #[allow(dead_code)]
     mod signal_tests {
@@ -2747,9 +2677,7 @@ mod tests {
         }
     }
 
-    // ================================================================
-    // AdaptedSequence tests
-    // ================================================================
+    // --- AdaptedSequence tests ---
 
     #[test]
     fn test_adapted_basic_execution() {
@@ -2994,9 +2922,7 @@ mod tests {
         ));
     }
 
-    // ================================================================
-    // apply_gate (interpreter mode) tests
-    // ================================================================
+    // --- apply_gate (interpreter mode) tests ---
 
     #[test]
     fn test_apply_gate_basic() {

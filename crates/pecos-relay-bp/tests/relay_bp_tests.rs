@@ -9,9 +9,7 @@ use pecos_relay_bp::{
     RelayConfig, StoppingCriterion,
 };
 
-// ============================================================================
-// Test helpers
-// ============================================================================
+// --- Test helpers ---
 
 /// Compute syndrome = H * error (mod 2) using PECOS ndarray types.
 fn compute_syndrome(h: &ArrayView2<u8>, error: &Array1<u8>) -> Array1<u8> {
@@ -59,9 +57,7 @@ fn default_priors(n: usize) -> Vec<f64> {
     vec![0.05; n]
 }
 
-// ============================================================================
-// Syndrome correctness: verify H * decoded_error mod 2 == syndrome
-// ============================================================================
+// --- Syndrome correctness: verify H * decoded_error mod 2 == syndrome ---
 
 #[test]
 fn min_sum_decoding_satisfies_syndrome_repetition_3() {
@@ -206,9 +202,7 @@ fn relay_decoding_satisfies_syndrome_hamming_7_4() {
     );
 }
 
-// ============================================================================
-// Zero syndrome
-// ============================================================================
+// --- Zero syndrome ---
 
 #[test]
 fn zero_syndrome_produces_zero_decoding() {
@@ -244,9 +238,7 @@ fn relay_zero_syndrome_produces_zero_decoding() {
     );
 }
 
-// ============================================================================
-// Sequential decode stability: same decoder, multiple calls
-// ============================================================================
+// --- Sequential decode stability: same decoder, multiple calls ---
 
 #[test]
 fn min_sum_sequential_decodes_are_independent() {
@@ -298,9 +290,7 @@ fn relay_sequential_decodes_are_independent() {
     }
 }
 
-// ============================================================================
-// Configuration variations
-// ============================================================================
+// --- Configuration variations ---
 
 #[test]
 fn min_sum_with_alpha_scaling() {
@@ -429,9 +419,7 @@ fn different_error_priors() {
     );
 }
 
-// ============================================================================
-// Batch decoding correctness
-// ============================================================================
+// --- Batch decoding correctness ---
 
 #[test]
 fn batch_decoding_matches_sequential() {
@@ -460,9 +448,7 @@ fn batch_decoding_matches_sequential() {
     }
 }
 
-// ============================================================================
-// Builder API
-// ============================================================================
+// --- Builder API ---
 
 #[test]
 fn relay_builder_all_options() {
@@ -510,9 +496,7 @@ fn min_sum_builder_all_options() {
     assert_eq!(syndrome, recomputed);
 }
 
-// ============================================================================
-// CheckMatrixDecoder trait: dense and sparse construction
-// ============================================================================
+// --- CheckMatrixDecoder trait: dense and sparse construction ---
 
 #[test]
 fn check_matrix_decoder_from_dense() {
@@ -588,9 +572,7 @@ fn check_matrix_decoder_default_priors() {
     assert_eq!(syndrome, recomputed);
 }
 
-// ============================================================================
-// Error handling
-// ============================================================================
+// --- Error handling ---
 
 #[test]
 fn invalid_syndrome_length_min_sum() {
@@ -632,9 +614,7 @@ fn invalid_matrix_empty() {
     assert!(MinSumBpDecoder::new(&h.view(), &config).is_err());
 }
 
-// ============================================================================
-// DecodingResult trait
-// ============================================================================
+// --- DecodingResult trait ---
 
 #[test]
 fn decoding_result_to_standard_conversion() {
@@ -669,13 +649,11 @@ fn decoding_result_failed() {
     assert!(!result.is_successful());
 }
 
-// ============================================================================
-// Exact decoding match (inspired by relay-bp's own tests)
+// --- Exact decoding match ---
 //
 // With very low error priors (0.003), the decoder has strong prior information
 // and should recover the exact error pattern on simple codes, not just a
 // syndrome-equivalent one.
-// ============================================================================
 
 #[test]
 fn min_sum_exact_decoding_repetition_3_low_priors() {
@@ -781,13 +759,11 @@ fn min_sum_exact_decoding_repetition_5_low_priors() {
     }
 }
 
-// ============================================================================
-// Relay with num_sets=0: pure BP passthrough mode
+// --- Relay with num_sets=0: pure BP passthrough mode ---
 //
 // When num_sets=0 and stopping_criterion=PreIter, relay runs only the
 // initial BP phase (no relay legs). This mirrors relay-bp's own
 // `min_sum_decode_repetition_code` test.
-// ============================================================================
 
 #[test]
 fn relay_num_sets_zero_is_pure_bp_passthrough() {
@@ -833,12 +809,10 @@ fn relay_num_sets_zero_is_pure_bp_passthrough() {
     }
 }
 
-// ============================================================================
-// MemBP variant (gamma0 parameter)
+// --- MemBP variant (gamma0 parameter) ---
 //
 // Tests the memory-enhanced BP variant where gamma0 controls the strength
 // of memory effects across iterations.
-// ============================================================================
 
 #[test]
 fn min_sum_membp_exact_decoding_repetition_3() {
@@ -920,12 +894,10 @@ fn relay_with_membp_exact_decoding_repetition_3() {
     }
 }
 
-// ============================================================================
-// Alpha scaling with exact decoding
+// --- Alpha scaling with exact decoding ---
 //
 // Tests alpha (min-sum scaling factor) combined with iteration scaling,
 // mirroring relay-bp's use of alpha=0 with alpha_iteration_scaling_factor.
-// ============================================================================
 
 #[test]
 fn min_sum_alpha_zero_exact_decoding_repetition_3() {
@@ -946,9 +918,7 @@ fn min_sum_alpha_zero_exact_decoding_repetition_3() {
     }
 }
 
-// ============================================================================
-// Seed reproducibility
-// ============================================================================
+// --- Seed reproducibility ---
 
 #[test]
 fn relay_seed_gives_deterministic_results() {

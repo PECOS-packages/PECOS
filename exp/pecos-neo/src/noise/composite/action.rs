@@ -361,9 +361,7 @@ impl GateAction for Seep {
     }
 }
 
-// ============================================================================
-// Two-Qubit Actions
-// ============================================================================
+// --- Two-Qubit Actions ---
 
 /// Apply a correlated two-qubit Pauli error.
 ///
@@ -463,9 +461,7 @@ impl GateAction for TwoQubitPauli {
     }
 }
 
-// ============================================================================
-// Emission Actions
-// ============================================================================
+// --- Emission Actions ---
 
 /// Apply an emission error (Pauli or leakage).
 ///
@@ -651,9 +647,7 @@ impl GateAction for TwoQubitEmission {
     }
 }
 
-// ============================================================================
-// Sample Emission Action (for two-stage composite)
-// ============================================================================
+// --- Sample Emission Action ---
 
 /// Sample whether an emission event occurs and store the result.
 ///
@@ -750,9 +744,7 @@ impl GateAction for SampleEmissionWithProb {
     }
 }
 
-// ============================================================================
-// Two-Qubit Emission with Partner Depolarize
-// ============================================================================
+// --- Two-Qubit Emission with Partner Depolarize ---
 
 /// Two-qubit emission that handles partner depolarizing correctly.
 ///
@@ -972,9 +964,7 @@ impl GateAction for IndependentEmissionWithPartnerDepolarize {
     }
 }
 
-// ============================================================================
-// Partner Depolarize Action (for two-qubit gates with leakage)
-// ============================================================================
+// --- Partner Depolarize Action ---
 
 /// Apply depolarizing noise to the OTHER qubit in a two-qubit gate.
 ///
@@ -1059,9 +1049,7 @@ impl GateAction for PartnerDepolarize {
     }
 }
 
-// ============================================================================
-// Coherent Dephasing Actions
-// ============================================================================
+// --- Coherent Dephasing Actions ---
 
 /// Inject an RZ gate for coherent dephasing.
 ///
@@ -1113,9 +1101,7 @@ impl GateAction for InjectCoherentRZ {
     }
 }
 
-// ============================================================================
-// Amplitude Damping (T1 Relaxation)
-// ============================================================================
+// --- Amplitude Damping (T1 Relaxation) ---
 
 /// Amplitude damping: asymmetric T1 relaxation where |1⟩ → |0⟩.
 ///
@@ -1242,9 +1228,7 @@ impl GateAction for BiasedAmplitudeDamping {
     }
 }
 
-// ============================================================================
-// Coherent Rotation Errors
-// ============================================================================
+// --- Coherent Rotation Errors ---
 
 /// Inject an arbitrary coherent rotation error.
 ///
@@ -1379,9 +1363,7 @@ impl GateAction for OverRotation {
     }
 }
 
-// ============================================================================
-// Correlated Phase Errors (ZZ Dephasing)
-// ============================================================================
+// --- Correlated Phase Errors (ZZ Dephasing) ---
 
 /// ZZ dephasing: correlated phase error on two qubits.
 ///
@@ -1501,9 +1483,7 @@ impl GateAction for ZZDephasingRate {
     }
 }
 
-// ============================================================================
-// Preparation Errors
-// ============================================================================
+// --- Preparation Errors ---
 
 /// Preparation error: qubit prepared in wrong state.
 ///
@@ -1574,9 +1554,7 @@ impl GateAction for PrepPhase {
     }
 }
 
-// ============================================================================
-// Erasure/Heralded Errors
-// ============================================================================
+// --- Erasure/Heralded Errors ---
 
 /// Erasure error: heralded loss of quantum information.
 ///
@@ -1665,9 +1643,7 @@ impl GateAction for ErasureWithReplacement {
     }
 }
 
-// ============================================================================
-// Crosstalk Actions
-// ============================================================================
+// --- Crosstalk Actions ---
 
 /// Apply state-dependent crosstalk effects.
 ///
@@ -1753,9 +1729,7 @@ impl GateAction for CrosstalkAction {
     }
 }
 
-// ============================================================================
-// Outcome Actions (for measurement noise)
-// ============================================================================
+// --- Outcome Actions ---
 
 /// Flip the measurement outcome (0 <-> 1).
 ///
@@ -1984,9 +1958,7 @@ pub mod actions {
         Seep::new()
     }
 
-    // ========================================================================
-    // Outcome Actions
-    // ========================================================================
+    // --- Outcome Actions ---
 
     /// Flip the measurement outcome (0 <-> 1).
     #[must_use]
@@ -2037,9 +2009,7 @@ pub mod actions {
         LeakedMeasurementAction
     }
 
-    // ========================================================================
-    // Crosstalk Actions
-    // ========================================================================
+    // --- Crosstalk Actions ---
 
     /// State-dependent crosstalk action (flip-only, no leakage).
     ///
@@ -2065,9 +2035,7 @@ pub mod actions {
         CrosstalkAction::new(transitions)
     }
 
-    // ========================================================================
-    // Two-Qubit Actions
-    // ========================================================================
+    // --- Two-Qubit Actions ---
 
     /// Correlated two-qubit Pauli with uniform weights.
     ///
@@ -2109,9 +2077,7 @@ pub mod actions {
         TwoQubitEmission::with_weights(weights)
     }
 
-    // ========================================================================
-    // Single-Qubit Emission Actions
-    // ========================================================================
+    // --- Single-Qubit Emission Actions ---
 
     /// Emission error with uniform Pauli weights (no leakage).
     #[must_use]
@@ -2133,9 +2099,7 @@ pub mod actions {
         Emission::with_weights(weights)
     }
 
-    // ========================================================================
-    // Two-Stage Sampling Actions
-    // ========================================================================
+    // --- Two-Stage Sampling Actions ---
 
     /// Sample emission and store the fired flag (for two-stage composite).
     ///
@@ -2156,9 +2120,7 @@ pub mod actions {
         SampleEmissionWithProb::new(prob)
     }
 
-    // ========================================================================
-    // Coherent Dephasing
-    // ========================================================================
+    // --- Coherent Dephasing ---
 
     /// Inject coherent RZ dephasing with given rate.
     ///
@@ -2168,9 +2130,7 @@ pub mod actions {
         InjectCoherentRZ::new(rate)
     }
 
-    // ========================================================================
-    // Partner Depolarize (for two-qubit gates with leakage)
-    // ========================================================================
+    // --- Partner Depolarize ---
 
     /// Apply depolarizing noise to the partner qubit in a two-qubit gate.
     ///
@@ -2195,9 +2155,7 @@ pub mod actions {
         PartnerDepolarize::with_weights(PauliWeights::custom(x, y, z))
     }
 
-    // ========================================================================
-    // Two-Qubit Emission with Partner Depolarize
-    // ========================================================================
+    // --- Two-Qubit Emission with Partner Depolarize ---
 
     /// Two-qubit emission with partner depolarizing.
     ///
@@ -2235,9 +2193,7 @@ pub mod actions {
         IndependentEmissionWithPartnerDepolarize::new(emission_prob)
     }
 
-    // ========================================================================
-    // Amplitude Damping (T1)
-    // ========================================================================
+    // --- Amplitude Damping (T1) ---
 
     /// Amplitude damping (T1 relaxation) with 50/50 X/Z approximation.
     #[must_use]
@@ -2251,9 +2207,7 @@ pub mod actions {
         BiasedAmplitudeDamping::new(x_probability)
     }
 
-    // ========================================================================
-    // Coherent Errors
-    // ========================================================================
+    // --- Coherent Errors ---
 
     /// Coherent RX rotation error.
     #[must_use]
@@ -2287,9 +2241,7 @@ pub mod actions {
         OverRotation::rz(fraction)
     }
 
-    // ========================================================================
-    // Correlated Dephasing (ZZ)
-    // ========================================================================
+    // --- Correlated Dephasing (ZZ) ---
 
     /// ZZ dephasing with fixed angle.
     #[must_use]
@@ -2303,9 +2255,7 @@ pub mod actions {
         ZZDephasing::from_rate(rate)
     }
 
-    // ========================================================================
-    // Preparation Errors
-    // ========================================================================
+    // --- Preparation Errors ---
 
     /// Preparation bit-flip error (applies X).
     #[must_use]
@@ -2319,9 +2269,7 @@ pub mod actions {
         PrepPhase::new()
     }
 
-    // ========================================================================
-    // Erasure Errors
-    // ========================================================================
+    // --- Erasure Errors ---
 
     /// Erasure error (heralded qubit loss).
     #[must_use]
@@ -2335,9 +2283,7 @@ pub mod actions {
         ErasureWithReplacement::new()
     }
 
-    // ========================================================================
-    // Channel Adapter
-    // ========================================================================
+    // --- Channel Adapter ---
 
     /// Adapter that wraps a `NoiseChannel` to be used as a composite primitive.
     ///
@@ -2798,9 +2744,7 @@ mod tests {
         assert!(response.is_none());
     }
 
-    // ========================================================================
-    // Crosstalk Action Tests
-    // ========================================================================
+    // --- Crosstalk Action Tests ---
 
     #[test]
     fn test_crosstalk_action_flip_only() {
@@ -2910,9 +2854,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Random Outcome Tests
-    // ========================================================================
+    // --- Random Outcome Tests ---
 
     #[test]
     fn test_random_outcome_uniform() {
@@ -2962,9 +2904,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Two-Stage Sample Emission Tests
-    // ========================================================================
+    // --- Two-Stage Sample Emission Tests ---
 
     #[test]
     fn test_sample_emission_sets_fired_flag() {

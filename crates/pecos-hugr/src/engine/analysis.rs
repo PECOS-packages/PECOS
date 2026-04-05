@@ -43,9 +43,7 @@ use super::types::{
     FuncDefnInfo, QuantumOp, TailLoopInfo,
 };
 
-// ============================================================================
-// Conditional extraction
-// ============================================================================
+// --- Conditional extraction ---
 
 /// Extract Conditional nodes from a HUGR for control flow support.
 ///
@@ -108,9 +106,7 @@ pub fn find_nodes_inside_cases(
     inside_cases
 }
 
-// ============================================================================
-// CFG extraction
-// ============================================================================
+// --- CFG extraction ---
 
 /// Extract all CFG nodes from the HUGR.
 ///
@@ -296,9 +292,7 @@ pub fn find_nodes_inside_cfg_blocks(hugr: &Hugr, cfgs: &BTreeMap<Node, CfgInfo>)
     inside_blocks
 }
 
-// ============================================================================
-// TailLoop extraction
-// ============================================================================
+// --- TailLoop extraction ---
 
 /// Extract all `TailLoop` nodes from the HUGR.
 ///
@@ -395,9 +389,7 @@ pub fn find_nodes_inside_tailloops(
     inside_tailloops
 }
 
-// ============================================================================
-// FuncDefn extraction
-// ============================================================================
+// --- FuncDefn extraction ---
 
 /// Extract all `FuncDefn` nodes from the HUGR.
 ///
@@ -499,9 +491,7 @@ pub fn find_nodes_inside_func_defns(
     inside_func_defns
 }
 
-// ============================================================================
-// Quantum operation extraction
-// ============================================================================
+// --- Quantum operation extraction ---
 
 /// Extract all quantum operations from a HUGR.
 ///
@@ -573,9 +563,7 @@ pub fn extract_quantum_ops(hugr: &Hugr) -> BTreeMap<Node, QuantumOp> {
     operations
 }
 
-// ============================================================================
-// Classical operation extraction
-// ============================================================================
+// --- Classical operation extraction ---
 
 /// Extract classical operations from the HUGR (logic, arithmetic, etc.).
 ///
@@ -693,9 +681,7 @@ pub fn extract_classical_ops(hugr: &Hugr) -> BTreeMap<Node, ClassicalOp> {
     operations
 }
 
-// ============================================================================
-// Block-level analysis helpers
-// ============================================================================
+// --- Block-level analysis helpers ---
 
 /// Find all quantum operations inside a CFG block.
 pub fn find_quantum_ops_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
@@ -875,9 +861,7 @@ fn collect_extension_ops_recursive(hugr: &Hugr, node: Node, extension_ops: &mut 
     }
 }
 
-// ============================================================================
-// Structural helpers
-// ============================================================================
+// --- Structural helpers ---
 
 /// Recursively collect all descendants of a node.
 pub fn collect_descendants(hugr: &Hugr, node: Node, descendants: &mut BTreeSet<Node>) {

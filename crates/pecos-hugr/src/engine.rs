@@ -647,9 +647,7 @@ impl HugrEngine {
                 break;
             }
 
-            // =================================================================
-            // Control Flow: Conditional
-            // =================================================================
+            // --- Control Flow: Conditional ---
             if self.conditionals.contains_key(&current_node) {
                 // Try to resolve the conditional's control value
                 if let Some(branch_index) =
@@ -678,9 +676,7 @@ impl HugrEngine {
                 continue;
             }
 
-            // =================================================================
-            // Control Flow: CFG
-            // =================================================================
+            // --- Control Flow: CFG ---
             if let Some(cfg_info) = self.cfgs.get(&current_node).cloned() {
                 debug!("Starting CFG {current_node:?} execution");
                 debug!("[TRACE] Starting CFG {current_node:?}");
@@ -927,9 +923,7 @@ impl HugrEngine {
                 continue;
             }
 
-            // =================================================================
-            // Control Flow: TailLoop
-            // =================================================================
+            // --- Control Flow: TailLoop ---
             if self.tailloops.contains_key(&current_node) {
                 // Check if already active
                 if self.active_tailloops.contains_key(&current_node) {
@@ -962,9 +956,7 @@ impl HugrEngine {
                 continue;
             }
 
-            // =================================================================
-            // Control Flow: Function Call
-            // =================================================================
+            // --- Control Flow: Function Call ---
             if let Some(&func_defn_node) = self.call_targets.get(&current_node) {
                 // Skip if already being processed (waiting for FuncDefn to complete)
                 if self.active_calls.contains_key(&current_node) {
@@ -1085,9 +1077,7 @@ impl HugrEngine {
                 continue;
             }
 
-            // =================================================================
-            // LoadConstant Operations (integer/float constants)
-            // =================================================================
+            // --- LoadConstant Operations (integer/float constants) ---
             let current_op = hugr.get_optype(current_node);
             if matches!(current_op, OpType::LoadConstant(_)) {
                 if let Some(value) = Self::try_load_constant(&hugr, current_node) {
@@ -1107,9 +1097,7 @@ impl HugrEngine {
                 continue;
             }
 
-            // =================================================================
-            // Classical Operations (arithmetic, logic, etc.)
-            // =================================================================
+            // --- Classical Operations (arithmetic, logic, etc.) ---
             if let Some(classical_op) = self.classical_ops.get(&current_node).cloned() {
                 debug!(
                     "Processing classical op {current_node:?}: {:?}",
@@ -1165,9 +1153,7 @@ impl HugrEngine {
                 continue;
             }
 
-            // =================================================================
-            // Extension Operations (tket.result, tket.qsystem, etc.)
-            // =================================================================
+            // --- Extension Operations (tket.result, tket.qsystem, etc.) ---
             let op = hugr.get_optype(current_node);
             let is_extension_op = op.as_extension_op().is_some();
             let ext_result = self.handle_extension_op(&hugr, current_node);
@@ -1200,9 +1186,7 @@ impl HugrEngine {
             }
             // Fall through to quantum op handling
 
-            // =================================================================
-            // Quantum Operations (gates, measurements)
-            // =================================================================
+            // --- Quantum Operations (gates, measurements) ---
             let Some(op) = self.quantum_ops.get(&current_node).cloned() else {
                 continue;
             };
@@ -1925,7 +1909,7 @@ mod tests {
         }
     }
 
-    // ==================== Rotation Gate Tests ====================
+    // --- Rotation Gate Tests ---
 
     /// Helper to create a `HugrEngine` from a `DagCircuit`
     fn engine_from_dag(dag: &DagCircuit) -> HugrEngine {
@@ -2118,7 +2102,7 @@ mod tests {
         assert_eq!(rz_count, 1, "Expected 1 RZ gate");
     }
 
-    // ==================== Two-Qubit Gate Tests ====================
+    // --- Two-Qubit Gate Tests ---
 
     #[test]
     fn test_cx_gate() {
@@ -2230,7 +2214,7 @@ mod tests {
         // The key test is that CY/CZ are recognized and extracted correctly
     }
 
-    // ==================== Qubit Tracking Tests ====================
+    // --- Qubit Tracking Tests ---
 
     #[test]
     fn test_qubit_tracking_simple() {
@@ -2313,7 +2297,7 @@ mod tests {
         assert!(!ops.is_empty(), "Expected operations in commands");
     }
 
-    // ==================== Engine State Tests ====================
+    // --- Engine State Tests ---
 
     #[test]
     fn test_engine_reset() {
@@ -2354,7 +2338,7 @@ mod tests {
         assert_eq!(engine.quantum_ops.len(), cloned.quantum_ops.len());
     }
 
-    // ==================== Edge Case Tests ====================
+    // --- Edge Case Tests ---
 
     #[test]
     fn test_empty_hugr() {
@@ -2396,7 +2380,7 @@ mod tests {
         assert!(debug_str.contains("has_hugr"));
     }
 
-    // ==================== Control Flow Tests ====================
+    // --- Control Flow Tests ---
 
     #[test]
     fn test_no_conditionals_in_simple_hugr() {
@@ -2471,7 +2455,7 @@ mod tests {
         );
     }
 
-    // ==================== Conditional HUGR Tests ====================
+    // --- Conditional HUGR Tests ---
 
     #[test]
     fn test_load_conditional_hugr() {
@@ -2661,7 +2645,7 @@ mod tests {
         // Full correctness requires integration with a quantum simulator
     }
 
-    // ==================== Integration Tests with Quantum Simulator ====================
+    // --- Integration Tests with Quantum Simulator ---
 
     #[test]
     fn test_bell_state_with_quest() {
@@ -2984,7 +2968,7 @@ mod tests {
         }
     }
 
-    // ==================== Simple Conditional HUGR Tests ====================
+    // --- Simple Conditional HUGR Tests ---
     // These tests use simpler conditional HUGRs with only 1 Conditional node
     // for easier validation and debugging.
 

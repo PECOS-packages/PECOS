@@ -44,10 +44,6 @@ use pecos_core::{Angle64, QubitId, TimeUnits};
 use smallvec::SmallVec;
 use std::collections::BTreeSet;
 
-// ============================================================================
-// BitVec - Efficient bit vector implementation
-// ============================================================================
-
 /// Simple bit vector implementation using u64 words.
 ///
 /// Provides O(1) get/set operations with excellent cache locality.
@@ -144,10 +140,6 @@ impl BitVec {
     }
 }
 
-// ============================================================================
-// QubitState Enum
-// ============================================================================
-
 /// Activity state of a qubit in the noise system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QubitState {
@@ -158,10 +150,6 @@ pub enum QubitState {
     /// Qubit is outside the computational subspace.
     Leaked,
 }
-
-// ============================================================================
-// GateInfo - Gate context for dynamic noise parameters
-// ============================================================================
 
 /// Information about the current gate being processed.
 ///
@@ -201,10 +189,6 @@ impl GateInfo {
     }
 }
 
-// ============================================================================
-// IdleInfo - Idle event context for time-dependent noise
-// ============================================================================
-
 /// Information about the current idle event being processed.
 ///
 /// This struct is used to pass idle duration to composite primitives that need
@@ -228,10 +212,6 @@ impl IdleInfo {
         self.duration.as_f64()
     }
 }
-
-// ============================================================================
-// NoiseContext - Main context using BitVec
-// ============================================================================
 
 /// Shared mutable state for noise channels.
 ///
@@ -329,9 +309,7 @@ impl NoiseContext {
         }
     }
 
-    // ========================================================================
-    // Leakage Tracking
-    // ========================================================================
+    // --- Leakage Tracking ---
 
     /// Mark a qubit as leaked.
     pub fn mark_leaked(&mut self, qubit: QubitId) {
@@ -381,9 +359,7 @@ impl NoiseContext {
         qubits.iter().any(|q| self.leaked.get(q.0))
     }
 
-    // ========================================================================
-    // Measurement Outcome Tracking (for composite-based noise)
-    // ========================================================================
+    // --- Measurement Outcome Tracking ---
 
     /// Set the current measurement outcome for noise processing.
     ///
@@ -406,9 +382,7 @@ impl NoiseContext {
         self.current_outcome
     }
 
-    // ========================================================================
-    // Gate Context Tracking (for composite-based noise with dynamic parameters)
-    // ========================================================================
+    // --- Gate Context Tracking ---
 
     /// Set the current gate information for noise processing.
     ///
@@ -435,9 +409,7 @@ impl NoiseContext {
         self.current_gate.as_ref()
     }
 
-    // ========================================================================
-    // Idle Context Tracking (for composite-based noise with time-dependent parameters)
-    // ========================================================================
+    // --- Idle Context Tracking ---
 
     /// Set the current idle information for noise processing.
     ///
@@ -460,9 +432,7 @@ impl NoiseContext {
         self.current_idle.as_ref()
     }
 
-    // ========================================================================
-    // Correlated Noise Support (for two-qubit gates)
-    // ========================================================================
+    // --- Correlated Noise Support ---
 
     /// Set the current qubit index and gate qubits for correlated noise.
     ///
@@ -520,9 +490,7 @@ impl NoiseContext {
         self.fired_flags = [false; 4];
     }
 
-    // ========================================================================
-    // Two-Stage Fired Flags (for correlated effects)
-    // ========================================================================
+    // --- Two-Stage Fired Flags ---
 
     /// Set the fired flag for the current qubit index.
     ///
@@ -564,9 +532,7 @@ impl NoiseContext {
         self.fired_flags = [false; 4];
     }
 
-    // ========================================================================
-    // Qubit Activity Tracking
-    // ========================================================================
+    // --- Qubit Activity Tracking ---
 
     /// Mark a qubit as prepared (exists and is active in the system).
     ///
@@ -631,9 +597,7 @@ impl NoiseContext {
         }
     }
 
-    // ========================================================================
-    // Crosstalk Support
-    // ========================================================================
+    // --- Crosstalk Support ---
 
     /// Get all prepared qubits except those in the given set.
     ///
@@ -693,9 +657,7 @@ impl NoiseContext {
             .collect()
     }
 
-    // ========================================================================
-    // Noiseless Gates
-    // ========================================================================
+    // --- Noiseless Gates ---
 
     /// Add a gate type to the noiseless set.
     ///
@@ -720,9 +682,7 @@ impl NoiseContext {
         self.noiseless_gates.clear();
     }
 
-    // ========================================================================
-    // Reset
-    // ========================================================================
+    // --- Reset ---
 
     /// Reset the context for a new shot.
     ///
@@ -741,9 +701,7 @@ impl NoiseContext {
         // Note: noiseless_gates and gate_definitions are configuration, not per-shot state
     }
 
-    // ========================================================================
-    // Gate Definitions
-    // ========================================================================
+    // --- Gate Definitions ---
 
     /// Set gate definitions for this context.
     ///

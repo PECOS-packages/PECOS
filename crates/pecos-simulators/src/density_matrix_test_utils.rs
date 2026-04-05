@@ -30,9 +30,7 @@
 
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 
-// ============================================================================
-// Density Matrix Simulator Marker Trait
-// ============================================================================
+// --- Density Matrix Simulator Marker Trait ---
 
 /// Marker trait for density matrix simulators.
 ///
@@ -120,9 +118,7 @@ macro_rules! density_matrix_test_suite {
     };
 }
 
-// ============================================================================
-// Test Suite Functions
-// ============================================================================
+// --- Test Suite Functions ---
 
 /// Run the shared Clifford gate tests on a density matrix simulator.
 pub fn run_density_matrix_clifford_suite<S: CliffordGateable + QuantumSimulator>(
@@ -155,9 +151,6 @@ pub fn run_density_matrix_test_suite<
     run_density_matrix_rotation_suite(sim, num_qubits);
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

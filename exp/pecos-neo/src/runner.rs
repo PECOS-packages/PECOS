@@ -1238,7 +1238,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 // Execute through unified precedence chain
                 let executed =
                     self.try_execute_override(sim, gate_id, qubits, command.angles.as_slice())
-                        || self.try_execute_clifford(sim, gate_id, qubits)
+                        || Self::try_execute_clifford(sim, gate_id, qubits)
                         || self.rotation_executor.is_some_and(|executor| {
                             executor(sim, gate_id, command.angles.as_slice(), qubits)
                         });
@@ -1361,7 +1361,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 self.execute_gate(sim, *gate_id, qubits, angles, depth)?;
             }
             AdaptedOp::Prep { qubit, basis } => {
-                self.execute_prep(sim, *qubit, *basis);
+                Self::execute_prep(sim,*qubit, *basis);
             }
             AdaptedOp::Measure {
                 qubit,
@@ -1423,7 +1423,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Try execution in order of precedence
         let executed = self.try_execute_override(sim, gate_id, qubits, angles)
-            || self.try_execute_clifford(sim, gate_id, qubits)
+            || Self::try_execute_clifford(sim, gate_id, qubits)
             || self
                 .rotation_executor
                 .is_some_and(|executor| executor(sim, gate_id, angles, qubits));
@@ -1453,7 +1453,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Try to execute a Clifford gate natively via trait methods.
-    fn try_execute_clifford(&mut self, sim: &mut S, gate_id: GateId, qubits: &[QubitId]) -> bool {
+    fn try_execute_clifford(sim: &mut S, gate_id: GateId, qubits: &[QubitId]) -> bool {
         let Some(gate_type) = gate_id.try_to_gate_type() else {
             return false;
         };
@@ -1565,7 +1565,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     // ================================================================
 
     /// Execute preparation in a given basis.
-    fn execute_prep(&mut self, sim: &mut S, qubit: QubitId, basis: PrepBasis) {
+    fn execute_prep(sim: &mut S, qubit: QubitId, basis: PrepBasis) {
         sim.pz(&[qubit]);
         match basis {
             PrepBasis::Z => {}

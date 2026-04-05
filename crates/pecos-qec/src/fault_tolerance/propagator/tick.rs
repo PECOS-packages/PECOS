@@ -141,7 +141,7 @@ impl<'a> TickFaultAnalyzer<'a> {
         }
 
         // Build reverse maps
-        self.build_reverse_maps(&mut map);
+        Self::build_reverse_maps(&mut map);
 
         map
     }
@@ -238,7 +238,7 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                     if touches_active {
                         // Apply gate backward
-                        self.apply_gate_backward(&mut prop, gate);
+                        Self::apply_gate_backward(&mut prop, gate);
 
                         // Update active qubits based on new Pauli state
                         for q in &gate.qubits {
@@ -328,7 +328,7 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                 if touches_active {
                     // Apply gate backward
-                    self.apply_gate_backward(&mut prop, gate);
+                    Self::apply_gate_backward(&mut prop, gate);
 
                     // Update active qubits based on new Pauli state
                     for q in &gate.qubits {
@@ -464,7 +464,7 @@ impl<'a> TickFaultAnalyzer<'a> {
     /// - H: Same as forward (H is self-adjoint)
     /// - SZ (S gate): X → -Y, Y → X, Z → Z (adjoint of forward)
     #[inline]
-    fn apply_gate_backward(&self, prop: &mut PauliProp, gate: &pecos_core::Gate) {
+    fn apply_gate_backward(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         // Access gate.qubits directly - no allocation needed
         let qubits = &gate.qubits;
 
@@ -591,7 +591,7 @@ impl<'a> TickFaultAnalyzer<'a> {
     }
 
     /// Builds reverse maps (detector -> faults, logical -> faults).
-    fn build_reverse_maps(&self, map: &mut FaultInfluenceMap) {
+    fn build_reverse_maps(map: &mut FaultInfluenceMap) {
         for (loc, influence) in &map.influences {
             for (pauli, detectors) in influence.detector_flips.iter().enumerate() {
                 for detector in detectors {

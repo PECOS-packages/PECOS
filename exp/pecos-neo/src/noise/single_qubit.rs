@@ -240,7 +240,7 @@ impl NoiseChannel for SingleQubitChannel {
                 if ctx.is_noiseless(*gate_type) {
                     return NoiseResponse::None;
                 }
-                self.handle_before_gate(qubits, ctx, rng)
+                Self::handle_before_gate(qubits, ctx, rng)
             }
             NoiseEvent::AfterGate {
                 gate_type, qubits, ..
@@ -279,7 +279,7 @@ impl NoiseChannel for SingleQubitChannel {
                 if ctx.is_noiseless(*gate_type) {
                     return Some(NoiseResponse::None);
                 }
-                Some(self.handle_before_gate(qubits, ctx, rng))
+                Some(Self::handle_before_gate(qubits, ctx, rng))
             }
             NoiseEvent::AfterGate {
                 gate_type, qubits, ..
@@ -314,7 +314,6 @@ impl NoiseChannel for SingleQubitChannel {
 impl SingleQubitChannel {
     /// Handle `BeforeGate` event - check for leaked qubits and skip gate if needed.
     fn handle_before_gate(
-        &self,
         qubits: &[pecos_core::QubitId],
         ctx: &NoiseContext,
         _rng: &mut PecosRng,

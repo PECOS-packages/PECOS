@@ -894,7 +894,7 @@ impl CompositeNoiseModelBuilder {
 
         // MeasureLeaked handling: return outcome 2 for leaked qubits
         if self.handle_measure_leaked {
-            let measure_leaked_noise = self.build_measure_leaked_noise();
+            let measure_leaked_noise = Self::build_measure_leaked_noise();
             let channel = CompositeChannel::new("flow_measure_leaked", measure_leaked_noise)
                 .with_filter(CompositeEventFilter::AfterMeasurement);
             model = model.add_channel(channel);
@@ -934,7 +934,7 @@ impl CompositeNoiseModelBuilder {
     /// Build `MeasureLeaked` noise primitive.
     ///
     /// For `MeasureLeaked` gates, leaked qubits return outcome 2.
-    fn build_measure_leaked_noise(&self) -> BoxSeq {
+    fn build_measure_leaked_noise() -> BoxSeq {
         // Only apply leaked_measurement for MeasureLeaked gates on leaked qubits
         seq![on_gate_type(
             GateType::MeasureLeaked,

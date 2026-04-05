@@ -269,7 +269,7 @@ impl QisIrParser {
             }
 
             // Terminators
-            if let Some(term) = self.parse_terminator_line(
+            if let Some(term) = Self::parse_terminator_line(
                 trimmed,
                 &mut in_switch,
                 &mut switch_value,
@@ -294,7 +294,6 @@ impl QisIrParser {
     /// Parse a terminator line. Returns `Some(RawTerminator)` if the line is a
     /// terminator, `None` otherwise.
     fn parse_terminator_line(
-        &mut self,
         line: &str,
         in_switch: &mut bool,
         switch_value: &mut String,

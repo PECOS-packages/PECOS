@@ -78,7 +78,7 @@ impl<'a> CircuitExecutor<'a> {
         let mut measurements = Vec::new();
 
         for (_tick_idx, tick) in self.circuit.iter_ticks_batched() {
-            self.execute_tick(sim, tick, &mut measurements);
+            Self::execute_tick(sim, tick, &mut measurements);
         }
 
         measurements
@@ -87,13 +87,12 @@ impl<'a> CircuitExecutor<'a> {
     /// Runs a single tick on the simulator.
     #[inline]
     fn execute_tick<S: CliffordGateable>(
-        &self,
         sim: &mut S,
         tick: &TickBatches,
         measurements: &mut Vec<MeasurementResult>,
     ) {
         for batch in tick.iter() {
-            self.execute_batch(sim, batch, measurements);
+            Self::execute_batch(sim, batch, measurements);
         }
     }
 
@@ -102,7 +101,6 @@ impl<'a> CircuitExecutor<'a> {
     /// This is the core dispatch function - one match per batch, not per gate.
     #[inline]
     fn execute_batch<S: CliffordGateable>(
-        &self,
         sim: &mut S,
         batch: &GateBatch,
         measurements: &mut Vec<MeasurementResult>,

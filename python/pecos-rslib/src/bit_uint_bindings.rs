@@ -246,6 +246,7 @@ impl PyBitUInt {
 
     /// Always returns False (unsigned).
     #[getter]
+    #[allow(clippy::unused_self)] // Python instance method
     pub fn signed(&self) -> bool {
         false
     }

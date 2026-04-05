@@ -152,7 +152,7 @@ impl CircuitCompiler {
         let hash = Self::compute_hash(gates);
 
         if !self.cache.contains_key(&hash) {
-            let compiled = self.generate_shader(gates, hash);
+            let compiled = Self::generate_shader(gates, hash);
             self.cache.insert(hash, compiled);
         }
 
@@ -167,7 +167,7 @@ impl CircuitCompiler {
     }
 
     /// Generate WGSL shader for a gate sequence
-    fn generate_shader(&self, gates: &[Gate], hash: u64) -> CompiledCircuit {
+    fn generate_shader(gates: &[Gate], hash: u64) -> CompiledCircuit {
         let entry_point = format!("compiled_circuit_{hash:016x}");
 
         let mut wgsl = String::new();
@@ -221,7 +221,7 @@ fn {}(
         // Generate code for each gate
         for (i, gate) in gates.iter().enumerate() {
             writeln!(wgsl, "    // Gate {}: {:?}", i, gate.gate_type).unwrap();
-            wgsl.push_str(&self.generate_gate_code(gate));
+            wgsl.push_str(&Self::generate_gate_code(gate));
             wgsl.push('\n');
         }
 
@@ -243,7 +243,7 @@ fn {}(
     }
 
     /// Generate WGSL code for a single gate
-    fn generate_gate_code(&self, gate: &Gate) -> String {
+    fn generate_gate_code(gate: &Gate) -> String {
         match gate.gate_type {
             GateType::H => format!(
                 r"    {{

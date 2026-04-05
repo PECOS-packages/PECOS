@@ -267,6 +267,7 @@ impl PyGateRegistry {
     }
 
     /// Start building a gate definition.
+    #[allow(clippy::unused_self)] // Python instance method
     fn define(&self, name: String, quantum_arity: usize) -> PyGateDefBuilder {
         PyGateDefBuilder {
             inner: Some(GateDefinitionBuilder::new(name, quantum_arity)),

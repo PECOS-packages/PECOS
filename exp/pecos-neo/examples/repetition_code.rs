@@ -53,7 +53,7 @@ impl RepetitionCode {
         }
     }
 
-    fn num_qubits(&self) -> usize {
+    fn num_qubits() -> usize {
         5
     }
 
@@ -107,7 +107,7 @@ impl RepetitionCode {
     /// Decode syndromes using majority voting.
     ///
     /// Returns the estimated logical measurement outcome.
-    fn decode(&self, data_outcomes: &[bool], syndromes: &[Vec<bool>]) -> bool {
+    fn decode(data_outcomes: &[bool], syndromes: &[Vec<bool>]) -> bool {
         // Simple decoder: use majority vote on final data
         // A more sophisticated decoder would use syndrome history
         let _ = syndromes; // Could be used for better decoding
@@ -151,7 +151,7 @@ fn example_noiseless(code: &RepetitionCode) {
     println!("--- Noiseless Operation ---");
 
     let commands = code.build_circuit(3);
-    let mut state = SparseStab::new(code.num_qubits());
+    let mut state = SparseStab::new(RepetitionCode::num_qubits());
     let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
     let mut all_zero = true;
@@ -188,7 +188,7 @@ fn example_with_noise(code: &RepetitionCode) {
 
     let commands = code.build_circuit(3);
 
-    let mut state = SparseStab::new(code.num_qubits());
+    let mut state = SparseStab::new(RepetitionCode::num_qubits());
     let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
@@ -217,7 +217,7 @@ fn example_with_noise(code: &RepetitionCode) {
             .collect();
 
         // Decode
-        let logical = code.decode(&data_outcomes, &syndromes);
+        let logical = RepetitionCode::decode(&data_outcomes, &syndromes);
 
         results.total_shots += 1;
         if logical {
@@ -270,7 +270,7 @@ fn example_error_scaling(code: &RepetitionCode) {
             .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
             .add_channel(MeasurementChannel::symmetric(p_phys));
 
-        let mut state = SparseStab::new(code.num_qubits());
+        let mut state = SparseStab::new(RepetitionCode::num_qubits());
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -328,7 +328,7 @@ fn example_round_scaling(code: &RepetitionCode) {
             .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
             .add_channel(MeasurementChannel::symmetric(p_phys));
 
-        let mut state = SparseStab::new(code.num_qubits());
+        let mut state = SparseStab::new(RepetitionCode::num_qubits());
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);

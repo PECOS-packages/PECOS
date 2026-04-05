@@ -103,11 +103,11 @@ impl NoiseChannel for LeakageChannel {
         match event {
             NoiseEvent::BeforeGate {
                 gate_type, qubits, ..
-            } => self.handle_before_gate(*gate_type, qubits, ctx),
+            } => Self::handle_before_gate(*gate_type, qubits, ctx),
             NoiseEvent::AfterGate {
                 gate_type, qubits, ..
-            } => self.handle_after_gate(*gate_type, qubits, ctx, rng),
-            NoiseEvent::BeforeMeasurement { qubits } => self.handle_measurement(qubits, ctx, rng),
+            } => Self::handle_after_gate(*gate_type, qubits, ctx, rng),
+            NoiseEvent::BeforeMeasurement { qubits } => Self::handle_measurement(qubits, ctx, rng),
             _ => NoiseResponse::None,
         }
     }
@@ -133,7 +133,6 @@ impl LeakageChannel {
     /// Measurements have special handling in the runner to return appropriate
     /// outcomes for leaked qubits.
     fn handle_before_gate(
-        &self,
         gate_type: GateType,
         qubits: &[pecos_core::QubitId],
         ctx: &NoiseContext,
@@ -157,7 +156,6 @@ impl LeakageChannel {
     /// Note: This only triggers if the gate wasn't skipped (i.e., if leakage
     /// happened during the gate itself, not before).
     fn handle_after_gate(
-        &self,
         gate_type: GateType,
         qubits: &[pecos_core::QubitId],
         ctx: &NoiseContext,
@@ -200,7 +198,6 @@ impl LeakageChannel {
     }
 
     fn handle_measurement(
-        &self,
         qubits: &[pecos_core::QubitId],
         ctx: &NoiseContext,
         rng: &mut PecosRng,

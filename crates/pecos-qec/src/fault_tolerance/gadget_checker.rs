@@ -851,7 +851,7 @@ impl<'a> GadgetChecker<'a> {
                 &FaultConfiguration::new(),
                 0,
             );
-            self.record_result(result, analysis, collect_failures);
+            Self::record_result(result, analysis, collect_failures);
         } else {
             let fault_iter = PauliFaultIterator::new(
                 self.internal_locations.clone(),
@@ -866,7 +866,7 @@ impl<'a> GadgetChecker<'a> {
                     &internal_config,
                     internal_weight,
                 );
-                self.record_result(result, analysis, collect_failures);
+                Self::record_result(result, analysis, collect_failures);
             }
         }
     }
@@ -895,8 +895,8 @@ impl<'a> GadgetChecker<'a> {
         let prop = self.propagate_with_initial_error(prop, internal_faults);
 
         // Extract syndrome
-        let z_syndrome_flips = self.get_syndrome_flips(&prop, &self.config.z_ancillas);
-        let x_syndrome_flips = self.get_syndrome_flips(&prop, &self.config.x_ancillas);
+        let z_syndrome_flips = Self::get_syndrome_flips(&prop, &self.config.z_ancillas);
+        let x_syndrome_flips = Self::get_syndrome_flips(&prop, &self.config.x_ancillas);
 
         let has_syndrome = !z_syndrome_flips.is_empty() || !x_syndrome_flips.is_empty();
 
@@ -906,7 +906,7 @@ impl<'a> GadgetChecker<'a> {
             .logical_zs
             .iter()
             .chain(self.config.logical_xs.iter())
-            .map(|(xs, zs)| self.anticommutes_with_logical(&prop, xs, zs))
+            .map(|(xs, zs)| Self::anticommutes_with_logical(&prop, xs, zs))
             .collect();
 
         let has_logical_error = logical_errors.iter().any(|&e| e);
@@ -915,7 +915,7 @@ impl<'a> GadgetChecker<'a> {
         let output_error_weight = self.calculate_output_error_weight(&prop);
 
         // Classify
-        let classification = self.classify(
+        let classification = Self::classify(
             has_syndrome,
             has_logical_error,
             output_error_weight,
@@ -954,7 +954,7 @@ impl<'a> GadgetChecker<'a> {
             // Apply internal faults at the end (simplified)
             // TODO: Proper interleaved fault injection
             let internal_prop = propagate_faults(self.circuit, internal_faults);
-            self.merge_pauli_props(&mut prop, &internal_prop);
+            Self::merge_pauli_props(&mut prop, &internal_prop);
 
             prop
         }
@@ -1005,7 +1005,7 @@ impl<'a> GadgetChecker<'a> {
     }
 
     /// Merge two `PauliProp` states (XOR the X and Z components).
-    fn merge_pauli_props(&self, target: &mut PauliProp, source: &PauliProp) {
+    fn merge_pauli_props(target: &mut PauliProp, source: &PauliProp) {
         // XOR the X and Z bits from source into target
         for q in source.get_x_qubits() {
             target.track_x(&[q]);
@@ -1016,7 +1016,7 @@ impl<'a> GadgetChecker<'a> {
     }
 
     /// Get which syndrome qubits have flipped.
-    fn get_syndrome_flips(&self, prop: &PauliProp, ancillas: &[usize]) -> Vec<usize> {
+    fn get_syndrome_flips(prop: &PauliProp, ancillas: &[usize]) -> Vec<usize> {
         ancillas
             .iter()
             .filter(|&&q| prop.contains_x(q))
@@ -1025,7 +1025,7 @@ impl<'a> GadgetChecker<'a> {
     }
 
     /// Check if error anticommutes with a logical operator.
-    fn anticommutes_with_logical(&self, prop: &PauliProp, xs: &[usize], zs: &[usize]) -> bool {
+    fn anticommutes_with_logical(prop: &PauliProp, xs: &[usize], zs: &[usize]) -> bool {
         // Error anticommutes with logical if odd number of anticommuting positions
         let mut count = 0;
 
@@ -1068,7 +1068,6 @@ impl<'a> GadgetChecker<'a> {
 
     /// Classify a fault combination result.
     fn classify(
-        &self,
         has_syndrome: bool,
         has_logical_error: bool,
         output_error_weight: usize,
@@ -1089,7 +1088,6 @@ impl<'a> GadgetChecker<'a> {
 
     /// Record a result in the analysis.
     fn record_result(
-        &self,
         result: GadgetFaultResult,
         analysis: &mut GadgetAnalysis,
         collect_failures: bool,
@@ -1156,7 +1154,7 @@ impl<'a> GadgetChecker<'a> {
             }
         }
 
-        self.build_decoder_analysis(max_weight, stats)
+        Self::build_decoder_analysis(max_weight, stats)
     }
 
     fn analyze_decoder_internal(
@@ -1248,7 +1246,6 @@ impl<'a> GadgetChecker<'a> {
 
     /// Build decoder analysis from collected data.
     fn build_decoder_analysis(
-        &self,
         max_weight: usize,
         stats: DecoderAccumulator,
     ) -> GadgetDecoderAnalysis {
@@ -1344,7 +1341,7 @@ impl<'a> GadgetChecker<'a> {
             }
         }
 
-        self.build_decoder_analysis(max_weight, stats)
+        Self::build_decoder_analysis(max_weight, stats)
     }
 
     fn analyze_follow_up_internal(
@@ -1497,7 +1494,7 @@ impl<'a> GadgetChecker<'a> {
             }
         }
 
-        self.build_history_analysis(
+        Self::build_history_analysis(
             rounds,
             total_tested,
             history_map,
@@ -1647,8 +1644,8 @@ impl<'a> GadgetChecker<'a> {
             let prop = self.propagate_up_to_tick(input_faults, internal_faults, round.tick);
 
             // Build syndrome for this round
-            let z_flips = self.get_syndrome_flips(&prop, &round.z_qubits);
-            let x_flips = self.get_syndrome_flips(&prop, &round.x_qubits);
+            let z_flips = Self::get_syndrome_flips(&prop, &round.z_qubits);
+            let x_flips = Self::get_syndrome_flips(&prop, &round.x_qubits);
 
             let mut round_syndrome = Vec::new();
             for &q in &round.z_qubits {
@@ -1764,7 +1761,6 @@ impl<'a> GadgetChecker<'a> {
 
     /// Build history analysis from collected data.
     fn build_history_analysis(
-        &self,
         rounds: Vec<MeasurementRound>,
         total_tested: usize,
         history_map: HashMap<Vec<Vec<u8>>, (usize, usize)>,

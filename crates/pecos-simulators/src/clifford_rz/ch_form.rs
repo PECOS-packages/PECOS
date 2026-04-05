@@ -1750,7 +1750,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let z_q = !y_q; // y and z always differ at pivot
 
         // Call the single-qubit H decomposition.
-        let (omega_factor, a, b, c) = self.h_decompose(self.v.contains(pivot), y_q, z_q, delta);
+        let (omega_factor, a, b, c) = Self::h_decompose(self.v.contains(pivot), y_q, z_q, delta);
 
         // Update state.
         let mut new_s = y.clone();
@@ -1784,7 +1784,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
     ///
     /// Precondition: y != z. From Proposition 4, case analysis.
     fn h_decompose(
-        &self,
         v_q: bool,
         y: bool,
         z: bool,

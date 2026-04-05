@@ -46,7 +46,7 @@ impl RepetitionCodeD3 {
         }
     }
 
-    fn num_qubits(&self) -> usize {
+    fn num_qubits() -> usize {
         5 // 3 data + 2 ancilla
     }
 }
@@ -166,7 +166,7 @@ fn run_general_noise_repetition(
     num_rounds: usize,
     num_shots: usize,
 ) -> SyndromeStatistics {
-    let quantum = Box::new(StateVecEngine::new(code.num_qubits()));
+    let quantum = Box::new(StateVecEngine::new(RepetitionCodeD3::num_qubits()));
     let mut system = QuantumSystem::new(Box::new(noise_model), quantum);
     system.set_seed(42);
 
@@ -335,7 +335,7 @@ fn run_composable_noise_repetition(
         let noise_model = noise_config.build();
 
         // Run with fresh simulator and RNG state per shot for better independence
-        let mut state = SparseStab::new(code.num_qubits());
+        let mut state = SparseStab::new(RepetitionCodeD3::num_qubits());
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise_model)
             .with_seed(42 + shot as u64);

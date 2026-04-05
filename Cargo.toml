@@ -248,4 +248,3 @@ items-after-statements = "allow"  # 50 hits -- local helper pattern, review indi
 missing-errors-doc = "allow"      # 35 hits -- need meaningful error docs
 missing-panics-doc = "allow"      # 31 hits -- need meaningful panic docs
 too-many-lines = "allow"          # ~40 hits -- long functions to refactor
-unused-self = "allow"             # 41 hits -- review: make associated fn or add local allow

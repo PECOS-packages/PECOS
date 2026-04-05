@@ -85,7 +85,7 @@ impl<'a> InfluenceBuilder<'a> {
         let measurement_info = self.run_symbolic_simulation();
 
         // Step 2: Extract detectors from deterministic measurements
-        let detectors = self.extract_detectors(&measurement_info);
+        let detectors = Self::extract_detectors(&measurement_info);
 
         // Step 3: Build influence map with backward propagation
         self.build_influence_map_with_detectors(&measurement_info, &detectors)
@@ -173,7 +173,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// that in the noiseless case: `m_i = m_a XOR m_b XOR ...`
     ///
     /// This defines a detector: `D = m_i XOR m_a XOR m_b XOR ... = 0` always.
-    fn extract_detectors(&self, info: &MeasurementInfo) -> Vec<DetectorDef> {
+    fn extract_detectors(info: &MeasurementInfo) -> Vec<DetectorDef> {
         let mut detectors = Vec::new();
 
         for result in info.history.iter() {
@@ -214,10 +214,10 @@ impl<'a> InfluenceBuilder<'a> {
         let mut map = DagFaultInfluenceMap::with_capacity(num_locations);
 
         // Copy locations from analyzer
-        map.locations = self.extract_locations(propagator);
+        map.locations = Self::extract_locations(propagator);
 
         // Build measurement node lookup
-        let measurements = self.extract_measurements(propagator);
+        let measurements = Self::extract_measurements(propagator);
         map.measurements.clone_from(&measurements);
 
         // Create DetectorId entries for each detector
@@ -268,7 +268,7 @@ impl<'a> InfluenceBuilder<'a> {
         let mut recorder = CompoundRecorder::new(map.locations.len(), num_detectors, num_logicals);
 
         // Propagate from each detector
-        self.propagate_detectors(propagator, info, detectors, &mut recorder);
+        Self::propagate_detectors(propagator, info, detectors, &mut recorder);
 
         // Propagate from logicals
         self.propagate_logicals(propagator, &mut recorder);
@@ -280,7 +280,7 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Extract fault locations from the propagator.
-    fn extract_locations(&self, propagator: &DagPropagator<'_>) -> Vec<DagSpacetimeLocation> {
+    fn extract_locations(propagator: &DagPropagator<'_>) -> Vec<DagSpacetimeLocation> {
         let mut locations = Vec::new();
 
         for &node in propagator.topo_order() {
@@ -331,7 +331,7 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Extract measurements from the propagator.
-    fn extract_measurements(&self, propagator: &DagPropagator<'_>) -> Vec<(usize, usize, u8)> {
+    fn extract_measurements(propagator: &DagPropagator<'_>) -> Vec<(usize, usize, u8)> {
         let mut measurements = Vec::new();
 
         for &node in propagator.topo_order() {
@@ -352,7 +352,6 @@ impl<'a> InfluenceBuilder<'a> {
 
     /// Propagate backward from all detectors.
     fn propagate_detectors(
-        &self,
         propagator: &DagPropagator<'_>,
         info: &MeasurementInfo,
         detectors: &[DetectorDef],
@@ -385,7 +384,7 @@ impl<'a> InfluenceBuilder<'a> {
             }
 
             // Propagate the combined observable backward
-            self.propagate_observable(
+            Self::propagate_observable(
                 propagator,
                 &combined_prop,
                 det_idx,
@@ -415,7 +414,7 @@ impl<'a> InfluenceBuilder<'a> {
                 prop.track_x(&[q]);
             }
 
-            self.propagate_observable(
+            Self::propagate_observable(
                 propagator,
                 &prop,
                 logical_idx,
@@ -435,7 +434,7 @@ impl<'a> InfluenceBuilder<'a> {
                 prop.track_z(&[q]);
             }
 
-            self.propagate_observable(
+            Self::propagate_observable(
                 propagator,
                 &prop,
                 logical_idx,
@@ -451,7 +450,6 @@ impl<'a> InfluenceBuilder<'a> {
     /// Propagate a single observable backward and record influences.
     #[allow(clippy::too_many_arguments)]
     fn propagate_observable(
-        &self,
         propagator: &DagPropagator<'_>,
         initial_prop: &PauliProp,
         target_idx: usize,
@@ -484,14 +482,14 @@ impl<'a> InfluenceBuilder<'a> {
         }
 
         // Build location index for recording
-        let loc_map = self.build_location_map(propagator);
+        let loc_map = Self::build_location_map(propagator);
 
         // Process gates in reverse topological order
         while let Some((_, node)) = heap.pop() {
             if let Some(gate) = propagator.gate(node) {
                 // Record influences at before=false location
                 if let Some(&loc_idx) = loc_map.get(&(node, false)) {
-                    self.record_influence(&prop, loc_idx, target_idx, is_detector, recorder);
+                    Self::record_influence(&prop, loc_idx, target_idx, is_detector, recorder);
                 }
 
                 // Track which qubits were active before the gate
@@ -507,7 +505,7 @@ impl<'a> InfluenceBuilder<'a> {
 
                 // Record influences at before=true location
                 if let Some(&loc_idx) = loc_map.get(&(node, true)) {
-                    self.record_influence(&prop, loc_idx, target_idx, is_detector, recorder);
+                    Self::record_influence(&prop, loc_idx, target_idx, is_detector, recorder);
                 }
 
                 // Check if Pauli spread to new qubits
@@ -536,7 +534,6 @@ impl<'a> InfluenceBuilder<'a> {
 
     /// Build a map from (node, before) to location index.
     fn build_location_map(
-        &self,
         propagator: &DagPropagator<'_>,
     ) -> std::collections::HashMap<(usize, bool), usize> {
         let mut map = std::collections::HashMap::new();
@@ -573,7 +570,6 @@ impl<'a> InfluenceBuilder<'a> {
 
     /// Record influence of a fault at a location on a target (detector or logical).
     fn record_influence(
-        &self,
         prop: &PauliProp,
         loc_idx: usize,
         target_idx: usize,
@@ -582,7 +578,7 @@ impl<'a> InfluenceBuilder<'a> {
     ) {
         // Check each Pauli type
         for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
-            if self.fault_anticommutes(prop, pauli) {
+            if Self::fault_anticommutes(prop, pauli) {
                 if is_detector {
                     recorder.record_detector(loc_idx, pauli, target_idx as u32);
                 } else {
@@ -593,7 +589,7 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Check if a fault Pauli anticommutes with the propagated observable.
-    fn fault_anticommutes(&self, prop: &PauliProp, fault: Pauli) -> bool {
+    fn fault_anticommutes(prop: &PauliProp, fault: Pauli) -> bool {
         let mut anticom_count = 0;
 
         match fault {

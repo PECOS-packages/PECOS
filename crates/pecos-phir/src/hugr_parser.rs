@@ -158,14 +158,14 @@ impl HugrToPhirConverter {
         let mut module = ModuleOp::new("hugr_module");
 
         // Find the container node (DFG or DataflowBlock) holding operations
-        let dfg_node = self.find_operations_container(hugr).ok_or_else(|| {
+        let dfg_node = Self::find_operations_container(hugr).ok_or_else(|| {
             PhirError::internal(
                 "No operations container (DFG or DataflowBlock) found in HUGR".to_string(),
             )
         })?;
 
         // Gather DFG children in topological order
-        let children = self.topological_children(hugr, dfg_node);
+        let children = Self::topological_children(hugr, dfg_node);
 
         // Count qubits and measurements
         let num_qubits = count_ops(hugr, &children, "QAlloc");
@@ -246,7 +246,7 @@ impl HugrToPhirConverter {
     /// Guppy-compiled HUGRs use: `Module -> FuncDefn -> CFG -> DataflowBlock`.
     /// Other tools may use: `Module -> FuncDefn -> DFG`.
     /// Handles both structures.
-    fn find_operations_container(&self, hugr: &Hugr) -> Option<Node> {
+    fn find_operations_container(hugr: &Hugr) -> Option<Node> {
         // First: look for FuncDefn and check its children
         for node in hugr.nodes() {
             if matches!(hugr.get_optype(node), OpType::FuncDefn(_)) {
@@ -282,7 +282,7 @@ impl HugrToPhirConverter {
     }
 
     /// Get children of a container in topological order using a work-queue approach.
-    fn topological_children(&self, hugr: &Hugr, container: Node) -> Vec<Node> {
+    fn topological_children(hugr: &Hugr, container: Node) -> Vec<Node> {
         let children: Vec<Node> = hugr.children(container).collect();
         let child_set: BTreeSet<usize> = children.iter().map(|n| n.index()).collect();
 
@@ -292,7 +292,7 @@ impl HugrToPhirConverter {
 
         // Seed with nodes whose internal predecessors are all satisfied
         for &child in &children {
-            if self.all_internal_preds_ready(hugr, child, &processed, &child_set) {
+            if Self::all_internal_preds_ready(hugr, child, &processed, &child_set) {
                 queue.push_back(child);
             }
         }
@@ -307,7 +307,7 @@ impl HugrToPhirConverter {
             // Check if any unprocessed children are now ready
             for &child in &children {
                 if !processed.contains(&child.index())
-                    && self.all_internal_preds_ready(hugr, child, &processed, &child_set)
+                    && Self::all_internal_preds_ready(hugr, child, &processed, &child_set)
                 {
                     queue.push_back(child);
                 }
@@ -319,7 +319,6 @@ impl HugrToPhirConverter {
 
     /// Check if all predecessors of `node` that are within `container_set` have been processed.
     fn all_internal_preds_ready(
-        &self,
         hugr: &Hugr,
         node: Node,
         processed: &BTreeSet<usize>,
@@ -443,7 +442,7 @@ impl HugrToPhirConverter {
                 _ => {
                     // Standard quantum gate
                     let angle = if is_rotation_op(&op_name) {
-                        self.extract_angle(hugr, node, num_q_in)
+                        Self::extract_angle(hugr, node, num_q_in)
                     } else {
                         None
                     };
@@ -498,7 +497,7 @@ impl HugrToPhirConverter {
     ///
     /// Traces back through Const / `LoadConstant` / `from_halfturns_unchecked` chains.
     /// Returns the angle in radians.
-    fn extract_angle(&self, hugr: &Hugr, node: Node, num_qubit_inputs: usize) -> Option<f64> {
+    fn extract_angle(hugr: &Hugr, node: Node, num_qubit_inputs: usize) -> Option<f64> {
         let angle_port = IncomingPort::from(num_qubit_inputs);
         let (src_node, _) = hugr.single_linked_output(node, angle_port)?;
         let (value, is_half_turns) = trace_const(hugr, src_node, 0)?;

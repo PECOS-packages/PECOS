@@ -1556,6 +1556,7 @@ impl Array {
     /// The @ operator is not supported. Provide a helpful error directing
     /// users to * for matrix multiplication and .`elemwise_mul()` for
     /// element-wise multiplication.
+    #[allow(clippy::unused_self)] // Python instance method
     fn __matmul__(&self, _other: &Bound<'_, PyAny>, _py: Python<'_>) -> PyResult<Py<PyAny>> {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "The @ operator is not supported for PECOS Arrays. \

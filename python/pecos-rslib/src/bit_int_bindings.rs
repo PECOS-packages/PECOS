@@ -290,6 +290,7 @@ impl PyBitInt {
 
     /// Always returns True (signed).
     #[getter]
+    #[allow(clippy::unused_self)] // Python instance method
     pub fn signed(&self) -> bool {
         true
     }

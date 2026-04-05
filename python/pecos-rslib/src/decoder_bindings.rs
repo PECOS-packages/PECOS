@@ -1125,6 +1125,7 @@ impl PyBpOsdDecoder {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
+    #[allow(clippy::unused_self)] // Python instance method
     fn __repr__(&self) -> String {
         "BpOsdDecoder(...)".to_string()
     }
@@ -1255,6 +1256,7 @@ impl PyBpLsdDecoder {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
+    #[allow(clippy::unused_self)] // Python instance method
     fn __repr__(&self) -> String {
         "BpLsdDecoder(...)".to_string()
     }
@@ -1364,6 +1366,7 @@ impl PyUnionFindDecoder {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
+    #[allow(clippy::unused_self)] // Python instance method
     fn __repr__(&self) -> String {
         "UnionFindDecoder(...)".to_string()
     }

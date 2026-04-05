@@ -267,6 +267,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Returns an error if GPU initialization fails.
     #[allow(clippy::too_many_lines)] // GPU initialization requires many setup steps
     pub fn with_seed(num_qubits: usize, seed: u64) -> Result<Self, String> {
+        // Max 32K measurements for deferred measurements (enough for large surface codes)
+        const MAX_BATCH_QUBITS_STAGING: u64 = 32 * 1024;
+        // Batch measurement support
+        // Max 32K measurements per batch (should be plenty for any practical circuit)
+        const MAX_BATCH_QUBITS: u64 = 32 * 1024;
         let rng = R::seed_from_u64(seed);
 
         // Initialize wgpu
@@ -379,8 +384,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         // One u32 per generator for anticommuting flags (not packed)
         let anticommuting_size = u64::from(num_qubits) * 4;
 
-        // Max 32K measurements for deferred measurements (enough for large surface codes)
-        const MAX_BATCH_QUBITS_STAGING: u64 = 32 * 1024;
         let deferred_size = MAX_BATCH_QUBITS_STAGING * 4;
 
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -795,9 +798,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let (subgroup_result_buffer, subgroup_find_pipeline, subgroup_bind_group) =
             (None, None, None);
 
-        // Batch measurement support
-        // Max 32K measurements per batch (should be plenty for any practical circuit)
-        const MAX_BATCH_QUBITS: u64 = 32 * 1024;
         let batch_qubits_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Batch Qubits Buffer"),
             size: (MAX_BATCH_QUBITS + 1) * 4, // +1 for count header
@@ -2781,11 +2781,6 @@ mod tests {
             CliffordGate, generate_random_clifford_circuit,
         };
 
-        let Some(mut gpu) = gpu_sim(4, 42) else {
-            return;
-        };
-        let mut cpu = SparseStab::new(4);
-
         // Helper to read GPU sign state
         fn read_gpu_signs(gpu: &GpuStab) -> (Vec<bool>, Vec<bool>) {
             let gen_words = gpu.gen_words as usize;
@@ -2820,6 +2815,11 @@ mod tests {
             }
             (sign_minus, sign_i)
         }
+
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
+        let mut cpu = SparseStab::new(4);
 
         let seed = 12354u64;
         let mut rng = PecosRng::seed_from_u64(seed);
@@ -2981,11 +2981,6 @@ mod tests {
     /// Test SX gate in isolation
     #[test]
     fn test_gpu_vs_cpu_sx_gate() {
-        let Some(mut gpu) = gpu_sim(4, 42) else {
-            return;
-        };
-        let mut cpu = SparseStab::new(4);
-
         // Helper to read GPU sign state
         fn read_gpu_signs(gpu: &GpuStab) -> (Vec<bool>, Vec<bool>) {
             let gen_words = gpu.gen_words as usize;
@@ -3020,6 +3015,11 @@ mod tests {
             }
             (sign_minus, sign_i)
         }
+
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
+        let mut cpu = SparseStab::new(4);
 
         println!("SX gate test on fresh state:");
 
@@ -3091,11 +3091,6 @@ mod tests {
             CliffordGate, generate_random_clifford_circuit,
         };
 
-        let Some(mut gpu) = gpu_sim(4, 42) else {
-            return;
-        };
-        let mut cpu = SparseStab::new(4);
-
         // Helper to read GPU sign state
         fn read_gpu_signs(gpu: &GpuStab) -> (Vec<bool>, Vec<bool>) {
             let gen_words = gpu.gen_words as usize;
@@ -3130,6 +3125,11 @@ mod tests {
             }
             (sign_minus, sign_i)
         }
+
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
+        let mut cpu = SparseStab::new(4);
 
         let seed = 12358u64;
         let mut rng = PecosRng::seed_from_u64(seed);
@@ -3242,23 +3242,6 @@ mod tests {
             apply_circuit, generate_random_clifford_circuit,
         };
 
-        let Some(mut gpu) = gpu_sim(4, 42) else {
-            return;
-        };
-        let mut cpu = SparseStab::new(4);
-
-        // Use seed 12354 which was failing
-        let seed = 12354u64;
-        let mut rng = PecosRng::seed_from_u64(seed);
-        let circuit = generate_random_clifford_circuit(&mut rng, 4, 30);
-
-        gpu.reset();
-        cpu.reset();
-        apply_circuit(&mut gpu, &circuit);
-        apply_circuit(&mut cpu, &circuit);
-        gpu.sync();
-        gpu.wait();
-
         // Helper to read GPU sign state
         fn read_gpu_signs(gpu: &GpuStab) -> (Vec<bool>, Vec<bool>) {
             let gen_words = gpu.gen_words as usize;
@@ -3293,6 +3276,23 @@ mod tests {
             }
             (sign_minus, sign_i)
         }
+
+        let Some(mut gpu) = gpu_sim(4, 42) else {
+            return;
+        };
+        let mut cpu = SparseStab::new(4);
+
+        // Use seed 12354 which was failing
+        let seed = 12354u64;
+        let mut rng = PecosRng::seed_from_u64(seed);
+        let circuit = generate_random_clifford_circuit(&mut rng, 4, 30);
+
+        gpu.reset();
+        cpu.reset();
+        apply_circuit(&mut gpu, &circuit);
+        apply_circuit(&mut cpu, &circuit);
+        gpu.sync();
+        gpu.wait();
 
         // Measure qubits one by one and compare
         println!("Sequential measurement test with seed {seed}:");

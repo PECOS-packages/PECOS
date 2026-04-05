@@ -802,9 +802,9 @@ impl CliffordFrame {
     #[inline]
     #[must_use]
     pub fn pauli_xz_bits(self) -> (bool, bool) {
-        debug_assert!(self.is_pauli());
         const PAULI_XZ: [(bool, bool); 4] =
             [(false, false), (true, false), (true, true), (false, true)];
+        debug_assert!(self.is_pauli());
         PAULI_XZ[self.0 as usize]
     }
 
@@ -826,13 +826,13 @@ impl CliffordFrame {
     #[inline]
     #[must_use]
     pub fn push_through_cx(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self, u8) {
+        // Phase: CX†(P1⊗P2)CX = phase * P1'⊗P2'. Nonzero only for XZ→YY and YY→XZ.
+        // Lookup: index = ctrl_pauli * 4 + targ_pauli (both 0-3).
+        const CX_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0];
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
         let new_ctrl = Self::pauli_from_xz(xc, zc ^ zt);
         let new_targ = Self::pauli_from_xz(xc ^ xt, zt);
-        // Phase: CX†(P1⊗P2)CX = phase * P1'⊗P2'. Nonzero only for XZ→YY and YY→XZ.
-        // Lookup: index = ctrl_pauli * 4 + targ_pauli (both 0-3).
-        const CX_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0];
         let phase = CX_PHASE[ctrl_pauli.0 as usize * 4 + targ_pauli.0 as usize];
         (new_ctrl, new_targ, phase)
     }
@@ -844,12 +844,12 @@ impl CliffordFrame {
     #[inline]
     #[must_use]
     pub fn push_through_cz(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self, u8) {
+        // Phase: nonzero only for XY→YX and YX→XY.
+        const CZ_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0, 0];
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
         let new_ctrl = Self::pauli_from_xz(xc, zc ^ xt);
         let new_targ = Self::pauli_from_xz(xt, zt ^ xc);
-        // Phase: nonzero only for XY→YX and YX→XY.
-        const CZ_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0, 0];
         let phase = CZ_PHASE[ctrl_pauli.0 as usize * 4 + targ_pauli.0 as usize];
         (new_ctrl, new_targ, phase)
     }
@@ -1940,7 +1940,6 @@ mod tests {
     fn test_push_through_syy() {
         // SYY = (Sdg⊗Sdg)·SXX·(S⊗S)
         // Build from matrix multiplication
-        let w = std::f64::consts::FRAC_1_SQRT_2;
         type Mat4 = [[f64; 2]; 16];
         const CZERO: [f64; 2] = [0.0, 0.0];
         fn mat4_zero() -> Mat4 {
@@ -1965,6 +1964,7 @@ mod tests {
             }
             r
         }
+        let w = std::f64::consts::FRAC_1_SQRT_2;
         // S⊗S tensor product: diag(1, i, i, -1)
         let mut ss = mat4_zero();
         ss[0] = [1.0, 0.0];

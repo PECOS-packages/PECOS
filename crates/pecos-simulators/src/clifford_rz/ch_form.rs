@@ -548,6 +548,27 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         omega_k: num_complex::Complex64,
         diff_qubits: Option<&[usize]>,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
+        // Phase table: exp(i*k*pi/4) for k mod 8
+        const PHASE_RE: [f64; 8] = [
+            1.0,
+            std::f64::consts::FRAC_1_SQRT_2,
+            0.0,
+            -std::f64::consts::FRAC_1_SQRT_2,
+            -1.0,
+            -std::f64::consts::FRAC_1_SQRT_2,
+            0.0,
+            std::f64::consts::FRAC_1_SQRT_2,
+        ];
+        const PHASE_IM: [f64; 8] = [
+            0.0,
+            std::f64::consts::FRAC_1_SQRT_2,
+            1.0,
+            std::f64::consts::FRAC_1_SQRT_2,
+            0.0,
+            -std::f64::consts::FRAC_1_SQRT_2,
+            -1.0,
+            -std::f64::consts::FRAC_1_SQRT_2,
+        ];
         let n = self.num_qubits;
         if !sc.consistent {
             let z = num_complex::Complex64::new(0.0, 0.0);
@@ -686,27 +707,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // (1+i)^a * (1-i)^b = 2^{(a+b)/2} * exp(i*pi/4*(a-b))
         // Combined with trivial factor: 2^{n_free - n_checked} per trivial qubit.
         let trivial_count = n_free as i32 - n_checked as i32;
-        // Phase table: exp(i*k*pi/4) for k mod 8
-        const PHASE_RE: [f64; 8] = [
-            1.0,
-            std::f64::consts::FRAC_1_SQRT_2,
-            0.0,
-            -std::f64::consts::FRAC_1_SQRT_2,
-            -1.0,
-            -std::f64::consts::FRAC_1_SQRT_2,
-            0.0,
-            std::f64::consts::FRAC_1_SQRT_2,
-        ];
-        const PHASE_IM: [f64; 8] = [
-            0.0,
-            std::f64::consts::FRAC_1_SQRT_2,
-            1.0,
-            std::f64::consts::FRAC_1_SQRT_2,
-            0.0,
-            -std::f64::consts::FRAC_1_SQRT_2,
-            -1.0,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        ];
 
         let compute_factor = |cp: i32,
                               cl1: u32,
@@ -835,6 +835,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         z_qubit: Option<usize>,
         shared_structure: bool,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
+        use super::quadratic_form::QuadraticForm;
         let n = self.num_qubits;
         debug_assert_eq!(n, other.num_qubits);
 
@@ -1280,7 +1281,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         //
         // Quadratic part per pair (p > q):
         //   Q[p,q] = (M2[p,:].F2[q,:] - M1[p,:].F1[q,:])  mod 2
-        use super::quadratic_form::QuadraticForm;
 
         // Precompute v_and_s masks for f_lin computation (avoids per-bit inner loop).
         let mut vs1 = S::with_capacity(n);

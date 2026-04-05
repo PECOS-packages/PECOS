@@ -3,6 +3,9 @@ use pecos_simulators::CliffordGateable;
 use std::time::Instant;
 
 fn main() {
+    type Sim = pecos_simulators::CHForm;
+    type GateFn<S> = Box<dyn Fn(&mut S)>;
+
     let nq: usize = std::env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
@@ -11,7 +14,6 @@ fn main() {
         .nth(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
-    type Sim = pecos_simulators::CHForm;
 
     let mut sim = Sim::new(nq);
     for q in 0..nq {
@@ -20,8 +22,6 @@ fn main() {
     if nq > 1 {
         sim.cx(&[(QubitId(0), QubitId(1))]);
     }
-
-    type GateFn<Sim> = Box<dyn Fn(&mut Sim)>;
 
     let gates: Vec<(&str, GateFn<Sim>, usize)> = vec![
         // Single-qubit gates

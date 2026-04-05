@@ -244,7 +244,6 @@ many-single-char-names = "allow"
 module-name-repetitions = "allow"
 # TODO: localize these allows to specific crates/modules and fix where possible
 needless-pass-by-value = "allow"  # 126 hits -- many are trait conformance, review individually
-items-after-statements = "allow"  # 50 hits -- local helper pattern, review individually
 missing-errors-doc = "allow"      # 35 hits -- need meaningful error docs
 missing-panics-doc = "allow"      # 31 hits -- need meaningful panic docs
 too-many-lines = "allow"          # ~40 hits -- long functions to refactor

@@ -355,6 +355,14 @@ impl<R: Rng> SparseStateVecSoA<R> {
         same_sin_sign: f64,
         diff_sin_sign: f64,
     ) {
+        struct PairInfo {
+            self_pos: u32,
+            partner_pos: u32, // u32::MAX if partner doesn't exist
+            self_idx: usize,
+            partner_idx: usize,
+            same_parity: bool,
+        }
+
         self.ensure_sorted();
         let both_mask = (1usize << q1) | (1usize << q2);
         let mask1 = 1usize << q1;
@@ -378,14 +386,6 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
         // Phase 1: Identify pairs. For each amplitude, find its partner.
         // Process from lower index side only.
-        struct PairInfo {
-            self_pos: u32,
-            partner_pos: u32, // u32::MAX if partner doesn't exist
-            self_idx: usize,
-            partner_idx: usize,
-            same_parity: bool,
-        }
-
         let mut pairs: Vec<PairInfo> = Vec::with_capacity(len);
 
         for i in 0..len {

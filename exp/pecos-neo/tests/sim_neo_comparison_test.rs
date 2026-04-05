@@ -397,6 +397,9 @@ fn test_sim_neo_vs_sim_measurement_noise() {
 
 #[test]
 fn test_sim_neo_vs_sim_conditional_x_correction() {
+    use pecos_neo::program::{ConditionalProgram, ProgramRunner};
+    use pecos_simulators::SparseStab;
+
     // Test: measure qubit, if result is 1, apply X to flip it back
     // QASM: if (c[0] == 1) x q[0];
     //
@@ -433,9 +436,6 @@ fn test_sim_neo_vs_sim_conditional_x_correction() {
     }
 
     // Run with pecos-neo ProgramRunner + ConditionalProgram
-    use pecos_neo::program::{ConditionalProgram, ProgramRunner};
-    use pecos_simulators::SparseStab;
-
     let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let branch = |outcomes: &pecos_neo::outcome::MeasurementOutcomes| {
@@ -488,6 +488,9 @@ fn test_sim_neo_vs_sim_conditional_x_correction() {
 
 #[test]
 fn test_sim_neo_vs_sim_conditional_with_noise() {
+    use pecos_neo::program::{ConditionalProgram, ProgramRunner};
+    use pecos_simulators::SparseStab;
+
     // Test conditional with noise - the correction may fail due to noise
     let p1 = 0.10;
 
@@ -524,9 +527,6 @@ fn test_sim_neo_vs_sim_conditional_with_noise() {
     }
 
     // Run with pecos-neo
-    use pecos_neo::program::{ConditionalProgram, ProgramRunner};
-    use pecos_simulators::SparseStab;
-
     let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let branch = |outcomes: &pecos_neo::outcome::MeasurementOutcomes| {

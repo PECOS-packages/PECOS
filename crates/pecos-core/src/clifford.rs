@@ -470,12 +470,12 @@ impl Clifford {
     /// Panics if called on a two-qubit gate.
     #[must_use]
     pub fn to_unitary_rep_on_qubit(self, q: impl Into<QubitId>) -> UnitaryRep {
+        use crate::unitary_rep;
         assert!(
             self.is_1q(),
             "to_unitary_rep_on_qubit called on two-qubit gate {self}"
         );
         let q = q.into();
-        use crate::unitary_rep;
         match self {
             // Paulis and identity
             Clifford::I => unitary_rep::I(q),
@@ -522,13 +522,13 @@ impl Clifford {
         q0: impl Into<QubitId>,
         q1: impl Into<QubitId>,
     ) -> UnitaryRep {
+        use crate::unitary_rep;
         assert!(
             self.is_2q(),
             "to_unitary_rep_on_qubits called on single-qubit gate {self}"
         );
         let a = q0.into();
         let b = q1.into();
-        use crate::unitary_rep;
         match self {
             Clifford::CX => unitary_rep::CX(a, b),
             Clifford::CY => unitary_rep::CY(a, b),

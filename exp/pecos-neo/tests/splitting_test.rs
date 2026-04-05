@@ -818,12 +818,6 @@ fn test_quantum_circuit_subset_simulation() {
     use pecos_neo::noise::{ComposableNoiseModel, SingleQubitChannel};
     use pecos_neo::runner::CircuitRunner;
 
-    // Configuration
-    let num_rounds = 3; // Error correction rounds
-    let p_error = 0.05; // Physical error rate per gate
-    let num_samples = 100;
-    let failure_threshold = 2; // Logical failure if >= 2 syndrome detections
-
     // Noise model factory (creates fresh noise model each time)
     fn make_noise(p: f64) -> ComposableNoiseModel {
         ComposableNoiseModel::new().add_channel(SingleQubitChannel::bit_flip(p))
@@ -839,6 +833,12 @@ fn test_quantum_circuit_subset_simulation() {
             .mz(&[1])
             .build()
     }
+
+    // Configuration
+    let num_rounds = 3; // Error correction rounds
+    let p_error = 0.05; // Physical error rate per gate
+    let num_samples = 100;
+    let failure_threshold = 2; // Logical failure if >= 2 syndrome detections
 
     // Direct Monte Carlo for comparison - run full shots
     let mut direct_failures = 0;

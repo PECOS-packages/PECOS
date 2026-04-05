@@ -266,8 +266,8 @@ impl CliffordRep {
     /// Additionally, all images must have `Sign` phases (`{+1, -1}`), not `{+i, -i}`.
     #[must_use]
     pub fn is_valid(&self) -> bool {
-        let n = self.num_qubits;
         use crate::PauliOperator;
+        let n = self.num_qubits;
 
         for qi in 0..n {
             // Check phases are real (Sign subset of QuarterPhase)

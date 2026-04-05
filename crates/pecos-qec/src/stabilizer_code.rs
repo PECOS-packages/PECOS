@@ -347,11 +347,11 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn repetition(n: usize) -> Self {
+        use pecos_core::pauli::constructors::Zs;
         assert!(
             n >= 2,
             "repetition code requires at least 2 qubits, got {n}"
         );
-        use pecos_core::pauli::constructors::Zs;
         let generators: Vec<PauliString> = (0..n - 1).map(|i| Zs([i, i + 1])).collect();
         Self {
             group: PauliStabilizerGroup::from_generators_unchecked(generators),
@@ -506,8 +506,8 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn toric(l: usize) -> Self {
-        assert!(l >= 2, "toric code requires L >= 2, got {l}");
         use pecos_core::pauli::constructors::{Xs, Zs};
+        assert!(l >= 2, "toric code requires L >= 2, got {l}");
 
         let n = 2 * l * l;
         let horiz = |r: usize, c: usize| r * l + c;

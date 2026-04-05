@@ -1933,11 +1933,6 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
     /// - `p_syndrome`: Probability that each ancilla triggers per round
     #[must_use]
     pub fn run_proper(mut self, p_syndrome: f64) -> SubsetResult {
-        let n = self.config.base.samples_per_level;
-        let p0 = self.config.base.threshold_fraction;
-        let num_rounds = self.config.num_rounds;
-        let mut total_samples = n;
-
         // Data structure to track trajectory history
         #[allow(dead_code)]
         struct TrajHistory {
@@ -1947,6 +1942,11 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
             is_failure: bool,
             base_seed: u64, // Kept for debugging/tracing
         }
+
+        let n = self.config.base.samples_per_level;
+        let p0 = self.config.base.threshold_fraction;
+        let num_rounds = self.config.num_rounds;
+        let mut total_samples = n;
 
         // Step 1: Run all trajectories to completion, recording history
         let mut histories: Vec<TrajHistory> = Vec::with_capacity(n);

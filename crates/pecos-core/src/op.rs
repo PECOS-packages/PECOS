@@ -1367,11 +1367,11 @@ pub fn BitPhaseFlip(p: f64, qubit: impl Into<QubitId>) -> Op {
 #[allow(non_snake_case)]
 #[must_use]
 pub fn Depolarizing2(p: f64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
+    use crate::unitary_rep;
     assert!((0.0..=1.0).contains(&p), "probability p must be in [0, 1]");
     let a = q0.into();
     let b = q1.into();
     let p15 = p / 15.0;
-    use crate::unitary_rep;
     let paulis_1q = [
         unitary_rep::I,
         unitary_rep::X,

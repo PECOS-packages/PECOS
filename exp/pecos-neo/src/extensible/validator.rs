@@ -127,6 +127,7 @@ impl CliffordValidator {
     /// Create a new Clifford validator.
     #[must_use]
     pub fn new() -> Self {
+        use Angle64 as A;
         let mut allowed_gates = GateSupportSet::new();
 
         // Paulis
@@ -162,8 +163,6 @@ impl CliffordValidator {
         allowed_gates.insert(gates::RY);
         allowed_gates.insert(gates::RZ);
         allowed_gates.insert(gates::RZZ);
-
-        use Angle64 as A;
         let allowed_angles = vec![
             A::ZERO,
             A::QUARTER_TURN,        // pi/2
@@ -264,6 +263,7 @@ impl CliffordTValidator {
     /// Create a new Clifford+T validator.
     #[must_use]
     pub fn new() -> Self {
+        use Angle64 as A;
         let mut inner = CliffordValidator::new();
 
         // Add T gates
@@ -271,7 +271,6 @@ impl CliffordTValidator {
         inner.allowed_gates.insert(gates::Tdg);
 
         // Add T angle (pi/4)
-        use Angle64 as A;
         inner.allowed_angles.push(A::HALF_TURN / 4); // pi/4
         inner.allowed_angles.push(A::ZERO - A::HALF_TURN / 4); // -pi/4
 

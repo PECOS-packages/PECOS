@@ -1011,7 +1011,10 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
 
 /// Benchmark batch probability filtering at scale
 fn bench_batch_filtering(c: &mut Criterion) {
-    use pecos_neo::noise::composite::batch::{filter_by_probability, filter_range_by_probability};
+    use pecos_neo::noise::composite::batch::{
+        ProbabilityThreshold, filter_by_probability, filter_by_probability_fast,
+        filter_range_by_probability, sample_noise_1q_batch,
+    };
     use pecos_neo::noise::composite::batch_composite::BatchState;
 
     let mut group = c.benchmark_group("batch_filtering");
@@ -1046,10 +1049,6 @@ fn bench_batch_filtering(c: &mut Criterion) {
     });
 
     // Compare with RngProbabilityExt optimized version
-    use pecos_neo::noise::composite::batch::{
-        ProbabilityThreshold, filter_by_probability_fast, sample_noise_1q_batch,
-    };
-
     group.bench_function("rng_ext_filter_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
         let threshold = ProbabilityThreshold::new(0.001, &rng);

@@ -1181,7 +1181,12 @@ impl<'a> DagFaultAnalyzer<'a> {
 
         for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
             self.propagate_from_measurement_generic(
-                node, qubit, basis, detector_idx, recorder, &mut work,
+                node,
+                qubit,
+                basis,
+                detector_idx,
+                recorder,
+                &mut work,
             );
         }
     }

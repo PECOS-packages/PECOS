@@ -178,6 +178,31 @@ enum ElemType {
     PauliString,
 }
 
+/// Collects flattened elements during polymorphic sequence parsing.
+struct FlatBuffers {
+    f64s: Vec<f64>,
+    complexes: Vec<num_complex::Complex<f64>>,
+    paulis: Vec<Pauli>,
+    paulistrings: Vec<PauliString>,
+    bools: Vec<bool>,
+    i64s: Vec<i64>,
+    elem_type: ElemType,
+}
+
+impl FlatBuffers {
+    fn new(elem_type: ElemType) -> Self {
+        Self {
+            f64s: Vec::new(),
+            complexes: Vec::new(),
+            paulis: Vec::new(),
+            paulistrings: Vec::new(),
+            bools: Vec::new(),
+            i64s: Vec::new(),
+            elem_type,
+        }
+    }
+}
+
 #[pymethods]
 impl Array {
     /// Create a new `Array` from a numpy array or Python sequence
@@ -2087,7 +2112,7 @@ impl Array {
         }
 
         // Parse dtype if provided, otherwise auto-detect
-        let mut elem_type = if let Some(dt) = dtype {
+        let elem_type = if let Some(dt) = dtype {
             Self::parse_dtype(dt)?
         } else {
             // Use Int64 as default for auto-detection, will promote to float/complex if needed
@@ -2095,29 +2120,14 @@ impl Array {
         };
 
         // Flatten and collect all elements
-        let mut flat_f64: Vec<f64> = Vec::new();
-        let mut flat_complex: Vec<num_complex::Complex<f64>> = Vec::new();
-        let mut flat_pauli: Vec<Pauli> = Vec::new();
-        let mut flat_paulistring: Vec<PauliString> = Vec::new();
-        let mut flat_bool: Vec<bool> = Vec::new();
-        let mut flat_i64: Vec<i64> = Vec::new();
-
-        Self::flatten_sequence(
-            data,
-            &mut flat_f64,
-            &mut flat_complex,
-            &mut flat_pauli,
-            &mut flat_paulistring,
-            &mut flat_bool,
-            &mut flat_i64,
-            &mut elem_type,
-            dtype.is_some(), // explicit_dtype flag
-        )?;
+        let mut bufs = FlatBuffers::new(elem_type);
+        Self::flatten_sequence(data, &mut bufs, dtype.is_some())?;
+        let elem_type = bufs.elem_type;
 
         // Create ndarray with the inferred shape
         match elem_type {
             ElemType::Bool => {
-                let arr = ArrayD::from_shape_vec(shape, flat_bool).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.bools).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2126,7 +2136,7 @@ impl Array {
             }
             ElemType::I8 => {
                 // Convert i64 to i8
-                let flat_i8: Vec<i8> = flat_i64.iter().map(|&x| x as i8).collect();
+                let flat_i8: Vec<i8> = bufs.i64s.iter().map(|&x| x as i8).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_i8).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2136,7 +2146,7 @@ impl Array {
             }
             ElemType::I16 => {
                 // Convert i64 to i16
-                let flat_i16: Vec<i16> = flat_i64.iter().map(|&x| x as i16).collect();
+                let flat_i16: Vec<i16> = bufs.i64s.iter().map(|&x| x as i16).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_i16).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2146,7 +2156,7 @@ impl Array {
             }
             ElemType::I32 => {
                 // Convert i64 to i32
-                let flat_i32: Vec<i32> = flat_i64.iter().map(|&x| x as i32).collect();
+                let flat_i32: Vec<i32> = bufs.i64s.iter().map(|&x| x as i32).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_i32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2155,7 +2165,7 @@ impl Array {
                 })
             }
             ElemType::I64 => {
-                let arr = ArrayD::from_shape_vec(shape, flat_i64).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.i64s).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2164,7 +2174,7 @@ impl Array {
             }
             ElemType::U8 => {
                 // Convert i64 to u8
-                let flat_u8: Vec<u8> = flat_i64.iter().map(|&x| x as u8).collect();
+                let flat_u8: Vec<u8> = bufs.i64s.iter().map(|&x| x as u8).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_u8).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2174,7 +2184,7 @@ impl Array {
             }
             ElemType::U16 => {
                 // Convert i64 to u16
-                let flat_u16: Vec<u16> = flat_i64.iter().map(|&x| x as u16).collect();
+                let flat_u16: Vec<u16> = bufs.i64s.iter().map(|&x| x as u16).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_u16).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2184,7 +2194,7 @@ impl Array {
             }
             ElemType::U32 => {
                 // Convert i64 to u32
-                let flat_u32: Vec<u32> = flat_i64.iter().map(|&x| x as u32).collect();
+                let flat_u32: Vec<u32> = bufs.i64s.iter().map(|&x| x as u32).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_u32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2194,7 +2204,7 @@ impl Array {
             }
             ElemType::U64 => {
                 // Convert i64 to u64
-                let flat_u64: Vec<u64> = flat_i64.iter().map(|&x| x as u64).collect();
+                let flat_u64: Vec<u64> = bufs.i64s.iter().map(|&x| x as u64).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_u64).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2204,7 +2214,7 @@ impl Array {
             }
             ElemType::F32 => {
                 // Convert f64 to f32
-                let flat_f32: Vec<f32> = flat_f64.iter().map(|&x| x as f32).collect();
+                let flat_f32: Vec<f32> = bufs.f64s.iter().map(|&x| x as f32).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_f32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2213,7 +2223,7 @@ impl Array {
                 })
             }
             ElemType::F64 => {
-                let arr = ArrayD::from_shape_vec(shape, flat_f64).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.f64s).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2222,7 +2232,8 @@ impl Array {
             }
             ElemType::Complex64 => {
                 // Convert Complex<f64> to Complex<f32>
-                let flat_c64: Vec<num_complex::Complex<f32>> = flat_complex
+                let flat_c64: Vec<num_complex::Complex<f32>> = bufs
+                    .complexes
                     .iter()
                     .map(|&c| num_complex::Complex::new(c.re as f32, c.im as f32))
                     .collect();
@@ -2234,7 +2245,7 @@ impl Array {
                 })
             }
             ElemType::Complex128 => {
-                let arr = ArrayD::from_shape_vec(shape, flat_complex).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.complexes).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2242,7 +2253,7 @@ impl Array {
                 })
             }
             ElemType::Pauli => {
-                let arr = ArrayD::from_shape_vec(shape, flat_pauli).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.paulis).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2250,7 +2261,7 @@ impl Array {
                 })
             }
             ElemType::PauliString => {
-                let arr = ArrayD::from_shape_vec(shape, flat_paulistring).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.paulistrings).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2299,16 +2310,10 @@ impl Array {
         Ok(shape)
     }
 
-    #[allow(clippy::too_many_arguments)] // type-discriminated output buffers for polymorphic parsing
+    /// Flatten a nested sequence into a 1D vector
     fn flatten_sequence(
         data: &Bound<'_, PyAny>,
-        flat_f64: &mut Vec<f64>,
-        flat_complex: &mut Vec<num_complex::Complex<f64>>,
-        flat_pauli: &mut Vec<Pauli>,
-        flat_paulistring: &mut Vec<PauliString>,
-        flat_bool: &mut Vec<bool>,
-        flat_i64: &mut Vec<i64>,
-        elem_type: &mut ElemType,
+        bufs: &mut FlatBuffers,
         explicit_dtype: bool,
     ) -> PyResult<()> {
         use pyo3::types::{PySequence, PyString};
@@ -2328,101 +2333,101 @@ impl Array {
             match &arr.data {
                 ArrayData::Bool(ndarray) => {
                     for val in ndarray {
-                        flat_bool.push(*val);
+                        bufs.bools.push(*val);
                     }
-                    if !explicit_dtype && *elem_type != ElemType::Bool {
-                        *elem_type = ElemType::Bool;
+                    if !explicit_dtype && bufs.elem_type != ElemType::Bool {
+                        bufs.elem_type = ElemType::Bool;
                     }
                 }
                 ArrayData::I8(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(i64::from(*val));
+                        bufs.i64s.push(i64::from(*val));
                     }
                 }
                 ArrayData::I16(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(i64::from(*val));
+                        bufs.i64s.push(i64::from(*val));
                     }
                 }
                 ArrayData::I32(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(i64::from(*val));
+                        bufs.i64s.push(i64::from(*val));
                     }
                 }
                 ArrayData::I64(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(*val);
+                        bufs.i64s.push(*val);
                     }
                 }
                 ArrayData::U8(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(i64::from(*val));
+                        bufs.i64s.push(i64::from(*val));
                     }
                 }
                 ArrayData::U16(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(i64::from(*val));
+                        bufs.i64s.push(i64::from(*val));
                     }
                 }
                 ArrayData::U32(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(i64::from(*val));
+                        bufs.i64s.push(i64::from(*val));
                     }
                 }
                 ArrayData::U64(ndarray) => {
                     for val in ndarray {
-                        flat_i64.push(*val as i64);
+                        bufs.i64s.push(*val as i64);
                     }
                 }
                 ArrayData::F32(ndarray) => {
                     for val in ndarray {
-                        flat_f64.push(f64::from(*val));
+                        bufs.f64s.push(f64::from(*val));
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::F64;
+                        bufs.elem_type = ElemType::F64;
                     }
                 }
                 ArrayData::F64(ndarray) => {
                     for val in ndarray {
-                        flat_f64.push(*val);
+                        bufs.f64s.push(*val);
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::F64;
+                        bufs.elem_type = ElemType::F64;
                     }
                 }
                 ArrayData::Complex64(ndarray) => {
                     for val in ndarray {
-                        flat_complex.push(num_complex::Complex::new(
+                        bufs.complexes.push(num_complex::Complex::new(
                             f64::from(val.re),
                             f64::from(val.im),
                         ));
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::Complex128;
+                        bufs.elem_type = ElemType::Complex128;
                     }
                 }
                 ArrayData::Complex128(ndarray) => {
                     for val in ndarray {
-                        flat_complex.push(*val);
+                        bufs.complexes.push(*val);
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::Complex128;
+                        bufs.elem_type = ElemType::Complex128;
                     }
                 }
                 ArrayData::Pauli(ndarray) => {
                     for val in ndarray {
-                        flat_pauli.push(*val);
+                        bufs.paulis.push(*val);
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::Pauli;
+                        bufs.elem_type = ElemType::Pauli;
                     }
                 }
                 ArrayData::PauliString(ndarray) => {
                     for val in ndarray {
-                        flat_paulistring.push(val.clone());
+                        bufs.paulistrings.push(val.clone());
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::PauliString;
+                        bufs.elem_type = ElemType::PauliString;
                     }
                 }
             }
@@ -2430,71 +2435,38 @@ impl Array {
             // It's a sequence - recurse
             for i in 0..seq.len()? {
                 let item = seq.get_item(i)?;
-                Self::flatten_sequence(
-                    &item,
-                    flat_f64,
-                    flat_complex,
-                    flat_pauli,
-                    flat_paulistring,
-                    flat_bool,
-                    flat_i64,
-                    elem_type,
-                    explicit_dtype,
-                )?;
+                Self::flatten_sequence(&item, bufs, explicit_dtype)?;
             }
         } else {
             // It's a scalar - extract it based on explicit or inferred type
             if explicit_dtype {
                 // Explicit dtype: convert value to target type
-                Self::extract_and_convert_value(
-                    data,
-                    *elem_type,
-                    flat_f64,
-                    flat_complex,
-                    flat_pauli,
-                    flat_paulistring,
-                    flat_bool,
-                    flat_i64,
-                )?;
+                Self::extract_and_convert_value(data, bufs.elem_type, bufs)?;
             } else {
                 // Auto-detect type (Priority 2, 3, and 4 will be added here)
-                Self::extract_and_infer_type(
-                    data,
-                    elem_type,
-                    flat_f64,
-                    flat_complex,
-                    flat_pauli,
-                    flat_paulistring,
-                    flat_bool,
-                    flat_i64,
-                )?;
+                Self::extract_and_infer_type(data, bufs)?;
             }
         }
 
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // type-discriminated output buffers for polymorphic parsing
+    /// Extract value and convert to explicit dtype
     fn extract_and_convert_value(
         data: &Bound<'_, PyAny>,
         target_type: ElemType,
-        flat_f64: &mut Vec<f64>,
-        flat_complex: &mut Vec<num_complex::Complex<f64>>,
-        flat_pauli: &mut Vec<Pauli>,
-        flat_paulistring: &mut Vec<PauliString>,
-        flat_bool: &mut Vec<bool>,
-        flat_i64: &mut Vec<i64>,
+        bufs: &mut FlatBuffers,
     ) -> PyResult<()> {
         match target_type {
             ElemType::Bool => {
                 // Try bool first, then convert from int
                 if let Ok(val) = data.extract::<bool>() {
-                    flat_bool.push(val);
+                    bufs.bools.push(val);
                 } else if let Ok(val) = data.extract::<i64>() {
-                    flat_bool.push(val != 0);
+                    bufs.bools.push(val != 0);
                 } else {
                     let val = data.extract::<f64>()?;
-                    flat_bool.push(val != 0.0);
+                    bufs.bools.push(val != 0.0);
                 }
             }
             ElemType::I8
@@ -2506,77 +2478,76 @@ impl Array {
             | ElemType::U32
             | ElemType::U64 => {
                 let val = data.extract::<i64>()?;
-                flat_i64.push(val);
+                bufs.i64s.push(val);
             }
             ElemType::F32 | ElemType::F64 => {
                 let val = data.extract::<f64>()?;
-                flat_f64.push(val);
+                bufs.f64s.push(val);
             }
             ElemType::Complex64 | ElemType::Complex128 => {
                 // Try complex first, then convert float
                 if let Ok(val) = data.extract::<num_complex::Complex<f64>>() {
-                    flat_complex.push(val);
+                    bufs.complexes.push(val);
                 } else {
                     let val = data.extract::<f64>()?;
-                    flat_complex.push(num_complex::Complex::new(val, 0.0));
+                    bufs.complexes.push(num_complex::Complex::new(val, 0.0));
                 }
             }
             ElemType::Pauli => {
                 let val = data.extract::<Pauli>()?;
-                flat_pauli.push(val);
+                bufs.paulis.push(val);
             }
             ElemType::PauliString => {
                 let val = data.extract::<PauliString>()?;
-                flat_paulistring.push(val);
+                bufs.paulistrings.push(val);
             }
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // type-discriminated output buffers for polymorphic parsing
-    fn extract_and_infer_type(
-        data: &Bound<'_, PyAny>,
-        elem_type: &mut ElemType,
-        flat_f64: &mut Vec<f64>,
-        flat_complex: &mut Vec<num_complex::Complex<f64>>,
-        flat_pauli: &mut Vec<Pauli>,
-        flat_paulistring: &mut Vec<PauliString>,
-        flat_bool: &mut Vec<bool>,
-        flat_i64: &mut Vec<i64>,
-    ) -> PyResult<()> {
+    /// Extract value and infer type automatically
+    fn extract_and_infer_type(data: &Bound<'_, PyAny>, bufs: &mut FlatBuffers) -> PyResult<()> {
         use pyo3::types::PyBool;
 
         // Priority order: PauliString > Pauli > Bool > Int > Complex > Float
         if data.is_instance_of::<PauliString>() {
-            *elem_type = ElemType::PauliString;
+            bufs.elem_type = ElemType::PauliString;
             let paulistring = data.extract::<PauliString>()?;
-            flat_paulistring.push(paulistring);
+            bufs.paulistrings.push(paulistring);
         } else if data.is_instance_of::<Pauli>() {
-            *elem_type = ElemType::Pauli;
+            bufs.elem_type = ElemType::Pauli;
             let pauli = data.extract::<Pauli>()?;
-            flat_pauli.push(pauli);
+            bufs.paulis.push(pauli);
         } else if data.is_instance_of::<PyBool>() {
             // Priority 2: Auto-detect booleans
-            if *elem_type != ElemType::Bool {
+            if bufs.elem_type != ElemType::Bool {
                 // Type promotion needed - convert existing values
-                Self::promote_type_to_bool(elem_type, flat_bool, flat_i64, flat_f64)?;
-            }
-            let val = data.extract::<bool>()?;
-            flat_bool.push(val);
-        } else if data.is_instance_of::<pyo3::types::PyComplex>() {
-            // Found complex - promote if needed
-            if matches!(*elem_type, ElemType::F64 | ElemType::I64 | ElemType::Bool) {
-                Self::promote_type_to_complex(
-                    elem_type,
-                    flat_complex,
-                    flat_f64,
-                    flat_i64,
-                    flat_bool,
+                Self::promote_type_to_bool(
+                    &mut bufs.elem_type,
+                    &mut bufs.bools,
+                    &mut bufs.i64s,
+                    &mut bufs.f64s,
                 )?;
             }
-            *elem_type = ElemType::Complex128;
+            let val = data.extract::<bool>()?;
+            bufs.bools.push(val);
+        } else if data.is_instance_of::<pyo3::types::PyComplex>() {
+            // Found complex - promote if needed
+            if matches!(
+                bufs.elem_type,
+                ElemType::F64 | ElemType::I64 | ElemType::Bool
+            ) {
+                Self::promote_type_to_complex(
+                    &mut bufs.elem_type,
+                    &mut bufs.complexes,
+                    &mut bufs.f64s,
+                    &mut bufs.i64s,
+                    &mut bufs.bools,
+                )?;
+            }
+            bufs.elem_type = ElemType::Complex128;
             let val = data.extract::<num_complex::Complex<f64>>()?;
-            flat_complex.push(val);
+            bufs.complexes.push(val);
         } else {
             // Priority 3: Check if it's an integer by type name
             let type_name = data.get_type().name()?;
@@ -2584,20 +2555,21 @@ impl Array {
             if type_name == "int" {
                 // It's a Python int
                 let ival = data.extract::<i64>()?;
-                match elem_type {
+                match bufs.elem_type {
                     ElemType::Complex128 | ElemType::Complex64 => {
-                        flat_complex.push(num_complex::Complex::new(ival as f64, 0.0));
+                        bufs.complexes
+                            .push(num_complex::Complex::new(ival as f64, 0.0));
                     }
                     ElemType::F64 | ElemType::F32 => {
-                        flat_f64.push(ival as f64);
+                        bufs.f64s.push(ival as f64);
                     }
                     ElemType::Bool => {
-                        flat_bool.push(ival != 0);
+                        bufs.bools.push(ival != 0);
                     }
                     _ => {
                         // First value or already in int mode
-                        *elem_type = ElemType::I64;
-                        flat_i64.push(ival);
+                        bufs.elem_type = ElemType::I64;
+                        bufs.i64s.push(ival);
                     }
                 }
                 return Ok(());
@@ -2605,14 +2577,18 @@ impl Array {
 
             // Try as float
             if let Ok(val) = data.extract::<f64>() {
-                if matches!(*elem_type, ElemType::I64) {
-                    Self::promote_type_to_float(elem_type, flat_f64, flat_i64)?;
+                if matches!(bufs.elem_type, ElemType::I64) {
+                    Self::promote_type_to_float(
+                        &mut bufs.elem_type,
+                        &mut bufs.f64s,
+                        &mut bufs.i64s,
+                    )?;
                 }
-                if *elem_type == ElemType::Complex128 {
-                    flat_complex.push(num_complex::Complex::new(val, 0.0));
+                if bufs.elem_type == ElemType::Complex128 {
+                    bufs.complexes.push(num_complex::Complex::new(val, 0.0));
                 } else {
-                    *elem_type = ElemType::F64;
-                    flat_f64.push(val);
+                    bufs.elem_type = ElemType::F64;
+                    bufs.f64s.push(val);
                 }
                 return Ok(());
             }

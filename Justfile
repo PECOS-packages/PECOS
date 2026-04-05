@@ -201,11 +201,20 @@ test mode="release": (rstest mode) pytest
 lint mode="fix":
     #!/usr/bin/env bash
     set -euo pipefail
+    # Detect CUDA: only use --all-features when CUDA toolkit is available
+    if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
+        CLIPPY_FEATURES="--all-features"
+        echo "(CUDA detected -- linting with all features)"
+    else
+        CLIPPY_FEATURES=""
+        echo "(No CUDA -- linting with default features only)"
+    fi
+
     if [ "{{mode}}" = "check" ]; then
         echo "==> Checking Rust formatting..."
         cargo fmt --all -- --check
         echo "==> Running clippy..."
-        cargo clippy --workspace --all-targets --all-features -- -D warnings
+        cargo clippy --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
         echo "==> Running pre-commit..."
         uv run pre-commit run --all-files
         if command -v julia >/dev/null 2>&1; then
@@ -221,7 +230,7 @@ lint mode="fix":
     else
         echo "==> Fixing Rust formatting and clippy..."
         cargo fmt --all
-        cargo clippy --workspace --all-targets --all-features --fix --allow-staged --allow-dirty -- -D warnings
+        cargo clippy --workspace --all-targets $CLIPPY_FEATURES --fix --allow-staged --allow-dirty -- -D warnings
         echo "==> Running pre-commit..."
         uv run pre-commit run --all-files || true
         if command -v julia >/dev/null 2>&1; then
@@ -239,10 +248,18 @@ lint mode="fix":
 check:
     cargo check --workspace --all-targets
 
-# Run cargo clippy
+# Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
 clippy:
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
+        echo "(CUDA detected -- clippy with all features)"
+        cargo clippy --workspace --all-targets --all-features -- -D warnings
+    else
+        echo "(No CUDA -- clippy with default features)"
+        cargo clippy --workspace --all-targets -- -D warnings
+    fi
 
 # Check Rust formatting
 [group('lint')]

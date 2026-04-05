@@ -163,14 +163,20 @@ pytest *args:
         uv run pytest python/selene-plugins
     fi
 
-# Run Rust tests (CUDA-aware, release mode)
+# Run Rust tests (CUDA-aware; mode: debug or release)
 [group('test')]
-rstest: check-cli
-    {{pecos}} rust test --release
+rstest mode="release": check-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{mode}}" = "release" ]; then
+        {{pecos}} rust test --release
+    else
+        {{pecos}} rust test
+    fi
 
 # Run all tests (Rust + Python + Julia + Go if available)
 [group('test')]
-test: rstest pytest
+test mode="release": (rstest mode) pytest
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
@@ -263,13 +269,13 @@ bench profile="release" features="" pattern="":
 # Dev Workflows
 # =============================================================================
 
-# Dev cycle: build + test (fast, for normal development)
+# Dev cycle: build + test (fast, debug mode)
 [group('dev')]
-dev: build test
+dev: build (test "debug")
 
 # Clean build + test + lint check (run before opening a PR)
 [group('dev')]
-check-all: clean build test (lint "check")
+check-all: clean (build "release") (test "release") (lint "check")
 
 # Clean build artifacts (or: just clean cache/deps/all/dry-run)
 [group('clean')]

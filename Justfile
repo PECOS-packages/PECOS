@@ -199,7 +199,7 @@ lint mode="fix":
         echo "==> Checking Rust formatting..."
         cargo fmt --all -- --check
         echo "==> Running clippy..."
-        cargo clippy --workspace --all-targets -- -D warnings
+        cargo clippy --workspace --all-targets --all-features -- -D warnings
         echo "==> Running pre-commit..."
         uv run pre-commit run --all-files
         if command -v julia >/dev/null 2>&1; then
@@ -215,7 +215,7 @@ lint mode="fix":
     else
         echo "==> Fixing Rust formatting and clippy..."
         cargo fmt --all
-        cargo clippy --workspace --all-targets --fix --allow-staged --allow-dirty -- -D warnings
+        cargo clippy --workspace --all-targets --all-features --fix --allow-staged --allow-dirty -- -D warnings
         echo "==> Running pre-commit..."
         uv run pre-commit run --all-files || true
         if command -v julia >/dev/null 2>&1; then
@@ -236,7 +236,7 @@ check:
 # Run cargo clippy
 [group('lint')]
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Check Rust formatting
 [group('lint')]

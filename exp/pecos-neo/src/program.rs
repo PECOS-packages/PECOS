@@ -176,6 +176,9 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     ///
     /// The simulator is reset to |0>^n at the start of each shot, ensuring
     /// clean state for programs that don't explicitly prepare qubits.
+    ///
+    /// # Panics
+    /// Panics if gate execution fails (e.g., an unsupported gate is encountered).
     pub fn run_shot<P: CommandSource + ?Sized>(&mut self, program: &mut P) -> ProgramResult {
         program.reset();
 

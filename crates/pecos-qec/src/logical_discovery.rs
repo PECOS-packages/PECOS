@@ -136,6 +136,9 @@ impl std::error::Error for LogicalDiscoveryError {}
 /// let result = discover_logical_operators(7, &stabilizers).unwrap();
 /// assert_eq!(result.logical_zs.len(), 1);  // 1 logical qubit
 /// ```
+///
+/// # Errors
+/// Returns `LogicalDiscoveryError` if stabilizers don't commute, have wrong length, or are not independent.
 pub fn discover_logical_operators(
     num_qubits: usize,
     stabilizers: &[PauliString],

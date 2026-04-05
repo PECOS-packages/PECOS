@@ -2636,6 +2636,9 @@ impl Simulation {
     /// - `MonteCarlo { workers: 1 }`: Runs shots via the Tool (default)
     /// - `MonteCarlo { workers: n }`: Parallelizes shots across n workers
     /// - `ImportanceSampling`: Runs via the Tool with `ImportanceSamplingSimPlugin`
+    ///
+    /// # Panics
+    /// Panics if parallel Monte Carlo is used without a static circuit and built-in backend.
     pub fn run(&mut self) -> SimulationResults {
         let config = self.tool.resource::<SimConfig>().clone();
 

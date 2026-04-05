@@ -148,6 +148,9 @@ impl CircuitCompiler {
     }
 
     /// Compile a gate sequence to a specialized WGSL shader
+    ///
+    /// # Panics
+    /// Panics if the cache entry is unexpectedly missing after insertion.
     pub fn compile(&mut self, gates: &[Gate]) -> &CompiledCircuit {
         let hash = Self::compute_hash(gates);
 

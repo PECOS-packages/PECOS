@@ -1930,6 +1930,9 @@ where
     /// Creates a state vector from a Vec of Complex64.
     ///
     /// The length of the state vector must be a power of 2.
+    ///
+    /// # Panics
+    /// Panics if `state.len()` is not a power of 2.
     #[must_use]
     pub fn from_complex_state(state: Vec<Complex64>, rng: R) -> Self {
         let num_qubits = state.len().trailing_zeros() as usize;

@@ -883,6 +883,9 @@ fn compute_correlation(a: &[f64], b: &[f64]) -> f64 {
 /// Convenience function to verify DEM equivalence.
 ///
 /// Returns true if DEMs are equivalent within tolerance.
+///
+/// # Errors
+/// Returns `DemParseError` if either DEM string cannot be parsed.
 pub fn verify_dem_equivalence(
     dem_str1: &str,
     dem_str2: &str,

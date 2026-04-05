@@ -314,6 +314,9 @@ where
     /// let b = Angle64::from_radians(1.0 + 1e-12);
     /// assert!(a.abs_diff_eq(&b, eps));
     /// ```
+    ///
+    /// # Panics
+    /// Panics if the conversion between `f64` and `T` fails.
     #[must_use]
     pub fn epsilon_from_radians(radians: f64) -> T {
         let max = T::max_value()
@@ -334,6 +337,9 @@ where
     /// let b = Angle64::from_turns(0.250_000_001);
     /// assert!(a.abs_diff_eq(&b, eps));
     /// ```
+    ///
+    /// # Panics
+    /// Panics if the conversion between `f64` and `T` fails.
     #[must_use]
     pub fn epsilon_from_turns(turns: f64) -> T {
         let max = T::max_value()

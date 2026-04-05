@@ -39,6 +39,9 @@ impl std::fmt::Display for GpuStartupError {
 impl std::error::Error for GpuStartupError {}
 
 /// Request the default high-performance GPU adapter and device used by PECOS GPU sims.
+///
+/// # Errors
+/// Returns `GpuStartupError` if no GPU adapter is found or device creation fails.
 pub fn request_default_gpu_device(
     label: &'static str,
 ) -> Result<GpuDeviceContext, GpuStartupError> {

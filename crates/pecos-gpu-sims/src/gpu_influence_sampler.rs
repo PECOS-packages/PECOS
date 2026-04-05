@@ -161,11 +161,17 @@ pub struct GpuInfluenceSampler {
 
 impl GpuInfluenceSampler {
     /// Create a new optimized GPU influence sampler.
+    ///
+    /// # Errors
+    /// Returns an error if no GPU adapter is found or device creation fails.
     pub fn new(influence_map: &GpuInfluenceMapData, seed: u64) -> Result<Self, String> {
         Self::create_internal(influence_map, seed)
     }
 
     /// Create with a random seed.
+    ///
+    /// # Errors
+    /// Returns an error if no GPU adapter is found or device creation fails.
     pub fn new_random(influence_map: &GpuInfluenceMapData) -> Result<Self, String> {
         Self::new(influence_map, time_seed())
     }

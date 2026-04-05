@@ -1087,6 +1087,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     ///
     /// The caller is responsible for resetting the simulator state if needed
     /// (e.g., `state.reset()` before calling this method).
+    ///
+    /// # Errors
+    /// Returns `ExecutionError` if a gate or noise operation fails.
     pub fn apply_circuit(
         &mut self,
         state: &mut S,
@@ -1152,6 +1155,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Runs before handlers -> noise -> gate execution -> noise -> after handlers.
     /// Measurement outcomes accumulate in the internal buffer; retrieve them
     /// via [`take_outcomes`](CircuitRunner::take_outcomes).
+    ///
+    /// # Errors
+    /// Returns `ExecutionError` if the gate or a noise operation fails.
     pub fn apply_gate(
         &mut self,
         state: &mut S,
@@ -1307,6 +1313,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     ///
     /// This path uses `GateId` natively and supports conditional execution,
     /// multi-basis prep/measure, and result tracking.
+    ///
+    /// # Errors
+    /// Returns `ExecutionError` if a gate, noise operation, or conditional check fails.
     pub fn apply_adapted_circuit(
         &mut self,
         state: &mut S,

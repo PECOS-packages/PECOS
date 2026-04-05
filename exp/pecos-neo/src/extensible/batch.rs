@@ -120,6 +120,9 @@ impl BatchedCircuit {
     /// Create a batched circuit from a resolved circuit.
     ///
     /// Groups consecutive operations of the same type into batches.
+    ///
+    /// # Panics
+    /// Panics if `current_batch` is unexpectedly `None` during flush.
     #[must_use]
     pub fn from_resolved(resolved: &ResolvedCircuit) -> Self {
         let mut batched = Self::new();

@@ -500,6 +500,9 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
     ///
     /// The `circuit_fn` is called once to build the circuit, which is then
     /// executed for each shot with fresh noise samples.
+    ///
+    /// # Errors
+    /// Returns an error if GPU resource creation or shader execution fails.
     pub fn sample<F>(&mut self, shots: usize, circuit_fn: F) -> Result<Vec<ShotResult>, String>
     where
         F: Fn(&mut CircuitBuilder),

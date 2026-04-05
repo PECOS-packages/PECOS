@@ -475,6 +475,9 @@ impl DecompositionRegistry {
     ///
     /// This method performs recursive resolution, so gates can list their
     /// immediate dependencies in `requires`, not just ultimate native gates.
+    ///
+    /// # Errors
+    /// Returns `ResolutionError` if the gate has no decomposition or a cycle is detected.
     pub fn resolve(
         &self,
         gate: GateId,

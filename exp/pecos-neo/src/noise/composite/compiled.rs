@@ -207,6 +207,7 @@ pub enum CompiledPrimitive {
 
 impl CompiledPrimitive {
     /// Apply this primitive.
+    #[allow(clippy::missing_panics_doc)] // internal invariant: Sample always has branches
     #[inline]
     pub fn apply(
         &self,
@@ -539,6 +540,7 @@ impl CompiledPrimitive {
     }
 
     /// Create a compiled sequence.
+    #[allow(clippy::missing_panics_doc)] // internal unwrap on single-element iterator
     #[must_use]
     pub fn seq(primitives: Vec<Self>) -> Self {
         // Flatten nested sequences

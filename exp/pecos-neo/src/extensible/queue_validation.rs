@@ -30,6 +30,8 @@ pub trait CommandQueueValidation {
     /// let validator = CliffordValidator::new();
     /// commands.validate(&validator, &registry).unwrap();
     /// ```
+    /// # Errors
+    /// Returns `ValidationError` if any gate is not allowed by the validator.
     fn validate(
         &self,
         validator: &dyn CircuitValidator,
@@ -74,6 +76,9 @@ impl CommandQueueValidation for CommandQueue {
 /// # Returns
 ///
 /// A new `CommandQueue` with snapped angles, or an error if snapping fails.
+///
+/// # Errors
+/// Returns the index and `SnapError` of the first angle that cannot be snapped.
 pub fn snap_command_queue(
     commands: &CommandQueue,
     policy: SnapPolicy,

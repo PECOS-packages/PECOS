@@ -96,6 +96,9 @@ pub struct GateForValidation {
 /// Trait for circuit validators.
 pub trait CircuitValidator {
     /// Validate a sequence of gates.
+    ///
+    /// # Errors
+    /// Returns `ValidationError` if any gate is not permitted by this validator.
     fn validate(
         &self,
         gates: &[GateForValidation],

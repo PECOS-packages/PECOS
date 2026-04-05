@@ -272,6 +272,9 @@ pub fn check_logical_errors_after_recovery(
 /// # Returns
 ///
 /// The correction result including whether a logical error occurred.
+///
+/// # Errors
+/// Returns the decoder's error type if decoding fails.
 pub fn run_correction_cycle<D>(
     circuit: &pecos_quantum::TickCircuit,
     fault: &FaultConfiguration,
@@ -405,6 +408,9 @@ impl<'a> ErrorCorrectionChecker<'a> {
     /// # Returns
     ///
     /// The error correction result.
+    ///
+    /// # Errors
+    /// Returns the decoder's error type if any decoding step fails.
     pub fn check<D>(
         &self,
         decoder: &mut D,

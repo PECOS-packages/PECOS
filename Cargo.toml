@@ -245,5 +245,3 @@ module-name-repetitions = "allow"
 # TODO: localize these allows to specific crates/modules and fix where possible
 needless-pass-by-value = "allow"  # ~126 hits -- mostly PyO3 bindings where Python owns the value
 too-many-lines = "allow"          # ~110 hits -- sim algorithms, tests, benchmarks are inherently long
-missing-errors-doc = "allow"      # 35 hits -- need meaningful error docs
-missing-panics-doc = "allow"      # 31 hits -- need meaningful panic docs

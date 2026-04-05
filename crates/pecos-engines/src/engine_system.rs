@@ -29,18 +29,27 @@ pub trait ControlEngine: DynClone + Send + Sync {
     type EngineOutput;
 
     /// Start processing new input. Returns `NeedsProcessing` or `Complete`.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if processing cannot be started.
     fn start(
         &mut self,
         input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
     /// Continue processing with result from controlled engine.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if processing cannot continue.
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
     /// Reset engine state for reuse between simulation runs.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if the reset fails.
     fn reset(&mut self) -> Result<(), PecosError>;
 }
 

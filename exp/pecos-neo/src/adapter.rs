@@ -151,6 +151,9 @@ fn convert_gate(gate: &Gate) -> Option<GateCommand> {
 /// Convert a `ByteMessage` containing quantum operations to a `CommandQueue`.
 ///
 /// Skips any gates that can't be converted (with a warning in debug mode).
+///
+/// # Errors
+/// Returns `PecosError` if the byte message cannot be decoded.
 #[cfg(feature = "engines-adapter")]
 pub fn byte_message_to_command_queue(
     message: &pecos_engines::ByteMessage,

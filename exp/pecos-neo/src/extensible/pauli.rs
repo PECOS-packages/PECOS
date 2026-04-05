@@ -257,6 +257,9 @@ impl StabilizerMeasurement {
     ///
     /// # Returns
     /// An `AdaptedSequence` that measures the stabilizer and outputs the result.
+    ///
+    /// # Panics
+    /// Panics if `qubits.len()` does not match the Pauli string length.
     #[must_use]
     pub fn decompose(&self, qubits: &[QubitId], ancilla: QubitId) -> AdaptedSequence {
         assert_eq!(
@@ -344,6 +347,9 @@ impl StabilizerPreparation {
     ///
     /// Prepares each qubit in the +1 eigenstate of its Pauli term.
     /// For negative sign, flips the first non-identity qubit.
+    ///
+    /// # Panics
+    /// Panics if `qubits.len()` does not match the Pauli string length.
     #[must_use]
     pub fn decompose(&self, qubits: &[QubitId]) -> AdaptedSequence {
         assert_eq!(

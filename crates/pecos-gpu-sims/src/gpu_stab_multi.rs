@@ -87,11 +87,17 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
 
 impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Create a new multi-shot GPU stabilizer simulator
+    ///
+    /// # Errors
+    /// Returns an error if no GPU adapter is found or buffer allocation exceeds device limits.
     pub fn new(num_qubits: usize, num_shots: usize) -> Result<Self, String> {
         Self::with_seed(num_qubits, num_shots, 42)
     }
 
     /// Create with a specific seed for reproducibility
+    ///
+    /// # Errors
+    /// Returns an error if no GPU adapter is found or buffer allocation exceeds device limits.
     pub fn with_seed(num_qubits: usize, num_shots: usize, seed: u64) -> Result<Self, String> {
         let gpu = request_default_gpu_device("GPU Stab Multi Device")
             .map_err(|error| error.to_string())?;

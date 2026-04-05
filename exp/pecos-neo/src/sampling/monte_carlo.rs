@@ -188,6 +188,9 @@ impl MonteCarloRunner {
     ///
     /// # Returns
     /// Results from all shots.
+    ///
+    /// # Panics
+    /// Panics if gate execution fails during a Monte Carlo shot.
     pub fn run<S, F, G, T>(
         commands: &CommandQueue,
         config: MonteCarloConfig,

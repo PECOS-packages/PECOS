@@ -99,6 +99,9 @@ impl BitInt {
     /// sign bit is always 0 (positive).
     ///
     /// Used for binary string construction and when the raw bit pattern is unsigned.
+    ///
+    /// # Panics
+    /// Panics if `size` is 0 or greater than 65534.
     #[must_use]
     pub fn new_from_u64(size: u16, value: u64) -> Self {
         assert!(size > 0, "BitInt size must be at least 1");

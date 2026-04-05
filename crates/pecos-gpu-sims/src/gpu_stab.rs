@@ -2189,6 +2189,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     ///
     /// This reads back all accumulated measurement results from `mz_queue` calls.
     /// If in batch mode, this also ends the batch.
+    ///
+    /// # Panics
+    /// Panics if the GPU buffer mapping fails.
     pub fn mz_fetch(&mut self) -> Vec<MeasurementResult> {
         // End batch mode if active
         if self.batch_mode {

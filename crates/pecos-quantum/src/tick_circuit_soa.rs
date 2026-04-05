@@ -199,6 +199,9 @@ impl TickBatches {
     }
 
     /// Adds a gate to the appropriate batch (creates batch if needed).
+    ///
+    /// # Panics
+    /// Panics if internal batch list is unexpectedly empty after insertion.
     pub fn add_gate(&mut self, gate_type: GateType, qubits: &[QubitId], angles: &[Angle64]) {
         // Find or create batch for this gate type
         let batch = if let Some(batch) = self.batches.iter_mut().find(|b| b.gate_type == gate_type)

@@ -772,6 +772,9 @@ impl DecoderAnalysis {
     /// At weight ≤ t (where t = ⌊(d-1)/2⌋), fault tolerance is all-or-nothing:
     /// either all syndromes have unique logical effects (any decoder works),
     /// or they don't (no decoder can fully succeed).
+    ///
+    /// # Errors
+    /// Returns a list of `FaultToleranceFailure`s if the circuit is not fault tolerant.
     pub fn is_fault_tolerant(&self) -> Result<(), Vec<FaultToleranceFailure>> {
         let mut failures = Vec::new();
 
@@ -960,6 +963,9 @@ impl SyndromeHistoryResult {
     ///
     /// This is more permissive than single-shot analysis because a fault only needs
     /// to be detected in SOME round, not necessarily the final state.
+    ///
+    /// # Errors
+    /// Returns a list of `FaultToleranceFailure`s if the circuit is not fault tolerant.
     pub fn is_fault_tolerant(&self) -> Result<(), Vec<FaultToleranceFailure>> {
         let mut failures = Vec::new();
 

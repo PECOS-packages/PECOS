@@ -138,6 +138,9 @@ pub fn diag_matrix<T: LinalgScalar>(v: ArrayView1<T>) -> Array2<T> {
 /// let result = broadcast_shapes(&[&[3], &[2, 3]]).unwrap();
 /// assert_eq!(result, vec![2, 3]);
 /// ```
+///
+/// # Errors
+/// Returns an error if shapes are not broadcast-compatible.
 pub fn broadcast_shapes(shapes: &[&[usize]]) -> Result<Vec<usize>, String> {
     let max_ndim = shapes.iter().map(|s| s.len()).max().unwrap_or(0);
     let mut result_shape = vec![1; max_ndim];
@@ -182,6 +185,8 @@ pub fn broadcast_shapes(shapes: &[&[usize]]) -> Result<Vec<usize>, String> {
 /// let result = broadcast_to(scalar.view(), &[2, 3]).unwrap();
 /// assert_eq!(result.shape(), &[2, 3]);
 /// ```
+/// # Errors
+/// Returns an error if the array cannot be broadcast to the target shape.
 #[allow(clippy::needless_pass_by_value)]
 pub fn broadcast_to<T: Clone>(
     arr: ArrayViewD<'_, T>,

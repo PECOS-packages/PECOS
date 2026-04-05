@@ -105,6 +105,9 @@ impl AngleSnapper {
     /// Try to snap an angle to the nearest target.
     ///
     /// Returns `Ok(SnapResult)` if within tolerance, `Err(SnapError)` otherwise.
+    ///
+    /// # Errors
+    /// Returns `SnapError` if no target angle is within tolerance.
     pub fn snap(&self, angle: Angle64) -> Result<SnapResult, SnapError> {
         let mut best_target: Option<Angle64> = None;
         let mut best_distance = f64::MAX;
@@ -201,6 +204,9 @@ impl SnapPolicy {
     }
 
     /// Apply this policy to an angle.
+    ///
+    /// # Errors
+    /// Returns `SnapError` if the policy is `SnapOrFail` and no target is within tolerance.
     pub fn apply(&self, angle: Angle64, snapper: &AngleSnapper) -> Result<Angle64, SnapError> {
         match self {
             Self::Exact => Ok(angle),

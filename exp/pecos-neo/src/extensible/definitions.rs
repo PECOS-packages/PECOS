@@ -576,6 +576,9 @@ impl GateDefinitionsBuilder {
     }
 
     /// Build the definitions, returning errors if any.
+    ///
+    /// # Errors
+    /// Returns `GateDefinitionsError` if any gate definitions have validation errors.
     pub fn build(self) -> Result<GateDefinitions, GateDefinitionsError> {
         if self.errors.is_empty() {
             Ok(self.defs)
@@ -587,6 +590,9 @@ impl GateDefinitionsBuilder {
     }
 
     /// Build the definitions, panicking on errors.
+    ///
+    /// # Panics
+    /// Panics if any gate definitions have validation errors.
     #[must_use]
     pub fn build_or_panic(self) -> GateDefinitions {
         self.build().expect("GateDefinitions build failed")

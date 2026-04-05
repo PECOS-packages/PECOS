@@ -579,6 +579,9 @@ impl OpBuilder {
     /// Inline a subcircuit using positional qubit arguments.
     ///
     /// Maps subcircuit qubits 0, 1, 2, ... to the provided qubits in order.
+    ///
+    /// # Panics
+    /// Panics if `qubits.len()` does not match the subcircuit's qubit count.
     #[must_use]
     pub fn call(mut self, sub: &Subcircuit, qubits: &[QubitId]) -> Self {
         assert_eq!(
@@ -600,6 +603,9 @@ impl OpBuilder {
     }
 
     /// Call a named gate from a library.
+    ///
+    /// # Panics
+    /// Panics if the named gate is not found in the library.
     #[must_use]
     pub fn call_named(self, library: &GateLibrary, name: &str, qubits: &[QubitId]) -> Self {
         let sub = library
@@ -613,6 +619,9 @@ impl OpBuilder {
     // ========================================================================
 
     /// Measure an arbitrary stabilizer (Pauli string).
+    ///
+    /// # Panics
+    /// Panics if the Pauli string is invalid.
     #[must_use]
     pub fn stabilizer_meas(
         mut self,
@@ -646,6 +655,9 @@ impl OpBuilder {
     }
 
     /// Prepare an arbitrary stabilizer eigenstate.
+    ///
+    /// # Panics
+    /// Panics if the Pauli string is invalid.
     #[must_use]
     pub fn stabilizer_prep(mut self, pauli: &str, qubits: &[QubitId]) -> Self {
         let ps = PauliString::from_str(pauli).expect("Invalid Pauli string");
@@ -687,6 +699,9 @@ impl OpBuilder {
     ///
     /// Note: This flattens the sequence. Conditional operations are not supported
     /// in `CommandQueue` and will cause this to return an error.
+    ///
+    /// # Errors
+    /// Returns `ConversionError` if an unsupported gate or conditional operation is encountered.
     pub fn to_command_queue(&self) -> Result<CommandQueue, ConversionError> {
         let mut queue = CommandQueue::with_capacity(self.ops.len());
 

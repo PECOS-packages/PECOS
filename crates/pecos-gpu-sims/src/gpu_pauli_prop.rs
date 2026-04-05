@@ -119,11 +119,17 @@ impl GpuPauliProp {
     ///
     /// # Returns
     /// A new `GpuPauliProp` instance or an error
+    ///
+    /// # Errors
+    /// Returns an error if no GPU adapter is found or device creation fails.
     pub fn new(num_qubits: usize, num_shots: u32) -> Result<Self, String> {
         Self::with_seed(num_qubits, num_shots, time_seed())
     }
 
     /// Create a new GPU Pauli propagator with a specific seed.
+    ///
+    /// # Errors
+    /// Returns an error if no GPU adapter is found or device creation fails.
     pub fn with_seed(num_qubits: usize, num_shots: u32, seed: u64) -> Result<Self, String> {
         // Initialize wgpu
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());

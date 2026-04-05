@@ -1372,6 +1372,9 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Set detector definitions from JSON.
     ///
     /// Format: `[{"id": 0, "records": [-1, -5]}, ...]`
+    ///
+    /// # Errors
+    /// Returns an error if the JSON is malformed or missing required fields.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
         self.detector_records = parse_records_json(json, "detector")?;
         Ok(self)
@@ -1380,6 +1383,9 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Set observable definitions from JSON.
     ///
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
+    ///
+    /// # Errors
+    /// Returns an error if the JSON is malformed or missing required fields.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
         self.observable_records = parse_records_json(json, "observable")?;
         Ok(self)

@@ -269,9 +269,36 @@ bench profile="release" features="" pattern="":
 # Dev Workflows
 # =============================================================================
 
-# Dev cycle: build + test (fast, debug mode)
+# Dev cycle: build + test (lang: all, rust, python, julia, go)
 [group('dev')]
-dev: build (test "debug")
+dev lang="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{lang}}" in
+        all)
+            just build
+            just test debug
+            ;;
+        rust)
+            just rstest debug
+            ;;
+        python)
+            just build
+            just pytest
+            ;;
+        julia)
+            just julia-build
+            just julia-test
+            ;;
+        go)
+            just go-build
+            just go-test
+            ;;
+        *)
+            echo "Unknown language: {{lang}}. Use: all, rust, python, julia, go"
+            exit 1
+            ;;
+    esac
 
 # Clean build + test + lint check (run before opening a PR)
 [group('dev')]

@@ -107,7 +107,6 @@ pub fn run() {
     if !has_overrides {
         println!("  (none)");
     }
-
 }
 
 /// Print toolchain and dependency status

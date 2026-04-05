@@ -102,7 +102,6 @@ pub fn run(verbose: bool) {
             println!("  {}: {} - {}", dep.name, dep.version, dep.description);
         }
     }
-
 }
 
 fn dir_size_display(path: &Path) -> String {

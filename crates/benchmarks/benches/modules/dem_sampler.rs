@@ -85,7 +85,8 @@ fn create_surface_code_sampler(
     let mut detector_records = Vec::new();
     for i in 0..num_measurements.min(50) {
         // Limit to 50 detectors for benchmark
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // i < 50, fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+        // i < 50, fits in i32
         detector_records.push(vec![-(i as i32 + 1)]);
     }
 

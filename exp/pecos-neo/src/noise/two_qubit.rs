@@ -534,10 +534,7 @@ impl NoiseChannel for TwoQubitChannel {
 
 impl TwoQubitChannel {
     /// Handle `BeforeGate` - skip if any qubit is leaked.
-    fn handle_before_gate(
-        qubits: &[pecos_core::QubitId],
-        ctx: &NoiseContext,
-    ) -> NoiseResponse {
+    fn handle_before_gate(qubits: &[pecos_core::QubitId], ctx: &NoiseContext) -> NoiseResponse {
         // If any qubit is leaked, skip the gate
         // Uses optimized any_leaked which has O(1) fast path when leaked_count == 0
         if ctx.any_leaked(qubits) {

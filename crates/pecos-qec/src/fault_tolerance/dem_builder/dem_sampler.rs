@@ -1725,7 +1725,8 @@ impl<'a> DemSamplerBuilder<'a> {
                 let mut xor_result = false;
                 for &offset in records {
                     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                    #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
+                    #[allow(clippy::cast_sign_loss)]
+                    // negative offset + total count, or non-negative offset
                     let abs_idx = if offset < 0 {
                         (num_tc_measurements as i32 + offset) as usize
                     } else {
@@ -1753,7 +1754,8 @@ impl<'a> DemSamplerBuilder<'a> {
                 let mut xor_result = false;
                 for &offset in records {
                     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                    #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
+                    #[allow(clippy::cast_sign_loss)]
+                    // negative offset + total count, or non-negative offset
                     let abs_idx = if offset < 0 {
                         (num_tc_measurements as i32 + offset) as usize
                     } else {

@@ -1246,7 +1246,8 @@ where
                 let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
 
                 // Collapse and renormalize
-                #[allow(clippy::cast_possible_truncation)] // intentional f32 downcast for f32 state vector
+                #[allow(clippy::cast_possible_truncation)]
+                // intentional f32 downcast for f32 state vector
                 let norm_factor = if outcome {
                     1.0 / prob_one.sqrt()
                 } else {

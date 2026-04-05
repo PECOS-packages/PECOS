@@ -1372,7 +1372,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 self.execute_gate(sim, *gate_id, qubits, angles, depth)?;
             }
             AdaptedOp::Prep { qubit, basis } => {
-                Self::execute_prep(sim,*qubit, *basis);
+                Self::execute_prep(sim, *qubit, *basis);
             }
             AdaptedOp::Measure {
                 qubit,

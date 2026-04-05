@@ -111,11 +111,14 @@ impl CpuSampler {
         self.rng_state ^= self.rng_state >> 7;
         self.rng_state ^= self.rng_state << 17;
         #[allow(clippy::cast_possible_truncation)] // intentional low-32-bit extraction
-        { self.rng_state as u32 }
+        {
+            self.rng_state as u32
+        }
     }
 
     fn sample(&mut self, num_shots: usize, p_error: f64) -> usize {
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0, u32::MAX]
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        // probability in [0,1] maps to [0, u32::MAX]
         let threshold = (p_error * f64::from(u32::MAX)) as u32;
         let mut logical_errors = 0;
 

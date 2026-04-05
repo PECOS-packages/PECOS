@@ -438,12 +438,8 @@ fn test_repetition_code_logical_error_vs_rounds() {
     for &num_rounds in &rounds_to_test {
         let general_stats =
             run_general_noise_repetition(&code, general_model.clone(), num_rounds, NUM_SHOTS);
-        let composable_stats = run_composable_noise_repetition(
-            &code,
-            &composable_config,
-            num_rounds,
-            NUM_SHOTS,
-        );
+        let composable_stats =
+            run_composable_noise_repetition(&code, &composable_config, num_rounds, NUM_SHOTS);
 
         let general_rate = general_stats.logical_error_rate();
         let composable_rate = composable_stats.logical_error_rate();

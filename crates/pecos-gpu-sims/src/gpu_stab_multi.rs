@@ -859,20 +859,29 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     fn update_noise_params(&mut self) {
         // Convert probabilities to fixed-point thresholds (p * 0xFFFF)
         let p1_threshold = if self.noise_enabled {
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0,65535]
-            { (self.noise_p1 * 65535.0) as u32 }
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            // probability in [0,1] maps to [0,65535]
+            {
+                (self.noise_p1 * 65535.0) as u32
+            }
         } else {
             0
         };
         let p2_threshold = if self.noise_enabled {
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0,65535]
-            { (self.noise_p2 * 65535.0) as u32 }
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            // probability in [0,1] maps to [0,65535]
+            {
+                (self.noise_p2 * 65535.0) as u32
+            }
         } else {
             0
         };
         let p_meas_threshold = if self.noise_enabled {
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0,65535]
-            { (self.noise_p_meas * 65535.0) as u32 }
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            // probability in [0,1] maps to [0,65535]
+            {
+                (self.noise_p_meas * 65535.0) as u32
+            }
         } else {
             0
         };
@@ -2533,7 +2542,8 @@ mod tests {
         sim.enable_noise(p1 as f32, 0.0, 0.0);
 
         // CPU-side verification
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0,65535]
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        // probability in [0,1] maps to [0,65535]
         let p1_threshold = (p1 * 65535.0) as u32;
         let seeds = sim.noise_seeds().to_vec();
         let mut cpu_trigger_counts = Vec::with_capacity(num_shots);
@@ -2602,7 +2612,8 @@ mod tests {
 
         // CPU-side verification: predict how many noise triggers we expect per shot.
         // Each CX produces 2 noise evaluations (one per qubit), so 50 CX gates = 100 evaluations.
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0,65535]
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        // probability in [0,1] maps to [0,65535]
         let p2_threshold = (p2 * 65535.0) as u32;
         let num_gates = num_cx_pairs * 2;
 

@@ -2290,7 +2290,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 // Phase index = (2*n_diff - n_pairs) mod 8
                 // n_diff different-parity pairs contribute e^{iπ/4} each,
                 // (n_pairs - n_diff) same-parity pairs contribute e^{-iπ/4} each.
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // n_diff and n_pairs are small counts
+                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+                // n_diff and n_pairs are small counts
                 let k = ((2 * n_diff as i32 - n_pairs as i32).rem_euclid(8)) as usize;
                 if k != 0 {
                     let [cos_k, sin_k] = PHASE_ROOTS[k];
@@ -2367,7 +2368,8 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 // SZZdg: conjugated phase = (8 - szz_phase) % 8
                 // SZZ phase = (2*n_diff - n_pairs) mod 8
                 // SZZdg phase = (n_pairs - 2*n_diff) mod 8
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // n_pairs and n_diff are small counts
+                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+                // n_pairs and n_diff are small counts
                 let k = ((n_pairs as i32 - 2 * n_diff as i32).rem_euclid(8)) as usize;
                 if k != 0 {
                     let [cos_k, sin_k] = PHASE_ROOTS[k];

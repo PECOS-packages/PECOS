@@ -1102,7 +1102,8 @@ fn bench_batch_filtering(c: &mut Criterion) {
         b.iter(|| {
             // Mark 1000 random qubits as leaked
             for _ in 0..1000 {
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // random f64 in [0,1) times positive constant
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                // random f64 in [0,1) times positive constant
                 let idx = (rng.random::<f64>() * 1_000_000.0) as usize;
                 state.mark_leaked(QubitId(idx));
             }
@@ -1120,7 +1121,8 @@ fn bench_batch_filtering(c: &mut Criterion) {
         b.iter(|| {
             let mut count = 0;
             for _ in 0..1000 {
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // random f64 in [0,1) times positive constant
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                // random f64 in [0,1) times positive constant
                 let idx = (rng.random::<f64>() * 1_000_000.0) as usize;
                 if state.is_leaked(QubitId(idx)) {
                     count += 1;

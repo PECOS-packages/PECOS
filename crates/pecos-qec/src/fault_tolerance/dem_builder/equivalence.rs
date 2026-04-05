@@ -458,11 +458,15 @@ impl FromStr for ParsedDem {
                 for comp in &mech.components {
                     for &d in &comp.detectors {
                         #[allow(clippy::cast_possible_wrap)] // detector ID fits in i32
-                        { max_det = max_det.max(d as i32); }
+                        {
+                            max_det = max_det.max(d as i32);
+                        }
                     }
                     for &o in &comp.observables {
                         #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
-                        { max_obs = max_obs.max(o as i32); }
+                        {
+                            max_obs = max_obs.max(o as i32);
+                        }
                     }
                 }
 
@@ -472,7 +476,9 @@ impl FromStr for ParsedDem {
             else if line.starts_with("detector") {
                 if let Some(id) = Self::extract_detector_id(line) {
                     #[allow(clippy::cast_possible_wrap)] // detector ID fits in i32
-                    { max_det = max_det.max(id as i32); }
+                    {
+                        max_det = max_det.max(id as i32);
+                    }
                 }
             }
             // Parse observable declarations
@@ -480,7 +486,9 @@ impl FromStr for ParsedDem {
                 && let Some(id) = Self::extract_observable_id(line)
             {
                 #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
-                { max_obs = max_obs.max(id as i32); }
+                {
+                    max_obs = max_obs.max(id as i32);
+                }
             }
         }
 
@@ -488,12 +496,20 @@ impl FromStr for ParsedDem {
             mechanisms,
             num_detectors: if max_det >= 0 {
                 #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
-                { max_det as u32 + 1 }
-            } else { 0 },
+                {
+                    max_det as u32 + 1
+                }
+            } else {
+                0
+            },
             num_observables: if max_obs >= 0 {
                 #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
-                { max_obs as u32 + 1 }
-            } else { 0 },
+                {
+                    max_obs as u32 + 1
+                }
+            } else {
+                0
+            },
         })
     }
 }

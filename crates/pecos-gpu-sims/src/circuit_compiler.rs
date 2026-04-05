@@ -154,10 +154,9 @@ impl CircuitCompiler {
     pub fn compile(&mut self, gates: &[Gate]) -> &CompiledCircuit {
         let hash = Self::compute_hash(gates);
 
-        if !self.cache.contains_key(&hash) {
-            let compiled = Self::generate_shader(gates, hash);
-            self.cache.insert(hash, compiled);
-        }
+        self.cache
+            .entry(hash)
+            .or_insert_with(|| Self::generate_shader(gates, hash));
 
         self.cache.get(&hash).unwrap()
     }

@@ -327,7 +327,8 @@ impl EnumeratedPath {
     /// Get the probability of this path (0.5^len).
     #[must_use]
     pub fn probability(&self) -> f64 {
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // path length fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+        // path length fits in i32
         0.5_f64.powi(self.len as i32)
     }
 

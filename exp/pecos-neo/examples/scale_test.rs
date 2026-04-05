@@ -36,7 +36,8 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
     let elapsed = start.elapsed();
 
     let per_iter = elapsed.as_nanos() as f64 / iterations as f64;
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // num_qubits * prob is bounded
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    // num_qubits * prob is bounded
     let expected_events = (num_qubits as f64 * prob) as usize;
     println!(
         "{num_qubits:>12} qubits, p={prob:.0e}: {per_iter:>12.1} ns/iter (~{expected_events:>5} events)"

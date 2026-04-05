@@ -5,9 +5,6 @@ These tests parse real `.ll` files, convert QIS dialect ops to `QuantumOp`s,
 and execute them through `PhirEngine` with a quantum backend.
 */
 
-// Hex float literals in inline LLVM IR strings are not Rust float constants
-#![allow(clippy::approx_constant)]
-
 use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;

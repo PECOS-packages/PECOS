@@ -183,16 +183,13 @@ fn test_pcg_concurrent_access() {
                 PCGRandom::pcg32_srandom_r(&mut pcg, initstate, thread_id as u64);
 
                 let mut results = Vec::new();
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..iterations_per_thread {
+                for (i, &expected) in expected_seq.iter().enumerate().take(iterations_per_thread) {
                     let val = PCGRandom::pcg32_random_r(&mut pcg);
                     results.push(val);
 
-                    // Verify we're getting the expected value
                     assert_eq!(
-                        val, expected_seq[i],
-                        "Thread {thread_id} iteration {i}: expected {} but got {val}",
-                        expected_seq[i]
+                        val, expected,
+                        "Thread {thread_id} iteration {i}: expected {expected} but got {val}",
                     );
 
                     // Yield to increase chance of interleaving

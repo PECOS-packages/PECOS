@@ -24,10 +24,12 @@ use std::ptr;
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::CuTensorNet;
 ///
-/// let sim = CuTensorNet::new().unwrap();
-/// // Use for tensor network contractions...
+/// let sim = CuTensorNet::new()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct CuTensorNet {
     handle: cutensornetHandle_t,

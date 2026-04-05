@@ -54,23 +54,29 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
+//! use pecos_quantum::TickCircuitSoA;
+//!
 //! // Build using the builder pattern
-//! let circuit = TickCircuitSoA::builder()
+//! let mut builder = TickCircuitSoA::builder();
+//! builder
 //!     .tick()
 //!         .h(&[0, 1])
 //!         .cx(&[(0, 1)])
 //!     .tick()
-//!         .mz(&[0, 1])
-//!     .build();
+//!         .mz(&[0, 1]);
+//! let circuit = builder.build();
+//! ```
 //!
-//! // Efficient batched simulation
-//! for tick in circuit.iter_ticks_batched() {
-//!     for batch in tick.batches() {
+//! With a simulator, the batched iteration looks like:
+//!
+//! ```text
+//! for (tick_idx, tick) in circuit.iter_ticks_batched() {
+//!     for batch in tick.iter() {
 //!         match batch.gate_type {
-//!             GateType::H => sim.h(batch.qubits()),
+//!             GateType::H  => sim.h(batch.qubits()),
 //!             GateType::CX => sim.cx(batch.qubits()),
-//!             GateType::Mz => { sim.mz(batch.qubits()); }
+//!             GateType::MZ => { sim.mz(batch.qubits()); }
 //!             // ...
 //!         }
 //!     }
@@ -988,11 +994,11 @@ impl TickCircuitSoA {
     /// Returns an iterator over ticks with batched gates for simulation.
     ///
     /// This is the primary API for efficient circuit simulation:
-    /// ```ignore
+    /// ```text
     /// for (tick_idx, tick) in circuit.iter_ticks_batched() {
     ///     for batch in tick.iter() {
     ///         match batch.gate_type {
-    ///             GateType::H => sim.h(batch.qubits()),
+    ///             GateType::H  => sim.h(batch.qubits()),
     ///             GateType::CX => sim.cx(batch.qubits()),
     ///             // ...
     ///         }

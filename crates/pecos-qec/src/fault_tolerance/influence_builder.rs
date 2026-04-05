@@ -8,21 +8,26 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_qec::fault_tolerance::InfluenceBuilder;
+//! use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
 //! use pecos_quantum::DagCircuit;
 //!
 //! // Build a syndrome extraction circuit
 //! let mut dag = DagCircuit::new();
-//! // ... add gates ...
+//! dag.pz(&[2]);
+//! dag.cx(&[(0, 2)]);
+//! dag.cx(&[(1, 2)]);
+//! dag.mz(&[2]);
 //!
 //! // Build influence map with automatic detector discovery
 //! let builder = InfluenceBuilder::new(&dag);
 //! let influence_map = builder.build();
 //!
 //! // Use with CPU sampler
-//! let mut sampler = NoisySampler::new(&influence_map, noise_model, seed);
-//! let results = sampler.sample(10000);
+//! let noise = UniformNoiseModel::depolarizing(0.001);
+//! let mut sampler = NoisySampler::new(&influence_map, noise, 42);
+//! let results = sampler.sample(100);
 //! ```
 
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation};

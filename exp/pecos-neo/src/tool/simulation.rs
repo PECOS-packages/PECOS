@@ -76,7 +76,7 @@
 //!
 //! Any `ClassicalControlEngineBuilder` works with `sim_neo()`:
 //!
-//! ```ignore
+//! ```text
 //! use pecos_neo::tool::sim_neo;
 //! use pecos_hugr::hugr_engine;
 //! use pecos_qis::qis_engine;

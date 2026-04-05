@@ -58,7 +58,10 @@ use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 /// Terms with negligible coefficients are pruned before each RZ decomposition.
 /// The pruning threshold can be configured via the builder:
 ///
-/// ```ignore
+/// ```
+/// use pecos_simulators::CliffordRz;
+///
+/// let num_qubits = 4;
 /// let sim = CliffordRz::builder(num_qubits)
 ///     .pruning_threshold(1e-6)
 ///     .seed(42)

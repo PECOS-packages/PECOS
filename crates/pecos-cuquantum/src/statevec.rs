@@ -24,14 +24,17 @@ use std::ptr;
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::CuStateVec;
 /// use pecos_simulators::{QuantumSimulator, CliffordGateable};
 /// use pecos_core::QubitId;
 ///
-/// let mut sim = CuStateVec::new(4).unwrap(); // 4 qubits
-/// sim.h(&[QubitId(0)]);           // Hadamard on qubit 0
-/// sim.cx(&[(QubitId(0), QubitId(1))]);       // CNOT with control=0, target=1
-/// let results = sim.mz(&[QubitId(0)]);  // Measure qubit 0
+/// let mut sim = CuStateVec::new(4)?;
+/// sim.h(&[QubitId(0)]);
+/// sim.cx(&[(QubitId(0), QubitId(1))]);
+/// let results = sim.mz(&[QubitId(0)]);
+/// # Ok(())
+/// # }
 /// ```
 pub struct CuStateVec {
     handle: custatevecHandle_t,

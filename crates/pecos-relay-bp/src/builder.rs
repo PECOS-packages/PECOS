@@ -9,7 +9,12 @@ use ndarray::ArrayView2;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use pecos_relay_bp::RelayBpDecoder;
+/// use ndarray::arr2;
+///
+/// let check_matrix = arr2(&[[1u8, 1, 0], [0, 1, 1]]);
 /// let decoder = RelayBpDecoder::builder(&check_matrix.view())
 ///     .error_priors(&[0.1, 0.1, 0.1])
 ///     .max_iter(200)
@@ -18,6 +23,8 @@ use ndarray::ArrayView2;
 ///     .num_sets(300)
 ///     .seed(42)
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct RelayBpBuilder<'a> {
     check_matrix: ArrayView2<'a, u8>,
@@ -168,12 +175,19 @@ impl<'a> RelayBpBuilder<'a> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use pecos_relay_bp::MinSumBpDecoder;
+/// use ndarray::arr2;
+///
+/// let check_matrix = arr2(&[[1u8, 1, 0], [0, 1, 1]]);
 /// let decoder = MinSumBpDecoder::builder(&check_matrix.view())
 ///     .error_priors(&[0.1, 0.1, 0.1])
 ///     .max_iter(200)
 ///     .alpha(Some(0.0))
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct MinSumBpBuilder<'a> {
     check_matrix: ArrayView2<'a, u8>,

@@ -205,13 +205,18 @@ impl FusionBlossomDecoder {
     ///
     /// This is the recommended way to construct a decoder:
     ///
-    /// ```rust,ignore
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use pecos_fusion_blossom::FusionBlossomDecoder;
+    ///
     /// let decoder = FusionBlossomDecoder::builder()
     ///     .num_nodes(4)
     ///     .num_observables(2)
     ///     .add_edge(0, 1, vec![0], Some(1.0))
     ///     .add_edge(1, 2, vec![1], Some(1.0))
     ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn builder() -> crate::builder::FusionBlossomBuilder {
         crate::builder::FusionBlossomBuilder::new()

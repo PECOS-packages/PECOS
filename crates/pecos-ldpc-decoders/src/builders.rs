@@ -3,15 +3,20 @@
 //! This module provides ergonomic builder patterns for constructing LDPC decoders.
 //! Instead of passing 10+ parameters to a constructor, you can use a fluent API:
 //!
-//! ```rust,ignore
-//! use pecos_ldpc_decoders::{BpOsdDecoder, SparseMatrix};
+//! ```rust
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use pecos_ldpc_decoders::{BpOsdDecoder, SparseMatrix, OsdMethod};
+//! use ndarray::arr2;
 //!
-//! let pcm = SparseMatrix::from_dense(&matrix.view());
+//! let dense = arr2(&[[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]);
+//! let pcm = SparseMatrix::from_dense(&dense.view());
 //! let decoder = BpOsdDecoder::builder(&pcm)
 //!     .error_rate(0.01)
 //!     .max_iter(100)
 //!     .osd_method(OsdMethod::Osd0)
 //!     .build()?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::{BpMethod, BpSchedule, InputVectorType, OsdMethod, Result, SparseMatrix, UfMethod};
@@ -24,7 +29,8 @@ use crate::{BpMethod, BpSchedule, InputVectorType, OsdMethod, Result, SparseMatr
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_ldpc_decoders::{BpOsdDecoder, SparseMatrix, BpMethod, OsdMethod};
 /// use ndarray::arr2;
 ///
@@ -37,6 +43,8 @@ use crate::{BpMethod, BpSchedule, InputVectorType, OsdMethod, Result, SparseMatr
 ///     .bp_method(BpMethod::ProductSum)
 ///     .osd_method(OsdMethod::Osd0)
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub struct BpOsdBuilder<'a> {
@@ -184,7 +192,8 @@ impl<'a> BpOsdBuilder<'a> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_ldpc_decoders::{BpLsdDecoder, SparseMatrix, OsdMethod};
 /// use ndarray::arr2;
 ///
@@ -197,6 +206,8 @@ impl<'a> BpOsdBuilder<'a> {
 ///     .lsd_method(OsdMethod::Osd0)
 ///     .lsd_order(0)
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub struct BpLsdBuilder<'a> {

@@ -1206,7 +1206,7 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use pecos_simulators::rotation_test_suite;
 ///
 /// rotation_test_suite!(MySimType, 4, MySimType::new(num_qubits));

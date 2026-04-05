@@ -24,22 +24,36 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, DemBuilder};
+//! ```
+//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+//! use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+//! use pecos_quantum::DagCircuit;
+//!
+//! // Build a simple syndrome extraction circuit
+//! let mut dag = DagCircuit::new();
+//! dag.pz(&[2]);
+//! dag.cx(&[(0, 2)]);
+//! dag.cx(&[(1, 2)]);
+//! dag.mz(&[2]);
 //!
 //! // Build influence map from circuit
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let influence_map = analyzer.build_influence_map();
 //!
+//! // Detector: measurement record -1 (the single measurement)
+//! let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
+//! let observables_json = "[]";
+//!
 //! // Build DEM with noise model
 //! let dem = DemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .with_detectors_json(detectors_json)?
-//!     .with_observables_json(observables_json)?
+//!     .with_detectors_json(detectors_json).unwrap()
+//!     .with_observables_json(observables_json).unwrap()
 //!     .build();
 //!
-//! // Output in Stim format
-//! println!("{}", dem.to_stim_format());
+//! // Output in Stim-compatible format
+//! let dem_str = dem.to_string();
+//! assert!(!dem_str.is_empty());
 //! ```
 //!
 //! # Error Decomposition
@@ -73,8 +87,18 @@
 //! for fast approximate sampling. Unlike the DEM which maps to detectors, the
 //! MNM maps directly to raw measurement effects.
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, MemBuilder};
+//! ```
+//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+//! use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
+//! use pecos_quantum::DagCircuit;
+//! use rand::SeedableRng;
+//! use rand::rngs::SmallRng;
+//!
+//! let mut dag = DagCircuit::new();
+//! dag.pz(&[2]);
+//! dag.cx(&[(0, 2)]);
+//! dag.cx(&[(1, 2)]);
+//! dag.mz(&[2]);
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let influence_map = analyzer.build_influence_map();
@@ -85,6 +109,7 @@
 //!     .build();
 //!
 //! // Sample measurement outcomes
+//! let mut rng = SmallRng::seed_from_u64(42);
 //! let outcomes = mnm.sample(&mut rng);
 //! ```
 //!

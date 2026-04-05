@@ -1476,11 +1476,28 @@ impl fmt::Debug for MeasurementMechanism {
 ///
 /// # Example
 ///
-/// ```ignore
-/// let mnm = MeasurementNoiseModel::from_influence_map(&influence_map, &noise);
+/// ```
+/// use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+/// use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
+/// use pecos_quantum::DagCircuit;
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut dag = DagCircuit::new();
+/// dag.pz(&[2]);
+/// dag.cx(&[(0, 2)]);
+/// dag.mz(&[2]);
+///
+/// let analyzer = DagFaultAnalyzer::new(&dag);
+/// let influence_map = analyzer.build_influence_map();
+///
+/// let mnm = MemBuilder::new(&influence_map)
+///     .with_noise(0.01, 0.01, 0.01, 0.01)
+///     .build();
 ///
 /// // Sample measurement outcomes
-/// let mut outcomes = vec![false; num_measurements];
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let mut outcomes = vec![false; mnm.num_measurements];
 /// mnm.sample_into(&mut outcomes, &mut rng);
 /// ```
 #[derive(Debug, Clone, Default)]

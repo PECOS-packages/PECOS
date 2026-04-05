@@ -24,16 +24,19 @@ use crate::stabilizer_group_bindings::PyPauliStabilizerGroup;
 /// logical operators. Also includes standard code constructors.
 ///
 /// Examples:
-///     >>> from pecos_rslib import StabilizerCode
-///     >>> code = StabilizerCode.repetition(3)
-///     >>> code.num_logical_qubits()
-///     1
-///     >>> code.distance()
-///     1
 ///
-///     >>> steane = StabilizerCode.steane()
-///     >>> steane.distance()
-///     3
+/// ```python
+/// >>> from pecos_rslib import StabilizerCode
+/// >>> code = StabilizerCode.repetition(3)
+/// >>> code.num_logical_qubits()
+/// 1
+/// >>> code.distance()
+/// 1
+///
+/// >>> steane = StabilizerCode.steane()
+/// >>> steane.distance()
+/// 3
+/// ```
 #[allow(clippy::doc_markdown)]
 #[pyclass(name = "StabilizerCode", module = "pecos_rslib", from_py_object)]
 #[derive(Debug, Clone)]

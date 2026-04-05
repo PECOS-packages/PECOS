@@ -4,17 +4,20 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_fusion_blossom::{FusionBlossomDecoder, SolverType};
 //! use ndarray::arr2;
 //!
-//! let H = arr2(&[[1, 1, 0], [0, 1, 1]]);
+//! let h = arr2(&[[1u8, 1, 0], [0, 1, 1]]);
 //!
 //! let decoder = FusionBlossomDecoder::builder()
 //!     .num_nodes(2)
 //!     .num_observables(3)
 //!     .solver_type(SolverType::Serial)
-//!     .from_check_matrix(&H.view(), None)?;
+//!     .from_check_matrix(&h, None)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::{

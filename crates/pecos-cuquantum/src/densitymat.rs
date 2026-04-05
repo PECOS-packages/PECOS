@@ -33,11 +33,12 @@ use std::ptr;
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::CuDensityMat;
 ///
-/// // Create a 4-qubit density matrix simulator
-/// let sim = CuDensityMat::new(4).unwrap();
-/// // Simulate noisy quantum operations...
+/// let sim = CuDensityMat::new(4)?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct CuDensityMat {
     handle: cudensitymatHandle_t,

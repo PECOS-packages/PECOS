@@ -49,12 +49,20 @@ impl BpOsdDecoder {
     ///
     /// This is the recommended way to construct a decoder:
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use pecos_ldpc_decoders::{BpOsdDecoder, SparseMatrix, OsdMethod};
+    /// use ndarray::arr2;
+    ///
+    /// let dense = arr2(&[[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]);
+    /// let pcm = SparseMatrix::from_dense(&dense.view());
     /// let decoder = BpOsdDecoder::builder(&pcm)
     ///     .error_rate(0.01)
     ///     .max_iter(100)
     ///     .osd_method(OsdMethod::Osd0)
     ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn builder(pcm: &SparseMatrix) -> crate::builders::BpOsdBuilder<'_> {
         crate::builders::BpOsdBuilder::new(pcm)
@@ -279,12 +287,20 @@ impl BpLsdDecoder {
     ///
     /// This is the recommended way to construct a decoder:
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use pecos_ldpc_decoders::{BpLsdDecoder, SparseMatrix, OsdMethod};
+    /// use ndarray::arr2;
+    ///
+    /// let dense = arr2(&[[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]]);
+    /// let pcm = SparseMatrix::from_dense(&dense.view());
     /// let decoder = BpLsdDecoder::builder(&pcm)
     ///     .error_rate(0.01)
     ///     .max_iter(100)
     ///     .lsd_method(OsdMethod::Osd0)
     ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn builder(pcm: &SparseMatrix) -> crate::builders::BpLsdBuilder<'_> {
         crate::builders::BpLsdBuilder::new(pcm)

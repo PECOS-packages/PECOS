@@ -36,7 +36,7 @@ pyo3::create_exception!(pecos_rslib, WasmError, pyo3::exceptions::PyException);
 ///
 /// Example:
 ///
-/// ```ignore
+/// ```python
 /// # Load from file
 /// wasm = WasmForeignObject.from_file("math.wasm")
 /// wasm.init()
@@ -85,7 +85,7 @@ impl PyWasmForeignObject {
     ///
     /// Example:
     ///
-    /// ```ignore
+    /// ```python
     /// # From file path
     /// wasm = WasmForeignObject("math.wasm")
     ///
@@ -174,7 +174,7 @@ impl PyWasmForeignObject {
     ///
     /// Example:
     ///
-    /// ```ignore
+    /// ```python
     /// # Basic usage
     /// wasm = WasmForeignObject.from_file("math.wasm")
     /// wasm.init()
@@ -240,7 +240,7 @@ impl PyWasmForeignObject {
     ///
     /// Example:
     ///
-    /// ```ignore
+    /// ```python
     /// # Load from file into bytes
     /// with open("math.wasm", "rb") as f:
     ///     wasm_bytes = f.read()

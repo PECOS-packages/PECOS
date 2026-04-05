@@ -33,20 +33,22 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::dem_builder::equivalence::{
+//! ```
+//! use pecos_qec::fault_tolerance::dem_builder::{
 //!     ParsedDem, compare_dems_exact, compare_dems_statistical,
 //! };
 //!
-//! let dem1 = ParsedDem::from_str(dem_str_1)?;
-//! let dem2 = ParsedDem::from_str(dem_str_2)?;
+//! let dem_str = "error(0.01) D0 D1\nerror(0.02) D1 D2 L0\n";
+//!
+//! let dem1 = ParsedDem::parse(dem_str).unwrap();
+//! let dem2 = ParsedDem::parse(dem_str).unwrap();
 //!
 //! // Exact comparison
 //! let result = compare_dems_exact(&dem1, &dem2, 1e-6);
 //! assert!(result.equivalent);
 //!
 //! // Statistical comparison (more robust for decomposed DEMs)
-//! let result = compare_dems_statistical(&dem1, &dem2, 100_000, 42, 0.02);
+//! let result = compare_dems_statistical(&dem1, &dem2, 10_000, 42, 0.02);
 //! assert!(result.equivalent);
 //! ```
 

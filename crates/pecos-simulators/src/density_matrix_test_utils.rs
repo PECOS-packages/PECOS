@@ -18,15 +18,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_simulators::density_matrix_test_utils::*;
+//! ```no_run
+//! use pecos_simulators::density_matrix_test_utils::run_density_matrix_test_suite;
 //! use pecos_simulators::DensityMatrix;
 //!
-//! #[test]
-//! fn test_my_simulator() {
-//!     let mut sim = DensityMatrix::with_seed(4, 42);
-//!     run_density_matrix_test_suite(&mut sim, 4);
-//! }
+//! let mut sim = DensityMatrix::with_seed(4, 42);
+//! run_density_matrix_test_suite(&mut sim, 4);
 //! ```
 
 #![allow(clippy::missing_panics_doc)]
@@ -51,7 +48,7 @@ use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use pecos_simulators::density_matrix_test_utils::{DensityMatrixSimulator, density_matrix_test_suite};
 ///
 /// // In your test module:
@@ -76,7 +73,7 @@ pub trait DensityMatrixSimulator:
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use pecos_simulators::density_matrix_test_suite;
 /// use pecos_simulators::DensityMatrix;
 ///

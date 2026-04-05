@@ -18,8 +18,18 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, MemBuilder};
+//! ```
+//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+//! use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
+//! use pecos_quantum::DagCircuit;
+//! use rand::SeedableRng;
+//! use rand::rngs::SmallRng;
+//!
+//! let mut dag = DagCircuit::new();
+//! dag.pz(&[2]);
+//! dag.cx(&[(0, 2)]);
+//! dag.cx(&[(1, 2)]);
+//! dag.mz(&[2]);
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let influence_map = analyzer.build_influence_map();
@@ -29,6 +39,7 @@
 //!     .build();
 //!
 //! // Sample measurement outcomes
+//! let mut rng = SmallRng::seed_from_u64(42);
 //! let outcomes = mnm.sample(&mut rng);
 //! ```
 

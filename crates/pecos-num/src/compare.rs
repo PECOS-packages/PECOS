@@ -731,7 +731,7 @@ pub fn relative_eq(a: f64, b: f64, epsilon: f64) -> bool {
 ///
 /// # Syntax
 ///
-/// ```ignore
+/// ```text
 /// assert_relative_eq!(a, b, epsilon = 1e-10);
 /// ```
 ///

@@ -12,19 +12,15 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_cuquantum::CuFrameSimulator;
 //!
-//! // Create a frame simulator for 1000 shots
-//! let mut sim = CuFrameSimulator::new(5, 1000, 2)?;  // 5 qubits, 1000 shots, 2 measurements
-//!
-//! // Define circuit in Stim format
+//! let mut sim = CuFrameSimulator::new(5, 1000, 2)?;
 //! let circuit = "H 0\nCNOT 0 1\nM 0 1";
-//!
-//! // Run the circuit
-//! let results = sim.run_circuit(circuit, 42)?;  // seed = 42
-//!
-//! // results.measurements[shot][meas_idx] gives the outcome
+//! let results = sim.run_circuit(circuit, 42)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::error::{CuQuantumError, Result, TryClone, check_stabilizer_status};

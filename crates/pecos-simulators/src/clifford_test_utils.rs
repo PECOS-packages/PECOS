@@ -21,13 +21,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_simulators::clifford_test_utils::run_clifford_gate_tests;
-//! use pecos_simulators::{CliffordGateable, QuantumSimulator};
+//! use pecos_simulators::SparseStab;
 //!
-//! fn test_my_simulator<S: CliffordGateable>(sim: &mut S, num_qubits: usize) {
-//!     run_clifford_gate_tests(sim, num_qubits);
-//! }
+//! let mut sim = SparseStab::new(4);
+//! run_clifford_gate_tests(&mut sim, 4);
 //! ```
 
 #![allow(clippy::missing_panics_doc)]
@@ -1679,7 +1678,7 @@ pub fn run_clifford_gate_tests<S: CliffordGateable>(sim: &mut S, num_qubits: usi
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use pecos_simulators::clifford_test_suite;
 ///
 /// clifford_test_suite!(MySimType, 4, MySimType::new(num_qubits));

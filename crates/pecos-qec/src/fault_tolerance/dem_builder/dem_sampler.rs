@@ -26,19 +26,34 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, DemSamplerBuilder};
+//! ```
+//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+//! use pecos_qec::fault_tolerance::dem_builder::DemSamplerBuilder;
+//! use pecos_quantum::DagCircuit;
+//! use rand::SeedableRng;
+//! use rand::rngs::SmallRng;
+//!
+//! let mut dag = DagCircuit::new();
+//! dag.pz(&[2]);
+//! dag.cx(&[(0, 2)]);
+//! dag.cx(&[(1, 2)]);
+//! dag.mz(&[2]);
+//!
+//! let analyzer = DagFaultAnalyzer::new(&dag);
+//! let influence_map = analyzer.build_influence_map();
+//! let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
+//! let observables_json = "[]";
 //!
 //! // Build from circuit with detector definitions
 //! let sampler = DemSamplerBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .with_detectors_json(detectors_json)?
-//!     .with_observables_json(observables_json)?
-//!     .with_measurement_order(measurement_order)
+//!     .with_detectors_json(detectors_json).unwrap()
+//!     .with_observables_json(observables_json).unwrap()
 //!     .build();
 //!
 //! // Fast batch sampling for threshold estimation
-//! let (det_events, obs_flips) = sampler.sample_batch(10000, &mut rng);
+//! let mut rng = SmallRng::seed_from_u64(42);
+//! let (det_events, obs_flips) = sampler.sample_batch(100, &mut rng);
 //! ```
 
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};

@@ -259,11 +259,13 @@ pub fn set_measurements(measurements: impl IntoIterator<Item = (usize, bool)>) {
 /// operations and return measurement results.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use pecos_qis_ffi::set_quantum_executor;
+/// use std::collections::BTreeMap;
+///
 /// set_quantum_executor(|collector| {
-///     let ops = collector.take_operations();
-///     let results = my_simulator.execute(ops);
-///     results
+///     let _ops = collector.take_operations();
+///     BTreeMap::new() // return measurement results
 /// });
 /// ```
 pub fn set_quantum_executor<F>(executor: F)

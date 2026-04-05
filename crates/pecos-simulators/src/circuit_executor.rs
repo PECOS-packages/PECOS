@@ -24,16 +24,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_simulators::{SparseStab, CircuitExecutor};
 //! use pecos_quantum::TickCircuitSoA;
 //!
-//! let circuit = TickCircuitSoA::builder()
+//! let mut builder = TickCircuitSoA::builder();
+//! builder
 //!     .tick().pz(&[0, 1, 2, 3])
 //!     .tick().h(&[0, 1, 2, 3])
 //!     .tick().cx(&[(0, 1), (2, 3)])
-//!     .tick().mz(&[0, 1, 2, 3])
-//!     .build();
+//!     .tick().mz(&[0, 1, 2, 3]);
+//! let circuit = builder.build();
 //!
 //! let mut sim = SparseStab::new(4);
 //! let executor = CircuitExecutor::new(&circuit);

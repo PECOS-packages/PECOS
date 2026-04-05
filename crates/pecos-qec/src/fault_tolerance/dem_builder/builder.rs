@@ -53,13 +53,26 @@ struct ParsedObservable {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use pecos_qec::fault_tolerance::DagFaultAnalyzer;
 /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+/// use pecos_quantum::DagCircuit;
+///
+/// let mut dag = DagCircuit::new();
+/// dag.pz(&[2]);
+/// dag.cx(&[(0, 2)]);
+/// dag.cx(&[(1, 2)]);
+/// dag.mz(&[2]);
+///
+/// let analyzer = DagFaultAnalyzer::new(&dag);
+/// let influence_map = analyzer.build_influence_map();
+/// let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
+/// let observables_json = "[]";
 ///
 /// let dem = DemBuilder::new(&influence_map)
 ///     .with_noise(0.01, 0.01, 0.01, 0.01)
-///     .with_detectors_json(detectors_json)?
-///     .with_observables_json(observables_json)?
+///     .with_detectors_json(detectors_json).unwrap()
+///     .with_observables_json(observables_json).unwrap()
 ///     .build();
 ///
 /// // Non-decomposed output (matches Stim's decompose_errors=False)

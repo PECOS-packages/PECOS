@@ -13,9 +13,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
-//! use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
+//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+//! use pecos_quantum::DagCircuit;
+//!
+//! // Build a simple circuit
+//! let mut dag = DagCircuit::new();
+//! dag.pz(&[2]);
+//! dag.cx(&[(0, 2)]);
+//! dag.cx(&[(1, 2)]);
+//! dag.mz(&[2]);
 //!
 //! // Build influence map (precomputation)
 //! let analyzer = DagFaultAnalyzer::new(&dag);
@@ -26,7 +34,7 @@
 //!
 //! // Sample many shots
 //! let mut sampler = NoisySampler::new(&influence_map, noise, 42);
-//! let results = sampler.sample(10000);
+//! let results = sampler.sample(100);
 //!
 //! // Analyze results
 //! for shot in &results {

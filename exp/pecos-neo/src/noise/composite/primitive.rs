@@ -162,8 +162,8 @@ impl MultiQubitSamples {
 ///
 /// # Example Implementation
 ///
-/// ```ignore
-/// # use pecos_neo::noise::composite::prelude::*;
+/// ```text
+/// use pecos_neo::noise::composite::prelude::*;
 /// struct EmissionWithPartnerDepolarize { prob: f64 }
 ///
 /// impl TwoStagePrimitive for EmissionWithPartnerDepolarize {

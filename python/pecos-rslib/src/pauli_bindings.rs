@@ -147,7 +147,7 @@ impl Pauli {
 ///
 /// Examples:
 ///
-/// ```ignore
+/// ```python
 /// >>> from pecos_rslib import Pauli, PauliString
 /// >>> # Create X on qubit 0, Z on qubit 1
 /// >>> ps = PauliString([(Pauli.X, 0), (Pauli.Z, 1)])

@@ -24,7 +24,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_simulators::{SparseStab, BatchedOps};
 //!
 //! let mut sim = SparseStab::new(100);
@@ -367,12 +367,15 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> RawOps for SparseStabGeneric<S, 
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// use pecos_simulators::{SparseStab, CommandBuffer};
+///
+/// let mut sim = SparseStab::new(8);
 /// let mut buffer = CommandBuffer::new();
 ///
 /// // Accumulate gates
 /// buffer.h(&[0, 1, 2, 3]);
-/// buffer.cx(&[0, 1, 2, 3]);
+/// buffer.cx(&[(0, 1), (2, 3)]);
 /// buffer.h(&[4, 5, 6, 7]);  // More H gates
 ///
 /// // Execute all accumulated gates in optimized order

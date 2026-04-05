@@ -21,15 +21,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_simulators::stabilizer_test_utils::*;
+//! ```no_run
+//! use pecos_simulators::stabilizer_test_utils::run_basic_stabilizer_test_suite;
 //! use pecos_simulators::SparseStab;
 //!
-//! #[test]
-//! fn test_my_simulator() {
-//!     let mut sim = SparseStab::new(4);
-//!     run_full_stabilizer_test_suite(&mut sim, 4);
-//! }
+//! let mut sim = SparseStab::new(4);
+//! run_basic_stabilizer_test_suite(&mut sim, 4);
 //! ```
 
 // All functions in this module are test utilities that panic on test failure.
@@ -69,7 +66,7 @@ pub trait ForcedMeasurement {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use pecos_simulators::stabilizer_test_utils::{StabilizerSimulator, stabilizer_test_suite};
 ///
 /// // In your test module:
@@ -94,7 +91,7 @@ pub trait StabilizerSimulator:
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use pecos_simulators::stabilizer_test_utils::stabilizer_test_suite;
 /// use pecos_simulators::SparseStab;
 ///

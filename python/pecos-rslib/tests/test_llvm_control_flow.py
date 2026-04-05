@@ -5,7 +5,6 @@ import pytest
 
 @pytest.fixture
 def module_with_function() -> tuple:
-    """Create a module with a test function."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("control_flow_test")
@@ -22,7 +21,6 @@ def module_with_function() -> tuple:
 
 
 def test_if_then_context_manager(module_with_function) -> None:
-    """Test if_then context manager."""
     from pecos_rslib_llvm import ir
 
     module, test_func, builder, i32 = module_with_function
@@ -46,7 +44,6 @@ def test_if_then_context_manager(module_with_function) -> None:
 
 
 def test_if_else_context_manager(module_with_function) -> None:
-    """Test if_else context manager."""
     from pecos_rslib_llvm import ir
 
     module, test_func, builder, i32 = module_with_function
@@ -74,7 +71,6 @@ def test_if_else_context_manager(module_with_function) -> None:
 
 
 def test_nested_if_then(module_with_function) -> None:
-    """Test nested if_then blocks."""
     from pecos_rslib_llvm import ir
 
     module, test_func, builder, i32 = module_with_function
@@ -104,7 +100,6 @@ def test_nested_if_then(module_with_function) -> None:
 
 
 def test_control_flow_generates_valid_ir() -> None:
-    """Test that control flow generates valid LLVM IR."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")

@@ -19,13 +19,11 @@ class TestQisInterfaceBuilder:
 
     def test_helios_interface_creation(self) -> None:
         """Test that Helios interface can be created."""
-        interface = qis_helios_interface()
-        assert interface is not None
+        qis_helios_interface()
 
     def test_selene_helios_interface_creation(self) -> None:
         """Test that Selene Helios interface can be created."""
-        interface = qis_selene_helios_interface()
-        assert interface is not None
+        qis_selene_helios_interface()
 
     def test_bell_state_with_helios(self) -> None:
         """Test Bell state simulation with Helios interface."""

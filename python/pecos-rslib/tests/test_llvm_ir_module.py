@@ -2,23 +2,17 @@
 
 
 def test_import_ir_module() -> None:
-    """Test that the ir module can be imported."""
-    from pecos_rslib_llvm import ir
-
-    assert ir is not None
+    from pecos_rslib_llvm import ir  # noqa: F401
 
 
 def test_create_module() -> None:
-    """Test creating an LLVM module."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")
-    assert module is not None
     assert repr(module) == "<LLVM Module>"
 
 
 def test_module_context_and_types() -> None:
-    """Test accessing module context and creating types."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")
@@ -30,14 +24,11 @@ def test_module_context_and_types() -> None:
     void = ctx.void_type()
     double = ctx.double_type()
 
-    assert i32 is not None
-    assert i64 is not None
-    assert void is not None
-    assert double is not None
+    # Verify types can be created without raising
+    _ = i32, i64, void, double
 
 
 def test_create_function() -> None:
-    """Test creating a function."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")
@@ -46,15 +37,12 @@ def test_create_function() -> None:
 
     # Create function type
     func_type = ctx.function_type(i32, [i32, i32], False)
-    assert func_type is not None
 
     # Add function to module
-    add_func = module.add_function("add", func_type)
-    assert add_func is not None
+    module.add_function("add", func_type)
 
 
 def test_create_basic_block_and_builder() -> None:
-    """Test creating basic blocks and IRBuilder."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")
@@ -66,15 +54,12 @@ def test_create_basic_block_and_builder() -> None:
 
     # Create basic block
     entry_block = add_func.append_basic_block("entry")
-    assert entry_block is not None
 
     # Create IRBuilder
-    builder = ir.IRBuilder(entry_block)
-    assert builder is not None
+    ir.IRBuilder(entry_block)
 
 
 def test_build_add_instruction() -> None:
-    """Test building arithmetic instructions."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")
@@ -91,12 +76,10 @@ def test_build_add_instruction() -> None:
     assert len(args) == 2
 
     # Build add instruction
-    result = builder.add(args[0], args[1], "sum")
-    assert result is not None
+    builder.add(args[0], args[1], "sum")
 
 
 def test_generate_llvm_ir() -> None:
-    """Test generating LLVM IR as a string."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_module")

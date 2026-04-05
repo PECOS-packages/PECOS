@@ -36,9 +36,7 @@ use pecos_core::clifford_rep::CliffordRep;
 use pecos_core::{Pauli, PauliString, QuarterPhase};
 use quizx::linalg::Mat2;
 
-// ============================================================================
-// SymplecticVector
-// ============================================================================
+// --- SymplecticVector ---
 
 /// A Pauli operator on n qubits represented as a 2n-bit symplectic vector.
 ///
@@ -190,9 +188,7 @@ impl SymplecticVector {
     }
 }
 
-// ============================================================================
-// Free functions
-// ============================================================================
+// --- Free functions ---
 
 /// The 2n x 2n symplectic form matrix: `[[0, I], [I, 0]]`.
 #[must_use]
@@ -232,9 +228,7 @@ pub fn is_symplectic(mat: &Mat2, n: usize) -> bool {
     product == om
 }
 
-// ============================================================================
-// SymplecticMatrix
-// ============================================================================
+// --- SymplecticMatrix ---
 
 /// A Clifford unitary on n qubits as a 2n x 2n binary matrix with sign bits.
 ///
@@ -439,9 +433,7 @@ impl SymplecticMatrix {
         Self { n, mat, signs }
     }
 
-    // ========================================================================
-    // Gate factories
-    // ========================================================================
+    // --- Gate factories ---
 
     /// Hadamard gate on the given qubit (in an n-qubit system).
     #[must_use]
@@ -536,17 +528,11 @@ pub(crate) fn padded_clifford(rep: CliffordRep, n: usize) -> CliffordRep {
     result
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ====================================================================
-    // SymplecticVector tests
-    // ====================================================================
+    // --- SymplecticVector tests ---
 
     #[test]
     fn vector_identity() {
@@ -624,9 +610,7 @@ mod tests {
         assert_eq!(back.phase(), QuarterPhase::MinusOne);
     }
 
-    // ====================================================================
-    // Symplectic form tests
-    // ====================================================================
+    // --- Symplectic form tests ---
 
     #[test]
     fn inner_product_commuting() {
@@ -683,9 +667,7 @@ mod tests {
         assert!(!is_symplectic(&m, 2));
     }
 
-    // ====================================================================
-    // SymplecticMatrix basics
-    // ====================================================================
+    // --- SymplecticMatrix basics ---
 
     #[test]
     fn matrix_identity_structure() {
@@ -736,9 +718,7 @@ mod tests {
         }
     }
 
-    // ====================================================================
-    // Gate validation
-    // ====================================================================
+    // --- Gate validation ---
 
     #[test]
     fn all_single_qubit_gates_are_symplectic() {
@@ -832,9 +812,7 @@ mod tests {
         }
     }
 
-    // ====================================================================
-    // Composition
-    // ====================================================================
+    // --- Composition ---
 
     #[test]
     fn h_squared_is_identity() {
@@ -883,9 +861,7 @@ mod tests {
         assert_eq!(sym_composed, sym_from_cliff);
     }
 
-    // ====================================================================
-    // Inverse
-    // ====================================================================
+    // --- Inverse ---
 
     #[test]
     fn identity_inverse() {
@@ -928,9 +904,7 @@ mod tests {
         assert_eq!(product, SymplecticMatrix::identity(n));
     }
 
-    // ====================================================================
-    // Rank
-    // ====================================================================
+    // --- Rank ---
 
     #[test]
     fn identity_rank_is_2n() {

@@ -5,7 +5,6 @@ import pytest
 
 @pytest.fixture
 def simple_llvm_ir() -> str:
-    """Create simple LLVM IR for testing."""
     from pecos_rslib_llvm import ir
 
     module = ir.Module("test_binding")
@@ -21,14 +20,10 @@ def simple_llvm_ir() -> str:
 
 
 def test_import_binding_module() -> None:
-    """Test that the binding module can be imported."""
-    from pecos_rslib_llvm import binding
-
-    assert binding is not None
+    from pecos_rslib_llvm import binding  # noqa: F401
 
 
 def test_binding_shutdown() -> None:
-    """Test binding.shutdown() (should be no-op)."""
     from pecos_rslib_llvm import binding
 
     # Should not raise any errors
@@ -36,7 +31,6 @@ def test_binding_shutdown() -> None:
 
 
 def test_binding_multiple_shutdowns() -> None:
-    """Test that multiple shutdown calls are safe."""
     from pecos_rslib_llvm import binding
 
     # Multiple calls should be safe
@@ -46,15 +40,12 @@ def test_binding_multiple_shutdowns() -> None:
 
 
 def test_parse_assembly(simple_llvm_ir) -> None:
-    """Test binding.parse_assembly()."""
     from pecos_rslib_llvm import binding
 
-    module_ref = binding.parse_assembly(simple_llvm_ir)
-    assert module_ref is not None
+    binding.parse_assembly(simple_llvm_ir)
 
 
 def test_convert_to_bitcode(simple_llvm_ir) -> None:
-    """Test converting LLVM IR to bitcode."""
     from pecos_rslib_llvm import binding
 
     module_ref = binding.parse_assembly(simple_llvm_ir)
@@ -67,7 +58,6 @@ def test_convert_to_bitcode(simple_llvm_ir) -> None:
 
 
 def test_bitcode_format(simple_llvm_ir) -> None:
-    """Test that generated bitcode has correct format."""
     from pecos_rslib_llvm import binding
 
     module_ref = binding.parse_assembly(simple_llvm_ir)
@@ -85,15 +75,12 @@ def test_bitcode_format(simple_llvm_ir) -> None:
 
 
 def test_value_ref() -> None:
-    """Test binding.ValueRef for type hints."""
     from pecos_rslib_llvm import binding
 
-    value_ref = binding.ValueRef()
-    assert value_ref is not None
+    binding.ValueRef()
 
 
 def test_ir_and_binding_integration(simple_llvm_ir) -> None:
-    """Test integration between ir and binding modules."""
     from pecos_rslib_llvm import binding
 
     # Parse IR
@@ -111,7 +98,6 @@ def test_ir_and_binding_integration(simple_llvm_ir) -> None:
 
 
 def test_complex_ir_to_bitcode() -> None:
-    """Test converting more complex IR to bitcode."""
     from pecos_rslib_llvm import binding, ir
 
     # Create a more complex module

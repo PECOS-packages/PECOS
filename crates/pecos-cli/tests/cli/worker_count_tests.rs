@@ -1,19 +1,3 @@
-/// # Worker Count Tests
-///
-/// This file contains tests that verify deterministic behavior across different
-/// worker count configurations in the PECOS CLI. Key aspects tested include:
-///
-/// 1. Self-Determinism: Each worker count should be deterministic with respect to itself
-///    when run with the same seed
-///
-/// 2. Small Shot Counts: Tests with small shot counts (10) and various worker counts (1, 5, 10)
-///    to ensure deterministic behavior even in edge cases
-///
-/// 3. Worker Count Effects: Analyzing how different worker counts may produce different
-///    distributions due to parallelization differences
-///
-/// These tests help ensure that the PECOS simulator maintains proper deterministic
-/// behavior regardless of the parallelization configuration.
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -31,30 +31,24 @@ class TestQuantumEngineBuilders:
     def test_state_vector_builder(self) -> None:
         """Test creating state vector engine builder."""
         # Using factory function
-        builder1 = state_vector()
-        assert builder1 is not None
+        state_vector()
 
         # Using class directly
-        builder2 = StateVectorEngineBuilder()
-        assert builder2 is not None
+        StateVectorEngineBuilder()
 
         # Test with qubits
-        builder3 = state_vector().qubits(10)
-        assert builder3 is not None
+        state_vector().qubits(10)
 
     def test_sparse_stab_builder(self) -> None:
         """Test creating sparse stabilizer engine builder."""
         # Using factory function
-        builder1 = sparse_stab()
-        assert builder1 is not None
+        sparse_stab()
 
         # Using class directly
-        builder2 = SparseStabEngineBuilder()
-        assert builder2 is not None
+        SparseStabEngineBuilder()
 
         # Test with qubits
-        builder3 = sparse_stab().qubits(5)
-        assert builder3 is not None
+        sparse_stab().qubits(5)
 
     def test_sparse_stab_alias(self) -> None:
         """Test that sparse_stab creates the expected builder type."""

@@ -17,13 +17,10 @@ from pecos_rslib import ByteMessage, SparseStabEngine
 
 
 def test_simulator_creation() -> None:
-    """Test creating a SparseStabEngine."""
-    simulator = SparseStabEngine(2)
-    assert simulator is not None
+    SparseStabEngine(2)
 
 
 def test_x_gate() -> None:
-    """Test applying an X gate and measuring."""
     # Create a circuit with X gate and measurement
     builder = ByteMessage.quantum_operations_builder()
     builder.x([0])
@@ -44,7 +41,6 @@ def test_x_gate() -> None:
 
 
 def test_bell_state_correlations() -> None:
-    """Test that measurements in a Bell state are correlated."""
     # Create a Bell state circuit
     builder = ByteMessage.quantum_operations_builder()
     builder.h([0])
@@ -93,7 +89,6 @@ def test_bell_state_correlations() -> None:
 
 
 def test_ghz_state_correlations() -> None:
-    """Test that measurements in a GHZ state are correlated."""
     # Create a GHZ state circuit
     builder = ByteMessage.quantum_operations_builder()
     builder.h([0])  # H on qubit 0
@@ -139,7 +134,6 @@ def test_ghz_state_correlations() -> None:
 
 
 def test_simulator_reset() -> None:
-    """Test resetting the simulator state."""
     # Create a simple circuit: X on qubit 0, measure qubit 0
     builder = ByteMessage.quantum_operations_builder()
     builder.x([0])
@@ -178,7 +172,6 @@ def test_simulator_reset() -> None:
 
 
 def test_clifford_specific_gate() -> None:
-    """Test a Clifford-specific gate (SZZ)."""
     # Create a circuit using SZZ gate
     builder = ByteMessage.quantum_operations_builder()
     # Prepare |+⟩|+⟩ state

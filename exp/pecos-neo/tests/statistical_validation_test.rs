@@ -82,9 +82,7 @@ fn chi_square_test(
     chi_sq
 }
 
-// ============================================================================
-// Hadamard Gate Tests - Should give 50/50 distribution
-// ============================================================================
+// --- Hadamard Gate Tests - Should give 50/50 distribution ---
 
 #[test]
 fn test_hadamard_distribution_high_statistics() {
@@ -167,9 +165,7 @@ fn test_hadamard_distribution_high_statistics() {
     );
 }
 
-// ============================================================================
-// Bell State Tests - Should give 50/50 for 00 and 11
-// ============================================================================
+// --- Bell State Tests - Should give 50/50 for 00 and 11 ---
 
 #[test]
 fn test_bell_state_distribution_high_statistics() {
@@ -256,9 +252,7 @@ fn test_bell_state_distribution_high_statistics() {
     );
 }
 
-// ============================================================================
-// Noise Model Tests
-// ============================================================================
+// --- Noise Model Tests ---
 
 #[test]
 fn test_depolarizing_noise_rate_validation() {
@@ -364,9 +358,7 @@ fn test_measurement_error_rate_validation() {
     }
 }
 
-// ============================================================================
-// Cross-System Comparison (pecos-neo vs pecos-engines)
-// ============================================================================
+// --- Cross-System Comparison (pecos-neo vs pecos-engines) ---
 
 #[test]
 fn test_neo_vs_engines_bell_state_comparison() {
@@ -581,9 +573,7 @@ fn test_neo_vs_engines_noisy_comparison() {
     );
 }
 
-// ============================================================================
-// Summary Statistics
-// ============================================================================
+// --- Summary Statistics ---
 
 #[test]
 fn test_print_validation_summary() {

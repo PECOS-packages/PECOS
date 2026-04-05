@@ -1,18 +1,3 @@
-/// # Simple Determinism Tests
-///
-/// This file contains tests that verify deterministic behavior in PECOS simulator
-/// using a specially crafted circuit. Key aspects tested include:
-///
-/// 1. Deterministic Single-Shot Behavior: When running with a fixed seed,
-///    the circuit should always produce the same result
-///
-/// 2. Cross-Implementation Verification: Ensuring consistency between different
-///    file formats (PHIR, QASM)
-///
-/// 3. Noise Impact: Adding noise introduces randomness in a predictable way
-///
-/// These tests help verify the deterministic properties of the simulator
-/// and its noise models.
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

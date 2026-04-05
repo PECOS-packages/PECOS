@@ -38,9 +38,7 @@ fn main() {
     example_builtin_correlated();
 }
 
-// ============================================================================
-// Example 1: Amplitude Damping Channel
-// ============================================================================
+// --- Example 1: Amplitude Damping Channel ---
 
 /// A simple amplitude damping channel.
 ///
@@ -141,9 +139,7 @@ fn example_amplitude_damping() {
     println!();
 }
 
-// ============================================================================
-// Example 2: Gate-Specific Noise
-// ============================================================================
+// --- Example 2: Gate-Specific Noise ---
 
 /// Noise channel that applies different error rates for different gates.
 #[derive(Debug, Clone)]
@@ -310,9 +306,7 @@ fn example_gate_specific_noise() {
     println!();
 }
 
-// ============================================================================
-// Example 3: Correlated Noise
-// ============================================================================
+// --- Example 3: Correlated Noise ---
 
 /// Noise channel with spatial correlations.
 ///
@@ -446,9 +440,7 @@ fn example_correlated_noise() {
     println!();
 }
 
-// ============================================================================
-// Example 4: Context-Aware Noise
-// ============================================================================
+// --- Example 4: Context-Aware Noise ---
 
 /// Noise channel that uses context to apply different noise
 /// based on qubit state (leaked qubits get different treatment).
@@ -559,9 +551,7 @@ fn example_context_aware_noise() {
     println!();
 }
 
-// ============================================================================
-// Example 5: Built-in GateDependentChannel
-// ============================================================================
+// --- Example 5: Built-in GateDependentChannel ---
 
 /// Demonstrate the built-in `GateDependentChannel` for gate-specific error rates.
 fn example_builtin_gate_dependent() {
@@ -646,9 +636,7 @@ fn example_builtin_gate_dependent() {
     println!();
 }
 
-// ============================================================================
-// Example 6: Built-in CorrelatedNoiseChannel
-// ============================================================================
+// --- Example 6: Built-in CorrelatedNoiseChannel ---
 
 /// Demonstrate the built-in `CorrelatedNoiseChannel` for spatially correlated errors.
 fn example_builtin_correlated() {

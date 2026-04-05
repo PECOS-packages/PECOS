@@ -29,9 +29,7 @@ use std::collections::BTreeMap;
 const NUM_SHOTS: usize = 1000;
 const TOLERANCE_PERCENT: f64 = 10.0;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
+// --- Helper Functions ---
 
 /// Extract measurement outcomes from pecos-engines `ShotVec`.
 fn extract_engines_outcomes(
@@ -115,9 +113,7 @@ fn distributions_match(
     true
 }
 
-// ============================================================================
-// Basic Circuit Tests (No Noise)
-// ============================================================================
+// --- Basic Circuit Tests (No Noise) ---
 
 #[test]
 fn test_sim_neo_vs_sim_deterministic_x() {
@@ -266,10 +262,6 @@ fn test_sim_neo_vs_sim_bell_state() {
     );
 }
 
-// ============================================================================
-// Tests with Noise
-// ============================================================================
-
 #[test]
 fn test_sim_neo_vs_sim_depolarizing_noise() {
     // Test single-qubit depolarizing noise
@@ -393,9 +385,7 @@ fn test_sim_neo_vs_sim_measurement_noise() {
     );
 }
 
-// ============================================================================
-// Conditional Execution Tests
-// ============================================================================
+// --- Conditional Execution Tests ---
 
 #[test]
 fn test_sim_neo_vs_sim_conditional_x_correction() {
@@ -645,9 +635,7 @@ fn test_sim_neo_vs_sim_teleportation_style() {
     );
 }
 
-// ============================================================================
-// Ergonomic Noise API Tests
-// ============================================================================
+// --- Ergonomic Noise API Tests ---
 
 #[test]
 fn test_sim_neo_ergonomic_builder_direct() {
@@ -742,9 +730,7 @@ fn test_sim_neo_convenience_methods() {
     );
 }
 
-// ============================================================================
-// Reusability Tests
-// ============================================================================
+// --- Reusability Tests ---
 
 #[test]
 fn test_sim_neo_reusable() {
@@ -807,9 +793,7 @@ fn test_sim_neo_determinism() {
     }
 }
 
-// ============================================================================
-// Noiseless vs Noisy Comparison Tests
-// ============================================================================
+// --- Noiseless vs Noisy Comparison Tests ---
 
 #[test]
 fn test_sim_neo_vs_sim_noiseless_exact() {
@@ -1058,9 +1042,7 @@ fn test_sim_neo_high_noise_chaos() {
     );
 }
 
-// ============================================================================
-// Additional Noise Tests (using GeneralNoiseModel on both sides)
-// ============================================================================
+// --- Additional Noise Tests (using GeneralNoiseModel on both sides) ---
 
 #[test]
 fn test_sim_neo_vs_sim_two_qubit_noise() {
@@ -1284,9 +1266,7 @@ fn test_sim_neo_vs_sim_combined_noise() {
     );
 }
 
-// ============================================================================
-// Multi-qubit Tests
-// ============================================================================
+// --- Multi-qubit Tests ---
 
 #[test]
 fn test_sim_neo_vs_sim_ghz_state() {

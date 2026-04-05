@@ -43,9 +43,7 @@ use quizx::linalg::Mat2;
 
 use crate::symplectic::{SymplecticMatrix, SymplecticVector, padded_clifford};
 
-// ============================================================================
-// Types
-// ============================================================================
+// --- Types ---
 
 /// A record of a single measurement operation.
 #[derive(Debug, Clone)]
@@ -147,9 +145,7 @@ impl CliffordTableau {
             .collect()
     }
 
-    // ========================================================================
-    // Gate application
-    // ========================================================================
+    // --- Gate application ---
 
     fn apply_gate(&mut self, gate_rep: CliffordRep) {
         let padded = padded_clifford(gate_rep, self.n);
@@ -216,9 +212,7 @@ impl CliffordTableau {
         self.apply_gate(CliffordRep::swap(q0, q1));
     }
 
-    // ========================================================================
-    // Accessors
-    // ========================================================================
+    // --- Accessors ---
 
     /// The internal Clifford representation.
     #[must_use]
@@ -232,9 +226,7 @@ impl CliffordTableau {
         &self.prepared
     }
 
-    // ========================================================================
-    // from_dag / apply_dag
-    // ========================================================================
+    // --- from_dag / apply_dag ---
 
     /// Build a `CliffordTableau` by iterating a `DagCircuit` in topological order.
     ///
@@ -313,9 +305,7 @@ impl CliffordTableau {
         Ok(())
     }
 
-    // ========================================================================
-    // Detector extraction
-    // ========================================================================
+    // --- Detector extraction ---
 
     /// Extract detectors from the accumulated tableau.
     ///
@@ -404,9 +394,7 @@ impl CliffordTableau {
     }
 }
 
-// ============================================================================
-// Periodic circuit analysis
-// ============================================================================
+// --- Periodic circuit analysis ---
 
 /// A detector expressed as measurement offsets relative to a round boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -781,18 +769,12 @@ impl PeriodicAnalysis {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use pecos_core::PauliOperator;
 
-    // ====================================================================
-    // Test 1: Identity circuit
-    // ====================================================================
+    // --- Test 1: Identity circuit ---
 
     #[test]
     fn identity_circuit_detectors() {
@@ -827,9 +809,7 @@ mod tests {
         }
     }
 
-    // ====================================================================
-    // Test 2: Bell state
-    // ====================================================================
+    // --- Test 2: Bell state ---
 
     #[test]
     fn bell_state_detector() {
@@ -864,9 +844,7 @@ mod tests {
         );
     }
 
-    // ====================================================================
-    // Test 3: Repetition code (1 round)
-    // ====================================================================
+    // --- Test 3: Repetition code (1 round) ---
 
     #[test]
     fn repetition_code_detectors() {
@@ -923,9 +901,7 @@ mod tests {
         }
     }
 
-    // ====================================================================
-    // Test 4: from_dag round-trip
-    // ====================================================================
+    // --- Test 4: from_dag round-trip ---
 
     #[test]
     fn from_dag_bell_state() {
@@ -946,9 +922,7 @@ mod tests {
         assert!(!result.expected_parities[0]);
     }
 
-    // ====================================================================
-    // Test 5: Cross-validation with Pauli webs
-    // ====================================================================
+    // --- Test 5: Cross-validation with Pauli webs ---
 
     #[test]
     fn cross_validate_with_pauli_webs() {
@@ -999,9 +973,7 @@ mod tests {
         );
     }
 
-    // ====================================================================
-    // Test 6: Stabilizer generators
-    // ====================================================================
+    // --- Test 6: Stabilizer generators ---
 
     #[test]
     fn stabilizer_generators_identity() {
@@ -1046,9 +1018,7 @@ mod tests {
         assert_eq!(g1.get(1), pecos_core::Pauli::Z);
     }
 
-    // ====================================================================
-    // Test 7: Unsupported gate error
-    // ====================================================================
+    // --- Test 7: Unsupported gate error ---
 
     #[test]
     fn unsupported_gate_error() {
@@ -1063,9 +1033,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ====================================================================
-    // Test 8: Gate correctness via CliffordRep comparison
-    // ====================================================================
+    // --- Test 8: Gate correctness via CliffordRep comparison ---
 
     #[test]
     fn gate_application_matches_clifford_rep() {
@@ -1109,9 +1077,7 @@ mod tests {
         }
     }
 
-    // ====================================================================
-    // Periodic analysis helper: build repetition code segments
-    // ====================================================================
+    // --- Periodic analysis helper: build repetition code segments ---
 
     /// Build init/body/finalize segments for a 3-data, 2-ancilla repetition code.
     /// Qubits: 0,1,2 = data; 3,4 = ancillas.
@@ -1142,9 +1108,7 @@ mod tests {
         (init, body, finalize)
     }
 
-    // ====================================================================
-    // Test 9: Periodic analysis - repetition code 2 rounds
-    // ====================================================================
+    // --- Test 9: Periodic analysis - repetition code 2 rounds ---
 
     #[test]
     fn periodic_repetition_code() {
@@ -1182,9 +1146,7 @@ mod tests {
         );
     }
 
-    // ====================================================================
-    // Test 10: compose(N) scaling
-    // ====================================================================
+    // --- Test 10: compose(N) scaling ---
 
     #[test]
     fn compose_scaling() {
@@ -1211,9 +1173,7 @@ mod tests {
         }
     }
 
-    // ====================================================================
-    // Test 11: Transfer map validity
-    // ====================================================================
+    // --- Test 11: Transfer map validity ---
 
     #[test]
     fn transfer_map_is_symplectic() {
@@ -1234,9 +1194,7 @@ mod tests {
         );
     }
 
-    // ====================================================================
-    // Test 12: Trivial periodic circuit
-    // ====================================================================
+    // --- Test 12: Trivial periodic circuit ---
 
     #[test]
     fn trivial_periodic_circuit() {
@@ -1279,9 +1237,7 @@ mod tests {
         );
     }
 
-    // ====================================================================
-    // Test 13: Cross-validate with unrolled circuit
-    // ====================================================================
+    // --- Test 13: Cross-validate with unrolled circuit ---
 
     #[test]
     fn cross_validate_periodic_with_unrolled() {
@@ -1329,9 +1285,7 @@ mod tests {
         );
     }
 
-    // ====================================================================
-    // Test 14: No body measurements error
-    // ====================================================================
+    // --- Test 14: No body measurements error ---
 
     #[test]
     fn no_body_measurements_error() {

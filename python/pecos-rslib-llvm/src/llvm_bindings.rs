@@ -38,9 +38,7 @@ use std::sync::{Mutex, OnceLock};
 // Import inkwell types directly
 use inkwell::context::Context;
 
-// ============================================================================
-// Comment Tracking
-// ============================================================================
+// --- Comment Tracking ---
 
 /// Represents a comment to be injected into the LLVM IR
 #[derive(Clone, Debug)]
@@ -123,9 +121,7 @@ fn inject_comments(ir: &str, comments: &[TrackedComment]) -> String {
     result
 }
 
-// ============================================================================
-// Module - Core LLVM module with owned context
-// ============================================================================
+// --- Module - Core LLVM module with owned context ---
 
 /// Python wrapper for LLVM Module
 ///
@@ -317,9 +313,7 @@ impl PyLLVMModule {
     }
 }
 
-// ============================================================================
-// ModuleContext - Provides type creation methods
-// ============================================================================
+// --- ModuleContext - Provides type creation methods ---
 
 /// Python wrapper for module.context
 ///
@@ -397,9 +391,7 @@ impl PyModuleContext {
     }
 }
 
-// ============================================================================
-// Type Classes
-// ============================================================================
+// --- Type Classes ---
 
 /// Enum to handle any type for function parameters
 #[derive(Copy, Clone, FromPyObject)]
@@ -592,9 +584,7 @@ pub struct PyVoidType {
 unsafe impl Send for PyVoidType {}
 unsafe impl Sync for PyVoidType {}
 
-// ============================================================================
-// IRBuilder - Instruction builder
-// ============================================================================
+// --- IRBuilder - Instruction builder ---
 
 /// Python wrapper for LLVM IR instruction builder
 ///
@@ -978,9 +968,7 @@ impl PyIRBuilder {
     }
 }
 
-// ============================================================================
-// Context managers for control flow
-// ============================================================================
+// --- Context managers for control flow ---
 
 /// Context manager for if-then blocks
 #[pyclass(name = "IfThen")]
@@ -1104,9 +1092,7 @@ impl PyIfElse {
     }
 }
 
-// ============================================================================
-// Function and related types
-// ============================================================================
+// --- Function and related types ---
 
 /// Python wrapper for LLVM function
 #[pyclass(name = "Function", from_py_object)]
@@ -1257,9 +1243,7 @@ impl PyLLValue {
     }
 }
 
-// ============================================================================
-// GlobalVariable - Global variable support
-// ============================================================================
+// --- GlobalVariable - Global variable support ---
 
 /// Python wrapper for LLVM global variables
 ///
@@ -1353,9 +1337,7 @@ impl PyGlobalVariable {
     }
 }
 
-// ============================================================================
-// Constant - Constant value creation
-// ============================================================================
+// --- Constant - Constant value creation ---
 
 /// Create constant value (mirrors llvmlite's ir.Constant(type, value))
 ///
@@ -1452,9 +1434,7 @@ fn Constant(_py: Python, ty: PyAnyType, value: &Bound<'_, PyAny>) -> PyResult<Py
     }
 }
 
-// ============================================================================
-// Type creation functions (module level)
-// ============================================================================
+// --- Type creation functions (module level) ---
 
 // Global context for standalone type creation (mimics llvmlite behavior)
 struct GlobalContextPtr(*mut Context);
@@ -1515,9 +1495,7 @@ fn Function(module: &mut PyLLVMModule, func_type: &PyFunctionType, name: &str) -
     module.add_function(name, func_type)
 }
 
-// ============================================================================
-// Register with Python
-// ============================================================================
+// --- Register with Python ---
 
 /// Register LLVM IR module with Python (compatible with llvmlite API)
 pub fn register_llvm_module(parent: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
@@ -1566,9 +1544,7 @@ pub fn register_llvm_module(parent: &Bound<'_, pyo3::types::PyModule>) -> PyResu
     Ok(())
 }
 
-// ============================================================================
-// llvmlite.binding module - for bitcode generation
-// ============================================================================
+// --- llvmlite.binding module - for bitcode generation ---
 
 /// `ValueRef` for type hints (matches llvmlite.binding.ValueRef)
 #[pyclass(name = "ValueRef")]

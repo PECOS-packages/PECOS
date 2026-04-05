@@ -10,8 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Comprehensive tests for the simulation builder API with different program formats
-//! including QASM, PHIR/JSON, and QIS.
+//! Tests for the simulation builder API with QASM, PHIR/JSON, and QIS formats.
 
 #![cfg(feature = "runtime")]
 

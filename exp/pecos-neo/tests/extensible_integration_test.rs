@@ -32,9 +32,7 @@ use pecos_neo::program::{CommandSource, ConditionalProgram, ProgramRunner, Stati
 use pecos_simulators::SparseStab;
 use std::any::TypeId;
 
-// ============================================================================
-// Gate Decomposition Chaining Tests (A → B → C)
-// ============================================================================
+// --- Gate Decomposition Chaining Tests (A → B → C) ---
 
 /// Create a custom gate that decomposes to SWAP (which itself decomposes to CX).
 /// This tests: `CUSTOM_GATE` → SWAP → CX (two levels of decomposition).
@@ -258,9 +256,7 @@ fn test_user_gate_requires_user_gate() {
     assert_eq!(resolved.len(), 2);
 }
 
-// ============================================================================
-// Plugin Dependency Tests
-// ============================================================================
+// --- Plugin Dependency Tests ---
 
 /// Test that circular dependencies are detected (or at least don't hang).
 #[test]
@@ -360,9 +356,7 @@ fn test_plugin_multi_level_dependencies() {
     assert!(registry.contains(GateId(258)));
 }
 
-// ============================================================================
-// User Gates with Noise Integration
-// ============================================================================
+// --- User Gates with Noise Integration ---
 
 /// Test that user-defined gates work with noise models in `sim_neo`.
 #[test]
@@ -461,9 +455,7 @@ fn test_noisy_execution_statistics() {
     );
 }
 
-// ============================================================================
-// CommandSource with User-Defined Gates
-// ============================================================================
+// --- CommandSource with User-Defined Gates ---
 
 /// A custom `CommandSource` that uses user-defined gates.
 struct UserGateProgram {
@@ -596,9 +588,7 @@ fn test_conditional_program_with_feedback() {
     );
 }
 
-// ============================================================================
-// Rotation Gate Decomposition with Angles
-// ============================================================================
+// --- Rotation Gate Decomposition with Angles ---
 
 #[test]
 fn test_rotation_gate_decomposition_preserves_angles() {
@@ -645,9 +635,7 @@ fn test_rotation_gate_decomposition_preserves_angles() {
     }
 }
 
-// ============================================================================
-// Edge Cases
-// ============================================================================
+// --- Edge Cases ---
 
 #[test]
 fn test_empty_decomposition() {
@@ -745,9 +733,7 @@ fn test_mixed_native_and_decomposed() {
     }
 }
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
+// --- Error Handling Tests ---
 
 #[test]
 fn test_resolution_error_unknown_gate() {
@@ -849,9 +835,7 @@ fn test_resolution_error_missing_requirements() {
     );
 }
 
-// ============================================================================
-// End-to-End Custom Gate Examples
-// ============================================================================
+// --- End-to-End Custom Gate Examples ---
 
 /// End-to-end example: Define a custom gate, execute it, verify correctness.
 ///

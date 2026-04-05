@@ -10,6 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+// Benchmark code casts qubit indices to i32/u32 for FFI and GPU APIs
+#![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+
 use criterion::{Criterion, criterion_group, criterion_main};
 
 mod modules {

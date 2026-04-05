@@ -117,13 +117,13 @@ fn bench_stabilizer_circuit_execution<M: Measurement>(c: &mut Criterion<M>) {
 
 /// Benchmark stabilizer simulation scaling with qubit count.
 fn bench_stabilizer_scaling<M: Measurement>(c: &mut Criterion<M>) {
-    let mut group = c.benchmark_group("Stabilizer Qubit Scaling");
-    group.sample_size(20);
-
     #[cfg(any(feature = "gpu-sims", feature = "cuquantum"))]
     const NUM_SHOTS: usize = 1000;
     #[cfg(any(feature = "gpu-sims", feature = "cuquantum"))]
     const DEPTH: usize = 20;
+
+    let mut group = c.benchmark_group("Stabilizer Qubit Scaling");
+    group.sample_size(20);
 
     // Test scaling from small to large qubit counts
     let qubit_counts = [10, 25, 50, 100, 200, 500, 1000];

@@ -30,7 +30,7 @@
 //!     .build();
 //!
 //! // Add importance sampling with 10x boost
-//! sim.tool_mut().add_plugin_mut(ImportanceSamplingPlugin::new(0.001, 10.0));
+//! sim.tool_mut().add_plugin_mut(&ImportanceSamplingPlugin::new(0.001, 10.0));
 //!
 //! let results = sim.run();
 //! // Use weighted statistics to analyze results...

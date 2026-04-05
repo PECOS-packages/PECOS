@@ -60,7 +60,7 @@
 //! use pecos_neo::noise::prelude::*;
 //!
 //! let model = realistic_device_noise(
-//!     DeviceNoiseParams::new()
+//!     &DeviceNoiseParams::new()
 //!         .with_p1(0.001)           // 0.1% single-qubit error
 //!         .with_p2(0.01)            // 1% two-qubit error
 //!         .with_measurement_error(0.02)
@@ -456,7 +456,7 @@ impl DeviceNoiseParams {
 /// ```
 /// # use pecos_neo::noise::prelude::*;
 /// let model = realistic_device_noise(
-///     DeviceNoiseParams::new()
+///     &DeviceNoiseParams::new()
 ///         .with_p1(0.001)
 ///         .with_p2(0.01)
 ///         .with_measurement_error(0.02)

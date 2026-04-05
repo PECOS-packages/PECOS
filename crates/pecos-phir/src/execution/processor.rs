@@ -536,7 +536,7 @@ impl PhirProcessor {
             ClassicalOp::Shl(shift) => {
                 if instruction.operands.len() >= 2 {
                     // Binary mode: shift amount from second operand (used by QIS parser)
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // shift amount is non-negative
                     self.process_binary_int_op(
                         instruction,
                         "shl",
@@ -556,7 +556,7 @@ impl PhirProcessor {
             ClassicalOp::Shr(shift) => {
                 if instruction.operands.len() >= 2 {
                     // Binary mode: shift amount from second operand (used by QIS parser)
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // shift amount is non-negative
                     self.process_binary_int_op(
                         instruction,
                         "shr",

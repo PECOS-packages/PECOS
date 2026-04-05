@@ -857,17 +857,20 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     fn update_noise_params(&mut self) {
         // Convert probabilities to fixed-point thresholds (p * 0xFFFF)
         let p1_threshold = if self.noise_enabled {
-            (self.noise_p1 * 65535.0) as u32
+            #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+            { (self.noise_p1 * 65535.0) as u32 }
         } else {
             0
         };
         let p2_threshold = if self.noise_enabled {
-            (self.noise_p2 * 65535.0) as u32
+            #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+            { (self.noise_p2 * 65535.0) as u32 }
         } else {
             0
         };
         let p_meas_threshold = if self.noise_enabled {
-            (self.noise_p_meas * 65535.0) as u32
+            #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+            { (self.noise_p_meas * 65535.0) as u32 }
         } else {
             0
         };
@@ -1184,6 +1187,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                         meas_base_idx + meas_idx as u32 + 0xFFFF_0000,
                         qubit as u32,
                     );
+                    #[allow(clippy::cast_sign_loss)] // probability in [0,1]
                     let threshold = (self.noise_p_meas * 65535.0) as u32;
                     if (rand & 0xFFFF) < threshold {
                         !outcome // Flip the outcome
@@ -1581,6 +1585,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                         self.measurement_count + meas_idx as u32 + 0xFFFF_0000,
                         qubit as u32,
                     );
+                    #[allow(clippy::cast_sign_loss)] // probability in [0,1]
                     let threshold = (self.noise_p_meas * 65535.0) as u32;
                     if (rand & 0xFFFF) < threshold {
                         !outcome
@@ -2512,11 +2517,13 @@ mod tests {
         sim.enable_noise(p1 as f32, 0.0, 0.0);
 
         // CPU-side verification
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1]
         let p1_threshold = (p1 * 65535.0) as u32;
         let seeds = sim.noise_seeds().to_vec();
         let mut cpu_trigger_counts = Vec::with_capacity(num_shots);
         for &seed in seeds.iter().take(num_shots) {
             let mut triggers = 0u32;
+            #[allow(clippy::cast_sign_loss)] // num_h_pairs is a positive count
             for gate_idx in 0..(num_h_pairs * 2) as u32 {
                 let rand = hash_noise_cpu(seed, gate_idx, 0);
                 if (rand & 0xFFFF) < p1_threshold {
@@ -2579,6 +2586,7 @@ mod tests {
 
         // CPU-side verification: predict how many noise triggers we expect per shot.
         // Each CX produces 2 noise evaluations (one per qubit), so 50 CX gates = 100 evaluations.
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1]
         let p2_threshold = (p2 * 65535.0) as u32;
         let num_gates = num_cx_pairs * 2;
 
@@ -2593,6 +2601,7 @@ mod tests {
         let mut cpu_trigger_counts = Vec::with_capacity(num_shots);
         for &seed in seeds.iter().take(num_shots) {
             let mut triggers = 0u32;
+            #[allow(clippy::cast_sign_loss)] // num_gates is a positive count
             for gate_idx in 0..num_gates as u32 {
                 // Control qubit noise
                 let rand = hash_noise_cpu(seed, gate_idx, 0);

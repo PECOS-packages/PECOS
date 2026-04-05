@@ -235,7 +235,6 @@ multiple-crate-versions = "allow"
 # values are bounded by construction. Localize #[allow] for non-obvious cases.
 cast-possible-truncation = "allow"
 cast-precision-loss = "allow"
-cast-sign-loss = "allow"
 cast-possible-wrap = "allow"
 # Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
 similar-names = "allow"

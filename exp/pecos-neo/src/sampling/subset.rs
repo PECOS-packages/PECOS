@@ -342,6 +342,7 @@ where
 
         for level in 0..self.config.max_levels {
             // Find threshold: score at (1 - threshold_fraction) quantile
+            #[allow(clippy::cast_sign_loss)] // product of values in [0,1] and a positive length
             let threshold_idx =
                 ((1.0 - self.config.threshold_fraction) * samples.len() as f64) as usize;
             let threshold_idx = threshold_idx.min(samples.len() - 1);
@@ -643,6 +644,7 @@ impl BernoulliSubsetSimulation {
     #[must_use]
     pub fn analytical_probability(&self) -> f64 {
         let n = self.num_steps;
+        #[allow(clippy::cast_sign_loss)] // both values are positive, so quotient is non-negative
         let k_min = (self.failure_threshold / self.damage_increment).ceil() as usize;
 
         if k_min > n {
@@ -880,6 +882,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
         });
 
         // Find adaptive threshold (top threshold_fraction)
+        #[allow(clippy::cast_sign_loss)] // product of fraction in [0,1] and a positive length
         let target_above =
             (self.config.threshold_fraction * self.trajectories.len() as f64).ceil() as usize;
         let threshold_idx = target_above.min(self.trajectories.len().saturating_sub(1));
@@ -1202,6 +1205,7 @@ impl ProperSubsetSimulation {
             });
 
             // Find adaptive threshold: score at (1-p0) quantile
+            #[allow(clippy::cast_sign_loss)] // p0 in [0,1] so (1-p0)*n is non-negative
             let threshold_idx = ((1.0 - p0) * n as f64).floor() as usize;
             let threshold_idx = threshold_idx.min(n - 1);
             let new_threshold = self.trajectories[threshold_idx].score;
@@ -1437,6 +1441,7 @@ impl ProperSubsetSimulation {
             // If no trajectories exceed this threshold, use quantile-based threshold
             let actual_threshold = if num_above == 0 {
                 // Use the (1-p0) quantile as the new threshold
+                #[allow(clippy::cast_sign_loss)] // p0 in [0,1] so (1-p0)*n is non-negative
                 let threshold_idx = ((1.0 - p0) * n as f64).floor() as usize;
                 let threshold_idx = threshold_idx.min(n - 1);
                 self.trajectories[threshold_idx].score
@@ -2004,6 +2009,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
             });
 
             // Find adaptive threshold: score at (1-p0) quantile
+            #[allow(clippy::cast_sign_loss)] // p0 in [0,1] so (1-p0)*n is non-negative
             let threshold_idx = ((1.0 - p0) * n as f64).floor() as usize;
             let threshold_idx = threshold_idx.min(n - 1);
             let new_threshold = histories[indices[threshold_idx]].final_score;
@@ -2082,7 +2088,8 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
                     }
                     syndrome_score.score =
                         parent.scores.get(crossing_round).copied().unwrap_or(0.0);
-                    syndrome_score.total_weight = syndrome_score.score as usize;
+                    #[allow(clippy::cast_sign_loss)] // score is a non-negative syndrome weight
+                    { syndrome_score.total_weight = syndrome_score.score as usize; }
 
                     // Continue from crossing point with new randomness
                     for round in (crossing_round + 1)..num_rounds {
@@ -2883,6 +2890,7 @@ mod tests {
         // Sum is Binomial(40, 0.2)
         // P(sum >= threshold) using our binomial_pmf function
         let total_trials = num_ancillas * num_rounds;
+        #[allow(clippy::cast_sign_loss)] // failure_threshold is a positive count
         let k_threshold = failure_threshold.ceil() as usize;
         let mut analytical = 0.0;
         for k in k_threshold..=total_trials {

@@ -1843,6 +1843,7 @@ pub fn blend_hex(a: &str, b: &str, t: f64) -> String {
     };
     let (r1, g1, b1) = parse(a);
     let (r2, g2, b2) = parse(b);
+    #[allow(clippy::cast_sign_loss)] // color interpolation between [0,255] values is non-negative
     let mix =
         |c1: u8, c2: u8| -> u8 { (f64::from(c1) * (1.0 - t) + f64::from(c2) * t).round() as u8 };
     format!("#{:02X}{:02X}{:02X}", mix(r1, r2), mix(g1, g2), mix(b1, b2))

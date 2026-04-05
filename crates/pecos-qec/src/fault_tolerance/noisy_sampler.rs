@@ -119,9 +119,11 @@ impl UniformNoiseModel {
     /// Create a uniform noise model with the given error probability.
     #[must_use]
     pub fn new(p_error: f64) -> Self {
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+        let threshold = (p_error * u64::MAX as f64) as u64;
         Self {
             p_error,
-            threshold: (p_error * u64::MAX as f64) as u64,
+            threshold,
         }
     }
 
@@ -169,7 +171,10 @@ impl PerLocationNoiseModel {
     pub fn new(probabilities: Vec<f64>) -> Self {
         let thresholds = probabilities
             .iter()
-            .map(|&p| (p * u64::MAX as f64) as u64)
+            .map(|&p| {
+                #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+                { (p * u64::MAX as f64) as u64 }
+            })
             .collect();
         Self {
             probabilities,

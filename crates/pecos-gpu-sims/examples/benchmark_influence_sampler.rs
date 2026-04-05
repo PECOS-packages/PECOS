@@ -113,6 +113,7 @@ impl CpuSampler {
     }
 
     fn sample(&mut self, num_shots: usize, p_error: f64) -> usize {
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
         let threshold = (p_error * f64::from(u32::MAX)) as u32;
         let mut logical_errors = 0;
 

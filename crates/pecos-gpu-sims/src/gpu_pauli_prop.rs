@@ -456,6 +456,7 @@ impl GpuPauliProp {
         self.upload_random_bits();
 
         // Encode probability as threshold in the "target" field
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
         let threshold = (probability * u32::MAX as f32) as u32;
         self.queue_gate(FAULT_DEPOL1, qubit as u32, threshold);
     }
@@ -470,6 +471,7 @@ impl GpuPauliProp {
 
         // For 2Q faults, we need to encode both qubits and probability
         // Use a separate queue entry for the probability threshold
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
         let threshold = (probability * u32::MAX as f32) as u32;
 
         // Queue as: [FAULT_DEPOL2, qubit_a, qubit_b, threshold]

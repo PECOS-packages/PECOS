@@ -954,7 +954,9 @@ mod tests {
         let mut flip_count = 0;
         for i in 0..100 {
             // Use different seeds to get variety
-            runner.rng = PecosRng::seed_from_u64(42 + i as u64);
+            #[allow(clippy::cast_sign_loss)] // i is a non-negative loop counter
+            let seed = 42 + i as u64;
+            runner.rng = PecosRng::seed_from_u64(seed);
             let result = runner.run_shot(&commands);
             // With 10% proposal rate, we should see flips
             if (result.weight.weight() - 1.0).abs() > f64::EPSILON {

@@ -324,6 +324,7 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
     // Benchmark with noise
     let mut noisy_group = c.benchmark_group("pecos-neo: Monte Carlo with Noise");
     let num_shots = 1000;
+    #[allow(clippy::cast_sign_loss)] // num_shots is a positive literal
     noisy_group.throughput(Throughput::Elements(num_shots as u64));
 
     // pecos-neo MonteCarloRunner with noise
@@ -336,6 +337,7 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
             .build();
 
         b.iter(|| {
+            #[allow(clippy::cast_sign_loss)] // num_shots is a positive literal
             let config = MonteCarloConfig::new()
                 .with_shots(num_shots as usize)
                 .with_workers(4)

@@ -239,6 +239,7 @@ fn demo_importance_sampling_boosted_errors() {
 
 /// Compare importance sampling vs standard Monte Carlo efficiency.
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop counters (trial) are non-negative, cast to u64
 fn demo_variance_comparison() {
     let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 

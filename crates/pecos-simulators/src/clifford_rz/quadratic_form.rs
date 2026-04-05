@@ -335,6 +335,7 @@ impl QuadraticForm {
         let n = self.n;
         if n == 0 {
             let e = ((self.q_const % 8) + 8) % 8;
+            #[allow(clippy::cast_sign_loss)] // (x % 8 + 8) % 8 is in [0,7]
             return ExactScalar::from_phase(e as u8);
         }
 
@@ -368,6 +369,7 @@ impl QuadraticForm {
                     _ => unreachable!(),
                 }
             }
+            #[allow(clippy::cast_sign_loss)] // phase8 is maintained in [0,7] via % 8
             let mut result = ExactScalar::from_phase(phase8 as u8);
             result.mul_sqrt2_pow(pow2);
             return result;
@@ -612,12 +614,14 @@ fn combine_result(
     if is_zero_imag {
         let mut result = ExactScalar::one();
         result.mul_sqrt2_pow(2 * pow2_real - 2);
+        #[allow(clippy::cast_sign_loss)] // all terms non-negative, result in [0,7]
         let e = ((4 * i32::from(sigma_real) + q_mod8) % 8) as u8;
         result.mul_phase(e);
         result
     } else if is_zero_real {
         let mut result = ExactScalar::one();
         result.mul_sqrt2_pow(2 * pow2_imag - 2);
+        #[allow(clippy::cast_sign_loss)] // all terms non-negative, result in [0,7]
         let e = ((2 + 4 * i32::from(sigma_imag) + q_mod8) % 8) as u8;
         result.mul_phase(e);
         result
@@ -631,6 +635,7 @@ fn combine_result(
         } else {
             5
         };
+        #[allow(clippy::cast_sign_loss)] // all terms non-negative, result in [0,7]
         let e = ((e + q_mod8) % 8) as u8;
         result.mul_phase(e);
         result

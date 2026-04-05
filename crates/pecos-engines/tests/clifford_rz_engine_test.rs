@@ -299,6 +299,7 @@ fn round_trip_statistical_comparison() {
     let mut crz_counts = vec![0u32; num_outcomes];
     let mut sv_counts = vec![0u32; num_outcomes];
 
+    #[allow(clippy::cast_sign_loss)] // num_shots is a positive literal
     for seed in 0..num_shots as u64 {
         // CliffordRz engine
         {

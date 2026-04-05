@@ -246,6 +246,7 @@ fn profile_gpu_sampler(
     let params_start = Instant::now();
     let detector_words = gpu_map.num_detectors.div_ceil(32).max(1);
     let logical_words = gpu_map.num_logicals.div_ceil(32).max(1);
+    #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
     let p_threshold = (p_error * f64::from(u32::MAX)) as u32;
     let params = SamplerParams {
         num_locations: gpu_map.num_locations,

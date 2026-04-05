@@ -464,6 +464,7 @@ impl GpuInfluenceSampler {
         let logical_words = self.num_logicals.div_ceil(32).max(1);
 
         // Update params
+        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
         let p_threshold = (p_error * f64::from(u32::MAX)) as u32;
         let params = SamplerParams {
             num_locations: self.num_locations,

@@ -408,6 +408,7 @@ fn test_user_gate_with_noise_integration() {
 
 /// Test noisy execution with gates.
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop seeds are non-negative counters cast to u64
 fn test_noisy_execution_statistics() {
     // This test verifies that noise is applied during gate execution.
     // We apply a high depolarizing rate and verify statistical behavior.
@@ -551,6 +552,7 @@ fn test_command_source_with_user_gates() {
 
 /// Test conditional branching with measurement feedback.
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop seeds are non-negative counters cast to u64
 fn test_conditional_program_with_feedback() {
     // Initial circuit: prepare |+>, measure
     let initial = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
@@ -859,6 +861,7 @@ fn test_resolution_error_missing_requirements() {
 /// 3. Execute through the simulator
 /// 4. Verify the expected quantum behavior
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop seeds are non-negative counters cast to u64
 fn test_e2e_custom_gate_definition_and_execution() {
     use pecos_neo::runner::CircuitRunner;
 

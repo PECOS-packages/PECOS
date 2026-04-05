@@ -429,6 +429,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_sign_loss)] // all values are small non-negative surface code indices
     fn test_surface_code_round() {
         let mut compiler = CircuitCompiler::new();
 

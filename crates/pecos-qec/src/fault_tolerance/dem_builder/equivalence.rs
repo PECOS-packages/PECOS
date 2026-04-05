@@ -482,8 +482,14 @@ impl FromStr for ParsedDem {
 
         Ok(Self {
             mechanisms,
-            num_detectors: if max_det >= 0 { max_det as u32 + 1 } else { 0 },
-            num_observables: if max_obs >= 0 { max_obs as u32 + 1 } else { 0 },
+            num_detectors: if max_det >= 0 {
+                #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
+                { max_det as u32 + 1 }
+            } else { 0 },
+            num_observables: if max_obs >= 0 {
+                #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
+                { max_obs as u32 + 1 }
+            } else { 0 },
         })
     }
 }

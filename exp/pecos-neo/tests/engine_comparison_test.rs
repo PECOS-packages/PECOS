@@ -601,6 +601,7 @@ fn test_full_seed_determinism() {
 /// This is the critical validation: both methods should estimate the same quantity
 /// (error rate) and agree within statistical tolerance.
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop seeds are non-negative counters cast to u64
 fn test_importance_sampling_matches_standard_monte_carlo() {
     use pecos_neo::sampling::ImportanceSamplingRunner;
 
@@ -680,6 +681,7 @@ fn test_importance_sampling_matches_standard_monte_carlo() {
 /// With a lower true error rate and higher boost, importance sampling
 /// should still produce unbiased estimates.
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop seeds are non-negative counters cast to u64
 fn test_importance_sampling_rare_events() {
     use pecos_neo::sampling::ImportanceSamplingRunner;
 
@@ -748,6 +750,7 @@ fn test_importance_sampling_rare_events() {
 /// For rare events, importance sampling should achieve lower variance
 /// (tighter confidence intervals) for the same number of samples.
 #[test]
+#[allow(clippy::cast_sign_loss)] // loop seeds are non-negative counters cast to u64
 fn test_importance_sampling_variance_reduction() {
     use pecos_neo::sampling::ImportanceSamplingRunner;
 

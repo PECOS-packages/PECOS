@@ -715,6 +715,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
          -> num_complex::Complex64 {
             // Total phase = constant_phase*pi/2 + (l1-l3)*pi/4
             // = (2*constant_phase + l1 - l3) * pi/4
+            #[allow(clippy::cast_sign_loss)] // (x % 8 + 8) ensures non-negative before cast
             let phase_idx = ((2 * cp + cl1 as i32 - cl3 as i32) % 8 + 8) as usize % 8;
             // Total power of 2: trivial_count + (l1+l3)/2 (each nontrivial l=1,3 gives factor sqrt(2))
             // But we need half-integer powers: 2^{trivial + (l1+l3)/2} = 2^trivial * sqrt(2)^{l1+l3}
@@ -726,6 +727,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                     std::f64::consts::SQRT_2 * 2.0_f64.powi((half_pow - 1) / 2)
                 }
             } else {
+                #[allow(clippy::cast_sign_loss)] // half_pow is negative in this branch, negation makes it positive
                 let abs_hp = (-half_pow) as u32;
                 if abs_hp & 1 == 0 {
                     1.0 / 2.0_f64.powi(abs_hp as i32 / 2)
@@ -859,7 +861,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
             // Compute l_per_bit (just gamma difference when shared).
             let l_for = |p: usize, gamma2: &[u8]| -> u8 {
-                ((i32::from(gamma2[p]) - i32::from(self.gamma[p])) % 4 + 4) as u8 % 4
+                #[allow(clippy::cast_sign_loss)] // (x % 4 + 4) ensures non-negative before cast
+                { ((i32::from(gamma2[p]) - i32::from(self.gamma[p])) % 4 + 4) as u8 % 4 }
             };
 
             // Solve constraint system for x0 if v != all_ones.
@@ -947,6 +950,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
                             };
                         }
                     }
+                    #[allow(clippy::cast_sign_loss)] // (x % 4 + 4) ensures non-negative before cast
                     let phase = match ((constant_phase % 4) + 4) as u8 % 4 {
                         0 => num_complex::Complex64::new(1.0, 0.0),
                         1 => num_complex::Complex64::new(0.0, 1.0),

@@ -709,8 +709,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             no_configure,
             yes,
         } => cli::upgrade_cmd::run(targets, *all, *no_configure, *yes)?,
-        Commands::SysInfo => cli::info::run()?,
-        Commands::List { verbose } => cli::list::run(*verbose)?,
+        Commands::SysInfo => cli::info::run(),
+        Commands::List { verbose } => cli::list::run(*verbose),
     }
 
     Ok(())

@@ -1,8 +1,5 @@
 //! Implementation of the `list` command
 
-#![allow(clippy::unnecessary_wraps)]
-
-use pecos_build::Result;
 use pecos_build::cuda::find_cuda;
 use pecos_build::cuquantum::find_cuquantum;
 use pecos_build::deps::list_dependencies;
@@ -12,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 /// Run the list command
-pub fn run(verbose: bool) -> Result<()> {
+pub fn run(verbose: bool) {
     println!("PECOS Dependencies");
     println!("==================");
     println!();
@@ -106,7 +103,6 @@ pub fn run(verbose: bool) -> Result<()> {
         }
     }
 
-    Ok(())
 }
 
 fn dir_size_display(path: &Path) -> String {

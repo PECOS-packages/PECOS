@@ -1,8 +1,5 @@
 //! Implementation of deps subcommands
 
-#![allow(clippy::unnecessary_wraps)]
-#![allow(clippy::needless_pass_by_value)]
-
 use super::DepsCommands;
 use pecos_build::Result;
 use pecos_build::download::download_cached;
@@ -13,14 +10,20 @@ use std::path::PathBuf;
 pub fn run(command: DepsCommands) -> Result<()> {
     match command {
         DepsCommands::Init { force } => run_init(force),
-        DepsCommands::Status => run_status(),
+        DepsCommands::Status => {
+            run_status();
+            Ok(())
+        }
         DepsCommands::Sync { dry_run } => run_sync(dry_run),
-        DepsCommands::Verify { deps } => run_verify(deps),
-        DepsCommands::List => run_list(),
+        DepsCommands::Verify { deps } => run_verify(deps.as_deref()),
+        DepsCommands::List => {
+            run_list();
+            Ok(())
+        }
     }
 }
 
-fn run_list() -> Result<()> {
+fn run_list() {
     let deps = pecos_build::deps::list_dependencies();
     if deps.is_empty() {
         println!("No dependencies defined in pecos.toml");
@@ -31,7 +34,6 @@ fn run_list() -> Result<()> {
             println!("  {:<20} {} - {}", dep.name, dep.version, dep.description);
         }
     }
-    Ok(())
 }
 
 fn run_init(force: bool) -> Result<()> {
@@ -49,7 +51,7 @@ fn run_init(force: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_status() -> Result<()> {
+fn run_status() {
     println!("Manifest Status");
     println!("===============");
     println!();
@@ -100,8 +102,6 @@ fn run_status() -> Result<()> {
         println!("pecos.toml: not found");
         println!("  Run 'pecos deps init' to create one.");
     }
-
-    Ok(())
 }
 
 fn run_sync(dry_run: bool) -> Result<()> {
@@ -250,7 +250,7 @@ fn run_sync_execute(workspace_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn run_verify(deps_filter: Option<String>) -> Result<()> {
+fn run_verify(deps_filter: Option<&str>) -> Result<()> {
     println!("Verifying dependency checksums...");
     println!();
 

@@ -1,7 +1,5 @@
 //! Implementation of LLVM subcommands
 
-#![allow(clippy::unnecessary_wraps)]
-
 use super::LlvmCommands;
 use pecos_build::Result;
 use pecos_build::llvm::config::{auto_configure_llvm, validate_llvm_config};
@@ -12,16 +10,25 @@ use pecos_build::llvm::{
 /// Run an LLVM subcommand
 pub fn run(command: LlvmCommands) -> Result<()> {
     match command {
-        LlvmCommands::Check { quiet } => run_check(quiet),
+        LlvmCommands::Check { quiet } => {
+            run_check(quiet);
+            Ok(())
+        }
         LlvmCommands::Configure => run_configure(),
-        LlvmCommands::Find { export } => run_find(export),
+        LlvmCommands::Find { export } => {
+            run_find(export);
+            Ok(())
+        }
         LlvmCommands::Version => run_version(),
         LlvmCommands::Validate { path } => run_validate(path),
-        LlvmCommands::Tool { name } => run_tool(&name),
+        LlvmCommands::Tool { name } => {
+            run_tool(&name);
+            Ok(())
+        }
     }
 }
 
-fn run_check(quiet: bool) -> Result<()> {
+fn run_check(quiet: bool) {
     let repo_root = get_repo_root_from_manifest();
     if let Some(llvm_path) = find_llvm_14(repo_root) {
         if !quiet {
@@ -39,7 +46,6 @@ fn run_check(quiet: bool) -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Ok(())
     } else {
         if !quiet {
             let cmd = get_pecos_command();
@@ -58,7 +64,7 @@ fn run_configure() -> Result<()> {
     Ok(())
 }
 
-fn run_find(export: bool) -> Result<()> {
+fn run_find(export: bool) {
     let repo_root = get_repo_root_from_manifest();
     if let Some(llvm_path) = find_llvm_14(repo_root) {
         if export {
@@ -66,7 +72,6 @@ fn run_find(export: bool) -> Result<()> {
         } else {
             println!("{}", llvm_path.display());
         }
-        Ok(())
     } else {
         eprintln!("LLVM 14 not found");
         std::process::exit(1);
@@ -147,10 +152,9 @@ fn run_validate(path: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn run_tool(name: &str) -> Result<()> {
+fn run_tool(name: &str) {
     if let Some(tool_path) = find_tool(name) {
         println!("{}", tool_path.display());
-        Ok(())
     } else {
         eprintln!("Tool '{name}' not found");
         std::process::exit(1);

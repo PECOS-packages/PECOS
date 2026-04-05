@@ -1,8 +1,5 @@
 //! Implementation of the `info` command
 
-#![allow(clippy::unnecessary_wraps)]
-
-use pecos_build::Result;
 use pecos_build::cuda::{find_cuda, get_cuda_version};
 use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
 use pecos_build::home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_pecos_home};
@@ -10,7 +7,7 @@ use pecos_build::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manif
 use std::process::Command;
 
 /// Run the info command
-pub fn run() -> Result<()> {
+pub fn run() {
     println!("PECOS Development Environment");
     println!("==============================");
     println!();
@@ -111,7 +108,6 @@ pub fn run() -> Result<()> {
         println!("  (none)");
     }
 
-    Ok(())
 }
 
 /// Print toolchain and dependency status

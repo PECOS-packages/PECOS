@@ -10,7 +10,8 @@
 use crate::CuQuantumError;
 use crate::error::{Result, check_densitymat_status};
 use pecos_cuquantum_sys::{
-    cudaDataType_t, cudensitymatHandle_t, cudensitymatState_t, cudensitymatStatePurity_t,
+    CuQuantumBackend, cudaDataType_t, cudensitymatHandle_t, cudensitymatState_t,
+    cudensitymatStatePurity_t,
 };
 use std::ptr;
 
@@ -32,7 +33,7 @@ use std::ptr;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::CuDensityMat;
 ///
@@ -41,6 +42,7 @@ use std::ptr;
 /// # }
 /// ```
 pub struct CuDensityMat {
+    backend: &'static CuQuantumBackend,
     handle: cudensitymatHandle_t,
     state: cudensitymatState_t,
     num_qubits: usize,
@@ -59,7 +61,6 @@ impl CuDensityMat {
     /// - cuDensityMat initialization fails
     /// - CUDA device is not available
     /// - Memory allocation fails
-    #[allow(unreachable_code)]
     pub fn new(num_qubits: usize) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(
@@ -67,21 +68,14 @@ impl CuDensityMat {
             ));
         }
 
-        #[cfg(cuquantum_stub)]
-        return Err(CuQuantumError::NotAvailable(
-            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
-             1. Set CUQUANTUM_ROOT environment variable, or\n\
-             2. Install via: pecos install cuquantum, or\n\
-             3. Install system-wide to /usr/local/cuquantum/"
-                .into(),
-        ));
+        let backend = pecos_cuquantum_sys::try_load().map_err(CuQuantumError::from)?;
 
         let mut handle: cudensitymatHandle_t = ptr::null_mut();
         let mut state: cudensitymatState_t = ptr::null_mut();
 
         // SAFETY: We pass valid pointers to receive the handle and state
         unsafe {
-            let status = pecos_cuquantum_sys::cudensitymatCreate(&mut handle);
+            let status = (backend.cudensitymatCreate)(&mut handle);
             check_densitymat_status(status)?;
 
             // Create space mode extents - each qubit has dimension 2
@@ -89,7 +83,7 @@ impl CuDensityMat {
 
             // Create a pure state (ket-bra representation)
             // New API requires numSpaceModes, spaceModeExtents, and batchSize
-            let status = pecos_cuquantum_sys::cudensitymatCreateState(
+            let status = (backend.cudensitymatCreateState)(
                 handle,
                 cudensitymatStatePurity_t::CUDENSITYMAT_STATE_PURITY_PURE,
                 num_qubits as i32,           // numSpaceModes
@@ -100,12 +94,13 @@ impl CuDensityMat {
             );
             if !pecos_cuquantum_sys::densitymat_is_success(status) {
                 // Clean up handle if state creation failed
-                let _ = pecos_cuquantum_sys::cudensitymatDestroy(handle);
+                let _ = (backend.cudensitymatDestroy)(handle);
                 check_densitymat_status(status)?;
             }
         }
 
         Ok(Self {
+            backend,
             handle,
             state,
             num_qubits,
@@ -120,11 +115,15 @@ impl CuDensityMat {
 
     /// Get the cuDensityMat version
     ///
-    /// Returns the version as a single integer
+    /// Returns the version as a single integer, or 0 if the library is not available.
     #[must_use]
     pub fn version() -> usize {
-        // SAFETY: This is a pure function with no side effects
-        unsafe { pecos_cuquantum_sys::cudensitymatGetVersion() }
+        if let Ok(backend) = pecos_cuquantum_sys::try_load() {
+            // SAFETY: This is a pure function with no side effects
+            unsafe { (backend.cudensitymatGetVersion)() }
+        } else {
+            0
+        }
     }
 
     /// Get the raw handle for advanced usage
@@ -153,10 +152,10 @@ impl Drop for CuDensityMat {
         // SAFETY: We own the handle and state, and they're valid
         unsafe {
             if !self.state.is_null() {
-                let _ = pecos_cuquantum_sys::cudensitymatDestroyState(self.state);
+                let _ = (self.backend.cudensitymatDestroyState)(self.state);
             }
             if !self.handle.is_null() {
-                let _ = pecos_cuquantum_sys::cudensitymatDestroy(self.handle);
+                let _ = (self.backend.cudensitymatDestroy)(self.handle);
             }
         }
     }

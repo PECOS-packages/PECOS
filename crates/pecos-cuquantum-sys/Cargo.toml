@@ -12,6 +12,10 @@ categories = ["external-ffi-bindings", "science"]
 readme = "README.md"
 
 [dependencies]
+libloading.workspace = true
+log.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
 
 [build-dependencies]
 bindgen.workspace = true

@@ -48,10 +48,13 @@
 #![allow(dead_code)]
 #![allow(clippy::useless_transmute)]
 #![allow(clippy::too_many_arguments)]
-#![allow(unpredictable_function_pointer_comparisons)]
 
-// Include the generated bindings
+// Type definitions from bindgen (real cuQuantum headers) or stubs
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
+// Runtime library loader
+pub mod loader;
+pub use loader::{try_load, is_available, CuQuantumBackend, CuQuantumLoadError};
 
 /// Check if a cuStateVec status indicates success
 #[inline]

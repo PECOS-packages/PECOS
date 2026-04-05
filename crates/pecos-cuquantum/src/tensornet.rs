@@ -7,7 +7,7 @@
 //! contracting tensor networks representing the circuit.
 
 use crate::error::{Result, check_tensornet_status};
-use pecos_cuquantum_sys::cutensornetHandle_t;
+use pecos_cuquantum_sys::{CuQuantumBackend, cutensornetHandle_t};
 use std::ptr;
 
 /// Tensor network simulator using NVIDIA cuTensorNet
@@ -23,7 +23,7 @@ use std::ptr;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::CuTensorNet;
 ///
@@ -32,6 +32,7 @@ use std::ptr;
 /// # }
 /// ```
 pub struct CuTensorNet {
+    backend: &'static CuQuantumBackend,
     handle: cutensornetHandle_t,
 }
 
@@ -42,35 +43,32 @@ impl CuTensorNet {
     /// Returns an error if:
     /// - cuTensorNet initialization fails
     /// - CUDA device is not available
-    #[allow(unreachable_code)]
     pub fn new() -> Result<Self> {
-        #[cfg(cuquantum_stub)]
-        return Err(crate::CuQuantumError::NotAvailable(
-            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
-             1. Set CUQUANTUM_ROOT environment variable, or\n\
-             2. Install via: pecos install cuquantum, or\n\
-             3. Install system-wide to /usr/local/cuquantum/"
-                .into(),
-        ));
+        let backend = pecos_cuquantum_sys::try_load().map_err(crate::CuQuantumError::from)?;
 
         let mut handle: cutensornetHandle_t = ptr::null_mut();
 
         // SAFETY: We pass a valid pointer to receive the handle
         unsafe {
-            let status = pecos_cuquantum_sys::cutensornetCreate(&mut handle);
+            let status = (backend.cutensornetCreate)(&mut handle);
             check_tensornet_status(status)?;
         }
 
-        Ok(Self { handle })
+        Ok(Self { backend, handle })
     }
 
     /// Get the cuTensorNet version
     ///
-    /// Returns the version as a single integer (e.g., 20000 for version 2.0.0)
+    /// Returns the version as a single integer (e.g., 20000 for version 2.0.0),
+    /// or 0 if the library is not available.
     #[must_use]
     pub fn version() -> usize {
-        // SAFETY: This is a pure function with no side effects
-        unsafe { pecos_cuquantum_sys::cutensornetGetVersion() }
+        if let Ok(backend) = pecos_cuquantum_sys::try_load() {
+            // SAFETY: This is a pure function with no side effects
+            unsafe { (backend.cutensornetGetVersion)() }
+        } else {
+            0
+        }
     }
 
     /// Get the raw handle for advanced usage
@@ -89,7 +87,7 @@ impl Drop for CuTensorNet {
         // SAFETY: We own the handle and it's valid
         unsafe {
             if !self.handle.is_null() {
-                let _ = pecos_cuquantum_sys::cutensornetDestroy(self.handle);
+                let _ = (self.backend.cutensornetDestroy)(self.handle);
             }
         }
     }

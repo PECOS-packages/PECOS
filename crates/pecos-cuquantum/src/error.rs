@@ -351,6 +351,12 @@ impl From<cudensitymatStatus_t> for CuQuantumError {
     }
 }
 
+impl From<&pecos_cuquantum_sys::CuQuantumLoadError> for CuQuantumError {
+    fn from(err: &pecos_cuquantum_sys::CuQuantumLoadError) -> Self {
+        Self::NotAvailable(err.to_string())
+    }
+}
+
 // =============================================================================
 // TryClone trait
 // =============================================================================
@@ -362,7 +368,7 @@ impl From<cudensitymatStatus_t> for CuQuantumError {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::{CuStateVec, TryClone};
 ///

@@ -6,7 +6,7 @@
 use crate::error::{CuQuantumError, Result, TryClone, check_status};
 use pecos_core::{Angle64, QubitId};
 use pecos_cuquantum_sys::{
-    cuDoubleComplex, cudaDataType_t, cudaMemcpyKind_cudaMemcpyDeviceToDevice,
+    CuQuantumBackend, cuDoubleComplex, cudaDataType_t, cudaMemcpyKind_cudaMemcpyDeviceToDevice,
     cudaMemcpyKind_cudaMemcpyHostToDevice, custatevecCollapseOp_t, custatevecComputeType_t,
     custatevecHandle_t, custatevecMatrixLayout_t,
 };
@@ -23,7 +23,7 @@ use std::ptr;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_cuquantum::CuStateVec;
 /// use pecos_simulators::{QuantumSimulator, CliffordGateable};
@@ -37,6 +37,7 @@ use std::ptr;
 /// # }
 /// ```
 pub struct CuStateVec {
+    backend: &'static CuQuantumBackend,
     handle: custatevecHandle_t,
     num_qubits: usize,
     /// Device pointer to the state vector (2^n complex doubles)
@@ -70,7 +71,6 @@ impl CuStateVec {
     ///
     /// # Errors
     /// Returns an error if initialization fails
-    #[allow(unreachable_code, unused_variables)]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(
@@ -84,18 +84,11 @@ impl CuStateVec {
             ));
         }
 
-        #[cfg(cuquantum_stub)]
-        return Err(CuQuantumError::NotAvailable(
-            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
-             1. Set CUQUANTUM_ROOT environment variable, or\n\
-             2. Install via: pecos install cuquantum, or\n\
-             3. Install system-wide to /usr/local/cuquantum/"
-                .into(),
-        ));
+        let backend = pecos_cuquantum_sys::try_load().map_err(CuQuantumError::from)?;
 
         // Create cuStateVec handle
         let mut handle: custatevecHandle_t = ptr::null_mut();
-        let status = unsafe { pecos_cuquantum_sys::custatevecCreate(&mut handle) };
+        let status = unsafe { (backend.custatevecCreate)(&mut handle) };
         check_status(status)?;
 
         // Allocate device memory for state vector
@@ -104,12 +97,12 @@ impl CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result = unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
+        let cuda_result = unsafe { (backend.cudaMalloc)(&mut state_vector, size_bytes) };
 
         if cuda_result != 0 {
             // Clean up handle if allocation failed
             unsafe {
-                let _ = pecos_cuquantum_sys::custatevecDestroy(handle);
+                let _ = (backend.custatevecDestroy)(handle);
             }
             return Err(CuQuantumError::Cuda(format!(
                 "cudaMalloc failed with error code {cuda_result}"
@@ -119,6 +112,7 @@ impl CuStateVec {
         let rng = fastrand::Rng::with_seed(seed);
 
         let mut sim = Self {
+            backend,
             handle,
             num_qubits,
             state_vector,
@@ -140,7 +134,7 @@ impl CuStateVec {
 
         // Zero out all memory
         let cuda_result =
-            unsafe { pecos_cuquantum_sys::cudaMemset(self.state_vector, 0, size_bytes) };
+            unsafe { (self.backend.cudaMemset)(self.state_vector, 0, size_bytes) };
         if cuda_result != 0 {
             return Err(CuQuantumError::Cuda(format!(
                 "cudaMemset failed with error code {cuda_result}"
@@ -150,7 +144,7 @@ impl CuStateVec {
         // Set first element to (1.0, 0.0) for |0...0>
         let one = cuDoubleComplex { x: 1.0, y: 0.0 };
         let cuda_result = unsafe {
-            pecos_cuquantum_sys::cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.state_vector,
                 &one as *const cuDoubleComplex as *const c_void,
                 std::mem::size_of::<cuDoubleComplex>(),
@@ -214,7 +208,7 @@ impl CuStateVec {
 
         // SAFETY: All pointers are valid, handle owns device memory
         let status = unsafe {
-            pecos_cuquantum_sys::custatevecApplyMatrix(
+            (self.backend.custatevecApplyMatrix)(
                 self.handle,
                 self.state_vector,
                 cudaDataType_t::CUDA_C_64F,
@@ -325,7 +319,7 @@ impl CuStateVec {
 
         // SAFETY: All pointers are valid, handle owns device memory
         let status = unsafe {
-            pecos_cuquantum_sys::custatevecApplyMatrix(
+            (self.backend.custatevecApplyMatrix)(
                 self.handle,
                 self.state_vector,
                 cudaDataType_t::CUDA_C_64F,
@@ -357,7 +351,7 @@ impl CuStateVec {
 
         // SAFETY: All pointers are valid
         let status = unsafe {
-            pecos_cuquantum_sys::custatevecMeasureOnZBasis(
+            (self.backend.custatevecMeasureOnZBasis)(
                 self.handle,
                 self.state_vector,
                 cudaDataType_t::CUDA_C_64F,
@@ -404,7 +398,7 @@ impl CuStateVec {
 
             // SAFETY: All pointers are valid
             let status = unsafe {
-                pecos_cuquantum_sys::custatevecBatchMeasure(
+                (self.backend.custatevecBatchMeasure)(
                     self.handle,
                     self.state_vector,
                     cudaDataType_t::CUDA_C_64F,
@@ -437,14 +431,14 @@ impl Drop for CuStateVec {
         // Free device memory first
         if !self.state_vector.is_null() {
             unsafe {
-                let _ = pecos_cuquantum_sys::cudaFree(self.state_vector);
+                let _ = (self.backend.cudaFree)(self.state_vector);
             }
         }
 
         // Then destroy handle
         if !self.handle.is_null() {
             unsafe {
-                let _ = pecos_cuquantum_sys::custatevecDestroy(self.handle);
+                let _ = (self.backend.custatevecDestroy)(self.handle);
             }
         }
     }
@@ -461,7 +455,7 @@ impl Clone for CuStateVec {
     fn clone(&self) -> Self {
         // Create new cuStateVec handle
         let mut handle: custatevecHandle_t = ptr::null_mut();
-        let status = unsafe { pecos_cuquantum_sys::custatevecCreate(&mut handle) };
+        let status = unsafe { (self.backend.custatevecCreate)(&mut handle) };
         check_status(status).expect("Failed to create cuStateVec handle for clone");
 
         // Allocate device memory for the cloned state vector
@@ -469,19 +463,19 @@ impl Clone for CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result = unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
+        let cuda_result = unsafe { (self.backend.cudaMalloc)(&mut state_vector, size_bytes) };
 
         if cuda_result != 0 {
             // Clean up handle if allocation failed
             unsafe {
-                let _ = pecos_cuquantum_sys::custatevecDestroy(handle);
+                let _ = (self.backend.custatevecDestroy)(handle);
             }
             panic!("cudaMalloc failed with error code {cuda_result} during clone");
         }
 
         // Copy device memory from original to clone (device-to-device)
         let cuda_result = unsafe {
-            pecos_cuquantum_sys::cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 state_vector,
                 self.state_vector,
                 size_bytes,
@@ -492,8 +486,8 @@ impl Clone for CuStateVec {
         if cuda_result != 0 {
             // Clean up on failure
             unsafe {
-                let _ = pecos_cuquantum_sys::cudaFree(state_vector);
-                let _ = pecos_cuquantum_sys::custatevecDestroy(handle);
+                let _ = (self.backend.cudaFree)(state_vector);
+                let _ = (self.backend.custatevecDestroy)(handle);
             }
             panic!("cudaMemcpy device-to-device failed with error code {cuda_result} during clone");
         }
@@ -502,6 +496,7 @@ impl Clone for CuStateVec {
         let rng = self.rng.clone();
 
         Self {
+            backend: self.backend,
             handle,
             num_qubits: self.num_qubits,
             state_vector,
@@ -524,7 +519,7 @@ impl TryClone for CuStateVec {
     fn try_clone(&self) -> Result<Self> {
         // Create new cuStateVec handle
         let mut handle: custatevecHandle_t = ptr::null_mut();
-        let status = unsafe { pecos_cuquantum_sys::custatevecCreate(&mut handle) };
+        let status = unsafe { (self.backend.custatevecCreate)(&mut handle) };
         check_status(status)?;
 
         // Allocate device memory for the cloned state vector
@@ -532,12 +527,12 @@ impl TryClone for CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result = unsafe { pecos_cuquantum_sys::cudaMalloc(&mut state_vector, size_bytes) };
+        let cuda_result = unsafe { (self.backend.cudaMalloc)(&mut state_vector, size_bytes) };
 
         if cuda_result != 0 {
             // Clean up handle if allocation failed
             unsafe {
-                let _ = pecos_cuquantum_sys::custatevecDestroy(handle);
+                let _ = (self.backend.custatevecDestroy)(handle);
             }
             return Err(CuQuantumError::Cuda(format!(
                 "cudaMalloc failed with error code {cuda_result} during clone"
@@ -546,7 +541,7 @@ impl TryClone for CuStateVec {
 
         // Copy device memory from original to clone (device-to-device)
         let cuda_result = unsafe {
-            pecos_cuquantum_sys::cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 state_vector,
                 self.state_vector,
                 size_bytes,
@@ -557,8 +552,8 @@ impl TryClone for CuStateVec {
         if cuda_result != 0 {
             // Clean up on failure
             unsafe {
-                let _ = pecos_cuquantum_sys::cudaFree(state_vector);
-                let _ = pecos_cuquantum_sys::custatevecDestroy(handle);
+                let _ = (self.backend.cudaFree)(state_vector);
+                let _ = (self.backend.custatevecDestroy)(handle);
             }
             return Err(CuQuantumError::Cuda(format!(
                 "cudaMemcpy device-to-device failed with error code {cuda_result} during clone"
@@ -569,6 +564,7 @@ impl TryClone for CuStateVec {
         let rng = self.rng.clone();
 
         Ok(Self {
+            backend: self.backend,
             handle,
             num_qubits: self.num_qubits,
             state_vector,

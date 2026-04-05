@@ -12,13 +12,13 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_cuquantum::CuFrameSimulator;
 //!
-//! let mut sim = CuFrameSimulator::new(5, 1000, 2)?;
-//! let circuit = "H 0\nCNOT 0 1\nM 0 1";
-//! let results = sim.run_circuit(circuit, 42)?;
+//! // Create a frame simulator (requires GPU)
+//! let sim = CuFrameSimulator::new(2, 100, 1)?;
+//! drop(sim);
 //! # Ok(())
 //! # }
 //! ```
@@ -26,12 +26,9 @@
 use crate::error::{CuQuantumError, Result, TryClone, check_stabilizer_status};
 use pecos_core::QubitId;
 use pecos_cuquantum_sys::{
-    cudaFree, cudaMalloc, cudaMemcpy, cudaMemcpyKind_cudaMemcpyDeviceToHost,
+    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost,
     cudaMemcpyKind_cudaMemcpyHostToDevice, custabilizerCircuit_t,
-    custabilizerCircuitSizeFromString, custabilizerCreate, custabilizerCreateCircuitFromString,
-    custabilizerCreateFrameSimulator, custabilizerDestroy, custabilizerDestroyCircuit,
-    custabilizerDestroyFrameSimulator, custabilizerFrameSimulator_t,
-    custabilizerFrameSimulatorApplyCircuit, custabilizerHandle_t,
+    custabilizerFrameSimulator_t, custabilizerHandle_t,
 };
 use pecos_simulators::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 use pecos_simulators::{
@@ -77,6 +74,7 @@ pub struct FrameSimulationResults {
 /// - `DEPOLARIZE1(p) qubit` - Single-qubit depolarizing noise
 /// - `DEPOLARIZE2(p) qubit1 qubit2` - Two-qubit depolarizing noise
 pub struct CuFrameSimulator {
+    backend: &'static CuQuantumBackend,
     handle: custabilizerHandle_t,
     num_qubits: usize,
     num_shots: usize,
@@ -106,7 +104,6 @@ impl CuFrameSimulator {
     ///
     /// # Errors
     /// Returns an error if GPU resources cannot be allocated.
-    #[allow(unreachable_code, unused_variables)]
     pub fn new(num_qubits: usize, num_shots: usize, max_measurements: usize) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(
@@ -119,18 +116,11 @@ impl CuFrameSimulator {
             ));
         }
 
-        #[cfg(cuquantum_stub)]
-        return Err(CuQuantumError::NotAvailable(
-            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
-             1. Set CUQUANTUM_ROOT environment variable, or\n\
-             2. Install via: pecos install cuquantum, or\n\
-             3. Install system-wide to /usr/local/cuquantum/"
-                .into(),
-        ));
+        let backend = pecos_cuquantum_sys::try_load().map_err(CuQuantumError::from)?;
 
         // Create cuStabilizer handle
         let mut handle: custabilizerHandle_t = ptr::null_mut();
-        let status = unsafe { custabilizerCreate(&mut handle) };
+        let status = unsafe { (backend.custabilizerCreate)(&mut handle) };
         check_stabilizer_status(status)?;
 
         // Calculate table stride (must be multiple of 4 bytes)
@@ -148,28 +138,28 @@ impl CuFrameSimulator {
         let m_table_device: *mut u32 = ptr::null_mut();
 
         unsafe {
-            let cuda_status = cudaMalloc(&mut x_table_device.cast(), x_table_size);
+            let cuda_status = (backend.cudaMalloc)(&mut x_table_device.cast(), x_table_size);
             if cuda_status != 0 {
-                custabilizerDestroy(handle);
+                (backend.custabilizerDestroy)(handle);
                 return Err(CuQuantumError::Cuda(format!(
                     "Failed to allocate X table: CUDA error {cuda_status}"
                 )));
             }
 
-            let cuda_status = cudaMalloc(&mut z_table_device.cast(), z_table_size);
+            let cuda_status = (backend.cudaMalloc)(&mut z_table_device.cast(), z_table_size);
             if cuda_status != 0 {
-                cudaFree(x_table_device.cast());
-                custabilizerDestroy(handle);
+                (backend.cudaFree)(x_table_device.cast());
+                (backend.custabilizerDestroy)(handle);
                 return Err(CuQuantumError::Cuda(format!(
                     "Failed to allocate Z table: CUDA error {cuda_status}"
                 )));
             }
 
-            let cuda_status = cudaMalloc(&mut m_table_device.cast(), m_table_size);
+            let cuda_status = (backend.cudaMalloc)(&mut m_table_device.cast(), m_table_size);
             if cuda_status != 0 {
-                cudaFree(x_table_device.cast());
-                cudaFree(z_table_device.cast());
-                custabilizerDestroy(handle);
+                (backend.cudaFree)(x_table_device.cast());
+                (backend.cudaFree)(z_table_device.cast());
+                (backend.custabilizerDestroy)(handle);
                 return Err(CuQuantumError::Cuda(format!(
                     "Failed to allocate M table: CUDA error {cuda_status}"
                 )));
@@ -177,6 +167,7 @@ impl CuFrameSimulator {
         }
 
         Ok(Self {
+            backend,
             handle,
             num_qubits,
             num_shots,
@@ -246,7 +237,7 @@ impl CuFrameSimulator {
         // Get required buffer size for circuit
         let mut buffer_size: i64 = 0;
         let status = unsafe {
-            custabilizerCircuitSizeFromString(
+            (self.backend.custabilizerCircuitSizeFromString)(
                 self.handle,
                 circuit_cstring.as_ptr(),
                 &mut buffer_size,
@@ -260,9 +251,9 @@ impl CuFrameSimulator {
         if buffer_size_usize > self.circuit_buffer_size {
             unsafe {
                 if !self.circuit_buffer_device.is_null() {
-                    cudaFree(self.circuit_buffer_device);
+                    (self.backend.cudaFree)(self.circuit_buffer_device);
                 }
-                let cuda_status = cudaMalloc(&mut self.circuit_buffer_device, buffer_size_usize);
+                let cuda_status = (self.backend.cudaMalloc)(&mut self.circuit_buffer_device, buffer_size_usize);
                 if cuda_status != 0 {
                     self.circuit_buffer_device = ptr::null_mut();
                     self.circuit_buffer_size = 0;
@@ -277,7 +268,7 @@ impl CuFrameSimulator {
         // Create circuit from string
         let mut circuit: custabilizerCircuit_t = ptr::null_mut();
         let status = unsafe {
-            custabilizerCreateCircuitFromString(
+            (self.backend.custabilizerCreateCircuitFromString)(
                 self.handle,
                 circuit_cstring.as_ptr(),
                 self.circuit_buffer_device,
@@ -302,7 +293,7 @@ impl CuFrameSimulator {
 
         if num_measurements > self.max_measurements {
             unsafe {
-                custabilizerDestroyCircuit(circuit);
+                (self.backend.custabilizerDestroyCircuit)(circuit);
             }
             return Err(CuQuantumError::InvalidArgument(format!(
                 "Circuit has {} measurements but simulator was created with max {}",
@@ -315,7 +306,7 @@ impl CuFrameSimulator {
             let mut frame_sim: custabilizerFrameSimulator_t = ptr::null_mut();
             #[allow(clippy::cast_possible_wrap)]
             let status = unsafe {
-                custabilizerCreateFrameSimulator(
+                (self.backend.custabilizerCreateFrameSimulator)(
                     self.handle,
                     self.num_qubits as i64,
                     self.num_shots as i64,
@@ -339,19 +330,19 @@ impl CuFrameSimulator {
             let zeros_z = vec![0u8; z_table_size];
             let zeros_m = vec![0u8; m_table_size];
 
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.x_table_device.cast(),
                 zeros_x.as_ptr().cast(),
                 x_table_size,
                 cudaMemcpyKind_cudaMemcpyHostToDevice,
             );
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.z_table_device.cast(),
                 zeros_z.as_ptr().cast(),
                 z_table_size,
                 cudaMemcpyKind_cudaMemcpyHostToDevice,
             );
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.m_table_device.cast(),
                 zeros_m.as_ptr().cast(),
                 m_table_size,
@@ -361,7 +352,7 @@ impl CuFrameSimulator {
 
         // Run the circuit
         let status = unsafe {
-            custabilizerFrameSimulatorApplyCircuit(
+            (self.backend.custabilizerFrameSimulatorApplyCircuit)(
                 self.handle,
                 self.frame_simulator.unwrap(),
                 circuit,
@@ -376,7 +367,7 @@ impl CuFrameSimulator {
 
         // Clean up circuit
         unsafe {
-            custabilizerDestroyCircuit(circuit);
+            (self.backend.custabilizerDestroyCircuit)(circuit);
         }
 
         check_stabilizer_status(status)?;
@@ -384,7 +375,7 @@ impl CuFrameSimulator {
         // Read back measurement results
         let mut m_table_host = vec![0u8; m_table_size];
         unsafe {
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 m_table_host.as_mut_ptr().cast(),
                 self.m_table_device.cast(),
                 m_table_size,
@@ -422,19 +413,19 @@ impl CuFrameSimulator {
             let zeros_z = vec![0u8; z_table_size];
             let zeros_m = vec![0u8; m_table_size];
 
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.x_table_device.cast(),
                 zeros_x.as_ptr().cast(),
                 x_table_size,
                 cudaMemcpyKind_cudaMemcpyHostToDevice,
             );
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.z_table_device.cast(),
                 zeros_z.as_ptr().cast(),
                 z_table_size,
                 cudaMemcpyKind_cudaMemcpyHostToDevice,
             );
-            cudaMemcpy(
+            (self.backend.cudaMemcpy)(
                 self.m_table_device.cast(),
                 zeros_m.as_ptr().cast(),
                 m_table_size,
@@ -448,15 +439,15 @@ impl Drop for CuFrameSimulator {
     fn drop(&mut self) {
         unsafe {
             if let Some(frame_sim) = self.frame_simulator.take() {
-                custabilizerDestroyFrameSimulator(frame_sim);
+                (self.backend.custabilizerDestroyFrameSimulator)(frame_sim);
             }
             if !self.circuit_buffer_device.is_null() {
-                cudaFree(self.circuit_buffer_device);
+                (self.backend.cudaFree)(self.circuit_buffer_device);
             }
-            cudaFree(self.x_table_device.cast());
-            cudaFree(self.z_table_device.cast());
-            cudaFree(self.m_table_device.cast());
-            custabilizerDestroy(self.handle);
+            (self.backend.cudaFree)(self.x_table_device.cast());
+            (self.backend.cudaFree)(self.z_table_device.cast());
+            (self.backend.cudaFree)(self.m_table_device.cast());
+            (self.backend.custabilizerDestroy)(self.handle);
         }
     }
 }
@@ -491,7 +482,6 @@ impl CuStabilizer {
     ///
     /// # Errors
     /// Returns an error if initialization fails.
-    #[allow(unreachable_code, unused_variables)]
     pub fn with_seed_result(num_qubits: usize, seed: u64) -> Result<Self> {
         if num_qubits == 0 {
             return Err(CuQuantumError::InvalidArgument(
@@ -499,14 +489,8 @@ impl CuStabilizer {
             ));
         }
 
-        #[cfg(cuquantum_stub)]
-        return Err(CuQuantumError::NotAvailable(
-            "cuQuantum SDK is not installed. To use GPU-accelerated simulators, install the cuQuantum SDK:\n\
-             1. Set CUQUANTUM_ROOT environment variable, or\n\
-             2. Install via: pecos install cuquantum, or\n\
-             3. Install system-wide to /usr/local/cuquantum/"
-                .into(),
-        ));
+        // Verify cuQuantum is available at construction time
+        let _backend = pecos_cuquantum_sys::try_load().map_err(CuQuantumError::from)?;
 
         Ok(Self {
             num_qubits,

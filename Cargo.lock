@@ -3658,9 +3658,12 @@ name = "pecos-cuquantum-sys"
 version = "0.2.0-dev.0"
 dependencies = [
  "bindgen",
+ "dirs",
  "env_logger",
+ "libloading 0.9.0",
  "log",
  "pecos-build",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

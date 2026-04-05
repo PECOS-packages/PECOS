@@ -61,12 +61,8 @@ fn main() {
     let lib_dir = pecos_build::cuquantum::get_lib_dir(&cuquantum_path)
         .expect("Could not find cuQuantum lib directory");
 
-    // Set up link paths
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=custatevec");
-    println!("cargo:rustc-link-lib=custabilizer");
-    println!("cargo:rustc-link-lib=cutensornet");
-    println!("cargo:rustc-link-lib=cudensitymat");
+    // No static linking -- libraries are loaded at runtime via libloading.
+    // Emit metadata so downstream build scripts can find library paths for rpath hints.
 
     // Emit metadata so downstream build scripts can read library paths
     // via DEP_PECOS_CUQUANTUM_SYS_CUQUANTUM_LIB_DIR
@@ -88,12 +84,10 @@ fn main() {
         }
     }
 
-    // Also need CUDA runtime
+    // Emit CUDA lib dir metadata (for rpath hints in downstream crates)
     if let Some(cuda_lib) = get_cuda_lib_dir(&cuda_path) {
-        println!("cargo:rustc-link-search=native={}", cuda_lib.display());
         println!("cargo:cuda_lib_dir={}", cuda_lib.display());
     }
-    println!("cargo:rustc-link-lib=cudart");
 
     // Generate bindings
     let cuquantum_include = pecos_build::cuquantum::get_include_dir(&cuquantum_path);
@@ -191,25 +185,17 @@ fn get_cuda_lib_dir(cuda_path: &std::path::Path) -> Option<PathBuf> {
 
 /// Generate stub bindings when cuQuantum is not available
 fn generate_stub_bindings() {
-    println!("cargo::rustc-cfg=cuquantum_stub");
-
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Stub bindings provide actual function implementations (not just declarations)
-    // so the crate compiles AND links without the cuQuantum SDK. Constructor guards
-    // in pecos-cuquantum prevent these stubs from being called at runtime.
+    // Stub bindings: type definitions only. Functions are loaded at runtime
+    // via libloading in the loader module.
     let stub_content = r#"
-// Stub bindings - cuQuantum not available at build time
-// These stubs provide function implementations that return error codes,
-// allowing compilation and linking without the cuQuantum SDK installed.
-// Constructor guards in pecos-cuquantum prevent these from being called at runtime.
+// Stub type definitions - cuQuantum not available at build time.
+// Functions are loaded at runtime via the loader module.
 
 use core::ffi::c_void;
-use core::ffi::c_char;
 
-// =============================================================================
-// CUDA types
-// =============================================================================
+// --- CUDA types ---
 
 pub type cudaStream_t = *mut c_void;
 
@@ -242,34 +228,7 @@ pub struct cuDoubleComplex {
     pub y: f64,
 }
 
-// =============================================================================
-// CUDA runtime function stubs
-// =============================================================================
-
-/// # Safety
-/// Stub: no-op, returns error. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudaMalloc(_dev_ptr: *mut *mut c_void, _size: usize) -> i32 { 1 }
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudaFree(_dev_ptr: *mut c_void) -> i32 { 0 }
-/// # Safety
-/// Stub: no-op, returns error. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudaMemcpy(
-    _dst: *mut c_void,
-    _src: *const c_void,
-    _count: usize,
-    _kind: cudaMemcpyKind,
-) -> i32 { 1 }
-/// # Safety
-/// Stub: no-op, returns error. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudaMemset(_dev_ptr: *mut c_void, _value: i32, _count: usize) -> i32 { 1 }
-/// # Safety
-/// Stub: no-op, returns error.
-pub unsafe extern "C" fn cudaDeviceSynchronize() -> i32 { 1 }
-
-// =============================================================================
-// cuStateVec types
-// =============================================================================
+// --- cuStateVec types ---
 
 pub type custatevecHandle_t = *mut c_void;
 pub type custatevecSamplerDescriptor_t = *mut c_void;
@@ -316,171 +275,7 @@ pub enum custatevecCollapseOp_t {
     CUSTATEVEC_COLLAPSE_NORMALIZE_AND_ZERO = 1,
 }
 
-// =============================================================================
-// cuStateVec function stubs
-// =============================================================================
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecCreate(
-    _handle: *mut custatevecHandle_t,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecDestroy(
-    _handle: custatevecHandle_t,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecGetProperty(
-    _type_: i32,
-    _value: *mut i32,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecInitializeStateVector(
-    _handle: custatevecHandle_t,
-    _sv: *mut c_void,
-    _sv_data_type: cudaDataType_t,
-    _n_index_bits: u32,
-    _sv_type: i32,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecApplyMatrixGetWorkspaceSize(
-    _handle: custatevecHandle_t,
-    _sv_data_type: cudaDataType_t,
-    _n_index_bits: u32,
-    _matrix: *const c_void,
-    _matrix_data_type: cudaDataType_t,
-    _layout: custatevecMatrixLayout_t,
-    _adjoint: i32,
-    _n_targets: u32,
-    _n_controls: u32,
-    _compute_type: custatevecComputeType_t,
-    _extra_workspace_size_in_bytes: *mut usize,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecApplyMatrix(
-    _handle: custatevecHandle_t,
-    _sv: *mut c_void,
-    _sv_data_type: cudaDataType_t,
-    _n_index_bits: u32,
-    _matrix: *const c_void,
-    _matrix_data_type: cudaDataType_t,
-    _layout: custatevecMatrixLayout_t,
-    _adjoint: i32,
-    _targets: *const i32,
-    _n_targets: u32,
-    _controls: *const i32,
-    _control_bit_values: *const i32,
-    _n_controls: u32,
-    _compute_type: custatevecComputeType_t,
-    _extra_workspace: *mut c_void,
-    _extra_workspace_size_in_bytes: usize,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecMeasureOnZBasis(
-    _handle: custatevecHandle_t,
-    _sv: *mut c_void,
-    _sv_data_type: cudaDataType_t,
-    _n_index_bits: u32,
-    _parity: *mut i32,
-    _basis_bits: *const i32,
-    _n_basis_bits: u32,
-    _rand_num: f64,
-    _collapse: custatevecCollapseOp_t,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecBatchMeasure(
-    _handle: custatevecHandle_t,
-    _sv: *mut c_void,
-    _sv_data_type: cudaDataType_t,
-    _n_index_bits: u32,
-    _bit_string: *mut i32,
-    _bit_ordering: *const i32,
-    _bit_string_len: u32,
-    _rand_num: f64,
-    _collapse: custatevecCollapseOp_t,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecSamplerCreate(
-    _handle: custatevecHandle_t,
-    _sv: *const c_void,
-    _sv_data_type: cudaDataType_t,
-    _n_index_bits: u32,
-    _sampler: *mut custatevecSamplerDescriptor_t,
-    _n_max_shots: u32,
-    _extra_workspace_size_in_bytes: *mut usize,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecSamplerDestroy(
-    _sampler: custatevecSamplerDescriptor_t,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecSamplerPreprocess(
-    _handle: custatevecHandle_t,
-    _sampler: custatevecSamplerDescriptor_t,
-    _extra_workspace: *mut c_void,
-    _extra_workspace_size_in_bytes: usize,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custatevecSamplerSample(
-    _handle: custatevecHandle_t,
-    _sampler: custatevecSamplerDescriptor_t,
-    _bit_strings: *mut i64,
-    _bit_ordering: *const i32,
-    _bit_string_len: u32,
-    _rand_nums: *const f64,
-    _n_shots: u32,
-    _output: i32,
-) -> custatevecStatus_t {
-    custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED
-}
-
-// =============================================================================
-// cuStabilizer types
-// =============================================================================
+// --- cuStabilizer types ---
 
 pub type custabilizerHandle_t = *mut c_void;
 pub type custabilizerCircuit_t = *mut c_void;
@@ -501,96 +296,7 @@ pub enum custabilizerStatus_t {
     CUSTABILIZER_STATUS_MAX_VALUE = 9,
 }
 
-// =============================================================================
-// cuStabilizer function stubs
-// =============================================================================
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerCreate(
-    _handle: *mut custabilizerHandle_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerDestroy(
-    _handle: custabilizerHandle_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerCircuitSizeFromString(
-    _handle: custabilizerHandle_t,
-    _str: *const c_char,
-    _size: *mut i64,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerCreateCircuitFromString(
-    _handle: custabilizerHandle_t,
-    _str: *const c_char,
-    _buffer: *mut c_void,
-    _buffer_size: i64,
-    _circuit: *mut custabilizerCircuit_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerDestroyCircuit(
-    _circuit: custabilizerCircuit_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerCreateFrameSimulator(
-    _handle: custabilizerHandle_t,
-    _num_qubits: i64,
-    _num_shots: i64,
-    _max_measurements: i64,
-    _table_stride: i64,
-    _frame_sim: *mut custabilizerFrameSimulator_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerDestroyFrameSimulator(
-    _frame_sim: custabilizerFrameSimulator_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn custabilizerFrameSimulatorApplyCircuit(
-    _handle: custabilizerHandle_t,
-    _frame_sim: custabilizerFrameSimulator_t,
-    _circuit: custabilizerCircuit_t,
-    _randomize: i32,
-    _seed: u64,
-    _x_table: *mut u32,
-    _z_table: *mut u32,
-    _m_table: *mut u32,
-    _stream: cudaStream_t,
-) -> custabilizerStatus_t {
-    custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED
-}
-
-// =============================================================================
-// cuTensorNet types
-// =============================================================================
+// --- cuTensorNet types ---
 
 pub type cutensornetHandle_t = *mut c_void;
 pub type cutensornetNetworkDescriptor_t = *mut c_void;
@@ -630,79 +336,7 @@ pub enum cutensornetComputeType_t {
     CUTENSORNET_COMPUTE_16BF = 14,
 }
 
-// =============================================================================
-// cuTensorNet function stubs
-// =============================================================================
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn cutensornetCreate(
-    _handle: *mut cutensornetHandle_t,
-) -> cutensornetStatus_t {
-    cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cutensornetDestroy(
-    _handle: cutensornetHandle_t,
-) -> cutensornetStatus_t {
-    cutensornetStatus_t::CUTENSORNET_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns 0.
-pub unsafe extern "C" fn cutensornetGetVersion() -> usize { 0 }
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn cutensornetCreateNetworkDescriptor(
-    _handle: cutensornetHandle_t,
-    _num_inputs: i32,
-    _num_modes_in: *const i32,
-    _extents_in: *const *const i64,
-    _strides_in: *const *const i64,
-    _modes_in: *const *const i32,
-    _qualifiers_in: *const u32,
-    _num_modes_out: i32,
-    _extents_out: *const i64,
-    _strides_out: *const i64,
-    _modes_out: *const i32,
-    _data_type: cudaDataType_t,
-    _compute_type: cutensornetComputeType_t,
-    _desc_net: *mut cutensornetNetworkDescriptor_t,
-) -> cutensornetStatus_t {
-    cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cutensornetDestroyNetworkDescriptor(
-    _desc_net: cutensornetNetworkDescriptor_t,
-) -> cutensornetStatus_t {
-    cutensornetStatus_t::CUTENSORNET_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn cutensornetCreateWorkspaceDescriptor(
-    _handle: cutensornetHandle_t,
-    _workspace_desc: *mut cutensornetWorkspaceDescriptor_t,
-) -> cutensornetStatus_t {
-    cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cutensornetDestroyWorkspaceDescriptor(
-    _workspace_desc: cutensornetWorkspaceDescriptor_t,
-) -> cutensornetStatus_t {
-    cutensornetStatus_t::CUTENSORNET_STATUS_SUCCESS
-}
-
-// =============================================================================
-// cuDensityMat types
-// =============================================================================
+// --- cuDensityMat types ---
 
 pub type cudensitymatHandle_t = *mut c_void;
 pub type cudensitymatState_t = *mut c_void;
@@ -730,71 +364,6 @@ pub enum cudensitymatStatus_t {
 pub enum cudensitymatStatePurity_t {
     CUDENSITYMAT_STATE_PURITY_PURE = 0,
     CUDENSITYMAT_STATE_PURITY_MIXED = 1,
-}
-
-// =============================================================================
-// cuDensityMat function stubs
-// =============================================================================
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudensitymatCreate(
-    _handle: *mut cudensitymatHandle_t,
-) -> cudensitymatStatus_t {
-    cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudensitymatDestroy(
-    _handle: cudensitymatHandle_t,
-) -> cudensitymatStatus_t {
-    cudensitymatStatus_t::CUDENSITYMAT_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns 0.
-pub unsafe extern "C" fn cudensitymatGetVersion() -> usize { 0 }
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudensitymatCreateState(
-    _handle: cudensitymatHandle_t,
-    _purity: cudensitymatStatePurity_t,
-    _num_space_modes: i32,
-    _space_mode_extents: *const i64,
-    _batch_size: i64,
-    _data_type: cudaDataType_t,
-    _state: *mut cudensitymatState_t,
-) -> cudensitymatStatus_t {
-    cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudensitymatDestroyState(
-    _state: cudensitymatState_t,
-) -> cudensitymatStatus_t {
-    cudensitymatStatus_t::CUDENSITYMAT_STATUS_SUCCESS
-}
-
-/// # Safety
-/// Stub: returns NOT_INITIALIZED. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudensitymatCreateOperator(
-    _handle: cudensitymatHandle_t,
-    _num_qubits: i32,
-    _data_type: cudaDataType_t,
-    _op: *mut cudensitymatOperator_t,
-) -> cudensitymatStatus_t {
-    cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED
-}
-
-/// # Safety
-/// Stub: no-op. Pointers are not dereferenced.
-pub unsafe extern "C" fn cudensitymatDestroyOperator(
-    _op: cudensitymatOperator_t,
-) -> cudensitymatStatus_t {
-    cudensitymatStatus_t::CUDENSITYMAT_STATUS_SUCCESS
 }
 "#;
 

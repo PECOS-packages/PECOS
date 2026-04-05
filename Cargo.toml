@@ -234,6 +234,4 @@ multiple-crate-versions = "allow"
 # Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
 similar-names = "allow"
 many-single-char-names = "allow"
-# Type names matching module names is common (e.g., pecos_core::PecosError)
-module-name-repetitions = "allow"
-too-many-lines = "allow"          # ~110 hits -- sim algorithms, tests, benchmarks are inherently long
+too-many-lines = "allow"          # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks

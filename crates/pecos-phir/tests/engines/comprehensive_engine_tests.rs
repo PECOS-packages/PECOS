@@ -1,5 +1,5 @@
 /*!
-Comprehensive PhirEngine Tests
+PhirEngine Tests
 
 This test suite ensures PhirEngine provides equivalent functionality to PhirJsonEngine
 by testing the same quantum programs, operations, and edge cases using realistic

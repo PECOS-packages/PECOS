@@ -42,9 +42,7 @@ type CircuitTestEntry = (
     fn(&mut SparseStabY),
 );
 
-// ============================================================================
-// Helpers
-// ============================================================================
+// --- Helpers ---
 
 /// Apply a 2q SPP gate to `StateVec`.
 fn apply_sv(sim: &mut StateVec, gate: Clifford) {
@@ -547,9 +545,7 @@ fn input_states() -> Vec<StatePrep> {
     ]
 }
 
-// ============================================================================
-// 0a. StateVec vs Unitary Matrix for all 1q Clifford gates
-// ============================================================================
+// --- 0a. StateVec vs Unitary Matrix for all 1q Clifford gates ---
 
 #[test]
 fn statevec_matches_unitary_matrix_all_1q_cliffords() {
@@ -595,9 +591,7 @@ fn statevec_matches_unitary_matrix_all_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 0b. StateVec vs Unitary Matrix for all 2q Clifford gates
-// ============================================================================
+// --- 0b. StateVec vs Unitary Matrix for all 2q Clifford gates ---
 
 #[test]
 fn statevec_matches_unitary_matrix_all_2q_cliffords() {
@@ -622,9 +616,7 @@ fn statevec_matches_unitary_matrix_all_2q_cliffords() {
     }
 }
 
-// ============================================================================
-// 1. StateVec vs Unitary Matrix for all SPP gates
-// ============================================================================
+// --- 1. StateVec vs Unitary Matrix for all SPP gates ---
 
 #[test]
 fn statevec_matches_unitary_matrix_spp_gates() {
@@ -649,9 +641,7 @@ fn statevec_matches_unitary_matrix_spp_gates() {
     }
 }
 
-// ============================================================================
-// 2. DensityMatrix vs StateVec for all SPP gates
-// ============================================================================
+// --- 2. DensityMatrix vs StateVec for all SPP gates ---
 
 #[test]
 fn density_matrix_matches_statevec_spp_gates() {
@@ -678,9 +668,7 @@ fn density_matrix_matches_statevec_spp_gates() {
     }
 }
 
-// ============================================================================
-// 3. SparseStab (W-convention) vs StateVec for all SPP gates
-// ============================================================================
+// --- 3. SparseStab (W-convention) vs StateVec for all SPP gates ---
 
 #[test]
 fn sparse_stab_matches_statevec_spp_gates() {
@@ -706,9 +694,7 @@ fn sparse_stab_matches_statevec_spp_gates() {
     }
 }
 
-// ============================================================================
-// 4. SparseStabY (Y-convention) vs StateVec for all SPP gates
-// ============================================================================
+// --- 4. SparseStabY (Y-convention) vs StateVec for all SPP gates ---
 
 #[test]
 fn sparse_stab_y_matches_statevec_spp_gates() {
@@ -734,9 +720,7 @@ fn sparse_stab_y_matches_statevec_spp_gates() {
     }
 }
 
-// ============================================================================
-// 5. SparseStab vs SparseStabY: direct comparison via probabilities
-// ============================================================================
+// --- 5. SparseStab vs SparseStabY: direct comparison via probabilities ---
 
 #[test]
 fn sparse_stab_matches_sparse_stab_y_spp_gates() {
@@ -763,9 +747,7 @@ fn sparse_stab_matches_sparse_stab_y_spp_gates() {
     }
 }
 
-// ============================================================================
-// 6. SparseStab vs SparseStabY: deterministic measurement outcomes agree
-// ============================================================================
+// --- 6. SparseStab vs SparseStabY: deterministic measurement outcomes agree ---
 
 #[test]
 fn deterministic_measurements_agree_all_stab_sims_spp_gates() {
@@ -873,9 +855,7 @@ fn deterministic_measurements_agree_all_stab_sims_spp_gates() {
     }
 }
 
-// ============================================================================
-// 7. CliffordRep Pauli images: all four generators, all stabilizer sims
-// ============================================================================
+// --- 7. CliffordRep Pauli images: all four generators, all stabilizer sims ---
 
 /// Extract Pauli bit pattern from a `CliffordRep` image.
 /// Returns (`x_bits`, `z_bits`, `num_ys`) -- the sign encoding depends on convention.
@@ -1039,9 +1019,7 @@ fn clifford_rep_matches_all_stab_sims_spp_gates() {
     }
 }
 
-// ============================================================================
-// 8. SPP^2 = PP property across all simulators
-// ============================================================================
+// --- 8. SPP^2 = PP property across all simulators ---
 
 #[test]
 fn spp_squared_is_pp_all_simulators() {
@@ -1209,9 +1187,7 @@ fn spp_squared_is_pp_all_simulators() {
     }
 }
 
-// ============================================================================
-// 9. Gate-then-dagger = identity across all simulators
-// ============================================================================
+// --- 9. Gate-then-dagger = identity across all simulators ---
 
 #[test]
 fn gate_then_dagger_identity_all_simulators() {
@@ -1296,9 +1272,7 @@ fn gate_then_dagger_identity_all_simulators() {
     }
 }
 
-// ============================================================================
-// 10. Gate sequences: SPP gates composed with other Cliffords
-// ============================================================================
+// --- 10. Gate sequences: SPP gates composed with other Cliffords ---
 
 #[test]
 fn spp_in_circuit_sequences_all_simulators() {
@@ -1497,9 +1471,7 @@ fn spp_in_circuit_sequences_all_simulators() {
     }
 }
 
-// ============================================================================
-// 11. Non-adjacent qubits: SPP gates on qubits (0, 2) in 3-qubit system
-// ============================================================================
+// --- 11. Non-adjacent qubits: SPP gates on qubits (0, 2) in 3-qubit system ---
 
 #[test]
 fn spp_nonadjacent_qubits_all_simulators() {
@@ -1601,9 +1573,7 @@ fn spp_nonadjacent_qubits_all_simulators() {
     }
 }
 
-// ============================================================================
-// 12. Unitary matrix properties: gate * dagger = identity, SPP^2 = PP
-// ============================================================================
+// --- 12. Unitary matrix properties: gate * dagger = identity, SPP^2 = PP ---
 
 #[test]
 fn unitary_matrix_spp_properties() {
@@ -1656,9 +1626,7 @@ fn unitary_matrix_spp_properties() {
     }
 }
 
-// ============================================================================
-// 13. SparseStabHybrid vs StateVec for all SPP gates
-// ============================================================================
+// --- 13. SparseStabHybrid vs StateVec for all SPP gates ---
 
 #[test]
 fn sparse_stab_hybrid_matches_statevec_spp_gates() {
@@ -1684,9 +1652,7 @@ fn sparse_stab_hybrid_matches_statevec_spp_gates() {
     }
 }
 
-// ============================================================================
-// 14. SparseStabHybrid: gate*dagger=identity and SPP^2=PP
-// ============================================================================
+// --- 14. SparseStabHybrid: gate*dagger=identity and SPP^2=PP ---
 
 #[test]
 fn sparse_stab_hybrid_roundtrip_properties() {
@@ -1796,9 +1762,7 @@ fn sparse_stab_hybrid_roundtrip_properties() {
     }
 }
 
-// ============================================================================
-// 15. DenseStateVec (StateVecSoA) vs StateVec: validates direct SPP overrides
-// ============================================================================
+// --- 15. DenseStateVec (StateVecSoA) vs StateVec: validates direct SPP overrides ---
 
 #[test]
 fn dense_statevec_matches_statevec_spp_gates() {
@@ -1823,9 +1787,7 @@ fn dense_statevec_matches_statevec_spp_gates() {
     }
 }
 
-// ============================================================================
-// 1q Clifford cross-validation helpers
-// ============================================================================
+// --- 1q Clifford cross-validation helpers ---
 
 /// All 1q single-qubit input states for testing (on a 2-qubit system, applied to q0).
 /// Using 2 qubits lets us verify the gate doesn't corrupt qubit 1.
@@ -2237,9 +2199,7 @@ fn apply_1q_sh(sim: &mut SparseStabHybrid, gate: Clifford) {
     }
 }
 
-// ============================================================================
-// 1q Clifford cross-validation: SparseStab vs StateVec
-// ============================================================================
+// --- 1q Clifford cross-validation: SparseStab vs StateVec ---
 
 #[test]
 fn sparse_stab_matches_statevec_all_1q_cliffords() {
@@ -2265,9 +2225,7 @@ fn sparse_stab_matches_statevec_all_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 1q Clifford cross-validation: SparseStabY vs StateVec
-// ============================================================================
+// --- 1q Clifford cross-validation: SparseStabY vs StateVec ---
 
 #[test]
 fn sparse_stab_y_matches_statevec_all_1q_cliffords() {
@@ -2293,9 +2251,7 @@ fn sparse_stab_y_matches_statevec_all_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 1q Clifford cross-validation: SparseStab vs SparseStabY
-// ============================================================================
+// --- 1q Clifford cross-validation: SparseStab vs SparseStabY ---
 
 #[test]
 fn sparse_stab_matches_sparse_stab_y_all_1q_cliffords() {
@@ -2322,9 +2278,7 @@ fn sparse_stab_matches_sparse_stab_y_all_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 1q Clifford cross-validation: SparseStabHybrid vs StateVec
-// ============================================================================
+// --- 1q Clifford cross-validation: SparseStabHybrid vs StateVec ---
 
 #[test]
 fn sparse_stab_hybrid_matches_statevec_all_1q_cliffords() {
@@ -2350,9 +2304,7 @@ fn sparse_stab_hybrid_matches_statevec_all_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 1q Clifford: deterministic measurements agree across all stab sims
-// ============================================================================
+// --- 1q Clifford: deterministic measurements agree across all stab sims ---
 
 #[test]
 fn deterministic_measurements_agree_all_stab_sims_1q_cliffords() {
@@ -2402,9 +2354,7 @@ fn deterministic_measurements_agree_all_stab_sims_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 1q Clifford: gate then dagger is identity
-// ============================================================================
+// --- 1q Clifford: gate then dagger is identity ---
 
 #[test]
 fn gate_then_dagger_identity_all_1q_cliffords() {
@@ -2508,9 +2458,7 @@ fn gate_then_dagger_identity_all_1q_cliffords() {
     }
 }
 
-// ============================================================================
-// 2q Clifford cross-validation helpers (all 14 gates)
-// ============================================================================
+// --- 2q Clifford cross-validation helpers (all 14 gates) ---
 
 fn apply_2q_sv(sim: &mut StateVec, gate: Clifford) {
     let q = [(QubitId(0), QubitId(1))];
@@ -2708,9 +2656,7 @@ fn apply_2q_sh_all(sim: &mut SparseStabHybrid, gate: Clifford) {
     }
 }
 
-// ============================================================================
-// 2q Clifford cross-validation: SparseStab vs StateVec (all 14 gates)
-// ============================================================================
+// --- 2q Clifford cross-validation: SparseStab vs StateVec (all 14 gates) ---
 
 #[test]
 fn sparse_stab_matches_statevec_all_2q_cliffords() {
@@ -2736,9 +2682,7 @@ fn sparse_stab_matches_statevec_all_2q_cliffords() {
     }
 }
 
-// ============================================================================
-// 2q Clifford cross-validation: SparseStabY vs StateVec (all 14 gates)
-// ============================================================================
+// --- 2q Clifford cross-validation: SparseStabY vs StateVec (all 14 gates) ---
 
 #[test]
 fn sparse_stab_y_matches_statevec_all_2q_cliffords() {
@@ -2764,9 +2708,7 @@ fn sparse_stab_y_matches_statevec_all_2q_cliffords() {
     }
 }
 
-// ============================================================================
-// 2q Clifford cross-validation: SparseStab vs SparseStabY (all 14 gates)
-// ============================================================================
+// --- 2q Clifford cross-validation: SparseStab vs SparseStabY (all 14 gates) ---
 
 #[test]
 fn sparse_stab_matches_sparse_stab_y_all_2q_cliffords() {
@@ -2793,9 +2735,7 @@ fn sparse_stab_matches_sparse_stab_y_all_2q_cliffords() {
     }
 }
 
-// ============================================================================
-// 2q Clifford cross-validation: SparseStabHybrid vs StateVec (all 14 gates)
-// ============================================================================
+// --- 2q Clifford cross-validation: SparseStabHybrid vs StateVec (all 14 gates) ---
 
 #[test]
 fn sparse_stab_hybrid_matches_statevec_all_2q_cliffords() {
@@ -2821,9 +2761,7 @@ fn sparse_stab_hybrid_matches_statevec_all_2q_cliffords() {
     }
 }
 
-// ============================================================================
-// 2q Clifford: deterministic measurements agree across all stab sims
-// ============================================================================
+// --- 2q Clifford: deterministic measurements agree across all stab sims ---
 
 #[test]
 fn deterministic_measurements_agree_all_stab_sims_2q_cliffords() {
@@ -2873,9 +2811,7 @@ fn deterministic_measurements_agree_all_stab_sims_2q_cliffords() {
     }
 }
 
-// ============================================================================
-// 2q Clifford: gate then dagger is identity (all 14 gates)
-// ============================================================================
+// --- 2q Clifford: gate then dagger is identity (all 14 gates) ---
 
 #[test]
 fn gate_then_dagger_identity_all_2q_cliffords() {
@@ -3020,9 +2956,7 @@ fn prep_dsv(sim: &mut DenseStateVec, name: &str) {
     }
 }
 
-// ============================================================================
-// Unitary conjugation: U * P * U† via matrix algebra vs stabilizer sims
-// ============================================================================
+// --- Unitary conjugation: U * P * U† via matrix algebra vs stabilizer sims ---
 
 /// Build a Pauli matrix on a specific qubit in an n-qubit system.
 /// Little-endian: qubit 0 is the rightmost (LSB) tensor factor.

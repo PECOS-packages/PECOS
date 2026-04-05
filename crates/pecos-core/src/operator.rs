@@ -56,9 +56,7 @@ use crate::{Angle64, PauliString, QuarterPhase, QubitId};
 use smallvec::SmallVec;
 use std::ops::{BitAnd, Mul, Neg};
 
-// ============================================================================
-// Phase macros for exact arithmetic
-// ============================================================================
+// --- Phase macros for exact arithmetic ---
 
 /// Creates a `PhaseValue` from a pi-based expression for use with operators.
 ///
@@ -155,9 +153,7 @@ impl RotationType {
     }
 }
 
-// ============================================================================
-// Commutativity
-// ============================================================================
+// --- Commutativity ---
 
 /// Result of checking whether two operators commute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -170,9 +166,7 @@ pub enum Commutativity {
     Unknown,
 }
 
-// ============================================================================
-// Qubit target types for polymorphic gate constructors
-// ============================================================================
+// --- Qubit target types for polymorphic gate constructors ---
 
 /// Wrapper for qubit targets that can be a single qubit or multiple qubits.
 ///
@@ -582,9 +576,7 @@ impl Operator {
     }
 }
 
-// ============================================================================
-// Negation operator: -op (phase by π)
-// ============================================================================
+// --- Negation operator: -op (phase by π) ---
 
 impl Neg for Operator {
     type Output = Operator;
@@ -602,9 +594,7 @@ impl Neg for &Operator {
     }
 }
 
-// ============================================================================
-// Imaginary unit for phase multiplication
-// ============================================================================
+// --- Imaginary unit for phase multiplication ---
 
 /// Imaginary unit for phase multiplication: i * op
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -661,9 +651,7 @@ impl Mul<&Operator> for NegImaginaryUnit {
     }
 }
 
-// ============================================================================
-// General phase value for arbitrary phase multiplication
-// ============================================================================
+// --- General phase value for arbitrary phase multiplication ---
 
 /// A phase value e^{i*angle} that can be multiplied with operators.
 ///
@@ -1913,9 +1901,7 @@ pub fn rotation_to_gate_type(rotation_type: RotationType, angle: Angle64) -> Opt
     }
 }
 
-// ============================================================================
-// Gate type helpers
-// ============================================================================
+// --- Gate type helpers ---
 
 trait GateTypeExt {
     fn is_clifford(&self) -> bool;
@@ -1952,9 +1938,7 @@ impl GateTypeExt for GateType {
     }
 }
 
-// ============================================================================
-// Angle64 helpers
-// ============================================================================
+// --- Angle64 helpers ---
 
 /// Check if an angle is a multiple of a quarter turn (π/2).
 ///
@@ -1993,9 +1977,7 @@ fn angle_to_quarter_phase(angle: Angle64) -> Option<QuarterPhase> {
     }
 }
 
-// ============================================================================
-// Gate constructors - Single qubit rotations
-// ============================================================================
+// --- Gate constructors - Single qubit rotations ---
 
 /// Rotation around X axis by the given angle.
 ///
@@ -2057,9 +2039,7 @@ pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> Operator {
         .apply(|q| Operator::rotation(RotationType::RZ, angle, smallvec::smallvec![q]))
 }
 
-// ============================================================================
-// Gate constructors - Two qubit rotations
-// ============================================================================
+// --- Gate constructors - Two qubit rotations ---
 
 /// Two-qubit XX rotation by the given angle.
 ///
@@ -2133,9 +2113,7 @@ pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> Operator {
         .apply(|q0, q1| Operator::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0, q1]))
 }
 
-// ============================================================================
-// Gate constructors - Named single-qubit Cliffords
-// ============================================================================
+// --- Gate constructors - Named single-qubit Cliffords ---
 
 /// Identity gate on a single qubit.
 #[must_use]
@@ -2311,9 +2289,7 @@ pub fn Hs(qubits: impl Into<Qubits>) -> Operator {
     })
 }
 
-// ============================================================================
-// Gate constructors - Named two-qubit gates
-// ============================================================================
+// --- Gate constructors - Named two-qubit gates ---
 
 /// CNOT (CX) gate.
 ///
@@ -2432,9 +2408,7 @@ pub fn SZZs(pairs: impl Into<QubitPairs>) -> Operator {
     })
 }
 
-// ============================================================================
-// Gate constructors - Three-qubit gates
-// ============================================================================
+// --- Gate constructors - Three-qubit gates ---
 
 /// Toffoli (CCX) gate.
 #[must_use]
@@ -2446,9 +2420,7 @@ pub fn CCX(c0: impl Into<QubitId>, c1: impl Into<QubitId>, target: impl Into<Qub
     )
 }
 
-// ============================================================================
-// Operator implementations
-// ============================================================================
+// --- Operator implementations ---
 
 // Tensor product: &
 impl BitAnd for Operator {
@@ -2512,9 +2484,7 @@ impl Mul for Operator {
     }
 }
 
-// ============================================================================
-// Circuit diagram generation
-// ============================================================================
+// --- Circuit diagram generation ---
 
 impl Operator {
     /// Generates an ASCII circuit diagram for this expression.
@@ -2795,9 +2765,6 @@ impl CircuitDiagram {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -2944,9 +2911,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Simplify tests
-    // ========================================================================
+// --- Simplify tests ---
 
     #[test]
     fn test_simplify_identity() {
@@ -3053,9 +3018,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // CliffordRep conversion tests
-    // ========================================================================
+// --- CliffordRep conversion tests ---
 
     #[test]
     fn test_to_clifford_rep_non_clifford_returns_none() {
@@ -3126,9 +3089,7 @@ mod tests {
         assert!(cliff.is_some());
     }
 
-    // ========================================================================
-    // Phase tests
-    // ========================================================================
+// --- Phase tests ---
 
     #[test]
     fn test_phase_basic() {
@@ -3204,9 +3165,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Macro tests
-    // ========================================================================
+// --- Macro tests ---
 
     #[test]
     fn test_angle_macro_pi() {
@@ -3275,9 +3234,7 @@ mod tests {
         assert_eq!(full, Angle64::ZERO);
     }
 
-    // ========================================================================
-    // Turn macro tests
-    // ========================================================================
+// --- Turn macro tests ---
 
     #[test]
     fn test_turn_macro_quarter() {
@@ -3349,9 +3306,7 @@ mod tests {
         assert_eq!(full, Angle64::ZERO);
     }
 
-    // ========================================================================
-    // Pauli equivalence tests
-    // ========================================================================
+// --- Pauli equivalence tests ---
 
     #[test]
     fn test_is_pauli_equivalent_pauli() {
@@ -3411,9 +3366,7 @@ mod tests {
         assert!(RZ(Angle64::QUARTER_TURN, 0).try_to_pauli().is_none());
     }
 
-    // ========================================================================
-    // Multi-qubit syntax tests
-    // ========================================================================
+// --- Multi-qubit syntax tests ---
 
     #[test]
     fn test_x_multi_qubit() {
@@ -3576,9 +3529,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Conjugation tests
-    // ========================================================================
+// --- Conjugation tests ---
     // Two conjugation conventions:
     //   A.conj(U)   = U * A * U†  (stabilizer update: S →USU† when applying U)
     //   A.conjdg(U) = U† * A * U  (Heisenberg picture: A → U†AU)
@@ -3730,9 +3681,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Weight tests
-    // ========================================================================
+// --- Weight tests ---
 
     #[test]
     fn test_weight_single_pauli() {
@@ -3775,9 +3724,7 @@ mod tests {
         assert_eq!(CCX(0, 1, 2).weight(), 3);
     }
 
-    // ========================================================================
-    // is_hermitian tests
-    // ========================================================================
+// --- is_hermitian tests ---
 
     #[test]
     fn test_is_hermitian_paulis() {
@@ -3818,9 +3765,7 @@ mod tests {
         assert!(RZ(Angle64::HALF_TURN, 0).is_hermitian());
     }
 
-    // ========================================================================
-    // pow tests
-    // ========================================================================
+// --- pow tests ---
 
     #[test]
     fn test_pow_zero() {
@@ -3898,9 +3843,7 @@ mod tests {
         assert!(result.is_identity());
     }
 
-    // ========================================================================
-    // commutes tests
-    // ========================================================================
+// --- commutes tests ---
 
     #[test]
     fn test_commutes_same_pauli() {
@@ -3962,9 +3905,7 @@ mod tests {
         assert_eq!(xz.commutes(&y), Commutativity::AntiCommutes);
     }
 
-    // ========================================================================
-    // decompose tests
-    // ========================================================================
+// --- decompose tests ---
 
     #[test]
     fn test_decompose_single_pauli() {
@@ -4054,9 +3995,7 @@ mod tests {
         assert_eq!(gates[0].gate_type, GateType::RZ);
     }
 
-    // ========================================================================
-    // as_pauli_string / into_pauli_string tests
-    // ========================================================================
+// --- as_pauli_string / into_pauli_string tests ---
 
     #[test]
     fn test_as_pauli_string_pauli() {

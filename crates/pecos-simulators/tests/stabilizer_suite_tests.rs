@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Comprehensive test suite for all stabilizer simulator implementations.
+//! Test suite for all stabilizer simulator implementations.
 //!
 //! This file uses the `stabilizer_test_suite!` macro to generate standardized
 //! tests for all types implementing `StabilizerSimulator`.

@@ -1,5 +1,5 @@
 /*!
-Comprehensive tests comparing PhirEngine with PhirJsonEngine
+Tests comparing PhirEngine with PhirJsonEngine
 
 These tests verify that PhirEngine produces equivalent results to PhirJsonEngine
 for the same PHIR programs, ensuring full compatibility and correctness.

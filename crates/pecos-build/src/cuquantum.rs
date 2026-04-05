@@ -309,7 +309,7 @@ pub struct CuQuantumInfo {
     pub cuda_path: Option<PathBuf>,
 }
 
-/// Get comprehensive information about a cuQuantum installation
+/// Get information about a cuQuantum installation
 ///
 /// # Errors
 /// Returns an error if cuQuantum is not found.

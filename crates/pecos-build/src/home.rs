@@ -365,7 +365,7 @@ pub struct HomeInfo {
     pub cache_overridden: bool,
 }
 
-/// Get comprehensive information about the PECOS home directory
+/// Get information about the PECOS home directory
 ///
 /// # Errors
 ///

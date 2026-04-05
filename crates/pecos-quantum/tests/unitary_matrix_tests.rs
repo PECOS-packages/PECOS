@@ -20,9 +20,7 @@ use pecos_core::unitary_rep::{RotationType, Unitary};
 use pecos_core::{Angle64, Pauli, PauliString, op};
 use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
 
-// ============================================================================
-// UnitaryMatrix: construction and num_qubits
-// ============================================================================
+// --- UnitaryMatrix: construction and num_qubits ---
 
 #[test]
 fn identity_num_qubits() {
@@ -39,9 +37,7 @@ fn from_dmatrix_roundtrip() {
     assert_eq!(dm, back);
 }
 
-// ============================================================================
-// UnitaryMatrix: * (composition)
-// ============================================================================
+// --- UnitaryMatrix: * (composition) ---
 
 #[test]
 fn matrix_mul_matches_unitary_rep_compose() {
@@ -80,9 +76,7 @@ fn matrix_mul_not_commutative() {
     assert!(!hsx.equiv_up_to_phase(&sxh));
 }
 
-// ============================================================================
-// UnitaryMatrix: & (tensor / Kronecker)
-// ============================================================================
+// --- UnitaryMatrix: & (tensor / Kronecker) ---
 
 #[test]
 fn matrix_tensor_produces_correct_dimension() {
@@ -150,9 +144,7 @@ fn matrix_tensor_not_commutative() {
     assert!(!xz.equiv_up_to_phase(&zx));
 }
 
-// ============================================================================
-// UnitaryMatrix: scalar multiplication
-// ============================================================================
+// --- UnitaryMatrix: scalar multiplication ---
 
 #[test]
 fn matrix_scalar_complex64() {
@@ -179,9 +171,7 @@ fn matrix_scalar_f64() {
     assert!(right.equiv_up_to_phase(&left));
 }
 
-// ============================================================================
-// UnitaryMatrix: subtraction and negation
-// ============================================================================
+// --- UnitaryMatrix: subtraction and negation ---
 
 #[test]
 fn matrix_sub_self_is_zero() {
@@ -205,9 +195,7 @@ fn matrix_neg_ref_variant() {
     assert!(neg_owned.equiv_up_to_phase(&neg_ref));
 }
 
-// ============================================================================
-// UnitaryMatrix: adjoint
-// ============================================================================
+// --- UnitaryMatrix: adjoint ---
 
 #[test]
 fn matrix_adjoint_of_unitary_is_inverse() {
@@ -224,9 +212,7 @@ fn matrix_adjoint_of_adjoint_is_original() {
     assert!(sx.equiv_up_to_phase(&double_adj));
 }
 
-// ============================================================================
-// UnitaryMatrix: equiv_up_to_phase
-// ============================================================================
+// --- UnitaryMatrix: equiv_up_to_phase ---
 
 #[test]
 fn equiv_up_to_phase_same_matrix() {
@@ -248,9 +234,7 @@ fn equiv_up_to_phase_different_gates() {
     assert!(!h.equiv_up_to_phase(&x));
 }
 
-// ============================================================================
-// ToMatrix: Pauli base type
-// ============================================================================
+// --- ToMatrix: Pauli base type ---
 
 #[test]
 fn to_matrix_pauli_x() {
@@ -275,9 +259,7 @@ fn to_matrix_pauli_matches_unitary_rep() {
     }
 }
 
-// ============================================================================
-// ToMatrix: Clifford base type
-// ============================================================================
+// --- ToMatrix: Clifford base type ---
 
 #[test]
 fn to_matrix_clifford_h() {
@@ -320,9 +302,7 @@ fn to_matrix_clifford_all_2q_gates() {
     }
 }
 
-// ============================================================================
-// ToMatrix: Unitary base type
-// ============================================================================
+// --- ToMatrix: Unitary base type ---
 
 #[test]
 fn to_matrix_unitary_named_1q() {
@@ -509,9 +489,7 @@ fn to_matrix_unitary_named_mz_panics() {
     let _ = Unitary::Named(GateType::MZ).to_matrix();
 }
 
-// ============================================================================
-// ToMatrix: CliffordRep
-// ============================================================================
+// --- ToMatrix: CliffordRep ---
 
 #[test]
 fn to_matrix_clifford_rep_h() {
@@ -537,9 +515,7 @@ fn to_matrix_clifford_rep_tensor_product() {
     assert!(cr_mat.equiv_up_to_phase(&ur_mat));
 }
 
-// ============================================================================
-// ToMatrix: Op
-// ============================================================================
+// --- ToMatrix: Op ---
 
 #[test]
 fn to_matrix_op_clifford() {
@@ -569,9 +545,7 @@ fn to_matrix_op_channel_panics() {
     let _ = channel.to_matrix();
 }
 
-// ============================================================================
-// Cross-level: matrix ops match algebraic ops
-// ============================================================================
+// --- Cross-level: matrix ops match algebraic ops ---
 
 #[test]
 fn matrix_compose_matches_algebra() {
@@ -598,9 +572,7 @@ fn matrix_tensor_associative() {
     assert!(left.equiv_up_to_phase(&right));
 }
 
-// ============================================================================
-// All Cliffords: unitarity and dagger pairs
-// ============================================================================
+// --- All Cliffords: unitarity and dagger pairs ---
 
 #[test]
 fn all_1q_cliffords_are_unitary() {
@@ -722,9 +694,7 @@ fn ccx_is_involution_via_matrix() {
     );
 }
 
-// ============================================================================
-// Rotation edge cases: zero angle and full turn
-// ============================================================================
+// --- Rotation edge cases: zero angle and full turn ---
 
 #[test]
 fn rotation_zero_angle_is_identity() {
@@ -771,9 +741,7 @@ fn rotation_2q_zero_angle_is_identity() {
     }
 }
 
-// ============================================================================
-// Rotation half-turn equals Pauli gates
-// ============================================================================
+// --- Rotation half-turn equals Pauli gates ---
 
 #[test]
 fn rotation_half_turn_equals_pauli_up_to_phase() {
@@ -811,9 +779,7 @@ fn rotation_half_turn_equals_pauli_up_to_phase() {
     );
 }
 
-// ============================================================================
-// Algebraic property: dg anti-homomorphism (A*B).dg() == B.dg()*A.dg()
-// ============================================================================
+// --- Algebraic property: dg anti-homomorphism (A*B).dg() == B.dg()*A.dg() ---
 
 #[test]
 fn dg_anti_homomorphism_via_matrix() {
@@ -849,9 +815,7 @@ fn dg_anti_homomorphism_2q_via_matrix() {
     );
 }
 
-// ============================================================================
-// Algebraic property: rotation angle additivity RZ(a)*RZ(b) == RZ(a+b)
-// ============================================================================
+// --- Algebraic property: rotation angle additivity RZ(a)*RZ(b) == RZ(a+b) ---
 
 #[test]
 fn rotation_angle_additivity() {
@@ -895,9 +859,7 @@ fn rotation_angle_additivity_various() {
     );
 }
 
-// ============================================================================
-// Algebraic property: RX(-theta) == RX(theta).adjoint()
-// ============================================================================
+// --- Algebraic property: RX(-theta) == RX(theta).adjoint() ---
 
 #[test]
 fn rotation_adjoint_negates_angle_via_matrix() {
@@ -925,9 +887,7 @@ fn rotation_adjoint_negates_angle_via_matrix() {
     }
 }
 
-// ============================================================================
-// Consistency: rotation_to_gate_type agrees with gate_to_matrix
-// ============================================================================
+// --- Consistency: rotation_to_gate_type agrees with gate_to_matrix ---
 
 #[test]
 fn rotation_matches_named_gate_when_gate_type_exists() {
@@ -1020,9 +980,7 @@ fn rotation_2q_matches_named_gate_when_gate_type_exists() {
     }
 }
 
-// ============================================================================
-// Qubit embedding: gates act on correct qubits
-// ============================================================================
+// --- Qubit embedding: gates act on correct qubits ---
 
 #[test]
 fn qubit_embedding_non_default_indices() {
@@ -1047,9 +1005,7 @@ fn cx_qubit_order_matters() {
     );
 }
 
-// ============================================================================
-// Face gate cycle: F^3 = I (up to phase)
-// ============================================================================
+// --- Face gate cycle: F^3 = I (up to phase) ---
 
 #[test]
 fn face_gates_have_order_3() {
@@ -1073,9 +1029,7 @@ fn face_gates_have_order_3() {
     }
 }
 
-// ============================================================================
-// Exact matrix values for standard gates
-// ============================================================================
+// --- Exact matrix values for standard gates ---
 
 #[test]
 fn exact_matrix_values_pauli_y() {
@@ -1178,9 +1132,7 @@ fn s_gate_squared_is_pauli() {
     }
 }
 
-// ============================================================================
-// Every Clifford: matrix adjoint matches dg() variant's matrix
-// ============================================================================
+// --- Every Clifford: matrix adjoint matches dg() variant's matrix ---
 
 #[test]
 fn all_1q_clifford_adjoint_matches_inverse_matrix() {
@@ -1208,9 +1160,7 @@ fn all_2q_clifford_adjoint_matches_inverse_matrix() {
     }
 }
 
-// ============================================================================
-// Exact 2-qubit matrix values
-// ============================================================================
+// --- Exact 2-qubit matrix values ---
 
 #[test]
 fn exact_matrix_values_cx() {
@@ -1345,9 +1295,7 @@ fn exact_matrix_values_gdg_clifford_path() {
     );
 }
 
-// ============================================================================
-// Pauli transformation verification for 1-qubit Hadamard and Face gates
-// ============================================================================
+// --- Pauli transformation verification for 1-qubit Hadamard and Face gates ---
 
 /// Verify that U maps Pauli `input` to `sign * output` via conjugation: U P U† = s * Q.
 fn assert_pauli_transform(
@@ -1520,9 +1468,7 @@ fn pauli_string_to_1q_matrix(ps: &PauliString) -> UnitaryMatrix {
     &base * phase
 }
 
-// ============================================================================
-// Exact 2-qubit matrix values for G gate
-// ============================================================================
+// --- Exact 2-qubit matrix values for G gate ---
 
 #[test]
 fn exact_matrix_values_g() {
@@ -1551,9 +1497,7 @@ fn g_squared_is_identity() {
     assert!(diff < 1e-10, "G^2 should be identity, diff = {diff}");
 }
 
-// ============================================================================
-// 2-qubit Pauli conjugation: U * P * U† matches CliffordRep images
-// ============================================================================
+// --- 2-qubit Pauli conjugation: U * P * U† matches CliffordRep images ---
 
 /// Build a 2-qubit Pauli matrix from a `PauliString` (phase * P0 tensor P1).
 fn pauli_string_to_2q_matrix(ps: &PauliString) -> UnitaryMatrix {
@@ -1616,9 +1560,7 @@ fn two_qubit_clifford_pauli_conjugation() {
     }
 }
 
-// ============================================================================
-// Op-level CliffordRep/UnitaryRep dual consistency
-// ============================================================================
+// --- Op-level CliffordRep/UnitaryRep dual consistency ---
 
 #[test]
 fn op_clifford_rep_matches_unitary_rep_2q() {
@@ -1688,9 +1630,7 @@ fn op_clifford_rep_matches_unitary_rep_1q() {
     }
 }
 
-// ============================================================================
-// Op composition consistency: CliffordRep and UnitaryRep halves agree after *
-// ============================================================================
+// --- Op composition consistency: CliffordRep and UnitaryRep halves agree after * ---
 
 use pecos_core::op::Op;
 
@@ -1782,9 +1722,6 @@ fn op_composition_preserves_dual_consistency_2q() {
     }
 }
 
-// ============================================================================
-// Display
-// ============================================================================
 
 #[test]
 fn display_does_not_panic() {

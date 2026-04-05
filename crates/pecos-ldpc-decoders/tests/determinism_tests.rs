@@ -1,4 +1,4 @@
-//! Comprehensive determinism tests for LDPC decoders
+//! Determinism tests for LDPC decoders
 //!
 //! These tests ensure that all LDPC decoders provide:
 //! 1. Deterministic results with fixed seeds

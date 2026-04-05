@@ -56,9 +56,7 @@ use pecos_core::{BitSet, Pauli, PauliString, Phase, QuarterPhase};
 use pecos_random::{PecosRng, SeedableRng};
 use std::collections::{BTreeSet, VecDeque};
 
-// ============================================================================
-// Core type
-// ============================================================================
+// --- Core type ---
 
 /// A graph state representation for mathematical manipulation.
 ///
@@ -74,9 +72,7 @@ pub struct GraphState {
     neighbors: Vec<BitSet>,
 }
 
-// ============================================================================
-// Constructors
-// ============================================================================
+// --- Constructors ---
 
 impl GraphState {
     /// Create an n-qubit graph state with all VOPs identity and no edges.
@@ -145,9 +141,7 @@ impl GraphState {
         Self { vops, neighbors }
     }
 
-    // ========================================================================
-    // Pattern factories
-    // ========================================================================
+// --- Pattern factories ---
 
     /// Linear cluster state: 0-1-2-..-(n-1).
     #[must_use]
@@ -214,9 +208,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// Accessors
-// ============================================================================
+// --- Accessors ---
 
 impl GraphState {
     /// Returns the number of qubits (vertices).
@@ -291,9 +283,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// Mutators
-// ============================================================================
+// --- Mutators ---
 
 impl GraphState {
     /// Set the VOP for vertex v.
@@ -335,9 +325,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// Local complementation
-// ============================================================================
+// --- Local complementation ---
 
 impl GraphState {
     /// Perform local complementation about vertex v.
@@ -480,9 +468,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// Stabilizer extraction (Phase 3)
-// ============================================================================
+// --- Stabilizer extraction (Phase 3) ---
 
 impl GraphState {
     /// Compute the stabilizer generator for vertex v.
@@ -536,9 +522,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// Conversions (Phase 4)
-// ============================================================================
+// --- Conversions (Phase 4) ---
 
 impl GraphState {
     /// Convert into a simulator by providing an RNG.
@@ -621,9 +605,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// LC-equivalence (Phase 5)
-// ============================================================================
+// --- LC-equivalence (Phase 5) ---
 
 impl GraphState {
     /// Enumerate the entire LC orbit of this graph state.
@@ -705,9 +687,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// Export / Display (Phase 6)
-// ============================================================================
+// --- Export / Display (Phase 6) ---
 
 /// Names for the 24 single-qubit Cliffords.
 const CLIFFORD_NAMES: [&str; 24] = [
@@ -715,9 +695,7 @@ const CLIFFORD_NAMES: [&str; 24] = [
     "S2HS", "SHS2", "S3HS", "S2HS2", "S2HSH", "HS2HS", "S3HS2", "S3HSH", "HS2HS3",
 ];
 
-// ============================================================================
-// VOP Color Algebra
-// ============================================================================
+// --- VOP Color Algebra ---
 //
 // Three independent visual dimensions encode Clifford structure:
 //
@@ -956,9 +934,7 @@ impl GraphState {
     }
 }
 
-// ============================================================================
-// GraphStateRenderer
-// ============================================================================
+// --- GraphStateRenderer ---
 
 /// A graph state bound to a [`GraphStyle`], ready to render in any output format.
 ///
@@ -1464,9 +1440,7 @@ impl fmt::Display for GraphState {
     }
 }
 
-// ============================================================================
-// GraphStateSim conversion support
-// ============================================================================
+// --- GraphStateSim conversion support ---
 
 impl crate::graph_state::GraphStateSim<PecosRng> {
     /// Create a simulator from a graph state representation with a seed.
@@ -1489,9 +1463,7 @@ impl<R: SeedableRng + pecos_random::Rng + core::fmt::Debug> crate::graph_state::
     }
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
+// --- Helpers ---
 
 fn pauli_axis_to_pauli(axis: PauliAxis) -> Pauli {
     match axis {
@@ -1517,18 +1489,13 @@ fn multiply_paulis(a: Pauli, b: Pauli) -> (Pauli, QuarterPhase) {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::CliffordGateable;
 
-    // ========================================================================
-    // Phase 1: Core type tests
-    // ========================================================================
+// --- Phase 1: Core type tests ---
 
     #[test]
     fn test_new_creates_plus_state() {
@@ -1610,9 +1577,7 @@ mod tests {
         assert!(gs.is_pure_graph_state());
     }
 
-    // ========================================================================
-    // Phase 2: Patterns and local complementation
-    // ========================================================================
+// --- Phase 2: Patterns and local complementation ---
 
     #[test]
     fn test_linear_cluster() {
@@ -1781,9 +1746,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Phase 3: Stabilizer extraction
-    // ========================================================================
+// --- Phase 3: Stabilizer extraction ---
 
     #[test]
     fn test_stabilizer_generator_single_qubit() {
@@ -1896,9 +1859,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Phase 4: Conversions
-    // ========================================================================
+// --- Phase 4: Conversions ---
 
     #[test]
     fn test_roundtrip_graph_state_to_sim() {
@@ -1945,9 +1906,7 @@ mod tests {
         assert!(sub.has_edge(1, 2)); // was 2-3
     }
 
-    // ========================================================================
-    // Phase 5: LC-equivalence
-    // ========================================================================
+// --- Phase 5: LC-equivalence ---
 
     #[test]
     fn test_lc_orbit_single_qubit() {
@@ -1995,9 +1954,7 @@ mod tests {
         assert_eq!(canon1, canon2);
     }
 
-    // ========================================================================
-    // Phase 6: Export
-    // ========================================================================
+// --- Phase 6: Export ---
 
     #[test]
     fn test_display() {
@@ -2096,9 +2053,7 @@ mod tests {
         assert!(tikz.contains("draw=famSqrt"));
     }
 
-    // ========================================================================
-    // Cross-validation with simulator
-    // ========================================================================
+// --- Cross-validation with simulator ---
 
     #[test]
     fn test_cross_validate_stabilizers_with_sim() {
@@ -2158,9 +2113,7 @@ mod tests {
         assert_eq!(r1[0].outcome, r2[0].outcome);
     }
 
-    // ========================================================================
-    // ASCII export
-    // ========================================================================
+// --- ASCII export ---
 
     #[test]
     fn test_to_ascii_pure_graph_state() {
@@ -2303,9 +2256,7 @@ mod tests {
         assert!(ascii.contains("0 qubits, 0 edges"));
     }
 
-    // ========================================================================
-    // render_with tests
-    // ========================================================================
+// --- render_with tests ---
 
     #[test]
     fn render_with_default_matches_to_svg() {

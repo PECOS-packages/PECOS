@@ -1,4 +1,4 @@
-//! Comprehensive determinism tests for Chromobius decoder
+//! Determinism tests for Chromobius decoder
 //!
 //! These tests ensure that the Chromobius decoder provides:
 //! 1. Deterministic results across multiple runs

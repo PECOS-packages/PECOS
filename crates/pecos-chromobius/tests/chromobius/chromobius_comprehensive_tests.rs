@@ -1,4 +1,4 @@
-//! Comprehensive tests for Chromobius decoder integration
+//! Tests for Chromobius decoder integration
 //! Based on test patterns from the upstream Chromobius repository
 
 use pecos_chromobius::{ChromobiusConfig, ChromobiusDecoder};

@@ -1,4 +1,4 @@
-//! Comprehensive determinism tests for `PyMatching` decoder
+//! Determinism tests for `PyMatching` decoder
 //!
 //! These tests ensure that `PyMatching` provides:
 //! 1. Deterministic results with fixed seeds

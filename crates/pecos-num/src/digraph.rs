@@ -79,7 +79,7 @@ pub struct DiEdgeBuilder<'a> {
     attrs: BTreeMap<String, Attribute>,
 }
 
-#[allow(clippy::return_self_not_must_use, clippy::must_use_candidate)]
+#[allow(clippy::return_self_not_must_use, clippy::must_use_candidate)] // builder uses Drop to commit
 impl DiEdgeBuilder<'_> {
     /// Sets the weight of the edge.
     /// The edge is added to the graph when the builder is dropped.

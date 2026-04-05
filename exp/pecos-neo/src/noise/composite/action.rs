@@ -1355,11 +1355,10 @@ impl GateAction for OverRotation {
         _rng: &mut PecosRng,
     ) -> CompositeResponse {
         // Get the gate's angle from context
-        #[allow(clippy::redundant_closure)]
         let base_angle = ctx
             .current_gate()
             .and_then(super::super::context::GateInfo::angle)
-            .map_or(0.0, |a| a.to_radians());
+            .map_or(0.0, pecos_core::Angle64::to_radians);
 
         let error_angle = base_angle * self.fraction;
 

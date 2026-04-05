@@ -1,6 +1,6 @@
 //! Helios Interface Builder
 //!
-//! This module provides the builder pattern for creating Helios-based `QisInterfaces`.
+//! Builder pattern for creating Helios-based `QisInterfaces`.
 
 use crate::QisHeliosInterface;
 use crate::program::QisInterfaceBuilder;

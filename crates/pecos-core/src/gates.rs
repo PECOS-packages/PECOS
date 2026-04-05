@@ -22,8 +22,8 @@ pub type GateParams = SmallVec<[f64; 2]>;
 
 /// Flat gate command representation for quantum operations
 ///
-/// This struct provides a clean, flat representation of quantum gate commands
-/// without unnecessary nesting. It serves as the primary interface for gate
+/// Clean, flat representation of quantum gate commands
+/// without unnecessary nesting. Serves as the primary interface for gate
 /// operations in the `ByteMessage` system.
 ///
 /// # Design
@@ -49,8 +49,8 @@ pub struct Gate {
 
 /// Legacy quantum gate representation for `ByteMessageBuilder` compatibility
 ///
-/// This struct is designed to replace `QuantumCommand` with a more FFI-friendly
-/// representation. It contains all the information needed to represent a quantum
+/// Designed to replace `QuantumCommand` with a more FFI-friendly
+/// representation. Contains all the information needed to represent a quantum
 /// gate operation.
 ///
 impl Gate {

@@ -12,7 +12,7 @@
 
 //! Qulacs quantum simulator bindings for PECOS.
 //!
-//! This crate provides Rust bindings to the Qulacs quantum simulator C++ library,
+//! Rust bindings to the Qulacs quantum simulator C++ library,
 //! enabling high-performance quantum circuit simulation.
 
 pub mod bridge;

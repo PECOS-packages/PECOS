@@ -24,7 +24,7 @@ use pecos_phir_json::v0_1::engine::PhirJsonEngine;
 ///
 /// Basic usage without WebAssembly:
 ///
-/// ```no_run
+/// ```text
 /// let results = run_phir_simulation_from_json(
 ///     phir_json,
 ///     1,                      // Just one shot
@@ -37,7 +37,7 @@ use pecos_phir_json::v0_1::engine::PhirJsonEngine;
 ///
 /// Using with WebAssembly:
 ///
-/// ```no_run
+/// ```text
 /// let wasm_path = std::path::Path::new("path/to/file.wat");
 /// let results = run_phir_simulation_from_json(
 ///     phir_json,

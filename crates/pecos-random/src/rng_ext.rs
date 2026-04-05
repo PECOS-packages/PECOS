@@ -12,7 +12,7 @@
 
 //! Extension trait for probability-based RNG operations.
 //!
-//! This module provides [`RngProbabilityExt`], a trait that adds fixed-point
+//! [`RngProbabilityExt`], a trait that adds fixed-point
 //! probability checking methods to any RNG implementing [`Rng`].
 //!
 //! # Usage
@@ -45,8 +45,8 @@ use rand_core::Rng;
 
 /// Extension trait providing fixed-point probability operations for RNGs.
 ///
-/// This trait provides methods for efficient probability checking using
-/// precomputed u64 thresholds instead of f64 comparisons. This is faster
+/// Methods for efficient probability checking using
+/// precomputed u64 thresholds instead of f64 comparisons. Faster
 /// for repeated probability checks with the same probability value.
 ///
 /// # Default Implementations
@@ -712,7 +712,7 @@ impl<T: Rng> RngProbabilityExt for T {}
 
 /// Extension trait for optimized bulk random number generation.
 ///
-/// This trait provides methods for efficiently filling slices with random values.
+/// Efficiently fills slices with random values.
 /// Unlike [`RngProbabilityExt`] which has a blanket implementation, this trait
 /// requires explicit implementation to enable optimized versions.
 ///

@@ -1,6 +1,6 @@
 //! FFI exports for linking with QIS LLVM IR programs
 //!
-//! This module provides the minimal set of FFI functions needed to link QIS programs
+//! Minimal set of FFI functions needed to link QIS programs
 //! with Rust. These functions simply collect operations into the thread-local interface
 //! without performing any simulation or complex state management.
 

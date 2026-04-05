@@ -12,7 +12,7 @@
 
 //! High-performance random number generator for bulk generation.
 //!
-//! This module provides [`PecosRng`], the default RNG for PECOS simulations.
+//! [`PecosRng`], the default RNG for PECOS simulations.
 //! It is optimized for bulk random number generation, making it ideal for
 //! Monte Carlo simulations and measurement sampling.
 //!

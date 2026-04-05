@@ -43,7 +43,7 @@ use core::fmt::Debug;
 
 /// A trait for set operations on `usize` indices.
 ///
-/// This trait provides a common interface for set types used in stabilizer
+/// Common interface for set types used in stabilizer
 /// simulation, abstracting over the differences between [`BitSet`](crate::BitSet)
 /// and [`VecSet<usize>`](crate::VecSet).
 ///

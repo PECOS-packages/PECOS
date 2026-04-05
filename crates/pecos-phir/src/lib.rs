@@ -222,7 +222,7 @@ fn compile_module_to_output(module: &Module, config: &PhirConfig) -> Result<Stri
 #[cfg(feature = "hugr")]
 /// Compile HUGR JSON directly to LLVM IR via PHIR pipeline
 ///
-/// This function provides a direct path from HUGR JSON to LLVM IR for Python bindings
+/// Direct path from HUGR JSON to LLVM IR for Python bindings
 ///
 /// # Errors
 ///
@@ -250,7 +250,7 @@ pub fn compile_hugr_bytes_via_phir(hugr_bytes: &[u8], config: &PhirConfig) -> Re
 #[cfg(feature = "hugr")]
 /// Convert HUGR to PHIR and then to MLIR text representation
 ///
-/// This function provides a path from HUGR to MLIR text format for debugging and analysis
+/// Path from HUGR to MLIR text format for debugging and analysis
 ///
 /// # Errors
 ///

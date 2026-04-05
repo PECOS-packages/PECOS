@@ -1,6 +1,6 @@
 //! Common result types for PECOS decoders
 //!
-//! This module provides standardized result structures that all decoders
+//! Standardized result structures that all decoders
 //! can use or convert to for interoperability.
 
 /// Standard decoding result that all decoders can use

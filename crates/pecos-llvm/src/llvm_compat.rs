@@ -14,7 +14,7 @@
 
 //! LLVM IR generation API using inkwell
 //!
-//! This module provides Rust types for LLVM IR generation, designed to be compatible
+//! Rust types for LLVM IR generation, designed to be compatible
 //! with Python's llvmlite API. We use inkwell (Rust LLVM bindings) to generate proper
 //! LLVM IR and expose it through a Python-friendly interface.
 //!

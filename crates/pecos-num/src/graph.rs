@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 
 /// Attribute value type used for both nodes and edges.
 ///
-/// This enum provides two paths for attribute storage:
+/// Two paths for attribute storage:
 /// 1. **Fast path**: Native types (Float, Int, String, Bool, `IntList`, `StringList`) for common use cases
 /// 2. **Flexible path**: Json variant for arbitrary/heterogeneous data structures
 ///

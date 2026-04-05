@@ -14,7 +14,7 @@
 
 //! Direct HUGR interpreter engine for PECOS.
 //!
-//! This crate provides [`HugrEngine`], a classical control engine that directly
+//! [`HugrEngine`], a classical control engine that directly
 //! interprets HUGR (Hierarchical Unified Graph Representation) programs without
 //! requiring LLVM compilation.
 //!

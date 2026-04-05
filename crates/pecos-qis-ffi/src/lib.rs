@@ -1,6 +1,6 @@
 //! Minimal QIS Interface for Fast Linking
 //!
-//! This crate provides the minimal FFI interface needed to link QIS (Quantum Instruction Set)
+//! Minimal FFI interface needed to link QIS (Quantum Instruction Set)
 //! programs with Rust functions. It's designed to be lightweight and compile quickly.
 //!
 //! The interface collects quantum operations during program execution without performing

@@ -38,7 +38,6 @@ pub struct MeasurementResult {
 /// where P' is another Pauli operator (possibly with a phase ±1 or ±i).
 ///
 /// # Gate Set
-/// This trait provides:
 ///
 /// ## Single-qubit gates
 /// - Pauli gates (X, Y, Z)

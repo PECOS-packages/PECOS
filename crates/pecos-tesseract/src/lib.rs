@@ -1,6 +1,6 @@
 //! Tesseract decoder wrapper for PECOS
 //!
-//! This crate provides Rust bindings for the Tesseract search-based decoder
+//! Rust bindings for the Tesseract search-based decoder
 //! for quantum error correction. Tesseract is designed for LDPC quantum codes
 //! and uses A* search with pruning heuristics to find the most likely error
 //! configuration consistent with observed syndromes.

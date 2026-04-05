@@ -18,7 +18,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use pecos_simulators::density_matrix_test_utils::run_density_matrix_test_suite;
 //! use pecos_simulators::DensityMatrix;
 //!

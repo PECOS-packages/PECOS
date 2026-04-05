@@ -14,7 +14,7 @@
 
 //! LLVM IR generation using inkwell
 //!
-//! This crate provides Rust types and functions for generating LLVM IR,
+//! Rust types and functions for generating LLVM IR,
 //! designed to be compatible with Python's llvmlite usage patterns.
 //!
 //! The main module is `llvm_compat`, which provides types for LLVM IR generation

@@ -228,7 +228,7 @@ pub trait QisInterface: Send + Sync {
 
 /// Handle for main thread synchronization with a dynamic worker thread
 ///
-/// This trait provides methods for the main thread to coordinate with a worker
+/// Methods for the main thread to coordinate with a worker
 /// thread running an LLVM program. All methods access the FFI library through
 /// the same singleton instance used by the worker thread.
 #[allow(clippy::module_name_repetitions)]

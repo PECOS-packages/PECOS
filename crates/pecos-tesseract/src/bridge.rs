@@ -1,6 +1,6 @@
 //! FFI bridge to Tesseract C++ library
 //!
-//! This module provides the low-level FFI bindings to the Tesseract C++ library.
+//! Low-level FFI bindings to the Tesseract C++ library.
 //! Users should prefer the high-level [`TesseractDecoder`](crate::TesseractDecoder) API.
 
 #[cxx::bridge]

@@ -20,7 +20,7 @@ use std::fmt::Debug;
 
 /// Trait for foreign object implementations
 ///
-/// This trait provides a unified interface for foreign objects (like WebAssembly modules)
+/// Unified interface for foreign objects (like WebAssembly modules)
 /// that can be executed from quantum simulation programs. Implementations must be thread-safe
 /// (`Send + Sync`) to support parallel execution.
 ///

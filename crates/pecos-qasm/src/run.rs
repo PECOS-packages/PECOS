@@ -18,7 +18,7 @@ use pecos_programs::Qasm;
 ///
 /// For more control and a fluent API, consider using [`qasm_engine`] directly:
 ///
-/// ```no_run
+/// ```
 /// use pecos_qasm::qasm_engine;
 /// use pecos_engines::{ClassicalControlEngineBuilder, noise::DepolarizingNoiseModel};
 /// use pecos_programs::Qasm;

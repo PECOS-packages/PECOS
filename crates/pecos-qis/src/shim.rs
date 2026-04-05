@@ -1,6 +1,6 @@
 //! Selene Runtime Shim
 //!
-//! This module provides the C shim library that implements selene_* functions
+//! C shim library that implements selene_* functions
 //! and forwards them to PECOS's thread-local interface.
 //!
 //! The shim is compiled as a shared library (`libpecos_selene_shim.so`) that

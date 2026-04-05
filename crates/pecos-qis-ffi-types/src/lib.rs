@@ -1,6 +1,6 @@
 //! QIS Interface Data Types
 //!
-//! This crate provides the data structures for quantum instruction set (QIS) FFI operations.
+//! Data structures for quantum instruction set (QIS) FFI operations.
 //! These types can be safely linked into any Rust binary without exporting FFI symbols.
 //!
 //! The actual FFI implementation (with `#[no_mangle]` functions) is in `pecos-qis-ffi`.

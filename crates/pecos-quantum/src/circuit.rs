@@ -40,7 +40,7 @@ pub type GateHandle = usize;
 
 /// Trait for read-only access to quantum circuits.
 ///
-/// This trait provides a common interface for different quantum circuit representations,
+/// Common interface for different quantum circuit representations,
 /// allowing generic algorithms to work with any circuit type.
 ///
 /// # Implementors

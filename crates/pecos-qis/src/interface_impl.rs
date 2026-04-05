@@ -1,6 +1,6 @@
 //! Interface trait utilities
 //!
-//! This module provides utilities for working with `QisInterface` implementations.
+//! Utilities for working with `QisInterface` implementations.
 
 use crate::qis_interface::InterfaceError;
 use pecos_core::prelude::PecosError;

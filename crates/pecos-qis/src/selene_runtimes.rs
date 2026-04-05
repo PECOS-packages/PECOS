@@ -1,6 +1,6 @@
 //! Utility functions for Selene runtime plugins
 //!
-//! This module provides convenient access to Selene runtime implementations.
+//! Convenient access to Selene runtime implementations.
 //! The runtimes are automatically built when you build this crate if the
 //! Selene repository is found at ../selene (relative to PECOS).
 

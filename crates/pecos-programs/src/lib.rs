@@ -1,6 +1,6 @@
 //! Zero-dependency program types for PECOS quantum simulation
 //!
-//! This crate provides pure data types for quantum programs that can be used
+//! Pure data types for quantum programs that can be used
 //! across different PECOS engine crates without creating dependencies between them.
 
 pub mod prelude;

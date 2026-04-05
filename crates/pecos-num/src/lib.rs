@@ -14,7 +14,7 @@
 
 //! # pecos-num: Numerical Computing for PECOS
 //!
-//! This crate provides numerical computing functionality for PECOS, including:
+//! Numerical computing functionality for PECOS, including:
 //!
 //! - Statistical functions (mean, std)
 //! - Mathematical functions (cos, sin, exp, sqrt, power, etc.)

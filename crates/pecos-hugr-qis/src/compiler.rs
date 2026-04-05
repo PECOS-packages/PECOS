@@ -1,6 +1,6 @@
 //! HUGR to QIS LLVM IR compiler
 //!
-//! This module provides HUGR to LLVM IR compilation that generates
+//! HUGR to LLVM IR compilation that generates
 //! Selene QIS-compatible LLVM IR. It matches the full functionality
 //! of tket2's qis-compiler but without Python bindings.
 

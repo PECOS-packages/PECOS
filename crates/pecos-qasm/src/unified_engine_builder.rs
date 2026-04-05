@@ -292,25 +292,17 @@ impl From<Qasm> for QasmEngineBuilder {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_qasm::unified_engine_builder::qasm_engine;
 /// use pecos_engines::{ClassicalControlEngineBuilder, DepolarizingNoise};
 ///
 /// // Basic usage
 /// let results = qasm_engine()
-///     .qasm("OPENQASM 2.0; include \"qelib1.inc\"; qreg q[2]; h q[0]; cx q[0],q[1]; measure q -> c;")
+///     .qasm("OPENQASM 2.0; include \"qelib1.inc\"; qreg q[2]; creg c[2]; h q[0]; cx q[0],q[1]; measure q -> c;")
 ///     .to_sim()
 ///     .seed(42)
 ///     .noise(DepolarizingNoise { p: 0.01 })
-///     .run(1000)?;
-///
-/// // With WASM foreign functions
-/// #[cfg(feature = "wasm")]
-/// let results_wasm = qasm_engine()
-///     .qasm("OPENQASM 2.0; include \"qelib1.inc\"; qreg q[2]; custom_func(q[0]); measure q -> c;")
-///     .wasm("custom_gates.wasm")
-///     .to_sim()
 ///     .run(1000)?;
 /// # Ok(())
 /// # }

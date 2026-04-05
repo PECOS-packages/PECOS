@@ -12,7 +12,7 @@
 
 //! Traits and utilities for managing RNG state.
 //!
-//! This module provides:
+//! Provides:
 //! - [`RngManageable`]: A trait for components that can have their RNG replaced or reseeded
 //! - [`derive_seed`]: A function for deriving related seeds from a base seed
 //! - [`time_seed`]: A function for generating a seed from system time
@@ -24,8 +24,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Derive a new seed from a base seed and a purpose string.
 ///
-/// This function provides a standardized way to derive related seeds from a base seed,
-/// which is useful for creating deterministic but uncorrelated random sequences
+/// Standardized way to derive related seeds from a base seed,
+/// useful for creating deterministic but uncorrelated random sequences
 /// across different components.
 ///
 /// # Arguments
@@ -64,8 +64,8 @@ pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
 
 /// Generate a seed from the current system time.
 ///
-/// This function provides a standardized way to generate a seed when no explicit
-/// seed is provided. It uses nanosecond precision for better uniqueness.
+/// Standardized way to generate a seed when no explicit
+/// seed is provided. Uses nanosecond precision for better uniqueness.
 ///
 /// # Returns
 /// A seed value derived from the current system time, or a fallback value (12345)

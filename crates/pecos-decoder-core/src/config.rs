@@ -1,6 +1,6 @@
 //! Common configuration traits and types for PECOS decoders
 //!
-//! This module provides standardized configuration patterns that decoders
+//! Standardized configuration patterns that decoders
 //! can implement for consistent API design.
 
 use crate::errors::ConfigError;

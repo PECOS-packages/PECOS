@@ -1,6 +1,6 @@
 //! Implementation for heap allocation of arrays using the selene heap.
 //!
-//! This module provides array codegen support compatible with Selene's QIS runtime.
+//! Array codegen support compatible with Selene's QIS runtime.
 
 use anyhow::Result;
 use tket::hugr::llvm::emit::EmitFuncContext;

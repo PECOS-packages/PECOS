@@ -236,7 +236,7 @@ fn execute_single_batch<S: CliffordGateable>(
 
 /// A DOD/ECS-style execution system that processes gate batches.
 ///
-/// This trait represents a "system" in ECS terminology - a function that
+/// A "system" in ECS terminology - a function that
 /// operates on components (gate batches) to produce effects (simulator state changes).
 pub trait GateSystem<S: CliffordGateable> {
     /// The gate type this system handles.

@@ -16,7 +16,7 @@
 //!
 //! These are raw FFI bindings. For a safe Rust API, use the `pecos-cuquantum` crate instead.
 //!
-//! ```no_run
+//! ```text
 //! use pecos_cuquantum_sys::*;
 //! use std::ptr;
 //!

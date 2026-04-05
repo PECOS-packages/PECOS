@@ -1,6 +1,6 @@
 //! Program abstraction for QIS Classical Control Engine
 //!
-//! This module provides a unified program interface that allows different
+//! Unified program interface that allows different
 //! program types (`Qis`, HUGR, raw `QisInterface`) to be used with
 //! the `QisEngine` through a consistent `.program()` API.
 //!

@@ -1,6 +1,6 @@
 //! Cross-platform GPU quantum simulators
 //!
-//! This crate provides GPU-accelerated quantum simulators using wgpu,
+//! GPU-accelerated quantum simulators using wgpu,
 //! enabling simulation on multiple backends:
 //!
 //! - Metal (Apple Silicon)

@@ -21,7 +21,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use pecos_simulators::stabilizer_test_utils::run_basic_stabilizer_test_suite;
 //! use pecos_simulators::SparseStab;
 //!

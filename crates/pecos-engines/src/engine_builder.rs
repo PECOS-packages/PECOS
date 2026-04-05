@@ -29,44 +29,13 @@ pub trait ClassicalControlEngineBuilder {
     ///
     /// **Deprecated**: Use `sim_builder()` instead for the preferred API pattern:
     ///
-    /// ```no_run
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # // This is a conceptual example showing the API pattern
-    /// # // In practice, you would use the actual engine builders from specific crates
-    /// # use pecos_engines::{ClassicalControlEngineBuilder, sim_builder};
-    /// #
-    /// # // Example using a hypothetical qasm_engine function
-    /// # // In real code, use: use pecos_qasm::qasm_engine;
-    /// # mod example {
-    /// #     use pecos_engines::{ClassicalControlEngineBuilder, SimBuilder};
-    /// #     use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
-    /// #
-    /// #     pub struct QasmEngineBuilder;
-    /// #
-    /// #     impl ClassicalControlEngineBuilder for QasmEngineBuilder {
-    /// #         type Engine = ExternalClassicalEngine;
-    /// #
-    /// #         fn build(self) -> Result<Self::Engine, pecos_core::errors::PecosError> {
-    /// #             Ok(ExternalClassicalEngine::new())
-    /// #         }
-    /// #     }
-    /// #
-    /// #     impl QasmEngineBuilder {
-    /// #         pub fn qasm(self, _qasm: &str) -> Self { self }
-    /// #     }
-    /// #
-    /// #     pub fn qasm_engine() -> QasmEngineBuilder { QasmEngineBuilder }
-    /// # }
-    /// # use example::qasm_engine;
-    /// #
+    /// ```text
     /// // Preferred pattern:
     /// let results = sim_builder()
     ///     .classical(qasm_engine()
     ///         .qasm("H q[0];"))
     ///     .seed(42)
     ///     .run(1000)?;
-    /// # Ok(())
-    /// # }
     /// ```
     fn to_sim(self) -> crate::sim_builder::SimBuilder
     where
@@ -83,17 +52,9 @@ pub trait ClassicalControlEngineBuilder {
 /// like engine builders, programs, or other simulation configurations.
 ///
 /// # Example
-/// ```no_run
-/// # use pecos_engines::{sim, SimInput};
-/// # struct MyInput;
-/// # impl SimInput for MyInput {
-/// #     fn into_sim_builder(self) -> pecos_engines::SimBuilder {
-/// #         pecos_engines::sim_builder()
-/// #     }
-/// # }
+/// ```text
 /// // Any type implementing SimInput can be used with sim()
 /// let results = sim(MyInput).run(100)?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait SimInput {
     /// Convert this input into a `SimBuilder`

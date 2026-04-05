@@ -21,7 +21,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use pecos_simulators::clifford_test_utils::run_clifford_gate_tests;
 //! use pecos_simulators::SparseStab;
 //!

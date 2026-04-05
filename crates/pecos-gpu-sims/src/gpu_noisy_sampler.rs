@@ -44,7 +44,7 @@ pub enum Pauli {
 
 /// Simplified noise sampling trait for GPU circuit execution.
 ///
-/// This trait provides a simple interface for sampling noise without the
+/// Simple interface for sampling noise without the
 /// complexity of the full `ControlEngine` interface.
 pub trait NoiseSampler: Send {
     /// Sample a single-qubit error. Returns the Pauli to apply (I = no error).

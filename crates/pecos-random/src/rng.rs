@@ -12,7 +12,7 @@
 
 //! High-performance random number generator using `RapidRng`.
 //!
-//! This module provides [`PecosRng`], an alternative RNG for PECOS simulations
+//! [`PecosRng`], an alternative RNG for PECOS simulations
 //! based on the `RapidHash` mixing function. It provides the same interface as
 //! [`PecosRng`](crate::quality_rng::PecosQualityRng) for easy comparison and drop-in replacement.
 //!

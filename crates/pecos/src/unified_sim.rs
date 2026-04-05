@@ -1,6 +1,6 @@
 //! Unified simulation API with automatic engine selection
 //!
-//! This module provides a convenience wrapper around the lower-level `sim_builder`
+//! Convenience wrapper around the lower-level `sim_builder`
 //! from pecos-engines, adding automatic engine selection based on program type.
 
 use pecos_core::errors::PecosError;
@@ -206,8 +206,8 @@ impl ProgrammedSimBuilder {
 
 /// Create a simulation builder with a program and automatic engine selection
 ///
-/// This function provides the primary API for quantum simulations in PECOS.
-/// It automatically selects the appropriate classical engine based on the program type.
+/// Primary API for quantum simulations in PECOS.
+/// Automatically selects the appropriate classical engine based on the program type.
 ///
 /// # Automatic Engine Selection
 ///

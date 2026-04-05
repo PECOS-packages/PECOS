@@ -1633,7 +1633,7 @@ impl MeasurementNoiseModel {
             let mut fired = false;
             for &offset in records {
                 // Convert negative offset to absolute index
-                #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
+                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
                 #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
                 let abs_idx = if offset < 0 {
                     (num_measurements as i32 + offset) as usize

@@ -1246,6 +1246,7 @@ where
                 let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
 
                 // Collapse and renormalize
+                #[allow(clippy::cast_possible_truncation)] // intentional f32 downcast for f32 state vector
                 let norm_factor = if outcome {
                     1.0 / prob_one.sqrt()
                 } else {
@@ -1282,6 +1283,7 @@ where
 {
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
+        #[allow(clippy::cast_possible_truncation)] // intentional f32 downcast
         let theta = theta as f32;
         let cos_half = (theta / 2.0).cos();
         let sin_half = (theta / 2.0).sin();
@@ -1305,6 +1307,7 @@ where
 
     fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
+        #[allow(clippy::cast_possible_truncation)] // intentional f32 downcast
         let theta = theta as f32;
         let cos_half = (theta / 2.0).cos();
         let sin_half = (theta / 2.0).sin();
@@ -1328,6 +1331,7 @@ where
 
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
+        #[allow(clippy::cast_possible_truncation)] // intentional f32 downcast
         let theta = theta as f32;
         let cos_half = (theta / 2.0).cos();
         let sin_half = (theta / 2.0).sin();

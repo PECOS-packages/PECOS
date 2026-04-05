@@ -119,7 +119,7 @@ impl UniformNoiseModel {
     /// Create a uniform noise model with the given error probability.
     #[must_use]
     pub fn new(p_error: f64) -> Self {
-        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] so product fits in u64
         let threshold = (p_error * u64::MAX as f64) as u64;
         Self {
             p_error,
@@ -172,7 +172,7 @@ impl PerLocationNoiseModel {
         let thresholds = probabilities
             .iter()
             .map(|&p| {
-                #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] so product fits in u64
                 { (p * u64::MAX as f64) as u64 }
             })
             .collect();
@@ -289,14 +289,20 @@ impl<'a, N: NoiseModel> NoisySampler<'a, N> {
             .iter()
             .enumerate()
             .filter(|(_, c)| **c == 1)
-            .map(|(i, _)| i as u32)
+            .map(|(i, _)| {
+                #[allow(clippy::cast_possible_truncation)] // detector index fits in u32
+                { i as u32 }
+            })
             .collect();
 
         let logical_flips: Vec<u32> = logical_flip_counts
             .iter()
             .enumerate()
             .filter(|(_, c)| **c == 1)
-            .map(|(i, _)| i as u32)
+            .map(|(i, _)| {
+                #[allow(clippy::cast_possible_truncation)] // logical index fits in u32
+                { i as u32 }
+            })
             .collect();
 
         ShotResult {

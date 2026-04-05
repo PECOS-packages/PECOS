@@ -1294,10 +1294,12 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
 
         for (gate_idx, command) in commands.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)] // gate index fits in u32
             self.dispatch_signals_at(sim, gate_idx as u32, store, &mut cursors);
             self.execute_queue_command(sim, command)?;
         }
         // Dispatch trailing signals (positioned after the last gate)
+        #[allow(clippy::cast_possible_truncation)] // gate count fits in u32
         self.dispatch_signals_at(sim, commands.len() as u32, store, &mut cursors);
         Ok(())
     }

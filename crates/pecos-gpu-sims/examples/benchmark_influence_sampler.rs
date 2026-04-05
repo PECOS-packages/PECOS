@@ -5,6 +5,7 @@
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
 use std::time::Instant;
 
+#[allow(clippy::cast_possible_truncation)] // benchmark indices fit in u32
 fn create_test_influence_map(num_locations: usize, num_detectors: usize) -> GpuInfluenceMapData {
     // Each location i: X fault -> detector i % num_detectors
     // This creates a realistic sparse pattern
@@ -109,11 +110,12 @@ impl CpuSampler {
         self.rng_state ^= self.rng_state << 13;
         self.rng_state ^= self.rng_state >> 7;
         self.rng_state ^= self.rng_state << 17;
-        self.rng_state as u32
+        #[allow(clippy::cast_possible_truncation)] // intentional low-32-bit extraction
+        { self.rng_state as u32 }
     }
 
     fn sample(&mut self, num_shots: usize, p_error: f64) -> usize {
-        #[allow(clippy::cast_sign_loss)] // probability in [0,1] so product is non-negative
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in [0,1] maps to [0, u32::MAX]
         let threshold = (p_error * f64::from(u32::MAX)) as u32;
         let mut logical_errors = 0;
 
@@ -242,6 +244,7 @@ fn main() {
 
         // Benchmark
         let (cpu_time, _cpu_errors) = benchmark_cpu(&map, num_shots, p_error, seed);
+        #[allow(clippy::cast_possible_truncation)] // benchmark shot count fits in u32
         let (gpu_time, _gpu_errors) = benchmark_gpu(&map, num_shots as u32, p_error, seed);
 
         let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();

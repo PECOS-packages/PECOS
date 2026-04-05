@@ -5093,6 +5093,7 @@ mod tests {
         // QuarterPhase encodes: PlusOne=0, MinusOne=1, PlusI=2, MinusI=3
         // Multiplying by i adds 2 to the encoding (mod 4)
         let base = image.phase() as u8;
+        #[allow(clippy::cast_possible_truncation)] // only low bits matter before % 4
         let w_phase = (base + 2 * (num_ys as u8 % 4)) % 4;
 
         let signs_minus = w_phase & 1 != 0; // bit 0 = minus

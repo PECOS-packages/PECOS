@@ -1210,7 +1210,8 @@ mod proptest_tests {
             let mut builder = OpBuilder::new();
             for i in 0..num_meas {
                 let q = QubitId(i);
-                builder = builder.pz(q).mz(q, ResultId(i as u16));
+                #[allow(clippy::cast_possible_truncation)] // test index bounded by 10
+                { builder = builder.pz(q).mz(q, ResultId(i as u16)); }
             }
             let seq = builder.build();
             prop_assert_eq!(seq.result_count, num_meas);

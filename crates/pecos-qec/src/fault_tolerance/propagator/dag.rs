@@ -295,6 +295,7 @@ impl CsrArray {
     /// Call this after adding all data for the current row.
     #[inline]
     pub fn finish_row(&mut self) {
+        #[allow(clippy::cast_possible_truncation)] // data length fits in u32
         self.offsets.push(self.data.len() as u32);
     }
 
@@ -617,8 +618,11 @@ impl DagFaultInfluenceMap {
         Vec<u32>,
         Vec<u32>,
     ) {
+        #[allow(clippy::cast_possible_truncation)] // location count fits in u32
         let num_locations = self.locations.len() as u32;
+        #[allow(clippy::cast_possible_truncation)] // detector count fits in u32
         let num_detectors = self.detectors.len() as u32;
+        #[allow(clippy::cast_possible_truncation)] // logical index fits in u32
         let num_logicals = self
             .influences
             .max_logical_index()
@@ -764,6 +768,7 @@ impl InfluenceRecorder for BucketRecorder {
         obs_z: bool,
         detector_idx: usize,
     ) {
+        #[allow(clippy::cast_possible_truncation)] // detector index fits in u32
         let det = detector_idx as u32;
 
         // X fault anticommutes with Z observable
@@ -1249,6 +1254,7 @@ mod tests {
         // Add random Clifford gates
         for _ in 0..num_gates {
             let gate_type = next_rand() % 5;
+            #[allow(clippy::cast_possible_truncation)] // 64-bit target
             let q1 = (next_rand() % num_qubits as u64) as usize;
 
             match gate_type {
@@ -1263,6 +1269,7 @@ mod tests {
                 }
                 3 => {
                     // CX - need two different qubits
+                    #[allow(clippy::cast_possible_truncation)] // 64-bit target
                     let mut q2 = (next_rand() % num_qubits as u64) as usize;
                     if q2 == q1 {
                         q2 = (q1 + 1) % num_qubits;
@@ -1271,6 +1278,7 @@ mod tests {
                 }
                 _ => {
                     // CZ - need two different qubits
+                    #[allow(clippy::cast_possible_truncation)] // 64-bit target
                     let mut q2 = (next_rand() % num_qubits as u64) as usize;
                     if q2 == q1 {
                         q2 = (q1 + 1) % num_qubits;

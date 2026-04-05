@@ -589,20 +589,24 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
     fn build_reverse_maps(map: &mut FaultInfluenceMap) {
         for (loc, influence) in &map.influences {
             for (pauli, detectors) in influence.detector_flips.iter().enumerate() {
+                #[allow(clippy::cast_possible_truncation)] // Pauli index 0..2
+                let pauli_u8 = pauli as u8;
                 for detector in detectors {
                     map.detector_to_faults
                         .entry(detector.clone())
                         .or_default()
-                        .push((loc.clone(), pauli as u8));
+                        .push((loc.clone(), pauli_u8));
                 }
             }
 
             for (pauli, logicals) in influence.logical_flips.iter().enumerate() {
+                #[allow(clippy::cast_possible_truncation)] // Pauli index 0..2
+                let pauli_u8 = pauli as u8;
                 for logical in logicals {
                     map.logical_to_faults
                         .entry(*logical)
                         .or_default()
-                        .push((loc.clone(), pauli as u8));
+                        .push((loc.clone(), pauli_u8));
                 }
             }
         }

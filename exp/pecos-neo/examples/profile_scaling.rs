@@ -77,6 +77,7 @@ fn bench_no_noise(num_qubits: usize, shots: usize) -> f64 {
     }
     let elapsed = start.elapsed();
 
+    #[allow(clippy::cast_possible_truncation)] // shots count fits in u32
     let per_shot = elapsed / shots as u32;
     let per_gate_ns = elapsed.as_nanos() as f64 / (shots * num_gates) as f64;
     println!(
@@ -113,6 +114,7 @@ fn bench_with_noise(num_qubits: usize, shots: usize) -> f64 {
     }
     let elapsed = start.elapsed();
 
+    #[allow(clippy::cast_possible_truncation)] // shots count fits in u32
     let per_shot = elapsed / shots as u32;
     let per_gate_ns = elapsed.as_nanos() as f64 / (shots * num_gates) as f64;
     println!(

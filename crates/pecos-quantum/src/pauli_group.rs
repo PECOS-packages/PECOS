@@ -421,6 +421,7 @@ impl PauliGroup {
         (0..total).map(move |mut idx| {
             let mut exponents = Vec::with_capacity(orders.len());
             for &order in &orders {
+                #[allow(clippy::cast_possible_truncation)] // remainder < order which is u32
                 exponents.push((idx % u64::from(order)) as u32);
                 idx /= u64::from(order);
             }

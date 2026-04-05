@@ -275,9 +275,11 @@ impl DemSampler {
             inv_log_1_minus_p.push(inv);
 
             detector_data.extend_from_slice(&detectors);
+            #[allow(clippy::cast_possible_truncation)] // detector data length fits in u32
             detector_offsets.push(detector_data.len() as u32);
 
             observable_data.extend_from_slice(&observables);
+            #[allow(clippy::cast_possible_truncation)] // observable data length fits in u32
             observable_offsets.push(observable_data.len() as u32);
         }
 
@@ -1539,9 +1541,11 @@ impl<'a> DemSamplerBuilder<'a> {
             inv_log_1_minus_p.push(inv);
 
             detector_data.extend_from_slice(&mech.detectors);
+            #[allow(clippy::cast_possible_truncation)] // detector data length fits in u32
             detector_offsets.push(detector_data.len() as u32);
 
             observable_data.extend_from_slice(&mech.observables);
+            #[allow(clippy::cast_possible_truncation)] // observable data length fits in u32
             observable_offsets.push(observable_data.len() as u32);
         }
 
@@ -1720,7 +1724,7 @@ impl<'a> DemSamplerBuilder<'a> {
             .filter_map(|(det_id, records)| {
                 let mut xor_result = false;
                 for &offset in records {
-                    #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
+                    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
                     #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
                     let abs_idx = if offset < 0 {
                         (num_tc_measurements as i32 + offset) as usize
@@ -1732,6 +1736,7 @@ impl<'a> DemSamplerBuilder<'a> {
                     }
                 }
                 if xor_result {
+                    #[allow(clippy::cast_possible_truncation)] // detector ID fits in u32
                     Some(det_id as u32)
                 } else {
                     None
@@ -1747,7 +1752,7 @@ impl<'a> DemSamplerBuilder<'a> {
             .filter_map(|(obs_id, records)| {
                 let mut xor_result = false;
                 for &offset in records {
-                    #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
+                    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
                     #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
                     let abs_idx = if offset < 0 {
                         (num_tc_measurements as i32 + offset) as usize
@@ -1759,6 +1764,7 @@ impl<'a> DemSamplerBuilder<'a> {
                     }
                 }
                 if xor_result {
+                    #[allow(clippy::cast_possible_truncation)] // observable ID fits in u32
                     Some(obs_id as u32)
                 } else {
                     None

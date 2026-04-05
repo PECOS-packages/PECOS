@@ -233,7 +233,6 @@ cargo = { level = "warn", priority = -1 }
 multiple-crate-versions = "allow"
 # Numeric casts are pervasive in quantum sim code (qubit indices, bitwise ops);
 # values are bounded by construction. Localize #[allow] for non-obvious cases.
-cast-possible-truncation = "allow" # ~250 usize -> u32/u8 casts for GPU/bit ops, qubit counts fit
 cast-precision-loss = "allow"     # ~465 usize/u64 -> f64 casts for statistics/normalization
 # Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
 similar-names = "allow"

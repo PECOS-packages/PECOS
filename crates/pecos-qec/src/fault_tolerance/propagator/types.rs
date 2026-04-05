@@ -46,6 +46,7 @@ impl NodeId {
     /// Creates from usize (for compatibility).
     #[inline]
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // node index fits in u32
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -88,6 +89,7 @@ impl LocationId {
 
     #[inline]
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // location index fits in u32
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -127,6 +129,7 @@ impl DetectorIdx {
 
     #[inline]
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // detector index fits in u32
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
@@ -166,6 +169,7 @@ impl LogicalIdx {
 
     #[inline]
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // logical index fits in u32
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }

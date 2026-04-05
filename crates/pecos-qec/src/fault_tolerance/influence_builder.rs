@@ -580,8 +580,10 @@ impl<'a> InfluenceBuilder<'a> {
         for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
             if Self::fault_anticommutes(prop, pauli) {
                 if is_detector {
+                    #[allow(clippy::cast_possible_truncation)] // index fits in u32
                     recorder.record_detector(loc_idx, pauli, target_idx as u32);
                 } else {
+                    #[allow(clippy::cast_possible_truncation)] // index fits in u32
                     recorder.record_logical(loc_idx, pauli, target_idx as u32);
                 }
             }

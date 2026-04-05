@@ -173,7 +173,7 @@ macro_rules! exp_sum_fixed {
         } else {
             !zero
         };
-        #[allow(clippy::cast_possible_wrap)] // m = n+1 where n is qubit count, fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // m = n+1 where n is qubit count, fits in i32
         let mut n_active = m as i32;
 
         while n_active >= 1 {
@@ -370,7 +370,7 @@ impl QuadraticForm {
                     _ => unreachable!(),
                 }
             }
-            #[allow(clippy::cast_sign_loss)] // phase8 is maintained in [0,7] via % 8
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // phase8 is in [0,7] via % 8
             let mut result = ExactScalar::from_phase(phase8 as u8);
             result.mul_sqrt2_pow(pow2);
             return result;
@@ -441,7 +441,7 @@ impl QuadraticForm {
         for i in 0..m {
             set_bit(&mut active, i);
         }
-        #[allow(clippy::cast_possible_wrap)] // m = n+1 where n is qubit count, fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // m = n+1 where n is qubit count, fits in i32
         let mut n_active = m as i32;
 
         // Pre-allocate scratch buffers.

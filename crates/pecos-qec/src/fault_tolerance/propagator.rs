@@ -911,6 +911,7 @@ mod tests {
             let mut circuit = TickCircuit::new();
             for _ in 0..num_gates {
                 let gate_type = next_rand() % 4;
+                #[allow(clippy::cast_possible_truncation)] // 64-bit target
                 let q1 = (next_rand() % num_qubits as u64) as usize;
 
                 let mut t = circuit.tick();
@@ -922,11 +923,13 @@ mod tests {
                         t.sz(&[q1]);
                     }
                     2 => {
+                        #[allow(clippy::cast_possible_truncation)] // 64-bit target
                         let q2 = ((next_rand() % (num_qubits - 1) as u64) as usize + q1 + 1)
                             % num_qubits;
                         t.cx(&[(q1, q2)]);
                     }
                     _ => {
+                        #[allow(clippy::cast_possible_truncation)] // 64-bit target
                         let q2 = ((next_rand() % (num_qubits - 1) as u64) as usize + q1 + 1)
                             % num_qubits;
                         t.cz(&[(q1, q2)]);

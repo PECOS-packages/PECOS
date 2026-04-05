@@ -317,6 +317,7 @@ impl GateRegistry {
 
     /// Register a user-defined gate, returns its ID.
     pub fn register(&mut self, spec: GateSpec) -> GateId {
+        #[allow(clippy::cast_possible_truncation)] // user gate count fits in u16
         let id = GateId(256 + self.user_specs.len() as u16);
         let name = spec.name;
         self.user_specs.push(spec);

@@ -840,6 +840,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)] // test statistical bounds
     fn test_general_vs_flow_builder_single_qubit_parity() {
         use crate::command::CommandBuilder;
         use crate::noise::composite::CompositeNoiseModelBuilder;
@@ -905,6 +906,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)] // test statistical bounds
     fn test_general_vs_flow_builder_two_qubit_parity() {
         use crate::command::CommandBuilder;
         use crate::noise::composite::CompositeNoiseModelBuilder;
@@ -973,6 +975,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)] // test statistical bounds
     fn test_general_vs_flow_builder_measurement_parity() {
         use crate::command::CommandBuilder;
         use crate::noise::composite::CompositeNoiseModelBuilder;

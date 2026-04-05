@@ -623,6 +623,7 @@ fn main() {
         // No edges -- just showcasing the VOP colors.
         let mut gs = GraphState::new(24);
         for i in 0..24 {
+            #[allow(clippy::cast_possible_truncation)] // loop bound 24 fits in u8
             gs.set_vop(i, CliffordFrame::from_index(i as u8));
         }
 

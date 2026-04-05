@@ -898,6 +898,7 @@ fn parse_detector_records(detectors_json: &str) -> PyResult<Vec<Vec<i32>>> {
         let offsets: Vec<i32> = records
             .iter()
             .map(|r| {
+                #[allow(clippy::cast_possible_truncation)] // measurement record offsets fit in i32
                 r.as_i64().map(|v| v as i32).ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
                 })
@@ -934,6 +935,7 @@ fn parse_observable_records(observables_json: &str) -> PyResult<Vec<Vec<i32>>> {
         let offsets: Vec<i32> = records
             .iter()
             .map(|r| {
+                #[allow(clippy::cast_possible_truncation)] // measurement record offsets fit in i32
                 r.as_i64().map(|v| v as i32).ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
                 })
@@ -1604,7 +1606,7 @@ impl PyNoisySampler {
                 .map(|records| {
                     let mut fired = false;
                     for &offset in records {
-                        #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
+                        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
                         #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
                         let abs_idx = if offset < 0 {
                             (num_tc_measurements as i32 + offset) as usize
@@ -1625,7 +1627,7 @@ impl PyNoisySampler {
                 .map(|records| {
                     let mut flipped = false;
                     for &offset in records {
-                        #[allow(clippy::cast_possible_wrap)] // measurement count fits in i32
+                        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
                         #[allow(clippy::cast_sign_loss)] // negative offset + total count, or non-negative offset
                         let abs_idx = if offset < 0 {
                             (num_tc_measurements as i32 + offset) as usize

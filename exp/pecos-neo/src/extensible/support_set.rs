@@ -66,6 +66,7 @@ impl GateSupportSet {
 
     /// Iterate over all gate IDs in the set.
     pub fn iter(&self) -> impl Iterator<Item = GateId> + '_ {
+        #[allow(clippy::cast_possible_truncation)] // gate ID fits in u16
         self.bits.iter_ones().map(|i| GateId(i as u16))
     }
 

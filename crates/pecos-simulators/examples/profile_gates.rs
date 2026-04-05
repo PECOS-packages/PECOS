@@ -188,11 +188,13 @@ fn main() {
             gate_fn(&mut sim);
         }
         let total = t0.elapsed();
+        #[allow(clippy::cast_possible_truncation)] // iters is small benchmark count
+        let avg = total / iters as u32;
         eprintln!(
             "  {:>5} x{:<5}: {:>8.1?}  ({:>5.0}ns/gate)",
             name,
             ngates,
-            total / iters as u32,
+            avg,
             total.as_nanos() as f64 / (iters * ngates) as f64
         );
     }

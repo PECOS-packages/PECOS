@@ -114,7 +114,7 @@ impl GeometricSampler {
             "Probability must be in (0, 1), got {probability}"
         );
 
-        #[allow(clippy::cast_sign_loss)] // probability is in (0,1), so product is non-negative
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // probability in (0,1) maps to [0, u64::MAX]
         let threshold_u64 = (probability * (u64::MAX as f64)) as u64;
         Self {
             probability,
@@ -153,7 +153,7 @@ impl GeometricSampler {
         let u: f64 = rng.random();
         let skip = if u > 0.0 {
             // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
             { (u.ln() / self.log_1_minus_p).floor() as usize }
         } else {
             0
@@ -182,7 +182,7 @@ impl GeometricSampler {
             let u: f64 = rng.random();
             let skip = if u > 0.0 {
                 // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
             { (u.ln() / self.log_1_minus_p).floor() as usize }
             } else {
                 0

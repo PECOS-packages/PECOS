@@ -450,6 +450,7 @@ impl GateStorage {
             (slot, self.generations[idx])
         } else {
             // Allocate new slot
+            #[allow(clippy::cast_possible_truncation)] // gate index fits in u32
             let idx = self.types.len() as u32;
             self.types.push(gate_type);
             self.tick_ids.push(tick_id);
@@ -465,20 +466,26 @@ impl GateStorage {
         let idx = index as usize;
 
         // Add qubits
+        #[allow(clippy::cast_possible_truncation)] // qubit pool index fits in u32
         let qubit_start = self.qubits.len() as u32;
         self.qubits.extend_from_slice(qubits);
+        #[allow(clippy::cast_possible_truncation)] // qubit pool index fits in u32
         let qubit_end = self.qubits.len() as u32;
         self.qubit_spans[idx] = (qubit_start, qubit_end);
 
         // Add angles
+        #[allow(clippy::cast_possible_truncation)] // angle pool index fits in u32
         let angle_start = self.angles.len() as u32;
         self.angles.extend_from_slice(angles);
+        #[allow(clippy::cast_possible_truncation)] // angle pool index fits in u32
         let angle_end = self.angles.len() as u32;
         self.angle_spans[idx] = (angle_start, angle_end);
 
         // Add params
+        #[allow(clippy::cast_possible_truncation)] // param pool index fits in u32
         let param_start = self.params.len() as u32;
         self.params.extend_from_slice(params);
+        #[allow(clippy::cast_possible_truncation)] // param pool index fits in u32
         let param_end = self.params.len() as u32;
         self.param_spans[idx] = (param_start, param_end);
 
@@ -622,6 +629,7 @@ impl GateStorage {
     pub fn iter_ids(&self) -> impl Iterator<Item = GateId> + '_ {
         (0..self.len()).filter_map(move |idx| {
             if self.occupied[idx] {
+                #[allow(clippy::cast_possible_truncation)] // gate index fits in u32
                 Some(GateId::new(idx as u32, self.generations[idx]))
             } else {
                 None
@@ -769,6 +777,7 @@ impl CircuitIndexes {
             if storage.is_occupied(idx) {
                 let tick_id = storage.tick_id_unchecked(idx);
                 let qubits = storage.qubits_unchecked(idx);
+                #[allow(clippy::cast_possible_truncation)] // gate index fits in u32
                 self.register_gate_raw(idx as u32, tick_id, qubits);
             }
         }
@@ -965,6 +974,7 @@ impl TickCircuitSoA {
     }
 
     /// Iterator over gate IDs in a specific tick.
+    #[allow(clippy::cast_possible_truncation)] // tick index fits in u16
     pub fn gates_in_tick(&self, tick: usize) -> impl Iterator<Item = GateId> + '_ {
         self.storage
             .iter_ids()
@@ -1209,6 +1219,7 @@ impl From<&crate::TickCircuit> for TickCircuitSoA {
 
         for (tick_idx, tick_data) in tc.iter_ticks() {
             // Ensure we're at the right tick
+            #[allow(clippy::cast_possible_truncation)] // tick index fits in u16
             while builder.current_tick <= tick_idx as u16 {
                 builder.tick();
             }

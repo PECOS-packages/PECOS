@@ -149,7 +149,7 @@ impl From<&Gate> for GateCommand {
         if gate_type == GateType::Idle
             && let Some(&duration) = gate.params.first()
         {
-            #[allow(clippy::cast_sign_loss)] // duration is a non-negative time value
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // duration is a non-negative time value
             return GateCommand::idle(qubits[0], TimeUnits::new(duration as u64));
         }
 

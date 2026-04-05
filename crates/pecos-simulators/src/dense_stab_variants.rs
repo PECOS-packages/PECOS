@@ -1354,7 +1354,9 @@ impl SparseColOnly {
 
         // Initialize: stabilizer[i] = Z_i, destabilizer[i] = X_i
         for i in 0..num_qubits {
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             stab_col_z[i].push(i as u16);
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             destab_col_x[i].push(i as u16);
         }
 
@@ -1679,8 +1681,10 @@ impl QuantumSimulator for SparseColOnly {
         for q in 0..n {
             self.stab_col_x[q].clear();
             self.stab_col_z[q].clear();
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             self.stab_col_z[q].push(q as u16);
             self.destab_col_x[q].clear();
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             self.destab_col_x[q].push(q as u16);
             self.destab_col_z[q].clear();
         }
@@ -1808,7 +1812,9 @@ impl SparseRowOnly {
 
         // Initialize: stabilizer[i] = Z_i, destabilizer[i] = X_i
         for i in 0..num_qubits {
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             stab_row_z[i].push(i as u16);
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             destab_row_x[i].push(i as u16);
         }
 
@@ -1846,6 +1852,7 @@ impl SparseRowOnly {
     }
 
     fn apply_h(&mut self, qubit: usize) {
+        #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
         let q = qubit as u16;
         // H: X -> Z, Z -> X, Y -> -Y
         for g in 0..self.num_qubits {
@@ -1873,6 +1880,7 @@ impl SparseRowOnly {
     }
 
     fn apply_sz(&mut self, qubit: usize) {
+        #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
         let q = qubit as u16;
         // S/SZ gate: X -> iXZ (Y), Y -> -X, Z -> Z
         for g in 0..self.num_qubits {
@@ -1896,7 +1904,9 @@ impl SparseRowOnly {
     }
 
     fn apply_cx(&mut self, control: usize, target: usize) {
+        #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
         let c = control as u16;
+        #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
         let t = target as u16;
         // CX: X_c -> X_c X_t, Z_t -> Z_c Z_t
         for g in 0..self.num_qubits {
@@ -1918,6 +1928,7 @@ impl SparseRowOnly {
     }
 
     fn deterministic_meas(&self, qubit: usize) -> Option<MeasurementResult> {
+        #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
         let q = qubit as u16;
 
         // Check if any stabilizer has X on this qubit
@@ -1984,6 +1995,7 @@ impl SparseRowOnly {
 
     #[allow(clippy::too_many_lines)]
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
+        #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
         let q = qubit as u16;
 
         // Find anti-commuting stabilizers and minimum weight one
@@ -2118,8 +2130,10 @@ impl QuantumSimulator for SparseRowOnly {
         for g in 0..n {
             self.stab_row_x[g].clear();
             self.stab_row_z[g].clear();
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             self.stab_row_z[g].push(g as u16);
             self.destab_row_x[g].clear();
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             self.destab_row_x[g].push(g as u16);
             self.destab_row_z[g].clear();
         }
@@ -2354,6 +2368,7 @@ fn sparse_col_tableau_string(
             result.push('i');
         }
 
+        #[allow(clippy::cast_possible_truncation)] // generator index fits in u16
         let g16 = g as u16;
         for qubit in 0..num_qubits {
             let in_x = col_x[qubit].binary_search(&g16).is_ok();
@@ -2391,6 +2406,7 @@ fn sparse_row_tableau_string(
         }
 
         for qubit in 0..num_qubits {
+            #[allow(clippy::cast_possible_truncation)] // qubit index fits in u16
             let q = qubit as u16;
             let in_x = row_x[g].binary_search(&q).is_ok();
             let in_z = row_z[g].binary_search(&q).is_ok();

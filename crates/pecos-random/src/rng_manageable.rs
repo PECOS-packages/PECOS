@@ -82,6 +82,7 @@ pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
 /// let rng = PecosRng::seed_from_u64(seed);
 /// ```
 #[must_use]
+#[allow(clippy::cast_possible_truncation)] // timestamp truncation is fine for seeding
 pub fn time_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

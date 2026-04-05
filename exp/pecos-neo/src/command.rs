@@ -369,6 +369,7 @@ impl CommandQueue {
     /// assert_eq!(queue.iter_signals::<Temperature>().len(), 1);
     /// ```
     pub fn signal<S: Signal>(&mut self, signal: S) {
+        #[allow(clippy::cast_possible_truncation)] // command count fits in u32
         let position = self.commands.len() as u32;
         self.signals.push(position, signal);
     }

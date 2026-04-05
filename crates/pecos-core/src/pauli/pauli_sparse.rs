@@ -221,13 +221,13 @@ where
         // Phase formula derived from the Weyl convention: P(a,c) = i^{a·c} X^a Z^c
         // Product phase = i^{y_self + y_other - y_result} * (-1)^{|z_self ∩ x_other|}
         // where y = |x ∩ z| counts Y positions.
-        #[allow(clippy::cast_possible_wrap)] // qubit count fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // qubit count fits in i32
         let y_self = (&self.x_positions & &self.z_positions).len() as i32;
-        #[allow(clippy::cast_possible_wrap)] // qubit count fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // qubit count fits in i32
         let y_other = (&other.x_positions & &other.z_positions).len() as i32;
-        #[allow(clippy::cast_possible_wrap)] // qubit count fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // qubit count fits in i32
         let y_result = (&x_result & &z_result).len() as i32;
-        #[allow(clippy::cast_possible_wrap)] // qubit count fits in i32
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // qubit count fits in i32
         let commute = (&self.z_positions & &other.x_positions).len() as i32;
 
         // Combined exponent of i (using (-1) = i^2)

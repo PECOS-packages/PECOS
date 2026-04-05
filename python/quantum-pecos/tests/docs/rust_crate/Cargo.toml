@@ -18,6 +18,9 @@ pecos-qec = { path = "../../../../../crates/pecos-qec" }
 pecos-decoders = { path = "../../../../../crates/pecos-decoders", features = ["ldpc"] }
 pecos-decoder-core = { path = "../../../../../crates/pecos-decoder-core" }
 pecos-random = { path = "../../../../../crates/pecos-random" }
+pecos-qasm = { path = "../../../../../crates/pecos-qasm" }
+pecos-programs = { path = "../../../../../crates/pecos-programs" }
+pecos-neo = { path = "../../../../../exp/pecos-neo" }
 # Common external crates used in documentation examples
 serde_json = "1.0"
 tempfile = "3"

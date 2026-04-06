@@ -447,7 +447,7 @@ impl GpuStab {
     /// Perform non-deterministic measurement.
     /// Randomly chooses outcome and updates tableau.
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
-        let pivot = self.find_anticommuting_stabilizer(qubit).unwrap();
+        let pivot = self.find_anticommuting_stabilizer(qubit).expect("non-deterministic measurement requires anticommuting stabilizer");
         let col_base = qubit * self.words_per_col;
         let pivot_word = pivot / 32;
         let pivot_shift = pivot % 32;

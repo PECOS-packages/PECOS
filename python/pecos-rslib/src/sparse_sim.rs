@@ -189,9 +189,9 @@ impl SparseSim {
             }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self.inner.mz(q).into_iter().next().unwrap(),
-                    "MX" => self.inner.mx(q).into_iter().next().unwrap(),
-                    "MY" => self.inner.my(q).into_iter().next().unwrap(),
+                    "MZ" => self.inner.mz(q).into_iter().next().expect("measurement returned no results"),
+                    "MX" => self.inner.mx(q).into_iter().next().expect("measurement returned no results"),
+                    "MY" => self.inner.my(q).into_iter().next().expect("measurement returned no results"),
                     "MZForced" => {
                         let forced_value = params
                             .ok_or_else(|| {

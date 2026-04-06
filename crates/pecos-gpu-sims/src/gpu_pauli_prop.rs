@@ -784,11 +784,11 @@ impl GpuPauliProp {
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            tx.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("GPU worker channel closed").expect("GPU buffer mapping failed");
 
         let data = slice.get_mapped_range();
         let result: Vec<u32> = bytemuck::cast_slice(&data).to_vec();

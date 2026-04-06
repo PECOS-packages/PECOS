@@ -1859,12 +1859,18 @@ impl ScalarU64 {
 
     fn __int__<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
         // Properly convert u64 to unsigned Python int
-        self.value.into_pyobject(py).unwrap().into_any()
+        self.value
+            .into_pyobject(py)
+            .expect("u64 to Python conversion failed")
+            .into_any()
     }
 
     fn __index__<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
         // Properly convert u64 to unsigned Python int for indexing
-        self.value.into_pyobject(py).unwrap().into_any()
+        self.value
+            .into_pyobject(py)
+            .expect("u64 to Python conversion failed")
+            .into_any()
     }
 
     fn __bool__(&self) -> bool {

@@ -925,7 +925,7 @@ impl GpuStateVec {
         buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
-            .unwrap();
+            .expect("GPU device poll failed");
 
         let prob_one: f32 = {
             let data = buffer_slice.get_mapped_range();
@@ -1021,7 +1021,7 @@ impl GpuStateVec {
         buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
-            .unwrap();
+            .expect("GPU device poll failed");
 
         let state: Vec<[f32; 2]> = {
             let data = buffer_slice.get_mapped_range();

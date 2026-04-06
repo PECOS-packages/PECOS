@@ -534,7 +534,7 @@ impl GpuStabParallel {
 
     /// Non-deterministic measurement.
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
-        let pivot = self.find_anticommuting(qubit).unwrap();
+        let pivot = self.find_anticommuting(qubit).expect("non-deterministic measurement requires anticommuting stabilizer");
         let word = qubit / 32;
         let bit_pos = qubit % 32;
         let pivot_word = pivot / 32;

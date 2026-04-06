@@ -460,7 +460,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let num_non_v = n - v_count;
 
         if num_non_v == 1 {
-            let j = (0..n).find(|&j| !self.v.contains(j)).unwrap();
+            let j = (0..n).find(|&j| !self.v.contains(j)).expect("num_non_v >= 1 guarantees a non-v index exists");
             let rhs = self.s.contains(j);
             if let Some(pivot) = self.f.col(j).iter().next() {
                 return SharedConstraints {

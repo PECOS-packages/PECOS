@@ -426,7 +426,7 @@ impl FusionBlossomDecoder {
             self.virtual_vertices.push(self.num_nodes as VertexIndex);
         }
 
-        let boundary_node = self.boundary_node.unwrap();
+        let boundary_node = self.boundary_node.expect("boundary_node is set above");
 
         let weight_int = if let Some(w) = weight {
             if w < 0.0 {
@@ -549,7 +549,7 @@ impl FusionBlossomDecoder {
             self.solver = Some(solver);
         }
 
-        self.solver.as_mut().unwrap()
+        self.solver.as_mut().expect("solver is initialized above")
     }
 
     /// Decode a syndrome with advanced options and decoding options

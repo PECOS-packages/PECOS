@@ -373,7 +373,7 @@ impl PhirJsonEngine {
                             {
                                 // Get operations based on condition
                                 let branch_ops = self.processor.process_conditional_block(
-                                    condition.as_ref().unwrap(),
+                                    condition.as_ref().expect("checked Some above"),
                                     tb,
                                     fb.as_deref(),
                                 )?;
@@ -759,7 +759,7 @@ impl ControlEngine for PhirJsonEngine {
             debug!("No more commands, returning results");
             // Make sure to process any remaining Result operations
             if self.current_op < self.program.as_ref().map_or(0, |prog| prog.ops.len()) {
-                let ops = self.program.as_ref().unwrap().ops.clone();
+                let ops = self.program.as_ref().expect("program is set during execution").ops.clone();
                 if let Operation::ClassicalOp {
                     cop, args, returns, ..
                 } = &ops[self.current_op]

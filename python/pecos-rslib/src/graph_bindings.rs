@@ -61,7 +61,7 @@ fn attribute_to_python(py: Python<'_>, attr: &RustAttribute) -> PyResult<Py<PyAn
         RustAttribute::IntList(v) => v.into_pyobject(py)?.into_any().unbind(),
         RustAttribute::StringList(v) => v.into_pyobject(py)?.into_any().unbind(),
         RustAttribute::Json(json_value) => {
-            let json_str = serde_json::to_string(json_value).unwrap();
+            let json_str = serde_json::to_string(json_value).expect("JSON serialization failed");
             let json_module = py.import("json")?;
             json_module
                 .getattr("loads")?
@@ -353,49 +353,21 @@ impl PyGraph {
     ///
     /// A dictionary with edge weight and attributes if an edge exists, None otherwise.
     /// The dictionary includes "weight" as a key with the edge weight value.
-    fn get_edge_data(&self, py: Python<'_>, a: usize, b: usize) -> Option<Py<PyAny>> {
-        self.inner.get_edge_data(a, b).map(|edge_attrs| {
-            let dict = PyDict::new(py);
+    fn get_edge_data(&self, py: Python<'_>, a: usize, b: usize) -> PyResult<Option<Py<PyAny>>> {
+        let Some(edge_attrs) = self.inner.get_edge_data(a, b) else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
 
-            // Add weight as a first-class dictionary item
-            dict.set_item("weight", edge_attrs.weight()).unwrap();
+        // Add weight as a first-class dictionary item
+        dict.set_item("weight", edge_attrs.weight())?;
 
-            // Add all other attributes
-            for (key, value) in edge_attrs.attrs() {
-                match value {
-                    RustAttribute::Float(f) => {
-                        dict.set_item(key, f).unwrap();
-                    }
-                    RustAttribute::Int(i) => {
-                        dict.set_item(key, i).unwrap();
-                    }
-                    RustAttribute::String(s) => {
-                        dict.set_item(key, s.as_str()).unwrap();
-                    }
-                    RustAttribute::Bool(b) => {
-                        dict.set_item(key, b).unwrap();
-                    }
-                    RustAttribute::IntList(v) => {
-                        dict.set_item(key, v.clone()).unwrap();
-                    }
-                    RustAttribute::StringList(v) => {
-                        dict.set_item(key, v.clone()).unwrap();
-                    }
-                    RustAttribute::Json(json_value) => {
-                        // Convert JSON back to Python using json.loads()
-                        let json_str = serde_json::to_string(json_value).unwrap();
-                        let json_module = py.import("json").unwrap();
-                        let py_obj = json_module
-                            .getattr("loads")
-                            .unwrap()
-                            .call1((json_str,))
-                            .unwrap();
-                        dict.set_item(key, py_obj).unwrap();
-                    }
-                }
-            }
-            dict.into()
-        })
+        // Add all other attributes
+        for (key, value) in edge_attrs.attrs() {
+            let py_value = attribute_to_python(py, value)?;
+            dict.set_item(key, py_value)?;
+        }
+        Ok(Some(dict.into()))
     }
 
     /// Gets a mutable view of edge attributes between two nodes.
@@ -1397,18 +1369,22 @@ impl PyDiGraph {
     }
 
     /// Gets edge data between two nodes.
-    fn get_edge_data(&self, py: Python<'_>, source: usize, target: usize) -> Option<Py<PyAny>> {
-        self.inner
-            .get_edge_data(source, target)
-            .map(|edge_attrs: EdgeAttrs| {
-                let dict = PyDict::new(py);
-                dict.set_item("weight", edge_attrs.weight()).unwrap();
-                for (key, value) in edge_attrs.attrs() {
-                    let py_value = attribute_to_python(py, value).unwrap();
-                    dict.set_item(key, py_value).unwrap();
-                }
-                dict.into()
-            })
+    fn get_edge_data(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let Some(edge_attrs) = self.inner.get_edge_data(source, target) else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        dict.set_item("weight", edge_attrs.weight())?;
+        for (key, value) in edge_attrs.attrs() {
+            let py_value = attribute_to_python(py, value)?;
+            dict.set_item(key, py_value)?;
+        }
+        Ok(Some(dict.into()))
     }
 
     /// Returns a mutable view of edge attributes.
@@ -1944,18 +1920,22 @@ impl PyDAG {
     }
 
     /// Gets edge data between two nodes.
-    fn get_edge_data(&self, py: Python<'_>, source: usize, target: usize) -> Option<Py<PyAny>> {
-        self.inner
-            .get_edge_data(source, target)
-            .map(|edge_attrs: EdgeAttrs| {
-                let dict = PyDict::new(py);
-                dict.set_item("weight", edge_attrs.weight()).unwrap();
-                for (key, value) in edge_attrs.attrs() {
-                    let py_value = attribute_to_python(py, value).unwrap();
-                    dict.set_item(key, py_value).unwrap();
-                }
-                dict.into()
-            })
+    fn get_edge_data(
+        &self,
+        py: Python<'_>,
+        source: usize,
+        target: usize,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let Some(edge_attrs) = self.inner.get_edge_data(source, target) else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        dict.set_item("weight", edge_attrs.weight())?;
+        for (key, value) in edge_attrs.attrs() {
+            let py_value = attribute_to_python(py, value)?;
+            dict.set_item(key, py_value)?;
+        }
+        Ok(Some(dict.into()))
     }
 
     /// Returns a mutable view of edge attributes.

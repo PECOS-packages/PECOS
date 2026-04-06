@@ -876,7 +876,7 @@ impl QisHeliosInterface {
             // We're first, insert ours
             debug!("Caching program library: {}", path.display());
             cache_guard.insert(path.to_path_buf(), Box::new(shared_lib));
-            std::ptr::from_ref::<SharedLibrary>(cache_guard.get(path).unwrap())
+            std::ptr::from_ref::<SharedLibrary>(cache_guard.get(path).expect("just inserted"))
         };
 
         // SAFETY: Box ensures stable heap address, BTreeMap never removes, OnceLock ensures lifetime

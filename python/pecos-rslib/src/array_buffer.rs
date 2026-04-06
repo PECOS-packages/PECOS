@@ -117,67 +117,67 @@ macro_rules! impl_numeric_array_view {
             }
 
             /// Less than or equal comparison (<=)
-            fn __le__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __le__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x <= other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Greater than or equal comparison (>=)
-            fn __ge__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __ge__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x >= other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Less than comparison (<)
-            fn __lt__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __lt__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x < other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Greater than comparison (>)
-            fn __gt__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __gt__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x > other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Equality comparison (==)
-            fn __eq__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __eq__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x == other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Not equal comparison (!=)
-            fn __ne__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __ne__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x != other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Addition (+)
-            fn __add__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __add__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x + other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Subtraction (-)
-            fn __sub__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __sub__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x - other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Multiplication (*)
-            fn __mul__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __mul__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x * other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Division (/)
-            fn __truediv__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __truediv__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x / other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Power (**) - Converts to f64 for power operation, then back to original type
-            fn __pow__(&self, py: Python<'_>, other: $dtype, _mod: Option<$dtype>) -> Py<$name> {
+            fn __pow__(&self, py: Python<'_>, other: $dtype, _mod: Option<$dtype>) -> PyResult<Py<$name>> {
                 #[allow(clippy::cast_lossless)] // f32 -> f64 is lossless, but triggers warning in generic code
                 #[allow(clippy::cast_possible_truncation)] // f64 -> smaller type intentional for NumPy compat
                 #[allow(clippy::cast_precision_loss)]
@@ -185,7 +185,7 @@ macro_rules! impl_numeric_array_view {
                 let result = self
                     .data
                     .mapv(|x| ((x as f64).powf(other as f64)) as $dtype);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Indexing ([]) - Basic integer indexing for 1D arrays
@@ -293,45 +293,45 @@ macro_rules! impl_complex_array_view {
             }
 
             /// Equality comparison (==)
-            fn __eq__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __eq__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x == other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Not equal comparison (!=)
-            fn __ne__(&self, py: Python<'_>, other: $dtype) -> Py<BoolArrayView> {
+            fn __ne__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<BoolArrayView>> {
                 let result = self.data.mapv(|x| x != other);
-                Py::new(py, BoolArrayView::new(result)).unwrap()
+                Py::new(py, BoolArrayView::new(result))
             }
 
             /// Addition (+)
-            fn __add__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __add__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x + other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Subtraction (-)
-            fn __sub__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __sub__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x - other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Multiplication (*)
-            fn __mul__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __mul__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x * other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Division (/)
-            fn __truediv__(&self, py: Python<'_>, other: $dtype) -> Py<$name> {
+            fn __truediv__(&self, py: Python<'_>, other: $dtype) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x / other);
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Power (**) - Complex power using powc
-            fn __pow__(&self, py: Python<'_>, other: $dtype, _mod: Option<$dtype>) -> Py<$name> {
+            fn __pow__(&self, py: Python<'_>, other: $dtype, _mod: Option<$dtype>) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x.powc(other));
-                Py::new(py, $name::new(result)).unwrap()
+                Py::new(py, $name::new(result))
             }
 
             /// Indexing ([]) - Basic integer indexing for 1D arrays
@@ -496,7 +496,7 @@ macro_rules! impl_extract_array {
 
             // Check if input is a Python list and handle it directly
             if obj.is_exact_instance_of::<PyList>() {
-                let list = obj.clone().cast_into::<PyList>().unwrap();
+                let list = obj.clone().cast_into::<PyList>()?;
                 // Extract list elements directly in Rust
                 let elements: Vec<$dtype> = list.extract()?;
                 let arr = ndarray::Array1::from_vec(elements);
@@ -769,7 +769,7 @@ fn extract_from_sequence(
 ) -> PyResult<ArrayD<f64>> {
     let len = seq.len()?;
     if len == 0 {
-        return Ok(ArrayD::from_shape_vec(vec![0], vec![]).unwrap());
+        return Ok(ArrayD::from_shape_vec(vec![0], vec![]).expect("empty array creation cannot fail"));
     }
 
     // Check for nested sequence (e.g., [[1, 2], [3, 4]])
@@ -862,7 +862,8 @@ pub fn f64_array_to_py(
     py: Python<'_>,
     arr: &ndarray::ArrayBase<impl ndarray::Data<Elem = f64>, impl ndarray::Dimension>,
 ) -> Py<F64ArrayView> {
-    Py::new(py, F64ArrayView::new(arr.to_owned().into_dyn())).unwrap()
+    Py::new(py, F64ArrayView::new(arr.to_owned().into_dyn()))
+        .expect("F64ArrayView allocation failed")
 }
 
 /// Helper function to create a Python-accessible array from ndarray (i64, any dimensionality)
@@ -870,7 +871,8 @@ pub fn i64_array_to_py(
     py: Python<'_>,
     arr: &ndarray::ArrayBase<impl ndarray::Data<Elem = i64>, impl ndarray::Dimension>,
 ) -> Py<I64ArrayView> {
-    Py::new(py, I64ArrayView::new(arr.to_owned().into_dyn())).unwrap()
+    Py::new(py, I64ArrayView::new(arr.to_owned().into_dyn()))
+        .expect("I64ArrayView allocation failed")
 }
 
 /// Helper function to create a Python-accessible array from ndarray (Complex64, any dimensionality)
@@ -878,5 +880,6 @@ pub fn complex64_array_to_py(
     py: Python<'_>,
     arr: &ndarray::ArrayBase<impl ndarray::Data<Elem = Complex64>, impl ndarray::Dimension>,
 ) -> Py<Complex64ArrayView> {
-    Py::new(py, Complex64ArrayView::new(arr.to_owned().into_dyn())).unwrap()
+    Py::new(py, Complex64ArrayView::new(arr.to_owned().into_dyn()))
+        .expect("Complex64ArrayView allocation failed")
 }

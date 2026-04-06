@@ -113,7 +113,7 @@ impl BlockExecutor {
         if self.builder.is_none() {
             self.builder = Some(ByteMessageBuilder::new());
         }
-        self.builder.as_mut().unwrap()
+        self.builder.as_mut().expect("builder is initialized above")
     }
 
     /// Handle variable definition operations

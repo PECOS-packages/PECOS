@@ -99,7 +99,7 @@ impl MeasurementKind {
                     MeasurementKind::Fixed(result.flip)
                 } else if result.outcome.len() == 1 {
                     // Single dependency = copy or negation
-                    let src = result.outcome.iter().next().unwrap();
+                    let src = result.outcome.iter().next().expect("outcome has exactly 1 element");
                     if result.flip {
                         MeasurementKind::CopyFlipped(src)
                     } else {

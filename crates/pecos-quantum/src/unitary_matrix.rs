@@ -580,7 +580,7 @@ fn try_identify_u2q(mat: &DMatrix<Complex64>, tol: f64) -> Option<Unitary> {
                 let avg_eval = f64::midpoint(eigenvalues[i], eigenvalues[j]);
                 let shifted = &combined - nalgebra::DMatrix::<f64>::identity(n, n) * avg_eval;
                 let svd = shifted.svd(true, true);
-                let vt = svd.v_t.unwrap();
+                let vt = svd.v_t.expect("SVD requested with v_t=true");
                 // The last two rows of V^T (smallest singular values) span the eigenspace.
                 for r in 0..n {
                     v[(r, i)] = vt[(n - 2, r)];

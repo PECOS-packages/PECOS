@@ -780,8 +780,8 @@ where
             let have_hi = self.pending_gates[q + 1].is_some();
 
             if have_lo && have_hi {
-                let m_lo = self.pending_gates[q].take().unwrap();
-                let m_hi = self.pending_gates[q + 1].take().unwrap();
+                let m_lo = self.pending_gates[q].take().expect("checked is_some above");
+                let m_hi = self.pending_gates[q + 1].take().expect("checked is_some above");
                 let lo_id = m_lo.is_identity();
                 let hi_id = m_hi.is_identity();
 

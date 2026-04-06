@@ -5338,66 +5338,66 @@ impl Array {
 
         match &self.data {
             ArrayData::Bool(arr) => {
-                let val = *arr.first().unwrap();
+                let val = *arr.first().expect("0-d array is non-empty");
                 Ok(PyBool::new(py, val).to_owned().into_any().unbind())
             }
             ArrayData::I8(arr) => {
-                let val = i64::from(*arr.first().unwrap());
+                let val = i64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::I16(arr) => {
-                let val = i64::from(*arr.first().unwrap());
+                let val = i64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::I32(arr) => {
-                let val = i64::from(*arr.first().unwrap());
+                let val = i64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::I64(arr) => {
-                let val = *arr.first().unwrap();
+                let val = *arr.first().expect("0-d array is non-empty");
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::U8(arr) => {
-                let val = u64::from(*arr.first().unwrap());
+                let val = u64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::U16(arr) => {
-                let val = u64::from(*arr.first().unwrap());
+                let val = u64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::U32(arr) => {
-                let val = u64::from(*arr.first().unwrap());
+                let val = u64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::U64(arr) => {
-                let val = *arr.first().unwrap();
+                let val = *arr.first().expect("0-d array is non-empty");
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
             ArrayData::F32(arr) => {
-                let val = f64::from(*arr.first().unwrap());
+                let val = f64::from(*arr.first().expect("0-d array is non-empty"));
                 Ok(PyFloat::new(py, val).clone().into_any().unbind())
             }
             ArrayData::F64(arr) => {
-                let val = *arr.first().unwrap();
+                let val = *arr.first().expect("0-d array is non-empty");
                 Ok(PyFloat::new(py, val).clone().into_any().unbind())
             }
             ArrayData::Complex64(arr) => {
-                let val = arr.first().unwrap();
+                let val = arr.first().expect("0-d array is non-empty");
                 Ok(
                     pyo3::types::PyComplex::from_doubles(py, f64::from(val.re), f64::from(val.im))
                         .into(),
                 )
             }
             ArrayData::Complex128(arr) => {
-                let val = arr.first().unwrap();
+                let val = arr.first().expect("0-d array is non-empty");
                 Ok(pyo3::types::PyComplex::from_doubles(py, val.re, val.im).into())
             }
             ArrayData::Pauli(arr) => {
-                let val = arr.first().unwrap();
+                let val = arr.first().expect("0-d array is non-empty");
                 Ok(Py::new(py, *val)?.into_any())
             }
             ArrayData::PauliString(arr) => {
-                let val = arr.first().unwrap();
+                let val = arr.first().expect("0-d array is non-empty");
                 Ok(Py::new(py, val.clone())?.into_any())
             }
         }

@@ -258,8 +258,8 @@ fn compute_visual_range(
     if arity <= 1 {
         rows.into_iter().collect()
     } else {
-        let min = *rows.iter().min().unwrap();
-        let max = *rows.iter().max().unwrap();
+        let min = *rows.iter().min().expect("rows is non-empty");
+        let max = *rows.iter().max().expect("rows is non-empty");
         (min..=max).collect()
     }
 }
@@ -465,9 +465,9 @@ fn decompose_gate(
             if rows.iter().any(Option::is_none) {
                 continue;
             }
-            let rows: Vec<usize> = rows.into_iter().map(|r| r.unwrap()).collect();
-            let top = *rows.iter().min().unwrap();
-            let bottom = *rows.iter().max().unwrap();
+            let rows: Vec<usize> = rows.into_iter().map(|r| r.expect("checked for None above")).collect();
+            let top = *rows.iter().min().expect("rows has exactly 3 elements");
+            let bottom = *rows.iter().max().expect("rows has exactly 3 elements");
 
             cells.push((rows[0], DiagramCell::Control, CellColor::ControlDot));
             cells.push((rows[1], DiagramCell::Control, CellColor::ControlDot));

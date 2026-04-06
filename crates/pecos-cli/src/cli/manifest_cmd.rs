@@ -137,7 +137,7 @@ fn run_sync(dry_run: bool) -> Result<()> {
 
 fn run_sync_dry_run(workspace_path: &std::path::Path) -> Result<()> {
     let workspace = Manifest::load(workspace_path)?;
-    let workspace_dir = workspace_path.parent().unwrap();
+    let workspace_dir = workspace_path.parent().expect("workspace path has a parent directory");
 
     for (crate_name, crate_config) in &workspace.crates {
         if crate_config.dependencies.is_empty() {

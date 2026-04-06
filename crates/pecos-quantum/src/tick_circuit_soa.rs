@@ -215,7 +215,7 @@ impl TickBatches {
             batch
         } else {
             self.batches.push(GateBatch::new(gate_type));
-            self.batches.last_mut().unwrap()
+            self.batches.last_mut().expect("batch was just pushed")
         };
 
         batch.add_qubits(qubits);

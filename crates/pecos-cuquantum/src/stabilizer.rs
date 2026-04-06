@@ -354,7 +354,7 @@ impl CuFrameSimulator {
         let status = unsafe {
             (self.backend.custabilizerFrameSimulatorApplyCircuit)(
                 self.handle,
-                self.frame_simulator.unwrap(),
+                self.frame_simulator.expect("frame_simulator is set during initialization"),
                 circuit,
                 i32::from(randomize_after_measurement),
                 seed,

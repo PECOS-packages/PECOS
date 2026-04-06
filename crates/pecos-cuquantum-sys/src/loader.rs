@@ -3,6 +3,8 @@
 //! Loads cuQuantum shared libraries at runtime via `libloading`,
 //! enabling a single binary to work on both systems with and without
 //! NVIDIA cuQuantum installed.
+//!
+//! Currently Linux-only (`.so` library names and paths).
 
 use crate::*;
 use libloading::{Library, Symbol};
@@ -15,8 +17,6 @@ use thiserror::Error;
 pub enum CuQuantumLoadError {
     #[error("cuQuantum libraries not found. Searched: {searched_paths}")]
     LibraryNotFound { searched_paths: String },
-    #[error("Failed to load {lib_name}: {reason}")]
-    LoadFailed { lib_name: String, reason: String },
     #[error("Missing symbol {symbol} in {lib_name}: {reason}")]
     MissingSymbol {
         lib_name: String,
@@ -45,11 +45,12 @@ macro_rules! load_sym {
 /// Loaded cuQuantum function pointers.
 #[allow(non_snake_case)]
 pub struct CuQuantumBackend {
-    // Keep libraries alive
+    // Keep libraries alive -- drop order matters: dependents before dependencies
     _cuda_rt: Library,
     _custatevec: Library,
     _custabilizer: Library,
     _cutensornet: Library,
+    _cutensor: Option<Library>,
     _cudensitymat: Library,
 
     // --- CUDA runtime ---
@@ -182,9 +183,11 @@ pub fn is_available() -> bool {
 
 fn cuda_search_paths() -> Vec<PathBuf> {
     let mut paths = vec![];
-    if let Ok(p) = std::env::var("CUDA_PATH") {
-        paths.push(PathBuf::from(&p).join("lib64"));
-        paths.push(PathBuf::from(&p).join("lib"));
+    for var in ["CUDA_PATH", "CUDA_HOME"] {
+        if let Ok(p) = std::env::var(var) {
+            paths.push(PathBuf::from(&p).join("lib64"));
+            paths.push(PathBuf::from(&p).join("lib"));
+        }
     }
     if let Some(home) = dirs::home_dir() {
         paths.push(home.join(".pecos/deps/cuda/lib64"));
@@ -220,30 +223,40 @@ fn cutensor_search_paths() -> Vec<PathBuf> {
     paths
 }
 
-fn try_load_lib(name: &str, search_dirs: &[PathBuf]) -> LoadResult<Library> {
-    // Try each search directory with the library name appended
-    for dir in search_dirs {
-        let path = dir.join(name);
-        log::debug!("Trying to load {name} from: {}", path.display());
-        match unsafe { Library::new(&path) } {
-            Ok(lib) => {
-                log::info!("Loaded {name} from: {}", path.display());
-                return Ok(lib);
+/// Try loading a library by trying each name variant in each search directory.
+///
+/// `names` should list versioned sonames first (e.g. `libcudart.so.12`), then the
+/// unversioned name (`libcudart.so`). On runtime-only installs the unversioned
+/// symlink often doesn't exist, so trying the versioned name first is important.
+fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> {
+    for name in names {
+        for dir in search_dirs {
+            let path = dir.join(name);
+            log::debug!("Trying to load {name} from: {}", path.display());
+            match unsafe { Library::new(&path) } {
+                Ok(lib) => {
+                    log::info!("Loaded {name} from: {}", path.display());
+                    return Ok(lib);
+                }
+                Err(e) => log::debug!("  Failed: {e}"),
             }
-            Err(e) => log::debug!("  Failed: {e}"),
+        }
+        // Fall back to bare name (system linker search)
+        log::debug!("Trying system path for {name}");
+        if let Ok(lib) = unsafe { Library::new(*name) } {
+            log::info!("Loaded {name} from system path");
+            return Ok(lib);
         }
     }
-    // Fall back to bare name (system linker search)
-    log::debug!("Trying system path for {name}");
-    unsafe { Library::new(name) }.map_err(|_| {
-        let searched = search_dirs
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        CuQuantumLoadError::LibraryNotFound {
-            searched_paths: format!("{name} not found in: {searched}, or system paths"),
-        }
+
+    let primary = names[0];
+    let searched = search_dirs
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(CuQuantumLoadError::LibraryNotFound {
+        searched_paths: format!("{primary} not found in: {searched}, or system paths"),
     })
 }
 
@@ -252,18 +265,24 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
     let cq_paths = cuquantum_search_paths();
     let ct_paths = cutensor_search_paths();
 
-    // Load CUDA runtime first (transitive dependency for everything else)
-    let cuda_rt = try_load_lib("libcudart.so", &cuda_paths)?;
+    // Load CUDA runtime first (transitive dependency for everything else).
+    // Try versioned soname first -- unversioned symlink may not exist on runtime-only installs.
+    let cuda_rt = try_load_lib(&["libcudart.so.12", "libcudart.so"], &cuda_paths)?;
 
-    // Load cuTensor before cuTensorNet (transitive dependency)
-    // cuTensor may not be needed if we're not using cuTensorNet, but load it
-    // to ensure cuTensorNet can resolve its symbols.
-    let _cutensor = try_load_lib("libcutensor.so", &ct_paths).ok();
+    // Load cuTensor before cuTensorNet (transitive dependency).
+    // The handle must stay alive in CuQuantumBackend so dlclose doesn't
+    // unload the library while cuTensorNet still needs its symbols.
+    let cutensor =
+        try_load_lib(&["libcutensor.so.2", "libcutensor.so"], &ct_paths).ok();
 
-    let custatevec = try_load_lib("libcustatevec.so", &cq_paths)?;
-    let custabilizer = try_load_lib("libcustabilizer.so", &cq_paths)?;
-    let cutensornet = try_load_lib("libcutensornet.so", &cq_paths)?;
-    let cudensitymat = try_load_lib("libcudensitymat.so", &cq_paths)?;
+    let custatevec =
+        try_load_lib(&["libcustatevec.so.1", "libcustatevec.so"], &cq_paths)?;
+    let custabilizer =
+        try_load_lib(&["libcustabilizer.so.0", "libcustabilizer.so"], &cq_paths)?;
+    let cutensornet =
+        try_load_lib(&["libcutensornet.so.2", "libcutensornet.so"], &cq_paths)?;
+    let cudensitymat =
+        try_load_lib(&["libcudensitymat.so.0", "libcudensitymat.so"], &cq_paths)?;
 
     unsafe {
         Ok(CuQuantumBackend {
@@ -367,6 +386,7 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
             _custatevec: custatevec,
             _custabilizer: custabilizer,
             _cutensornet: cutensornet,
+            _cutensor: cutensor,
             _cudensitymat: cudensitymat,
         })
     }

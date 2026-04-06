@@ -74,7 +74,6 @@ fn main() {
         Ok(cutensor_path) => {
             if let Some(cutensor_lib) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
                 log::info!("Using cuTensor from: {}", cutensor_path.display());
-                println!("cargo:rustc-link-search=native={}", cutensor_lib.display());
                 println!("cargo:cutensor_lib_dir={}", cutensor_lib.display());
             }
         }

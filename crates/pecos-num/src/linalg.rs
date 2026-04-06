@@ -49,9 +49,6 @@ use num_complex::Complex64;
 /// assert!((norm(&v, None) - 5.0).abs() < 1e-10);
 /// ```
 ///
-/// # Panics
-///
-/// Panics if the array is not contiguous in memory.
 pub fn norm<S, D>(x: &ArrayBase<S, D>, ord: Option<f64>) -> f64
 where
     S: Data<Elem = f64>,
@@ -59,17 +56,19 @@ where
 {
     let ord = ord.unwrap_or(2.0);
 
-    // For 1-D arrays (vectors)
     if x.ndim() == 1 {
-        return vector_norm(x.as_slice().expect("array must be contiguous"), ord);
+        return if let Some(slice) = x.as_slice() {
+            vector_norm(slice, ord)
+        } else {
+            let flat: Vec<f64> = x.iter().copied().collect();
+            vector_norm(&flat, ord)
+        };
     }
 
-    // For 2-D arrays (matrices) - Frobenius norm
     if x.ndim() == 2 {
         return frobenius_norm(x);
     }
 
-    // For higher dimensions, flatten and compute vector norm
     let flat: Vec<f64> = x.iter().copied().collect();
     vector_norm(&flat, ord)
 }
@@ -77,10 +76,6 @@ where
 /// Compute the norm of a complex vector or matrix.
 ///
 /// Complex number variant of `norm()`.
-///
-/// # Panics
-///
-/// Panics if the array is not contiguous in memory.
 pub fn norm_complex<S, D>(x: &ArrayBase<S, D>, ord: Option<f64>) -> f64
 where
     S: Data<Elem = Complex64>,
@@ -88,17 +83,19 @@ where
 {
     let ord = ord.unwrap_or(2.0);
 
-    // For 1-D arrays (vectors)
     if x.ndim() == 1 {
-        return vector_norm_complex(x.as_slice().expect("array must be contiguous"), ord);
+        return if let Some(slice) = x.as_slice() {
+            vector_norm_complex(slice, ord)
+        } else {
+            let flat: Vec<Complex64> = x.iter().copied().collect();
+            vector_norm_complex(&flat, ord)
+        };
     }
 
-    // For 2-D arrays (matrices) - Frobenius norm
     if x.ndim() == 2 {
         return frobenius_norm_complex(x);
     }
 
-    // For higher dimensions, flatten and compute vector norm
     let flat: Vec<Complex64> = x.iter().copied().collect();
     vector_norm_complex(&flat, ord)
 }

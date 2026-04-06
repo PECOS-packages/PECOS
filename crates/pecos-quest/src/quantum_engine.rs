@@ -870,12 +870,17 @@ unsafe impl Send for QuestCudaStateVecEngine {}
 unsafe impl Sync for QuestCudaStateVecEngine {}
 
 impl Clone for QuestCudaStateVecEngine {
-    /// Clone creates a new CUDA engine with the same configuration but reset to zero state.
+    /// Clone creates a new CUDA engine with the same qubit count but reset to zero state.
     ///
-    /// Note: This does NOT preserve the quantum state of the original engine.
-    /// Cloning GPU resources is expensive, so this creates a fresh engine.
+    /// Does NOT preserve the quantum state of the original.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a new CUDA quantum register cannot be allocated (e.g. GPU out of memory).
+    /// The CUDA backend itself is guaranteed to be loaded because `self` exists.
     fn clone(&self) -> Self {
-        Self::new(self.num_qubits).expect("Failed to clone CUDA engine")
+        Self::new(self.num_qubits)
+            .expect("CUDA engine clone failed -- GPU register allocation failed")
     }
 }
 

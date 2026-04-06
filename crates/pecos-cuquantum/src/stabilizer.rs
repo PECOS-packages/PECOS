@@ -14,9 +14,10 @@
 //!
 //! ```
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! if !pecos_cuquantum::is_cuquantum_available() { return Ok(()); }
+//!
 //! use pecos_cuquantum::CuFrameSimulator;
 //!
-//! // Create a frame simulator (requires GPU)
 //! let sim = CuFrameSimulator::new(2, 100, 1)?;
 //! drop(sim);
 //! # Ok(())

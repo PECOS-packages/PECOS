@@ -35,6 +35,8 @@ use std::ptr;
 ///
 /// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// if !pecos_cuquantum::is_cuquantum_available() { return Ok(()); }
+///
 /// use pecos_cuquantum::CuDensityMat;
 ///
 /// let sim = CuDensityMat::new(4)?;

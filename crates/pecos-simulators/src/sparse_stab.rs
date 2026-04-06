@@ -302,8 +302,7 @@ where
 
         // TODO: Check that stabilizers commute.
         // TODO: Check destabilizers commute.
-        // TODO: Check that only stab[i] anti-commutes with destab[j] only iff i == j;
-        todo!()
+        // TODO: Check that only stab[i] anti-commutes with destab[j] only iff i == j.
     }
 
     #[inline]

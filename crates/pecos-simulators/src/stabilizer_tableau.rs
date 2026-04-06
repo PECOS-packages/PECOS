@@ -90,21 +90,6 @@ pub trait StabilizerTableauSimulator: QuantumSimulator {
         )
     }
 
-    /// Checks if a given Pauli operator commutes with all stabilizers.
-    ///
-    /// This can be used to verify if an operator is in the stabilizer group.
-    ///
-    /// # Arguments
-    /// * `pauli_string` - A string representation of a Pauli operator (e.g., "XIZ")
-    ///
-    /// # Returns
-    /// `true` if the operator commutes with all stabilizers, `false` otherwise.
-    fn commutes_with_stabilizers(&self, pauli_string: &str) -> bool {
-        // Default implementation - derived types should override for efficiency
-        let _ = pauli_string;
-        unimplemented!("commutes_with_stabilizers not yet implemented")
-    }
-
     /// Returns the number of qubits in the simulator.
     ///
     /// This method should be implemented by each simulator type to return

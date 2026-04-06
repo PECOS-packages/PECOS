@@ -39,7 +39,6 @@ mod gate_registry_bindings;
 mod graph_bindings;
 mod hugr_compilation_bindings;
 mod namespace_modules;
-mod noise_helpers;
 mod num_bindings;
 mod pauli_bindings;
 mod pauli_prop_bindings;

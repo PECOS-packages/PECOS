@@ -293,15 +293,8 @@ fn configure_build(
         build.flag_if_supported("-fno-math-errno");
         build.flag_if_supported("-fno-trapping-math");
 
-        // Silence OpenMP pragma warnings since we intentionally don't use OpenMP
-        // PECOS uses thread-level parallelism instead of OpenMP's internal parallelism
-        build.flag_if_supported("-Wno-unknown-pragmas");
-
-        // Suppress specific warnings from third-party libraries (Eigen, Boost, Qulacs)
-        build.flag_if_supported("-Wno-unused-but-set-variable"); // Eigen SparseLU warnings
-        build.flag_if_supported("-Wno-deprecated-copy-with-user-provided-copy"); // Boost warnings
-        build.flag_if_supported("-Wno-unqualified-std-cast-call"); // Qulacs move() warnings
-        build.flag_if_supported("-Wno-inconsistent-missing-override"); // Qulacs override warnings
+        // Suppress all warnings from third-party C++ code (Qulacs, Eigen, Boost)
+        build.warnings(false);
 
         // On macOS, use libc++ (the system default and what PECOS clang expects)
         if target.contains("darwin") {

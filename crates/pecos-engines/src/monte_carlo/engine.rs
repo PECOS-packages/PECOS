@@ -356,7 +356,7 @@ impl MonteCarloEngine {
                         // Store with worker/shot indices for deterministic ordering
                         results_vec
                             .lock()
-                            .unwrap()
+                            .expect("results mutex poisoned")
                             .push((worker_idx, shot_idx, shot_result));
                     }
 
@@ -373,7 +373,7 @@ impl MonteCarloEngine {
         drop(thread_pool);
 
         // Ensure deterministic ordering of results
-        let mut results = results_vec.lock().unwrap();
+        let mut results = results_vec.lock().expect("results mutex poisoned");
         results.sort_by(|(w1, s1, _), (w2, s2, _)| w1.cmp(w2).then(s1.cmp(s2)));
 
         // Convert to final results format

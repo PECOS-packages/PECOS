@@ -8,16 +8,17 @@ use crate::parser::{Program, QASMParser, Rule};
 /// # Errors
 ///
 /// Returns an error if the register syntax is invalid
-///
-/// # Panics
-///
-/// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_register(pair: Pair<Rule>, program: &mut Program) -> Result<(), PecosError> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| QASMParser::error("Empty register declaration"))?;
 
     match inner.as_rule() {
         Rule::qreg => {
-            let indexed_id = inner.into_inner().next().unwrap();
+            let indexed_id = inner.into_inner().next().ok_or_else(|| {
+                QASMParser::error("Missing indexed identifier in qreg declaration")
+            })?;
             let (name, size) = parse_indexed_id(&indexed_id)?;
 
             // Assign global qubit IDs
@@ -32,7 +33,9 @@ pub fn parse_register(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pec
             program.quantum_registers.insert(name, qubit_ids);
         }
         Rule::creg => {
-            let indexed_id = inner.into_inner().next().unwrap();
+            let indexed_id = inner.into_inner().next().ok_or_else(|| {
+                QASMParser::error("Missing indexed identifier in creg declaration")
+            })?;
             let (name, size) = parse_indexed_id(&indexed_id)?;
             program.classical_registers.insert(name, size);
         }

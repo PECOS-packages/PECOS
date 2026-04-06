@@ -32,7 +32,9 @@ fn parse_qubit_references(
 
     for item in any_list.into_inner() {
         if item.as_rule() == Rule::any_item {
-            let inner = item.into_inner().next().unwrap();
+            let inner = item.into_inner().next().ok_or_else(|| {
+                QASMParser::error("Empty any_item in qubit reference list")
+            })?;
             match inner.as_rule() {
                 Rule::identifier => {
                     let reg_name = inner.as_str();
@@ -64,7 +66,9 @@ fn parse_qubit_operands(
 
     for item in any_list.into_inner() {
         if item.as_rule() == Rule::any_item {
-            let inner = item.into_inner().next().unwrap();
+            let inner = item.into_inner().next().ok_or_else(|| {
+                QASMParser::error("Empty any_item in qubit operand list")
+            })?;
             match inner.as_rule() {
                 Rule::identifier => {
                     let reg_name = inner.as_str();
@@ -93,20 +97,22 @@ fn parse_qubit_operands(
 /// # Errors
 ///
 /// Returns an error if the operation is invalid
-///
-/// # Panics
-///
-/// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_quantum_op(
     pair: Pair<Rule>,
     program: &Program,
 ) -> Result<Option<Operation>, PecosError> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| QASMParser::error("Empty quantum operation"))?;
 
     match inner.as_rule() {
         Rule::gate_call => {
             let mut inner_pairs = inner.into_inner();
-            let gate_name = inner_pairs.next().unwrap().as_str();
+            let gate_name = inner_pairs
+                .next()
+                .ok_or_else(|| QASMParser::error("Missing gate name in gate call"))?
+                .as_str();
 
             let mut params = Vec::new();
             let mut register_or_qubits = Vec::new();
@@ -271,13 +277,15 @@ pub fn parse_measure(pair: Pair<Rule>, program: &Program) -> Result<Option<Opera
 /// # Errors
 ///
 /// Returns an error if the reset syntax is invalid
-///
-/// # Panics
-///
-/// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_reset(pair: Pair<Rule>, program: &Program) -> Result<Option<Operation>, PecosError> {
-    let any_item = pair.into_inner().next().unwrap();
-    let inner = any_item.into_inner().next().unwrap();
+    let any_item = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| QASMParser::error("Missing operand in reset"))?;
+    let inner = any_item
+        .into_inner()
+        .next()
+        .ok_or_else(|| QASMParser::error("Empty operand in reset"))?;
 
     match inner.as_rule() {
         Rule::qubit_id => {
@@ -316,12 +324,11 @@ pub fn parse_reset(pair: Pair<Rule>, program: &Program) -> Result<Option<Operati
 /// # Errors
 ///
 /// Returns an error if the barrier syntax is invalid
-///
-/// # Panics
-///
-/// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_barrier(pair: Pair<Rule>, program: &Program) -> Result<Option<Operation>, PecosError> {
-    let any_list = pair.into_inner().next().unwrap();
+    let any_list = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| QASMParser::error("Missing operand list in barrier"))?;
     let qubits = parse_qubit_references(any_list, program)?;
     Ok(Some(Operation::Barrier { qubits }))
 }

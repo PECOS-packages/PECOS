@@ -117,7 +117,9 @@ fn parse_unary_expr(pair: Pair<Rule>) -> Result<Expression, PecosError> {
     // Collect operators
     while let Some(pair) = pairs.peek() {
         if pair.as_rule() == Rule::unary_op {
-            ops.push(pairs.next().unwrap().as_str().to_string());
+            // SAFETY: peek() confirmed an element exists
+            let op_pair = pairs.next().expect("peek confirmed element exists");
+            ops.push(op_pair.as_str().to_string());
         } else {
             break;
         }
@@ -193,7 +195,12 @@ fn parse_expr_internal_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosE
             }
             // If we have a single element that's also an expr, unwrap it
             if pairs.len() == 1 && pairs[0].as_rule() == Rule::expr {
-                return parse_expr_internal_gate_param(pairs.into_iter().next().unwrap());
+                return parse_expr_internal_gate_param(
+                    pairs
+                        .into_iter()
+                        .next()
+                        .expect("length checked to be 1"),
+                );
             }
             parse_expr_with_precedence_gate_param(&mut pairs, 1)
         }
@@ -216,7 +223,12 @@ fn parse_expr_internal(pair: Pair<Rule>) -> Result<Expression, PecosError> {
             }
             // If we have a single element that's also an expr, unwrap it
             if pairs.len() == 1 && pairs[0].as_rule() == Rule::expr {
-                return parse_expr_internal(pairs.into_iter().next().unwrap());
+                return parse_expr_internal(
+                    pairs
+                        .into_iter()
+                        .next()
+                        .expect("length checked to be 1"),
+                );
             }
             parse_expr_with_precedence(&mut pairs, 1)
         }
@@ -231,7 +243,9 @@ fn parse_expr_internal(pair: Pair<Rule>) -> Result<Expression, PecosError> {
 fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, PecosError> {
     match pair.as_rule() {
         Rule::primary_expr => {
-            let inner = pair.into_inner().next().unwrap();
+            let inner = pair.into_inner().next().ok_or_else(|| {
+                PecosError::ParseInvalidExpression("Empty primary expression".to_string())
+            })?;
             parse_primary_expr(inner)
         }
         Rule::pi_constant => Ok(Expression::Pi),
@@ -262,7 +276,15 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, PecosError> {
         Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
         Rule::function_call => {
             let mut pairs = pair.into_inner();
-            let name = pairs.next().unwrap().as_str().to_string();
+            let name = pairs
+                .next()
+                .ok_or_else(|| {
+                    PecosError::ParseInvalidExpression(
+                        "Missing function name in function call".to_string(),
+                    )
+                })?
+                .as_str()
+                .to_string();
             let args: Result<Vec<_>, _> = pairs.map(parse_expr_internal).collect();
             Ok(Expression::FunctionCall { name, args: args? })
         }
@@ -342,7 +364,9 @@ fn parse_unary_expr_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosErro
     // Collect operators
     while let Some(pair) = pairs.peek() {
         if pair.as_rule() == Rule::unary_op {
-            ops.push(pairs.next().unwrap().as_str().to_string());
+            // SAFETY: peek() confirmed an element exists
+            let op_pair = pairs.next().expect("peek confirmed element exists");
+            ops.push(op_pair.as_str().to_string());
         } else {
             break;
         }
@@ -369,7 +393,9 @@ fn parse_unary_expr_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosErro
 fn parse_primary_expr_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosError> {
     match pair.as_rule() {
         Rule::primary_expr => {
-            let inner = pair.into_inner().next().unwrap();
+            let inner = pair.into_inner().next().ok_or_else(|| {
+                PecosError::ParseInvalidExpression("Empty primary expression".to_string())
+            })?;
             parse_primary_expr_gate_param(inner)
         }
         Rule::pi_constant => Ok(Expression::Pi),
@@ -396,7 +422,15 @@ fn parse_primary_expr_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosEr
         Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
         Rule::function_call => {
             let mut pairs = pair.into_inner();
-            let name = pairs.next().unwrap().as_str().to_string();
+            let name = pairs
+                .next()
+                .ok_or_else(|| {
+                    PecosError::ParseInvalidExpression(
+                        "Missing function name in function call".to_string(),
+                    )
+                })?
+                .as_str()
+                .to_string();
             let args: Result<Vec<_>, _> = pairs.map(parse_expr_internal_gate_param).collect();
             Ok(Expression::FunctionCall { name, args: args? })
         }

@@ -11,14 +11,14 @@ use crate::parser::{Program, QASMParser, Rule};
 /// # Errors
 ///
 /// Returns an error if the gate definition is invalid
-///
-/// # Panics
-///
-/// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_gate_definition(pair: Pair<Rule>, program: &mut Program) -> Result<(), PecosError> {
     let mut inner = pair.into_inner();
 
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner
+        .next()
+        .ok_or_else(|| QASMParser::error("Missing gate name in gate definition"))?
+        .as_str()
+        .to_string();
 
     let mut params = Vec::new();
     let mut qargs = Vec::new();
@@ -118,17 +118,19 @@ pub fn parse_opaque_def(pair: Pair<Rule>) -> Result<Option<Operation>, PecosErro
 /// # Errors
 ///
 /// Returns an error if the statement is invalid
-///
-/// # Panics
-///
-/// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_gate_def_statement(pair: Pair<Rule>) -> Result<Option<GateOperation>, PecosError> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| QASMParser::error("Empty gate definition statement"))?;
 
     match inner.as_rule() {
         Rule::gate_def_call => {
             let mut parts = inner.into_inner();
-            let gate_name = parts.next().unwrap().as_str();
+            let gate_name = parts
+                .next()
+                .ok_or_else(|| QASMParser::error("Missing gate name in gate body call"))?
+                .as_str();
 
             let mut params = Vec::new();
             let mut arguments = Vec::new();

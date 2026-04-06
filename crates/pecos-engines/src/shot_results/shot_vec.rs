@@ -151,7 +151,10 @@ impl ShotVec {
             for name in &register_names {
                 match shot.data.get(name) {
                     Some(data) => {
-                        columnar_map.get_mut(name).unwrap().push(data.clone());
+                        columnar_map
+                            .get_mut(name)
+                            .expect("key was inserted during initialization")
+                            .push(data.clone());
                     }
                     None => {
                         return Err(PecosError::Processing(format!(

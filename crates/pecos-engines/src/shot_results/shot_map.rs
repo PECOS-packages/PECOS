@@ -72,7 +72,8 @@ impl ShotMap {
         let num_shots = if data.is_empty() {
             0
         } else {
-            let first_len = data.values().next().unwrap().len();
+            // SAFETY: we just checked `data.is_empty()` above
+            let first_len = data.values().next().expect("data is non-empty").len();
 
             // Verify all columns have the same length
             for (name, values) in &data {

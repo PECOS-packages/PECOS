@@ -436,12 +436,10 @@ impl GraphState {
                 }
             }
 
-            if !valid || x_pos.is_none() {
+            let Some(v) = x_pos.filter(|_| valid) else {
                 success = false;
                 break;
-            }
-
-            let v = x_pos.unwrap();
+            };
             if v != idx {
                 // Generator ordering doesn't match vertex ordering
                 // This could happen but shouldn't for our construction

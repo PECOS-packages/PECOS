@@ -499,19 +499,21 @@ pub fn shots_to_columnar(
     // Fill columns
     for shot in &shots.shots {
         for name in &register_names {
-            if let Some(data) = shot.data.get(name) {
-                use crate::shot_results::Data;
-                let value = match data {
-                    Data::U32(v) => i64::from(*v),
-                    Data::I64(v) => *v,
-                    #[allow(clippy::cast_possible_truncation)]
-                    Data::F64(v) => *v as i64,
-                    Data::Bool(v) => i64::from(*v),
-                    _ => 0,
-                };
-                columnar.get_mut(name).unwrap().push(value);
-            } else {
-                columnar.get_mut(name).unwrap().push(0);
+            if let Some(col) = columnar.get_mut(name) {
+                if let Some(data) = shot.data.get(name) {
+                    use crate::shot_results::Data;
+                    let value = match data {
+                        Data::U32(v) => i64::from(*v),
+                        Data::I64(v) => *v,
+                        #[allow(clippy::cast_possible_truncation)]
+                        Data::F64(v) => *v as i64,
+                        Data::Bool(v) => i64::from(*v),
+                        _ => 0,
+                    };
+                    col.push(value);
+                } else {
+                    col.push(0);
+                }
             }
         }
     }

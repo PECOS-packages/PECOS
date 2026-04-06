@@ -29,11 +29,15 @@ type LoadResult<T> = std::result::Result<T, CuQuantumLoadError>;
 
 macro_rules! load_sym {
     ($lib:expr, $lib_name:expr, $name:literal) => {{
-        let sym: Symbol<_> = $lib.get($name).map_err(|e| CuQuantumLoadError::MissingSymbol {
-            lib_name: $lib_name.into(),
-            symbol: String::from_utf8_lossy($name).trim_end_matches('\0').to_string(),
-            reason: e.to_string(),
-        })?;
+        let sym: Symbol<_> = $lib
+            .get($name)
+            .map_err(|e| CuQuantumLoadError::MissingSymbol {
+                lib_name: $lib_name.into(),
+                symbol: String::from_utf8_lossy($name)
+                    .trim_end_matches('\0')
+                    .to_string(),
+                reason: e.to_string(),
+            })?;
         *sym
     }};
 }
@@ -102,8 +106,11 @@ pub struct CuQuantumBackend {
     // --- cuStabilizer ---
     pub custabilizerCreate: unsafe extern "C" fn(*mut custabilizerHandle_t) -> custabilizerStatus_t,
     pub custabilizerDestroy: unsafe extern "C" fn(custabilizerHandle_t) -> custabilizerStatus_t,
-    pub custabilizerCircuitSizeFromString:
-        unsafe extern "C" fn(custabilizerHandle_t, *const std::ffi::c_char, *mut i64) -> custabilizerStatus_t,
+    pub custabilizerCircuitSizeFromString: unsafe extern "C" fn(
+        custabilizerHandle_t,
+        *const std::ffi::c_char,
+        *mut i64,
+    ) -> custabilizerStatus_t,
     pub custabilizerCreateCircuitFromString: unsafe extern "C" fn(
         custabilizerHandle_t,
         *const std::ffi::c_char,
@@ -111,7 +118,8 @@ pub struct CuQuantumBackend {
         i64,
         *mut custabilizerCircuit_t,
     ) -> custabilizerStatus_t,
-    pub custabilizerDestroyCircuit: unsafe extern "C" fn(custabilizerCircuit_t) -> custabilizerStatus_t,
+    pub custabilizerDestroyCircuit:
+        unsafe extern "C" fn(custabilizerCircuit_t) -> custabilizerStatus_t,
     pub custabilizerCreateFrameSimulator: unsafe extern "C" fn(
         custabilizerHandle_t,
         i64,
@@ -269,31 +277,91 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
             // cuStateVec
             custatevecCreate: load_sym!(custatevec, "libcustatevec", b"custatevecCreate\0"),
             custatevecDestroy: load_sym!(custatevec, "libcustatevec", b"custatevecDestroy\0"),
-            custatevecApplyMatrix: load_sym!(custatevec, "libcustatevec", b"custatevecApplyMatrix\0"),
-            custatevecMeasureOnZBasis: load_sym!(custatevec, "libcustatevec", b"custatevecMeasureOnZBasis\0"),
-            custatevecBatchMeasure: load_sym!(custatevec, "libcustatevec", b"custatevecBatchMeasure\0"),
+            custatevecApplyMatrix: load_sym!(
+                custatevec,
+                "libcustatevec",
+                b"custatevecApplyMatrix\0"
+            ),
+            custatevecMeasureOnZBasis: load_sym!(
+                custatevec,
+                "libcustatevec",
+                b"custatevecMeasureOnZBasis\0"
+            ),
+            custatevecBatchMeasure: load_sym!(
+                custatevec,
+                "libcustatevec",
+                b"custatevecBatchMeasure\0"
+            ),
 
             // cuStabilizer
             custabilizerCreate: load_sym!(custabilizer, "libcustabilizer", b"custabilizerCreate\0"),
-            custabilizerDestroy: load_sym!(custabilizer, "libcustabilizer", b"custabilizerDestroy\0"),
-            custabilizerCircuitSizeFromString: load_sym!(custabilizer, "libcustabilizer", b"custabilizerCircuitSizeFromString\0"),
-            custabilizerCreateCircuitFromString: load_sym!(custabilizer, "libcustabilizer", b"custabilizerCreateCircuitFromString\0"),
-            custabilizerDestroyCircuit: load_sym!(custabilizer, "libcustabilizer", b"custabilizerDestroyCircuit\0"),
-            custabilizerCreateFrameSimulator: load_sym!(custabilizer, "libcustabilizer", b"custabilizerCreateFrameSimulator\0"),
-            custabilizerDestroyFrameSimulator: load_sym!(custabilizer, "libcustabilizer", b"custabilizerDestroyFrameSimulator\0"),
-            custabilizerFrameSimulatorApplyCircuit: load_sym!(custabilizer, "libcustabilizer", b"custabilizerFrameSimulatorApplyCircuit\0"),
+            custabilizerDestroy: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerDestroy\0"
+            ),
+            custabilizerCircuitSizeFromString: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerCircuitSizeFromString\0"
+            ),
+            custabilizerCreateCircuitFromString: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerCreateCircuitFromString\0"
+            ),
+            custabilizerDestroyCircuit: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerDestroyCircuit\0"
+            ),
+            custabilizerCreateFrameSimulator: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerCreateFrameSimulator\0"
+            ),
+            custabilizerDestroyFrameSimulator: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerDestroyFrameSimulator\0"
+            ),
+            custabilizerFrameSimulatorApplyCircuit: load_sym!(
+                custabilizer,
+                "libcustabilizer",
+                b"custabilizerFrameSimulatorApplyCircuit\0"
+            ),
 
             // cuTensorNet
             cutensornetCreate: load_sym!(cutensornet, "libcutensornet", b"cutensornetCreate\0"),
             cutensornetDestroy: load_sym!(cutensornet, "libcutensornet", b"cutensornetDestroy\0"),
-            cutensornetGetVersion: load_sym!(cutensornet, "libcutensornet", b"cutensornetGetVersion\0"),
+            cutensornetGetVersion: load_sym!(
+                cutensornet,
+                "libcutensornet",
+                b"cutensornetGetVersion\0"
+            ),
 
             // cuDensityMat
             cudensitymatCreate: load_sym!(cudensitymat, "libcudensitymat", b"cudensitymatCreate\0"),
-            cudensitymatDestroy: load_sym!(cudensitymat, "libcudensitymat", b"cudensitymatDestroy\0"),
-            cudensitymatGetVersion: load_sym!(cudensitymat, "libcudensitymat", b"cudensitymatGetVersion\0"),
-            cudensitymatCreateState: load_sym!(cudensitymat, "libcudensitymat", b"cudensitymatCreateState\0"),
-            cudensitymatDestroyState: load_sym!(cudensitymat, "libcudensitymat", b"cudensitymatDestroyState\0"),
+            cudensitymatDestroy: load_sym!(
+                cudensitymat,
+                "libcudensitymat",
+                b"cudensitymatDestroy\0"
+            ),
+            cudensitymatGetVersion: load_sym!(
+                cudensitymat,
+                "libcudensitymat",
+                b"cudensitymatGetVersion\0"
+            ),
+            cudensitymatCreateState: load_sym!(
+                cudensitymat,
+                "libcudensitymat",
+                b"cudensitymatCreateState\0"
+            ),
+            cudensitymatDestroyState: load_sym!(
+                cudensitymat,
+                "libcudensitymat",
+                b"cudensitymatDestroyState\0"
+            ),
 
             _cuda_rt: cuda_rt,
             _custatevec: custatevec,

@@ -590,7 +590,10 @@ mod tests {
                     .entities()
                     .map(|entity| {
                         // Get simulator and RNG
-                        let sim_comp = world.simulators.get(entity).expect("entity must have simulator");
+                        let sim_comp = world
+                            .simulators
+                            .get(entity)
+                            .expect("entity must have simulator");
                         let rng_comp = world.rngs.get(entity).expect("entity must have rng");
 
                         // Create a runner with the entity's components
@@ -598,7 +601,9 @@ mod tests {
                         let mut runner =
                             CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.apply_circuit(&mut sim, &commands).expect("circuit execution failed");
+                        let outcomes = runner
+                            .apply_circuit(&mut sim, &commands)
+                            .expect("circuit execution failed");
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()

@@ -855,8 +855,12 @@ impl QuestCudaStateVecEngine {
         })?;
 
         // Create quantum register using the shared environment
-        let qureg_handle =
-            unsafe { (backend.create_qureg)(env_handle, i32::try_from(num_qubits).expect("num_qubits fits in i32")) };
+        let qureg_handle = unsafe {
+            (backend.create_qureg)(
+                env_handle,
+                i32::try_from(num_qubits).expect("num_qubits fits in i32"),
+            )
+        };
         if qureg_handle.is_null() {
             return Err(PecosError::Processing(format!(
                 "Failed to create CUDA quantum register with {num_qubits} qubits"
@@ -1185,7 +1189,8 @@ impl Engine for QuestCudaStateVecEngine {
                     for q in &cmd.qubits {
                         let qubit = **q as i32;
                         let outcome = unsafe { (self.backend.measure)(self.qureg_handle, qubit) };
-                        measurements.push(u32::try_from(outcome).expect("measurement outcome fits in u32"));
+                        measurements
+                            .push(u32::try_from(outcome).expect("measurement outcome fits in u32"));
                     }
                 }
                 GateType::PZ | GateType::QAlloc => {

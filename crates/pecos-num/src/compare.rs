@@ -422,8 +422,8 @@ pub fn assert_allclose<S1, S2, D>(
 
     // If there are mismatches, panic with detailed error message
     if mismatch_count > 0 {
-        let (first_a, first_b) =
-            first_mismatch_values.expect("first_mismatch_values must be Some when mismatch_count > 0");
+        let (first_a, first_b) = first_mismatch_values
+            .expect("first_mismatch_values must be Some when mismatch_count > 0");
 
         panic!(
             "\nNot equal to tolerance rtol={}, atol={}\n\

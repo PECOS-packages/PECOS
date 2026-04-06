@@ -155,7 +155,10 @@ pub fn download_all_cached(downloads: Vec<DownloadInfo>) -> Result<Vec<(String, 
 
             thread::spawn(move || match download_cached(&info) {
                 Ok(data) => {
-                    results.lock().expect("results mutex poisoned").push((info.name.clone(), data));
+                    results
+                        .lock()
+                        .expect("results mutex poisoned")
+                        .push((info.name.clone(), data));
                 }
                 Err(e) => {
                     errors

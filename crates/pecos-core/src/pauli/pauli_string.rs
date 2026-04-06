@@ -294,7 +294,7 @@ impl PauliString {
         self.paulis.is_empty()
     }
 
-// --- Decomposition methods - non-overlapping X-only, Y, Z-only sets ---
+    // --- Decomposition methods - non-overlapping X-only, Y, Z-only sets ---
 
     /// Returns qubit IDs where the Pauli is exactly X (not Y).
     ///
@@ -1113,7 +1113,7 @@ mod tests {
         }
     }
 
-// --- pauli_str tests ---
+    // --- pauli_str tests ---
 
     #[test]
     fn test_pauli_str_basic() {
@@ -1165,7 +1165,7 @@ mod tests {
         assert_eq!(s, "II");
     }
 
-// --- to_dense_str / to_sparse_str tests ---
+    // --- to_dense_str / to_sparse_str tests ---
 
     #[test]
     fn test_to_dense_str_basic() {
@@ -1237,7 +1237,7 @@ mod tests {
         }
     }
 
-// --- from_str / from_sparse_str / from_dense_str tests ---
+    // --- from_str / from_sparse_str / from_dense_str tests ---
 
     #[test]
     fn test_from_str_dense_auto() {
@@ -1382,7 +1382,7 @@ mod tests {
         assert_eq!(p.get(4), Pauli::Z);
     }
 
-// --- into_pauli_sparse tests ---
+    // --- into_pauli_sparse tests ---
 
     #[test]
     fn test_into_pauli_sparse_basic() {
@@ -1411,7 +1411,7 @@ mod tests {
         assert_eq!(sparse.weight(), 0);
     }
 
-// --- into_pauli_bitmap tests ---
+    // --- into_pauli_bitmap tests ---
 
     #[test]
     fn test_into_pauli_bitmap_basic() {
@@ -1441,7 +1441,7 @@ mod tests {
         assert_eq!(bitmap.weight(), 3);
     }
 
-// --- set_phase tests ---
+    // --- set_phase tests ---
 
     #[test]
     fn test_set_phase() {
@@ -1467,7 +1467,7 @@ mod tests {
         }
     }
 
-// --- get edge case tests ---
+    // --- get edge case tests ---
 
     #[test]
     fn test_get_returns_identity_for_missing_qubit() {
@@ -1484,7 +1484,7 @@ mod tests {
         assert_eq!(p.get(999), Pauli::I);
     }
 
-// --- PauliOperator trait method tests (commutes_with, x_positions, z_positions) ---
+    // --- PauliOperator trait method tests (commutes_with, x_positions, z_positions) ---
 
     #[test]
     fn test_commutes_with_same_type() {
@@ -1571,7 +1571,7 @@ mod tests {
         assert!(p.z_positions().is_empty());
     }
 
-// --- Algebraic property tests ---
+    // --- Algebraic property tests ---
 
     #[test]
     fn test_multiply_associativity() {
@@ -1648,7 +1648,7 @@ mod tests {
         assert_eq!(result.phase(), QuarterPhase::PlusOne);
     }
 
-// --- from_decomposed edge cases ---
+    // --- from_decomposed edge cases ---
 
     #[test]
     fn test_from_decomposed_empty_is_identity() {
@@ -1661,7 +1661,7 @@ mod tests {
         assert!(p.is_identity());
     }
 
-// --- into_pauli_bitmap edge case ---
+    // --- into_pauli_bitmap edge case ---
 
     #[test]
     fn test_into_pauli_bitmap_too_large() {
@@ -1669,7 +1669,7 @@ mod tests {
         assert!(p.into_pauli_bitmap().is_err());
     }
 
-// --- Cross-consistency: PauliOperator::multiply vs algebra * operator ---
+    // --- Cross-consistency: PauliOperator::multiply vs algebra * operator ---
 
     #[test]
     fn test_multiply_vs_algebra_no_y_inputs() {
@@ -1744,7 +1744,7 @@ mod tests {
         }
     }
 
-// --- Roundtrip conversion tests with Y operators ---
+    // --- Roundtrip conversion tests with Y operators ---
 
     #[test]
     fn test_roundtrip_pauli_sparse_with_y() {
@@ -1786,7 +1786,7 @@ mod tests {
         assert_eq!(result.phase(), QuarterPhase::PlusI);
     }
 
-// --- into_pauli_bitmap boundary qubit ---
+    // --- into_pauli_bitmap boundary qubit ---
 
     #[test]
     fn test_into_pauli_bitmap_qubit_63() {
@@ -1796,7 +1796,7 @@ mod tests {
         assert!(bitmap.x_positions().contains(&63));
     }
 
-// --- Y in parse/display ---
+    // --- Y in parse/display ---
 
     #[test]
     fn test_parse_sparse_y_operators() {
@@ -1835,7 +1835,7 @@ mod tests {
         assert_eq!(original.get(1), roundtripped.get(1));
     }
 
-// --- to_matrix tests ---
+    // --- to_matrix tests ---
 
     fn c(re: f64, im: f64) -> num_complex::Complex64 {
         num_complex::Complex64::new(re, im)

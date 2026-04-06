@@ -651,7 +651,9 @@ impl GpuInfluenceSampler {
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        rx.recv().expect("GPU worker channel closed").expect("GPU buffer mapping failed");
+        rx.recv()
+            .expect("GPU worker channel closed")
+            .expect("GPU buffer mapping failed");
 
         let data = slice.get_mapped_range();
         let raw: Vec<u32> = bytemuck::cast_slice(&data).to_vec();

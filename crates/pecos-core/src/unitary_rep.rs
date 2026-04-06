@@ -3613,7 +3613,6 @@ impl UnitaryRep {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3769,7 +3768,7 @@ mod tests {
         }
     }
 
-// --- Simplify tests ---
+    // --- Simplify tests ---
 
     #[test]
     fn test_simplify_identity() {
@@ -3878,7 +3877,7 @@ mod tests {
         }
     }
 
-// --- CliffordRep conversion tests ---
+    // --- CliffordRep conversion tests ---
 
     #[test]
     fn test_to_clifford_rep_non_clifford_returns_none() {
@@ -3949,7 +3948,7 @@ mod tests {
         assert!(cliff.is_some());
     }
 
-// --- Phase tests ---
+    // --- Phase tests ---
 
     #[test]
     fn test_phase_basic() {
@@ -4025,7 +4024,7 @@ mod tests {
         }
     }
 
-// --- Macro tests ---
+    // --- Macro tests ---
 
     #[test]
     fn test_angle_macro_pi() {
@@ -4094,7 +4093,7 @@ mod tests {
         assert_eq!(full, Angle64::ZERO);
     }
 
-// --- Turn macro tests ---
+    // --- Turn macro tests ---
 
     #[test]
     fn test_turn_macro_quarter() {
@@ -4166,7 +4165,7 @@ mod tests {
         assert_eq!(full, Angle64::ZERO);
     }
 
-// --- Pauli equivalence tests ---
+    // --- Pauli equivalence tests ---
 
     #[test]
     fn test_is_pauli_equivalent_pauli() {
@@ -4226,7 +4225,7 @@ mod tests {
         assert!(RZ(Angle64::QUARTER_TURN, 0).try_to_pauli().is_none());
     }
 
-// --- Multi-qubit syntax tests ---
+    // --- Multi-qubit syntax tests ---
 
     #[test]
     fn test_x_multi_qubit() {
@@ -4399,7 +4398,7 @@ mod tests {
         }
     }
 
-// --- Conjugation tests ---
+    // --- Conjugation tests ---
     // Two conjugation conventions:
     //   A.conj(U)   = U * A * U†  (stabilizer update: S →USU† when applying U)
     //   A.conjdg(U) = U† * A * U  (Heisenberg picture: A → U†AU)
@@ -4563,7 +4562,7 @@ mod tests {
         }
     }
 
-// --- Weight tests ---
+    // --- Weight tests ---
 
     #[test]
     fn test_weight_single_pauli() {
@@ -4606,7 +4605,7 @@ mod tests {
         assert_eq!(CCX(0, 1, 2).weight(), 3);
     }
 
-// --- is_hermitian tests ---
+    // --- is_hermitian tests ---
 
     #[test]
     fn test_is_hermitian_paulis() {
@@ -4647,7 +4646,7 @@ mod tests {
         assert!(RZ(Angle64::HALF_TURN, 0).is_hermitian());
     }
 
-// --- pow tests ---
+    // --- pow tests ---
 
     #[test]
     fn test_pow_zero() {
@@ -4727,7 +4726,7 @@ mod tests {
         assert!(result.is_identity());
     }
 
-// --- commutes tests ---
+    // --- commutes tests ---
 
     #[test]
     fn test_commutes_same_pauli() {
@@ -4789,7 +4788,7 @@ mod tests {
         assert_eq!(xz.commutes(&y), Commutativity::AntiCommutes);
     }
 
-// --- decompose tests ---
+    // --- decompose tests ---
 
     #[test]
     fn test_decompose_single_pauli() {
@@ -4879,7 +4878,7 @@ mod tests {
         assert_eq!(gates[0].gate_type, GateType::RZ);
     }
 
-// --- as_pauli_string / into_pauli_string tests ---
+    // --- as_pauli_string / into_pauli_string tests ---
 
     #[test]
     fn test_as_pauli_string_pauli() {
@@ -5393,7 +5392,7 @@ mod tests {
         ));
     }
 
-// --- Unitary base type tests ---
+    // --- Unitary base type tests ---
 
     #[test]
     fn unitary_named_is_clifford() {

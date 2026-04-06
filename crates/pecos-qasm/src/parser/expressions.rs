@@ -196,10 +196,7 @@ fn parse_expr_internal_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosE
             // If we have a single element that's also an expr, unwrap it
             if pairs.len() == 1 && pairs[0].as_rule() == Rule::expr {
                 return parse_expr_internal_gate_param(
-                    pairs
-                        .into_iter()
-                        .next()
-                        .expect("length checked to be 1"),
+                    pairs.into_iter().next().expect("length checked to be 1"),
                 );
             }
             parse_expr_with_precedence_gate_param(&mut pairs, 1)
@@ -224,10 +221,7 @@ fn parse_expr_internal(pair: Pair<Rule>) -> Result<Expression, PecosError> {
             // If we have a single element that's also an expr, unwrap it
             if pairs.len() == 1 && pairs[0].as_rule() == Rule::expr {
                 return parse_expr_internal(
-                    pairs
-                        .into_iter()
-                        .next()
-                        .expect("length checked to be 1"),
+                    pairs.into_iter().next().expect("length checked to be 1"),
                 );
             }
             parse_expr_with_precedence(&mut pairs, 1)

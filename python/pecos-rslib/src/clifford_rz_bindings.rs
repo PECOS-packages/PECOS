@@ -232,7 +232,12 @@ impl PyCliffordRz {
 
             // Measurements
             "MZ" | "Measure" | "measure Z" | "Measure +Z" => {
-                let result = self.inner.mz(q).into_iter().next().expect("measurement returned no results");
+                let result = self
+                    .inner
+                    .mz(q)
+                    .into_iter()
+                    .next()
+                    .expect("measurement returned no results");
                 Ok(Some(u8::from(result.outcome)))
             }
 

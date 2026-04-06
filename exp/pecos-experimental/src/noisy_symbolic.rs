@@ -187,7 +187,11 @@ impl NoisyMeasurementKind {
 
         // Pure random: single random dep, no faults
         if num_random == 1 && num_faults == 0 {
-            let r_idx = flat.random_bit_deps.iter().next().expect("num_random == 1 guarantees an element");
+            let r_idx = flat
+                .random_bit_deps
+                .iter()
+                .next()
+                .expect("num_random == 1 guarantees an element");
             if flat.flip {
                 return NoisyMeasurementKind::PureRandomFlipped(r_idx);
             }

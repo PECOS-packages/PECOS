@@ -283,15 +283,30 @@ impl PyStateVec {
                 Ok(None)
             }
             "MZ" | "Measure" | "Measure +Z" | "measure Z" => {
-                let result = self.inner.mz(q).into_iter().next().expect("single-qubit measurement returned no result");
+                let result = self
+                    .inner
+                    .mz(q)
+                    .into_iter()
+                    .next()
+                    .expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "MX" | "Measure +X" => {
-                let result = self.inner.mx(q).into_iter().next().expect("single-qubit measurement returned no result");
+                let result = self
+                    .inner
+                    .mx(q)
+                    .into_iter()
+                    .next()
+                    .expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "MY" | "Measure +Y" => {
-                let result = self.inner.my(q).into_iter().next().expect("single-qubit measurement returned no result");
+                let result = self
+                    .inner
+                    .my(q)
+                    .into_iter()
+                    .next()
+                    .expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             // Gate aliases - alternative names for common gates

@@ -334,7 +334,11 @@ impl Poly1d {
 
         // Horner's method: a0 + x(a1 + x(a2 + x(...)))
         let mut result = self.coeffs[0];
-        for &coeff in &self.coeffs.as_slice().expect("coefficient array must be contiguous")[1..] {
+        for &coeff in &self
+            .coeffs
+            .as_slice()
+            .expect("coefficient array must be contiguous")[1..]
+        {
             result = result * x + coeff;
         }
         result

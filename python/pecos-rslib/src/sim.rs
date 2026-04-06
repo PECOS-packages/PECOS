@@ -224,7 +224,8 @@ impl PySimBuilder {
                 SimBuilderInner::Qasm(sim_builder) => {
                     if let Ok(mut qasm_engine) = engine_builder.extract::<PyQasmEngineBuilder>(py) {
                         // Transfer program from existing engine to new engine if needed
-                        let existing_engine_lock = sim_builder.engine_builder.lock().expect("lock poisoned");
+                        let existing_engine_lock =
+                            sim_builder.engine_builder.lock().expect("lock poisoned");
                         if let Some(existing_engine) = existing_engine_lock.as_ref()
                             && existing_engine.has_source()
                             && !qasm_engine.inner.has_source()

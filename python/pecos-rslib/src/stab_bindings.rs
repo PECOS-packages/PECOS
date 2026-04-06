@@ -155,9 +155,24 @@ impl PyStabilizer {
             }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self.inner.mz(q).into_iter().next().expect("single-qubit measurement returned no result"),
-                    "MX" => self.inner.mx(q).into_iter().next().expect("single-qubit measurement returned no result"),
-                    "MY" => self.inner.my(q).into_iter().next().expect("single-qubit measurement returned no result"),
+                    "MZ" => self
+                        .inner
+                        .mz(q)
+                        .into_iter()
+                        .next()
+                        .expect("single-qubit measurement returned no result"),
+                    "MX" => self
+                        .inner
+                        .mx(q)
+                        .into_iter()
+                        .next()
+                        .expect("single-qubit measurement returned no result"),
+                    "MY" => self
+                        .inner
+                        .my(q)
+                        .into_iter()
+                        .next()
+                        .expect("single-qubit measurement returned no result"),
                     "MZForced" => {
                         let forced_value = params
                             .ok_or_else(|| {
@@ -260,15 +275,30 @@ impl PyStabilizer {
                     return Ok(Some(u8::from(result.outcome)));
                 }
                 // No forced_outcome, use regular measurement
-                let result = self.inner.mz(q).into_iter().next().expect("single-qubit measurement returned no result");
+                let result = self
+                    .inner
+                    .mz(q)
+                    .into_iter()
+                    .next()
+                    .expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "Measure +X" => {
-                let result = self.inner.mx(q).into_iter().next().expect("single-qubit measurement returned no result");
+                let result = self
+                    .inner
+                    .mx(q)
+                    .into_iter()
+                    .next()
+                    .expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "Measure +Y" => {
-                let result = self.inner.my(q).into_iter().next().expect("single-qubit measurement returned no result");
+                let result = self
+                    .inner
+                    .my(q)
+                    .into_iter()
+                    .next()
+                    .expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

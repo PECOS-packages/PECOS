@@ -354,10 +354,11 @@ impl MonteCarloEngine {
                         };
 
                         // Store with worker/shot indices for deterministic ordering
-                        results_vec
-                            .lock()
-                            .expect("results mutex poisoned")
-                            .push((worker_idx, shot_idx, shot_result));
+                        results_vec.lock().expect("results mutex poisoned").push((
+                            worker_idx,
+                            shot_idx,
+                            shot_result,
+                        ));
                     }
 
                     Ok(())

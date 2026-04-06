@@ -177,7 +177,12 @@ macro_rules! impl_numeric_array_view {
             }
 
             /// Power (**) - Converts to f64 for power operation, then back to original type
-            fn __pow__(&self, py: Python<'_>, other: $dtype, _mod: Option<$dtype>) -> PyResult<Py<$name>> {
+            fn __pow__(
+                &self,
+                py: Python<'_>,
+                other: $dtype,
+                _mod: Option<$dtype>,
+            ) -> PyResult<Py<$name>> {
                 #[allow(clippy::cast_lossless)] // f32 -> f64 is lossless, but triggers warning in generic code
                 #[allow(clippy::cast_possible_truncation)] // f64 -> smaller type intentional for NumPy compat
                 #[allow(clippy::cast_precision_loss)]
@@ -329,7 +334,12 @@ macro_rules! impl_complex_array_view {
             }
 
             /// Power (**) - Complex power using powc
-            fn __pow__(&self, py: Python<'_>, other: $dtype, _mod: Option<$dtype>) -> PyResult<Py<$name>> {
+            fn __pow__(
+                &self,
+                py: Python<'_>,
+                other: $dtype,
+                _mod: Option<$dtype>,
+            ) -> PyResult<Py<$name>> {
                 let result = self.data.mapv(|x| x.powc(other));
                 Py::new(py, $name::new(result))
             }
@@ -769,7 +779,9 @@ fn extract_from_sequence(
 ) -> PyResult<ArrayD<f64>> {
     let len = seq.len()?;
     if len == 0 {
-        return Ok(ArrayD::from_shape_vec(vec![0], vec![]).expect("empty array creation cannot fail"));
+        return Ok(
+            ArrayD::from_shape_vec(vec![0], vec![]).expect("empty array creation cannot fail")
+        );
     }
 
     // Check for nested sequence (e.g., [[1, 2], [3, 4]])

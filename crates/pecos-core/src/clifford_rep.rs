@@ -340,7 +340,7 @@ impl CliffordRep {
         PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
     }
 
-// --- Standard single-qubit Clifford gates ---
+    // --- Standard single-qubit Clifford gates ---
 
     /// Hadamard gate on qubit q: X <-> Z
     #[must_use]
@@ -543,7 +543,7 @@ impl CliffordRep {
         Self::szdg(qubit).compose(&Self::sxdg(qubit))
     }
 
-// --- Two-qubit Clifford gates ---
+    // --- Two-qubit Clifford gates ---
 
     /// CNOT (CX) gate: control -> target
     ///
@@ -735,7 +735,7 @@ impl CliffordRep {
 }
 
 impl CliffordRep {
-// --- Single-qubit Clifford enumeration ---
+    // --- Single-qubit Clifford enumeration ---
 
     /// All 24 single-qubit Cliffords as generator sequences (H=0, S=1).
     /// Applied left-to-right: [a, b, c] means C = a * b * c.
@@ -1163,7 +1163,7 @@ mod tests {
     use super::*;
     use crate::PauliOperator;
 
-// --- Helper: verify C * C^{-1} = identity on all generators ---
+    // --- Helper: verify C * C^{-1} = identity on all generators ---
 
     fn assert_inverse_correct(cliff: &CliffordRep) {
         let inv = cliff.inverse();
@@ -1202,7 +1202,7 @@ mod tests {
         }
     }
 
-// --- Basic gate tests ---
+    // --- Basic gate tests ---
 
     #[test]
     fn test_identity() {
@@ -1328,7 +1328,7 @@ mod tests {
         assert_eq!(swap.apply(&PauliString::z(1)), PauliString::z(0));
     }
 
-// --- Inverse tests ---
+    // --- Inverse tests ---
 
     #[test]
     fn test_inverse_identity() {
@@ -1419,7 +1419,7 @@ mod tests {
         assert_inverse_correct(&CliffordRep::cy(0, 1));
     }
 
-// --- Validity tests ---
+    // --- Validity tests ---
 
     #[test]
     fn test_valid_gates() {
@@ -1455,7 +1455,7 @@ mod tests {
         assert!(!bad.is_valid());
     }
 
-// --- Display test ---
+    // --- Display test ---
 
     #[test]
     fn test_display() {
@@ -1465,7 +1465,7 @@ mod tests {
         assert!(s.contains("Z_0 ->"));
     }
 
-// --- Composition properties ---
+    // --- Composition properties ---
 
     #[test]
     fn test_composed_cliffords_are_valid() {
@@ -1494,7 +1494,7 @@ mod tests {
         }
     }
 
-// --- Direct gate transformation tests ---
+    // --- Direct gate transformation tests ---
 
     #[test]
     fn test_sdg_transforms() {
@@ -1588,7 +1588,7 @@ mod tests {
         assert_eq!(rz1.phase(), QuarterPhase::PlusOne);
     }
 
-// --- extended_to tests ---
+    // --- extended_to tests ---
 
     #[test]
     fn test_extended_to_larger() {
@@ -1622,7 +1622,7 @@ mod tests {
         assert_eq!(cx_shrunk, cx);
     }
 
-// --- apply edge cases ---
+    // --- apply edge cases ---
 
     #[test]
     fn test_apply_identity_pauli() {
@@ -1655,7 +1655,7 @@ mod tests {
         assert_eq!(result.get(3), Pauli::Z);
     }
 
-// --- Composition edge cases ---
+    // --- Composition edge cases ---
 
     #[test]
     fn test_compose_different_qubit_counts() {
@@ -1689,7 +1689,7 @@ mod tests {
         assert_eq!(lhs.apply(&z1), rhs.apply(&z1));
     }
 
-// --- Inverse properties ---
+    // --- Inverse properties ---
 
     #[test]
     fn test_inverse_of_inverse() {
@@ -1715,7 +1715,7 @@ mod tests {
         assert_eq!(round_trip, p);
     }
 
-// --- Enumeration and random Clifford tests ---
+    // --- Enumeration and random Clifford tests ---
 
     #[test]
     fn test_single_qubit_cliffords_count() {
@@ -1769,7 +1769,7 @@ mod tests {
         }
     }
 
-// --- Ergonomic API tests (constructors + Mul) ---
+    // --- Ergonomic API tests (constructors + Mul) ---
 
     #[test]
     fn test_mul_operator() {

@@ -564,7 +564,8 @@ fn curve_fit_tuple<'py>(
 
         // Convert to 1D if needed
         let arr_1d = if arr.ndim() == 1 {
-            arr.into_dimensionality::<ndarray::Ix1>().expect("array must be 1-dimensional")
+            arr.into_dimensionality::<ndarray::Ix1>()
+                .expect("array must be 1-dimensional")
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "xdata[{}] must be a 1D array, got {}D array with shape {:?}",
@@ -3068,13 +3069,12 @@ fn array(
         let current_dtype = existing_array.dtype();
 
         // Determine if we need to create a new array
-        if let Some(td) = target_dtype {
-            if td != current_dtype {
+        if let Some(td) = target_dtype
+            && td != current_dtype {
                 // Perform dtype conversion using the pure Rust astype() method
                 let converted_array = existing_array.astype(td);
                 return Py::new(py, converted_array);
             }
-        }
 
         // No dtype conversion needed - always create a copy
         let copied_array = existing_array.copy();
@@ -3273,13 +3273,12 @@ fn asarray(
         let current_dtype = existing_array.dtype();
 
         // Determine if we need to create a new array
-        if let Some(td) = target_dtype {
-            if td != current_dtype {
+        if let Some(td) = target_dtype
+            && td != current_dtype {
                 // Perform dtype conversion using the pure Rust astype() method
                 let converted_array = existing_array.astype(td);
                 return Py::new(py, converted_array);
             }
-        }
 
         // No conversion needed - return the same object (no copy!)
         return Ok(obj.extract::<Py<Array>>()?);
@@ -3339,7 +3338,9 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
 
         // Convert to 1D for delete operation
         let arr_1d = if arr_f64.ndim() == 1 {
-            arr_f64.into_dimensionality::<ndarray::Ix1>().expect("array must be 1-dimensional")
+            arr_f64
+                .into_dimensionality::<ndarray::Ix1>()
+                .expect("array must be 1-dimensional")
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "delete only supports 1D arrays",
@@ -3362,7 +3363,9 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
 
         // Convert to 1D for delete operation
         let arr_1d = if arr_c64.ndim() == 1 {
-            arr_c64.into_dimensionality::<ndarray::Ix1>().expect("array must be 1-dimensional")
+            arr_c64
+                .into_dimensionality::<ndarray::Ix1>()
+                .expect("array must be 1-dimensional")
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "delete only supports 1D arrays",
@@ -3386,7 +3389,9 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
 
         // Convert to 1D for delete operation
         let arr_1d = if arr_i64.ndim() == 1 {
-            arr_i64.into_dimensionality::<ndarray::Ix1>().expect("array must be 1-dimensional")
+            arr_i64
+                .into_dimensionality::<ndarray::Ix1>()
+                .expect("array must be 1-dimensional")
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "delete only supports 1D arrays",

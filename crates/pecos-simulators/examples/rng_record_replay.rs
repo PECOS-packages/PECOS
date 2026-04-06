@@ -25,8 +25,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - in a Bell state, results should match
-    let result1 = sim_recording.mz(&qid(0)).into_iter().next().ok_or("no measurement result")?;
-    let result2 = sim_recording.mz(&qid(1)).into_iter().next().ok_or("no measurement result")?;
+    let result1 = sim_recording
+        .mz(&qid(0))
+        .into_iter()
+        .next()
+        .ok_or("no measurement result")?;
+    let result2 = sim_recording
+        .mz(&qid(1))
+        .into_iter()
+        .next()
+        .ok_or("no measurement result")?;
 
     println!("Measurement outcomes:");
     println!("  Qubit 0: {}", if result1.outcome { "1" } else { "0" });
@@ -52,8 +60,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - should get the same results as before
-    let replay_result1 = sim_replaying.mz(&qid(0)).into_iter().next().ok_or("no measurement result")?;
-    let replay_result2 = sim_replaying.mz(&qid(1)).into_iter().next().ok_or("no measurement result")?;
+    let replay_result1 = sim_replaying
+        .mz(&qid(0))
+        .into_iter()
+        .next()
+        .ok_or("no measurement result")?;
+    let replay_result2 = sim_replaying
+        .mz(&qid(1))
+        .into_iter()
+        .next()
+        .ok_or("no measurement result")?;
 
     println!("Replayed measurement outcomes:");
     println!(

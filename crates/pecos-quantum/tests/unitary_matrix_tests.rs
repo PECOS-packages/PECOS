@@ -1722,7 +1722,6 @@ fn op_composition_preserves_dual_consistency_2q() {
     }
 }
 
-
 #[test]
 fn display_does_not_panic() {
     let mat = Pauli::X.to_matrix();

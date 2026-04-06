@@ -1428,7 +1428,6 @@ pub fn Leakage(rate: f64, qubit: impl Into<QubitId>) -> Op {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

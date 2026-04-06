@@ -26,9 +26,8 @@
 use crate::error::{CuQuantumError, Result, TryClone, check_stabilizer_status};
 use pecos_core::QubitId;
 use pecos_cuquantum_sys::{
-    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost,
-    cudaMemcpyKind_cudaMemcpyHostToDevice, custabilizerCircuit_t,
-    custabilizerFrameSimulator_t, custabilizerHandle_t,
+    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost, cudaMemcpyKind_cudaMemcpyHostToDevice,
+    custabilizerCircuit_t, custabilizerFrameSimulator_t, custabilizerHandle_t,
 };
 use pecos_simulators::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 use pecos_simulators::{
@@ -253,7 +252,8 @@ impl CuFrameSimulator {
                 if !self.circuit_buffer_device.is_null() {
                     (self.backend.cudaFree)(self.circuit_buffer_device);
                 }
-                let cuda_status = (self.backend.cudaMalloc)(&mut self.circuit_buffer_device, buffer_size_usize);
+                let cuda_status =
+                    (self.backend.cudaMalloc)(&mut self.circuit_buffer_device, buffer_size_usize);
                 if cuda_status != 0 {
                     self.circuit_buffer_device = ptr::null_mut();
                     self.circuit_buffer_size = 0;
@@ -354,7 +354,8 @@ impl CuFrameSimulator {
         let status = unsafe {
             (self.backend.custabilizerFrameSimulatorApplyCircuit)(
                 self.handle,
-                self.frame_simulator.expect("frame_simulator is set during initialization"),
+                self.frame_simulator
+                    .expect("frame_simulator is set during initialization"),
                 circuit,
                 i32::from(randomize_after_measurement),
                 seed,

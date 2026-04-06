@@ -91,7 +91,10 @@ fn example_basic_ssa() -> Result<(), Box<dyn std::error::Error>> {
         vec![Type::Int(IntWidth::I32)],
     );
     builder.current_block.add_instruction(add);
-    println!("  Used {} in addition", builder.lookup("x").ok_or("variable 'x' not found")?);
+    println!(
+        "  Used {} in addition",
+        builder.lookup("x").ok_or("variable 'x' not found")?
+    );
 
     // Parse: return y
     let y_use = *builder.lookup("y").ok_or("variable 'y' not found")?;

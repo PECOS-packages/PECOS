@@ -615,7 +615,10 @@ impl PyBitInt {
     fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         // Fast path: value fits in i64
         if let Some(val) = self.inner.to_i64() {
-            return Ok(val.into_pyobject(py).expect("i64 to Python conversion failed").into_any());
+            return Ok(val
+                .into_pyobject(py)
+                .expect("i64 to Python conversion failed")
+                .into_any());
         }
         // Slow path: arbitrary precision
         let words = self.inner.inner_words();

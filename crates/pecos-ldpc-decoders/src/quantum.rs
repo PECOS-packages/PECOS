@@ -134,7 +134,9 @@ impl MbpDecoder {
             )));
         }
 
-        let syndrome_slice = syndrome.as_slice().expect("syndrome array must be contiguous");
+        let syndrome_slice = syndrome
+            .as_slice()
+            .expect("syndrome array must be contiguous");
         let result = ffi::decode_mbp(self.inner.pin_mut(), syndrome_slice)
             .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 
@@ -172,7 +174,9 @@ impl MbpDecoder {
             )));
         }
 
-        let syndrome_slice = syndrome.as_slice().expect("syndrome array must be contiguous");
+        let syndrome_slice = syndrome
+            .as_slice()
+            .expect("syndrome array must be contiguous");
         let result = ffi::decode_mbp(self.inner.pin_mut(), syndrome_slice)
             .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 

@@ -180,7 +180,10 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         );
 
         // Pick a neighbor that isn't `avoid` (if possible)
-        let mut vb = self.neighbors[v].iter().next().expect("neighbors is non-empty (checked by caller)");
+        let mut vb = self.neighbors[v]
+            .iter()
+            .next()
+            .expect("neighbors is non-empty (checked by caller)");
         if vb == avoid
             && let Some(alt) = self.neighbors[v].iter().find(|&u| u != avoid)
         {
@@ -305,7 +308,10 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
         let outcome = forced_outcome.unwrap_or_else(|| self.rng.coin_flip());
 
         // Pick a neighbor vb
-        let vb = self.neighbors[v].iter().next().expect("neighbors[v] is non-empty (checked above)");
+        let vb = self.neighbors[v]
+            .iter()
+            .next()
+            .expect("neighbors[v] is non-empty (checked above)");
 
         // Save neighborhoods BEFORE modifications
         let vn: Vec<usize> = self.neighbors[v].iter().collect();

@@ -198,7 +198,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
                 log::debug!("Found Selene runtime! Attempting to preload: {path_str}");
 
                 unsafe {
-                    let path_cstr = CString::new(path_str.as_bytes()).expect("path contains null byte");
+                    let path_cstr =
+                        CString::new(path_str.as_bytes()).expect("path contains null byte");
                     let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
                     if handle.is_null() {
                         let error_ptr = libc::dlerror();

@@ -1918,7 +1918,7 @@ mod tests {
     use pecos_core::unitary_rep::{CX, H, I, Is, RX, RZ, SWAP, SZ, T, X, Y, Z};
     use std::f64::consts::PI;
 
-// --- Basic to_matrix tests ---
+    // --- Basic to_matrix tests ---
 
     #[test]
     fn test_pauli_matrices() {
@@ -1983,7 +1983,7 @@ mod tests {
         assert!(mat[(1, 0)].norm() < 1e-10);
     }
 
-// --- Rotation matrix tests ---
+    // --- Rotation matrix tests ---
 
     #[test]
     fn test_t_gate_matrix() {
@@ -2026,7 +2026,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&mat, &z_mat, 1e-10));
     }
 
-// --- Tensor product and composition tests ---
+    // --- Tensor product and composition tests ---
 
     #[test]
     fn test_tensor_product() {
@@ -2079,7 +2079,7 @@ mod tests {
         assert!((mat[(3, 3)] - Complex64::new(1.0, 0.0)).norm() < 1e-10);
     }
 
-// --- unitaries_equiv tests ---
+    // --- unitaries_equiv tests ---
 
     #[test]
     fn test_unitaries_equiv_same() {
@@ -2111,7 +2111,7 @@ mod tests {
         assert!(unitaries_equiv(&x, &i_x));
     }
 
-// --- unitary_exp tests ---
+    // --- unitary_exp tests ---
 
     #[test]
     fn test_unitary_exp_identity() {
@@ -2141,7 +2141,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&result, &expected, 1e-10));
     }
 
-// --- unitary_log tests ---
+    // --- unitary_log tests ---
 
     #[test]
     fn test_unitary_log_identity() {
@@ -2171,7 +2171,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-// --- to_matrix_with_size tests ---
+    // --- to_matrix_with_size tests ---
 
     #[test]
     fn test_to_matrix_with_size_embedding() {
@@ -2207,7 +2207,7 @@ mod tests {
         }
     }
 
-// --- Conjugation matrix verification tests ---
+    // --- Conjugation matrix verification tests ---
 
     #[test]
     fn test_conj_matrix_verification() {
@@ -2272,7 +2272,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&back_mat, &a_mat, 1e-10));
     }
 
-// --- Multi-qubit conjugation tests ---
+    // --- Multi-qubit conjugation tests ---
 
     #[test]
     fn test_conj_multi_qubit_stabilizer() {
@@ -2307,7 +2307,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&result_mat, &expected, 1e-10));
     }
 
-// --- More two-qubit gate tests ---
+    // --- More two-qubit gate tests ---
 
     #[test]
     fn test_cz_gate() {
@@ -2340,7 +2340,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&mat_01, &mat_10, 1e-10));
     }
 
-// --- Algebraic identity tests ---
+    // --- Algebraic identity tests ---
 
     #[test]
     fn test_adjoint_of_product() {
@@ -2396,7 +2396,7 @@ mod tests {
         ));
     }
 
-// --- ToMatrix trait tests ---
+    // --- ToMatrix trait tests ---
 
     #[test]
     fn test_to_matrix_trait_method() {
@@ -2442,7 +2442,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&product, &identity, 1e-10));
     }
 
-// --- Identity operator ToMatrix tests ---
+    // --- Identity operator ToMatrix tests ---
 
     #[test]
     fn test_identity_to_matrix_single_qubit() {
@@ -2493,7 +2493,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&orig_mat, &simp_mat, 1e-10));
     }
 
-// --- PauliString ToMatrix tests ---
+    // --- PauliString ToMatrix tests ---
 
     #[test]
     fn test_pauli_string_to_matrix_single() {
@@ -2567,7 +2567,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&ps_mat, &op_mat, 1e-10));
     }
 
-// --- try_to_unitary tests ---
+    // --- try_to_unitary tests ---
 
     #[test]
     fn try_to_unitary_identifies_all_named_1q_gates() {
@@ -2687,7 +2687,7 @@ mod tests {
         assert_eq!(t.try_to_pauli(), None);
     }
 
-// --- rotation extraction tests ---
+    // --- rotation extraction tests ---
 
     #[test]
     fn try_to_unitary_identifies_1q_rotations() {
@@ -3090,7 +3090,7 @@ mod tests {
         }
     }
 
-// --- is_unitary tests ---
+    // --- is_unitary tests ---
 
     #[test]
     fn is_unitary_for_known_gates() {
@@ -3196,7 +3196,7 @@ mod tests {
         assert!(count > 100, "Stress test ran only {count} cases");
     }
 
-// --- U2q (KAK decomposition) tests ---
+    // --- U2q (KAK decomposition) tests ---
 
     #[test]
     fn try_to_unitary_identifies_u2q_general() {

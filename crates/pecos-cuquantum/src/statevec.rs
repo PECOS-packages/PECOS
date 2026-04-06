@@ -133,8 +133,7 @@ impl CuStateVec {
         let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
 
         // Zero out all memory
-        let cuda_result =
-            unsafe { (self.backend.cudaMemset)(self.state_vector, 0, size_bytes) };
+        let cuda_result = unsafe { (self.backend.cudaMemset)(self.state_vector, 0, size_bytes) };
         if cuda_result != 0 {
             return Err(CuQuantumError::Cuda(format!(
                 "cudaMemset failed with error code {cuda_result}"

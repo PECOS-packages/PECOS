@@ -32,9 +32,10 @@ fn parse_qubit_references(
 
     for item in any_list.into_inner() {
         if item.as_rule() == Rule::any_item {
-            let inner = item.into_inner().next().ok_or_else(|| {
-                QASMParser::error("Empty any_item in qubit reference list")
-            })?;
+            let inner = item
+                .into_inner()
+                .next()
+                .ok_or_else(|| QASMParser::error("Empty any_item in qubit reference list"))?;
             match inner.as_rule() {
                 Rule::identifier => {
                     let reg_name = inner.as_str();
@@ -66,9 +67,10 @@ fn parse_qubit_operands(
 
     for item in any_list.into_inner() {
         if item.as_rule() == Rule::any_item {
-            let inner = item.into_inner().next().ok_or_else(|| {
-                QASMParser::error("Empty any_item in qubit operand list")
-            })?;
+            let inner = item
+                .into_inner()
+                .next()
+                .ok_or_else(|| QASMParser::error("Empty any_item in qubit operand list"))?;
             match inner.as_rule() {
                 Rule::identifier => {
                     let reg_name = inner.as_str();

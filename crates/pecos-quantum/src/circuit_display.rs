@@ -465,7 +465,10 @@ fn decompose_gate(
             if rows.iter().any(Option::is_none) {
                 continue;
             }
-            let rows: Vec<usize> = rows.into_iter().map(|r| r.expect("checked for None above")).collect();
+            let rows: Vec<usize> = rows
+                .into_iter()
+                .map(|r| r.expect("checked for None above"))
+                .collect();
             let top = *rows.iter().min().expect("rows has exactly 3 elements");
             let bottom = *rows.iter().max().expect("rows has exactly 3 elements");
 

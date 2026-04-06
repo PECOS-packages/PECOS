@@ -420,7 +420,10 @@ pub fn clifford_rep_to_unitary_rep(cr: &CliffordRep) -> UnitaryRep {
     }
 
     if all_matched && !parts.is_empty() {
-        return parts.into_iter().reduce(|a, b| a & b).expect("parts is non-empty");
+        return parts
+            .into_iter()
+            .reduce(|a, b| a & b)
+            .expect("parts is non-empty");
     }
 
     // Fallback: try known 2q Cliffords

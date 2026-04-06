@@ -54,7 +54,7 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 // Runtime library loader
 pub mod loader;
-pub use loader::{try_load, is_available, CuQuantumBackend, CuQuantumLoadError};
+pub use loader::{CuQuantumBackend, CuQuantumLoadError, is_available, try_load};
 
 /// Check if a cuStateVec status indicates success
 #[inline]

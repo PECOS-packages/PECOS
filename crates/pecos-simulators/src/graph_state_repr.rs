@@ -141,7 +141,7 @@ impl GraphState {
         Self { vops, neighbors }
     }
 
-// --- Pattern factories ---
+    // --- Pattern factories ---
 
     /// Linear cluster state: 0-1-2-..-(n-1).
     #[must_use]
@@ -1487,13 +1487,12 @@ fn multiply_paulis(a: Pauli, b: Pauli) -> (Pauli, QuarterPhase) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::CliffordGateable;
 
-// --- Phase 1: Core type tests ---
+    // --- Phase 1: Core type tests ---
 
     #[test]
     fn test_new_creates_plus_state() {
@@ -1575,7 +1574,7 @@ mod tests {
         assert!(gs.is_pure_graph_state());
     }
 
-// --- Phase 2: Patterns and local complementation ---
+    // --- Phase 2: Patterns and local complementation ---
 
     #[test]
     fn test_linear_cluster() {
@@ -1744,7 +1743,7 @@ mod tests {
         }
     }
 
-// --- Phase 3: Stabilizer extraction ---
+    // --- Phase 3: Stabilizer extraction ---
 
     #[test]
     fn test_stabilizer_generator_single_qubit() {
@@ -1857,7 +1856,7 @@ mod tests {
         }
     }
 
-// --- Phase 4: Conversions ---
+    // --- Phase 4: Conversions ---
 
     #[test]
     fn test_roundtrip_graph_state_to_sim() {
@@ -1904,7 +1903,7 @@ mod tests {
         assert!(sub.has_edge(1, 2)); // was 2-3
     }
 
-// --- Phase 5: LC-equivalence ---
+    // --- Phase 5: LC-equivalence ---
 
     #[test]
     fn test_lc_orbit_single_qubit() {
@@ -1952,7 +1951,7 @@ mod tests {
         assert_eq!(canon1, canon2);
     }
 
-// --- Phase 6: Export ---
+    // --- Phase 6: Export ---
 
     #[test]
     fn test_display() {
@@ -2051,7 +2050,7 @@ mod tests {
         assert!(tikz.contains("draw=famSqrt"));
     }
 
-// --- Cross-validation with simulator ---
+    // --- Cross-validation with simulator ---
 
     #[test]
     fn test_cross_validate_stabilizers_with_sim() {
@@ -2111,7 +2110,7 @@ mod tests {
         assert_eq!(r1[0].outcome, r2[0].outcome);
     }
 
-// --- ASCII export ---
+    // --- ASCII export ---
 
     #[test]
     fn test_to_ascii_pure_graph_state() {
@@ -2254,7 +2253,7 @@ mod tests {
         assert!(ascii.contains("0 qubits, 0 edges"));
     }
 
-// --- render_with tests ---
+    // --- render_with tests ---
 
     #[test]
     fn render_with_default_matches_to_svg() {

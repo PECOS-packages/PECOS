@@ -598,7 +598,10 @@ impl PyBitUInt {
     fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         // Fast path: value fits in u64
         if let Some(val) = self.inner.to_u64() {
-            return Ok(val.into_pyobject(py).expect("u64 to Python conversion failed").into_any());
+            return Ok(val
+                .into_pyobject(py)
+                .expect("u64 to Python conversion failed")
+                .into_any());
         }
         // Slow path: arbitrary precision
         let words = self.inner.to_words();

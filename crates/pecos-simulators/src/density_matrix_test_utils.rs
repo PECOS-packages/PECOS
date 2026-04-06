@@ -151,7 +151,6 @@ pub fn run_density_matrix_test_suite<
     run_density_matrix_rotation_suite(sim, num_qubits);
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

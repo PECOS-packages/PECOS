@@ -616,7 +616,10 @@ impl CircuitPass for MergeAdjacentRotations {
                 }
 
                 // Merge angle and remove successor.
-                circuit.gate_mut(node).expect("node must exist in circuit").angles[0] += succ_angle;
+                circuit
+                    .gate_mut(node)
+                    .expect("node must exist in circuit")
+                    .angles[0] += succ_angle;
                 circuit.remove_gate(succ);
 
                 for (q, succ_succ) in rewire {
@@ -1013,7 +1016,9 @@ impl CircuitPass for CompactTicks {
 
         for (i, (gate, attrs)) in entries.into_iter().enumerate() {
             let ti = assignments[i];
-            let tick = circuit.get_tick_mut(ti).expect("tick index must exist in circuit");
+            let tick = circuit
+                .get_tick_mut(ti)
+                .expect("tick index must exist in circuit");
             let gi = tick.add_gate(gate);
             if !attrs.is_empty() {
                 tick.set_gate_attrs(gi, attrs);

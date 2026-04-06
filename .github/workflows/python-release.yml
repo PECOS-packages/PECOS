@@ -75,7 +75,6 @@ jobs:
           - os: ubuntu-latest
             architecture: x86_64
             cibw_archs: x86_64
-            cuda_feature: ""
             install_cuda: true
             # GCC Toolset 13 paths for CUDA compatibility
             gcc_path_prefix: "/opt/rh/gcc-toolset-13/root/usr/bin:"
@@ -90,7 +89,6 @@ jobs:
           #   architecture: aarch64
           #   runner: ubuntu-24.04-arm
           #   cibw_archs: aarch64
-          #   cuda_feature: ""
           #   install_cuda: false
           #   gcc_path_prefix: ""
           #   gcc_ld_path: ""
@@ -101,17 +99,14 @@ jobs:
           # pointer_traits bug with CXX crate's contiguous iterators in C++20.
           - os: macos-15
             architecture: aarch64
-            cuda_feature: ""
             install_cuda: false
           - os: macos-15-intel
             architecture: x86_64
-            cuda_feature: ""
             install_cuda: false
           # Windows x86_64 with CUDA support
           # Note: Uses specific sub-packages to avoid VS integration bug (see Jimver/cuda-toolkit#382)
           - os: windows-2022
             architecture: x86_64
-            cuda_feature: ""
             install_cuda: true
 
     steps:
@@ -196,7 +191,6 @@ jobs:
             LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
             CUDA_PATH=/usr/local/cuda-12.6
-            MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -243,7 +237,6 @@ jobs:
           CIBW_ENVIRONMENT_WINDOWS: >
             PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
-            MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
             rustup update &&

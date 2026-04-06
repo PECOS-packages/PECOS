@@ -134,6 +134,23 @@ fn main() {
         .derive_default(true)
         .derive_eq(true)
         .derive_hash(true)
+        // Structs with function pointer fields can't meaningfully derive Eq/Hash
+        .no_partialeq("custatevecDeviceMemHandler_t")
+        .no_partialeq("cutensornetDeviceMemHandler_t")
+        .no_partialeq("cutensornetDistributedInterface_t")
+        .no_partialeq("cudensitymatDistributedInterface_t")
+        .no_partialeq("cudensitymatWrappedScalarCallback_t")
+        .no_partialeq("cudensitymatWrappedTensorCallback_t")
+        .no_partialeq("cudensitymatWrappedScalarGradientCallback_t")
+        .no_partialeq("cudensitymatWrappedTensorGradientCallback_t")
+        .no_hash("custatevecDeviceMemHandler_t")
+        .no_hash("cutensornetDeviceMemHandler_t")
+        .no_hash("cutensornetDistributedInterface_t")
+        .no_hash("cudensitymatDistributedInterface_t")
+        .no_hash("cudensitymatWrappedScalarCallback_t")
+        .no_hash("cudensitymatWrappedTensorCallback_t")
+        .no_hash("cudensitymatWrappedScalarGradientCallback_t")
+        .no_hash("cudensitymatWrappedTensorGradientCallback_t")
         // Use core instead of std where possible
         .use_core()
         // Generate rustified enums

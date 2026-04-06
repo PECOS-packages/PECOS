@@ -25,8 +25,8 @@
 use crate::error::{CuQuantumError, Result, TryClone, check_stabilizer_status};
 use pecos_core::QubitId;
 use pecos_cuquantum_sys::{
-    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost,
-    custabilizerCircuit_t, custabilizerFrameSimulator_t, custabilizerHandle_t,
+    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost, custabilizerCircuit_t,
+    custabilizerFrameSimulator_t, custabilizerHandle_t,
 };
 use pecos_simulators::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 use pecos_simulators::{

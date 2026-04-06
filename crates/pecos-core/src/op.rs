@@ -448,8 +448,8 @@ impl BitAnd for Op {
         let max_level = self.level().max(rhs.level());
         match max_level {
             Level::Pauli => {
-                let a = self.into_pauli().unwrap();
-                let b = rhs.into_pauli().unwrap();
+                let a = self.into_pauli().expect("max_level is Pauli");
+                let b = rhs.into_pauli().expect("max_level is Pauli");
                 Op::Pauli(&a & &b)
             }
             Level::Clifford => {
@@ -466,8 +466,8 @@ impl BitAnd for Op {
                 cliff(cr_a.compose(&cr_b), ur_a & ur_b)
             }
             Level::Unitary => {
-                let a = self.into_unitary().unwrap();
-                let b = rhs.into_unitary().unwrap();
+                let a = self.into_unitary().expect("max_level is Unitary");
+                let b = rhs.into_unitary().expect("max_level is Unitary");
                 Op::Unitary(a & b)
             }
             Level::Channel => {
@@ -488,8 +488,8 @@ impl Mul for Op {
         let max_level = self.level().max(rhs.level());
         match max_level {
             Level::Pauli => {
-                let a = self.into_pauli().unwrap();
-                let b = rhs.into_pauli().unwrap();
+                let a = self.into_pauli().expect("max_level is Pauli");
+                let b = rhs.into_pauli().expect("max_level is Pauli");
                 Op::Pauli(a * &b)
             }
             Level::Clifford => {
@@ -506,8 +506,8 @@ impl Mul for Op {
                 cliff(cr_a.compose(&cr_b), ur_a * ur_b)
             }
             Level::Unitary => {
-                let a = self.into_unitary().unwrap();
-                let b = rhs.into_unitary().unwrap();
+                let a = self.into_unitary().expect("max_level is Unitary");
+                let b = rhs.into_unitary().expect("max_level is Unitary");
                 Op::Unitary(a * b)
             }
             Level::Channel => {
@@ -647,7 +647,9 @@ impl Mul<Op> for PhaseValue {
                 panic!("phase multiplication is not defined for Channel-level operations")
             }
             other => {
-                let ur = other.into_unitary().unwrap();
+                let ur = other
+                    .into_unitary()
+                    .expect("non-Channel Op is convertible to Unitary");
                 Op::Unitary(self * ur)
             }
         }

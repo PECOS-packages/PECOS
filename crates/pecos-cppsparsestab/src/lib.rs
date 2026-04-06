@@ -95,6 +95,26 @@ unsafe impl Send for CppSparseStab {}
 unsafe impl Sync for CppSparseStab {}
 
 impl CppSparseStab {
+    /// Get mutable access to the underlying C++ state.
+    ///
+    /// # Panics
+    /// Panics if the C++ state pointer is null, which should never happen after construction.
+    fn state_mut(&mut self) -> std::pin::Pin<&mut ffi::StateWrapper> {
+        self.state
+            .as_mut()
+            .expect("CppSparseStab state is always initialized after construction")
+    }
+
+    /// Get shared access to the underlying C++ state.
+    ///
+    /// # Panics
+    /// Panics if the C++ state pointer is null, which should never happen after construction.
+    fn state_ref(&self) -> &ffi::StateWrapper {
+        self.state
+            .as_ref()
+            .expect("CppSparseStab state is always initialized after construction")
+    }
+
     /// Create a new C++ sparse stabilizer simulator
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
@@ -104,18 +124,17 @@ impl CppSparseStab {
     }
 
     /// Create a new simulator with a specific seed
-    ///
-    /// # Panics
-    ///
-    /// Panics if the C++ state wrapper creation fails (should never happen in normal usage)
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
-        let mut state = ffi::create_state_wrapper(num_qubits as u64, 0);
+        let mut sim = Self {
+            state: ffi::create_state_wrapper(num_qubits as u64, 0),
+            num_qubits,
+        };
         // Use the provided seed for C++ RNG, truncating to 32-bit as C++ expects
         #[allow(clippy::cast_possible_truncation)]
         let seed_u32 = seed as u32;
-        state.as_mut().unwrap().set_seed(seed_u32);
-        Self { state, num_qubits }
+        sim.state_mut().set_seed(seed_u32);
+        sim
     }
 
     /// Create a new simulator with a specific seed (alias for `with_seed`)
@@ -131,15 +150,11 @@ impl CppSparseStab {
     }
 
     /// Set the RNG seed for this simulator instance
-    ///
-    /// # Panics
-    ///
-    /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
     pub fn set_seed(&mut self, seed: u64) {
         // Truncate to 32-bit as C++ expects
         #[allow(clippy::cast_possible_truncation)]
         let seed_u32 = seed as u32;
-        self.state.as_mut().unwrap().set_seed(seed_u32);
+        self.state_mut().set_seed(seed_u32);
     }
 
     /// Internal helper for Z-basis measurement via FFI
@@ -155,11 +170,7 @@ impl CppSparseStab {
             Some(true) => 1,
         };
 
-        let outcome_raw = self
-            .state
-            .as_mut()
-            .unwrap()
-            .mz(qubit as u64, forced, collapse);
+        let outcome_raw = self.state_mut().mz(qubit as u64, forced, collapse);
         let outcome = outcome_raw != 0;
 
         // Wrapper doesn't care about determinism - always return false
@@ -172,7 +183,7 @@ impl CppSparseStab {
 
 impl QuantumSimulator for CppSparseStab {
     fn reset(&mut self) -> &mut Self {
-        self.state.as_mut().unwrap().clear();
+        self.state_mut().clear();
         // Don't reset the RNG - just reset the quantum state
         // This matches the behavior of the pure Rust simulator
         self
@@ -182,14 +193,14 @@ impl QuantumSimulator for CppSparseStab {
 impl CliffordGateable for CppSparseStab {
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().hadamard(q.index() as u64);
+            self.state_mut().hadamard(q.index() as u64);
         }
         self
     }
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().phaserot(q.index() as u64);
+            self.state_mut().phaserot(q.index() as u64);
         }
         self
     }
@@ -198,7 +209,7 @@ impl CliffordGateable for CppSparseStab {
         for &(q0, q1) in pairs {
             let control = q0.index() as u64;
             let target = q1.index() as u64;
-            self.state.as_mut().unwrap().cx(control, target);
+            self.state_mut().cx(control, target);
         }
         self
     }
@@ -214,147 +225,147 @@ impl CliffordGateable for CppSparseStab {
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().bitflip(q.index() as u64);
+            self.state_mut().bitflip(q.index() as u64);
         }
         self
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().Y(q.index() as u64);
+            self.state_mut().Y(q.index() as u64);
         }
         self
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().phaseflip(q.index() as u64);
+            self.state_mut().phaseflip(q.index() as u64);
         }
         self
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().SZdg(q.index() as u64);
+            self.state_mut().SZdg(q.index() as u64);
         }
         self
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().SY(q.index() as u64);
+            self.state_mut().SY(q.index() as u64);
         }
         self
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().SYdg(q.index() as u64);
+            self.state_mut().SYdg(q.index() as u64);
         }
         self
     }
 
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().SX(q.index() as u64);
+            self.state_mut().SX(q.index() as u64);
         }
         self
     }
 
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().SXdg(q.index() as u64);
+            self.state_mut().SXdg(q.index() as u64);
         }
         self
     }
 
     fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().H2(q.index() as u64);
+            self.state_mut().H2(q.index() as u64);
         }
         self
     }
 
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().H3(q.index() as u64);
+            self.state_mut().H3(q.index() as u64);
         }
         self
     }
 
     fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().H4(q.index() as u64);
+            self.state_mut().H4(q.index() as u64);
         }
         self
     }
 
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().H5(q.index() as u64);
+            self.state_mut().H5(q.index() as u64);
         }
         self
     }
 
     fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().H6(q.index() as u64);
+            self.state_mut().H6(q.index() as u64);
         }
         self
     }
 
     fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F(q.index() as u64);
+            self.state_mut().F(q.index() as u64);
         }
         self
     }
 
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().Fdg(q.index() as u64);
+            self.state_mut().Fdg(q.index() as u64);
         }
         self
     }
 
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F2(q.index() as u64);
+            self.state_mut().F2(q.index() as u64);
         }
         self
     }
 
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F2dg(q.index() as u64);
+            self.state_mut().F2dg(q.index() as u64);
         }
         self
     }
 
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F3(q.index() as u64);
+            self.state_mut().F3(q.index() as u64);
         }
         self
     }
 
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F3dg(q.index() as u64);
+            self.state_mut().F3dg(q.index() as u64);
         }
         self
     }
 
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F4(q.index() as u64);
+            self.state_mut().F4(q.index() as u64);
         }
         self
     }
 
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.state.as_mut().unwrap().F4dg(q.index() as u64);
+            self.state_mut().F4dg(q.index() as u64);
         }
         self
     }
@@ -363,7 +374,7 @@ impl CliffordGateable for CppSparseStab {
         for &(q0, q1) in pairs {
             let control = q0.index() as u64;
             let target = q1.index() as u64;
-            self.state.as_mut().unwrap().cy(control, target);
+            self.state_mut().cy(control, target);
         }
         self
     }
@@ -372,7 +383,7 @@ impl CliffordGateable for CppSparseStab {
         for &(q0, q1) in pairs {
             let a = q0.index() as u64;
             let b = q1.index() as u64;
-            self.state.as_mut().unwrap().cz(a, b);
+            self.state_mut().cz(a, b);
         }
         self
     }
@@ -381,7 +392,7 @@ impl CliffordGateable for CppSparseStab {
         for &(q0, q1) in pairs {
             let a = q0.index() as u64;
             let b = q1.index() as u64;
-            self.state.as_mut().unwrap().swap(a, b);
+            self.state_mut().swap(a, b);
         }
         self
     }
@@ -406,43 +417,31 @@ impl CppSparseStab {
     }
 
     /// Apply G2 gate (CZ.H(1).H(2).CZ)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
     pub fn g2(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             let a = q0.index() as u64;
             let b = q1.index() as u64;
-            self.state.as_mut().unwrap().g2(a, b);
+            self.state_mut().g2(a, b);
         }
         self
     }
 
     /// Apply SXX gate (sqrt(XX))
-    ///
-    /// # Panics
-    ///
-    /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
     pub fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             let a = q0.index() as u64;
             let b = q1.index() as u64;
-            self.state.as_mut().unwrap().sxx(a, b);
+            self.state_mut().sxx(a, b);
         }
         self
     }
 
     /// Apply `SXXdg` gate (sqrt(XX)†)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the C++ state wrapper is not initialized (should never happen in normal usage)
     pub fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             let a = q0.index() as u64;
             let b = q1.index() as u64;
-            self.state.as_mut().unwrap().sxxdg(a, b);
+            self.state_mut().sxxdg(a, b);
         }
         self
     }
@@ -462,7 +461,7 @@ impl CppSparseStab {
     /// Format generators into tableau string
     fn format_generators(&self, is_stab: bool) -> String {
         let mut result = String::new();
-        let state_ref = self.state.as_ref().unwrap();
+        let state_ref = self.state_ref();
         // Safe to cast as num_qubits should never exceed usize::MAX
         #[allow(clippy::cast_possible_truncation)]
         let num_qubits = state_ref.get_num_qubits() as usize;

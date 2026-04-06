@@ -117,9 +117,13 @@ fn verify_sha256(data: &[u8], expected: &str) -> Result<String> {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
-    hasher.update(data);
+    Digest::update(&mut hasher, data);
     let result = hasher.finalize();
-    let actual = format!("{result:x}");
+    let actual = result.iter().fold(String::new(), |mut s, b| {
+        use std::fmt::Write;
+        write!(s, "{b:02x}").unwrap();
+        s
+    });
 
     if actual == expected {
         Ok(actual)

@@ -3,60 +3,57 @@ name = "pecos-workspace"
 version = "0.8.0.dev5"
 # Development dependencies that are optional in quantum-pecos but needed for full dev/test
 dependencies = [
-    "stim>=1.15.0",  # Optional in quantum-pecos, but needed for stim-related tests
+  "stim>=1.15.0", # Optional in quantum-pecos, but needed for stim-related tests
 ]
 
 [project.optional-dependencies]
-cuda = [
-    "quantum-pecos[cuda]",
-]
+cuda = ["quantum-pecos[cuda]"]
 
 [tool.uv.workspace]
 members = [
-    "python/pecos-rslib",
-    "python/pecos-rslib-cuda",
-    "python/pecos-rslib-llvm",
-    "python/quantum-pecos",
-    "python/selene-plugins/pecos-selene-*",
+  "python/pecos-rslib",
+  "python/pecos-rslib-cuda",
+  "python/pecos-rslib-llvm",
+  "python/quantum-pecos",
+  "python/selene-plugins/pecos-selene-*",
 ]
 
 [tool.uv.sources]
 quantum-pecos = { workspace = true }
-# guppylang = { path = "../guppylang" }  # Commented out to use packaged version
 
 [dependency-groups]
 dev = [
-    "maturin>=1.2,<2.0", # For building (should match build requirements)
-    "patchelf; platform_system != 'Windows'", # For setting rpath in shared libraries (Linux/macOS only)
-    "setuptools>=62.6", # Build system
-    "pre-commit", # Git hooks
-    "black", # Code formatting
-    "ruff", # Fast Python linting
-    "mkdocs", # Documentation framework
-    "mkdocs-material", # Material theme for MkDocs
-    "mkdocstrings[python]", # Code documentation extraction
-    "markdown-exec[ansi]", # Executable markdown blocks
-    # Runtime dependencies for development (non-test)
-    "networkx>=2.1.0",
-    "matplotlib>=2.2.0",
-    "phir>=0.3.3",
-    "polars>=1.0.0", # DataFrame library for examples/benchmarks
-    # WebAssembly runtimes for testing
-    "wasmtime>=13.0",
-    "jupyter>=1.1.1",
+  "maturin>=1.2,<2.0",                      # For building (should match build requirements)
+  "patchelf; platform_system != 'Windows'", # For setting rpath in shared libraries (Linux/macOS only)
+  "setuptools>=62.6",                       # Build system
+  "pre-commit",                             # Git hooks
+  "black",                                  # Code formatting
+  "ruff",                                   # Fast Python linting
+  "mkdocs",                                 # Documentation framework
+  "mkdocs-material",                        # Material theme for MkDocs
+  "mkdocstrings[python]",                   # Code documentation extraction
+  "markdown-exec[ansi]",                    # Executable markdown blocks
+  # Runtime dependencies for development (non-test)
+  "networkx>=2.1.0",
+  "matplotlib>=2.2.0",
+  "phir>=0.3.3",
+  "polars>=1.0.0",     # DataFrame library for examples/benchmarks
+  # WebAssembly runtimes for testing
+  "wasmtime>=13.0",
+  "jupyter>=1.1.1",
 ]
 test = [ # pinning testing environment
-    "pytest==8.3.3", # 8.3.4 seems to be causing errors
-    "pytest-cov==6.0.0",
-    "pytest-timeout>=2.3.1",
-    "hypothesis==6.122.3",
+  "pytest==8.3.3",         # 8.3.4 seems to be causing errors
+  "pytest-cov==6.0.0",
+  "pytest-timeout>=2.3.1",
+  "hypothesis==6.122.3",
 ]
-numpy-compat = [  # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack
-    "numpy>=1.15.0",
-    "scipy>=1.1.0",
+numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack
+  "numpy>=1.15.0",
+  "scipy>=1.1.0",
 ]
-cuda = [  # CUDA Python packages for GPU-accelerated simulations (requires CUDA toolkit)
-    "quantum-pecos[cuda]",
+cuda = [ # CUDA Python packages for GPU-accelerated simulations (requires CUDA toolkit)
+  "quantum-pecos[cuda]",
 ]
 
 [tool.uv]
@@ -71,9 +68,9 @@ line-length = 120
 
 [tool.pytest.ini_options]
 markers = [
-    "optional_dependency: mark a test as using one or more optional dependencies",
-    "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems",
-    "wasmer: mark test as using the 'wasmer' option",
-    "wasmtime: mark test as using the 'wasmtime' option",
-    "numpy: mark tests that verify NumPy compatibility (requires numpy installed)",
+  "optional_dependency: mark a test as using one or more optional dependencies",
+  "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems",
+  "wasmer: mark test as using the 'wasmer' option",
+  "wasmtime: mark test as using the 'wasmtime' option",
+  "numpy: mark tests that verify NumPy compatibility (requires numpy installed)",
 ]

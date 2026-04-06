@@ -268,10 +268,14 @@ fn verify_checksum(file_path: &Path, expected: &str) -> Result<()> {
     print!("Verifying checksum... ");
     io::stdout().flush()?;
 
-    let mut file = fs::File::open(file_path)?;
+    let data = fs::read(file_path)?;
     let mut hasher = Sha256::new();
-    io::copy(&mut file, &mut hasher)?;
-    let computed_hash = format!("{:x}", hasher.finalize());
+    Digest::update(&mut hasher, &data);
+    let computed_hash = hasher.finalize().iter().fold(String::new(), |mut s, b| {
+        use std::fmt::Write;
+        write!(s, "{b:02x}").unwrap();
+        s
+    });
 
     if computed_hash == expected {
         println!("OK");

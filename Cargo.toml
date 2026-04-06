@@ -109,7 +109,7 @@ parking_lot = "0.12"
 rayon = "1"
 
 # --- GPU ---
-wgpu = "28"
+wgpu = "29"
 pollster = "0.4"
 
 # --- Graph algorithms ---

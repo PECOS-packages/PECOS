@@ -168,10 +168,7 @@ impl GpuStateVec {
         let num_amplitudes = 1u64 << num_qubits;
 
         // Initialize wgpu
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -311,14 +308,14 @@ impl GpuStateVec {
         // Create pipeline layouts
         let gate_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Gate pipeline layout"),
-            bind_group_layouts: &[&gate_bind_group_layout],
+            bind_group_layouts: &[Some(&gate_bind_group_layout)],
             immediate_size: 0,
         });
 
         let collapse_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Collapse pipeline layout"),
-                bind_group_layouts: &[&collapse_bind_group_layout],
+                bind_group_layouts: &[Some(&collapse_bind_group_layout)],
                 immediate_size: 0,
             });
 
@@ -460,7 +457,7 @@ impl GpuStateVec {
         let marginal_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Marginal probability pipeline layout"),
-                bind_group_layouts: &[&marginal_bind_group_layout],
+                bind_group_layouts: &[Some(&marginal_bind_group_layout)],
                 immediate_size: 0,
             });
 

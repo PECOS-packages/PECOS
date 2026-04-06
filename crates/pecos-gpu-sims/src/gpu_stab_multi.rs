@@ -107,7 +107,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
         // Query actual device limits
         let limits = device.limits();
-        let max_buffer_size = u64::from(limits.max_storage_buffer_binding_size);
+        let max_buffer_size = limits.max_storage_buffer_binding_size;
 
         let num_qubits = num_qubits as u32;
         let num_shots = num_shots as u32;
@@ -418,7 +418,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Multi Gate Pipeline Layout"),
-            bind_group_layouts: &[&main_bind_group_layout],
+            bind_group_layouts: &[Some(&main_bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -514,7 +514,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
         let meas_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Multi Measurement Pipeline Layout"),
-            bind_group_layouts: &[&main_bind_group_layout, &meas_bind_group_layout],
+            bind_group_layouts: &[Some(&main_bind_group_layout), Some(&meas_bind_group_layout)],
             immediate_size: 0,
         });
 

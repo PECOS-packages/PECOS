@@ -275,7 +275,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let rng = R::seed_from_u64(seed);
 
         // Initialize wgpu
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -694,7 +694,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         // Create pipelines
         let main_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Main Pipeline Layout"),
-            bind_group_layouts: &[&main_bind_group_layout],
+            bind_group_layouts: &[Some(&main_bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -769,8 +769,8 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Find Anticommuting Pipeline Layout"),
                 bind_group_layouts: &[
-                    &main_bind_group_layout,
-                    &find_anticommuting_bind_group_layout,
+                    Some(&main_bind_group_layout),
+                    Some(&find_anticommuting_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -932,7 +932,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let batch_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Batch Pipeline Layout"),
-                bind_group_layouts: &[&main_bind_group_layout, &batch_bind_group_layout],
+                bind_group_layouts: &[
+                    Some(&main_bind_group_layout),
+                    Some(&batch_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -1016,7 +1019,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let measurement_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Measurement Pipeline Layout"),
-                bind_group_layouts: &[&main_bind_group_layout, &measurement_bind_group_layout],
+                bind_group_layouts: &[
+                    Some(&main_bind_group_layout),
+                    Some(&measurement_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -1532,7 +1538,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
                 self.device
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some(&format!("Compiled Pipeline Layout {hash:016x}")),
-                        bind_group_layouts: &[&self.compiled_bind_group_layout],
+                        bind_group_layouts: &[Some(&self.compiled_bind_group_layout)],
                         immediate_size: 0,
                     });
 

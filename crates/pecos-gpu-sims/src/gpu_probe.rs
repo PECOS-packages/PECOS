@@ -45,7 +45,7 @@ impl std::error::Error for GpuStartupError {}
 pub fn request_default_gpu_device(
     label: &'static str,
 ) -> Result<GpuDeviceContext, GpuStartupError> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,

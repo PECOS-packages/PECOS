@@ -167,7 +167,7 @@ impl PyLLVMModule {
         let module_id = module_ptr as usize;
         global_comments()
             .lock()
-            .unwrap()
+            .expect("comments lock poisoned")
             .insert(module_id, Vec::new());
 
         Self {
@@ -184,7 +184,7 @@ impl PyLLVMModule {
         // Get comments for this module
         let comments = global_comments()
             .lock()
-            .unwrap()
+            .expect("comments lock poisoned")
             .get(&module_id)
             .cloned()
             .unwrap_or_default();
@@ -216,7 +216,7 @@ impl PyLLVMModule {
 
         // Replace "TYPE* null" with "TYPE* inttoptr (i64 0 to TYPE*)" for any pointer type
         // Handles both named types (%Qubit*) and built-in types (i8*, i64*, etc.)
-        let null_ptr_re = Regex::new(r"(%?\w+\*) null").unwrap();
+        let null_ptr_re = Regex::new(r"(%?\w+\*) null").expect("valid regex");
         let ir = null_ptr_re
             .replace_all(&ir, "$1 inttoptr (i64 0 to $1)")
             .to_string();
@@ -236,10 +236,10 @@ impl PyLLVMModule {
         // - First unnamed value gets .4 (skip .3 for next comment if any)
         // So: %0 → %.4, %1 → %.6, %2 → %.8, etc.
         // Formula: %n → %.{(n + 2) * 2}
-        let ssa_re = Regex::new(r"%(\d+)([^0-9a-zA-Z_])").unwrap();
+        let ssa_re = Regex::new(r"%(\d+)([^0-9a-zA-Z_])").expect("valid regex");
         ssa_re
             .replace_all(&ir, |caps: &regex::Captures| {
-                let num: usize = caps[1].parse().unwrap();
+                let num: usize = caps[1].parse().expect("regex matched digits");
                 let suffix = &caps[2];
                 // Offset by 2 to account for function setup (.1) and "Generated using" comment (.2)
                 format!("%.{}{}", (num + 2) * 2, suffix)

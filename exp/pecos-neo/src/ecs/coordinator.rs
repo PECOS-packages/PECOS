@@ -342,24 +342,24 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
                 worker.collect_stats();
 
                 // Store results with ordering info
-                let mut all_results = results.lock().unwrap();
+                let mut all_results = results.lock().expect("results lock poisoned");
                 for (entity_idx, result) in worker_results.into_iter().enumerate() {
                     all_results.push((worker_id, entity_idx, result));
                 }
 
                 // Merge stats
-                let mut all_stats = stats.lock().unwrap();
+                let mut all_stats = stats.lock().expect("stats lock poisoned");
                 all_stats.merge(&worker.stats);
             });
 
         // Sort results by (worker_id, entity_idx) for deterministic ordering
-        let mut sorted_results = results.lock().unwrap();
+        let mut sorted_results = results.lock().expect("results lock poisoned");
         sorted_results.sort_by(|(w1, e1, _), (w2, e2, _)| w1.cmp(w2).then(e1.cmp(e2)));
 
         let final_results: Vec<T> = sorted_results.drain(..).map(|(_, _, r)| r).collect();
         drop(sorted_results);
 
-        let final_stats = stats.lock().unwrap().clone();
+        let final_stats = stats.lock().expect("stats lock poisoned").clone();
 
         ParallelResult::new(final_results, final_stats, self.config.seed)
     }
@@ -590,15 +590,15 @@ mod tests {
                     .entities()
                     .map(|entity| {
                         // Get simulator and RNG
-                        let sim_comp = world.simulators.get(entity).unwrap();
-                        let rng_comp = world.rngs.get(entity).unwrap();
+                        let sim_comp = world.simulators.get(entity).expect("entity must have simulator");
+                        let rng_comp = world.rngs.get(entity).expect("entity must have rng");
 
                         // Create a runner with the entity's components
                         let mut sim = sim_comp.simulator.clone();
                         let mut runner =
                             CircuitRunner::<SparseStab>::new().with_rng(rng_comp.rng.clone());
 
-                        let outcomes = runner.apply_circuit(&mut sim, &commands).unwrap();
+                        let outcomes = runner.apply_circuit(&mut sim, &commands).expect("circuit execution failed");
                         outcomes.get_bit(QubitId(0)).unwrap_or(false)
                     })
                     .collect()

@@ -239,12 +239,12 @@ impl PyMatchingBuilder {
         config: Option<CheckMatrixConfig>,
     ) -> Result<PyMatchingDecoder> {
         // If this is a simple case, just use the direct API
-        if config.is_none() || config.as_ref().unwrap().repetitions == 1 {
+        let Some(config) = config else {
+            return PyMatchingDecoder::from_check_matrix(matrix);
+        };
+        if config.repetitions == 1 {
             return PyMatchingDecoder::from_check_matrix(matrix);
         }
-
-        // For complex cases with repetitions, use the advanced API
-        let config = config.unwrap();
         PyMatchingDecoder::from_check_matrix_with_config(matrix, config)
     }
 

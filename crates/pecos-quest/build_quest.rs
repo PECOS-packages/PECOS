@@ -141,6 +141,8 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
         api_dir.join("paulis.cpp"),
         api_dir.join("qureg.cpp"),
         api_dir.join("types.cpp"),
+        api_dir.join("multiplication.cpp"),
+        api_dir.join("trotterisation.cpp"),
         // Core utilities
         core_dir.join("errors.cpp"),
         core_dir.join("utilities.cpp"),
@@ -152,6 +154,8 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
         core_dir.join("localiser.cpp"),
         core_dir.join("autodeployer.cpp"),
         core_dir.join("accelerator.cpp"),
+        core_dir.join("envvars.cpp"),
+        core_dir.join("paulilogic.cpp"),
         // CPU backend (still needed for some operations)
         cpu_dir.join("cpu_config.cpp"),
         cpu_dir.join("cpu_subroutines.cpp"),
@@ -393,76 +397,106 @@ fn patch_quest_for_cuda13(quest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Generate quest.h from quest.h.in template (`QuEST` v4.1.0+)
+/// Generate config.h from config.h.in template (QuEST v4.2.0+)
+/// or quest.h from quest.h.in (QuEST v4.1.x).
+///
+/// The main library is ALWAYS CPU-only (COMPILE_CUDA=0).
+/// GPU support is provided via a separate shared library loaded at runtime.
 fn generate_quest_header(quest_dir: &Path) -> Result<()> {
-    let template_file = quest_dir.join("include/quest.h.in");
-    let output_file = quest_dir.join("include/quest.h");
-
-    if !template_file.exists() {
-        // quest.h already exists or not using template-based build
+    // v4.2.0+: config.h.in
+    let config_template = quest_dir.join("include/config.h.in");
+    if config_template.exists() {
+        let output = quest_dir.join("include/config.h");
+        if output.exists() {
+            return Ok(());
+        }
+        info!("Generating config.h from config.h.in...");
+        let template = fs::read_to_string(&config_template)?;
+        let config_h = template
+            .lines()
+            .map(|line| {
+                if line.contains("#cmakedefine FLOAT_PRECISION @FLOAT_PRECISION@") {
+                    "#define FLOAT_PRECISION 2".to_string()
+                } else if line.contains("#cmakedefine01 COMPILE_OPENMP") {
+                    "#define COMPILE_OPENMP 0".to_string()
+                } else if line.contains("#cmakedefine01 COMPILE_MPI") {
+                    "#define COMPILE_MPI 0".to_string()
+                } else if line.contains("#cmakedefine01 COMPILE_CUDA") {
+                    "#define COMPILE_CUDA 0".to_string()
+                } else if line.contains("#cmakedefine01 COMPILE_HIP") {
+                    "#define COMPILE_HIP 0".to_string()
+                } else if line.contains("#cmakedefine01 COMPILE_CUQUANTUM") {
+                    "#define COMPILE_CUQUANTUM 0".to_string()
+                } else if line.contains("#cmakedefine01 NUMA_AWARE") {
+                    "#define NUMA_AWARE 0".to_string()
+                } else if line.contains("#cmakedefine01 INCLUDE_DEPRECATED_FUNCTIONS") {
+                    "#define INCLUDE_DEPRECATED_FUNCTIONS 0".to_string()
+                } else if line.contains("#cmakedefine01 DISABLE_DEPRECATION_WARNINGS") {
+                    "#define DISABLE_DEPRECATION_WARNINGS 1".to_string()
+                } else if line.contains("@PROJECT_VERSION_MAJOR@") {
+                    "#define QUEST_VERSION_MAJOR 4".to_string()
+                } else if line.contains("@PROJECT_VERSION_MINOR@") {
+                    "#define QUEST_VERSION_MINOR 2".to_string()
+                } else if line.contains("@PROJECT_VERSION_PATCH@") {
+                    "#define QUEST_VERSION_PATCH 0".to_string()
+                } else if line.contains("@PROJECT_VERSION@") {
+                    "#define QUEST_VERSION_STRING \"4.2.0\"".to_string()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&output, config_h)?;
+        info!("Generated config.h");
         return Ok(());
     }
 
-    info!("Generating quest.h from template...");
-
-    let template = fs::read_to_string(&template_file)?;
-
-    // Since MULTI_LIB_HEADERS=0, we want the #if !0 block to be active
-    // which means we need to process the #cmakedefine directives
-    //
-    // IMPORTANT: The main library is ALWAYS CPU-only (COMPILE_CUDA=0).
-    // GPU support is provided via a separate shared library (libpecos_quest_cuda.so)
-    // which is compiled with nvcc and has its own COMPILE_CUDA=1 flag.
-    // This generated quest.h is only used by the main library.
-
-    // Process the template line by line to handle conditional blocks
-    let mut in_multi_lib_block = false;
-    let mut found_cmakedefine = false;
-    let quest_h = template
-        .lines()
-        .filter_map(|line| {
-            // Track when we're in the MULTI_LIB_HEADERS conditional
-            if line.contains("#if !@MULTI_LIB_HEADERS@") {
-                in_multi_lib_block = true;
-                return None; // Remove this line
-            }
-
-            // Process #cmakedefine directives (these are inside the block we're removing the conditional from)
-            if line.contains("#cmakedefine") {
-                found_cmakedefine = true;
-                if line.contains("#cmakedefine FLOAT_PRECISION @FLOAT_PRECISION@") {
-                    return Some("#define FLOAT_PRECISION 2".to_string());
+    // v4.1.x: quest.h.in
+    let quest_template = quest_dir.join("include/quest.h.in");
+    if quest_template.exists() {
+        let output = quest_dir.join("include/quest.h");
+        info!("Generating quest.h from quest.h.in...");
+        let template = fs::read_to_string(&quest_template)?;
+        let mut in_multi_lib_block = false;
+        let mut found_cmakedefine = false;
+        let quest_h = template
+            .lines()
+            .filter_map(|line| {
+                if line.contains("#if !@MULTI_LIB_HEADERS@") {
+                    in_multi_lib_block = true;
+                    return None;
                 }
-                if line.contains("#cmakedefine01 COMPILE_MPI") {
-                    return Some("#define COMPILE_MPI 0".to_string());
+                if line.contains("#cmakedefine") {
+                    found_cmakedefine = true;
+                    if line.contains("#cmakedefine FLOAT_PRECISION @FLOAT_PRECISION@") {
+                        return Some("#define FLOAT_PRECISION 2".to_string());
+                    }
+                    if line.contains("#cmakedefine01 COMPILE_MPI") {
+                        return Some("#define COMPILE_MPI 0".to_string());
+                    }
+                    if line.contains("#cmakedefine01 COMPILE_OPENMP") {
+                        return Some("#define COMPILE_OPENMP 0".to_string());
+                    }
+                    if line.contains("#cmakedefine01 COMPILE_CUDA") {
+                        return Some("#define COMPILE_CUDA 0".to_string());
+                    }
+                    if line.contains("#cmakedefine01 COMPILE_CUQUANTUM") {
+                        return Some("#define COMPILE_CUQUANTUM 0".to_string());
+                    }
                 }
-                if line.contains("#cmakedefine01 COMPILE_OPENMP") {
-                    return Some("#define COMPILE_OPENMP 0".to_string());
+                if line.contains("#endif") && in_multi_lib_block && found_cmakedefine {
+                    in_multi_lib_block = false;
+                    found_cmakedefine = false;
+                    return None;
                 }
-                if line.contains("#cmakedefine01 COMPILE_CUDA") {
-                    // Main library is always CPU-only; GPU library is separate
-                    return Some("#define COMPILE_CUDA 0".to_string());
-                }
-                if line.contains("#cmakedefine01 COMPILE_CUQUANTUM") {
-                    return Some("#define COMPILE_CUQUANTUM 0".to_string());
-                }
-            }
-
-            // Remove the #endif that closes the MULTI_LIB_HEADERS block
-            if line.contains("#endif") && in_multi_lib_block && found_cmakedefine {
-                in_multi_lib_block = false;
-                found_cmakedefine = false;
-                return None; // Remove this specific #endif
-            }
-
-            Some(line.to_string())
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    fs::write(&output_file, quest_h)?;
-
-    info!("Successfully generated quest.h");
+                Some(line.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&output, quest_h)?;
+        info!("Generated quest.h");
+    }
 
     Ok(())
 }
@@ -643,7 +677,17 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
         .file(api_dir.join("operations.cpp"))
         .file(api_dir.join("paulis.cpp"))
         .file(api_dir.join("qureg.cpp"))
-        .file(api_dir.join("types.cpp"))
+        .file(api_dir.join("types.cpp"));
+
+    // v4.2.0 added these files
+    for f in ["multiplication.cpp", "trotterisation.cpp"] {
+        let path = api_dir.join(f);
+        if path.exists() {
+            build.file(path);
+        }
+    }
+
+    build
         // Core utilities
         .file(core_dir.join("errors.cpp"))
         .file(core_dir.join("utilities.cpp"))
@@ -654,8 +698,15 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
         .file(core_dir.join("parser.cpp"))
         .file(core_dir.join("localiser.cpp"))
         .file(core_dir.join("autodeployer.cpp"))
-        // Accelerator.cpp contains dispatch logic for both CPU and GPU
         .file(core_dir.join("accelerator.cpp"));
+
+    // v4.2.0 added these core files
+    for f in ["envvars.cpp", "paulilogic.cpp"] {
+        let path = core_dir.join(f);
+        if path.exists() {
+            build.file(path);
+        }
+    }
 
     // Build the separate GPU shared library if GPU feature is enabled
     // This library will be loaded at runtime via dlopen
@@ -707,18 +758,29 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
         .include(quest_dir.parent().unwrap()) // Add out_dir so "quest/include/..." resolves correctly
         .include("include");
 
-    // Define preprocessor flags based on features
-    // IMPORTANT: The main library is ALWAYS CPU-only. GPU support is provided via
-    // a separate shared library (libpecos_quest_cuda.so) loaded at runtime via dlopen.
-    // This allows a single binary to work on systems with and without CUDA.
-    build
-        .define("COMPILE_CPU", "1")
-        .define("COMPILE_OPENMP", "0") // Disable OpenMP for simplicity initially
-        .define("COMPILE_MPI", "0") // Disable MPI for simplicity initially
-        .define("FLOAT_PRECISION", "2") // Double precision by default
-        .define("COMPILE_CUDA", "0") // Main library never uses CUDA directly
-        .define("COMPILE_GPU", "0") // GPU ops are in the separate GPU library
-        .define("COMPILE_CUQUANTUM", "0");
+    // v4.2.0+ defines come from generated config.h (included by quest.h).
+    // v4.1.x needs them as compiler flags since quest.h.in was processed differently.
+    if !quest_dir.join("include/config.h").exists() {
+        build
+            .define("COMPILE_CPU", "1")
+            .define("COMPILE_OPENMP", "0")
+            .define("COMPILE_MPI", "0")
+            .define("FLOAT_PRECISION", "2")
+            .define("COMPILE_CUDA", "0")
+            .define("COMPILE_GPU", "0")
+            .define("COMPILE_CUQUANTUM", "0");
+    }
+
+    // v4.2.0+ requires COMPLEX_OVERLOADS_PATCHED for cpu_subroutines.cpp.
+    // In release builds, -Ofast enables fast-math which makes std::complex
+    // operator overloads as fast as hand-rolled arithmetic.
+    let profile = get_build_profile();
+    if profile == "release" || profile == "native" {
+        build.flag_if_supported("-Ofast");
+        build.define("COMPLEX_OVERLOADS_PATCHED", "1");
+    } else {
+        build.define("COMPLEX_OVERLOADS_PATCHED", "0");
+    }
 
     // Note: We do NOT link cudart/cublas here. The GPU library handles CUDA linking
     // and is loaded at runtime only when GPU is requested.

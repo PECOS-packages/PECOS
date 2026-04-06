@@ -12,7 +12,7 @@ required_by = []
 [crates]
 
 [dependencies.quest]
-version = "v4.1.0"
-url = "https://github.com/QuEST-Kit/QuEST/archive/refs/tags/v4.1.0.tar.gz"
-sha256 = "85aa95bba6457c4f4e93221f4c417d988588891a1f7cb211c307dfe81a10cadd"
+version = "v4.2.0"
+url = "https://github.com/QuEST-Kit/QuEST/archive/refs/tags/v4.2.0.tar.gz"
+sha256 = "2c812a7ec4d727e0947ffd0daf05452963c3f1c10e428c8bc30c35164921fcba"
 description = "QuEST quantum simulator"

@@ -377,6 +377,10 @@ std::complex<double> gpu_statevec_calcExpecPauliStr_subA(Qureg q, std::vector<in
 std::complex<double> gpu_statevec_calcExpecPauliStr_subB(Qureg q, std::vector<int> a, std::vector<int> b, std::vector<int> c) { return 0.0; }
 std::complex<double> gpu_densmatr_calcExpecPauliStr_sub(Qureg q, std::vector<int> a, std::vector<int> b, std::vector<int> c) { return 0.0; }
 
+// Weighted sum (v4.2.0+)
+template<int NumQuregs>
+void gpu_statevec_setQuregToWeightedSum_sub(Qureg outQureg, std::vector<std::complex<double>> coeffs, std::vector<Qureg> inQuregs) {}
+
 // Init functions
 void gpu_statevec_initDebugState_sub(Qureg q) {}
 void gpu_statevec_initUnnormalisedUniformlyRandomPureStateAmps_sub(Qureg q) {}
@@ -441,6 +445,15 @@ template<bool HasPower, bool UseRealPow>
 std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
     return std::complex<double>(0.0, 0.0);
 }
+
+// Explicit template instantiations for weighted sum (v4.2.0+)
+template void gpu_statevec_setQuregToWeightedSum_sub<0>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
+template void gpu_statevec_setQuregToWeightedSum_sub<1>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
+template void gpu_statevec_setQuregToWeightedSum_sub<2>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
+template void gpu_statevec_setQuregToWeightedSum_sub<3>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
+template void gpu_statevec_setQuregToWeightedSum_sub<4>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
+template void gpu_statevec_setQuregToWeightedSum_sub<5>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
+template void gpu_statevec_setQuregToWeightedSum_sub<-1>(Qureg, std::vector<std::complex<double>>, std::vector<Qureg>);
 
 // Explicit template instantiations for SWAP operations
 template void gpu_statevec_anyCtrlSwap_subA<0>(Qureg, std::vector<int>, std::vector<int>, int, int);

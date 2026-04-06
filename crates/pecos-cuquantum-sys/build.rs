@@ -16,7 +16,7 @@ fn main() {
         Some(path) => path,
         None => {
             log::info!("cuQuantum not found. Generating stub bindings.");
-            log::info!("To use cuQuantum, install it via: pecos install cuquantum");
+            log::info!("To install cuQuantum, run: pecos setup");
             generate_stub_bindings();
             return;
         }
@@ -54,7 +54,7 @@ fn main() {
             println!("cargo:cutensor_lib_dir={}", cutensor_lib.display());
         }
     } else {
-        log::info!("cuTensor not found. Install via: pecos install cuquantum");
+        log::info!("cuTensor not found. Run: pecos setup");
     }
 
     // Emit CUDA lib dir metadata (for rpath hints in downstream crates)

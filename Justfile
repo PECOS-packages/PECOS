@@ -61,11 +61,15 @@ doctor:
     fail() { echo "  [!!] $1: $2"; PROBLEMS=$((PROBLEMS + 1)); }
 
     echo "LLVM 14:"
-    if [ -d "$HOME/.pecos/deps/llvm/bin" ]; then
-        VERSION=$("$HOME/.pecos/deps/llvm/bin/llvm-config" --version 2>/dev/null || echo "unknown")
-        ok "installed" "$VERSION at $HOME/.pecos/deps/llvm"
+    LLVM_DIR=""
+    for d in "$HOME/.pecos/deps/llvm-14" "$HOME/.pecos/deps/llvm"; do
+        [ -d "$d/bin" ] && LLVM_DIR="$d" && break
+    done
+    if [ -n "$LLVM_DIR" ]; then
+        VERSION=$("$LLVM_DIR/bin/llvm-config" --version 2>/dev/null || echo "unknown")
+        ok "installed" "$VERSION at $LLVM_DIR"
     else
-        fail "installed" "not found (run: pecos install llvm)"
+        fail "installed" "not found (run: pecos setup)"
     fi
     if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_140_PREFIX" .cargo/config.toml 2>/dev/null; then
         ok ".cargo/config.toml" "LLVM_SYS_140_PREFIX configured"
@@ -124,16 +128,8 @@ build profile="debug": check-cli setup-quiet sync-deps build-selene
     #!/usr/bin/env bash
     set -euo pipefail
     {{pecos}} python build --profile {{profile}}
-    if command -v julia >/dev/null 2>&1; then
-        just julia-build {{profile}}
-    else
-        echo "Skipping Julia build (julia not found)"
-    fi
-    if command -v go >/dev/null 2>&1; then
-        just go-build {{profile}}
-    else
-        echo "Skipping Go build (go not found)"
-    fi
+    command -v julia >/dev/null 2>&1 && just julia-build {{profile}} || true
+    command -v go >/dev/null 2>&1 && just go-build {{profile}} || true
 
 # Build PECOS without dependency setup or sync (profile: debug, release, native)
 [group('build')]

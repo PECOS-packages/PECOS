@@ -150,15 +150,28 @@ jobs:
         "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-        # Add LLVM bin to PATH and update .cargo/config.toml with LLVM path
+        # Add LLVM bin to PATH
         $llvmBinDir = Join-Path -Path $env:PECOS_LLVM -ChildPath "bin"
         if (Test-Path $llvmBinDir) {
           "$llvmBinDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         }
-        $escapedLLVMPath = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
-        $configPath = ".cargo\config.toml"
-        $existing = Get-Content $configPath -Raw
-        "$existing`n`n[env]`nLLVM_SYS_140_PREFIX = `"$escapedLLVMPath`"" | Out-File -FilePath $configPath -Encoding UTF8
+
+        # Rewrite .cargo/config.toml with both linker and LLVM config
+        # (pecos install llvm may have already written this, so overwrite cleanly)
+        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsPath = & $vsWhere -latest -property installationPath
+        $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
+                    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
+                    Select-Object -First 1 -ExpandProperty FullName
+        $escapedLinker = $linkPath.Replace('\', '/')
+        $escapedLLVM = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
+        @"
+        [target.x86_64-pc-windows-msvc]
+        linker = "$escapedLinker"
+
+        [env]
+        LLVM_SYS_140_PREFIX = { value = "$escapedLLVM", force = true }
+        "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
 
     # Now install CLI (LLVM env is set, inkwell can find it)
     - name: Install PECOS CLI

@@ -11,36 +11,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
     println!("cargo::rustc-check-cfg=cfg(cuquantum_stub)");
 
-    // Find cuQuantum installation
+    // Find cuQuantum installation (no auto-install -- use `pecos install cuquantum`)
     let cuquantum_path = match pecos_build::cuquantum::find_cuquantum() {
         Some(path) => path,
         None => {
-            // If CUDA is available, try auto-installing cuQuantum
-            if pecos_build::cuda::find_cuda().is_some() {
-                match pecos_build::cuquantum::ensure_cuquantum() {
-                    Ok(path) => {
-                        println!(
-                            "cargo:warning=Auto-installed cuQuantum to: {}",
-                            path.display()
-                        );
-                        path
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to auto-install cuQuantum: {e}");
-                        generate_stub_bindings();
-                        return;
-                    }
-                }
-            } else {
-                log::info!("cuQuantum not found. Generating stub bindings.");
-                log::info!("To use cuQuantum, either:");
-                log::info!("  1. Set CUQUANTUM_ROOT environment variable");
-                log::info!("  2. Install cuQuantum via: pecos install cuquantum");
-                log::info!("  3. Install cuQuantum system-wide");
-
-                generate_stub_bindings();
-                return;
-            }
+            log::info!("cuQuantum not found. Generating stub bindings.");
+            log::info!("To use cuQuantum, install it via: pecos install cuquantum");
+            generate_stub_bindings();
+            return;
         }
     };
 
@@ -69,18 +47,14 @@ fn main() {
     println!("cargo:cuquantum_lib_dir={}", lib_dir.display());
 
     // cuTensor is required by cuTensorNet at runtime.
-    // Find or install it to ~/.pecos/deps/cutensor-<version>/
-    match pecos_build::cutensor::ensure_cutensor() {
-        Ok(cutensor_path) => {
-            if let Some(cutensor_lib) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
-                log::info!("Using cuTensor from: {}", cutensor_path.display());
-                println!("cargo:cutensor_lib_dir={}", cutensor_lib.display());
-            }
+    // It's found by the runtime loader (not linked at build time).
+    if let Some(cutensor_path) = pecos_build::cutensor::find_cutensor() {
+        if let Some(cutensor_lib) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
+            log::info!("Using cuTensor from: {}", cutensor_path.display());
+            println!("cargo:cutensor_lib_dir={}", cutensor_lib.display());
         }
-        Err(e) => {
-            log::warn!("cuTensor not found: {e}");
-            log::warn!("cuTensorNet may fail to load at runtime without libcutensor.");
-        }
+    } else {
+        log::info!("cuTensor not found. Install via: pecos install cuquantum");
     }
 
     // Emit CUDA lib dir metadata (for rpath hints in downstream crates)

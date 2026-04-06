@@ -12,13 +12,13 @@ use pecos_simulators::CliffordGateable;
 #[test]
 fn test_concurrent_gpu_stab_creation_and_destruction() {
     // Create and destroy many GpuStab instances in parallel threads
-    let handles: Vec<_> = (0..8)
+    let handles: Vec<_> = (0u64..8)
         .map(|i| {
             thread::spawn(move || {
                 // Create a small simulator, run a simple circuit, drop it.
                 // Each thread gets its own device.
                 for _ in 0..5 {
-                    let sim = DefaultGpuStab::with_seed(4, i as u64);
+                    let sim = DefaultGpuStab::with_seed(4, i);
                     if let Ok(mut sim) = sim {
                         sim.h(&[QubitId(0)]);
                         sim.cx(&[(QubitId(0), QubitId(1))]);

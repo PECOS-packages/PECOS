@@ -540,7 +540,7 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
                     b.iter(|| {
                         sim.reset();
                         benchmark_circuit(&mut sim, nq, nl);
-                        black_box(())
+                        black_box(());
                     });
                 },
             );

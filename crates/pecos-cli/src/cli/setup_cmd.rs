@@ -105,7 +105,11 @@ fn check_legacy_deps(mode: PromptMode) -> Result<()> {
         println!("  {} -> {}", dep.old.display(), dep.new.display());
     }
 
-    if confirm("Migrate to versioned paths under ~/.pecos/deps/?", true, mode) {
+    if confirm(
+        "Migrate to versioned paths under ~/.pecos/deps/?",
+        true,
+        mode,
+    ) {
         for dep in &legacy {
             print!("  Moving {}...", dep.name);
             pecos_build::home::migrate_legacy_dep(dep)?;

@@ -279,10 +279,7 @@ pub fn check_consistency(workspace_root: &Path) -> Result<Vec<DepMismatch>> {
         if !manifest_path.exists() {
             continue;
         }
-        let crate_name = entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
+        let crate_name = entry.file_name().to_string_lossy().to_string();
         let manifest = Manifest::load(&manifest_path)?;
         for (dep_name, dep_def) in manifest.dependencies {
             all_deps
@@ -304,7 +301,12 @@ pub fn check_consistency(workspace_root: &Path) -> Result<Vec<DepMismatch>> {
             .iter()
             .map(|(c, d)| (c.clone(), d.version.clone()))
             .collect();
-        if versions.values().collect::<std::collections::HashSet<_>>().len() > 1 {
+        if versions
+            .values()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1
+        {
             mismatches.push(DepMismatch {
                 dep_name: dep_name.clone(),
                 field: "version".to_string(),
@@ -317,7 +319,12 @@ pub fn check_consistency(workspace_root: &Path) -> Result<Vec<DepMismatch>> {
             .iter()
             .map(|(c, d)| (c.clone(), d.url.clone().unwrap_or_default()))
             .collect();
-        if urls.values().collect::<std::collections::HashSet<_>>().len() > 1 {
+        if urls
+            .values()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1
+        {
             mismatches.push(DepMismatch {
                 dep_name: dep_name.clone(),
                 field: "url".to_string(),
@@ -330,7 +337,12 @@ pub fn check_consistency(workspace_root: &Path) -> Result<Vec<DepMismatch>> {
             .iter()
             .map(|(c, d)| (c.clone(), d.sha256.clone().unwrap_or_default()))
             .collect();
-        if shas.values().collect::<std::collections::HashSet<_>>().len() > 1 {
+        if shas
+            .values()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1
+        {
             mismatches.push(DepMismatch {
                 dep_name: dep_name.clone(),
                 field: "sha256".to_string(),
@@ -465,6 +477,10 @@ sha256 = "bbb"
 
         let mismatches = check_consistency(tmp.path()).unwrap();
         assert!(!mismatches.is_empty());
-        assert!(mismatches.iter().any(|m| m.dep_name == "stim" && m.field == "version"));
+        assert!(
+            mismatches
+                .iter()
+                .any(|m| m.dep_name == "stim" && m.field == "version")
+        );
     }
 }

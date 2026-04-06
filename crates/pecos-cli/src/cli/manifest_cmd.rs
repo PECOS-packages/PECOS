@@ -187,8 +187,10 @@ fn run_verify(deps_filter: Option<&str>) -> Result<()> {
 
 fn find_workspace_root() -> Option<PathBuf> {
     // Try CARGO_MANIFEST_DIR first, then current directory
-    let start = std::env::var("CARGO_MANIFEST_DIR")
-        .map_or_else(|_| std::env::current_dir().unwrap_or_default(), PathBuf::from);
+    let start = std::env::var("CARGO_MANIFEST_DIR").map_or_else(
+        |_| std::env::current_dir().unwrap_or_default(),
+        PathBuf::from,
+    );
 
     let mut path = start.as_path();
     loop {

@@ -397,10 +397,10 @@ fn patch_quest_for_cuda13(quest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Generate config.h from config.h.in template (QuEST v4.2.0+)
-/// or quest.h from quest.h.in (QuEST v4.1.x).
+/// Generate config.h from config.h.in template (`QuEST` v4.2.0+)
+/// or quest.h from quest.h.in (`QuEST` v4.1.x).
 ///
-/// The main library is ALWAYS CPU-only (COMPILE_CUDA=0).
+/// The main library is ALWAYS CPU-only (`COMPILE_CUDA=0`).
 /// GPU support is provided via a separate shared library loaded at runtime.
 fn generate_quest_header(quest_dir: &Path) -> Result<()> {
     // v4.2.0+: config.h.in

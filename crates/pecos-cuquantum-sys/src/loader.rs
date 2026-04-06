@@ -9,9 +9,9 @@
 
 use crate::*;
 use libloading::Library;
+use libloading::Symbol;
 #[cfg(unix)]
 use libloading::os::unix::Library as UnixLibrary;
-use libloading::Symbol;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -330,7 +330,10 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
 
     // Load CUDA runtime first (transitive dependency for everything else).
     // Try versioned soname first -- unversioned symlink may not exist on runtime-only installs.
-    let cuda_rt = try_load_lib(&["libcudart.so.13", "libcudart.so.12", "libcudart.so"], &cuda_paths)?;
+    let cuda_rt = try_load_lib(
+        &["libcudart.so.13", "libcudart.so.12", "libcudart.so"],
+        &cuda_paths,
+    )?;
 
     // Load cuTensor before cuTensorNet (transitive dependency).
     // The handle must stay alive in CuQuantumBackend so dlclose doesn't

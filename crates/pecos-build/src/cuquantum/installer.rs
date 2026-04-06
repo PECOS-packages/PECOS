@@ -8,10 +8,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use super::{
-    CUQUANTUM_VERSION, config, get_pecos_cuquantum_dir,
-    is_valid_cuquantum_installation,
-};
+use super::{CUQUANTUM_VERSION, config, get_pecos_cuquantum_dir, is_valid_cuquantum_installation};
 
 /// cuQuantum download information
 struct CuQuantumDownload {
@@ -99,8 +96,7 @@ fn get_download_info() -> Result<CuQuantumDownload> {
 /// - Download or extraction fails
 /// - Installation verification fails
 pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
-    let cuquantum_dir =
-        crate::home::get_versioned_dep_path("cuquantum", super::CUQUANTUM_VERSION)?;
+    let cuquantum_dir = crate::home::get_versioned_dep_path("cuquantum", super::CUQUANTUM_VERSION)?;
 
     // Check if already installed
     if !force && cuquantum_dir.exists() && is_valid_cuquantum_installation(&cuquantum_dir) {

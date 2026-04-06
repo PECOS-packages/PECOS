@@ -42,13 +42,14 @@ pub fn run() -> Result<()> {
 
     // Update .cargo/config.toml to point to the new paths
     let llvm_dir = pecos_build::home::get_llvm_dir_path()?;
-    if llvm_dir.exists() {
-        if let Ok(project_root) = find_project_root() {
-            if pecos_build::llvm::config::write_cargo_config(&project_root, &llvm_dir, true).is_ok()
-            {
-                println!("Updated .cargo/config.toml with LLVM path: {}", llvm_dir.display());
-            }
-        }
+    if llvm_dir.exists()
+        && let Ok(project_root) = find_project_root()
+        && pecos_build::llvm::config::write_cargo_config(&project_root, &llvm_dir, true).is_ok()
+    {
+        println!(
+            "Updated .cargo/config.toml with LLVM path: {}",
+            llvm_dir.display()
+        );
     }
 
     println!();

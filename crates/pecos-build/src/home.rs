@@ -372,14 +372,14 @@ pub fn find_legacy_deps() -> Result<Vec<LegacyDep>> {
         }
 
         // Check top-level legacy path (e.g. ~/.pecos/llvm/)
-        if let Ok(top_level) = get_pecos_home_path().map(|h| h.join(&lower)) {
-            if top_level.exists() {
-                found.push(LegacyDep {
-                    name,
-                    old: top_level,
-                    new: versioned,
-                });
-            }
+        if let Ok(top_level) = get_pecos_home_path().map(|h| h.join(&lower))
+            && top_level.exists()
+        {
+            found.push(LegacyDep {
+                name,
+                old: top_level,
+                new: versioned,
+            });
         }
     }
     Ok(found)

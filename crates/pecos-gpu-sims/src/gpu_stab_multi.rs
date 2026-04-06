@@ -1594,7 +1594,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             });
 
             let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            receiver.recv().expect("GPU worker channel closed").expect("GPU buffer mapping failed");
+            receiver
+                .recv()
+                .expect("GPU worker channel closed")
+                .expect("GPU buffer mapping failed");
 
             let data = buffer_slice.get_mapped_range();
             let outcomes: &[u32] = bytemuck::cast_slice(&data);
@@ -1841,7 +1844,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().expect("GPU worker channel closed").expect("GPU buffer mapping failed");
+        receiver
+            .recv()
+            .expect("GPU worker channel closed")
+            .expect("GPU buffer mapping failed");
 
         let data = buffer_slice.get_mapped_range();
         let result = data.to_vec();

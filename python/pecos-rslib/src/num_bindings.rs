@@ -3070,11 +3070,12 @@ fn array(
 
         // Determine if we need to create a new array
         if let Some(td) = target_dtype
-            && td != current_dtype {
-                // Perform dtype conversion using the pure Rust astype() method
-                let converted_array = existing_array.astype(td);
-                return Py::new(py, converted_array);
-            }
+            && td != current_dtype
+        {
+            // Perform dtype conversion using the pure Rust astype() method
+            let converted_array = existing_array.astype(td);
+            return Py::new(py, converted_array);
+        }
 
         // No dtype conversion needed - always create a copy
         let copied_array = existing_array.copy();
@@ -3274,11 +3275,12 @@ fn asarray(
 
         // Determine if we need to create a new array
         if let Some(td) = target_dtype
-            && td != current_dtype {
-                // Perform dtype conversion using the pure Rust astype() method
-                let converted_array = existing_array.astype(td);
-                return Py::new(py, converted_array);
-            }
+            && td != current_dtype
+        {
+            // Perform dtype conversion using the pure Rust astype() method
+            let converted_array = existing_array.astype(td);
+            return Py::new(py, converted_array);
+        }
 
         // No conversion needed - return the same object (no copy!)
         return Ok(obj.extract::<Py<Array>>()?);

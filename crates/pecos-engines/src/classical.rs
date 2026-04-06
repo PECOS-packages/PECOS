@@ -12,12 +12,21 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
 
     /// Generate a `ByteMessage` containing the next batch of quantum commands to execute.
     /// An empty message indicates no more commands are available.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if program processing fails.
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError>;
 
     /// Handles a `ByteMessage` containing measurements from the quantum engine.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if measurement processing fails.
     fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError>;
 
     /// Retrieves the results of the execution process after all measurements are handled.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if result retrieval fails.
     fn get_results(&self) -> Result<Shot, PecosError>;
 
     /// Sets a specific seed for the classical engine.
@@ -27,9 +36,15 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
 
     /// Compiles the classical program into an intermediate representation or directly
     /// into commands that can be executed by the engine.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if compilation fails.
     fn compile(&self) -> Result<(), PecosError>;
 
     /// Resets the state of the classical engine to its initial configuration.
+    ///
+    /// # Errors
+    /// Returns `PecosError` if the reset operation fails.
     fn reset(&mut self) -> Result<(), PecosError> {
         Ok(())
     }

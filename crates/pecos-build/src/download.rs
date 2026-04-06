@@ -140,6 +140,10 @@ fn verify_sha256(data: &[u8], expected: &str) -> Result<String> {
 /// # Errors
 ///
 /// Returns an error if any download fails or a thread panics.
+///
+/// # Panics
+///
+/// Panics if an internal mutex is poisoned (indicates a prior thread panic).
 pub fn download_all_cached(downloads: Vec<DownloadInfo>) -> Result<Vec<(String, Vec<u8>)>> {
     use std::sync::{Arc, Mutex};
     use std::thread;

@@ -5,6 +5,19 @@
 
 use pecos_build::Result;
 use pecos_build::home::{find_legacy_deps, migrate_legacy_dep};
+use std::path::PathBuf;
+
+fn find_project_root() -> Result<PathBuf> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        if dir.join("Cargo.toml").exists() && dir.join(".cargo").exists() {
+            return Ok(dir);
+        }
+        if !dir.pop() {
+            return Ok(std::env::current_dir()?);
+        }
+    }
+}
 
 /// Run the migrate command.
 pub fn run() -> Result<()> {
@@ -27,10 +40,19 @@ pub fn run() -> Result<()> {
         println!(" ... done");
     }
 
+    // Update .cargo/config.toml to point to the new paths
+    let llvm_dir = pecos_build::home::get_llvm_dir_path()?;
+    if llvm_dir.exists() {
+        if let Ok(project_root) = find_project_root() {
+            if pecos_build::llvm::config::write_cargo_config(&project_root, &llvm_dir, true).is_ok()
+            {
+                println!("Updated .cargo/config.toml with LLVM path: {}", llvm_dir.display());
+            }
+        }
+    }
+
     println!();
-    println!(
-        "Migration complete. You may want to run `pecos llvm configure` to update .cargo/config.toml."
-    );
+    println!("Migration complete.");
 
     Ok(())
 }

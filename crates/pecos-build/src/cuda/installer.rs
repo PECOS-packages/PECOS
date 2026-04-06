@@ -69,7 +69,7 @@ fn get_download_info() -> Result<CudaDownload> {
 /// - Download or extraction fails
 /// - Installation verification fails
 pub fn install_cuda(force: bool) -> Result<PathBuf> {
-    let cuda_dir = get_pecos_cuda_dir()?;
+    let cuda_dir = crate::home::get_versioned_dep_path("cuda", CUDA_VERSION)?;
 
     // Check if already installed
     if !force && cuda_dir.exists() && is_valid_cuda_installation(&cuda_dir) {

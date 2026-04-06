@@ -8,7 +8,10 @@
 //! On other platforms, `try_load()` will return `Err`.
 
 use crate::*;
-use libloading::{Library, Symbol};
+use libloading::Library;
+#[cfg(unix)]
+use libloading::os::unix::Library as UnixLibrary;
+use libloading::Symbol;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -195,7 +198,19 @@ fn cuda_search_paths() -> Vec<PathBuf> {
         }
     }
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".pecos/deps/cuda/lib64"));
+        // Check versioned dirs (cuda-12.6.3, cuda-12, etc.) then legacy unversioned
+        let deps = home.join(".pecos/deps");
+        if let Ok(entries) = std::fs::read_dir(&deps) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str()
+                    && name.starts_with("cuda-")
+                {
+                    paths.push(entry.path().join("lib64"));
+                    paths.push(entry.path().join("lib"));
+                }
+            }
+        }
+        paths.push(deps.join("cuda").join("lib64"));
     }
     paths.push(PathBuf::from("/usr/local/cuda/lib64"));
     paths
@@ -210,8 +225,21 @@ fn cuquantum_search_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(&p).join("lib"));
     }
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".pecos/deps/cuquantum/lib64"));
-        paths.push(home.join(".pecos/deps/cuquantum/lib"));
+        let deps = home.join(".pecos/deps");
+        // Check versioned dirs (cuquantum-25.11.1.11, etc.) then legacy unversioned
+        if let Ok(entries) = std::fs::read_dir(&deps) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str()
+                    && name.starts_with("cuquantum-")
+                {
+                    paths.push(entry.path().join("lib64"));
+                    paths.push(entry.path().join("lib"));
+                }
+            }
+        }
+        paths.push(deps.join("cuquantum").join("lib64"));
+        paths.push(deps.join("cuquantum").join("lib"));
+        // Legacy top-level path
         paths.push(home.join(".pecos/cuquantum/lib64"));
         paths.push(home.join(".pecos/cuquantum/lib"));
     }
@@ -223,11 +251,39 @@ fn cuquantum_search_paths() -> Vec<PathBuf> {
 fn cutensor_search_paths() -> Vec<PathBuf> {
     let mut paths = vec![];
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".pecos/deps/cutensor/lib"));
-        paths.push(home.join(".pecos/deps/cutensor/lib64"));
+        let deps = home.join(".pecos/deps");
+        if let Ok(entries) = std::fs::read_dir(&deps) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str()
+                    && name.starts_with("cutensor-")
+                {
+                    paths.push(entry.path().join("lib"));
+                    paths.push(entry.path().join("lib64"));
+                }
+            }
+        }
+        paths.push(deps.join("cutensor").join("lib"));
+        paths.push(deps.join("cutensor").join("lib64"));
     }
     paths.push(PathBuf::from("/usr/local/cutensor/lib"));
     paths
+}
+
+/// Load a shared library with RTLD_GLOBAL so its symbols are visible to subsequent loads.
+/// This is necessary because cuQuantum libs have transitive dependencies (e.g.
+/// libcutensornet depends on libcutensor) that need to resolve via the global symbol table.
+#[cfg(unix)]
+fn load_global<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading::Error> {
+    // RTLD_NOW: resolve all symbols immediately
+    // RTLD_GLOBAL: make symbols available for subsequent dlopen calls
+    let flags = libc::RTLD_NOW | libc::RTLD_GLOBAL;
+    let lib = unsafe { UnixLibrary::open(Some(path.as_ref()), flags) }?;
+    Ok(lib.into())
+}
+
+#[cfg(not(unix))]
+fn load_global<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading::Error> {
+    unsafe { Library::new(path.as_ref()) }
 }
 
 /// Try loading a library by trying each name variant in each search directory.
@@ -240,7 +296,7 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
         for dir in search_dirs {
             let path = dir.join(name);
             log::debug!("Trying to load {name} from: {}", path.display());
-            match unsafe { Library::new(&path) } {
+            match load_global(&path) {
                 Ok(lib) => {
                     log::info!("Loaded {name} from: {}", path.display());
                     return Ok(lib);
@@ -250,7 +306,7 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
         }
         // Fall back to bare name (system linker search)
         log::debug!("Trying system path for {name}");
-        if let Ok(lib) = unsafe { Library::new(*name) } {
+        if let Ok(lib) = load_global(*name) {
             log::info!("Loaded {name} from system path");
             return Ok(lib);
         }
@@ -274,7 +330,7 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
 
     // Load CUDA runtime first (transitive dependency for everything else).
     // Try versioned soname first -- unversioned symlink may not exist on runtime-only installs.
-    let cuda_rt = try_load_lib(&["libcudart.so.12", "libcudart.so"], &cuda_paths)?;
+    let cuda_rt = try_load_lib(&["libcudart.so.13", "libcudart.so.12", "libcudart.so"], &cuda_paths)?;
 
     // Load cuTensor before cuTensorNet (transitive dependency).
     // The handle must stay alive in CuQuantumBackend so dlclose doesn't

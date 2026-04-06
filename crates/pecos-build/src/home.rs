@@ -4,14 +4,14 @@
 //!
 //! ```text
 //! ~/.pecos/
-//! ├── cache/      # Downloaded archives (tar.gz, 7z, etc.)
-//! ├── deps/       # All dependencies (LLVM, CUDA, cuQuantum, C++ libs, etc.)
-//! │   ├── llvm/
-//! │   ├── cuda/
-//! │   ├── cuquantum/
-//! │   ├── quest-v4.1.0/
+//! ├── cache/          # Downloaded archives (tar.gz, 7z, etc.)
+//! ├── deps/           # All dependencies, versioned by name
+//! │   ├── llvm-14/
+//! │   ├── cuda-12.6.3/
+//! │   ├── quest-v4.2.0/
+//! │   ├── stim-bd60b73525fd/
 //! │   └── ...
-//! └── tmp/        # Temporary files during downloads/extraction
+//! └── tmp/            # Temporary files during downloads/extraction
 //! ```
 //!
 //! # Legacy paths
@@ -116,20 +116,71 @@ pub fn get_deps_dir() -> Result<PathBuf> {
     Ok(deps_dir)
 }
 
-/// Get the LLVM installation directory path (without creating it)
+/// Get a versioned dependency directory path (without creating it).
 ///
-/// Returns `$PECOS_HOME/deps/llvm/`
+/// Returns `$PECOS_HOME/deps/{name}-{version}/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path.
+pub fn get_versioned_dep_path(name: &str, version: &str) -> Result<PathBuf> {
+    Ok(get_deps_dir_path()?.join(format!("{name}-{version}")))
+}
+
+/// Get a versioned dependency directory, creating it if needed.
+///
+/// # Errors
+///
+/// Returns an error if unable to determine or create the directory.
+pub fn get_versioned_dep_dir(name: &str, version: &str) -> Result<PathBuf> {
+    let dir = get_versioned_dep_path(name, version)?;
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Resolve a dependency directory, checking versioned path first then legacy unversioned.
+///
+/// For new installs, returns the versioned path. For existing installs, returns
+/// whichever path exists (versioned preferred over legacy).
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path.
+pub fn resolve_dep_path(name: &str, version: &str) -> Result<PathBuf> {
+    let versioned = get_versioned_dep_path(name, version)?;
+    if versioned.exists() {
+        return Ok(versioned);
+    }
+    let legacy = get_deps_dir_path()?.join(name);
+    if legacy.exists() {
+        // Auto-migrate: rename legacy unversioned dir to versioned
+        if fs::rename(&legacy, &versioned).is_ok() {
+            log::info!(
+                "Migrated {name} from {} to {}",
+                legacy.display(),
+                versioned.display()
+            );
+            return Ok(versioned);
+        }
+        // Rename failed (permissions, cross-device, etc.) -- use legacy
+        return Ok(legacy);
+    }
+    Ok(versioned)
+}
+
+/// LLVM major version used by PECOS
+pub const LLVM_VERSION: &str = "14";
+
+/// Get the LLVM installation directory path (without creating it)
 ///
 /// # Errors
 ///
 /// Returns an error if unable to determine the path
 pub fn get_llvm_dir_path() -> Result<PathBuf> {
-    Ok(get_deps_dir_path()?.join("llvm"))
+    resolve_dep_path("llvm", LLVM_VERSION)
 }
 
 /// Get the LLVM installation directory (creates if needed)
-///
-/// Returns `$PECOS_HOME/deps/llvm/`
 ///
 /// # Errors
 ///
@@ -142,18 +193,14 @@ pub fn get_llvm_dir() -> Result<PathBuf> {
 
 /// Get the CUDA installation directory path (without creating it)
 ///
-/// Returns `$PECOS_HOME/deps/cuda/`
-///
 /// # Errors
 ///
 /// Returns an error if unable to determine the path
 pub fn get_cuda_dir_path() -> Result<PathBuf> {
-    Ok(get_deps_dir_path()?.join("cuda"))
+    resolve_dep_path("cuda", crate::cuda::CUDA_VERSION)
 }
 
 /// Get the CUDA installation directory (creates if needed)
-///
-/// Returns `$PECOS_HOME/deps/cuda/`
 ///
 /// # Errors
 ///
@@ -172,7 +219,7 @@ pub fn get_cuda_dir() -> Result<PathBuf> {
 ///
 /// Returns an error if unable to determine the path
 pub fn get_cuquantum_dir_path() -> Result<PathBuf> {
-    Ok(get_deps_dir_path()?.join("cuquantum"))
+    resolve_dep_path("cuquantum", crate::cuquantum::CUQUANTUM_VERSION)
 }
 
 /// Get the cuQuantum installation directory (creates if needed)

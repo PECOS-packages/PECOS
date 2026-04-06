@@ -19,7 +19,7 @@
 //! ```no_run
 //! # use pecos_build::{Manifest, ensure_dep_ready};
 //! # fn main() -> pecos_build::Result<()> {
-//! let manifest = Manifest::find_and_load_validated()?;
+//! let manifest = Manifest::find_and_load()?;
 //! let qulacs_path = ensure_dep_ready("qulacs", &manifest)?;
 //! # Ok(())
 //! # }
@@ -47,7 +47,7 @@ pub struct DependencyInfo {
 /// List all available dependencies from the manifest
 #[must_use]
 pub fn list_dependencies() -> Vec<DependencyInfo> {
-    let manifest = Manifest::find_and_load().unwrap_or_else(|_| Manifest::default_pecos());
+    let manifest = Manifest::find_or_default();
 
     manifest
         .dependencies
@@ -97,7 +97,7 @@ pub fn list_dependencies() -> Vec<DependencyInfo> {
 /// ```no_run
 /// # use pecos_build::{Manifest, ensure_dep_ready};
 /// # fn main() -> pecos_build::Result<()> {
-/// let manifest = Manifest::find_and_load_validated()?;
+/// let manifest = Manifest::find_and_load()?;
 /// let qulacs_path = ensure_dep_ready("qulacs", &manifest)?;
 /// let eigen_path = ensure_dep_ready("eigen", &manifest)?;
 /// # Ok(())

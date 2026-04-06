@@ -8,6 +8,25 @@ use std::process::Command;
 /// FFI crates that should be excluded from workspace-wide cargo commands
 const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-julia-ffi", "pecos-go-ffi"];
 
+/// Warn if shared C++ dependencies differ across per-crate pecos.toml files.
+/// This is informational -- different crates may legitimately pin different versions.
+fn check_dep_consistency() {
+    let Ok(workspace_root) = std::env::current_dir() else {
+        return;
+    };
+    let Ok(mismatches) = pecos_build::manifest::check_consistency(&workspace_root) else {
+        return;
+    };
+    if mismatches.is_empty() {
+        return;
+    }
+    eprintln!("Note: some C++ dependencies differ across per-crate pecos.toml files:");
+    for m in &mismatches {
+        eprintln!("  {} ({}): {:?}", m.dep_name, m.field, m.values);
+    }
+    eprintln!();
+}
+
 #[derive(Debug)]
 enum GpuProbeResult {
     Available,
@@ -343,6 +362,9 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 
 /// Run cargo test with GPU-aware feature handling
 fn run_test(release: bool, include_ffi: bool) -> Result<()> {
+    // Warn about any C++ dependency version differences across crates
+    check_dep_consistency();
+
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
     let release_flag = if release { "--release" } else { "" };

@@ -31,7 +31,7 @@ All dependencies managed under `~/.pecos/`:
 // In build.rs
 use pecos_build::{ensure_dep_ready, Manifest, find_tool};
 
-let manifest = Manifest::find_and_load_validated()?;
+let manifest = Manifest::find_and_load()?;
 let quest_path = ensure_dep_ready("quest", &manifest)?;
 let llvm_as = find_tool("llvm-as");
 ```

@@ -178,23 +178,15 @@ pub enum LlvmCommands {
 
 #[derive(Subcommand, Clone)]
 pub enum DepsCommands {
-    /// Initialize a new pecos.toml manifest
-    Init {
-        #[arg(long)]
-        force: bool,
-    },
+    /// Check consistency of shared dependencies across per-crate pecos.toml files
+    Check,
     /// Show current manifest status
     Status,
-    /// Sync crate manifests from workspace manifest
-    Sync {
-        #[arg(long)]
-        dry_run: bool,
-    },
     /// Verify dependency checksums
     Verify {
         #[arg(short, long)]
         deps: Option<String>,
     },
-    /// List available dependencies
+    /// List available dependencies (merged from all per-crate manifests)
     List,
 }

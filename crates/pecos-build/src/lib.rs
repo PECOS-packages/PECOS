@@ -33,7 +33,7 @@
 //! use pecos_build::{Manifest, ensure_dep_ready};
 //!
 //! // Load manifest
-//! let manifest = Manifest::find_and_load_validated()
+//! let manifest = Manifest::find_and_load()
 //!     .expect("pecos.toml not found");
 //!
 //! // Ensure dependency is downloaded and extracted to ~/.pecos/deps/

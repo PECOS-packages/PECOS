@@ -2,6 +2,7 @@
 
 use pecos_build::Result;
 use pecos_build::errors::Error;
+use pecos_build::prompt::{PromptMode, confirm};
 
 /// Known installable targets
 const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum"];
@@ -34,13 +35,32 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
 
     let total = targets.len();
     for (i, target) in targets.iter().enumerate() {
-        if !force && is_available(target) {
-            println!(
-                "[{}/{}] {target} is already available, skipping (use --force to install locally)",
-                i + 1,
-                total,
-            );
-            // Auto-configure LLVM if installed but not configured
+        let existing = find_existing(target);
+        let is_local = existing
+            .as_ref()
+            .is_some_and(|p| p.to_string_lossy().contains(".pecos/deps/"));
+
+        if !force && existing.is_some() {
+            let path = existing.as_ref().unwrap();
+            if is_local {
+                println!(
+                    "[{}/{}] {target}: already installed at {}",
+                    i + 1, total, path.display()
+                );
+            } else {
+                println!(
+                    "[{}/{}] {target}: found system install at {}",
+                    i + 1, total, path.display()
+                );
+                if confirm(
+                    "  Install a PECOS-managed copy to ~/.pecos/deps/ instead?",
+                    false,
+                    PromptMode::Interactive,
+                ) {
+                    println!();
+                    install_target(target, true, no_configure)?;
+                }
+            }
             if *target == "llvm" {
                 ensure_llvm_configured(no_configure);
             }
@@ -56,13 +76,13 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
     Ok(())
 }
 
-/// Check if a target is already available on the system
-fn is_available(target: &str) -> bool {
+/// Find where a target is currently installed (if at all)
+fn find_existing(target: &str) -> Option<std::path::PathBuf> {
     match target {
-        "cuda" => pecos_build::cuda::find_cuda().is_some(),
-        "llvm" => pecos_build::llvm::find_llvm_14(None).is_some(),
-        "cuquantum" => pecos_build::cuquantum::find_cuquantum().is_some(),
-        _ => false,
+        "cuda" => pecos_build::cuda::find_cuda(),
+        "llvm" => pecos_build::llvm::find_llvm_14(None),
+        "cuquantum" => pecos_build::cuquantum::find_cuquantum(),
+        _ => None,
     }
 }
 

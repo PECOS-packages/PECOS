@@ -331,9 +331,9 @@ use pecos_quantum::PauliSet;
 use pecos_core::pauli::constructors::*;
 
 let mut set = PauliSet::new();
-set.insert(X(0));
-set.insert(Z(1));
-set.insert(X(0));  // duplicate, ignored
+set.insert(&X(0));
+set.insert(&Z(1));
+set.insert(&X(0));  // duplicate, ignored
 
 assert_eq!(set.len(), 2);
 assert!(set.contains(&X(0)));

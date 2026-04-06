@@ -1590,11 +1590,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             let buffer_slice = self.meas_staging_buffer.slice(..);
             let (sender, receiver) = std::sync::mpsc::channel();
             buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                sender.send(result).unwrap();
+                let _ = sender.send(result);
             });
 
             let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            receiver.recv().unwrap().unwrap();
+            receiver.recv().expect("GPU worker channel closed").expect("GPU buffer mapping failed");
 
             let data = buffer_slice.get_mapped_range();
             let outcomes: &[u32] = bytemuck::cast_slice(&data);
@@ -1837,11 +1837,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         let buffer_slice = staging.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().unwrap();
+        receiver.recv().expect("GPU worker channel closed").expect("GPU buffer mapping failed");
 
         let data = buffer_slice.get_mapped_range();
         let result = data.to_vec();

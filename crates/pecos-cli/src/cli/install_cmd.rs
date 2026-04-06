@@ -40,17 +40,20 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
             .as_ref()
             .is_some_and(|p| p.to_string_lossy().contains(".pecos/deps/"));
 
-        if !force && existing.is_some() {
-            let path = existing.as_ref().unwrap();
+        if let Some(path) = existing.as_ref().filter(|_| !force) {
             if is_local {
                 println!(
                     "[{}/{}] {target}: already installed at {}",
-                    i + 1, total, path.display()
+                    i + 1,
+                    total,
+                    path.display()
                 );
             } else {
                 println!(
                     "[{}/{}] {target}: found system install at {}",
-                    i + 1, total, path.display()
+                    i + 1,
+                    total,
+                    path.display()
                 );
                 if confirm(
                     "  Install a PECOS-managed copy to ~/.pecos/deps/ instead?",

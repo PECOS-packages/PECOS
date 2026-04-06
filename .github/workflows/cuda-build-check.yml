@@ -110,7 +110,7 @@ jobs:
           echo "To run GPU tests locally:"
           echo "  1. Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads"
           echo "  2. Install cuQuantum SDK: https://developer.nvidia.com/cuquantum-sdk"
-          echo "  3. Run: cargo test -p pecos-cuquantum --features cuda"
+          echo "  3. Run: cargo test -p pecos-cuquantum"
           echo "  4. Build Python package: maturin develop -m python/pecos-rslib-cuda/Cargo.toml"
           echo ""
           echo "For self-hosted CI runners with GPU support:"

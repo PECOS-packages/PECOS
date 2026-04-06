@@ -75,7 +75,7 @@ jobs:
           - os: ubuntu-latest
             architecture: x86_64
             cibw_archs: x86_64
-            cuda_feature: "--features cuda"
+            cuda_feature: ""
             install_cuda: true
             # GCC Toolset 13 paths for CUDA compatibility
             gcc_path_prefix: "/opt/rh/gcc-toolset-13/root/usr/bin:"
@@ -111,7 +111,7 @@ jobs:
           # Note: Uses specific sub-packages to avoid VS integration bug (see Jimver/cuda-toolkit#382)
           - os: windows-2022
             architecture: x86_64
-            cuda_feature: "--features cuda"
+            cuda_feature: ""
             install_cuda: true
 
     steps:

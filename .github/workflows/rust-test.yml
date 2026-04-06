@@ -236,7 +236,7 @@ jobs:
       - name: Compile tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo test --no-run --workspace --exclude pecos-decoders --exclude pecos-gpu-sims --features llvm,cuda
+          cargo test --no-run --workspace --exclude pecos-decoders --exclude pecos-gpu-sims --features llvm
           cargo test --no-run -p pecos-decoders --all-features
 
       - name: Compile tests (Windows)
@@ -258,7 +258,7 @@ jobs:
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo test --workspace --exclude pecos-decoders --exclude pecos-gpu-sims --features llvm,cuda
+          cargo test --workspace --exclude pecos-decoders --exclude pecos-gpu-sims --features llvm
           cargo test -p pecos-decoders --all-features
 
       - name: Run tests (Windows)

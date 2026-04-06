@@ -20,7 +20,7 @@ pecos rust test               # Run cargo test (CUDA-aware)
 pecos python build            # Build pecos-rslib with maturin
 
 # Dependency installation
-pecos install llvm            # Install LLVM 14 to ~/.pecos/deps/llvm/
+pecos install llvm            # Install LLVM 14 to ~/.pecos/deps/llvm-14/
 pecos install cuda            # Install CUDA Toolkit to ~/.pecos/deps/cuda/
 pecos install cuquantum       # Install cuQuantum SDK to ~/.pecos/deps/cuquantum/
 pecos install --all           # Install all optional dependencies
@@ -102,7 +102,7 @@ pecos install llvm --force
 pecos install llvm --no-configure
 ```
 
-This downloads and installs LLVM 14 to `~/.pecos/deps/llvm/`.
+This downloads and installs LLVM 14 to `~/.pecos/deps/llvm-14/`.
 
 ### Check LLVM Status
 

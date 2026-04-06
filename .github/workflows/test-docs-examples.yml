@@ -51,7 +51,7 @@ jobs:
         id: cache-llvm
         uses: actions/cache@v4
         with:
-          path: ~/.pecos/deps/llvm
+          path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install LLVM ${{ env.LLVM_VERSION }}

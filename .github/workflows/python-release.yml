@@ -187,9 +187,9 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           # Linux configuration - GCC Toolset and CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
+            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:/usr/local/cuda-12.6/bin:$PATH
             LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             CUDA_PATH=/usr/local/cuda-12.6
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
@@ -217,8 +217,8 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
           # macOS configuration
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             MACOSX_DEPLOYMENT_TARGET=13.2
           CIBW_BEFORE_ALL_MACOS: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
@@ -231,21 +231,18 @@ jobs:
             printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
             chmod +x $HOME/.pecos/bin/codesign
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-14/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # Windows configuration - CUDA via Jimver/cuda-toolkit (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin;$PATH"
-            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;$PATH"
+            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
             rustup update &&
-            echo "=== Running pecos install llvm ===" &&
             cargo run --release -p pecos-cli -- install llvm --force &&
             echo "=== Checking LLVM installation ===" &&
-            (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm" && echo "LLVM directory exists" && ls -la "C:\\Users\\runneradmin\\.pecos\\deps\\llvm" && (ls -la "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" || echo "bin directory not found")) || (echo "ERROR: LLVM directory not found!" && exit 1) &&
-            echo "=== Verifying LLVM_SYS_140_PREFIX ===" &&
-            echo "LLVM_SYS_140_PREFIX will be set to: C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
+            (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14" && echo "LLVM directory exists") || (echo "ERROR: LLVM directory not found!" && exit 1)
           # Install delvewheel and patch it to ignore ext-ms-win-* API sets
           # (delvewheel ignores api-ms-win-* but not ext-ms-win-* which are also Windows API sets)
           CIBW_BEFORE_BUILD_WINDOWS: >
@@ -276,8 +273,8 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -287,12 +284,12 @@ jobs:
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             MACOSX_DEPLOYMENT_TARGET=13.2
           CIBW_BEFORE_ALL_MACOS: |
             source $HOME/.cargo/env 2>/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env; }
-            if [ ! -d "$HOME/.pecos/deps/llvm/bin" ]; then
+            if [ ! -d "$HOME/.pecos/deps/llvm-14/bin" ]; then
               rustup update
               cargo run --release -p pecos-cli -- install llvm --force
             else
@@ -302,19 +299,19 @@ jobs:
             printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
             chmod +x $HOME/.pecos/bin/codesign
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-14/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin;$PATH"
-            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm"
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;$PATH"
+            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
           CIBW_BEFORE_ALL_WINDOWS: >
             rustup update &&
-            if not exist "C:\Users\runneradmin\.pecos\deps\llvm\bin" (cargo run --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
+            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-14\bin" (cargo run --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib-llvm wheels

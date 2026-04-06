@@ -27,7 +27,7 @@ fn validate_llvm() {
         eprintln!("  1. Fix the path to point to a valid LLVM 14 installation");
         eprintln!("  2. Unset it and configure LLVM:");
         eprintln!("     unset LLVM_SYS_140_PREFIX");
-        eprintln!("     cargo run -p pecos -- llvm configure");
+        eprintln!("     pecos llvm configure");
         eprintln!("═══════════════════════════════════════════════════════════════\n");
         panic!("Invalid LLVM_SYS_140_PREFIX. See error message above.");
     }
@@ -45,12 +45,12 @@ fn print_llvm_not_found_error_extended() {
     eprintln!("The pecos-qir crate requires LLVM 14 for QIR generation.");
     eprintln!("Choose one of these installation methods:");
     eprintln!();
-    eprintln!("Option 1: Use pecos-llvm installer (recommended)");
-    eprintln!("  cargo run -p pecos -- install llvm");
+    eprintln!("Option 1: Use pecos setup (recommended)");
+    eprintln!("  pecos setup");
     eprintln!("  cargo build");
     eprintln!();
-    eprintln!("  The installer automatically configures PECOS.");
-    eprintln!("  (Downloads LLVM 14.0.6 to ~/.pecos/deps/llvm/ - ~400MB, ~5 minutes)");
+    eprintln!("  This detects and installs all missing dependencies.");
+    eprintln!("  (LLVM 14: ~400 MB download, installs to ~/.pecos/deps/llvm-14/)");
     eprintln!();
 
     #[cfg(target_os = "macos")]
@@ -60,7 +60,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!("  brew install llvm@14");
         eprintln!();
         eprintln!("  # Configure PECOS to use it");
-        eprintln!("  cargo run -p pecos -- llvm configure");
+        eprintln!("  pecos llvm configure");
         eprintln!();
         eprintln!("  # Build PECOS");
         eprintln!("  cargo build");
@@ -85,7 +85,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!("    yay -S llvm14");
         eprintln!();
         eprintln!("  Then configure and build:");
-        eprintln!("    cargo run -p pecos -- llvm configure");
+        eprintln!("    pecos llvm configure");
         eprintln!("    cargo build");
         eprintln!();
     }
@@ -103,7 +103,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!();
         eprintln!("  After extracting to C:\\LLVM (or similar):");
         eprintln!("    set LLVM_SYS_140_PREFIX=C:\\LLVM");
-        eprintln!("    cargo run -p pecos -- llvm configure");
+        eprintln!("    pecos llvm configure");
         eprintln!("    cargo build");
         eprintln!();
     }

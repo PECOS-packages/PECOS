@@ -36,12 +36,10 @@
 //!
 //! This crate requires LLVM 14 for QIR (Quantum Intermediate Representation) support.
 //!
-//! If the build fails, just run the commands shown in the error message. Typically:
+//! If the build fails, run:
 //!
 //! ```bash
-//! cargo run -p pecos -- install llvm
-//! export PECOS_LLVM=$(cargo run -p pecos -- llvm find)
-//! export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+//! pecos setup
 //! cargo build
 //! ```
 //!

@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use super::{
-    CUQUANTUM_VERSION, config, get_lib_dir, get_pecos_cuquantum_dir,
+    CUQUANTUM_VERSION, config, get_pecos_cuquantum_dir,
     is_valid_cuquantum_installation,
 };
 
@@ -200,16 +200,6 @@ pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
             println!("You may need to set the environment variable manually:");
             println!("  export CUQUANTUM_ROOT=\"{}\"", cuquantum_dir.display());
         }
-    }
-
-    // Print runtime library path hint
-    if let Some(lib_dir) = get_lib_dir(&cuquantum_dir) {
-        println!();
-        println!("For runtime library loading, add to your shell profile:");
-        println!(
-            "  export LD_LIBRARY_PATH=\"{}:$LD_LIBRARY_PATH\"",
-            lib_dir.display()
-        );
     }
 
     Ok(cuquantum_dir)

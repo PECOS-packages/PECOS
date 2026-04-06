@@ -14,30 +14,48 @@ pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool, quiet: bool) -> R
     // Check for legacy installs that should be migrated
     check_legacy_deps(mode)?;
 
-    // Show summary of current state
-    if !quiet {
+    let anything_missing = has_missing_deps(skip_llvm, skip_cuda);
+
+    // Show summary: always when not quiet, or when something needs action
+    if !quiet || anything_missing {
         print_status_summary(skip_llvm, skip_cuda);
         println!();
     }
 
     if !skip_llvm {
-        setup_llvm(mode, quiet)?;
+        setup_llvm(mode)?;
     }
 
     if !skip_cuda {
-        setup_cuda(mode, quiet)?;
+        setup_cuda(mode)?;
     }
 
     // cuQuantum: only relevant when CUDA is available
     if !skip_cuda && pecos_build::cuda::find_cuda().is_some() {
-        setup_cuquantum(mode, quiet)?;
+        setup_cuquantum(mode)?;
     }
 
-    if !quiet {
+    if !quiet || anything_missing {
         println!();
         println!("Setup complete. Run `just build` to build PECOS.");
     }
     Ok(())
+}
+
+fn has_missing_deps(skip_llvm: bool, skip_cuda: bool) -> bool {
+    if !skip_llvm && pecos_build::llvm::find_llvm_14(None).is_none() {
+        return true;
+    }
+    if !skip_cuda && cuda_platform_supported() && pecos_build::cuda::find_cuda().is_none() {
+        return true;
+    }
+    if !skip_cuda
+        && pecos_build::cuda::find_cuda().is_some()
+        && pecos_build::cuquantum::find_cuquantum().is_none()
+    {
+        return true;
+    }
+    false
 }
 
 fn print_status_summary(skip_llvm: bool, skip_cuda: bool) {
@@ -47,8 +65,8 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool) {
     // LLVM
     if skip_llvm {
         println!("  LLVM 14:    skipped (--skip-llvm)");
-    } else if pecos_build::llvm::find_llvm_14(None).is_some() {
-        println!("  LLVM 14:    installed");
+    } else if let Some(path) = pecos_build::llvm::find_llvm_14(None) {
+        println!("  LLVM 14:    {}", path.display());
     } else {
         println!("  LLVM 14:    not found (~400 MB, required for QIR/HUGR compilation)");
     }
@@ -58,16 +76,16 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool) {
         println!("  CUDA:       skipped (--skip-cuda)");
     } else if !cuda_platform_supported() {
         println!("  CUDA:       not supported on this platform");
-    } else if pecos_build::cuda::find_cuda().is_some() {
-        println!("  CUDA:       installed");
+    } else if let Some(path) = pecos_build::cuda::find_cuda() {
+        println!("  CUDA:       {}", path.display());
     } else {
         println!("  CUDA:       not found (~4 GB, required for GPU simulation)");
     }
 
     // cuQuantum (only show if CUDA is present)
     if !skip_cuda && pecos_build::cuda::find_cuda().is_some() {
-        if pecos_build::cuquantum::find_cuquantum().is_some() {
-            println!("  cuQuantum:  installed");
+        if let Some(path) = pecos_build::cuquantum::find_cuquantum() {
+            println!("  cuQuantum:  {}", path.display());
         } else {
             println!("  cuQuantum:  not found (~200 MB, GPU-accelerated quantum simulation)");
         }
@@ -104,9 +122,9 @@ fn check_legacy_deps(mode: PromptMode) -> Result<()> {
 
 // ── LLVM ────────────────────────────────────────────────────────────────────
 
-fn setup_llvm(mode: PromptMode, quiet: bool) -> Result<()> {
+fn setup_llvm(mode: PromptMode) -> Result<()> {
     if pecos_build::llvm::find_llvm_14(None).is_some() {
-        ensure_llvm_configured(quiet);
+        ensure_llvm_configured();
         return Ok(());
     }
 
@@ -126,7 +144,7 @@ fn setup_llvm(mode: PromptMode, quiet: bool) -> Result<()> {
 
 // ── CUDA ────────────────────────────────────────────────────────────────────
 
-fn setup_cuda(mode: PromptMode, _quiet: bool) -> Result<()> {
+fn setup_cuda(mode: PromptMode) -> Result<()> {
     if pecos_build::cuda::find_cuda().is_some() {
         return Ok(());
     }
@@ -150,7 +168,7 @@ fn setup_cuda(mode: PromptMode, _quiet: bool) -> Result<()> {
 
 // ── cuQuantum ───────────────────────────────────────────────────────────────
 
-fn setup_cuquantum(mode: PromptMode, _quiet: bool) -> Result<()> {
+fn setup_cuquantum(mode: PromptMode) -> Result<()> {
     if pecos_build::cuquantum::find_cuquantum().is_some() {
         return Ok(());
     }
@@ -170,23 +188,14 @@ fn setup_cuquantum(mode: PromptMode, _quiet: bool) -> Result<()> {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn ensure_llvm_configured(quiet: bool) {
+fn ensure_llvm_configured() {
     let config = pecos_build::llvm::config::validate_llvm_config();
     if config.is_healthy() {
         return;
     }
-    if !quiet {
-        println!("  LLVM found but not configured, configuring...");
-    }
+    println!("  LLVM found but not configured, configuring...");
     match pecos_build::llvm::config::auto_configure_llvm(None) {
-        Ok(path) => {
-            if !quiet {
-                println!(
-                    "  Updated .cargo/config.toml with LLVM path: {}",
-                    path.display()
-                );
-            }
-        }
+        Ok(path) => println!("  Updated .cargo/config.toml: {}", path.display()),
         Err(e) => {
             eprintln!("  Warning: could not auto-configure LLVM: {e}");
             config.print_warnings();

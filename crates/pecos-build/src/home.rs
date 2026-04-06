@@ -151,18 +151,9 @@ pub fn resolve_dep_path(name: &str, version: &str) -> Result<PathBuf> {
     if versioned.exists() {
         return Ok(versioned);
     }
+    // Fall back to legacy unversioned path (migration handled by `pecos setup`)
     let legacy = get_deps_dir_path()?.join(name);
     if legacy.exists() {
-        // Auto-migrate: rename legacy unversioned dir to versioned
-        if fs::rename(&legacy, &versioned).is_ok() {
-            log::info!(
-                "Migrated {name} from {} to {}",
-                legacy.display(),
-                versioned.display()
-            );
-            return Ok(versioned);
-        }
-        // Rename failed (permissions, cross-device, etc.) -- use legacy
         return Ok(legacy);
     }
     Ok(versioned)
@@ -354,21 +345,41 @@ pub struct LegacyDep {
 /// Returns an error if unable to determine paths.
 pub fn find_legacy_deps() -> Result<Vec<LegacyDep>> {
     let mut found = Vec::new();
-    let checks: [(&str, Result<PathBuf>, Result<PathBuf>); 3] = [
-        ("LLVM", get_legacy_llvm_dir_path(), get_llvm_dir_path()),
-        ("CUDA", get_legacy_cuda_dir_path(), get_cuda_dir_path()),
-        (
-            "cuQuantum",
-            get_legacy_cuquantum_dir_path(),
-            get_cuquantum_dir_path(),
-        ),
+    let deps_dir = get_deps_dir_path()?;
+
+    let checks: &[(&str, &str)] = &[
+        ("LLVM", LLVM_VERSION),
+        ("CUDA", crate::cuda::CUDA_VERSION),
+        ("cuQuantum", crate::cuquantum::CUQUANTUM_VERSION),
     ];
-    for (name, old_result, new_result) in checks {
-        let (Ok(old), Ok(new)) = (old_result, new_result) else {
+
+    for &(name, version) in checks {
+        let lower = name.to_lowercase();
+        let versioned = deps_dir.join(format!("{lower}-{version}"));
+        if versioned.exists() {
+            continue; // Already at versioned path
+        }
+
+        // Check unversioned deps/ path (e.g. deps/llvm/)
+        let unversioned = deps_dir.join(&lower);
+        if unversioned.exists() {
+            found.push(LegacyDep {
+                name,
+                old: unversioned,
+                new: versioned.clone(),
+            });
             continue;
-        };
-        if old.exists() && !new.exists() {
-            found.push(LegacyDep { name, old, new });
+        }
+
+        // Check top-level legacy path (e.g. ~/.pecos/llvm/)
+        if let Ok(top_level) = get_pecos_home_path().map(|h| h.join(&lower)) {
+            if top_level.exists() {
+                found.push(LegacyDep {
+                    name,
+                    old: top_level,
+                    new: versioned,
+                });
+            }
         }
     }
     Ok(found)

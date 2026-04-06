@@ -27,9 +27,35 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
     }
 }
 
-/// Check if cuQuantum SDK is available
-fn is_cuquantum_available() -> bool {
-    pecos_build::cuquantum::is_cuquantum_available()
+/// Probe whether cuQuantum is available at runtime (SDK installed + CUDA GPU present).
+///
+/// Runs the cuda-check binary from pecos-cuquantum-sys which tries to load the
+/// cuQuantum shared libraries and call cudaDeviceSynchronize. This catches the case
+/// where the SDK is installed for compilation but no GPU is present to run code.
+fn probe_cuquantum_availability() -> bool {
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "pecos-cuquantum-sys",
+            "--bin",
+            "cuda_check",
+            "-q",
+            "--",
+            "--json",
+        ])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(payload) = serde_json::from_str::<Value>(stdout.trim()) {
+                return payload.get("status").and_then(Value::as_str) == Some("available");
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Probe whether a GPU adapter is available for wgpu.
@@ -362,8 +388,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     }
 
     // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)
-    if is_cuquantum_available() {
-        println!("cuQuantum SDK detected - testing pecos-cuquantum");
+    if probe_cuquantum_availability() {
+        println!("cuQuantum runtime available - testing pecos-cuquantum");
         let mut args = vec!["test", "-p", "pecos-cuquantum"];
         if !release_flag.is_empty() {
             args.push(release_flag);
@@ -374,7 +400,7 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
             ));
         }
     } else {
-        println!("cuQuantum SDK not detected - skipping pecos-cuquantum");
+        println!("cuQuantum runtime not available - skipping pecos-cuquantum");
     }
 
     // Test GPU simulator if GPU is available

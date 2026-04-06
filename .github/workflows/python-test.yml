@@ -110,11 +110,30 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && runner.os != 'Windows'
       run: cargo run -p pecos-cli --release -- install llvm
 
+    # Configure MSVC linker BEFORE any cargo build (Git's link.exe conflicts with MSVC's)
+    - name: Configure MSVC linker (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsPath = & $vsWhere -latest -property installationPath
+        $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
+                    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
+                    Select-Object -First 1 -ExpandProperty FullName
+        if ($linkPath) {
+          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+          $escapedPath = $linkPath.Replace('\', '/')
+          "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"" | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+        } else {
+          Write-Error "Could not find MSVC link.exe"
+          exit 1
+        }
+
     - name: Install LLVM ${{ env.LLVM_VERSION }} (Windows)
       if: steps.cache-llvm.outputs.cache-hit != 'true' && runner.os == 'Windows'
       run: cargo run -p pecos-cli --release -- install llvm
 
-    # Configure LLVM environment (must happen before CLI install)
+    # Configure LLVM environment
     - name: Configure LLVM environment (Unix)
       if: runner.os != 'Windows'
       run: |
@@ -131,30 +150,15 @@ jobs:
         "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-        # Add LLVM bin to PATH
+        # Add LLVM bin to PATH and update .cargo/config.toml with LLVM path
         $llvmBinDir = Join-Path -Path $env:PECOS_LLVM -ChildPath "bin"
         if (Test-Path $llvmBinDir) {
-          $env:PATH = "$llvmBinDir;$env:PATH"
           "$llvmBinDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         }
-
-        # Configure MSVC linker
-        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        $vsPath = & $vsWhere -latest -property installationPath
-        $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
-                    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
-                    Select-Object -First 1 -ExpandProperty FullName
-
-        if ($linkPath) {
-          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-          $escapedPath = $linkPath.Replace('\', '/')
-          $escapedLLVMPath = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
-          $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"`n`n[env]`nLLVM_SYS_140_PREFIX = `"$escapedLLVMPath`""
-          $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
-        } else {
-          Write-Error "Could not find MSVC link.exe"
-          exit 1
-        }
+        $escapedLLVMPath = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
+        $configPath = ".cargo\config.toml"
+        $existing = Get-Content $configPath -Raw
+        "$existing`n`n[env]`nLLVM_SYS_140_PREFIX = `"$escapedLLVMPath`"" | Out-File -FilePath $configPath -Encoding UTF8
 
     # Now install CLI (LLVM env is set, inkwell can find it)
     - name: Install PECOS CLI

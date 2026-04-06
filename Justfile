@@ -28,7 +28,7 @@ default:
 set shell := ["bash", "-cu"]
 
 # PECOS CLI - must be installed (run 'just install-cli' first)
-pecos := "cargo run -p pecos-cli --release --"
+pecos := "cargo run -p pecos-cli --"
 
 # =============================================================================
 # Getting Started

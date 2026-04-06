@@ -272,17 +272,12 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
     // Load cuTensor before cuTensorNet (transitive dependency).
     // The handle must stay alive in CuQuantumBackend so dlclose doesn't
     // unload the library while cuTensorNet still needs its symbols.
-    let cutensor =
-        try_load_lib(&["libcutensor.so.2", "libcutensor.so"], &ct_paths).ok();
+    let cutensor = try_load_lib(&["libcutensor.so.2", "libcutensor.so"], &ct_paths).ok();
 
-    let custatevec =
-        try_load_lib(&["libcustatevec.so.1", "libcustatevec.so"], &cq_paths)?;
-    let custabilizer =
-        try_load_lib(&["libcustabilizer.so.0", "libcustabilizer.so"], &cq_paths)?;
-    let cutensornet =
-        try_load_lib(&["libcutensornet.so.2", "libcutensornet.so"], &cq_paths)?;
-    let cudensitymat =
-        try_load_lib(&["libcudensitymat.so.0", "libcudensitymat.so"], &cq_paths)?;
+    let custatevec = try_load_lib(&["libcustatevec.so.1", "libcustatevec.so"], &cq_paths)?;
+    let custabilizer = try_load_lib(&["libcustabilizer.so.0", "libcustabilizer.so"], &cq_paths)?;
+    let cutensornet = try_load_lib(&["libcutensornet.so.2", "libcutensornet.so"], &cq_paths)?;
+    let cudensitymat = try_load_lib(&["libcudensitymat.so.0", "libcudensitymat.so"], &cq_paths)?;
 
     unsafe {
         Ok(CuQuantumBackend {

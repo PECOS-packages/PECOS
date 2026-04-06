@@ -25,11 +25,9 @@ use std::ptr;
 ///
 /// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use pecos_cuquantum::{CuStateVec, is_cuquantum_available};
+/// use pecos_cuquantum::CuStateVec;
 /// use pecos_simulators::{QuantumSimulator, CliffordGateable};
 /// use pecos_core::QubitId;
-///
-/// if !is_cuquantum_available() { return Ok(()); }
 ///
 /// let mut sim = CuStateVec::new(4)?;
 /// sim.h(&[QubitId(0)]);

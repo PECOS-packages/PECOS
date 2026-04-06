@@ -27,13 +27,11 @@
 //! # Example
 //!
 //! ```
-//! use pecos_cuquantum::{CuStateVec, is_cuquantum_available};
+//! use pecos_cuquantum::CuStateVec;
 //! use pecos_simulators::{QuantumSimulator, CliffordGateable};
 //! use pecos_core::QubitId;
 //!
 //! fn main() -> pecos_cuquantum::Result<()> {
-//!     if !is_cuquantum_available() { return Ok(()); }
-//!
 //!     let mut sim = CuStateVec::new(4)?;
 //!
 //!     // Create a Bell state

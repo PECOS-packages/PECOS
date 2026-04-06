@@ -370,8 +370,6 @@ impl From<&pecos_cuquantum_sys::CuQuantumLoadError> for CuQuantumError {
 ///
 /// ```
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// if !pecos_cuquantum::is_cuquantum_available() { return Ok(()); }
-///
 /// use pecos_cuquantum::{CuStateVec, TryClone};
 ///
 /// let sim = CuStateVec::new(4)?;

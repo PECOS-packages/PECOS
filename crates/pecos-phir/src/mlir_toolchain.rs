@@ -142,7 +142,10 @@ pub fn mlir_to_llvm_ir(
         .expect("Invalid regex pattern for main function - this is a bug");
 
     if let Some(captures) = main_pattern.captures(&llvm_ir) {
-        let original = captures.get(0).unwrap().as_str();
+        let original = captures
+            .get(0)
+            .expect("regex group 0 always exists on a successful match")
+            .as_str();
         let replacement = format!("{original} #0");
         llvm_ir = llvm_ir.replace(original, &replacement);
 

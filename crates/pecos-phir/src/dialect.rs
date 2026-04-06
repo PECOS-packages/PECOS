@@ -226,7 +226,10 @@ static GLOBAL_REGISTRY: LazyLock<Arc<RwLock<DialectRegistry>>> =
 ///
 /// Panics if the global registry lock is poisoned
 pub fn register_dialect<D: Dialect + 'static>(dialect: D) -> Result<()> {
-    GLOBAL_REGISTRY.write().unwrap().register_dialect(dialect)
+    GLOBAL_REGISTRY
+        .write()
+        .expect("global dialect registry lock is poisoned")
+        .register_dialect(dialect)
 }
 
 /// Get the global dialect registry

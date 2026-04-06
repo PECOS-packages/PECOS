@@ -547,7 +547,10 @@ impl QisIrParser {
                 return Ok(None);
             }
 
-            let args_start = caps.get(0).unwrap().end();
+            let args_start = caps
+                .get(0)
+                .expect("regex group 0 always exists on a successful match")
+                .end();
             let args_str = extract_balanced_parens(line, args_start);
 
             let args = self.parse_call_args(&args_str);

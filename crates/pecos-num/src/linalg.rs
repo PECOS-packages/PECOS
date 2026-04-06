@@ -61,7 +61,7 @@ where
 
     // For 1-D arrays (vectors)
     if x.ndim() == 1 {
-        return vector_norm(x.as_slice().unwrap(), ord);
+        return vector_norm(x.as_slice().expect("array must be contiguous"), ord);
     }
 
     // For 2-D arrays (matrices) - Frobenius norm
@@ -90,7 +90,7 @@ where
 
     // For 1-D arrays (vectors)
     if x.ndim() == 1 {
-        return vector_norm_complex(x.as_slice().unwrap(), ord);
+        return vector_norm_complex(x.as_slice().expect("array must be contiguous"), ord);
     }
 
     // For 2-D arrays (matrices) - Frobenius norm

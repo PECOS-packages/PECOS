@@ -526,10 +526,10 @@ pub fn delete<T: Clone>(arr: &Array1<T>, index: usize) -> Array1<T> {
     let mut result_vec = Vec::with_capacity(arr.len() - 1);
 
     // Add elements before the index
-    result_vec.extend_from_slice(&arr.as_slice().unwrap()[..index]);
+    result_vec.extend_from_slice(&arr.as_slice().expect("array must be contiguous")[..index]);
 
     // Add elements after the index
-    result_vec.extend_from_slice(&arr.as_slice().unwrap()[(index + 1)..]);
+    result_vec.extend_from_slice(&arr.as_slice().expect("array must be contiguous")[(index + 1)..]);
 
     Array1::from_vec(result_vec)
 }

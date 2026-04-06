@@ -388,8 +388,13 @@ impl LoweringPattern for ResolveNames {
     }
 
     fn rewrite(&self, op: &dyn Operation) -> Box<dyn Operation> {
-        let unresolved = op.downcast_ref::<UnresolvedRef>().unwrap();
-        let symbol = self.symbol_table.lookup(&unresolved.name).unwrap();
+        let unresolved = op
+            .downcast_ref::<UnresolvedRef>()
+            .expect("ResolveNames pattern should only match UnresolvedRef operations");
+        let symbol = self
+            .symbol_table
+            .lookup(&unresolved.name)
+            .expect("symbol must exist in table after name resolution pass");
 
         // Create resolved reference
         Box::new(ValueRef {

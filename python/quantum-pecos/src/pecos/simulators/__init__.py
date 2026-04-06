@@ -65,16 +65,13 @@ try:
 except ImportError:
     MPS = None
 
-# Attempt to import Rust cuQuantum bindings (pecos-rslib-cuda)
+# Rust cuQuantum bindings (pecos-rslib-cuda)
+# Import always succeeds if the package is installed -- GPU availability is
+# checked at construction time, not import time. This lets users reference
+# the classes and get clear error messages when they try to use them.
 try:
-    from pecos_rslib_cuda import is_cuquantum_available
-
-    if is_cuquantum_available():
-        from pecos.simulators.cuda_stabilizer import CudaStabilizer
-        from pecos.simulators.cuda_statevec import CudaStateVec
-    else:
-        CudaStateVec = None
-        CudaStabilizer = None
+    from pecos.simulators.cuda_stabilizer import CudaStabilizer
+    from pecos.simulators.cuda_statevec import CudaStateVec
 except ImportError:
     CudaStateVec = None
     CudaStabilizer = None

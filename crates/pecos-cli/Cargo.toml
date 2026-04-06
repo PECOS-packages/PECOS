@@ -25,9 +25,6 @@ serde_json = { workspace = true }
 # Build tools (LLVM/CUDA detection, installation)
 pecos-build = { workspace = true }
 
-# Cargo workspace introspection (for CUDA-aware feature handling)
-cargo_metadata = { workspace = true }
-
 # Runtime commands (pecos run, compile, info, doctor, examples)
 # These use the pecos simulation library directly.
 pecos = { path = "../pecos", optional = true }

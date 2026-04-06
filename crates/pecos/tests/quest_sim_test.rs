@@ -45,9 +45,9 @@ fn test_quest_state_vec_cpu() {
     }
 }
 
-/// Test Quest state vector with GPU mode (only runs if GPU feature enabled)
+/// Test Quest state vector with GPU mode (requires CUDA at runtime)
 #[test]
-#[cfg(feature = "cuda")]
+#[ignore = "requires CUDA at runtime"]
 fn test_quest_state_vec_gpu() {
     let qasm_code = r#"
         OPENQASM 2.0;
@@ -129,7 +129,6 @@ fn test_quest_density_matrix_cpu() {
 /// Test Quest density matrix with GPU mode returns appropriate error
 /// (GPU density matrix simulation is not yet implemented in `QuEST`)
 #[test]
-#[cfg(feature = "cuda")]
 fn test_quest_density_matrix_gpu() {
     let qasm_code = r#"
         OPENQASM 2.0;
@@ -287,7 +286,7 @@ fn test_quest_builder_with_qubits() {
 /// Note: Due to potential differences in RNG implementation between CPU and GPU,
 /// we verify that both modes produce valid results rather than identical results.
 #[test]
-#[cfg(feature = "cuda")]
+#[ignore = "requires CUDA at runtime"]
 #[allow(clippy::similar_names)]
 fn test_quest_cpu_and_gpu_both_work() {
     let qasm_code = r#"

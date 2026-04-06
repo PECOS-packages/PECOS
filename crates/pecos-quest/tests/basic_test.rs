@@ -311,7 +311,6 @@ fn test_gpu_acceleration_status() {
 }
 
 /// Test the CUDA engine through the builder interface
-#[cfg(feature = "cuda")]
 #[test]
 fn test_cuda_engine_builder() {
     use pecos_engines::{Engine, QuantumEngineBuilder, byte_message::ByteMessage};

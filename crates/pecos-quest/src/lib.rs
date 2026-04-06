@@ -25,12 +25,9 @@ pub mod cuda_loader;
 
 pub mod quantum_engine;
 pub use quantum_engine::{
-    QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder, QuestStateVecEngine,
-    QuestStateVectorEngineBuilder, quest_density_matrix, quest_state_vec,
+    QuestCudaStateVecEngine, QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder,
+    QuestStateVecEngine, QuestStateVectorEngineBuilder, quest_density_matrix, quest_state_vec,
 };
-
-#[cfg(feature = "cuda")]
-pub use quantum_engine::QuestCudaStateVecEngine;
 
 pub use pecos_core::rng::RngManageable;
 use pecos_core::{Angle64, QubitId};

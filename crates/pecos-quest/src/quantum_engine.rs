@@ -12,9 +12,9 @@ use pecos_engines::{
     Engine, IntoQuantumEngineBuilder, QuantumEngine, QuantumEngineBuilder,
     byte_message::{ByteMessage, GateType},
 };
-#[cfg(feature = "cuda")]
-use pecos_simulators::MeasurementResult;
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_simulators::{
+    ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
+};
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -610,7 +610,6 @@ pub struct QuestStateVectorEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
     /// CUDA acceleration mode flag
-    #[allow(dead_code)]
     use_cuda: bool,
 }
 
@@ -641,23 +640,11 @@ impl QuestStateVectorEngineBuilder {
     /// Currently supports NVIDIA CUDA via the `QuEST` CUDA backend.
     /// The backend is loaded at runtime, so systems without GPU support
     /// can still use the CPU mode.
-    ///
-    /// # Panics
-    /// Panics if the `cuda` feature is not enabled at compile time
     #[must_use]
     pub fn with_gpu(self) -> Self {
-        #[cfg(not(feature = "cuda"))]
-        {
-            panic!(
-                "GPU feature is not enabled. Rebuild with --features cuda to use GPU acceleration"
-            );
-        }
-        #[cfg(feature = "cuda")]
-        {
-            Self {
-                use_cuda: true,
-                ..self
-            }
+        Self {
+            use_cuda: true,
+            ..self
         }
     }
 }
@@ -669,20 +656,10 @@ impl QuantumEngineBuilder for QuestStateVectorEngineBuilder {
         })?;
 
         // Check if CUDA was requested
-        #[cfg(feature = "cuda")]
         if self.use_cuda {
-            // Create and return CUDA-backed engine
+            // Create and return CUDA-backed engine (runtime detection)
             let engine = QuestCudaStateVecEngine::new(num_qubits)?;
             return Ok(Box::new(engine));
-        }
-
-        #[cfg(not(feature = "cuda"))]
-        if self.use_cuda {
-            return Err(PecosError::Processing(
-                "CUDA acceleration requested but 'cuda' feature is not enabled. \
-                 Rebuild with --features cuda to use GPU acceleration."
-                    .to_string(),
-            ));
         }
 
         // CPU mode - use the standard implementation
@@ -710,7 +687,6 @@ pub struct QuestDensityMatrixEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
     /// CUDA acceleration mode flag
-    #[allow(dead_code)]
     use_cuda: bool,
 }
 
@@ -741,23 +717,11 @@ impl QuestDensityMatrixEngineBuilder {
     /// Currently supports NVIDIA CUDA via the `QuEST` CUDA backend.
     /// The backend is loaded at runtime, so systems without GPU support
     /// can still use the CPU mode.
-    ///
-    /// # Panics
-    /// Panics if the `cuda` feature is not enabled at compile time
     #[must_use]
     pub fn with_gpu(self) -> Self {
-        #[cfg(not(feature = "cuda"))]
-        {
-            panic!(
-                "GPU feature is not enabled. Rebuild with --features cuda to use GPU acceleration"
-            );
-        }
-        #[cfg(feature = "cuda")]
-        {
-            Self {
-                use_cuda: true,
-                ..self
-            }
+        Self {
+            use_cuda: true,
+            ..self
         }
     }
 }
@@ -823,7 +787,6 @@ pub fn quest_density_matrix() -> QuestDensityMatrixEngineBuilder {
 /// The engine uses a shared CUDA environment that persists for the lifetime of the
 /// process, avoiding `QuEST` CUDA recreation issues. Only the quantum register (qureg)
 /// is created/destroyed per engine instance.
-#[cfg(feature = "cuda")]
 pub struct QuestCudaStateVecEngine {
     /// Opaque handle to the quantum register (owned by this instance)
     qureg_handle: *mut u8,
@@ -833,7 +796,6 @@ pub struct QuestCudaStateVecEngine {
     num_qubits: usize,
 }
 
-#[cfg(feature = "cuda")]
 impl QuestCudaStateVecEngine {
     /// Create a new CUDA-backed state vector engine
     ///
@@ -882,7 +844,6 @@ impl QuestCudaStateVecEngine {
     }
 }
 
-#[cfg(feature = "cuda")]
 impl Drop for QuestCudaStateVecEngine {
     fn drop(&mut self) {
         // Destroy the qureg to free GPU memory.
@@ -896,7 +857,6 @@ impl Drop for QuestCudaStateVecEngine {
     }
 }
 
-#[cfg(feature = "cuda")]
 impl Debug for QuestCudaStateVecEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuestCudaStateVecEngine")
@@ -906,12 +866,9 @@ impl Debug for QuestCudaStateVecEngine {
 }
 
 // Safety: The CUDA backend handles are thread-safe through QuEST's internal synchronization
-#[cfg(feature = "cuda")]
 unsafe impl Send for QuestCudaStateVecEngine {}
-#[cfg(feature = "cuda")]
 unsafe impl Sync for QuestCudaStateVecEngine {}
 
-#[cfg(feature = "cuda")]
 impl Clone for QuestCudaStateVecEngine {
     /// Clone creates a new CUDA engine with the same configuration but reset to zero state.
     ///
@@ -922,7 +879,6 @@ impl Clone for QuestCudaStateVecEngine {
     }
 }
 
-#[cfg(feature = "cuda")]
 impl Engine for QuestCudaStateVecEngine {
     type Input = ByteMessage;
     type Output = ByteMessage;
@@ -1517,7 +1473,6 @@ impl Engine for QuestCudaStateVecEngine {
     }
 }
 
-#[cfg(feature = "cuda")]
 impl QuantumEngine for QuestCudaStateVecEngine {
     fn set_seed(&mut self, _seed: u64) {
         // CUDA backend doesn't currently support seeding via the loaded library
@@ -1538,7 +1493,6 @@ impl QuantumEngine for QuestCudaStateVecEngine {
 // CliffordGateable and ArbitraryRotationGateable implementations for CUDA engine
 // ============================================================================
 
-#[cfg(feature = "cuda")]
 impl QuantumSimulator for QuestCudaStateVecEngine {
     fn reset(&mut self) -> &mut Self {
         unsafe {
@@ -1548,7 +1502,6 @@ impl QuantumSimulator for QuestCudaStateVecEngine {
     }
 }
 
-#[cfg(feature = "cuda")]
 impl CliffordGateable for QuestCudaStateVecEngine {
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -1596,7 +1549,6 @@ impl CliffordGateable for QuestCudaStateVecEngine {
     }
 }
 
-#[cfg(feature = "cuda")]
 impl ArbitraryRotationGateable for QuestCudaStateVecEngine {
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {

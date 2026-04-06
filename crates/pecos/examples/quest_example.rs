@@ -34,28 +34,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ones = measurements.iter().filter(|&&x| x == 3).count();
     println!("Results: |00⟩: {zeros}, |11⟩: {ones}");
 
-    // Demonstrate GPU mode (only works if compiled with --features cuda)
-    #[cfg(feature = "cuda")]
+    // Demonstrate GPU mode (requires CUDA to be available at runtime)
+    println!("\n==== Quest State Vector Simulation (GPU) ====");
+    match sim(program)
+        .quantum(quest_state_vec().with_gpu())
+        .seed(42)
+        .run(100)
     {
-        println!("\n==== Quest State Vector Simulation (GPU) ====");
-        let results_gpu = sim(program.clone())
-            .quantum(quest_state_vec().with_gpu())
-            .seed(42)
-            .run(100)?;
-
-        println!("Ran 100 shots with Quest state vector (GPU)");
-        let shot_map_gpu = results_gpu.try_as_shot_map()?;
-        let measurements_gpu = shot_map_gpu.try_bits_as_u64("c")?;
-        let zeros_gpu = measurements_gpu.iter().filter(|&&x| x == 0).count();
-        let ones_gpu = measurements_gpu.iter().filter(|&&x| x == 3).count();
-        println!("Results: |00⟩: {zeros_gpu}, |11⟩: {ones_gpu}");
-    }
-
-    #[cfg(not(feature = "cuda"))]
-    {
-        println!(
-            "\nNote: GPU mode not available. Compile with --features cuda to enable GPU acceleration"
-        );
+        Ok(results_gpu) => {
+            println!("Ran 100 shots with Quest state vector (GPU)");
+            let shot_map_gpu = results_gpu.try_as_shot_map()?;
+            let measurements_gpu = shot_map_gpu.try_bits_as_u64("c")?;
+            let zeros_gpu = measurements_gpu.iter().filter(|&&x| x == 0).count();
+            let ones_gpu = measurements_gpu.iter().filter(|&&x| x == 3).count();
+            println!("Results: |00⟩: {zeros_gpu}, |11⟩: {ones_gpu}");
+        }
+        Err(e) => {
+            println!("GPU mode not available (CUDA not detected at runtime): {e}");
+        }
     }
 
     Ok(())

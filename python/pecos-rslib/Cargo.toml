@@ -20,7 +20,6 @@ doctest = false
 [features]
 default = ["wasm"]
 wasm = ["dep:pecos-wasm"]
-cuda = ["pecos-quest/cuda"]
 
 [dependencies]
 # Core PECOS crates (direct deps instead of metacrate)

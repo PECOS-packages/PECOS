@@ -23,7 +23,7 @@
 //! ```
 //! cargo bench -p benchmarks --features gpu-sims        # GpuStateVec only
 //! cargo bench -p benchmarks --features cuquantum       # CuStateVec (NVIDIA CUDA)
-//! cargo bench -p benchmarks --features quest-cuda      # QuEST with CUDA
+//! cargo bench -p benchmarks --features quest            # QuEST (CPU + CUDA if available at runtime)
 //! cargo bench -p benchmarks --features all-sims        # All simulators
 //! ```
 
@@ -40,11 +40,11 @@ use pecos_gpu_sims::GpuStateVec;
 #[cfg(feature = "cuquantum")]
 use pecos_cuquantum::CuStateVec;
 
-#[cfg(all(feature = "quest", not(feature = "quest-cuda")))]
-use pecos_quest::QuestStateVec;
-
-#[cfg(feature = "quest-cuda")]
+#[cfg(feature = "quest")]
 use pecos_quest::QuestCudaStateVecEngine;
+
+#[cfg(feature = "quest")]
+use pecos_quest::QuestStateVec;
 
 #[cfg(feature = "qulacs")]
 use pecos_qulacs::QulacsStateVec;
@@ -529,8 +529,8 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
             }
         }
 
-        // Benchmark QuEST (CPU mode - when quest feature is enabled but not quest-cuda)
-        #[cfg(all(feature = "quest", not(feature = "quest-cuda")))]
+        // Benchmark QuEST (CPU mode)
+        #[cfg(feature = "quest")]
         {
             let mut sim = QuestStateVec::new(num_qubits);
             group.bench_with_input(
@@ -574,7 +574,7 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
     // 2. After destroying a qureg, subsequent creations fail
     // 3. Creating quregs with 12+ qubits fails (QuEST CUDA configuration limit?)
     // We run a single configuration (10 qubits) to compare against CPU implementations.
-    #[cfg(feature = "quest-cuda")]
+    #[cfg(feature = "quest")]
     {
         let cuda_config = (10, 20); // 10 qubits, 20 layers - max reliable size
         let (num_qubits, num_layers) = cuda_config;

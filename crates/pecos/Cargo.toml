@@ -93,9 +93,6 @@ quest = ["sim", "dep:pecos-quest"]
 qulacs = ["sim", "dep:pecos-qulacs"]
 all-simulators = ["cppsparsestab", "quest", "qulacs"]
 
-# NVIDIA CUDA support
-cuda = ["quest", "pecos-quest/cuda"]
-
 # Decoder backends
 ldpc = ["sim", "dep:pecos-decoders", "pecos-decoders/ldpc"]
 pymatching = ["sim", "dep:pecos-decoders", "pecos-decoders/pymatching"]

@@ -293,11 +293,7 @@ fn bench_native_statevec_comparison<M: Measurement>(c: &mut Criterion<M>) {
         // -- QuEST direct FFI --
         #[cfg(feature = "quest")]
         {
-            let quest_name = if cfg!(feature = "quest-cuda") {
-                "QuEST_CUDA_direct"
-            } else {
-                "QuEST_direct"
-            };
+            let quest_name = "QuEST_direct";
             let qs = QuestState::new(num_qubits);
             group.bench_with_input(
                 BenchmarkId::new(quest_name, &label),
@@ -447,11 +443,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     #[cfg(feature = "quest")]
     {
-        let quest_h_name = if cfg!(feature = "quest-cuda") {
-            "H/QuEST_CUDA_direct"
-        } else {
-            "H/QuEST_direct"
-        };
+        let quest_h_name = "H/QuEST_direct";
         group.bench_function(quest_h_name, |b| {
             let qs = QuestState::new(num_qubits);
             b.iter(|| {
@@ -574,11 +566,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     #[cfg(feature = "quest")]
     {
-        let quest_x_name = if cfg!(feature = "quest-cuda") {
-            "X/QuEST_CUDA_direct"
-        } else {
-            "X/QuEST_direct"
-        };
+        let quest_x_name = "X/QuEST_direct";
         group.bench_function(quest_x_name, |b| {
             let qs = QuestState::new(num_qubits);
             b.iter(|| {
@@ -701,11 +689,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     #[cfg(feature = "quest")]
     {
-        let quest_cx_name = if cfg!(feature = "quest-cuda") {
-            "CX/QuEST_CUDA_direct"
-        } else {
-            "CX/QuEST_direct"
-        };
+        let quest_cx_name = "CX/QuEST_direct";
         group.bench_function(quest_cx_name, |b| {
             let qs = QuestState::new(num_qubits);
             b.iter(|| {
@@ -830,11 +814,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
 
     #[cfg(feature = "quest")]
     {
-        let quest_rz_name = if cfg!(feature = "quest-cuda") {
-            "RZ/QuEST_CUDA_direct"
-        } else {
-            "RZ/QuEST_direct"
-        };
+        let quest_rz_name = "RZ/QuEST_direct";
         group.bench_function(quest_rz_name, |b| {
             let qs = QuestState::new(num_qubits);
             b.iter(|| {

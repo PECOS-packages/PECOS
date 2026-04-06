@@ -224,7 +224,7 @@ impl PySimBuilder {
                 SimBuilderInner::Qasm(sim_builder) => {
                     if let Ok(mut qasm_engine) = engine_builder.extract::<PyQasmEngineBuilder>(py) {
                         // Transfer program from existing engine to new engine if needed
-                        let existing_engine_lock = sim_builder.engine_builder.lock().unwrap();
+                        let existing_engine_lock = sim_builder.engine_builder.lock().expect("lock poisoned");
                         if let Some(existing_engine) = existing_engine_lock.as_ref()
                             && existing_engine.has_source()
                             && !qasm_engine.inner.has_source()
@@ -481,7 +481,7 @@ impl PySimBuilder {
 
         match &self.inner {
             SimBuilderInner::Qasm(builder) => {
-                let mut builder_lock = builder.engine_builder.lock().unwrap();
+                let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -606,7 +606,7 @@ impl PySimBuilder {
             }
             SimBuilderInner::QisControl(builder) => {
                 // Implementation for QIS Engine
-                let mut builder_lock = builder.engine_builder.lock().unwrap();
+                let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -724,7 +724,7 @@ impl PySimBuilder {
             }
             SimBuilderInner::PhirJson(builder) => {
                 // Similar implementation for PHIR JSON
-                let mut builder_lock = builder.engine_builder.lock().unwrap();
+                let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -749,7 +749,7 @@ impl PySimBuilder {
                 }
             }
             SimBuilderInner::Phir(builder) => {
-                let mut builder_lock = builder.engine_builder.lock().unwrap();
+                let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -773,7 +773,7 @@ impl PySimBuilder {
             }
             SimBuilderInner::Hugr(builder) => {
                 // Direct HUGR interpreter
-                let mut builder_lock = builder.engine_builder.lock().unwrap();
+                let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -913,7 +913,7 @@ impl PySimBuilder {
         Python::attach(|py| {
             match &self.inner {
                 SimBuilderInner::Qasm(builder) => {
-                    let mut builder_lock = builder.engine_builder.lock().unwrap();
+                    let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -1048,7 +1048,7 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::PhirJson(builder) => {
                     // Similar implementation for PHIR JSON
-                    let mut builder_lock = builder.engine_builder.lock().unwrap();
+                    let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -1080,7 +1080,7 @@ impl PySimBuilder {
                     .into_any())
                 }
                 SimBuilderInner::Phir(builder) => {
-                    let mut builder_lock = builder.engine_builder.lock().unwrap();
+                    let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -1111,7 +1111,7 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::QisControl(builder) => {
                     // Implementation for QIS Engine build()
-                    let mut builder_lock = builder.engine_builder.lock().unwrap();
+                    let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
@@ -1283,7 +1283,7 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::Hugr(builder) => {
                     // Direct HUGR interpreter build
-                    let mut builder_lock = builder.engine_builder.lock().unwrap();
+                    let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;

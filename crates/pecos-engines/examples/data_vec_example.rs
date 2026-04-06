@@ -1,10 +1,10 @@
 use bitvec::prelude::*;
 use pecos_engines::{Data, DataVec, DataVecType};
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 1: Creating a DataVec from homogeneous Data values
     let measurements = vec![Data::U32(0), Data::U32(1), Data::U32(0), Data::U32(1)];
-    let data_vec = DataVec::from_data_vec(measurements).unwrap();
+    let data_vec = DataVec::from_data_vec(measurements)?;
 
     println!("Created DataVec with {} elements", data_vec.len());
     println!("Data type: {:?}", data_vec.data_type());
@@ -20,9 +20,9 @@ fn main() {
 
     // Example 4: Creating an empty DataVec and pushing values
     let mut float_vec = DataVec::new_empty(DataVecType::F64);
-    float_vec.push(Data::F64(std::f64::consts::PI)).unwrap();
-    float_vec.push(Data::F64(2.71)).unwrap();
-    float_vec.push(Data::F64(1.41)).unwrap();
+    float_vec.push(Data::F64(std::f64::consts::PI))?;
+    float_vec.push(Data::F64(2.71))?;
+    float_vec.push(Data::F64(1.41))?;
 
     println!("\nFloat vector: {float_vec:?}");
 
@@ -39,7 +39,7 @@ fn main() {
     bv2.push(true);
 
     let bitvec_data = vec![Data::BitVec(bv1), Data::BitVec(bv2)];
-    let bitvec_vec = DataVec::from_data_vec(bitvec_data).unwrap();
+    let bitvec_vec = DataVec::from_data_vec(bitvec_data)?;
 
     println!("\nBitVec as JSON (decimal): {}", bitvec_vec.to_json_array());
 
@@ -48,8 +48,10 @@ fn main() {
         Data::String("quantum".to_string()),
         Data::String("computing".to_string()),
     ];
-    let string_vec = DataVec::from_data_vec(original.clone()).unwrap();
+    let string_vec = DataVec::from_data_vec(original.clone())?;
     let converted_back = string_vec.to_data_vec();
 
     println!("\nRound-trip successful: {}", original == converted_back);
+
+    Ok(())
 }

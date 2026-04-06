@@ -69,7 +69,7 @@ error(0.0005) D1 D3 L0
             "Pattern {}: {:?} -> errors: {:?}, cost: {:.3}",
             i + 1,
             pattern,
-            result.predicted_errors.as_slice().unwrap(),
+            result.predicted_errors.as_slice().ok_or("non-contiguous array")?,
             result.cost
         );
     }
@@ -95,7 +95,7 @@ error(0.0005) D1 D3 L0
             "Pattern {}: {:?} -> errors: {:?}, cost: {:.3}",
             i + 1,
             pattern,
-            result.predicted_errors.as_slice().unwrap(),
+            result.predicted_errors.as_slice().ok_or("non-contiguous array")?,
             result.cost
         );
     }
@@ -140,7 +140,7 @@ error(0.0005) D1 D3 L0
     println!("Heavy detection pattern: {detections:?}");
     println!(
         "Custom decoder result: errors={:?}, cost={:.3}",
-        result.predicted_errors.as_slice().unwrap(),
+        result.predicted_errors.as_slice().ok_or("non-contiguous array")?,
         result.cost
     );
 

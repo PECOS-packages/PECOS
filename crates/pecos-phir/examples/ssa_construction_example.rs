@@ -10,16 +10,18 @@ use pecos_phir::{
 };
 use std::collections::BTreeMap;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== SSA Construction During Parsing ===\n");
 
-    example_basic_ssa();
+    example_basic_ssa()?;
     example_phi_nodes();
     example_dominance_frontier();
+
+    Ok(())
 }
 
 /// Basic SSA construction
-fn example_basic_ssa() {
+fn example_basic_ssa() -> Result<(), Box<dyn std::error::Error>> {
     struct SSABuilder {
         next_id: u32,
         current_block: Block,
@@ -71,7 +73,7 @@ fn example_basic_ssa() {
 
     // Parse: y = x + 10
     let y_ssa = builder.define("y");
-    let x_use = *builder.lookup("x").unwrap();
+    let x_use = *builder.lookup("x").ok_or("variable 'x' not found")?;
     let const_10_ssa = builder.new_ssa_value();
 
     let const_10 = Instruction::new(
@@ -89,16 +91,18 @@ fn example_basic_ssa() {
         vec![Type::Int(IntWidth::I32)],
     );
     builder.current_block.add_instruction(add);
-    println!("  Used {} in addition", builder.lookup("x").unwrap());
+    println!("  Used {} in addition", builder.lookup("x").ok_or("variable 'x' not found")?);
 
     // Parse: return y
-    let y_use = *builder.lookup("y").unwrap();
+    let y_use = *builder.lookup("y").ok_or("variable 'y' not found")?;
     builder.current_block.set_terminator(Terminator::Return {
         values: vec![y_use],
     });
     println!("  Returned {y_use}");
 
     println!("\n  SSA form constructed during parsing!\n");
+
+    Ok(())
 }
 
 #[derive(Debug)]

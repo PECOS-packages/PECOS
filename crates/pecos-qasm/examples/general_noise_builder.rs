@@ -6,7 +6,7 @@ use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
 
-fn run_basic_noise_example(qasm: &str) {
+fn run_basic_noise_example(qasm: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Example 1: Basic noise configuration");
     let basic_noise = GeneralNoiseModel::builder()
         .with_seed(42)
@@ -19,12 +19,11 @@ fn run_basic_noise_example(qasm: &str) {
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
         .noise(basic_noise)
-        .run(1000)
-        .unwrap();
+        .run(1000)?;
 
     println!("Ran 1000 shots with basic noise");
-    let shot_map = results.try_as_shot_map().unwrap();
-    let values = shot_map.try_bits_as_u64("c").unwrap();
+    let shot_map = results.try_as_shot_map()?;
+    let values = shot_map.try_bits_as_u64("c")?;
 
     // Count unique states
     let mut state_counts = std::collections::BTreeMap::new();
@@ -32,9 +31,10 @@ fn run_basic_noise_example(qasm: &str) {
         *state_counts.entry(val).or_insert(0) += 1;
     }
     println!("State distribution: {state_counts:?}\n");
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -47,7 +47,7 @@ fn main() {
     "#;
 
     // Example 1: Basic noise configuration
-    run_basic_noise_example(qasm);
+    run_basic_noise_example(qasm)?;
 
     // Example 2: Complex noise with Pauli models
     println!("Example 2: Complex noise with Pauli error models");
@@ -80,8 +80,7 @@ fn main() {
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(123)
         .noise(complex_noise)
-        .run(500)
-        .unwrap();
+        .run(500)?;
 
     println!("Ran 500 shots with complex Pauli noise models\n");
 
@@ -98,8 +97,7 @@ fn main() {
     let _results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(selective_noise)
-        .run(100)
-        .unwrap();
+        .run(100)?;
 
     println!("Ran 100 shots with selective noiseless gates");
     println!("H and MEASURE gates are noiseless, CX gates have 10% error rate\n");
@@ -131,11 +129,12 @@ fn main() {
         .workers(2)
         .noise(full_noise)
         .quantum(sparse_stab().qubits(3))
-        .run(50)
-        .unwrap();
+        .run(50)?;
 
     println!("Ran 50 shots with full noise configuration");
-    let shot_map = results.try_as_shot_map().unwrap();
-    let binary_values = shot_map.try_bits_as_binary("c").unwrap();
+    let shot_map = results.try_as_shot_map()?;
+    let binary_values = shot_map.try_bits_as_binary("c")?;
     println!("Sample results (binary): {:?}", &binary_values[..5]);
+
+    Ok(())
 }

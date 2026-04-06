@@ -152,9 +152,9 @@ impl PySparseStab {
             }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self.inner.mz(q).into_iter().next().unwrap(),
-                    "MX" => self.inner.mx(q).into_iter().next().unwrap(),
-                    "MY" => self.inner.my(q).into_iter().next().unwrap(),
+                    "MZ" => self.inner.mz(q).into_iter().next().expect("single-qubit measurement returned no result"),
+                    "MX" => self.inner.mx(q).into_iter().next().expect("single-qubit measurement returned no result"),
+                    "MY" => self.inner.my(q).into_iter().next().expect("single-qubit measurement returned no result"),
                     "MZForced" => {
                         let forced_value = params
                             .ok_or_else(|| {
@@ -258,15 +258,15 @@ impl PySparseStab {
                     return Ok(Some(u8::from(result.outcome)));
                 }
                 // No forced_outcome, use regular measurement
-                let result = self.inner.mz(q).into_iter().next().unwrap();
+                let result = self.inner.mz(q).into_iter().next().expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "Measure +X" => {
-                let result = self.inner.mx(q).into_iter().next().unwrap();
+                let result = self.inner.mx(q).into_iter().next().expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "Measure +Y" => {
-                let result = self.inner.my(q).into_iter().next().unwrap();
+                let result = self.inner.my(q).into_iter().next().expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -567,13 +567,13 @@ impl PySparseStab {
             dict.set_item("row_x", bitset_to_list(&gens.row_x)?)?;
             dict.set_item("row_z", bitset_to_list(&gens.row_z)?)?;
 
-            let set_to_list = |s: &BitSet| -> Py<PyList> {
+            let set_to_list = |s: &BitSet| -> PyResult<Py<PyList>> {
                 let elems: Vec<usize> = s.iter().collect();
-                PyList::new(py, &elems).unwrap().unbind()
+                Ok(PyList::new(py, &elems)?.unbind())
             };
 
-            dict.set_item("signs_minus", set_to_list(&gens.signs_minus))?;
-            dict.set_item("signs_i", set_to_list(&gens.signs_i))?;
+            dict.set_item("signs_minus", set_to_list(&gens.signs_minus)?)?;
+            dict.set_item("signs_i", set_to_list(&gens.signs_i)?)?;
 
             Ok(dict.unbind())
         };

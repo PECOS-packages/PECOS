@@ -262,7 +262,7 @@ pub struct PyQasmSimulation {
 impl PyQasmSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         // Use workers from builder config or default (1)
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
@@ -272,7 +272,7 @@ impl PyQasmSimulation {
 
     /// Run the simulation with specified number of workers
     fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -284,7 +284,7 @@ impl PyQasmSimulation {
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
         {
-            let mut engine = slf.inner.lock().unwrap();
+            let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
                 .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
@@ -303,7 +303,7 @@ pub struct PyPhirJsonSimulation {
 impl PyPhirJsonSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         // Use workers from builder config or default (1)
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
@@ -313,7 +313,7 @@ impl PyPhirJsonSimulation {
 
     /// Run the simulation with specified number of workers
     fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -325,7 +325,7 @@ impl PyPhirJsonSimulation {
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
         {
-            let mut engine = slf.inner.lock().unwrap();
+            let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
                 .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
@@ -358,7 +358,7 @@ pub struct PyQisControlSimulation {
 impl PyQisControlSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -367,7 +367,7 @@ impl PyQisControlSimulation {
 
     /// Run the simulation with specified number of workers
     fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -385,7 +385,7 @@ impl PyQisControlSimulation {
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
         {
-            let mut engine = slf.inner.lock().unwrap();
+            let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
                 .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
@@ -465,7 +465,7 @@ pub struct PyPhirSimulation {
 impl PyPhirSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -474,7 +474,7 @@ impl PyPhirSimulation {
 
     /// Run the simulation with specified number of workers
     fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -486,7 +486,7 @@ impl PyPhirSimulation {
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
         {
-            let mut engine = slf.inner.lock().unwrap();
+            let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
                 .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
@@ -586,7 +586,7 @@ pub struct PyHugrSimulation {
 impl PyHugrSimulation {
     /// Run the simulation
     pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -595,7 +595,7 @@ impl PyHugrSimulation {
 
     /// Run the simulation with specified number of workers
     fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().unwrap();
+        let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
@@ -613,7 +613,7 @@ impl PyHugrSimulation {
     /// Returns the simulation object for method chaining.
     fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
         {
-            let mut engine = slf.inner.lock().unwrap();
+            let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
                 .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;

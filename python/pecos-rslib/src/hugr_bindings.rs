@@ -84,7 +84,7 @@ impl PyHugrCompiler {
 
         // Compile directly to the output path
         compiler
-            .compile_hugr_bytes(bytes, config.output_path.as_ref().unwrap())
+            .compile_hugr_bytes(bytes, config.output_path.as_ref().expect("output_path was just set"))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         Ok(())
@@ -170,7 +170,7 @@ impl PyHugrQisEngine {
             _temp_dir: Some(temp_dir),
         };
 
-        PYTHON_LLVM_ENGINES.lock().unwrap().insert(engine_id, entry);
+        PYTHON_LLVM_ENGINES.lock().expect("lock poisoned").insert(engine_id, entry);
 
         Ok(Self { engine_id, shots })
     }
@@ -218,7 +218,7 @@ impl PyHugrQisEngine {
             _temp_dir: Some(temp_dir),
         };
 
-        PYTHON_LLVM_ENGINES.lock().unwrap().insert(engine_id, entry);
+        PYTHON_LLVM_ENGINES.lock().expect("lock poisoned").insert(engine_id, entry);
 
         Ok(Self { engine_id, shots })
     }
@@ -233,7 +233,7 @@ impl PyHugrQisEngine {
             state_vector,
         };
 
-        let mut engines = PYTHON_LLVM_ENGINES.lock().unwrap();
+        let mut engines = PYTHON_LLVM_ENGINES.lock().expect("lock poisoned");
         let entry = engines.get_mut(&self.engine_id).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Engine {} not found",
@@ -281,7 +281,7 @@ impl PyHugrQisEngine {
 
     /// Reset the engine state
     fn reset(&mut self) -> PyResult<()> {
-        let mut engines = PYTHON_LLVM_ENGINES.lock().unwrap();
+        let mut engines = PYTHON_LLVM_ENGINES.lock().expect("lock poisoned");
         let entry = engines.get_mut(&self.engine_id).ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Engine {} not found",
@@ -334,6 +334,6 @@ impl PyHugrQisEngine {
 impl Drop for PyHugrQisEngine {
     fn drop(&mut self) {
         // Remove from storage when dropped
-        let _ = PYTHON_LLVM_ENGINES.lock().unwrap().remove(&self.engine_id);
+        let _ = PYTHON_LLVM_ENGINES.lock().expect("lock poisoned").remove(&self.engine_id);
     }
 }

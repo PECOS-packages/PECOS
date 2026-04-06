@@ -283,15 +283,15 @@ impl PyStateVec {
                 Ok(None)
             }
             "MZ" | "Measure" | "Measure +Z" | "measure Z" => {
-                let result = self.inner.mz(q).into_iter().next().unwrap();
+                let result = self.inner.mz(q).into_iter().next().expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "MX" | "Measure +X" => {
-                let result = self.inner.mx(q).into_iter().next().unwrap();
+                let result = self.inner.mx(q).into_iter().next().expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             "MY" | "Measure +Y" => {
-                let result = self.inner.my(q).into_iter().next().unwrap();
+                let result = self.inner.my(q).into_iter().next().expect("single-qubit measurement returned no result");
                 Ok(Some(u8::from(result.outcome)))
             }
             // Gate aliases - alternative names for common gates
@@ -794,8 +794,16 @@ impl PyStateVec {
 
         let mut state = Vec::with_capacity(1 << num_qubits);
         for chunk in bytes.chunks_exact(16) {
-            let re = f64::from_le_bytes(chunk[..8].try_into().unwrap());
-            let im = f64::from_le_bytes(chunk[8..16].try_into().unwrap());
+            let re = f64::from_le_bytes(
+                chunk[..8]
+                    .try_into()
+                    .expect("chunks_exact(16) guarantees 8-byte slices"),
+            );
+            let im = f64::from_le_bytes(
+                chunk[8..16]
+                    .try_into()
+                    .expect("chunks_exact(16) guarantees 8-byte slices"),
+            );
             state.push(num_complex::Complex64::new(re, im));
         }
 

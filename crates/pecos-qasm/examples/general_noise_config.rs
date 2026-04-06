@@ -12,7 +12,7 @@ use pecos_engines::sim_builder;
 use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -37,8 +37,7 @@ fn main() {
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(general_noise)
         .seed(42)
-        .run(1000)
-        .unwrap();
+        .run(1000)?;
 
     println!("Got {} shots with general noise", results.shots.len());
 
@@ -50,8 +49,7 @@ fn main() {
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(depolarizing)
         .seed(42)
-        .run(1000)
-        .unwrap();
+        .run(1000)?;
 
     println!("Got {} shots with depolarizing noise", results.shots.len());
 
@@ -67,8 +65,7 @@ fn main() {
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(custom_depolarizing)
         .seed(42)
-        .run(1000)
-        .unwrap();
+        .run(1000)?;
 
     println!(
         "Got {} shots with custom depolarizing noise",
@@ -84,8 +81,7 @@ fn main() {
         .noise(biased)
         .seed(42)
         .workers(4) // Use multiple workers
-        .run(1000)
-        .unwrap();
+        .run(1000)?;
 
     println!(
         "Got {} shots with biased depolarizing noise",
@@ -97,8 +93,9 @@ fn main() {
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
-        .run(1000)
-        .unwrap();
+        .run(1000)?;
 
     println!("Got {} shots with no noise", results.shots.len());
+
+    Ok(())
 }

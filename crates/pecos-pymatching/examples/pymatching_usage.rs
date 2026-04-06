@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     detection_events[1] = 1; // Detection at node 1
     detection_events[4] = 1; // Detection at node 4
 
-    let result = decoder.decode(&detection_events).unwrap();
+    let result = decoder.decode(&detection_events)?;
     println!(
         "Decoding result: observables = {:?}, weight = {}",
         result.observable, result.weight
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if events.len() >= 2 {
                 events[0] = 1;
                 events[1] = 1;
-                let result = dem_decoder.decode(&events).unwrap();
+                let result = dem_decoder.decode(&events)?;
                 println!("DEM decoding result: observables = {:?}", result.observable);
             }
         }

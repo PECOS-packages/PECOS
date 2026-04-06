@@ -33,12 +33,37 @@ use std::collections::HashMap;
 /// Convert a Rust Attribute to a Python object.
 fn attribute_to_py(py: Python<'_>, attr: &Attribute) -> Py<PyAny> {
     match attr {
-        Attribute::Float(f) => f.into_pyobject(py).unwrap().into_any().unbind(),
-        Attribute::Int(i) => i.into_pyobject(py).unwrap().into_any().unbind(),
-        Attribute::String(s) => s.into_pyobject(py).unwrap().into_any().unbind(),
-        Attribute::Bool(b) => b.into_pyobject(py).unwrap().to_owned().into_any().unbind(),
-        Attribute::IntList(list) => list.into_pyobject(py).unwrap().into_any().unbind(),
-        Attribute::StringList(list) => list.into_pyobject(py).unwrap().into_any().unbind(),
+        Attribute::Float(f) => f
+            .into_pyobject(py)
+            .expect("f64 to Python conversion failed")
+            .into_any()
+            .unbind(),
+        Attribute::Int(i) => i
+            .into_pyobject(py)
+            .expect("i64 to Python conversion failed")
+            .into_any()
+            .unbind(),
+        Attribute::String(s) => s
+            .into_pyobject(py)
+            .expect("String to Python conversion failed")
+            .into_any()
+            .unbind(),
+        Attribute::Bool(b) => b
+            .into_pyobject(py)
+            .expect("bool to Python conversion failed")
+            .to_owned()
+            .into_any()
+            .unbind(),
+        Attribute::IntList(list) => list
+            .into_pyobject(py)
+            .expect("Vec<i64> to Python conversion failed")
+            .into_any()
+            .unbind(),
+        Attribute::StringList(list) => list
+            .into_pyobject(py)
+            .expect("Vec<String> to Python conversion failed")
+            .into_any()
+            .unbind(),
         Attribute::Json(value) => {
             // Convert serde_json::Value to Python via JSON string
             let json_str = serde_json::to_string(value).unwrap_or_default();

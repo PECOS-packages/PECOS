@@ -10,7 +10,7 @@ use pecos_core::rng::{RecordingRng, ReplayingRng};
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, QubitId, StateVec, qid};
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RNG Recording and Replay Example ===\n");
 
     // Step 1: Create a simulator with RecordingRng
@@ -25,8 +25,8 @@ fn main() {
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - in a Bell state, results should match
-    let result1 = sim_recording.mz(&qid(0)).into_iter().next().unwrap();
-    let result2 = sim_recording.mz(&qid(1)).into_iter().next().unwrap();
+    let result1 = sim_recording.mz(&qid(0)).into_iter().next().ok_or("no measurement result")?;
+    let result2 = sim_recording.mz(&qid(1)).into_iter().next().ok_or("no measurement result")?;
 
     println!("Measurement outcomes:");
     println!("  Qubit 0: {}", if result1.outcome { "1" } else { "0" });
@@ -52,8 +52,8 @@ fn main() {
     println!("Created Bell state |00⟩ + |11⟩ / √2");
 
     // Measure both qubits - should get the same results as before
-    let replay_result1 = sim_replaying.mz(&qid(0)).into_iter().next().unwrap();
-    let replay_result2 = sim_replaying.mz(&qid(1)).into_iter().next().unwrap();
+    let replay_result1 = sim_replaying.mz(&qid(0)).into_iter().next().ok_or("no measurement result")?;
+    let replay_result2 = sim_replaying.mz(&qid(1)).into_iter().next().ok_or("no measurement result")?;
 
     println!("Replayed measurement outcomes:");
     println!(
@@ -74,4 +74,6 @@ fn main() {
 
     println!("\nThis demonstrates how to make quantum simulations with random measurements");
     println!("fully deterministic by recording and replaying the random number sequences.");
+
+    Ok(())
 }

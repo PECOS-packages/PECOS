@@ -45,7 +45,10 @@ pub fn pyint_to_u64_words(obj: &Bound<'_, PyAny>, n_words: usize) -> PyResult<Ve
     // Slow path: arbitrary precision Python int.
     // Extract word by word: word_i = (value >> (64*i)) & 0xFFFFFFFFFFFFFFFF
     let py = obj.py();
-    let mask = u64::MAX.into_pyobject(py).unwrap().into_any();
+    let mask = u64::MAX
+        .into_pyobject(py)
+        .expect("u64 to Python conversion failed")
+        .into_any();
 
     let mut words = Vec::with_capacity(n_words);
     let mut current = obj.clone();
@@ -63,14 +66,23 @@ pub fn pyint_to_u64_words(obj: &Bound<'_, PyAny>, n_words: usize) -> PyResult<Ve
 pub fn u64_words_to_pyint<'py>(py: Python<'py>, words: &[u64]) -> PyResult<Bound<'py, PyAny>> {
     // Fast path: single word
     if words.len() == 1 || words.iter().skip(1).all(|&w| w == 0) {
-        return Ok(words[0].into_pyobject(py).unwrap().into_any());
+        return Ok(words[0]
+            .into_pyobject(py)
+            .expect("u64 to Python conversion failed")
+            .into_any());
     }
 
     // Build value: iterate from MSB word to LSB word
-    let mut result = 0u64.into_pyobject(py).unwrap().into_any();
+    let mut result = 0u64
+        .into_pyobject(py)
+        .expect("u64 to Python conversion failed")
+        .into_any();
     for &word in words.iter().rev() {
         result = result.call_method1("__lshift__", (64u32,))?;
-        let word_py = word.into_pyobject(py).unwrap().into_any();
+        let word_py = word
+            .into_pyobject(py)
+            .expect("u64 to Python conversion failed")
+            .into_any();
         result = result.call_method1("__or__", (&word_py,))?;
     }
 
@@ -107,14 +119,20 @@ pub fn u64_words_to_pyint_signed<'py>(
                 r
             }
         };
-        return Ok(val.into_pyobject(py).unwrap().into_any());
+        return Ok(val
+            .into_pyobject(py)
+            .expect("i64 to Python conversion failed")
+            .into_any());
     }
 
     // Slow path: build unsigned value, then check sign bit
     let unsigned = u64_words_to_pyint(py, words)?;
 
     let sign_bit_pos = internal_size - 1;
-    let one = 1u32.into_pyobject(py).unwrap().into_any();
+    let one = 1u32
+        .into_pyobject(py)
+        .expect("u32 to Python conversion failed")
+        .into_any();
     let sign_mask = one.call_method1("__lshift__", (sign_bit_pos,))?;
     let sign_test = unsigned.call_method1("__and__", (&sign_mask,))?;
 

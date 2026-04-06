@@ -16,7 +16,8 @@ fn test_concurrent_gpu_stab_creation_and_destruction() {
 
     thread::scope(|s| {
         for i in 0u64..8 {
-            s.spawn(|| {
+            let created = &created;
+            s.spawn(move || {
                 for _ in 0..5 {
                     let sim = DefaultGpuStab::with_seed(4, i);
                     if let Ok(mut sim) = sim {

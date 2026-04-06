@@ -1715,11 +1715,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..read_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().ok()?;
+        receiver.recv().expect("GPU worker channel closed").ok()?;
 
         let data = buffer_slice.get_mapped_range();
         let anticommuting: &[u32] = bytemuck::cast_slice(&data);
@@ -1772,11 +1772,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..8);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().ok()?;
+        receiver.recv().expect("GPU worker channel closed").ok()?;
 
         let data = buffer_slice.get_mapped_range();
         let result_data: &[u32] = bytemuck::cast_slice(&data);
@@ -1903,11 +1903,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..4);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().unwrap();
+        receiver
+            .recv()
+            .expect("GPU worker channel closed")
+            .expect("GPU buffer mapping failed");
 
         let data = buffer_slice.get_mapped_range();
         let result: u32 = bytemuck::cast_slice::<u8, u32>(&data)[0];
@@ -1983,11 +1986,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..4);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().unwrap();
+        receiver
+            .recv()
+            .expect("GPU worker channel closed")
+            .expect("GPU buffer mapping failed");
 
         let data = buffer_slice.get_mapped_range();
         let result: u32 = bytemuck::cast_slice::<u8, u32>(&data)[0];
@@ -2222,11 +2228,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..results_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().unwrap();
+        receiver
+            .recv()
+            .expect("GPU worker channel closed")
+            .expect("GPU buffer mapping failed");
 
         let data = buffer_slice.get_mapped_range();
         let result_data: &[u32] = bytemuck::cast_slice(&data);
@@ -2262,11 +2271,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().unwrap();
+        receiver
+            .recv()
+            .expect("GPU worker channel closed")
+            .expect("GPU buffer mapping failed");
 
         let data = buffer_slice.get_mapped_range();
         let result: Vec<u32> = bytemuck::cast_slice(&data).to_vec();

@@ -178,7 +178,10 @@ fn get_hugr_llvm_module<'c>(
     let module = context.create_module(module_name);
     let emit = EmitHugr::new(context, module, namer, exts);
     Ok(emit
-        .emit_module(hugr.try_fat(hugr.module_root()).unwrap())?
+        .emit_module(
+            hugr.try_fat(hugr.module_root())
+                .expect("module root must be a valid fat node"),
+        )?
         .finish())
 }
 
@@ -231,7 +234,10 @@ fn wrap_main<'c>(
     let builder = ctx.create_builder();
     builder.position_at_end(block);
 
-    let initial_tc = entry_fun.get_nth_param(0).unwrap().into_int_value();
+    let initial_tc = entry_fun
+        .get_nth_param(0)
+        .expect("entry function must have at least one parameter")
+        .into_int_value();
     let hugr_main = module
         .get_function(hugr_entry)
         .ok_or_else(|| anyhow!("Entrypoint function '{hugr_entry}' not found in Module"))?;
@@ -258,7 +264,8 @@ fn wrap_main<'c>(
 pub fn get_native_target_machine(opt_level: OptimizationLevel) -> Result<TargetMachine> {
     let reloc_mode = RelocMode::PIC;
     let code_model = CodeModel::Default;
-    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    Target::initialize_native(&InitializationConfig::default())
+        .expect("native LLVM target initialization failed");
     let triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple).map_err(|e| anyhow!("{e}"))?;
 

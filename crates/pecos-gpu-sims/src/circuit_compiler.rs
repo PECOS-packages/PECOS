@@ -158,7 +158,7 @@ impl CircuitCompiler {
             .entry(hash)
             .or_insert_with(|| Self::generate_shader(gates, hash));
 
-        self.cache.get(&hash).unwrap()
+        self.cache.get(&hash).expect("just inserted")
     }
 
     /// Check if a circuit is already compiled
@@ -326,7 +326,7 @@ fn {}(
             ),
 
             GateType::Cx => {
-                let ctrl = gate.control.unwrap();
+                let ctrl = gate.control.expect("two-qubit gate must have control");
                 format!(
                     r"    {{
         let c_off = {}u * gw + word_idx;
@@ -344,7 +344,7 @@ fn {}(
             }
 
             GateType::Cz => {
-                let a = gate.control.unwrap();
+                let a = gate.control.expect("two-qubit gate must have control");
                 let b = gate.target;
                 format!(
                     r"    {{
@@ -366,7 +366,7 @@ fn {}(
             }
 
             GateType::Swap => {
-                let a = gate.control.unwrap();
+                let a = gate.control.expect("two-qubit gate must have control");
                 let b = gate.target;
                 format!(
                     r"    {{

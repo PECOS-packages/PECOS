@@ -907,13 +907,13 @@ impl GpuMeasurementSampler {
 
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         receiver
             .recv()
-            .unwrap()
+            .expect("GPU worker channel closed")
             .expect("Failed to map counts buffer");
 
         let data = buffer_slice.get_mapped_range();
@@ -933,11 +933,14 @@ impl GpuMeasurementSampler {
 
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("GPU worker channel closed");
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver.recv().unwrap().expect("Failed to map buffer");
+        receiver
+            .recv()
+            .expect("GPU worker channel closed")
+            .expect("Failed to map buffer");
 
         let data = buffer_slice.get_mapped_range();
         let results: &[u32] = bytemuck::cast_slice(&data);

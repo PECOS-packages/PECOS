@@ -145,7 +145,7 @@ impl BpOsdDecoder {
     /// Panics if the input array is not contiguous in memory.
     pub fn decode(&mut self, input: &ArrayView1<u8>) -> Result<DecodingResult, LdpcError> {
         // Input validation is done in the C++ code based on input_vector_type
-        let input_slice = input.as_slice().unwrap();
+        let input_slice = input.as_slice().expect("input array must be contiguous");
         let result = ffi::decode_bp_osd(self.inner.pin_mut(), input_slice)
             .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 
@@ -386,7 +386,7 @@ impl BpLsdDecoder {
     /// Panics if the input array is not contiguous in memory.
     pub fn decode(&mut self, input: &ArrayView1<u8>) -> Result<DecodingResult, LdpcError> {
         // Input validation is done in the C++ code based on input_vector_type
-        let input_slice = input.as_slice().unwrap();
+        let input_slice = input.as_slice().expect("input array must be contiguous");
         let result = ffi::decode_bp_lsd(self.inner.pin_mut(), input_slice)
             .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 
@@ -1059,7 +1059,7 @@ impl BeliefFindDecoder {
 
         // BP didn't converge, use Union Find with soft information from BP
         let llrs = self.bp_decoder.log_prob_ratios()?;
-        let llrs_slice = llrs.as_slice().unwrap();
+        let llrs_slice = llrs.as_slice().expect("LLR array must be contiguous");
 
         // Convert LLRs to bit weights for Union Find
         // Union Find expects weights where lower values = more likely to be in error

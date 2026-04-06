@@ -616,7 +616,7 @@ impl CircuitPass for MergeAdjacentRotations {
                 }
 
                 // Merge angle and remove successor.
-                circuit.gate_mut(node).unwrap().angles[0] += succ_angle;
+                circuit.gate_mut(node).expect("node must exist in circuit").angles[0] += succ_angle;
                 circuit.remove_gate(succ);
 
                 for (q, succ_succ) in rewire {
@@ -756,7 +756,7 @@ impl CircuitPass for PeepholeOptimize {
                     continue;
                 }
 
-                let gate = circuit.gate(node).unwrap();
+                let gate = circuit.gate(node).expect("node must exist in circuit");
                 if let Some((new_gt, new_qubits)) = peephole_conjugation(gate, q) {
                     // Rewire around the two H gates.
                     let h_pred = circuit.predecessor_on_qubit(pred, q);
@@ -764,7 +764,7 @@ impl CircuitPass for PeepholeOptimize {
                     circuit.remove_gate(pred);
                     circuit.remove_gate(succ);
                     // Update the middle gate in place.
-                    let g = circuit.gate_mut(node).unwrap();
+                    let g = circuit.gate_mut(node).expect("node must exist in circuit");
                     g.gate_type = new_gt;
                     g.qubits = new_qubits;
                     // Rewire: h_pred -> node, node -> h_succ
@@ -1013,7 +1013,7 @@ impl CircuitPass for CompactTicks {
 
         for (i, (gate, attrs)) in entries.into_iter().enumerate() {
             let ti = assignments[i];
-            let tick = circuit.get_tick_mut(ti).unwrap();
+            let tick = circuit.get_tick_mut(ti).expect("tick index must exist in circuit");
             let gi = tick.add_gate(gate);
             if !attrs.is_empty() {
                 tick.set_gate_attrs(gi, attrs);

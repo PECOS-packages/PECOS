@@ -95,9 +95,9 @@ sha256 = "85aa95bba6457c4f4e93221f4c417d988588891a1f7cb211c307dfe81a10cadd"
 description = "QuEST quantum simulator"
 
 [dependencies.qulacs]
-version = "0.6.12"
-url = "https://github.com/qulacs/qulacs/archive/v0.6.12.tar.gz"
-sha256 = "b9e5422e0bb2b07725b0c62f7827326b5a1486facb30cf68d12b4ef119c485e9"
+version = "0.6.13"
+url = "https://github.com/qulacs/qulacs/archive/v0.6.13.tar.gz"
+sha256 = "9ef25a988b9f483b97ea9501554a1ce5ee23ffaf89e7ca89969f0d03fcf94af0"
 description = "Qulacs quantum simulator"
 
 [dependencies.stim]

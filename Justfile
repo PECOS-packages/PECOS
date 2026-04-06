@@ -9,8 +9,9 @@ default:
     @echo "================="
     @echo ""
     @echo "Quick start:"
-    @echo "  just install-cli    # First time: install the pecos CLI"
-    @echo "  just build          # Build PECOS (auto-installs dependencies)"
+    @echo "  just install-cli    # Optional: install pecos CLI for direct use"
+    @echo "  just setup          # First time: detect and install dependencies"
+    @echo "  just build          # Build PECOS (runs setup if needed)"
     @echo "  just test           # Run all tests"
     @echo "  just dev            # Build + test (daily workflow)"
     @echo "  just lint           # Check formatting and linting"
@@ -27,7 +28,7 @@ default:
 set shell := ["bash", "-cu"]
 
 # PECOS CLI - must be installed (run 'just install-cli' first)
-pecos := "pecos"
+pecos := "cargo run -p pecos-cli --release --"
 
 # =============================================================================
 # Getting Started
@@ -43,12 +44,12 @@ install-cli:
 
 # Set up build environment (detect and install missing dependencies)
 [group('setup')]
-setup: check-cli
+setup:
     {{pecos}} setup
 
 # Set up build environment, accepting all prompts (for CI)
 [group('setup')]
-setup-ci: check-cli
+setup-ci:
     {{pecos}} setup --yes
 
 # Check development environment for common problems
@@ -110,12 +111,12 @@ doctor:
 
 # Show system information
 [group('setup')]
-sys-info: check-cli
+sys-info:
     {{pecos}} sys-info
 
 # List installed and cached dependencies
 [group('setup')]
-list-deps: check-cli
+list-deps:
     {{pecos}} list -v
 
 # =============================================================================
@@ -124,7 +125,7 @@ list-deps: check-cli
 
 # Build PECOS (profile: debug, release, native)
 [group('build')]
-build profile="debug": check-cli setup-quiet sync-deps build-selene
+build profile="debug": setup-quiet sync-deps build-selene
     #!/usr/bin/env bash
     set -euo pipefail
     {{pecos}} python build --profile {{profile}}
@@ -133,12 +134,12 @@ build profile="debug": check-cli setup-quiet sync-deps build-selene
 
 # Build PECOS without dependency setup or sync (profile: debug, release, native)
 [group('build')]
-build-lite profile="debug": check-cli build-selene
+build-lite profile="debug": build-selene
     {{pecos}} python build --profile {{profile}}
 
 # Build PECOS with CUDA Python extras (profile: debug, release, native)
 [group('build')]
-build-cuda profile="debug": check-cli setup-quiet
+build-cuda profile="debug": setup-quiet
     {{pecos}} python build --profile {{profile}} --cuda
 
 # =============================================================================
@@ -161,7 +162,7 @@ pytest *args:
 
 # Run Rust tests (CUDA-aware; mode: debug or release)
 [group('test')]
-rstest mode="release": check-cli
+rstest mode="release":
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "{{mode}}" = "release" ]; then
@@ -348,27 +349,27 @@ docs-test:
 
 # Install LLVM 14
 [group('deps')]
-install-llvm: check-cli
+install-llvm:
     {{pecos}} install llvm
 
 # Install CUDA Toolkit
 [group('deps')]
-install-cuda: check-cli
+install-cuda:
     {{pecos}} install cuda
 
 # Configure LLVM paths in .cargo/config.toml
 [group('deps')]
-configure-llvm: check-cli
+configure-llvm:
     {{pecos}} llvm configure
 
 # Check LLVM 14 installation status
 [group('deps')]
-check-llvm: check-cli
+check-llvm:
     -{{pecos}} llvm check
 
 # Check CUDA installation status
 [group('deps')]
-check-cuda: check-cli
+check-cuda:
     -{{pecos}} cuda check
 
 # =============================================================================
@@ -488,26 +489,7 @@ pytest-dep:
 # =============================================================================
 
 [private]
-check-cli:
-    #!/usr/bin/env bash
-    NEEDS_INSTALL=false
-    if ! command -v pecos >/dev/null 2>&1; then
-        NEEDS_INSTALL=true
-    else
-        expected=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-        installed=$(pecos --version 2>/dev/null | awk '{print $2}')
-        if [[ "$installed" != "$expected" ]]; then
-            echo "PECOS CLI outdated (installed: ${installed:-unknown}, expected: $expected)"
-            NEEDS_INSTALL=true
-        fi
-    fi
-    if [ "$NEEDS_INSTALL" = true ]; then
-        echo "Installing PECOS CLI..."
-        cargo install --path crates/pecos-cli --force --quiet
-    fi
-
-[private]
-setup-quiet: check-cli
+setup-quiet:
     {{pecos}} setup --quiet
 
 # Sync Python deps (fast if already installed, skips maturin rebuilds)

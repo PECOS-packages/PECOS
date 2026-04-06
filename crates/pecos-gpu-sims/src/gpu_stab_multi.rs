@@ -1932,6 +1932,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 }
 
+impl<R: Rng + SeedableRng> Drop for GpuStabMulti<R> {
+    fn drop(&mut self) {
+        // Ensure all pending GPU work completes before resources are freed
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+}
+
 /// PCG-style hash for deterministic noise (CPU version, matches shader)
 fn hash_noise_cpu(seed: u32, gate_idx: u32, qubit: u32) -> u32 {
     let mut h = seed ^ (gate_idx.wrapping_mul(0x9E37_79B9)) ^ (qubit.wrapping_mul(0x85EB_CA6B));

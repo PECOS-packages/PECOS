@@ -907,7 +907,7 @@ impl GpuMeasurementSampler {
 
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -933,7 +933,7 @@ impl GpuMeasurementSampler {
 
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -969,6 +969,13 @@ impl GpuMeasurementSampler {
     #[must_use]
     pub fn max_shots(&self) -> usize {
         self.max_shots
+    }
+}
+
+impl Drop for GpuMeasurementSampler {
+    fn drop(&mut self) {
+        // Ensure all pending GPU work completes before resources are freed
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 }
 

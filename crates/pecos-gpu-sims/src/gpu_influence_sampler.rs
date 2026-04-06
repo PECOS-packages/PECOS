@@ -647,7 +647,7 @@ impl GpuInfluenceSampler {
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).expect("GPU worker channel closed");
+            let _ = tx.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -661,6 +661,13 @@ impl GpuInfluenceSampler {
         staging.unmap();
 
         raw
+    }
+}
+
+impl Drop for GpuInfluenceSampler {
+    fn drop(&mut self) {
+        // Ensure all pending GPU work completes before resources are freed
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 }
 

@@ -1715,7 +1715,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..read_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -1772,7 +1772,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..8);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -1903,7 +1903,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..4);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -1986,7 +1986,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..4);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -2228,7 +2228,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..results_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -2271,7 +2271,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let buffer_slice = self.staging_buffer.slice(..size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("GPU worker channel closed");
+            let _ = sender.send(result);
         });
 
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
@@ -2472,6 +2472,13 @@ impl<R: Rng + SeedableRng + Debug> Debug for GpuStab<R> {
             .field("num_qubits", &self.num_qubits)
             .field("queued_gates", &self.gate_queue.len())
             .finish_non_exhaustive()
+    }
+}
+
+impl<R: Rng + SeedableRng> Drop for GpuStab<R> {
+    fn drop(&mut self) {
+        // Ensure all pending GPU work completes before resources are freed
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 }
 

@@ -23,9 +23,7 @@ use crate::ArbitraryRotationGateable;
 use pecos_core::{Angle64, QubitId, qid};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
-// ============================================================================
-// Helper: deterministic measurement assertion
-// ============================================================================
+// --- Helper: deterministic measurement assertion ---
 
 fn assert_mz<S: ArbitraryRotationGateable>(sim: &mut S, q: usize, expected: bool, msg: &str) {
     let result = sim.mz(&qid(q));
@@ -53,9 +51,7 @@ fn assert_mz_superposition<S: ArbitraryRotationGateable>(sim: &mut S, q: usize, 
     );
 }
 
-// ============================================================================
-// Clifford-Angle Equivalences
-// ============================================================================
+// --- Clifford-Angle Equivalences ---
 
 /// Verify RX(pi) = X (up to global phase, invisible to measurement).
 ///
@@ -107,9 +103,7 @@ pub fn verify_rz_pi_equals_z<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mx(sim, 0, true, "RZ(pi)|+>");
 }
 
-// ============================================================================
-// Identity at Zero Angle
-// ============================================================================
+// --- Identity at Zero Angle ---
 
 /// Verify R(0) = I for all single-qubit rotations.
 pub fn verify_rotation_identity_at_zero<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -147,9 +141,7 @@ pub fn verify_rotation_identity_at_zero<S: ArbitraryRotationGateable>(sim: &mut 
     assert_mx(sim, 0, false, "RZ(0)|+>");
 }
 
-// ============================================================================
-// Inverse Rotations
-// ============================================================================
+// --- Inverse Rotations ---
 
 /// Verify R(theta) * R(-theta) = I for various rotations.
 pub fn verify_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -239,9 +231,7 @@ pub fn verify_two_qubit_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut
     }
 }
 
-// ============================================================================
-// T Gate Tests
-// ============================================================================
+// --- T Gate Tests ---
 
 /// Verify T^8 = I (up to global phase, invisible to measurement).
 ///
@@ -278,9 +268,7 @@ pub fn verify_t_adjoint<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mz(sim, 0, false, "T*Tdg|0>");
 }
 
-// ============================================================================
-// Rotation Composition
-// ============================================================================
+// --- Rotation Composition ---
 
 /// Verify RZ(a) * RZ(b) = RZ(a+b) at Clifford angles.
 ///
@@ -325,9 +313,7 @@ pub fn verify_rz_composition<S: ArbitraryRotationGateable>(sim: &mut S) {
     );
 }
 
-// ============================================================================
-// Two-Qubit Rotation Tests
-// ============================================================================
+// --- Two-Qubit Rotation Tests ---
 
 /// Verify RZZ at special angles.
 ///
@@ -405,9 +391,7 @@ pub fn verify_ry_half_pi_superposition<S: ArbitraryRotationGateable>(sim: &mut S
     assert_mz_superposition(sim, 0, "RY(pi/2)|0>");
 }
 
-// ============================================================================
-// Circuit Inverse Test
-// ============================================================================
+// --- Circuit Inverse Test ---
 
 /// Verify that a mixed rotation circuit and its reverse compose to identity.
 pub fn verify_rotation_circuit_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -430,9 +414,7 @@ pub fn verify_rotation_circuit_inverse<S: ArbitraryRotationGateable>(sim: &mut S
     assert_mx(sim, 0, false, "Rotation circuit inverse: back to |+>");
 }
 
-// ============================================================================
-// U Gate Tests
-// ============================================================================
+// --- U Gate Tests ---
 
 /// Verify U(0, 0, 0) = I.
 pub fn verify_u_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -621,9 +603,7 @@ pub fn verify_u_after_clifford_ordering<S: ArbitraryRotationGateable>(sim: &mut 
     );
 }
 
-// ============================================================================
-// R1XY Gate Tests
-// ============================================================================
+// --- R1XY Gate Tests ---
 
 /// Verify R1XY(0, phi) = I for any phi.
 pub fn verify_r1xy_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -725,9 +705,7 @@ pub fn verify_r1xy_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     }
 }
 
-// ============================================================================
-// RXXRYYRZZ Composite Gate Tests
-// ============================================================================
+// --- RXXRYYRZZ Composite Gate Tests ---
 
 /// Verify RXXRYYRZZ(0, 0, 0) = I.
 pub fn verify_rxxryyrzz_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -848,9 +826,7 @@ pub fn verify_rxxryyrzz_decomposition<S: ArbitraryRotationGateable>(sim: &mut S)
     assert_mz(sim, 1, false, "RXXRYYRZZ decomp|+0> q1");
 }
 
-// ============================================================================
-// U2q General 2-Qubit Gate Tests
-// ============================================================================
+// --- U2q General 2-Qubit Gate Tests ---
 
 /// Verify U2q with identity parameters = I.
 pub fn verify_u2q_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -1013,9 +989,7 @@ pub fn verify_u2q_matches_rxxryyrzz<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mz(sim, 1, false, "U2q(I,int,I)*RXXRYYRZZ_inv|+0> q1");
 }
 
-// ============================================================================
-// Half-Pi Clifford Equivalences
-// ============================================================================
+// --- Half-Pi Clifford Equivalences ---
 
 /// Verify RZ(pi/2) = SZ (up to global phase).
 pub fn verify_rz_half_pi_is_sz<S: ArbitraryRotationGateable>(sim: &mut S) {
@@ -1115,9 +1089,7 @@ pub fn verify_rz_quarter_pi_is_t<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mx(sim, 0, false, "RZ(pi/4)*Tdg|+> = |+>");
 }
 
-// ============================================================================
-// Aggregator
-// ============================================================================
+// --- Aggregator ---
 
 /// Run all measurement-based rotation gate tests.
 ///
@@ -1192,9 +1164,7 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
     }
 }
 
-// ============================================================================
-// Test Suite Macro
-// ============================================================================
+// --- Test Suite Macro ---
 
 /// Generates a measurement-based rotation test suite for any `ArbitraryRotationGateable` simulator.
 ///

@@ -291,9 +291,7 @@ fn matrices_equiv_up_to_phase(a: &DMatrix<Complex64>, b: &DMatrix<Complex64>, to
     }
 }
 
-// ============================================================================
-// Helper functions for matrix construction
-// ============================================================================
+// --- Helper functions for matrix construction ---
 
 /// Converts a [`PauliString`] to a dense matrix (implementation).
 fn pauli_string_to_matrix_impl(ps: &PauliString, num_qubits: usize) -> DMatrix<Complex64> {
@@ -604,9 +602,7 @@ mod tests {
     use pecos_core::operator::{CX, H, I, Is, RX, RZ, SWAP, SZ, T, X, Y, Z};
     use std::f64::consts::PI;
 
-    // ========================================================================
-    // Basic to_matrix tests
-    // ========================================================================
+    // --- Basic to_matrix tests ---
 
     #[test]
     fn test_pauli_matrices() {
@@ -671,9 +667,7 @@ mod tests {
         assert!(mat[(1, 0)].norm() < 1e-10);
     }
 
-    // ========================================================================
-    // Rotation matrix tests
-    // ========================================================================
+    // --- Rotation matrix tests ---
 
     #[test]
     fn test_t_gate_matrix() {
@@ -716,9 +710,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&mat, &z_mat, 1e-10));
     }
 
-    // ========================================================================
-    // Tensor product and composition tests
-    // ========================================================================
+    // --- Tensor product and composition tests ---
 
     #[test]
     fn test_tensor_product() {
@@ -771,9 +763,7 @@ mod tests {
         assert!((mat[(3, 3)] - Complex64::new(1.0, 0.0)).norm() < 1e-10);
     }
 
-    // ========================================================================
-    // operators_equiv tests
-    // ========================================================================
+    // --- operators_equiv tests ---
 
     #[test]
     fn test_operators_equiv_same() {
@@ -805,9 +795,7 @@ mod tests {
         assert!(operators_equiv(&x, &i_x));
     }
 
-    // ========================================================================
-    // operator_exp tests
-    // ========================================================================
+    // --- operator_exp tests ---
 
     #[test]
     fn test_operator_exp_identity() {
@@ -837,9 +825,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&result, &expected, 1e-10));
     }
 
-    // ========================================================================
-    // operator_log tests
-    // ========================================================================
+    // --- operator_log tests ---
 
     #[test]
     fn test_operator_log_identity() {
@@ -869,9 +855,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-    // ========================================================================
-    // to_matrix_with_size tests
-    // ========================================================================
+    // --- to_matrix_with_size tests ---
 
     #[test]
     fn test_to_matrix_with_size_embedding() {
@@ -907,9 +891,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Conjugation matrix verification tests
-    // ========================================================================
+    // --- Conjugation matrix verification tests ---
 
     #[test]
     fn test_conj_matrix_verification() {
@@ -974,9 +956,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&back_mat, &a_mat, 1e-10));
     }
 
-    // ========================================================================
-    // Multi-qubit conjugation tests
-    // ========================================================================
+    // --- Multi-qubit conjugation tests ---
 
     #[test]
     fn test_conj_multi_qubit_stabilizer() {
@@ -1011,9 +991,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&result_mat, &expected, 1e-10));
     }
 
-    // ========================================================================
-    // More two-qubit gate tests
-    // ========================================================================
+    // --- More two-qubit gate tests ---
 
     #[test]
     fn test_cz_gate() {
@@ -1046,9 +1024,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&mat_01, &mat_10, 1e-10));
     }
 
-    // ========================================================================
-    // Algebraic identity tests
-    // ========================================================================
+    // --- Algebraic identity tests ---
 
     #[test]
     fn test_adjoint_of_product() {
@@ -1104,9 +1080,7 @@ mod tests {
         ));
     }
 
-    // ========================================================================
-    // ToMatrix trait tests
-    // ========================================================================
+    // --- ToMatrix trait tests ---
 
     #[test]
     fn test_to_matrix_trait_method() {
@@ -1152,9 +1126,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&product, &identity, 1e-10));
     }
 
-    // ========================================================================
-    // Identity operator ToMatrix tests
-    // ========================================================================
+    // --- Identity operator ToMatrix tests ---
 
     #[test]
     fn test_identity_to_matrix_single_qubit() {
@@ -1205,9 +1177,7 @@ mod tests {
         assert!(matrices_equiv_up_to_phase(&orig_mat, &simp_mat, 1e-10));
     }
 
-    // ========================================================================
-    // PauliString ToMatrix tests
-    // ========================================================================
+    // --- PauliString ToMatrix tests ---
 
     #[test]
     fn test_pauli_string_to_matrix_single() {

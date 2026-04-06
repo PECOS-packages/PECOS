@@ -220,9 +220,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         amp.re * amp.re + amp.im * amp.im
     }
 
-    // =========================================================================
-    // Buffer management
-    // =========================================================================
+    // --- Buffer management ---
 
     /// Get references to active buffers
     #[inline]
@@ -234,9 +232,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
-    // =========================================================================
-    // Rotation kernel helpers
-    // =========================================================================
+    // --- Rotation kernel helpers ---
 
     /// Apply a diagonal RZ rotation in-place: e^{-i*theta/2} to |0> and e^{i*theta/2} to |1>.
     /// Takes precomputed cos(theta/2) and sin(theta/2).
@@ -539,9 +535,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         self.sort_active();
     }
 
-    // =========================================================================
-    // Single-qubit gate application
-    // =========================================================================
+    // --- Single-qubit gate application ---
 
     /// Apply single-qubit gate using two-pointer merge with sorted output.
     ///
@@ -1103,9 +1097,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
-    // =========================================================================
-    // Optimized in-place gates (Z, S, CZ) with SIMD
-    // =========================================================================
+    // --- Optimized in-place gates (Z, S, CZ) with SIMD ---
 
     /// Apply CZ gate in-place (flip sign where both bits are set)
     fn apply_cz_inplace(&mut self, q1: usize, q2: usize) {
@@ -1135,9 +1127,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
-    // =========================================================================
-    // Two-qubit gates
-    // =========================================================================
+    // --- Two-qubit gates ---
 
     /// Apply SZZ diagonal phase gate in-place.
     ///
@@ -1626,9 +1616,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// Clone implementation
-// =============================================================================
+// --- Clone implementation ---
 
 impl<R: Rng + Clone> Clone for SparseStateVecSoA<R> {
     fn clone(&self) -> Self {
@@ -1658,9 +1646,7 @@ impl<R: Rng + Clone> Clone for SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// RngManageable implementation
-// =============================================================================
+// --- RngManageable implementation ---
 
 impl<R: Rng + SeedableRng> RngManageable for SparseStateVecSoA<R> {
     type Rng = R;
@@ -1678,9 +1664,7 @@ impl<R: Rng + SeedableRng> RngManageable for SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// State expansion
-// =============================================================================
+// --- State expansion ---
 
 impl<R: Rng> SparseStateVecSoA<R> {
     /// Returns the full state vector as a dense Vec of Complex64.
@@ -1867,9 +1851,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// Frame flush methods
-// =============================================================================
+// --- Frame flush methods ---
 
 impl<R: Rng> SparseStateVecSoA<R> {
     /// Flush the Clifford frame on qubit `q` by physically applying the
@@ -1930,9 +1912,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// QuantumSimulator trait implementation
-// =============================================================================
+// --- QuantumSimulator trait implementation ---
 
 impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
     fn reset(&mut self) -> &mut Self {
@@ -1952,9 +1932,7 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// CliffordGateable trait implementation
-// =============================================================================
+// --- CliffordGateable trait implementation ---
 
 impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // ---- Single-qubit Clifford gates: O(1) frame composition ----
@@ -2573,9 +2551,7 @@ impl<R: Rng> SparseStateVecSoA<R> {
     }
 }
 
-// =============================================================================
-// ArbitraryRotationGateable trait implementation
-// =============================================================================
+// --- ArbitraryRotationGateable trait implementation ---
 
 impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
@@ -2855,10 +2831,6 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
         self
     }
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

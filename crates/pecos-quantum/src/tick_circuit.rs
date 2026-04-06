@@ -697,9 +697,7 @@ impl TickCircuit {
         self.circuit_attrs.iter()
     }
 
-    // =========================================================================
-    // Circuit manipulation
-    // =========================================================================
+    // --- Circuit manipulation ---
 
     /// Clear the circuit and start fresh.
     ///
@@ -895,9 +893,7 @@ impl TickCircuit {
             .map(|tick| tick.discard(&qubit_ids))
     }
 
-    // =========================================================================
-    // Gate signature validation
-    // =========================================================================
+    // --- Gate signature validation ---
 
     /// Import gate signatures in bulk (e.g., from a `GateRegistry`).
     pub fn import_signatures(&mut self, sigs: &HashMap<String, GateSignature>) {
@@ -946,9 +942,7 @@ impl TickCircuit {
         Ok(())
     }
 
-    // =========================================================================
-    // Iteration helpers
-    // =========================================================================
+    // --- Iteration helpers ---
 
     /// Iterate over all gates in the circuit, across all ticks.
     ///
@@ -1083,9 +1077,7 @@ impl TickCircuit {
     }
 }
 
-// ============================================================================
-// TickHandle - handle for adding gates to a specific tick
-// ============================================================================
+// --- TickHandle - handle for adding gates to a specific tick ---
 
 impl<'a> TickHandle<'a> {
     /// Get the tick index this handle refers to.
@@ -1175,9 +1167,7 @@ impl<'a> TickHandle<'a> {
         self
     }
 
-    // =========================================================================
-    // Single-qubit gates
-    // =========================================================================
+    // --- Single-qubit gates ---
 
     /// Apply Hadamard gate(s) to one or more qubits.
     ///
@@ -1361,9 +1351,7 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::u(theta.into(), phi.into(), lambda.into(), qubits))
     }
 
-    // =========================================================================
-    // Two-qubit gates
-    // =========================================================================
+    // --- Two-qubit gates ---
 
     /// Apply CNOT (CX) gate(s) to one or more qubit pairs.
     ///
@@ -1564,9 +1552,7 @@ impl<'a> TickHandle<'a> {
         self
     }
 
-    // =========================================================================
-    // Three-qubit gates
-    // =========================================================================
+    // --- Three-qubit gates ---
 
     /// Apply CCX (Toffoli) gate(s).
     ///
@@ -1588,9 +1574,7 @@ impl<'a> TickHandle<'a> {
         self
     }
 
-    // =========================================================================
-    // State preparation and measurement
-    // =========================================================================
+    // --- State preparation and measurement ---
 
     /// Prepare qubit(s) in the |0⟩ state.
     ///
@@ -1659,9 +1643,7 @@ impl<'a> TickHandle<'a> {
         }
     }
 
-    // =========================================================================
-    // Resource management
-    // =========================================================================
+    // --- Resource management ---
 
     /// Allocate one or more qubits.
     ///
@@ -1682,9 +1664,7 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::qfree(qubits))
     }
 
-    // =========================================================================
-    // Timing
-    // =========================================================================
+    // --- Timing ---
 
     /// Insert an idle (wait) operation for one or more qubits.
     ///
@@ -1712,9 +1692,7 @@ impl<'a> TickHandle<'a> {
         ))
     }
 
-    // =========================================================================
-    // Custom gates with signature validation
-    // =========================================================================
+    // --- Custom gates with signature validation ---
 
     /// Add a custom gate with signature validation.
     ///
@@ -1759,9 +1737,7 @@ impl<'a> TickHandle<'a> {
     }
 }
 
-// ============================================================================
-// Conversions between TickCircuit and DagCircuit
-// ============================================================================
+// --- Conversions between TickCircuit and DagCircuit ---
 
 impl From<&DagCircuit> for TickCircuit {
     /// Convert a `DagCircuit` to a `TickCircuit`.
@@ -2677,9 +2653,7 @@ mod tests {
         assert_eq!(removed, None);
     }
 
-    // =========================================================================
-    // Gate signature validation tests
-    // =========================================================================
+    // --- Gate signature validation tests ---
 
     #[test]
     fn test_custom_gate_jit_registration() {

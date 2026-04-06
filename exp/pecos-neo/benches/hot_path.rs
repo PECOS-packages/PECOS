@@ -39,9 +39,7 @@ fn make_noise_model() -> ComposableNoiseModel {
         .add_channel(MeasurementChannel::symmetric(0.01))
 }
 
-// ============================================================================
-// Noise Channel Benchmarks
-// ============================================================================
+// --- Noise Channel Benchmarks ---
 
 fn bench_noise_emission(c: &mut Criterion) {
     let mut group = c.benchmark_group("noise_emission");
@@ -90,9 +88,7 @@ fn bench_noise_emission(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Shot Execution Benchmarks
-// ============================================================================
+// --- Shot Execution Benchmarks ---
 
 fn bench_shot_execution(c: &mut Criterion) {
     let mut group = c.benchmark_group("shot_execution");
@@ -165,9 +161,7 @@ fn bench_shot_execution(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Multi-Shot Benchmarks
-// ============================================================================
+// --- Multi-Shot Benchmarks ---
 
 fn bench_multi_shot(c: &mut Criterion) {
     let mut group = c.benchmark_group("multi_shot");
@@ -249,9 +243,7 @@ fn bench_multi_shot(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Entity Operation Benchmarks
-// ============================================================================
+// --- Entity Operation Benchmarks ---
 
 fn bench_entity_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("entity_operations");
@@ -320,9 +312,7 @@ fn bench_entity_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Redistribution Benchmarks
-// ============================================================================
+// --- Redistribution Benchmarks ---
 
 #[allow(clippy::cast_precision_loss)] // small index as f64
 fn bench_redistribution(c: &mut Criterion) {
@@ -364,9 +354,7 @@ fn bench_redistribution(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// RNG Benchmarks
-// ============================================================================
+// --- RNG Benchmarks ---
 
 fn bench_rng_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("rng");
@@ -394,9 +382,7 @@ fn bench_rng_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Simulator Benchmarks
-// ============================================================================
+// --- Simulator Benchmarks ---
 
 fn bench_simulator_ops(c: &mut Criterion) {
     let mut group = c.benchmark_group("simulator");
@@ -456,9 +442,7 @@ fn bench_simulator_ops(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Memory Usage Benchmarks
-// ============================================================================
+// --- Memory Usage Benchmarks ---
 
 fn bench_memory_usage(c: &mut Criterion) {
     use pecos_core::Angle64;
@@ -563,9 +547,7 @@ fn bench_memory_usage(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Monte Carlo Engine Comparison Benchmarks
-// ============================================================================
+// --- Monte Carlo Engine Comparison Benchmarks ---
 
 /// Compare pecos-neo `MonteCarloRunner` against pecos-engines `MonteCarloEngine`
 ///
@@ -792,9 +774,7 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Flow vs Channel Noise System Comparison
-// ============================================================================
+// --- Flow vs Channel Noise System Comparison ---
 
 /// Compare composite-based noise (`CompositeNoiseModelBuilder`) vs channel-based (`GeneralNoiseModelBuilder`)
 fn bench_composite_vs_channel_noise(c: &mut Criterion) {
@@ -1007,9 +987,7 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Batch Filtering Benchmarks
-// ============================================================================
+// --- Batch Filtering Benchmarks ---
 
 /// Benchmark batch probability filtering at scale
 fn bench_batch_filtering(c: &mut Criterion) {
@@ -1063,9 +1041,7 @@ fn bench_batch_filtering(c: &mut Criterion) {
         b.iter(|| black_box(sample_noise_1q_batch(1_000_000, &threshold, &mut rng)));
     });
 
-    // ========================================================================
-    // Low probability benchmarks (realistic fault rates: 1e-4 to 1e-5)
-    // ========================================================================
+    // --- Low probability benchmarks (realistic fault rates: 1e-4 to 1e-5) ---
 
     // p = 1e-4 (0.0001) - typical gate error rate
     for num_qubits in [100_000, 1_000_000] {
@@ -1136,9 +1112,7 @@ fn bench_batch_filtering(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Batch Processor Comparison
-// ============================================================================
+// --- Batch Processor Comparison ---
 
 /// Compare `FastBatchProcessor` vs `BatchCompositeChannel` vs `CompositeChannel` at scale
 fn bench_batch_processor(c: &mut Criterion) {

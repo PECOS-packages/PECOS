@@ -129,9 +129,7 @@ use std::collections::BTreeMap;
 use super::resource::Resources;
 use super::{Plugin, Stage, Tool};
 
-// ============================================================================
-// Quantum Backend Builders (builder-of-builders pattern)
-// ============================================================================
+// --- Quantum Backend Builders (builder-of-builders pattern) ---
 
 /// Configuration for a quantum backend, stored as data in the builder.
 ///
@@ -259,9 +257,7 @@ pub fn state_vector() -> StateVecBuilder {
     StateVecBuilder::new()
 }
 
-// ============================================================================
-// Custom Backend Support
-// ============================================================================
+// --- Custom Backend Support ---
 
 /// Factory for creating simulator instances.
 ///
@@ -436,9 +432,7 @@ where
     }
 }
 
-// ============================================================================
-// SimNeoInput Trait
-// ============================================================================
+// --- SimNeoInput Trait ---
 
 /// Trait for types that can be used as input to [`sim_neo()`].
 ///
@@ -615,9 +609,7 @@ impl SimNeoInput for pecos_programs::Program {
     }
 }
 
-// ============================================================================
-// Resources
-// ============================================================================
+// --- Resources ---
 
 /// The circuit to execute.
 #[derive(Clone)]
@@ -948,9 +940,7 @@ impl SimulationResults {
         Some((stats.mean(), stats.standard_error()))
     }
 
-    // ========================================================================
-    // Register-based accessors
-    // ========================================================================
+    // --- Register-based accessors ---
 
     /// Convert to columnar format: `register_name` -> `Vec<Vec<bool>>` (one bitstring per shot).
     ///
@@ -1080,9 +1070,7 @@ struct GateOverridesResource(StoredOverrides);
 /// Wrapper for event handlers resource.
 struct EventHandlersResource(EventHandlers);
 
-// ============================================================================
-// Classical Engine Support
-// ============================================================================
+// --- Classical Engine Support ---
 
 /// Trait for type-erased engine building.
 ///
@@ -1229,9 +1217,7 @@ pub struct ProgramSourceResource(pub ProgramSource);
 /// Temporary storage for current shot outcomes.
 struct CurrentOutcomes(MeasurementOutcomes);
 
-// ============================================================================
-// SimNeoBuilder
-// ============================================================================
+// --- SimNeoBuilder ---
 
 /// Builder for configuring simulation tools (builder-of-builders pattern).
 ///
@@ -2120,9 +2106,7 @@ impl SimNeoBuilder {
     }
 }
 
-// ============================================================================
-// Unified Simulation Plugin
-// ============================================================================
+// --- Unified Simulation Plugin ---
 
 /// Plugin that handles both static circuits and classical engines.
 struct UnifiedSimulationPlugin {
@@ -2399,9 +2383,7 @@ fn unified_simulation_post_shot(resources: &mut Resources) {
     resources.get_mut::<UnifiedShotState>().shot_index += 1;
 }
 
-// ============================================================================
-// Importance Sampling Simulation Plugin
-// ============================================================================
+// --- Importance Sampling Simulation Plugin ---
 
 /// Plugin for importance-sampling simulation.
 ///
@@ -2551,9 +2533,7 @@ fn is_sim_post_shot(resources: &mut Resources) {
     resources.get_mut::<ISShotState>().shot_index += 1;
 }
 
-// ============================================================================
-// Simulation Handle
-// ============================================================================
+// --- Simulation Handle ---
 
 /// Reusable simulation handle.
 ///
@@ -2780,9 +2760,7 @@ impl Simulation {
     }
 }
 
-// ============================================================================
-// Convenience Entry Point
-// ============================================================================
+// --- Convenience Entry Point ---
 
 /// Create a simulation builder for any program type.
 ///
@@ -2892,9 +2870,7 @@ pub fn sim_neo_builder() -> SimNeoBuilder {
     SimNeoBuilder::empty()
 }
 
-// ============================================================================
-// Parallel Execution Helpers
-// ============================================================================
+// --- Parallel Execution Helpers ---
 
 /// Distribute shots evenly across workers with remainder going to initial workers.
 fn distribute_shots(num_shots: usize, num_workers: usize) -> Vec<usize> {
@@ -3611,9 +3587,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Importance Sampling Orchestrator Tests
-    // ========================================================================
+    // --- Importance Sampling Orchestrator Tests ---
 
     #[test]
     fn test_sim_neo_importance_sampling_basic() {
@@ -3824,9 +3798,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Custom Backend Tests
-    // ========================================================================
+    // --- Custom Backend Tests ---
 
     #[test]
     fn test_custom_backend_basic() {
@@ -3973,9 +3945,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Register-based Results Tests
-    // ========================================================================
+    // --- Register-based Results Tests ---
 
     #[test]
     fn test_register_counts() {

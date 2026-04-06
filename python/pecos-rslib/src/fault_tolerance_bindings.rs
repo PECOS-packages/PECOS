@@ -62,9 +62,7 @@ use pyo3::prelude::*;
 /// Type alias for batch sampling results: (`detection_events_per_shot`, `observable_flips_per_shot`)
 type BatchSampleResult = (Vec<Vec<bool>>, Vec<Vec<bool>>);
 
-// =============================================================================
-// Fault Location Types
-// =============================================================================
+// --- Fault Location Types ---
 
 /// A spacetime location for a fault in a DAG circuit.
 ///
@@ -136,9 +134,7 @@ impl From<&DagSpacetimeLocation> for PyFaultLocation {
     }
 }
 
-// =============================================================================
-// Fault Influence Map
-// =============================================================================
+// --- Fault Influence Map ---
 
 /// A fault influence map built from a DAG circuit.
 ///
@@ -369,9 +365,7 @@ impl PyDagFaultInfluenceMap {
     }
 }
 
-// =============================================================================
-// DAG Fault Analyzer
-// =============================================================================
+// --- DAG Fault Analyzer ---
 
 /// Analyzes fault tolerance properties of a DAG circuit.
 ///
@@ -459,9 +453,7 @@ impl PyDagFaultAnalyzer {
     }
 }
 
-// =============================================================================
-// Influence Builder
-// =============================================================================
+// --- Influence Builder ---
 
 /// Builder for fault influence maps with proper detector definitions.
 ///
@@ -564,9 +556,7 @@ impl PyInfluenceBuilder {
     }
 }
 
-// =============================================================================
-// Detector Error Model
-// =============================================================================
+// --- Detector Error Model ---
 
 /// A Detector Error Model (DEM) in Stim-compatible format.
 ///
@@ -673,9 +663,7 @@ impl PyDetectorErrorModel {
     }
 }
 
-// =============================================================================
-// DEM Builder
-// =============================================================================
+// --- DEM Builder ---
 
 /// Builder for Detector Error Models (DEMs).
 ///
@@ -870,9 +858,7 @@ impl PyDemBuilder {
     }
 }
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
+// --- Helper Functions ---
 
 /// Parse detector records from JSON string.
 ///
@@ -948,9 +934,7 @@ fn parse_observable_records(observables_json: &str) -> PyResult<Vec<Vec<i32>>> {
     Ok(observable_records)
 }
 
-// =============================================================================
-// Measurement Noise Model
-// =============================================================================
+// --- Measurement Noise Model ---
 
 /// A Measurement Noise Model (MNM) for fast approximate sampling.
 ///
@@ -1241,9 +1225,7 @@ impl PyMeasurementNoiseModel {
     }
 }
 
-// =============================================================================
-// Noisy Sampler (DEM-style sampling)
-// =============================================================================
+// --- Noisy Sampler (DEM-style sampling) ---
 
 /// Fast noisy sampler for threshold estimation.
 ///
@@ -1662,9 +1644,7 @@ impl PyNoisySampler {
     }
 }
 
-// =============================================================================
-// MNM Builder
-// =============================================================================
+// --- MNM Builder ---
 
 /// Builder for Measurement Noise Models (MNMs).
 ///
@@ -1801,9 +1781,7 @@ impl PyMemBuilder {
     }
 }
 
-// =============================================================================
-// DEM Sampler (Fast DEM-style sampling)
-// =============================================================================
+// --- DEM Sampler (Fast DEM-style sampling) ---
 
 /// Fast DEM-style sampler for threshold estimation.
 ///
@@ -2064,9 +2042,7 @@ impl PyDemSamplerBuilder {
     }
 }
 
-// =============================================================================
-// DEM Equivalence Validation
-// =============================================================================
+// --- DEM Equivalence Validation ---
 
 /// Result of DEM equivalence comparison.
 ///
@@ -2527,9 +2503,7 @@ fn assert_dems_equivalent(
     }
 }
 
-// =============================================================================
-// Module Registration
-// =============================================================================
+// --- Module Registration ---
 
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -1452,9 +1452,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         }
     }
 
-    // =========================================================================
-    // Gate-Parallel Processing
-    // =========================================================================
+    // --- Gate-Parallel Processing ---
 
     /// Enable gate-parallel processing.
     ///
@@ -1482,9 +1480,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         self.parallel_enabled
     }
 
-    // =========================================================================
-    // Compiled Circuit Support
-    // =========================================================================
+    // --- Compiled Circuit Support ---
 
     /// Compile a circuit for efficient repeated execution.
     ///
@@ -2482,9 +2478,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Basic Stabilizer Test Suite (no Clone required)
-    // ========================================================================
+    // --- Basic Stabilizer Test Suite (no Clone required) ---
 
     /// Run the basic stabilizer test suite on the GPU simulator.
     /// This tests gate identities, entanglement correlations, etc.
@@ -2507,9 +2501,7 @@ mod tests {
         run_basic_stabilizer_test_suite(&mut gpu, 4);
     }
 
-    // ========================================================================
-    // GPU vs CPU Comparison Tests
-    // ========================================================================
+    // --- GPU vs CPU Comparison Tests ---
 
     /// Compare GPU and CPU simulators on random circuits.
     /// This uses the direct comparison method which doesn't require Clone.
@@ -3488,9 +3480,7 @@ mod tests {
         GpuStab::with_seed(num_qubits, seed).ok()
     }
 
-    // ========================================================================
-    // Basic Tests
-    // ========================================================================
+    // --- Basic Tests ---
 
     #[test]
     fn test_creation() {
@@ -3521,9 +3511,7 @@ mod tests {
         assert_eq!(sim.gate_queue.len() - 1, 0);
     }
 
-    // ========================================================================
-    // Deterministic Measurement Tests (|0> and |1> states)
-    // ========================================================================
+    // --- Deterministic Measurement Tests (|0> and |1> states) ---
 
     #[test]
     fn test_initial_state_measurement() {
@@ -3637,9 +3625,7 @@ mod tests {
         assert_eq!(gpu_r.outcome, cpu_r.outcome, "Y gate: outcome mismatch");
     }
 
-    // ========================================================================
-    // H Gate Tests (Non-Deterministic)
-    // ========================================================================
+    // --- H Gate Tests (Non-Deterministic) ---
 
     #[test]
     fn test_h_gate_non_deterministic() {
@@ -3686,9 +3672,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // S Gate Tests
-    // ========================================================================
+    // --- S Gate Tests ---
 
     #[test]
     fn test_s_gate_gpu_vs_cpu() {
@@ -3753,9 +3737,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Sdg Gate Tests
-    // ========================================================================
+    // --- Sdg Gate Tests ---
 
     #[test]
     fn test_sdg_gate_gpu_vs_cpu() {
@@ -3800,9 +3782,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // CX Gate Tests
-    // ========================================================================
+    // --- CX Gate Tests ---
 
     #[test]
     fn test_cx_deterministic() {
@@ -3887,9 +3867,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // CZ Gate Tests
-    // ========================================================================
+    // --- CZ Gate Tests ---
 
     #[test]
     fn test_cz_deterministic() {
@@ -3937,9 +3915,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // SWAP Gate Tests
-    // ========================================================================
+    // --- SWAP Gate Tests ---
 
     #[test]
     fn test_swap_gate() {
@@ -3967,9 +3943,7 @@ mod tests {
         assert_eq!(gpu_r1.outcome, cpu_r1.outcome, "SWAP: q1 mismatch");
     }
 
-    // ========================================================================
-    // Multi-Qubit Tests
-    // ========================================================================
+    // --- Multi-Qubit Tests ---
 
     #[test]
     fn test_multi_qubit_circuit() {
@@ -4035,9 +4009,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Large System Tests
-    // ========================================================================
+    // --- Large System Tests ---
 
     #[test]
     fn test_larger_system() {

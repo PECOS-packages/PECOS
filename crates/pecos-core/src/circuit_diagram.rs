@@ -17,9 +17,7 @@
 
 use std::fmt::Write;
 
-// ============================================================================
-// Types
-// ============================================================================
+// --- Types ---
 
 /// What occupies a single (row, column) position in the diagram grid.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,9 +231,7 @@ pub enum SymbolSet {
     Unicode,
 }
 
-// ============================================================================
-// Color palette types
-// ============================================================================
+// --- Color palette types ---
 
 /// Fill, stroke, and text colors for a single diagram element category.
 #[derive(Clone, Debug)]
@@ -305,9 +301,7 @@ impl ColorPalette {
     }
 }
 
-// ============================================================================
-// DiagramStyle
-// ============================================================================
+// --- DiagramStyle ---
 
 /// Full configuration for diagram rendering.
 ///
@@ -390,9 +384,7 @@ impl DiagramStyle {
     }
 }
 
-// ============================================================================
-// DiagramStyleBuilder
-// ============================================================================
+// --- DiagramStyleBuilder ---
 
 /// Builder for [`DiagramStyle`].
 #[derive(Clone, Debug)]
@@ -551,9 +543,7 @@ impl Default for DiagramStyleBuilder {
     }
 }
 
-// ============================================================================
-// DiagramRenderer
-// ============================================================================
+// --- DiagramRenderer ---
 
 /// A prepared diagram bound to a style, ready to render in any output format.
 ///
@@ -616,9 +606,7 @@ impl<'a> DiagramRenderer<'a> {
     }
 }
 
-// ============================================================================
-// ANSI color codes
-// ============================================================================
+// --- ANSI color codes ---
 
 const ANSI_RESET: &str = "\x1b[0m";
 
@@ -636,9 +624,7 @@ fn ansi_code(color: CellColor) -> &'static str {
     }
 }
 
-// ============================================================================
-// CircuitDiagram builder
-// ============================================================================
+// --- CircuitDiagram builder ---
 
 /// A grid-based circuit diagram builder.
 ///
@@ -942,9 +928,7 @@ impl CircuitDiagram {
         out
     }
 
-    // ========================================================================
-    // SVG rendering
-    // ========================================================================
+    // --- SVG rendering ---
 
     /// Render the diagram as a standalone SVG string.
     ///
@@ -1270,9 +1254,7 @@ impl CircuitDiagram {
         out
     }
 
-    // ========================================================================
-    // TikZ rendering
-    // ========================================================================
+    // --- TikZ rendering ---
 
     /// Render the diagram as a `TikZ` `tikzpicture` environment.
     ///
@@ -1486,9 +1468,7 @@ impl CircuitDiagram {
         out
     }
 
-    // ========================================================================
-    // DOT / Graphviz rendering
-    // ========================================================================
+    // --- DOT / Graphviz rendering ---
 
     /// Render the diagram as a Graphviz DOT `digraph` with `rankdir=LR`.
     ///
@@ -1762,9 +1742,7 @@ impl CircuitDiagram {
     }
 }
 
-// ============================================================================
-// Rendering helpers
-// ============================================================================
+// --- Rendering helpers ---
 
 /// Content width of a cell in characters (before padding).
 fn cell_content_width(cell: &DiagramCell) -> usize {
@@ -1826,9 +1804,7 @@ fn pad_center(s: &str, width: usize, pad_char: char) -> String {
     format!("{left}{s}{right}")
 }
 
-// ============================================================================
-// Graph state style types
-// ============================================================================
+// --- Graph state style types ---
 
 /// Blend two `#RRGGBB` hex colors at ratio `t` (0.0 = a, 1.0 = b).
 ///
@@ -2177,10 +2153,6 @@ impl Default for GraphStyleBuilder {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2352,7 +2324,7 @@ mod tests {
         }
     }
 
-    // ====================== SVG tests ======================
+    // --- SVG tests ---
 
     #[test]
     fn svg_empty_diagram() {
@@ -2393,7 +2365,7 @@ mod tests {
         assert!(out.contains("My Circuit"));
     }
 
-    // ====================== TikZ tests ======================
+    // --- TikZ tests ---
 
     #[test]
     fn tikz_empty_diagram() {
@@ -2435,7 +2407,7 @@ mod tests {
         assert!(out.contains("% My Circuit"));
     }
 
-    // ====================== DOT tests ======================
+    // --- DOT tests ---
 
     #[test]
     fn dot_empty_diagram() {
@@ -2478,7 +2450,7 @@ mod tests {
         assert!(out.contains("label=\"My Circuit\""));
     }
 
-    // ====================== Gate family bracket tests ======================
+    // --- Gate family bracket tests ---
 
     #[test]
     fn pauli_brackets() {
@@ -2528,7 +2500,7 @@ mod tests {
         assert!(out.contains("(PZ|"));
     }
 
-    // ====================== Gate family stroke tests ======================
+    // --- Gate family stroke tests ---
 
     #[test]
     fn svg_slike_dasharray() {
@@ -2570,7 +2542,7 @@ mod tests {
         assert!(out.contains("filled,dotted"));
     }
 
-    // ==================== DiagramStyle tests ====================
+    // --- DiagramStyle tests ---
 
     #[test]
     fn default_style_matches_old_text_output() {
@@ -2716,7 +2688,7 @@ mod tests {
         assert!(!tikz.contains(", dashed]"));
     }
 
-    // ==================== Column group tests ====================
+    // --- Column group tests ---
 
     #[test]
     fn column_group_bracket_ascii() {

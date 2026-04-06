@@ -294,7 +294,7 @@ impl GpuMeasurementSampler {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("GpuMeasurementSampler Device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits: adapter.limits(),
             ..Default::default()
         }))
         .map_err(|e| format!("Failed to create device: {e}"))?;

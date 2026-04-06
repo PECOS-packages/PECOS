@@ -186,15 +186,10 @@ impl GpuInfluenceSampler {
         }))
         .map_err(|_| "No GPU adapter found")?;
 
-        let limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: 16,
-            ..wgpu::Limits::default()
-        };
-
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("InfluenceSampler Device"),
             required_features: wgpu::Features::empty(),
-            required_limits: limits,
+            required_limits: adapter.limits(),
             ..Default::default()
         }))
         .map_err(|e| format!("Failed to create device: {e}"))?;

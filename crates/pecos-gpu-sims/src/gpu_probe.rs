@@ -64,7 +64,7 @@ pub fn request_default_gpu_device(
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(label),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
+        required_limits: adapter.limits(),
         ..Default::default()
     }))
     .map_err(|error| GpuStartupError::DeviceCreation {

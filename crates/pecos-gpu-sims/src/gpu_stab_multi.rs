@@ -2262,10 +2262,13 @@ mod tests {
 
     #[test]
     fn test_adaptive_batching() {
-        // Create with a large number of shots that would exceed buffer limits
+        // Use enough shots that batching is required even on large GPUs.
+        // Each shot needs ~(num_qubits * num_qubits / 8) bytes for the tableau.
+        // With 881 qubits, each shot is ~96KB. 100k shots = ~9.6GB, which
+        // exceeds any single buffer limit.
         let d = 21;
         let total_qubits = d * d + (d * d - 1); // 881 qubits
-        let num_shots = 2000; // More than can fit in 128MB
+        let num_shots = 100_000;
 
         let sim = GpuStabMulti::<PecosRng>::new(total_qubits, num_shots).unwrap();
 
@@ -2278,7 +2281,6 @@ mod tests {
         println!("Requires batching: {}", sim.requires_batching());
         println!("Number of batches: {}", sim.num_batches());
 
-        // Should have capped the shots per batch
         assert!(sim.shots_per_batch() < num_shots);
         assert!(sim.requires_batching());
         assert!(sim.num_batches() > 1);
@@ -2964,11 +2966,11 @@ mod tests {
 
     #[test]
     fn test_run_batched_multiple_batches() {
-        // Force multiple batches by using a large number of qubits
-        // At d=21 surface code (881 qubits), ~612 shots fit per batch
+        // Force multiple batches by exceeding max_storage_buffer_binding_size.
+        // 881 qubits * 100k shots needs ~10 batches on a 2GB-buffer GPU.
         let d = 21;
         let num_qubits = d * d + (d * d - 1); // 881 qubits
-        let num_shots = 1000; // More than one batch
+        let num_shots = 20_000; // Just over 2 batches
 
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(num_qubits, num_shots, 42).unwrap();
 

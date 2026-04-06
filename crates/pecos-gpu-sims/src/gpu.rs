@@ -177,19 +177,10 @@ impl GpuStateVec {
         }))
         .map_err(|_| GpuError::NoAdapter)?;
 
-        // Request the adapter's maximum buffer size limits for large qubit counts
-        // This allows supporting as many qubits as the GPU hardware allows
-        let adapter_limits = adapter.limits();
-        let limits = wgpu::Limits {
-            max_buffer_size: adapter_limits.max_buffer_size,
-            max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
-            ..Default::default()
-        };
-
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("PECOS wgpu simulator"),
             required_features: wgpu::Features::empty(),
-            required_limits: limits,
+            required_limits: adapter.limits(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::default(),

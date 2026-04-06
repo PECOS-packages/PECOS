@@ -16,6 +16,8 @@ pub fn collect_stim_sources(stim_src_dir: &Path) -> Vec<PathBuf> {
         "stim/dem/detector_error_model_target.cc",
         "stim/dem/dem_instruction.cc",
         "stim/dem/dem_target.cc",
+        // Utilities (parse_int64 needed by dem_instruction.cc)
+        "stim/util_bot/arg_parse.cc",
         // Circuit support
         "stim/circuit/circuit.cc",
         "stim/circuit/circuit_instruction.cc",

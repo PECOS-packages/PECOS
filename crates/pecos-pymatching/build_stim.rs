@@ -28,6 +28,8 @@ pub fn collect_stim_sources(stim_src_dir: &Path) -> Vec<PathBuf> {
         "stim/stabilizers/pauli_string.cc",
         "stim/stabilizers/flex_pauli_string.cc",
         "stim/stabilizers/tableau.cc",
+        // Utilities (parse_int64 needed by dem_instruction.cc)
+        "stim/util_bot/arg_parse.cc",
         // I/O
         "stim/io/raii_file.cc",
         "stim/io/measure_record_batch.cc",

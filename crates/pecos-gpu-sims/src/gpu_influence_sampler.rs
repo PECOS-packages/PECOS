@@ -664,12 +664,7 @@ impl GpuInfluenceSampler {
     }
 }
 
-impl Drop for GpuInfluenceSampler {
-    fn drop(&mut self) {
-        // Ensure all pending GPU work completes before resources are freed
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-    }
-}
+crate::impl_gpu_drop!(GpuInfluenceSampler);
 
 /// Result from GPU sampling.
 pub struct GpuSamplingResult {

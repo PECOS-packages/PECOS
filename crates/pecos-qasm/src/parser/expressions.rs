@@ -117,7 +117,6 @@ fn parse_unary_expr(pair: Pair<Rule>) -> Result<Expression, PecosError> {
     // Collect operators
     while let Some(pair) = pairs.peek() {
         if pair.as_rule() == Rule::unary_op {
-            // SAFETY: peek() confirmed an element exists
             let op_pair = pairs.next().expect("peek confirmed element exists");
             ops.push(op_pair.as_str().to_string());
         } else {
@@ -358,7 +357,6 @@ fn parse_unary_expr_gate_param(pair: Pair<Rule>) -> Result<Expression, PecosErro
     // Collect operators
     while let Some(pair) = pairs.peek() {
         if pair.as_rule() == Rule::unary_op {
-            // SAFETY: peek() confirmed an element exists
             let op_pair = pairs.next().expect("peek confirmed element exists");
             ops.push(op_pair.as_str().to_string());
         } else {

@@ -26,6 +26,28 @@
 //! let result = sim.mz(&[QubitId(0)]);  // Measure qubit 0
 //! ```
 
+/// Implement Drop to poll the wgpu device before resources are freed.
+/// All GPU simulator types that own a `device: Arc<wgpu::Device>` need this
+/// to prevent resource cleanup races.
+macro_rules! impl_gpu_drop {
+    ($ty:ty) => {
+        impl Drop for $ty {
+            fn drop(&mut self) {
+                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+            }
+        }
+    };
+    ($ty:ty, $($bound:tt)+) => {
+        impl<$($bound)+> Drop for $ty {
+            fn drop(&mut self) {
+                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+            }
+        }
+    };
+}
+
+pub(crate) use impl_gpu_drop;
+
 pub mod circuit_compiler;
 mod clifford_fusion;
 mod gpu;

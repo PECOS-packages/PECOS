@@ -4,7 +4,8 @@
 //! enabling a single binary to work on both systems with and without
 //! NVIDIA cuQuantum installed.
 //!
-//! Currently Linux-only (`.so` library names and paths).
+//! Library names and search paths are Linux-specific (`.so`).
+//! On other platforms, `try_load()` will return `Err`.
 
 use crate::*;
 use libloading::{Library, Symbol};
@@ -45,13 +46,15 @@ macro_rules! load_sym {
 /// Loaded cuQuantum function pointers.
 #[allow(non_snake_case)]
 pub struct CuQuantumBackend {
-    // Keep libraries alive -- drop order matters: dependents before dependencies
-    _cuda_rt: Library,
-    _custatevec: Library,
-    _custabilizer: Library,
+    // Keep libraries alive.
+    // Rust drops fields in declaration order, so dependents must come before
+    // their dependencies. cuda_rt is last because everything depends on it.
+    _cudensitymat: Library,
     _cutensornet: Library,
     _cutensor: Option<Library>,
-    _cudensitymat: Library,
+    _custabilizer: Library,
+    _custatevec: Library,
+    _cuda_rt: Library,
 
     // --- CUDA runtime ---
     pub cudaMalloc: unsafe extern "C" fn(*mut *mut c_void, usize) -> i32,
@@ -181,6 +184,8 @@ pub fn is_available() -> bool {
     try_load().is_ok()
 }
 
+/// Runtime search paths for CUDA libraries.
+/// Keep in sync with `pecos_build::cuda::find_cuda()` (build-time equivalent).
 fn cuda_search_paths() -> Vec<PathBuf> {
     let mut paths = vec![];
     for var in ["CUDA_PATH", "CUDA_HOME"] {
@@ -196,6 +201,8 @@ fn cuda_search_paths() -> Vec<PathBuf> {
     paths
 }
 
+/// Runtime search paths for cuQuantum libraries.
+/// Keep in sync with `pecos_build::cuquantum::find_cuquantum()` (build-time equivalent).
 fn cuquantum_search_paths() -> Vec<PathBuf> {
     let mut paths = vec![];
     if let Ok(p) = std::env::var("CUQUANTUM_ROOT") {

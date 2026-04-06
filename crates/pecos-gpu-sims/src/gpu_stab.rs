@@ -2475,12 +2475,7 @@ impl<R: Rng + SeedableRng + Debug> Debug for GpuStab<R> {
     }
 }
 
-impl<R: Rng + SeedableRng> Drop for GpuStab<R> {
-    fn drop(&mut self) {
-        // Ensure all pending GPU work completes before resources are freed
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-    }
-}
+crate::impl_gpu_drop!(GpuStab<R>, R: Rng + SeedableRng);
 
 #[cfg(test)]
 mod tests {

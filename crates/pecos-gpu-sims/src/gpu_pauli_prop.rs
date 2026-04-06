@@ -801,12 +801,7 @@ impl GpuPauliProp {
     }
 }
 
-impl Drop for GpuPauliProp {
-    fn drop(&mut self) {
-        // Ensure all pending GPU work completes before resources are freed
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-    }
-}
+crate::impl_gpu_drop!(GpuPauliProp);
 
 #[cfg(test)]
 mod tests {

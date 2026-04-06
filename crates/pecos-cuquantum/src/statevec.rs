@@ -444,63 +444,10 @@ impl Drop for CuStateVec {
 }
 
 impl Clone for CuStateVec {
-    /// Clone the state vector simulator, including GPU device memory
-    ///
-    /// This performs a device-to-device memory copy of the state vector.
-    /// The cloned instance has its own cuStateVec handle and device memory.
-    ///
     /// # Panics
-    /// Panics if CUDA memory allocation or copy fails.
+    /// Panics if CUDA memory allocation or device-to-device copy fails.
     fn clone(&self) -> Self {
-        // Create new cuStateVec handle
-        let mut handle: custatevecHandle_t = ptr::null_mut();
-        let status = unsafe { (self.backend.custatevecCreate)(&mut handle) };
-        check_status(status).expect("Failed to create cuStateVec handle for clone");
-
-        // Allocate device memory for the cloned state vector
-        let dimension = self.dimension();
-        let size_bytes = dimension * std::mem::size_of::<cuDoubleComplex>();
-
-        let mut state_vector: *mut c_void = ptr::null_mut();
-        let cuda_result = unsafe { (self.backend.cudaMalloc)(&mut state_vector, size_bytes) };
-
-        if cuda_result != 0 {
-            // Clean up handle if allocation failed
-            unsafe {
-                let _ = (self.backend.custatevecDestroy)(handle);
-            }
-            panic!("cudaMalloc failed with error code {cuda_result} during clone");
-        }
-
-        // Copy device memory from original to clone (device-to-device)
-        let cuda_result = unsafe {
-            (self.backend.cudaMemcpy)(
-                state_vector,
-                self.state_vector,
-                size_bytes,
-                cudaMemcpyKind_cudaMemcpyDeviceToDevice,
-            )
-        };
-
-        if cuda_result != 0 {
-            // Clean up on failure
-            unsafe {
-                let _ = (self.backend.cudaFree)(state_vector);
-                let _ = (self.backend.custatevecDestroy)(handle);
-            }
-            panic!("cudaMemcpy device-to-device failed with error code {cuda_result} during clone");
-        }
-
-        // Clone the RNG with a derived seed to ensure independent random streams
-        let rng = self.rng.clone();
-
-        Self {
-            backend: self.backend,
-            handle,
-            num_qubits: self.num_qubits,
-            state_vector,
-            rng,
-        }
+        self.try_clone().expect("CuStateVec clone failed")
     }
 }
 

@@ -25,7 +25,7 @@
 use crate::error::{CuQuantumError, Result, TryClone, check_stabilizer_status};
 use pecos_core::QubitId;
 use pecos_cuquantum_sys::{
-    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost, cudaMemcpyKind_cudaMemcpyHostToDevice,
+    CuQuantumBackend, cudaMemcpyKind_cudaMemcpyDeviceToHost,
     custabilizerCircuit_t, custabilizerFrameSimulator_t, custabilizerHandle_t,
 };
 use pecos_simulators::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
@@ -318,36 +318,10 @@ impl CuFrameSimulator {
             self.frame_simulator = Some(frame_sim);
         }
 
-        // Initialize tables to zero (all I operators, no measurements)
-        let x_table_size = self.num_qubits * self.table_stride;
-        let z_table_size = self.num_qubits * self.table_stride;
+        // Zero tables before running
+        self.reset();
+
         let m_table_size = self.max_measurements * self.table_stride;
-
-        unsafe {
-            // Zero out tables
-            let zeros_x = vec![0u8; x_table_size];
-            let zeros_z = vec![0u8; z_table_size];
-            let zeros_m = vec![0u8; m_table_size];
-
-            (self.backend.cudaMemcpy)(
-                self.x_table_device.cast(),
-                zeros_x.as_ptr().cast(),
-                x_table_size,
-                cudaMemcpyKind_cudaMemcpyHostToDevice,
-            );
-            (self.backend.cudaMemcpy)(
-                self.z_table_device.cast(),
-                zeros_z.as_ptr().cast(),
-                z_table_size,
-                cudaMemcpyKind_cudaMemcpyHostToDevice,
-            );
-            (self.backend.cudaMemcpy)(
-                self.m_table_device.cast(),
-                zeros_m.as_ptr().cast(),
-                m_table_size,
-                cudaMemcpyKind_cudaMemcpyHostToDevice,
-            );
-        }
 
         // Run the circuit
         let status = unsafe {
@@ -404,33 +378,13 @@ impl CuFrameSimulator {
 
     /// Reset the simulator state (clears X, Z, and M tables).
     pub fn reset(&mut self) {
-        let x_table_size = self.num_qubits * self.table_stride;
-        let z_table_size = self.num_qubits * self.table_stride;
-        let m_table_size = self.max_measurements * self.table_stride;
+        let xz_size = self.num_qubits * self.table_stride;
+        let m_size = self.max_measurements * self.table_stride;
 
         unsafe {
-            let zeros_x = vec![0u8; x_table_size];
-            let zeros_z = vec![0u8; z_table_size];
-            let zeros_m = vec![0u8; m_table_size];
-
-            (self.backend.cudaMemcpy)(
-                self.x_table_device.cast(),
-                zeros_x.as_ptr().cast(),
-                x_table_size,
-                cudaMemcpyKind_cudaMemcpyHostToDevice,
-            );
-            (self.backend.cudaMemcpy)(
-                self.z_table_device.cast(),
-                zeros_z.as_ptr().cast(),
-                z_table_size,
-                cudaMemcpyKind_cudaMemcpyHostToDevice,
-            );
-            (self.backend.cudaMemcpy)(
-                self.m_table_device.cast(),
-                zeros_m.as_ptr().cast(),
-                m_table_size,
-                cudaMemcpyKind_cudaMemcpyHostToDevice,
-            );
+            (self.backend.cudaMemset)(self.x_table_device.cast(), 0, xz_size);
+            (self.backend.cudaMemset)(self.z_table_device.cast(), 0, xz_size);
+            (self.backend.cudaMemset)(self.m_table_device.cast(), 0, m_size);
         }
     }
 }

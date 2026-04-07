@@ -226,9 +226,33 @@ impl PyPhirClassicalInterpreter {
 
     /// Execute the program, returning an iterator that yields batches of ops.
     ///
-    /// The `sequence` argument is accepted for protocol compatibility but ignored --
-    /// the iterator always uses the program ops stored at init time.
-    fn execute(&self, _sequence: Option<&Bound<'_, PyAny>>) -> PyResult<PyPhirExecuteIter> {
+    /// When `sequence` is None or the program's own ops, uses the Rust AST walker.
+    /// When `sequence` is a list of Python QOp/MOp objects (inner interpreter case),
+    /// passes them through directly, buffering at measurement boundaries.
+    fn execute(
+        &self,
+        py: Python<'_>,
+        sequence: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        // Check if sequence is a list of Python QOp objects (inner interpreter mode)
+        if let Some(seq) = sequence {
+            if !seq.is_none() {
+                if let Ok(py_list) = seq.downcast::<PyList>() {
+                    // Inner interpreter mode: pass through Python QOp objects
+                    return Ok(PyPhirPassthroughIter::new(py, py_list)?.into_pyobject(py)?.into_any().unbind());
+                }
+                // If it's some other iterable (like a list), try to convert
+                if let Ok(iter) = seq.try_iter() {
+                    let items: Vec<Py<PyAny>> = iter
+                        .map(|item| item.map(|i| i.unbind()))
+                        .collect::<PyResult<_>>()?;
+                    let py_list = PyList::new(py, &items)?;
+                    return Ok(PyPhirPassthroughIter::new(py, &py_list)?.into_pyobject(py)?.into_any().unbind());
+                }
+            }
+        }
+
+        // Outer interpreter mode: use Rust AST walker
         let json = self.program_json.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("No program initialized")
         })?;
@@ -242,7 +266,9 @@ impl PyPhirClassicalInterpreter {
             stack: vec![(0, OpsRef::Root)],
             buffer: Vec::new(),
             done: false,
-        })
+            qop_cls: None,
+            mop_cls: None,
+        }.into_pyobject(py)?.into_any().unbind())
     }
 
     /// Receive measurement results from the quantum simulator.
@@ -392,6 +418,74 @@ impl PyProgramWrapper {
     }
 }
 
+// ── Passthrough Iterator (for inner interpreter) ────────────────────
+
+/// Iterator that passes Python QOp/MOp objects through, buffering at measurement boundaries.
+///
+/// Used by the inner interpreter which receives noisy QOp objects from `op_processor.process()`.
+#[pyclass(name = "_PhirPassthroughIter", module = "pecos_rslib")]
+struct PyPhirPassthroughIter {
+    /// All ops as Python objects
+    ops: Vec<Py<PyAny>>,
+    /// Current position
+    idx: usize,
+    /// Buffer for current batch
+    buffer: Vec<Py<PyAny>>,
+    done: bool,
+}
+
+impl PyPhirPassthroughIter {
+    fn new(py: Python<'_>, ops: &Bound<'_, PyList>) -> PyResult<Self> {
+        let items: Vec<Py<PyAny>> = ops.iter().map(|item| item.unbind()).collect();
+        Ok(Self {
+            ops: items,
+            idx: 0,
+            buffer: Vec::new(),
+            done: false,
+        })
+    }
+}
+
+#[pymethods]
+impl PyPhirPassthroughIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        if self.done {
+            return Ok(None);
+        }
+
+        loop {
+            if self.idx >= self.ops.len() {
+                self.done = true;
+                if self.buffer.is_empty() {
+                    return Ok(None);
+                }
+                let batch: Vec<Py<PyAny>> = std::mem::take(&mut self.buffer);
+                let list = PyList::new(py, &batch)?;
+                return Ok(Some(list.into_any().unbind()));
+            }
+
+            let op = &self.ops[self.idx];
+            self.idx += 1;
+
+            // Check if this is a measurement op by reading .name
+            let name: String = op.getattr(py, "name")?.extract(py)?;
+            let is_measure = matches!(name.as_str(), "measure Z" | "Measure" | "Measure +Z");
+
+            self.buffer.push(op.clone_ref(py));
+
+            if is_measure {
+                let batch: Vec<Py<PyAny>> = std::mem::take(&mut self.buffer);
+                let list = PyList::new(py, &batch)?;
+                return Ok(Some(list.into_any().unbind()));
+            }
+        }
+    }
+}
+
 // ── Execute Iterator ────────────────────────────────────────────────
 
 /// Where the current frame's ops come from.
@@ -413,6 +507,10 @@ pub struct PyPhirExecuteIter {
     /// Buffer of yielded ops accumulated until a measurement
     buffer: Vec<YieldedOp>,
     done: bool,
+    /// Cached Python QOp class (avoid repeated import)
+    qop_cls: Option<Py<PyAny>>,
+    /// Cached Python MOp class
+    mop_cls: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -426,10 +524,19 @@ impl PyPhirExecuteIter {
             return Ok(None);
         }
 
+        // Cache class lookups on first call
+        if self.qop_cls.is_none() {
+            let op_types = py.import("pecos.reps.pyphir.op_types")?;
+            self.qop_cls = Some(op_types.getattr("QOp")?.unbind());
+            self.mop_cls = Some(op_types.getattr("MOp")?.unbind());
+        }
+
         let batch = self.advance()?;
         match batch {
             Some(ops) => {
-                let py_list = convert_batch_to_python(py, &ops)?;
+                let qop_cls = self.qop_cls.as_ref().unwrap().bind(py);
+                let mop_cls = self.mop_cls.as_ref().unwrap().bind(py);
+                let py_list = convert_batch_to_python_cached(py, &ops, qop_cls, mop_cls)?;
                 Ok(Some(py_list))
             }
             None => Ok(None),
@@ -573,12 +680,13 @@ impl PyPhirExecuteIter {
 
 /// Convert a batch of YieldedOps to a Python list of actual QOp/MOp objects.
 ///
-/// Creates real Python `pecos.reps.pyphir.op_types.QOp` and `MOp` instances
-/// so that `isinstance()` checks in QuantumSimulator and GenericOpProc work.
-fn convert_batch_to_python(py: Python<'_>, ops: &[YieldedOp]) -> PyResult<Py<PyAny>> {
-    let op_types = py.import("pecos.reps.pyphir.op_types")?;
-    let qop_cls = op_types.getattr("QOp")?;
-    let mop_cls = op_types.getattr("MOp")?;
+/// Uses pre-cached class references for performance.
+fn convert_batch_to_python_cached<'py>(
+    py: Python<'py>,
+    ops: &[YieldedOp],
+    qop_cls: &Bound<'py, PyAny>,
+    mop_cls: &Bound<'py, PyAny>,
+) -> PyResult<Py<PyAny>> {
 
     let list = PyList::empty(py);
 

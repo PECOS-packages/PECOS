@@ -116,10 +116,12 @@ class HybridEngine:
         else:
             self.cinterp: ClassicalInterpreterProtocol = cinterp
 
-        # Internal interpreter is always Python -- it processes noisy QOp objects
-        # from op_processor, not PHIR JSON. The Rust interpreter only handles the
-        # outer classical control flow (parsing, expression eval, block flattening).
-        self._internal_cinterp: ClassicalInterpreterProtocol = PhirClassicalInterpreter()
+        # Internal interpreter uses the same implementation as the outer one.
+        # When given Python QOp objects (from op_processor), the Rust interpreter's
+        # execute() uses a passthrough mode that buffers at measurement boundaries.
+        self._internal_cinterp: ClassicalInterpreterProtocol = _make_classical_interpreter(
+            "rust" if type(self.cinterp).__name__ == "RustPhirClassicalInterpreter" else "python",
+        )
         self._internal_cinterp.phir_validate = self.cinterp.phir_validate
 
         self.qsim: QuantumSimulator | None = qsim

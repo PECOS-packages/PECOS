@@ -2981,23 +2981,23 @@ mod tests {
             }
             let num_shots = sim.num_shots();
 
-        let results = sim.run_batched(|s| {
-            // Simple circuit: put first qubit in |0> state and measure
-            s.mz(&[QubitId(0)])
-        });
+            let results = sim.run_batched(|s| {
+                // Simple circuit: put first qubit in |0> state and measure
+                s.mz(&[QubitId(0)])
+            });
 
-        // Should have exactly num_shots results
-        assert_eq!(
-            results.len(),
-            num_shots,
-            "Should have results for all shots"
-        );
+            // Should have exactly num_shots results
+            assert_eq!(
+                results.len(),
+                num_shots,
+                "Should have results for all shots"
+            );
 
-        // All should measure 0 (qubit starts in |0>)
-        for result in &results {
-            assert_eq!(result.len(), 1);
-            assert!(!result[0], "Qubit in |0> should measure 0");
-        }
+            // All should measure 0 (qubit starts in |0>)
+            for result in &results {
+                assert_eq!(result.len(), 1);
+                assert!(!result[0], "Qubit in |0> should measure 0");
+            }
         });
         if result.is_err() {
             eprintln!("test_run_batched_multiple_batches: skipped (GPU OOM or no driver)");

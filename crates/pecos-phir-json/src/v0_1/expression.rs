@@ -1,5 +1,5 @@
 use crate::v0_1::ast::{ArgItem, Expression};
-use crate::v0_1::environment::{DataType, Environment, TypedValue};
+use crate::v0_1::environment::{BitValue, DataType, Environment, TypedValue};
 use pecos_core::errors::PecosError;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
@@ -61,6 +61,20 @@ impl ExprValue {
             TypedValue::U32(val) => ExprValue::UInteger(u64::from(val)),
             TypedValue::U64(val) => ExprValue::UInteger(val),
             TypedValue::Bool(val) => ExprValue::Boolean(val),
+        }
+    }
+
+    /// Converts a `BitValue` to an `ExprValue`
+    #[must_use]
+    pub fn from_bit_value(value: &BitValue) -> Self {
+        // 1-bit unsigned is treated as boolean for expression evaluation
+        if !value.is_signed() && value.size() == 1 {
+            return ExprValue::Boolean(value.as_bool());
+        }
+        if value.is_signed() {
+            ExprValue::Integer(value.as_i64())
+        } else {
+            ExprValue::UInteger(value.as_u64())
         }
     }
 
@@ -233,7 +247,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
                 // Lookup the variable in the environment
                 if let Some(value) = self.environment.get(name) {
-                    let expr_val = ExprValue::from_typed_value(value);
+                    let expr_val = ExprValue::from_bit_value(value);
                     // Update cache for future lookups
                     self.var_cache.insert(name.clone(), expr_val);
                     return Ok(expr_val);
@@ -363,7 +377,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
                 // Lookup the variable in the environment
                 if let Some(value) = self.environment.get(name) {
-                    let expr_val = ExprValue::from_typed_value(value);
+                    let expr_val = ExprValue::from_bit_value(value);
                     // Update cache for future lookups
                     self.var_cache.insert(name.clone(), expr_val);
                     Ok(expr_val)

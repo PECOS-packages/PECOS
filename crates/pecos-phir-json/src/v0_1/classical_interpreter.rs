@@ -500,41 +500,23 @@ impl PhirClassicalInterpreter {
         })
     }
 
-    /// Assign an integer value to a whole classical variable,
-    /// applying size masking for unsigned types (matching Python behavior).
+    /// Assign an integer value to a whole classical variable.
+    ///
+    /// The Environment's BitValue storage automatically masks to the declared
+    /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
         if self.environment.has_variable(name) {
-            let masked = self.mask_to_size(name, val);
-            self.environment.set_raw(name, masked)?;
+            self.environment.set_raw(name, val)?;
         }
         Ok(())
     }
 
     /// Assign a bit value to a specific bit of a classical variable.
-    /// After setting the bit, applies size masking for unsigned types.
     fn assign_int_bit(&mut self, name: &str, idx: usize, val: i64) -> Result<(), PecosError> {
         if self.environment.has_variable(name) {
             self.environment.set_bit(name, idx, (val & 1) != 0)?;
-            // Apply size masking after bit set (Python does this in assign_int)
-            if let Some(current) = self.environment.get(name) {
-                let masked = self.mask_to_size(name, current.as_u64());
-                self.environment.set_raw(name, masked)?;
-            }
         }
         Ok(())
-    }
-
-    /// Mask a value to the variable's declared size for unsigned types.
-    ///
-    /// Python's `assign_int` does: `cval &= (1 << size) - 1` for unsigned types.
-    /// This ensures a 3-bit u32 variable only keeps the bottom 3 bits.
-    fn mask_to_size(&self, name: &str, val: u64) -> u64 {
-        if let Ok(info) = self.environment.get_variable_info(name) {
-            if !info.data_type.is_signed() && info.size < info.data_type.bit_width() {
-                return val & ((1u64 << info.size) - 1);
-            }
-        }
-        val
     }
 
     /// Evaluate an expression using the current environment.
@@ -577,8 +559,7 @@ impl PhirClassicalInterpreter {
                                     .add_variable(var, DataType::I32, 32)?;
                             }
                             #[allow(clippy::cast_sign_loss)]
-                            let masked = self.mask_to_size(var, val as u64);
-                            self.environment.set_raw(var, masked)?;
+                            self.environment.set_raw(var, val as u64)?;
                         }
                         ArgItem::Indexed((var, idx)) => {
                             if !self.environment.has_variable(var) {
@@ -587,11 +568,6 @@ impl PhirClassicalInterpreter {
                             }
                             self.environment
                                 .set_bit(var, *idx, (val & 1) != 0)?;
-                            // Apply size masking after bit set
-                            if let Some(current) = self.environment.get(var) {
-                                let masked = self.mask_to_size(var, current.as_u64());
-                                self.environment.set_raw(var, masked)?;
-                            }
                         }
                         _ => {
                             return Err(PecosError::Input(

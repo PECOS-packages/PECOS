@@ -1021,8 +1021,7 @@ impl OperationProcessor {
 
                     // Calculate the new value and update exported_values
                     // Get the current value from environment or use 0 if it doesn't exist
-                    let env_value = self.environment.get(&var).unwrap_or(TypedValue::U32(0));
-                    let current_value = env_value.as_u32();
+                    let current_value = self.environment.get(&var).map_or(0u32, |v| v.as_u32());
 
                     // Clear the bit and set it to the new value
                     let mask = !(1 << idx);
@@ -1809,10 +1808,12 @@ impl OperationProcessor {
                     return Ok(u32::from(bit_value.0));
                 }
                 Err(_) => {
-                    // Fall back to extracting bit from full value
+                    // Fall back to extracting bit from full u64 value
                     if let Some(full_val) = self.environment.get(var_name) {
-                        let bit_value = (full_val >> idx) & 1;
+                        let raw = full_val.as_u64();
+                        let bit_value = (raw >> idx) & 1;
                         log::debug!("Extracted bit from variable: {var_name}[{idx}] = {bit_value}");
+                        #[allow(clippy::cast_possible_truncation)]
                         return Ok(bit_value as u32);
                     }
                 }

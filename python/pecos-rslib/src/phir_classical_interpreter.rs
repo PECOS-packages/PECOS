@@ -705,8 +705,23 @@ fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
     let clean = dtype_str
         .trim_start_matches("<class '")
         .trim_end_matches("'>")
-        .trim_start_matches("pecos.dtypes.");
+        .trim_start_matches("pecos.dtypes.")
+        .trim_start_matches("pecos_rslib.dtypes.");
 
-    DataType::from_str(clean)
+    // Map Python dtype names to Rust DataType names
+    // str(pc.dtypes.i64) gives "int64", repr gives "dtypes.i64"
+    let mapped = match clean {
+        "int8" => "i8",
+        "int16" => "i16",
+        "int32" => "i32",
+        "int64" => "i64",
+        "uint8" => "u8",
+        "uint16" => "u16",
+        "uint32" => "u32",
+        "uint64" => "u64",
+        other => other,
+    };
+
+    DataType::from_str(mapped)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Unknown dtype '{dtype_str}': {e}")))
 }

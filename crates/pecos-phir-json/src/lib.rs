@@ -604,14 +604,26 @@ mod tests {
             "shot counts should match"
         );
 
-        // Compare shared register values between engines
+        // Compare shared register values between engines using binary string representation
+        // (different engines may store values as BitVec vs U32, but the logical values should match)
         let mut compared = 0;
         for (i, (s1, s2)) in shots1.shots.iter().zip(shots2.shots.iter()).enumerate() {
-            for (name, val1) in &s1.data {
-                if let Some(val2) = s2.data.get(name) {
+            for name in s1.data.keys() {
+                if name.starts_with('_') {
+                    continue; // Skip metadata keys like _width_*
+                }
+                if let (Some(str1), Some(str2)) = (
+                    s1.register_to_binary_string(name),
+                    s2.register_to_binary_string(name),
+                ) {
+                    // Compare values by stripping leading zeros (engines may use different widths)
+                    let v1 = str1.trim_start_matches('0');
+                    let v2 = str2.trim_start_matches('0');
+                    let v1 = if v1.is_empty() { "0" } else { v1 };
+                    let v2 = if v2.is_empty() { "0" } else { v2 };
                     assert_eq!(
-                        val1, val2,
-                        "shot {i}: register '{name}' differs between engines"
+                        v1, v2,
+                        "shot {i}: register '{name}' differs between engines (str1={str1}, str2={str2})"
                     );
                     compared += 1;
                 }

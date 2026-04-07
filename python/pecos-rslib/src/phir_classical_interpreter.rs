@@ -150,6 +150,28 @@ impl PyPhirClassicalInterpreter {
         }
     }
 
+    /// Support pickling for multiprocessing.
+    ///
+    /// The interpreter state is re-initialized by HybridEngine.run() via init(),
+    /// so we only need to preserve the configuration (phir_validate).
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let cls = py
+            .import("pecos_rslib")?
+            .getattr("RustPhirClassicalInterpreter")?
+            .unbind();
+        let args = PyTuple::empty(py).into_any().unbind();
+        Ok((cls, args))
+    }
+
+    fn __getstate__(&self) -> PyResult<bool> {
+        Ok(self.phir_validate)
+    }
+
+    fn __setstate__(&mut self, state: bool) -> PyResult<()> {
+        self.phir_validate = state;
+        Ok(())
+    }
+
     /// Initialize with a PHIR program. Returns num_qubits.
     #[pyo3(signature = (program, foreign_obj=None))]
     fn init(

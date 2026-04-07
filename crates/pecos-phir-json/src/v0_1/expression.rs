@@ -313,7 +313,13 @@ impl<'a> ExpressionEvaluator<'a> {
                                 "Binary operation '{cop}' requires exactly 2 arguments"
                             )));
                         }
-                        self.eval_binary_op(cop, &args[0], &args[1])
+                        let result = self.eval_binary_op(cop, &args[0], &args[1])?;
+                        // Constrain result to LHS type width (matching Python dtype wrapping)
+                        if let Some(w) = self.arg_type_width(&args[0]) {
+                            Ok(Self::constrain_to_width(result, w))
+                        } else {
+                            Ok(result)
+                        }
                     }
                 }
             }
@@ -427,6 +433,48 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
+    /// Get the type bit width for an ArgItem (if it references a variable).
+    ///
+    /// Returns the DataType's bit width, used to constrain binary op results
+    /// to match Python PECOS dtype arithmetic behavior.
+    fn arg_type_width(&self, arg: &ArgItem) -> Option<usize> {
+        match arg {
+            ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => {
+                self.environment
+                    .get_variable_info_opt(name)
+                    .map(|info| info.data_type.bit_width())
+            }
+            _ => None,
+        }
+    }
+
+    /// Constrain an ExprValue to a type width, matching Python dtype wrapping.
+    ///
+    /// For unsigned: mask to width bits.
+    /// For signed: mask then sign-extend from width (two's complement).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    fn constrain_to_width(val: ExprValue, width: usize) -> ExprValue {
+        if width == 0 || width >= 64 {
+            return val;
+        }
+        let mask = (1u64 << width) - 1;
+        match val {
+            ExprValue::Integer(v) => {
+                // Mask then sign-extend from width
+                let masked = v as u64 & mask;
+                let sign_bit = 1u64 << (width - 1);
+                let extended = if masked & sign_bit != 0 {
+                    (masked | !mask) as i64
+                } else {
+                    masked as i64
+                };
+                ExprValue::Integer(extended)
+            }
+            ExprValue::UInteger(v) => ExprValue::UInteger(v & mask),
+            ExprValue::Boolean(v) => ExprValue::Boolean(v),
+        }
+    }
+
     /// Evaluates a binary operation with proper type handling
     #[allow(clippy::too_many_lines)]
     fn eval_binary_op(
@@ -438,9 +486,10 @@ impl<'a> ExpressionEvaluator<'a> {
         let lhs_val = self.eval_arg(lhs)?;
         let rhs_val = self.eval_arg(rhs)?;
 
+        // Get LHS type width for result constraining (matches Python dtype wrapping)
+        let lhs_width = self.arg_type_width(lhs);
+
         // Promote types based on Python's promotion rules
-        // If both operands are signed, result is signed
-        // If any operand is unsigned, result is unsigned if it fits, otherwise signed
         let lhs_signed = matches!(lhs_val, ExprValue::Integer(_));
         let rhs_signed = matches!(rhs_val, ExprValue::Integer(_));
 

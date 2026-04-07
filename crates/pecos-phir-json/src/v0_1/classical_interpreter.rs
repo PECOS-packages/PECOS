@@ -320,7 +320,21 @@ impl PhirClassicalInterpreter {
                     let dtype_name = info.data_type.to_string();
                     result.insert(info.name.clone(), ResultValue::Int(val.as_i64(), dtype_name));
                 } else {
-                    let bits = format!("{:0>width$b}", val.as_u64(), width = info.size);
+                    // Match Python format() behavior on PECOS dtypes:
+                    // - unsigned: zero-padded binary of the value
+                    // - signed negative: "-" + zero-padded binary of magnitude
+                    // - signed positive: zero-padded binary
+                    let bits = if info.data_type.is_signed() {
+                        let signed = val.as_i64();
+                        if signed < 0 {
+                            format!("-{:0>width$b}", signed.unsigned_abs(), width = info.size)
+                        } else {
+                            #[allow(clippy::cast_sign_loss)]
+                            format!("{:0>width$b}", signed as u64, width = info.size)
+                        }
+                    } else {
+                        format!("{:0>width$b}", val.as_u64(), width = info.size)
+                    };
                     result.insert(info.name.clone(), ResultValue::BitString(bits));
                 }
             }

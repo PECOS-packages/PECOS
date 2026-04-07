@@ -570,10 +570,16 @@ impl BitValue {
     /// Create a new zero value for the given data type and size.
     #[must_use]
     pub fn zero(data_type: &DataType, size: usize) -> Self {
-        let s = u16::try_from(size).unwrap_or(64);
         let tw = u16::try_from(data_type.bit_width()).unwrap_or(64);
+        // Signed types use type width for storage (matching Python which doesn't
+        // mask signed values to register size). Unsigned types use register size.
+        let storage_width = if data_type.is_signed() {
+            tw
+        } else {
+            u16::try_from(size).unwrap_or(64)
+        };
         Self {
-            inner: BitUInt::zero(s),
+            inner: BitUInt::zero(storage_width),
             signed: data_type.is_signed(),
             type_width: tw,
         }
@@ -581,13 +587,19 @@ impl BitValue {
 
     /// Create a new value from a raw u64 for the given data type and size.
     ///
-    /// The value is automatically masked to `size` bits by `BitUInt::new`.
+    /// For unsigned types, the value is masked to `size` bits.
+    /// For signed types, the value is stored at the full type width
+    /// (matching Python behavior where signed values are not masked).
     #[must_use]
     pub fn from_u64(data_type: &DataType, size: usize, value: u64) -> Self {
-        let s = u16::try_from(size).unwrap_or(64);
         let tw = u16::try_from(data_type.bit_width()).unwrap_or(64);
+        let storage_width = if data_type.is_signed() {
+            tw
+        } else {
+            u16::try_from(size).unwrap_or(64)
+        };
         Self {
-            inner: BitUInt::new(s, value),
+            inner: BitUInt::new(storage_width, value),
             signed: data_type.is_signed(),
             type_width: tw,
         }

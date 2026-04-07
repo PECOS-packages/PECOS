@@ -88,7 +88,7 @@ impl<S: IndexSet> SparseBinaryMatrix<S> {
     ///
     /// Updates both row and column representations. `dst` must not equal `src`.
     pub fn row_xor_assign(&mut self, dst: usize, src: usize) {
-        debug_assert_ne!(dst, src, "row_xor_assign: dst must differ from src");
+        assert_ne!(dst, src, "row_xor_assign: dst must differ from src");
 
         // Update columns first: for each column j in src's row, toggle dst in that column.
         for j in self.rows[src].iter() {

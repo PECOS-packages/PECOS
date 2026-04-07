@@ -86,7 +86,11 @@ impl<S: IndexSet> SparseBinaryMatrix<S> {
 
     /// XOR row `src` into row `dst`: rows[dst] ^= rows[src].
     ///
-    /// Updates both row and column representations. `dst` must not equal `src`.
+    /// Updates both row and column representations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dst == src` (aliasing would cause undefined behavior).
     pub fn row_xor_assign(&mut self, dst: usize, src: usize) {
         assert_ne!(dst, src, "row_xor_assign: dst must differ from src");
 

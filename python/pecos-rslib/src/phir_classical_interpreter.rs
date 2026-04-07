@@ -412,8 +412,8 @@ impl PyPhirClassicalInterpreter {
 
     /// Expose `program` attribute for HybridEngine compatibility.
     ///
-    /// HybridEngine accesses `cinterp.program.ops` and passes it to execute().
-    /// Our execute() ignores the argument, so this returns a simple wrapper.
+    /// Returns a wrapper with `ops` and `num_qubits` attributes.
+    /// `ops` returns a sentinel that our execute() recognizes.
     #[getter]
     fn program(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let num_qubits = {
@@ -425,6 +425,15 @@ impl PyPhirClassicalInterpreter {
 
         let wrapper = PyProgramWrapper { num_qubits };
         Ok(wrapper.into_pyobject(py)?.into_any().unbind())
+    }
+
+    /// Expose `foreign_obj` attribute for protocol compatibility.
+    #[getter]
+    fn foreign_obj(&self) -> Option<()> {
+        // Foreign objects are stored internally in the Rust interpreter.
+        // We return None here for protocol compatibility -- the actual
+        // foreign object was passed via init() and is held in Rust.
+        None
     }
 }
 

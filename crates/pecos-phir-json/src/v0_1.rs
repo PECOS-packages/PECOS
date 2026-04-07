@@ -1,6 +1,8 @@
 pub mod ast;
+pub mod classical_interpreter;
 pub mod engine;
 pub mod foreign_objects;
+pub mod name_resolver;
 pub mod operations;
 pub mod phir_converter;
 pub mod wasm_foreign_object;

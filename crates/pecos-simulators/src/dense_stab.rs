@@ -104,6 +104,8 @@ fn clear_sign(signs: &mut [u64], row: usize) {
 fn xor_cols(data: &mut [u64], words_per_col: usize, col_a: usize, col_b: usize) {
     let base_a = col_a * words_per_col;
     let base_b = col_b * words_per_col;
+    debug_assert!(base_a + words_per_col <= data.len());
+    debug_assert!(base_b + words_per_col <= data.len());
 
     // Manual unrolling for common small sizes to avoid loop overhead
     unsafe {
@@ -177,6 +179,8 @@ fn xor_cols(data: &mut [u64], words_per_col: usize, col_a: usize, col_b: usize) 
 fn xor_rows(data: &mut [u64], words_per_row: usize, row_a: usize, row_b: usize) {
     let base_a = row_a * words_per_row;
     let base_b = row_b * words_per_row;
+    debug_assert!(base_a + words_per_row <= data.len());
+    debug_assert!(base_b + words_per_row <= data.len());
 
     // Manual unrolling for common small sizes to avoid loop overhead
     unsafe {
@@ -247,6 +251,7 @@ fn xor_rows(data: &mut [u64], words_per_row: usize, row_a: usize, row_b: usize) 
 #[inline(always)]
 fn row_weight(data: &[u64], words_per_row: usize, row: usize) -> usize {
     let base = row * words_per_row;
+    debug_assert!(base + words_per_row <= data.len());
     let mut count = 0;
     for w in 0..words_per_row {
         // SAFETY: bounds are guaranteed by caller
@@ -260,6 +265,7 @@ fn row_weight(data: &[u64], words_per_row: usize, row: usize) -> usize {
 #[inline(always)]
 fn col_is_empty(data: &[u64], words_per_col: usize, qubit: usize) -> bool {
     let base = qubit * words_per_col;
+    debug_assert!(base + words_per_col <= data.len());
     for w in 0..words_per_col {
         // SAFETY: bounds are guaranteed by caller
         unsafe {
@@ -438,12 +444,12 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
 
         // For each generator with X on control, toggle X on target
         let col_base = control * words_per_col;
+        debug_assert!(col_base + words_per_col <= col_x.len());
         for w in 0..words_per_col {
-            // SAFETY: bounds are guaranteed by caller
             let mut gen_mask = unsafe { *col_x.get_unchecked(col_base + w) };
             while gen_mask != 0 {
                 let g = w * 64 + gen_mask.trailing_zeros() as usize;
-                // SAFETY: g is a valid generator index
+                debug_assert!(g * words_per_row + target_word < row_x.len());
                 unsafe {
                     *row_x.get_unchecked_mut(g * words_per_row + target_word) ^= target_mask;
                 }
@@ -456,12 +462,12 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
 
         // For each generator with Z on target, toggle Z on control
         let col_base = target * words_per_col;
+        debug_assert!(col_base + words_per_col <= col_z.len());
         for w in 0..words_per_col {
-            // SAFETY: bounds are guaranteed by caller
             let mut gen_mask = unsafe { *col_z.get_unchecked(col_base + w) };
             while gen_mask != 0 {
                 let g = w * 64 + gen_mask.trailing_zeros() as usize;
-                // SAFETY: g is a valid generator index
+                debug_assert!(g * words_per_row + control_word < row_z.len());
                 unsafe {
                     *row_z.get_unchecked_mut(g * words_per_row + control_word) ^= control_mask;
                 }
@@ -520,10 +526,12 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
     ) {
         // H: X -> Z, Z -> X, Y -> -Y
         let col_base = qubit * words_per_col;
+        debug_assert!(col_base + words_per_col <= col_x.len());
+        debug_assert!(col_base + words_per_col <= col_z.len());
+        debug_assert!(words_per_col <= signs_minus.len());
 
         // Update phases for Y -> -Y and swap X/Z columns in one pass
         for w in 0..words_per_col {
-            // SAFETY: bounds are guaranteed by caller
             unsafe {
                 let cx = *col_x.get_unchecked(col_base + w);
                 let cz = *col_z.get_unchecked(col_base + w);
@@ -538,6 +546,8 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
         let mask = 1u64 << (qubit % 64);
         for g in 0..num_rows {
             let row_idx = g * words_per_row + qubit_word;
+            debug_assert!(row_idx < row_x.len());
+            debug_assert!(row_idx < row_z.len());
             unsafe {
                 let rx = *row_x.get_unchecked(row_idx);
                 let rz = *row_z.get_unchecked(row_idx);
@@ -603,9 +613,12 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
         let qubit_word = qubit / 64;
         let qubit_bit = qubit % 64;
         let mask = 1u64 << qubit_bit;
+        debug_assert!(col_base + words_per_col <= col_x.len());
+        debug_assert!(col_base + words_per_col <= col_z.len());
+        debug_assert!(words_per_col <= signs_minus.len());
+        debug_assert!(words_per_col <= signs_i.len());
 
         for w in 0..words_per_col {
-            // SAFETY: bounds are guaranteed by caller
             unsafe {
                 let x_gens = *col_x.get_unchecked(col_base + w);
                 // i * i = -1: toggle minus for generators with both i and X
@@ -620,7 +633,8 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
         // Update rows - branchless: XOR with (x_bit << qubit_bit)
         for g in 0..num_rows {
             let row_idx = g * words_per_row + qubit_word;
-            // SAFETY: bounds are guaranteed by caller
+            debug_assert!(row_idx < row_x.len());
+            debug_assert!(row_idx < row_z.len());
             unsafe {
                 let rx = *row_x.get_unchecked(row_idx);
                 let x_bit_at_pos = rx & mask;
@@ -1063,6 +1077,8 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
             // Update rows for stabilizers
             for g in 0..self.num_qubits {
                 let row_idx = g * self.words_per_row + qubit_word;
+                debug_assert!(row_idx < self.stab_row_x.len());
+                debug_assert!(row_idx < self.stab_row_z.len());
                 unsafe {
                     let rx = *self.stab_row_x.get_unchecked(row_idx);
                     let x_bit = rx & mask;
@@ -1081,6 +1097,8 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
             // Update rows for destabilizers
             for g in 0..self.num_qubits {
                 let row_idx = g * self.words_per_row + qubit_word;
+                debug_assert!(row_idx < self.destab_row_x.len());
+                debug_assert!(row_idx < self.destab_row_z.len());
                 unsafe {
                     let rx = *self.destab_row_x.get_unchecked(row_idx);
                     let x_bit = rx & mask;
@@ -1213,6 +1231,10 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
             // Row updates for stabilizers
             for g in 0..self.num_qubits {
                 let row_base = g * self.words_per_row;
+                debug_assert!(row_base + q1_word < self.stab_row_x.len());
+                debug_assert!(row_base + q2_word < self.stab_row_x.len());
+                debug_assert!(row_base + q1_word < self.stab_row_z.len());
+                debug_assert!(row_base + q2_word < self.stab_row_z.len());
                 unsafe {
                     let x1_bit = *self.stab_row_x.get_unchecked(row_base + q1_word) & q1_mask;
                     let x2_bit = *self.stab_row_x.get_unchecked(row_base + q2_word) & q2_mask;
@@ -1241,6 +1263,10 @@ impl<R: SeedableRng + Rng + Debug + Clone> CliffordGateable for DenseStab<R> {
 
             for g in 0..self.num_qubits {
                 let row_base = g * self.words_per_row;
+                debug_assert!(row_base + q1_word < self.destab_row_x.len());
+                debug_assert!(row_base + q2_word < self.destab_row_x.len());
+                debug_assert!(row_base + q1_word < self.destab_row_z.len());
+                debug_assert!(row_base + q2_word < self.destab_row_z.len());
                 unsafe {
                     let x1_bit = *self.destab_row_x.get_unchecked(row_base + q1_word) & q1_mask;
                     let x2_bit = *self.destab_row_x.get_unchecked(row_base + q2_word) & q2_mask;

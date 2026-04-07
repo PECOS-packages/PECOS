@@ -80,19 +80,9 @@ pub struct CppSparseStab {
     num_qubits: usize,
 }
 
-// SAFETY: CppSparseStab can be safely sent between threads because:
-// 1. The C++ StateWrapper manages its own memory properly
-// 2. Each instance is used by only one thread at a time
-// 3. The underlying C++ code has no shared state between instances
-// 4. cxx::UniquePtr provides exclusive ownership
+// SAFETY: CppSparseStab can be moved between threads. Each instance owns its
+// C++ state exclusively via cxx::UniquePtr, and all access is through &mut self.
 unsafe impl Send for CppSparseStab {}
-
-// SAFETY: CppSparseStab can be safely shared between threads because:
-// 1. The underlying C++ StateWrapper is thread-safe for concurrent read access
-// 2. Each instance maintains its own independent state
-// 3. No global/shared mutable state is accessed
-// 4. cxx::UniquePtr ensures exclusive ownership semantics
-unsafe impl Sync for CppSparseStab {}
 
 impl CppSparseStab {
     /// Get mutable access to the underlying C++ state.

@@ -356,6 +356,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
             let (low_idx, low_amp) = if have_low {
                 // SAFETY: low_ptr < low_len checked above, idx from 0..len
                 let arr_idx = unsafe { *self.scratch_low.get_unchecked(low_ptr) } as usize;
+                debug_assert!(arr_idx < self.amplitudes.len());
                 let entry = unsafe { self.amplitudes.get_unchecked(arr_idx) };
                 (entry.0, entry.1)
             } else {
@@ -365,6 +366,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
             let (high_idx, high_amp) = if have_high {
                 // SAFETY: high_ptr < high_len checked above, idx from 0..len
                 let arr_idx = unsafe { *self.scratch_high.get_unchecked(high_ptr) } as usize;
+                debug_assert!(arr_idx < self.amplitudes.len());
                 let entry = unsafe { self.amplitudes.get_unchecked(arr_idx) };
                 (entry.0, entry.1)
             } else {
@@ -546,6 +548,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
 
             let (low_idx, low_amp) = if have_low {
                 let arr_idx = unsafe { *self.scratch_low.get_unchecked(low_ptr) } as usize;
+                debug_assert!(arr_idx < self.amplitudes.len());
                 let entry = unsafe { self.amplitudes.get_unchecked(arr_idx) };
                 (entry.0, entry.1)
             } else {
@@ -554,6 +557,7 @@ impl<R: Rng> SparseStateVecAoS<R> {
 
             let (high_idx, high_amp) = if have_high {
                 let arr_idx = unsafe { *self.scratch_high.get_unchecked(high_ptr) } as usize;
+                debug_assert!(arr_idx < self.amplitudes.len());
                 let entry = unsafe { self.amplitudes.get_unchecked(arr_idx) };
                 (entry.0, entry.1)
             } else {

@@ -60,9 +60,10 @@ pub struct SeleneRuntime {
     pending_measurements: Vec<usize>,
 }
 
-// Safety: SeleneRuntime can be moved between threads. The raw pointer `instance`
-// is only accessed through &mut self methods, so exclusive access is guaranteed.
-// Sync is required by the QisRuntime trait bound.
+// SAFETY: SeleneRuntime owns its instance pointer exclusively.
+// WARNING: The Selene FFI runtime may not be thread-safe for concurrent access.
+// Sync is required by the QisRuntime/Engine trait but callers must ensure
+// single-threaded access to any given instance.
 unsafe impl Send for SeleneRuntime {}
 unsafe impl Sync for SeleneRuntime {}
 

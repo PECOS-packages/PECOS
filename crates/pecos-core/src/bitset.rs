@@ -378,9 +378,7 @@ impl BitSet {
         for &index in indices {
             let word_idx = index / 64;
             let bit_idx = index % 64;
-            if word_idx < self.words.len()
-                && (unsafe { *self.words.get_unchecked(word_idx) } & (1u64 << bit_idx)) != 0
-            {
+            if word_idx < self.words.len() && (self.words[word_idx] & (1u64 << bit_idx)) != 0 {
                 count += 1;
             }
         }

@@ -78,6 +78,8 @@ fn clear_sign(signs: &mut [u64], row: usize) {
 fn xor_cols(data: &mut [u64], words_per_col: usize, col_a: usize, col_b: usize) {
     let base_a = col_a * words_per_col;
     let base_b = col_b * words_per_col;
+    debug_assert!(base_a + words_per_col <= data.len());
+    debug_assert!(base_b + words_per_col <= data.len());
     unsafe {
         match words_per_col {
             1 => {
@@ -127,6 +129,8 @@ fn xor_cols(data: &mut [u64], words_per_col: usize, col_a: usize, col_b: usize) 
 fn xor_rows(data: &mut [u64], words_per_row: usize, row_a: usize, row_b: usize) {
     let base_a = row_a * words_per_row;
     let base_b = row_b * words_per_row;
+    debug_assert!(base_a + words_per_row <= data.len());
+    debug_assert!(base_b + words_per_row <= data.len());
     unsafe {
         match words_per_row {
             1 => {

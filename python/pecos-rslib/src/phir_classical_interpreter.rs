@@ -833,3 +833,84 @@ fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
     DataType::from_str(mapped)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Unknown dtype '{dtype_str}': {e}")))
 }
+
+// ── Full Rust simulation ────────────────────────────────────────────
+
+/// Run a PHIR program entirely in Rust.
+///
+/// Uses the existing Rust `PhirJsonEngine` + `HybridEngine` + `MonteCarloEngine`
+/// pipeline. Zero Python boundary crossings per shot.
+///
+/// Returns a dict of `{register_name: [bitstring, ...]}` matching
+/// `HybridEngine.run()` output format.
+#[pyfunction]
+#[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer"))]
+pub fn run_phir_sim(
+    py: Python<'_>,
+    phir_json: &str,
+    shots: usize,
+    seed: Option<u64>,
+    quantum: &str,
+) -> PyResult<Py<PyAny>> {
+    use pecos_engines::classical::ClassicalEngine;
+    use pecos_engines::hybrid::HybridEngineBuilder;
+    use pecos_engines::monte_carlo::MonteCarloEngineBuilder;
+    use pecos_engines::noise::PassThroughNoiseModel;
+    use pecos_engines::quantum::SparseStabEngine;
+    use pecos_engines::{QuantumSystem, StateVecEngine};
+    use pecos_phir_json::v0_1::engine::PhirJsonEngine;
+
+    // Parse and create the classical engine
+    let engine = PhirJsonEngine::from_json(phir_json).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Failed to parse PHIR: {e}"))
+    })?;
+
+    let num_qubits = engine.num_qubits();
+
+    // Build quantum engine
+    let quantum_engine: Box<dyn pecos_engines::QuantumEngine> = match quantum {
+        "stabilizer" => Box::new(SparseStabEngine::new(num_qubits)),
+        "state-vector" => Box::new(StateVecEngine::new(num_qubits)),
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown quantum backend: '{other}'. Use 'stabilizer' or 'state-vector'."
+            )));
+        }
+    };
+
+    // Build quantum system (no noise for now)
+    let noise_model = Box::new(PassThroughNoiseModel::new());
+    let quantum_system = QuantumSystem::new(noise_model, quantum_engine);
+
+    // Build hybrid engine
+    let hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_system(quantum_system)
+        .build();
+
+    // Build and run Monte Carlo engine
+    let mut mc_builder = MonteCarloEngineBuilder::new()
+        .with_hybrid_engine(hybrid);
+
+    if let Some(s) = seed {
+        mc_builder = mc_builder.with_seed(s);
+    }
+
+    let mut mc = mc_builder.build();
+
+    let shot_vec = mc.run(shots).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("Simulation error: {e}"))
+    })?;
+
+    // Convert ShotVec to Python dict matching HybridEngine.run() format
+    // {register_name: [bitstring, bitstring, ...]}
+    let binary_results = shot_vec.format_as_binary_strings();
+
+    let result_dict = PyDict::new(py);
+    for (name, values) in &binary_results {
+        let py_list = PyList::new(py, values)?;
+        result_dict.set_item(name, py_list)?;
+    }
+
+    Ok(result_dict.into_any().unbind())
+}

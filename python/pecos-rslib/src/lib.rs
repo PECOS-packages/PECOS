@@ -224,6 +224,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStabilizer>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
     m.add_class::<phir_classical_interpreter::PyPhirClassicalInterpreter>()?;
+    m.add_function(pyo3::wrap_pyfunction!(phir_classical_interpreter::run_phir_sim, m)?)?;
     m.add_class::<PyStateVec>()?;
     m.add_class::<PyQulacs>()?;
     m.add_class::<PyCoinToss>()?;

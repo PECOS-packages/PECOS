@@ -231,6 +231,40 @@ class HybridEngine:
         for k, v in shot_results.items():
             self.results.setdefault(k, []).append(v)
 
+    def _can_use_full_rust(self, program: PHIRProgram, foreign_object: Any) -> bool:
+        """Check if we can use the full Rust simulation path."""
+        if type(self.cinterp).__name__ != "RustPhirClassicalInterpreter":
+            return False
+        if foreign_object is not None:
+            return False
+        if not isinstance(self.error_model, NoErrorModel):
+            return False
+        # Need JSON string or dict input
+        if not isinstance(program, (str, dict)):
+            return False
+        return True
+
+    def _run_full_rust(
+        self,
+        program: PHIRProgram,
+        shots: int,
+        seed: int | None,
+    ) -> dict:
+        """Run the simulation entirely in Rust (zero per-shot Python overhead)."""
+        import json
+
+        from pecos_rslib import run_phir_sim
+
+        phir_json = program if isinstance(program, str) else json.dumps(program)
+        # Determine quantum backend from our qsim
+        quantum = "stabilizer"
+        if self.qsim is not None:
+            sim_type = type(self.qsim.state).__name__ if self.qsim.state else ""
+            if "StateVec" in sim_type:
+                quantum = "state-vector"
+
+        return run_phir_sim(phir_json, shots=shots, seed=seed, quantum=quantum)
+
     def run(
         self,
         program: PHIRProgram,
@@ -255,6 +289,13 @@ class HybridEngine:
             return_int: Whether to return measurement results as integers.
 
         """
+        # Fast path: full Rust simulation when conditions allow
+        if initialize and not return_int and self._can_use_full_rust(program, foreign_object):
+            try:
+                return self._run_full_rust(program, shots, seed)
+            except Exception:
+                pass  # Fall through to Python loop
+
         measurements = MeasData()
 
         if initialize:

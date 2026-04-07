@@ -213,4 +213,3 @@ cython_debug/
 clib/*/.venv/
 clib/*/uv.lock
 python/selene-plugins/*/uv.lock
-design/rust-classical-interpreter-known-issues.md

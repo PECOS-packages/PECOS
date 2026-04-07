@@ -41,9 +41,9 @@ def _make_classical_interpreter(
     Returns:
         A classical interpreter instance.
     """
-    if spec is None or spec == "python":
+    if spec == "python":
         return PhirClassicalInterpreter()
-    if spec == "rust":
+    if spec is None or spec == "rust":
         from pecos_rslib import RustPhirClassicalInterpreter
 
         return RustPhirClassicalInterpreter()

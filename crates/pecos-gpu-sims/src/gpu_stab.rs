@@ -29,14 +29,23 @@ const GATE_SWAP: u32 = 8;
 
 /// Pack a single-qubit gate into the queue format
 fn pack_single_gate(gate_type: u32, target: u32) -> u32 {
-    debug_assert!(target <= 0x3FFF, "qubit index {target} exceeds 14-bit limit");
+    debug_assert!(
+        target <= 0x3FFF,
+        "qubit index {target} exceeds 14-bit limit"
+    );
     (gate_type & 0xF) | ((target & 0x3FFF) << 4)
 }
 
 /// Pack a two-qubit gate into the queue format
 fn pack_two_qubit_gate(gate_type: u32, control: u32, target: u32) -> u32 {
-    debug_assert!(control <= 0x3FFF, "control qubit index {control} exceeds 14-bit limit");
-    debug_assert!(target <= 0x3FFF, "target qubit index {target} exceeds 14-bit limit");
+    debug_assert!(
+        control <= 0x3FFF,
+        "control qubit index {control} exceeds 14-bit limit"
+    );
+    debug_assert!(
+        target <= 0x3FFF,
+        "target qubit index {target} exceeds 14-bit limit"
+    );
     (gate_type & 0xF) | ((target & 0x3FFF) << 4) | ((control & 0x3FFF) << 18)
 }
 

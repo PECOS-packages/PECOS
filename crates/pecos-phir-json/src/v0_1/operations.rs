@@ -1876,17 +1876,23 @@ impl OperationProcessor {
 
                 // Create destination variable if needed
                 if !self.environment.has_variable(&dst_name) {
-                    // Size depends on whether we're doing bit access
-                    let var_size = if let Some(idx) = dst_index {
-                        std::cmp::max(idx + 1, 32)
-                    } else {
-                        32
-                    };
+                    // Inherit type and size from source variable when possible
+                    let (var_type, var_size) = self
+                        .environment
+                        .get_variable_info_opt(&src_name)
+                        .map(|info| (info.data_type.clone(), info.size))
+                        .unwrap_or_else(|| {
+                            if let Some(idx) = dst_index {
+                                (DataType::I32, std::cmp::max(idx + 1, 32))
+                            } else {
+                                (DataType::I32, 32)
+                            }
+                        });
 
                     // Create the variable, but don't fail if it already exists
                     if let Err(e) =
                         self.environment
-                            .add_variable(&dst_name, DataType::I32, var_size)
+                            .add_variable(&dst_name, var_type, var_size)
                     {
                         log::warn!(
                             "Could not create variable: {dst_name}. Will try to update existing: {e}"
@@ -1975,6 +1981,13 @@ impl OperationProcessor {
             for var_info in self.environment.get_all_variables() {
                 // Skip variables we've already exported
                 if exported_values.contains_key(&var_info.name) {
+                    continue;
+                }
+                // Skip quantum variables and internal measurement variables
+                if var_info.data_type == DataType::Qubits {
+                    continue;
+                }
+                if var_info.name.starts_with("measurement_") {
                     continue;
                 }
 

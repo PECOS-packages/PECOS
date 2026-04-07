@@ -50,22 +50,6 @@ impl PhirImplementation for V0_1 {
             )));
         }
 
-        // Validate that at least one Result command exists
-        let has_result_command = program.ops.iter().any(|op| {
-            if let ast::Operation::ClassicalOp { cop, .. } = op {
-                cop == "Result"
-            } else {
-                false
-            }
-        });
-
-        if !has_result_command {
-            return Err(PecosError::Input(
-                "Invalid PHIR-JSON program structure: Program must contain at least one Result command to specify outputs"
-                    .to_string(),
-            ));
-        }
-
         Ok(program)
     }
 

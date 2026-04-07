@@ -1,4 +1,5 @@
 use crate::v0_1::ast::{infer_size, Operation, PHIRProgram};
+use crate::v0_1::environment::DataType;
 use crate::v0_1::foreign_objects::ForeignObject;
 use crate::v0_1::operations::OperationProcessor;
 use log::debug;
@@ -105,22 +106,6 @@ impl PhirJsonEngine {
                 "Unsupported PHIR version: found '{}', only version '0.1.0' is supported",
                 program.version
             )));
-        }
-
-        // Validate that at least one Result command exists
-        let has_result_command = program.ops.iter().any(|op| {
-            if let Operation::ClassicalOp { cop, .. } = op {
-                cop == "Result"
-            } else {
-                false
-            }
-        });
-
-        if !has_result_command {
-            return Err(PecosError::Input(
-                "Invalid PHIR program structure: Program must contain at least one Result command to specify outputs"
-                    .to_string(),
-            ));
         }
 
         log::debug!("Loading PHIR program with metadata: {:?}", program.metadata);
@@ -860,20 +845,17 @@ impl ClassicalEngine for PhirJsonEngine {
             );
 
             for info in self.processor.environment.get_all_variables() {
+                // Skip quantum variables and internal measurement variables
+                if info.data_type == DataType::Qubits {
+                    continue;
+                }
+                if info.name.starts_with("measurement_") {
+                    continue;
+                }
                 if let Some(value) = self.processor.environment.get(&info.name) {
-                    // Add to exported_values if not already there
                     exported_values
                         .entry(info.name.clone())
                         .or_insert(value.as_u32());
-
-                    log::debug!(
-                        "PHIR: Added direct variable from environment {} = {}",
-                        info.name,
-                        value
-                    );
-
-                    // Simply add all variables from environment without any special transformations
-                    // No assumptions about variable naming conventions
                 }
             }
         } else {
@@ -908,8 +890,15 @@ impl ClassicalEngine for PhirJsonEngine {
         );
 
         for (key, value) in &exported_values {
-            results.data.insert(key.clone(), Data::U32(*value));
-            log::debug!("PHIR: Adding mapped register {key} = {value}");
+            // Use add_register with proper width from variable metadata
+            let width = self
+                .processor
+                .environment
+                .get_variable_info_opt(key)
+                .map(|info| info.size)
+                .unwrap_or(32);
+            results.add_register(key, *value, width);
+            log::debug!("PHIR: Adding mapped register {key} = {value} (width={width})");
         }
 
         // If nothing has been exported so far, use all available variables
@@ -917,13 +906,11 @@ impl ClassicalEngine for PhirJsonEngine {
         if results.data.is_empty() {
             log::debug!("PHIR: No exported values found - using all available variables");
 
-            // Add all variables from environment
+            // Add all variables from environment with proper widths
             for info in self.processor.environment.get_all_variables() {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::debug!("PHIR: Adding variable {} = {} to results", info.name, value);
-                    results
-                        .data
-                        .insert(info.name.clone(), Data::U32(value.as_u32()));
+                    results.add_register(&info.name, value.as_u32(), info.size);
                 }
             }
 

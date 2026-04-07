@@ -415,7 +415,7 @@ void gpu_statevec_anyCtrlAnyTargDiagMatr_sub(Qureg q, std::vector<int> ctrls, st
 template<bool HasPower>
 void gpu_statevec_allTargDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {}
 
-template<bool HasPower, bool MultiplyOnly>
+template<bool HasPower, bool ApplyLeft, bool ApplyRight, bool ConjRight>
 void gpu_densmatr_allTargDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {}
 
 // Template stubs for partial trace operations
@@ -899,10 +899,22 @@ template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, true, true>(Qureg,
 template void gpu_statevec_allTargDiagMatr_sub<false>(Qureg, FullStateDiagMatr, std::complex<double>);
 template void gpu_statevec_allTargDiagMatr_sub<true>(Qureg, FullStateDiagMatr, std::complex<double>);
 
-template void gpu_densmatr_allTargDiagMatr_sub<false, false>(Qureg, FullStateDiagMatr, std::complex<double>);
-template void gpu_densmatr_allTargDiagMatr_sub<false, true>(Qureg, FullStateDiagMatr, std::complex<double>);
-template void gpu_densmatr_allTargDiagMatr_sub<true, false>(Qureg, FullStateDiagMatr, std::complex<double>);
-template void gpu_densmatr_allTargDiagMatr_sub<true, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, false, false, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, false, false, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, false, true, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, false, true, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, true, false, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, true, false, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, true, true, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<false, true, true, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, false, false, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, false, false, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, false, true, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, false, true, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, true, false, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, true, false, true>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, true, true, false>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<true, true, true, true>(Qureg, FullStateDiagMatr, std::complex<double>);
 
 // Explicit template instantiations for partial trace operations
 template void gpu_densmatr_partialTrace_sub<0>(Qureg, Qureg, std::vector<int>, std::vector<int>);

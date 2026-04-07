@@ -647,6 +647,9 @@ impl PhirJsonEngine {
                     debug!("Processing comment: {comment}");
                     // Comments are ignored during execution
                 }
+                Operation::DataExport { .. } => {
+                    // Data exports are handled elsewhere
+                }
             }
             self.current_op += 1;
 

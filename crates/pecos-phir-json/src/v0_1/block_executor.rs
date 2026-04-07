@@ -219,6 +219,9 @@ impl BlockExecutor {
                 debug!("Skipping comment: {comment}");
                 // Comments are no-ops
             }
+            Operation::DataExport { .. } => {
+                // Data exports are no-ops during execution
+            }
         }
 
         Ok(())

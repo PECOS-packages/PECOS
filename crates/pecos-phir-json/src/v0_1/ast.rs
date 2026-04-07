@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 pub struct PHIRProgram {
     pub format: String,
     pub version: String,
+    #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
     pub ops: Vec<Operation>,
 }
@@ -77,6 +78,11 @@ pub enum Operation {
         args: Vec<(String, usize)>,
         #[serde(default)]
         metadata: Option<BTreeMap<String, serde_json::Value>>,
+    },
+    /// Data export (cvar_export) -- specifies which variables to export
+    DataExport {
+        data: String,
+        variables: Vec<String>,
     },
     /// Comment
     Comment {

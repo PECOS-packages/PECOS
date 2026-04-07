@@ -15,15 +15,116 @@
 //! Exposes the Rust classical interpreter to Python as a drop-in replacement
 //! for `pecos.classical_interpreters.PhirClassicalInterpreter`.
 
+use pecos_core::errors::PecosError;
 use pecos_phir_json::v0_1::ast::{Operation, PHIRProgram};
 use pecos_phir_json::v0_1::classical_interpreter::{
     MeasKey, PhirClassicalInterpreter as RustInterpreter, QOpArgs, ResultValue, YieldedOp,
 };
 use pecos_phir_json::v0_1::environment::DataType;
+use pecos_wasm::ForeignObject;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+
+// ── Python ForeignObject bridge ──────────────────────────────────────
+
+/// Wraps a Python `ForeignObjectProtocol` as a Rust `ForeignObject`.
+///
+/// Calls into Python via the GIL for `exec()`. Implements `Send + Sync`
+/// because `Py<PyAny>` is `Send` and we acquire the GIL on each call.
+struct PyForeignObject {
+    obj: Py<PyAny>,
+}
+
+// SAFETY: Py<PyAny> is Send. We always acquire the GIL before using it.
+unsafe impl Sync for PyForeignObject {}
+
+impl std::fmt::Debug for PyForeignObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PyForeignObject(<python object>)")
+    }
+}
+
+impl ForeignObject for PyForeignObject {
+    fn clone_box(&self) -> Box<dyn ForeignObject> {
+        Python::attach(|py| {
+            Box::new(PyForeignObject {
+                obj: self.obj.clone_ref(py),
+            }) as Box<dyn ForeignObject>
+        })
+    }
+
+    fn init(&mut self) -> Result<(), PecosError> {
+        Python::attach(|py| {
+            self.obj
+                .call_method0(py, "init")
+                .map_err(|e| PecosError::Input(format!("ForeignObject.init() failed: {e}")))?;
+            Ok(())
+        })
+    }
+
+    fn new_instance(&mut self) -> Result<(), PecosError> {
+        // Python ForeignObjectProtocol doesn't have new_instance, just init
+        Ok(())
+    }
+
+    fn get_funcs(&self) -> Vec<String> {
+        Python::attach(|py| {
+            let result = self.obj.call_method0(py, "get_funcs");
+            match result {
+                Ok(list) => list.extract::<Vec<String>>(py).unwrap_or_default(),
+                Err(_) => vec![],
+            }
+        })
+    }
+
+    fn exec(&mut self, func_name: &str, args: &[i64]) -> Result<Vec<i64>, PecosError> {
+        Python::attach(|py| {
+            let py_args = PyList::new(py, args)
+                .map_err(|e| PecosError::Input(format!("Failed to create args list: {e}")))?;
+            let result = self
+                .obj
+                .call_method1(py, "exec", (func_name, py_args))
+                .map_err(|e| {
+                    PecosError::Input(format!("ForeignObject.exec({func_name}) failed: {e}"))
+                })?;
+
+            // Result can be int or tuple/list of ints
+            if let Ok(val) = result.extract::<i64>(py) {
+                Ok(vec![val])
+            } else if let Ok(vals) = result.extract::<Vec<i64>>(py) {
+                Ok(vals)
+            } else {
+                // Try extracting as tuple
+                let tuple = result
+                    .bind(py)
+                    .cast::<PyTuple>()
+                    .map_err(|e| {
+                        PecosError::Input(format!(
+                            "ForeignObject.exec() returned non-int/tuple: {e}"
+                        ))
+                    })?;
+                let mut vals = Vec::new();
+                for item in tuple.iter() {
+                    vals.push(item.extract::<i64>().map_err(|e| {
+                        PecosError::Input(format!("ForeignObject.exec() return item not int: {e}"))
+                    })?);
+                }
+                Ok(vals)
+            }
+        })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
 
 /// Python-exposed classical interpreter backed by Rust.
 ///
@@ -74,9 +175,12 @@ impl PyPhirClassicalInterpreter {
                 .extract::<String>()?
         };
 
-        if foreign_obj.is_some() {
-            log::warn!("foreign_object not yet supported in Rust interpreter, ignoring");
-        }
+        let rust_foreign = foreign_obj.map(|fo| {
+            let py_fo = PyForeignObject {
+                obj: fo.clone().unbind(),
+            };
+            Box::new(py_fo) as Box<dyn ForeignObject>
+        });
 
         self.program_json = Some(json_str.clone());
 
@@ -85,7 +189,7 @@ impl PyPhirClassicalInterpreter {
             .lock()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {e}")))?;
         inner
-            .init(&json_str, None)
+            .init(&json_str, rust_foreign)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))
     }
 
@@ -215,6 +319,9 @@ impl PyPhirClassicalInterpreter {
     }
 
     /// Return final results dict.
+    ///
+    /// When `return_int=True`, returns PECOS dtype objects (e.g. `i32(42)`, `u32(7)`)
+    /// matching the Python `PhirClassicalInterpreter` behavior.
     #[pyo3(signature = (*, return_int=true))]
     fn results(&self, py: Python<'_>, return_int: bool) -> PyResult<Py<PyAny>> {
         let inner = self
@@ -224,10 +331,26 @@ impl PyPhirClassicalInterpreter {
         let results = inner.results(return_int);
 
         let dict = PyDict::new(py);
-        for (name, val) in &results {
-            match val {
-                ResultValue::Int(v) => dict.set_item(name, v)?,
-                ResultValue::BitString(s) => dict.set_item(name, s)?,
+        if return_int {
+            // Access dtypes through pecos_rslib module
+            let pecos_rslib = py.import("pecos_rslib")?;
+            let dtypes = pecos_rslib.getattr("dtypes")?;
+            for (name, val) in &results {
+                match val {
+                    ResultValue::Int(v, dtype_name) => {
+                        let dtype_cls = dtypes.getattr(dtype_name.as_str())?;
+                        let typed_val = dtype_cls.call1((*v,))?;
+                        dict.set_item(name, typed_val)?;
+                    }
+                    ResultValue::BitString(s) => dict.set_item(name, s)?,
+                }
+            }
+        } else {
+            for (name, val) in &results {
+                match val {
+                    ResultValue::Int(v, _) => dict.set_item(name, v)?,
+                    ResultValue::BitString(s) => dict.set_item(name, s)?,
+                }
             }
         }
         Ok(dict.into_any().unbind())
@@ -352,7 +475,9 @@ impl PyPhirExecuteIter {
             self.stack[stack_len - 1].0 += 1;
 
             match &op {
-                Operation::VariableDefinition { .. } | Operation::Comment { .. } => {}
+                Operation::VariableDefinition { .. }
+                | Operation::DataExport { .. }
+                | Operation::Comment { .. } => {}
 
                 Operation::MetaInstruction { meta, .. } => {
                     if meta == "barrier" {

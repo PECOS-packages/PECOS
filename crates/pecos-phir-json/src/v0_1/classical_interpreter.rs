@@ -168,8 +168,9 @@ impl PhirClassicalInterpreter {
                             },
                         );
                         self.num_qubits += size;
-                        self.environment
-                            .add_variable(variable, DataType::Qubits, *size)?;
+                        // Don't add quantum vars to the classical environment --
+                        // they live in qvar_meta only, matching Python behavior
+                        // where qvar_meta and csym2id are separate namespaces.
                     }
                     "cvar_define" => {
                         let dt = DataType::from_str(data_type)?;
@@ -316,7 +317,8 @@ impl PhirClassicalInterpreter {
             }
             if let Some(val) = self.environment.get(&info.name) {
                 if return_int {
-                    result.insert(info.name.clone(), ResultValue::Int(val.as_i64()));
+                    let dtype_name = info.data_type.to_string();
+                    result.insert(info.name.clone(), ResultValue::Int(val.as_i64(), dtype_name));
                 } else {
                     let bits = format!("{:0>width$b}", val.as_u64(), width = info.size);
                     result.insert(info.name.clone(), ResultValue::BitString(bits));
@@ -645,10 +647,11 @@ pub enum MeasKey {
     Bit(String, usize),
 }
 
-/// Result value -- either an integer or a bit string.
+/// Result value -- either a typed integer or a bit string.
 #[derive(Debug, Clone)]
 pub enum ResultValue {
-    Int(i64),
+    /// Integer value with its PHIR data type name (e.g. "i32", "u32")
+    Int(i64, String),
     BitString(String),
 }
 
@@ -718,11 +721,11 @@ impl<'a> ExecuteIter<'a> {
             *idx += 1;
 
             match op {
-                Operation::VariableDefinition { .. } => {
-                    // Already processed during init, skip
-                }
-                Operation::Comment { .. } => {
-                    // Skip comments
+                Operation::VariableDefinition { .. }
+                | Operation::DataExport { .. }
+                | Operation::Comment { .. } => {
+                    // Skip: var defs already processed during init,
+                    // data exports and comments are no-ops
                 }
                 Operation::MetaInstruction { meta, .. } => {
                     if meta == "barrier" {
@@ -857,7 +860,7 @@ mod tests {
         let results = interp.results(true);
         let m_val = results.get("m").unwrap();
         match m_val {
-            ResultValue::Int(v) => assert_eq!(*v, 1), // bit 0 = 1, bit 1 = 0 -> value = 1
+            ResultValue::Int(v, _) => assert_eq!(*v, 1), // bit 0 = 1, bit 1 = 0 -> value = 1
             _ => panic!("Expected Int"),
         }
     }

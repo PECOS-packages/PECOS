@@ -14,14 +14,11 @@
 //!
 //! Translates PHIR gate names to simulator-recognized names, matching
 //! the Python `sim_name_resolver` in `pecos/reps/pyphir/name_resolver.py`.
+//!
+//! Uses `Angle64` for angle comparisons so that equivalent angles
+//! (e.g. `3pi/2` and `-pi/2`) are handled automatically via wrapping.
 
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
-
-const ATOL: f64 = 1e-12;
-
-fn isclose(a: f64, b: f64) -> bool {
-    (a - b).abs() <= ATOL
-}
+use pecos_core::Angle64;
 
 /// Resolve the simulator name for a PHIR quantum operation.
 ///
@@ -39,15 +36,14 @@ pub fn resolve_sim_name(name: &str, angles: Option<&[f64]>) -> String {
 fn resolve_rzz(angles: Option<&[f64]>) -> String {
     if let Some(angs) = angles {
         if angs.len() == 1 {
-            let theta = angs[0];
-            if isclose(theta, 0.0) {
+            let a = Angle64::from_radians(angs[0]);
+            if a == Angle64::ZERO {
                 return "I".to_string();
             }
-            let theta_mod = theta.rem_euclid(TAU);
-            if isclose(theta_mod, FRAC_PI_2) {
+            if a == Angle64::QUARTER_TURN {
                 return "SZZ".to_string();
             }
-            if isclose(theta_mod, PI * 1.5) {
+            if a == Angle64::THREE_QUARTERS_TURN {
                 return "SZZdg".to_string();
             }
         }
@@ -58,9 +54,7 @@ fn resolve_rzz(angles: Option<&[f64]>) -> String {
 fn resolve_rz(angles: Option<&[f64]>) -> String {
     if let Some(angs) = angles {
         if angs.len() == 1 {
-            let theta = angs[0];
-            // Check lookup table first
-            if let Some(name) = rz_angle_to_clifford(theta) {
+            if let Some(name) = rz_angle_to_clifford(Angle64::from_radians(angs[0])) {
                 return name.to_string();
             }
         }
@@ -71,9 +65,8 @@ fn resolve_rz(angles: Option<&[f64]>) -> String {
 fn resolve_r1xy(angles: Option<&[f64]>) -> String {
     if let Some(angs) = angles {
         if angs.len() == 2 {
-            let theta = angs[0];
-            let phi = angs[1];
-            // Check lookup table first
+            let theta = Angle64::from_radians(angs[0]);
+            let phi = Angle64::from_radians(angs[1]);
             if let Some(name) = r1xy_angles_to_clifford(theta, phi) {
                 return name.to_string();
             }
@@ -83,80 +76,58 @@ fn resolve_r1xy(angles: Option<&[f64]>) -> String {
 }
 
 /// Look up RZ angle in the Clifford conversion table.
-fn rz_angle_to_clifford(theta: f64) -> Option<&'static str> {
-    // Check if theta mod tau is close to 0
-    let theta_mod = theta.rem_euclid(TAU);
-    if isclose(theta_mod, 0.0) || isclose(theta_mod, TAU) {
+///
+/// With Angle64, equivalent angles like pi and -pi are the same value,
+/// so the table only needs canonical entries.
+fn rz_angle_to_clifford(angle: Angle64) -> Option<&'static str> {
+    if angle == Angle64::ZERO {
         return Some("I");
     }
-
-    // Table of known RZ Clifford angles
-    let table: &[(f64, &str)] = &[
-        (PI, "Z"),
-        (FRAC_PI_2, "SZ"),
-        (-FRAC_PI_2, "SZdg"),
-        (-PI, "Z"),
-        (PI * 1.5, "SZdg"),    // 4.712...
-        (-PI * 1.5, "SZ"),     // -4.712...
-        (TAU, "I"),
-        (0.0, "I"),
-    ];
-
-    for &(angle, name) in table {
-        if isclose(angle, theta) {
-            return Some(name);
-        }
+    // pi/2 -> SZ, pi -> Z, 3pi/4 -> SZdg
+    if angle == Angle64::HALF_TURN {
+        return Some("Z");
     }
-
+    if angle == Angle64::QUARTER_TURN {
+        return Some("SZ");
+    }
+    if angle == Angle64::THREE_QUARTERS_TURN {
+        return Some("SZdg");
+    }
     None
 }
 
 /// Look up R1XY angles in the Clifford conversion table.
-fn r1xy_angles_to_clifford(theta: f64, phi: f64) -> Option<&'static str> {
-    // Check if theta mod tau is close to 0
-    let theta_mod = theta.rem_euclid(TAU);
-    if isclose(theta_mod, 0.0) || isclose(theta_mod, TAU) {
+///
+/// With Angle64, -pi/2 and 3pi/2 are the same value, so no
+/// duplicate entries needed.
+fn r1xy_angles_to_clifford(theta: Angle64, phi: Angle64) -> Option<&'static str> {
+    if theta == Angle64::ZERO {
         return Some("I");
     }
 
-    // Table from Python: (theta, phi) -> name
-    // Includes both positive and negative angle equivalences
-    let table: &[(f64, f64, &str)] = &[
-        (PI, PI, "X"),
-        (PI, FRAC_PI_2, "Y"),
-        (PI, 0.0, "X"),
-        (PI, -FRAC_PI_2, "Y"),
-        (PI, -PI, "X"),
-        (FRAC_PI_2, PI, "SXdg"),
-        (FRAC_PI_2, FRAC_PI_2, "SY"),
-        (FRAC_PI_2, 0.0, "SX"),
-        (FRAC_PI_2, -FRAC_PI_2, "SYdg"),
-        (FRAC_PI_2, -PI, "SXdg"),
-        (-FRAC_PI_2, PI, "SX"),
-        (-FRAC_PI_2, FRAC_PI_2, "SYdg"),
-        (-FRAC_PI_2, 0.0, "SXdg"),
-        (-FRAC_PI_2, -FRAC_PI_2, "SY"),
-        (-PI, PI, "X"),
-        (-PI, FRAC_PI_2, "Y"),
-        (-PI, 0.0, "X"),
-        (-PI, -FRAC_PI_2, "Y"),
-        (-PI, -PI, "X"),
-        // Equivalences for 3pi/2 = -pi/2 (mod 2pi)
-        (PI * 1.5, PI, "SX"),
-        (PI * 1.5, FRAC_PI_2, "SYdg"),
-        (PI * 1.5, 0.0, "SXdg"),
-        (PI * 1.5, -FRAC_PI_2, "SY"),
-        (PI * 1.5, -PI, "SX"),
-        // Equivalences for -3pi/2 = pi/2 (mod 2pi)
-        (-PI * 1.5, PI, "SXdg"),
-        (-PI * 1.5, FRAC_PI_2, "SY"),
-        (-PI * 1.5, 0.0, "SX"),
-        (-PI * 1.5, -FRAC_PI_2, "SYdg"),
-        (-PI * 1.5, -PI, "SXdg"),
+    let half = Angle64::HALF_TURN;
+    let quarter = Angle64::QUARTER_TURN;
+    let three_quarter = Angle64::THREE_QUARTERS_TURN;
+
+    // Table: (theta, phi) -> name
+    // Only canonical Angle64 values needed -- equivalences are automatic
+    let table: &[(Angle64, Angle64, &str)] = &[
+        (half, half, "X"),
+        (half, quarter, "Y"),
+        (half, Angle64::ZERO, "X"),
+        (half, three_quarter, "Y"),
+        (quarter, half, "SXdg"),
+        (quarter, quarter, "SY"),
+        (quarter, Angle64::ZERO, "SX"),
+        (quarter, three_quarter, "SYdg"),
+        (three_quarter, half, "SX"),
+        (three_quarter, quarter, "SYdg"),
+        (three_quarter, Angle64::ZERO, "SXdg"),
+        (three_quarter, three_quarter, "SY"),
     ];
 
     for &(t, p, name) in table {
-        if isclose(t, theta) && isclose(p, phi) {
+        if t == theta && p == phi {
             return Some(name);
         }
     }
@@ -167,6 +138,7 @@ fn r1xy_angles_to_clifford(theta: f64, phi: f64) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f64::consts::{FRAC_PI_2, PI};
 
     #[test]
     fn test_rzz_zero_is_identity() {
@@ -189,8 +161,24 @@ mod tests {
     }
 
     #[test]
+    fn test_rz_neg_pi_is_z() {
+        assert_eq!(resolve_sim_name("RZ", Some(&[-PI])), "Z");
+    }
+
+    #[test]
     fn test_rz_pi_over_2_is_sz() {
         assert_eq!(resolve_sim_name("RZ", Some(&[FRAC_PI_2])), "SZ");
+    }
+
+    #[test]
+    fn test_rz_neg_pi_over_2_is_szdg() {
+        assert_eq!(resolve_sim_name("RZ", Some(&[-FRAC_PI_2])), "SZdg");
+    }
+
+    #[test]
+    fn test_rz_3pi_over_2_is_szdg() {
+        // 3pi/2 == -pi/2 mod 2pi, both should resolve to SZdg
+        assert_eq!(resolve_sim_name("RZ", Some(&[PI * 1.5])), "SZdg");
     }
 
     #[test]
@@ -211,6 +199,17 @@ mod tests {
     #[test]
     fn test_r1xy_pi2_0_is_sx() {
         assert_eq!(resolve_sim_name("R1XY", Some(&[FRAC_PI_2, 0.0])), "SX");
+    }
+
+    #[test]
+    fn test_r1xy_3pi2_pi2_is_sydg() {
+        // 3pi/2 == -pi/2 mod 2pi
+        assert_eq!(resolve_sim_name("R1XY", Some(&[PI * 1.5, FRAC_PI_2])), "SYdg");
+    }
+
+    #[test]
+    fn test_r1xy_neg_pi2_pi2_is_sydg() {
+        assert_eq!(resolve_sim_name("R1XY", Some(&[-FRAC_PI_2, FRAC_PI_2])), "SYdg");
     }
 
     #[test]

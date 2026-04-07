@@ -834,6 +834,63 @@ fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Unknown dtype '{dtype_str}': {e}")))
 }
 
+/// Build a Rust noise model from a Python object.
+///
+/// Accepts:
+/// - Rust noise model builders (DepolarizingNoiseModelBuilder, GeneralNoiseModelBuilder, etc.)
+/// - Python GenericErrorModel (mapped to Rust DepolarizingNoiseModel)
+/// - Python NoErrorModel (mapped to PassThroughNoiseModel)
+/// - A float (shorthand for uniform depolarizing probability)
+fn build_noise_model(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<Box<dyn pecos_engines::noise::NoiseModel>> {
+    use crate::engine_builders::{
+        PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
+        PyGeneralNoiseModelBuilder,
+    };
+    use pecos_engines::noise::{DepolarizingNoiseModel, PassThroughNoiseModel};
+
+    // Try Rust noise model builders first
+    if let Ok(builder) = obj.extract::<PyDepolarizingNoiseModelBuilder>() {
+        return Ok(Box::new(builder.inner.build()));
+    }
+    if let Ok(builder) = obj.extract::<PyGeneralNoiseModelBuilder>() {
+        return Ok(Box::new(builder.inner.build()));
+    }
+    if let Ok(builder) = obj.extract::<PyBiasedDepolarizingNoiseModelBuilder>() {
+        return Ok(Box::new(builder.inner.build()));
+    }
+
+    // Try float (shorthand for uniform depolarizing)
+    if let Ok(p) = obj.extract::<f64>() {
+        return Ok(Box::new(DepolarizingNoiseModel::new_uniform(p)));
+    }
+
+    // Try Python GenericErrorModel
+    let type_name = obj.get_type().qualname()?;
+    if type_name == "GenericErrorModel" {
+        let error_params = obj.getattr("error_params")?;
+        let p1: f64 = error_params
+            .get_item("p1")
+            .ok()
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        return Ok(Box::new(DepolarizingNoiseModel::new_uniform(p1)));
+    }
+
+    // Python NoErrorModel -> PassThrough
+    if type_name == "NoErrorModel" {
+        return Ok(Box::new(PassThroughNoiseModel::new()));
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "Unsupported noise model type: {type_name}. Use a Rust noise model builder \
+         (e.g., depolarizing_noise().with_uniform_probability(0.01)), a Python \
+         GenericErrorModel, or a float for uniform depolarizing."
+    )))
+}
+
 // ── Full Rust simulation ────────────────────────────────────────────
 
 /// Run a PHIR program entirely in Rust.
@@ -844,7 +901,7 @@ fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
 /// Returns a dict of `{register_name: [bitstring, ...]}` matching
 /// `HybridEngine.run()` output format.
 #[pyfunction]
-#[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer", foreign_object=None, depolarizing_noise=None))]
+#[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer", foreign_object=None, noise_model=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn run_phir_sim(
     py: Python<'_>,
@@ -853,7 +910,7 @@ pub fn run_phir_sim(
     seed: Option<u64>,
     quantum: &str,
     foreign_object: Option<&Bound<'_, PyAny>>,
-    depolarizing_noise: Option<f64>,
+    noise_model: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     use pecos_engines::classical::ClassicalEngine;
     use pecos_engines::hybrid::HybridEngineBuilder;
@@ -904,13 +961,13 @@ pub fn run_phir_sim(
         }
     };
 
-    // Build quantum system with optional noise
-    let noise_model: Box<dyn pecos_engines::noise::NoiseModel> = if let Some(p) = depolarizing_noise {
-        Box::new(DepolarizingNoiseModel::new_uniform(p))
+    // Build quantum system with optional noise model
+    let rust_noise: Box<dyn pecos_engines::noise::NoiseModel> = if let Some(nm) = noise_model {
+        build_noise_model(py, nm)?
     } else {
         Box::new(PassThroughNoiseModel::new())
     };
-    let quantum_system = QuantumSystem::new(noise_model, quantum_engine);
+    let quantum_system = QuantumSystem::new(rust_noise, quantum_engine);
 
     // Build hybrid engine
     let hybrid = HybridEngineBuilder::new()

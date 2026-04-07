@@ -238,11 +238,6 @@ class HybridEngine:
         # Need JSON string or dict input
         if not isinstance(program, (str, dict)):
             return False
-        # Only support depolarizing noise or no noise (not custom Python models)
-        from pecos.noise.generic_error_model import GenericErrorModel
-
-        if not isinstance(self.error_model, (NoErrorModel, GenericErrorModel)):
-            return False
         return True
 
     def _run_full_rust(
@@ -266,13 +261,9 @@ class HybridEngine:
             if "StateVec" in sim_type:
                 quantum = "state-vector"
 
-        # Extract depolarizing noise parameter if set
-        from pecos.noise.generic_error_model import GenericErrorModel
-
-        depolarizing_noise = None
-        if isinstance(self.error_model, GenericErrorModel):
-            # Use p1 as the uniform depolarizing probability
-            depolarizing_noise = self.error_model.error_params.get("p1")
+        # Pass the error model directly -- run_phir_sim handles both Python
+        # and Rust noise models via build_noise_model()
+        noise = self.error_model if not isinstance(self.error_model, NoErrorModel) else None
 
         return run_phir_sim(
             phir_json,
@@ -280,7 +271,7 @@ class HybridEngine:
             seed=seed,
             quantum=quantum,
             foreign_object=foreign_object,
-            depolarizing_noise=depolarizing_noise,
+            noise_model=noise,
         )
 
     def run(

@@ -17,7 +17,7 @@
 //! classical operations inline, and yields batches of quantum/machine operations
 //! at measurement boundaries.
 
-use crate::v0_1::ast::{ArgItem, Expression, Operation, PHIRProgram, QubitArg};
+use crate::v0_1::ast::{infer_size, ArgItem, Expression, Operation, PHIRProgram, QubitArg};
 use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
@@ -157,6 +157,7 @@ impl PhirClassicalInterpreter {
                 size,
             } = op
             {
+                let resolved_size = infer_size(data_type, *size);
                 match data.as_str() {
                     "qvar_define" if data_type == "qubits" => {
                         let start_id = self.num_qubits;
@@ -164,10 +165,10 @@ impl PhirClassicalInterpreter {
                             variable.clone(),
                             QVarMeta {
                                 start_id,
-                                size: *size,
+                                size: resolved_size,
                             },
                         );
-                        self.num_qubits += size;
+                        self.num_qubits += resolved_size;
                         // Don't add quantum vars to the classical environment --
                         // they live in qvar_meta only, matching Python behavior
                         // where qvar_meta and csym2id are separate namespaces.
@@ -175,7 +176,8 @@ impl PhirClassicalInterpreter {
                     "cvar_define" => {
                         let dt = DataType::from_str(data_type)?;
                         if !self.environment.has_variable(variable) {
-                            self.environment.add_variable(variable, dt, *size)?;
+                            self.environment
+                                .add_variable(variable, dt, resolved_size)?;
                         }
                     }
                     _ => {}
@@ -534,9 +536,15 @@ impl PhirClassicalInterpreter {
     ) -> Result<(), PecosError> {
         match cop {
             "=" => {
-                // Evaluate each arg and assign to corresponding return
-                for (arg, ret) in args.iter().zip(returns.iter()) {
-                    let val = self.eval_arg(arg)?;
+                // Evaluate ALL args first (before any assignment),
+                // then assign to corresponding returns.
+                // This matches Python: args = [eval(a) for a in op.args]
+                let values: Vec<i64> = args
+                    .iter()
+                    .map(|arg| self.eval_arg(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                for (val, ret) in values.into_iter().zip(returns.iter()) {
                     match ret {
                         ArgItem::Simple(var) => {
                             if !self.environment.has_variable(var) {

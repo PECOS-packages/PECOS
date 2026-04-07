@@ -21,7 +21,9 @@ pub enum Operation {
         data: String,
         data_type: String,
         variable: String,
-        size: usize,
+        /// Size in bits. Optional -- if omitted, inferred from data_type.
+        #[serde(default)]
+        size: Option<usize>,
     },
     /// Quantum operation (gates, measurements)
     QuantumOp {
@@ -129,6 +131,19 @@ pub enum Expression {
 
 // Constants for internal register naming
 pub const MEASUREMENT_PREFIX: &str = "measurement_";
+
+/// Infer variable size from data type when not explicitly provided.
+///
+/// For types like "i32", "u64", extracts the bit width from the name.
+/// For "qubits", returns 0 (size must be explicit).
+pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
+    if let Some(s) = explicit_size {
+        return s;
+    }
+    // Try to extract bit width from type name (e.g., "i32" -> 32, "u64" -> 64)
+    let digits: String = data_type.chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.parse().unwrap_or(0)
+}
 
 /// Custom deserializer to convert angles to radians
 fn deserialize_angles_to_radians<'de, D>(deserializer: D) -> Result<Option<Vec<f64>>, D::Error>

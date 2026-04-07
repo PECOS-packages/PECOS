@@ -644,8 +644,9 @@ fn qop_args_to_python(py: Python<'_>, args: &QOpArgs) -> PyResult<Py<PyAny>> {
         QOpArgs::Multi(groups) => {
             let list = PyList::empty(py);
             for group in groups {
-                let tuple = PyTuple::new(py, group)?;
-                list.append(tuple)?;
+                // Python PyPHIR uses list (not tuple) for multi-qubit arg groups
+                let inner = PyList::new(py, group)?;
+                list.append(inner)?;
             }
             Ok(list.into_any().unbind())
         }

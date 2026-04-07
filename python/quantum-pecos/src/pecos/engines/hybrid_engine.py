@@ -235,18 +235,20 @@ class HybridEngine:
         """Check if we can use the full Rust simulation path."""
         if type(self.cinterp).__name__ != "RustPhirClassicalInterpreter":
             return False
-        if foreign_object is not None:
-            return False
-        if not isinstance(self.error_model, NoErrorModel):
-            return False
         # Need JSON string or dict input
         if not isinstance(program, (str, dict)):
+            return False
+        # Only support depolarizing noise or no noise (not custom Python models)
+        from pecos.noise.generic_error_model import GenericErrorModel
+
+        if not isinstance(self.error_model, (NoErrorModel, GenericErrorModel)):
             return False
         return True
 
     def _run_full_rust(
         self,
         program: PHIRProgram,
+        foreign_object: Any,
         shots: int,
         seed: int | None,
     ) -> dict:
@@ -256,6 +258,7 @@ class HybridEngine:
         from pecos_rslib import run_phir_sim
 
         phir_json = program if isinstance(program, str) else json.dumps(program)
+
         # Determine quantum backend from our qsim
         quantum = "stabilizer"
         if self.qsim is not None:
@@ -263,7 +266,22 @@ class HybridEngine:
             if "StateVec" in sim_type:
                 quantum = "state-vector"
 
-        return run_phir_sim(phir_json, shots=shots, seed=seed, quantum=quantum)
+        # Extract depolarizing noise parameter if set
+        from pecos.noise.generic_error_model import GenericErrorModel
+
+        depolarizing_noise = None
+        if isinstance(self.error_model, GenericErrorModel):
+            # Use p1 as the uniform depolarizing probability
+            depolarizing_noise = self.error_model.error_params.get("p1")
+
+        return run_phir_sim(
+            phir_json,
+            shots=shots,
+            seed=seed,
+            quantum=quantum,
+            foreign_object=foreign_object,
+            depolarizing_noise=depolarizing_noise,
+        )
 
     def run(
         self,
@@ -292,7 +310,7 @@ class HybridEngine:
         # Fast path: full Rust simulation when conditions allow
         if initialize and not return_int and self._can_use_full_rust(program, foreign_object):
             try:
-                return self._run_full_rust(program, shots, seed)
+                return self._run_full_rust(program, foreign_object, shots, seed)
             except Exception:
                 pass  # Fall through to Python loop
 

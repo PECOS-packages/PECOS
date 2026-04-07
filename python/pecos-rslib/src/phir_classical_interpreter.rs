@@ -844,26 +844,52 @@ fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
 /// Returns a dict of `{register_name: [bitstring, ...]}` matching
 /// `HybridEngine.run()` output format.
 #[pyfunction]
-#[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer"))]
+#[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer", foreign_object=None, depolarizing_noise=None))]
+#[allow(clippy::too_many_arguments)]
 pub fn run_phir_sim(
     py: Python<'_>,
     phir_json: &str,
     shots: usize,
     seed: Option<u64>,
     quantum: &str,
+    foreign_object: Option<&Bound<'_, PyAny>>,
+    depolarizing_noise: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
     use pecos_engines::classical::ClassicalEngine;
     use pecos_engines::hybrid::HybridEngineBuilder;
     use pecos_engines::monte_carlo::MonteCarloEngineBuilder;
-    use pecos_engines::noise::PassThroughNoiseModel;
+    use pecos_engines::noise::{DepolarizingNoiseModel, PassThroughNoiseModel};
     use pecos_engines::quantum::SparseStabEngine;
     use pecos_engines::{QuantumSystem, StateVecEngine};
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
 
     // Parse and create the classical engine
-    let engine = PhirJsonEngine::from_json(phir_json).map_err(|e| {
+    let mut engine = PhirJsonEngine::from_json(phir_json).map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(format!("Failed to parse PHIR: {e}"))
     })?;
+
+    // Set foreign object if provided (WASM or Python ForeignObjectProtocol)
+    if let Some(fo) = foreign_object {
+        #[cfg(feature = "wasm")]
+        {
+            use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
+            if let Ok(wasm_ref) = fo.downcast::<PyWasmForeignObject>() {
+                engine.set_foreign_object(wasm_ref.borrow().clone_boxed());
+            } else {
+                let py_fo = PyForeignObject {
+                    obj: fo.clone().unbind(),
+                };
+                engine.set_foreign_object(Box::new(py_fo));
+            }
+        }
+        #[cfg(not(feature = "wasm"))]
+        {
+            let py_fo = PyForeignObject {
+                obj: fo.clone().unbind(),
+            };
+            engine.set_foreign_object(Box::new(py_fo));
+        }
+    }
 
     let num_qubits = engine.num_qubits();
 
@@ -878,8 +904,12 @@ pub fn run_phir_sim(
         }
     };
 
-    // Build quantum system (no noise for now)
-    let noise_model = Box::new(PassThroughNoiseModel::new());
+    // Build quantum system with optional noise
+    let noise_model: Box<dyn pecos_engines::noise::NoiseModel> = if let Some(p) = depolarizing_noise {
+        Box::new(DepolarizingNoiseModel::new_uniform(p))
+    } else {
+        Box::new(PassThroughNoiseModel::new())
+    };
     let quantum_system = QuantumSystem::new(noise_model, quantum_engine);
 
     // Build hybrid engine

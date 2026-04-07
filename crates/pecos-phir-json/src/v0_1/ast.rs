@@ -111,8 +111,10 @@ pub enum ArgItem {
     Indexed((String, usize)),
     /// Simple argument (entire register)
     Simple(String),
-    /// Integer literal
+    /// Integer literal (signed, covers most cases)
     Integer(i64),
+    /// Unsigned integer literal (for values > i64::MAX, e.g. u64::MAX)
+    UInteger(u64),
     /// Expression (for nested expressions)
     Expression(Box<Expression>),
 }

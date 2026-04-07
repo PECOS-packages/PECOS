@@ -957,7 +957,7 @@ impl OperationProcessor {
             match arg {
                 ArgItem::Indexed((name, idx)) => Ok((name.clone(), *idx)),
                 ArgItem::Simple(name) => Ok((name.clone(), 0)),
-                ArgItem::Integer(_) => Err(PecosError::Input(
+                ArgItem::Integer(_) | ArgItem::UInteger(_) => Err(PecosError::Input(
                     "Expected variable reference, got integer literal".to_string(),
                 )),
                 ArgItem::Expression(_) => Err(PecosError::Input(
@@ -1072,7 +1072,7 @@ impl OperationProcessor {
                     ArgItem::Indexed((var, idx)) => {
                         self.validate_variable_access(var, *idx)?;
                     }
-                    ArgItem::Integer(_) => {
+                    ArgItem::Integer(_) | ArgItem::UInteger(_) => {
                         // Integer literals are valid and don't need validation
                     }
                     ArgItem::Expression(_expr) => {

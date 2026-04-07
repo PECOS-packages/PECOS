@@ -368,6 +368,11 @@ impl PyPhirClassicalInterpreter {
                         let typed_val = dtype_cls.call1((*v,))?;
                         dict.set_item(name, typed_val)?;
                     }
+                    ResultValue::UInt(v, dtype_name) => {
+                        let dtype_cls = dtypes.getattr(dtype_name.as_str())?;
+                        let typed_val = dtype_cls.call1((*v,))?;
+                        dict.set_item(name, typed_val)?;
+                    }
                     ResultValue::BitString(s) => dict.set_item(name, s)?,
                 }
             }
@@ -375,6 +380,7 @@ impl PyPhirClassicalInterpreter {
             for (name, val) in &results {
                 match val {
                     ResultValue::Int(v, _) => dict.set_item(name, v)?,
+                    ResultValue::UInt(v, _) => dict.set_item(name, v)?,
                     ResultValue::BitString(s) => dict.set_item(name, s)?,
                 }
             }

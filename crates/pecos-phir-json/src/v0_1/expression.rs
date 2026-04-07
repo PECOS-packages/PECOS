@@ -196,6 +196,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             write!(&mut key, ",indexed:{name}[{idx}]").unwrap();
                         }
                         ArgItem::Integer(val) => write!(&mut key, ",int:{val}").unwrap(),
+                        ArgItem::UInteger(val) => write!(&mut key, ",uint:{val}").unwrap(),
                         ArgItem::Expression(expr) => {
                             write!(&mut key, ",expr:{}", Self::expr_to_cache_key(expr)).unwrap();
                         }
@@ -380,15 +381,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     )))
                 }
             }
-            ArgItem::Integer(val) => {
-                // Integer literal
-                if *val >= 0 {
-                    Ok(ExprValue::Integer(*val))
-                } else {
-                    // This shouldn't happen as integers are parsed as positive
-                    Ok(ExprValue::Integer(*val))
-                }
-            }
+            ArgItem::Integer(val) => Ok(ExprValue::Integer(*val)),
+            ArgItem::UInteger(val) => Ok(ExprValue::UInteger(*val)),
             ArgItem::Expression(expr) => {
                 // Nested expression
                 self.eval_expr(expr)

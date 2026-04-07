@@ -320,7 +320,11 @@ impl PhirClassicalInterpreter {
             if let Some(val) = self.environment.get(&info.name) {
                 if return_int {
                     let dtype_name = info.data_type.to_string();
-                    result.insert(info.name.clone(), ResultValue::Int(val.as_i64(), dtype_name));
+                    if info.data_type.is_signed() {
+                        result.insert(info.name.clone(), ResultValue::Int(val.as_i64(), dtype_name));
+                    } else {
+                        result.insert(info.name.clone(), ResultValue::UInt(val.as_u64(), dtype_name));
+                    }
                 } else {
                     // Match Python format() behavior on PECOS dtypes:
                     // - unsigned: zero-padded binary of the value
@@ -699,8 +703,10 @@ pub enum MeasKey {
 /// Result value -- either a typed integer or a bit string.
 #[derive(Debug, Clone)]
 pub enum ResultValue {
-    /// Integer value with its PHIR data type name (e.g. "i32", "u32")
+    /// Signed integer value with its PHIR data type name (e.g. "i32", "i64")
     Int(i64, String),
+    /// Unsigned integer value with its PHIR data type name (e.g. "u32", "u64")
+    UInt(u64, String),
     BitString(String),
 }
 

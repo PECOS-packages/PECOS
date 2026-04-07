@@ -2261,28 +2261,23 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Stress test: requires GPU with enough VRAM for large allocations
     fn test_adaptive_batching() {
-        // Use enough shots that batching is required even on large GPUs.
-        // Each shot needs ~(num_qubits * num_qubits / 8) bytes for the tableau.
-        // With 881 qubits, each shot is ~96KB. 100k shots = ~9.6GB, which
-        // exceeds any single buffer limit.
-        let d = 21;
-        let total_qubits = d * d + (d * d - 1); // 881 qubits
-        let num_shots = 100_000;
+        // Create a small sim first to discover the GPU's buffer limit,
+        // then request enough shots to guarantee batching on any GPU.
+        let num_qubits = 100;
+        let probe = GpuStabMulti::<PecosRng>::new(num_qubits, 1).unwrap();
+        let max_buf = probe.max_buffer_size();
+        drop(probe);
 
-        let sim = GpuStabMulti::<PecosRng>::new(total_qubits, num_shots).unwrap();
+        // Each shot needs ~(2 * num_qubits) bytes minimum for X+Z tables.
+        // Request enough shots that the total exceeds the buffer limit.
+        let bytes_per_shot = (2 * num_qubits) as u64;
+        let shots_to_exceed = (max_buf / bytes_per_shot.max(1) + 1) * 2;
+        let num_shots = shots_to_exceed.max(1000) as usize;
 
-        println!("Requested shots: {}", sim.num_shots());
-        println!("Shots per batch: {}", sim.shots_per_batch());
-        println!(
-            "Max buffer size: {} MB",
-            sim.max_buffer_size() / 1024 / 1024
-        );
-        println!("Requires batching: {}", sim.requires_batching());
-        println!("Number of batches: {}", sim.num_batches());
-
-        assert!(sim.shots_per_batch() < num_shots);
-        assert!(sim.requires_batching());
+        let sim = GpuStabMulti::<PecosRng>::new(num_qubits, num_shots).unwrap();
+        assert!(sim.requires_batching(), "Should require batching with {num_shots} shots");
         assert!(sim.num_batches() > 1);
     }
 
@@ -2965,16 +2960,21 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Stress test: requires GPU with enough VRAM for batched execution
     fn test_run_batched_multiple_batches() {
-        // Force multiple batches by exceeding max_storage_buffer_binding_size.
-        // 881 qubits * 100k shots needs ~10 batches on a 2GB-buffer GPU.
-        let d = 21;
-        let num_qubits = d * d + (d * d - 1); // 881 qubits
-        let num_shots = 20_000; // Just over 2 batches
+        // Discover the GPU's buffer limit and pick shot count to force 2-3 batches.
+        let num_qubits = 50;
+        // Create with a large number to discover the real batch size
+        let probe = GpuStabMulti::<PecosRng>::new(num_qubits, 1_000_000).unwrap();
+        let shots_per_batch = probe.shots_per_batch();
+        drop(probe);
+
+        // Request just over 2 batches worth
+        let num_shots = shots_per_batch * 2 + 100;
 
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(num_qubits, num_shots, 42).unwrap();
 
-        assert!(sim.requires_batching(), "Should require batching");
+        assert!(sim.requires_batching(), "Should require batching with {num_shots} shots (batch size: {shots_per_batch})");
         assert!(sim.num_batches() >= 2, "Should need at least 2 batches");
 
         let results = sim.run_batched(|s| {

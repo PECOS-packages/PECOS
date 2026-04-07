@@ -326,18 +326,17 @@ impl PhirClassicalInterpreter {
                         result.insert(info.name.clone(), ResultValue::UInt(val.as_u64(), dtype_name));
                     }
                 } else {
-                    // Match Python format() behavior on PECOS dtypes:
-                    // - unsigned: zero-padded binary of the value
-                    // - signed negative: "-" + zero-padded binary of magnitude
-                    // - signed positive: zero-padded binary
-                    let bits = if info.data_type.is_signed() {
-                        let signed = val.as_i64();
-                        if signed < 0 {
-                            format!("-{:0>width$b}", signed.unsigned_abs(), width = info.size)
-                        } else {
-                            #[allow(clippy::cast_sign_loss)]
-                            format!("{:0>width$b}", signed as u64, width = info.size)
-                        }
+                    // Match Python: format(cval, '0{size}b')
+                    //
+                    // Python stores values in PECOS signed dtypes. When the value
+                    // is negative (determined by the TYPE's sign interpretation),
+                    // format() shows "-" prefix + magnitude. We use as_i64() which
+                    // sign-extends from the register's bit width -- this matches
+                    // Python behavior because Python stores the sign-extended value
+                    // in the full-width dtype.
+                    let signed_val = val.as_i64();
+                    let bits = if info.data_type.is_signed() && signed_val < 0 {
+                        format!("-{:0>width$b}", signed_val.unsigned_abs(), width = info.size)
                     } else {
                         format!("{:0>width$b}", val.as_u64(), width = info.size)
                     };

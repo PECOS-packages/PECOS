@@ -556,10 +556,14 @@ pub struct VariableInfo {
 /// stored, and sign interpretation happens at the API boundary.
 #[derive(Debug, Clone)]
 pub struct BitValue {
-    /// The raw value as an N-bit unsigned integer
+    /// The raw value as an N-bit unsigned integer (N = register size)
     inner: BitUInt,
     /// Whether this value should be interpreted as signed
     signed: bool,
+    /// The data type's full bit width (e.g. 64 for i64, 32 for u32)
+    /// Used for sign interpretation: values are negative only when the
+    /// sign bit at this width is set, matching Python PECOS dtype behavior.
+    type_width: u16,
 }
 
 impl BitValue {
@@ -567,9 +571,11 @@ impl BitValue {
     #[must_use]
     pub fn zero(data_type: &DataType, size: usize) -> Self {
         let s = u16::try_from(size).unwrap_or(64);
+        let tw = u16::try_from(data_type.bit_width()).unwrap_or(64);
         Self {
             inner: BitUInt::zero(s),
             signed: data_type.is_signed(),
+            type_width: tw,
         }
     }
 
@@ -579,9 +585,11 @@ impl BitValue {
     #[must_use]
     pub fn from_u64(data_type: &DataType, size: usize, value: u64) -> Self {
         let s = u16::try_from(size).unwrap_or(64);
+        let tw = u16::try_from(data_type.bit_width()).unwrap_or(64);
         Self {
             inner: BitUInt::new(s, value),
             signed: data_type.is_signed(),
+            type_width: tw,
         }
     }
 
@@ -591,21 +599,25 @@ impl BitValue {
         self.inner.to_u64().unwrap_or(0)
     }
 
-    /// Get value as i64, interpreting sign via two's complement if signed.
+    /// Get value as i64, interpreting sign via two's complement using the
+    /// TYPE's bit width (not the register size).
+    ///
+    /// This matches Python behavior where `i64(3)` is positive even if stored
+    /// in a 2-bit register, because the sign bit is at position 63 (i64 type
+    /// width), not at position 1 (register size).
     #[must_use]
     #[allow(clippy::cast_possible_wrap)]
     pub fn as_i64(&self) -> i64 {
         let raw = self.as_u64();
         if self.signed {
-            let size = self.inner.size();
-            if size >= 64 {
+            let tw = self.type_width;
+            if tw >= 64 {
                 return raw as i64;
             }
-            // Two's complement: if high bit set, sign-extend
-            let sign_bit = 1u64 << (size - 1);
+            // Two's complement using TYPE width
+            let sign_bit = 1u64 << (tw - 1);
             if raw & sign_bit != 0 {
-                // Sign extend: fill upper bits with 1s
-                let mask = !((1u64 << size) - 1);
+                let mask = !((1u64 << tw) - 1);
                 (raw | mask) as i64
             } else {
                 raw as i64
@@ -670,6 +682,7 @@ impl BitValue {
         Ok(BitValue {
             inner: new_inner,
             signed: self.signed,
+            type_width: self.type_width,
         })
     }
 

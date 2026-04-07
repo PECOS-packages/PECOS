@@ -232,13 +232,14 @@ class HybridEngine:
             self.results.setdefault(k, []).append(v)
 
     def _can_use_full_rust(self, program: PHIRProgram, foreign_object: Any) -> bool:
-        """Check if we can use the full Rust simulation path."""
-        if type(self.cinterp).__name__ != "RustPhirClassicalInterpreter":
-            return False
-        # Need JSON string or dict input
-        if not isinstance(program, (str, dict)):
-            return False
-        return True
+        """Check if we can use the full Rust simulation path.
+
+        Currently disabled by default -- the existing PhirJsonEngine has
+        behavioral differences (seeding, bit ordering) from the Python
+        PhirClassicalInterpreter. Use run_phir_sim() directly for the
+        full Rust path.
+        """
+        return False
 
     def _run_full_rust(
         self,

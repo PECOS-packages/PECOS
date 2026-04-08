@@ -46,8 +46,8 @@ class ClassicalInterpreterProtocol(Protocol):
 
 Additional methods called by HybridEngine but not in the protocol:
 ```python
-    def add_cvar(self, cvar: str, dtype: type, size: int) -> None: ...
-    def result_bits(self, bits: Iterable, *, filter_private: bool = True) -> dict: ...
+def add_cvar(self, cvar: str, dtype: type, size: int) -> None: ...
+def result_bits(self, bits: Iterable, *, filter_private: bool = True) -> dict: ...
 ```
 
 ## Call Ordering in HybridEngine
@@ -252,9 +252,7 @@ for yielded QOps to have correct `sim_name` values.
 FFCalls are COps handled during `execute()` -- never yielded. The foreign object
 is a Python object implementing `ForeignObjectProtocol`:
 
-```python
-def exec(func_name: str, args: Sequence) -> tuple | int
-```
+    def exec(func_name: str, args: Sequence) -> tuple | int
 
 The Rust side must call back into this Python object for FFCalls. This requires
 holding a `Py<PyAny>` reference.

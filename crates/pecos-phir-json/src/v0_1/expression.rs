@@ -1,7 +1,7 @@
 use crate::v0_1::ast::{ArgItem, Expression};
 use crate::v0_1::environment::{BitValue, DataType, Environment, TypedValue};
-use pecos_core::errors::PecosError;
 use pecos_core::BitUInt;
+use pecos_core::errors::PecosError;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 
@@ -45,8 +45,7 @@ impl ExprValue {
     #[allow(clippy::cast_possible_wrap)]
     pub fn as_i64(&self) -> i64 {
         match self {
-            ExprValue::Signed(v) => v.to_u64().unwrap_or(0) as i64,
-            ExprValue::Unsigned(v) => v.to_u64().unwrap_or(0) as i64,
+            ExprValue::Signed(v) | ExprValue::Unsigned(v) => v.to_u64().unwrap_or(0) as i64,
             ExprValue::Boolean(v) => i64::from(*v),
         }
     }
@@ -78,9 +77,15 @@ impl ExprValue {
             TypedValue::I16(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
             TypedValue::I32(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
             TypedValue::I64(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
-            TypedValue::U8(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val))),
-            TypedValue::U16(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val))),
-            TypedValue::U32(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val))),
+            TypedValue::U8(val) => {
+                ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val)))
+            }
+            TypedValue::U16(val) => {
+                ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val)))
+            }
+            TypedValue::U32(val) => {
+                ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val)))
+            }
             TypedValue::U64(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, val)),
             TypedValue::Bool(val) => ExprValue::Boolean(val),
         }
@@ -333,17 +338,6 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    /// Get the type bit width for an ArgItem variable.
-    fn arg_type_width(&self, arg: &ArgItem) -> Option<usize> {
-        match arg {
-            ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => self
-                .environment
-                .get_variable_info_opt(name)
-                .map(|info| info.data_type.bit_width()),
-            _ => None,
-        }
-    }
-
     /// Evaluates a unary operation.
     fn eval_unary_op(&mut self, op: &str, arg: &ArgItem) -> Result<ExprValue, PecosError> {
         let val = self.eval_arg(arg)?;
@@ -453,20 +447,20 @@ impl<'a> ExpressionEvaluator<'a> {
     /// Extract inner `BitUInt` from an `ExprValue`, widening both to the same width.
     fn widen_pair(a: &ExprValue, b: &ExprValue) -> (BitUInt, BitUInt) {
         let (a_bits, b_bits) = match (a, b) {
-            (ExprValue::Signed(va) | ExprValue::Unsigned(va),
-             ExprValue::Signed(vb) | ExprValue::Unsigned(vb)) => {
-                (va.clone(), vb.clone())
-            }
+            (
+                ExprValue::Signed(va) | ExprValue::Unsigned(va),
+                ExprValue::Signed(vb) | ExprValue::Unsigned(vb),
+            ) => (va.clone(), vb.clone()),
             (ExprValue::Boolean(v), ExprValue::Signed(vb) | ExprValue::Unsigned(vb)) => {
                 (BitUInt::new(vb.size(), u64::from(*v)), vb.clone())
             }
             (ExprValue::Signed(va) | ExprValue::Unsigned(va), ExprValue::Boolean(v)) => {
                 (va.clone(), BitUInt::new(va.size(), u64::from(*v)))
             }
-            (ExprValue::Boolean(va), ExprValue::Boolean(vb)) => {
-                (BitUInt::new(MIN_EVAL_WIDTH, u64::from(*va)),
-                 BitUInt::new(MIN_EVAL_WIDTH, u64::from(*vb)))
-            }
+            (ExprValue::Boolean(va), ExprValue::Boolean(vb)) => (
+                BitUInt::new(MIN_EVAL_WIDTH, u64::from(*va)),
+                BitUInt::new(MIN_EVAL_WIDTH, u64::from(*vb)),
+            ),
         };
 
         // Widen to same width (max of the two)
@@ -481,9 +475,10 @@ impl<'a> ExpressionEvaluator<'a> {
     /// # Errors
     /// Returns an error if any bit access fails.
     pub fn get_bits(&self, name: &str, indices: &[usize]) -> Result<Vec<bool>, PecosError> {
-        let value = self.environment.get(name).ok_or_else(|| {
-            PecosError::Input(format!("Variable '{name}' not found"))
-        })?;
+        let value = self
+            .environment
+            .get(name)
+            .ok_or_else(|| PecosError::Input(format!("Variable '{name}' not found")))?;
         let value_u64 = value.as_u64();
         indices
             .iter()

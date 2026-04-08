@@ -1,5 +1,5 @@
 use crate::v0_1::ast::{ArgItem, Expression, MEASUREMENT_PREFIX, Operation, QubitArg};
-use crate::v0_1::environment::{DataType, Environment, TypedValue};
+use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
@@ -842,7 +842,7 @@ impl OperationProcessor {
         size: usize,
     ) -> Result<(), PecosError> {
         // Convert string data type to DataType enum
-        let dt = DataType::from_str(data_type)?;
+        let dt = data_type.parse::<DataType>()?;
 
         // Only add to environment if it doesn't already exist
         // This is important for compatibility with test programs that might redefine variables
@@ -1021,7 +1021,10 @@ impl OperationProcessor {
 
                     // Calculate the new value and update exported_values
                     // Get the current value from environment or use 0 if it doesn't exist
-                    let current_value = self.environment.get(&var).map_or(0u32, |v| v.as_u32());
+                    let current_value = self
+                        .environment
+                        .get(&var)
+                        .map_or(0u32, super::environment::BitValue::as_u32);
 
                     // Clear the bit and set it to the new value
                     let mask = !(1 << idx);
@@ -1881,20 +1884,19 @@ impl OperationProcessor {
                     let (var_type, var_size) = self
                         .environment
                         .get_variable_info_opt(&src_name)
-                        .map(|info| (info.data_type.clone(), info.size))
-                        .unwrap_or_else(|| {
-                            if let Some(idx) = dst_index {
-                                (DataType::I32, std::cmp::max(idx + 1, 32))
-                            } else {
-                                (DataType::I32, 32)
-                            }
-                        });
+                        .map_or_else(
+                            || {
+                                if let Some(idx) = dst_index {
+                                    (DataType::I32, std::cmp::max(idx + 1, 32))
+                                } else {
+                                    (DataType::I32, 32)
+                                }
+                            },
+                            |info| (info.data_type.clone(), info.size),
+                        );
 
                     // Create the variable, but don't fail if it already exists
-                    if let Err(e) =
-                        self.environment
-                            .add_variable(&dst_name, var_type, var_size)
-                    {
+                    if let Err(e) = self.environment.add_variable(&dst_name, var_type, var_size) {
                         log::warn!(
                             "Could not create variable: {dst_name}. Will try to update existing: {e}"
                         );

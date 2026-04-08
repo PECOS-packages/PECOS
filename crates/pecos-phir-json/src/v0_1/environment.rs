@@ -1,7 +1,9 @@
-use pecos_core::errors::PecosError;
-use pecos_core::{BitInt, BitUInt};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::str::FromStr;
+
+use pecos_core::BitUInt;
+use pecos_core::errors::PecosError;
 
 /// Represents the data type of a variable
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,13 +30,10 @@ pub enum DataType {
     Qubits,
 }
 
-impl DataType {
-    /// Creates a `DataType` from a string representation
-    ///
-    /// # Errors
-    /// Returns an error if the string doesn't match a supported data type.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Result<Self, PecosError> {
+impl FromStr for DataType {
+    type Err = PecosError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "i8" => Ok(DataType::I8),
             "i16" => Ok(DataType::I16),
@@ -49,7 +48,9 @@ impl DataType {
             _ => Err(PecosError::Input(format!("Unsupported data type: {s}"))),
         }
     }
+}
 
+impl DataType {
     /// Returns the bit width of the data type
     #[must_use]
     pub fn bit_width(&self) -> usize {
@@ -572,7 +573,9 @@ impl BitValue {
     pub fn zero(data_type: &DataType, size: usize) -> Self {
         let raw_tw = data_type.bit_width();
         // For types with 0 bit width (qubits), use the declared size
-        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size }).unwrap_or(64).max(1);
+        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size })
+            .unwrap_or(64)
+            .max(1);
         Self {
             inner: BitUInt::zero(tw),
             signed: data_type.is_signed(),
@@ -588,7 +591,9 @@ impl BitValue {
     #[must_use]
     pub fn from_u64(data_type: &DataType, size: usize, value: u64) -> Self {
         let raw_tw = data_type.bit_width();
-        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size }).unwrap_or(64).max(1);
+        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size })
+            .unwrap_or(64)
+            .max(1);
         let s = u16::try_from(size).unwrap_or(tw);
         // Mask to `size` data bits before storing at type width.
         // This ensures user-assigned values respect the declared register size,
@@ -671,10 +676,13 @@ impl BitValue {
     }
 
     /// Get a specific bit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError::Input` if `idx` is out of range for this value's type width.
     pub fn get_bit(&self, idx: usize) -> Result<bool, PecosError> {
-        let idx16 = u16::try_from(idx).map_err(|_| {
-            PecosError::Input(format!("Bit index {idx} too large"))
-        })?;
+        let idx16 = u16::try_from(idx)
+            .map_err(|_| PecosError::Input(format!("Bit index {idx} too large")))?;
         if idx16 >= self.inner.size() {
             return Err(PecosError::Input(format!(
                 "Bit index {idx} out of range for type with bit width {}",
@@ -685,10 +693,13 @@ impl BitValue {
     }
 
     /// Set a specific bit, returning new value.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError::Input` if `idx` is out of range for this value's type width.
     pub fn with_bit_set(&self, idx: usize, bit: bool) -> Result<BitValue, PecosError> {
-        let idx16 = u16::try_from(idx).map_err(|_| {
-            PecosError::Input(format!("Bit index {idx} too large"))
-        })?;
+        let idx16 = u16::try_from(idx)
+            .map_err(|_| PecosError::Input(format!("Bit index {idx} too large")))?;
         if idx16 >= self.inner.size() {
             return Err(PecosError::Input(format!(
                 "Bit index {idx} out of range for type with bit width {}",
@@ -725,7 +736,7 @@ impl BitValue {
         }
     }
 
-    /// Convert to a TypedValue (for backward compatibility with existing code).
+    /// Convert to a `TypedValue` (for backward compatibility with existing code).
     #[must_use]
     pub fn to_typed_value(&self) -> TypedValue {
         TypedValue::new(&self.get_type(), self.as_u64())

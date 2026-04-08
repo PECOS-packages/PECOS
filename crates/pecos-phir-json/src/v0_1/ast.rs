@@ -21,7 +21,7 @@ pub enum Operation {
         data: String,
         data_type: String,
         variable: String,
-        /// Size in bits. Optional -- if omitted, inferred from data_type.
+        /// Size in bits. Optional -- if omitted, inferred from `data_type`.
         #[serde(default)]
         size: Option<usize>,
     },
@@ -81,7 +81,7 @@ pub enum Operation {
         #[serde(default)]
         metadata: Option<BTreeMap<String, serde_json::Value>>,
     },
-    /// Data export (cvar_export) -- specifies which variables to export
+    /// Data export (`cvar_export`) -- specifies which variables to export
     DataExport {
         data: String,
         variables: Vec<String>,
@@ -113,7 +113,7 @@ pub enum ArgItem {
     Simple(String),
     /// Integer literal (signed, covers most cases)
     Integer(i64),
-    /// Unsigned integer literal (for values > i64::MAX, e.g. u64::MAX)
+    /// Unsigned integer literal (for values > `i64::MAX`, e.g. `u64::MAX`)
     UInteger(u64),
     /// Expression (for nested expressions)
     Expression(Box<Expression>),
@@ -138,12 +138,13 @@ pub const MEASUREMENT_PREFIX: &str = "measurement_";
 ///
 /// For types like "i32", "u64", extracts the bit width from the name.
 /// For "qubits", returns 0 (size must be explicit).
+#[must_use]
 pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     if let Some(s) = explicit_size {
         return s;
     }
     // Try to extract bit width from type name (e.g., "i32" -> 32, "u64" -> 64)
-    let digits: String = data_type.chars().filter(|c| c.is_ascii_digit()).collect();
+    let digits: String = data_type.chars().filter(char::is_ascii_digit).collect();
     digits.parse().unwrap_or(0)
 }
 

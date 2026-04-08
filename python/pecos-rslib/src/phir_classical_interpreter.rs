@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! PyO3 wrapper for the Rust `PhirClassicalInterpreter`.
+//! `PyO3` wrapper for the Rust `PhirClassicalInterpreter`.
 //!
 //! Exposes the Rust classical interpreter to Python as a drop-in replacement
 //! for `pecos.classical_interpreters.PhirClassicalInterpreter`.
@@ -98,14 +98,9 @@ impl ForeignObject for PyForeignObject {
                 Ok(vals)
             } else {
                 // Try extracting as tuple
-                let tuple = result
-                    .bind(py)
-                    .cast::<PyTuple>()
-                    .map_err(|e| {
-                        PecosError::Input(format!(
-                            "ForeignObject.exec() returned non-int/tuple: {e}"
-                        ))
-                    })?;
+                let tuple = result.bind(py).cast::<PyTuple>().map_err(|e| {
+                    PecosError::Input(format!("ForeignObject.exec() returned non-int/tuple: {e}"))
+                })?;
                 let mut vals = Vec::new();
                 for item in tuple.iter() {
                     vals.push(item.extract::<i64>().map_err(|e| {
@@ -152,9 +147,10 @@ impl PyPhirClassicalInterpreter {
 
     /// Support pickling for multiprocessing.
     ///
-    /// The interpreter state is re-initialized by HybridEngine.run() via init(),
-    /// so we only need to preserve the configuration (phir_validate).
-    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+    /// The interpreter state is re-initialized by `HybridEngine.run()` via `init()`,
+    /// so we only need to preserve the configuration (`phir_validate`).
+    fn __reduce__(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let _ = slf; // PyO3 pickle protocol requires the bound reference
         let cls = py
             .import("pecos_rslib")?
             .getattr("RustPhirClassicalInterpreter")?
@@ -163,16 +159,15 @@ impl PyPhirClassicalInterpreter {
         Ok((cls, args))
     }
 
-    fn __getstate__(&self) -> PyResult<bool> {
-        Ok(self.phir_validate)
+    fn __getstate__(&self) -> bool {
+        self.phir_validate
     }
 
-    fn __setstate__(&mut self, state: bool) -> PyResult<()> {
+    fn __setstate__(&mut self, state: bool) {
         self.phir_validate = state;
-        Ok(())
     }
 
-    /// Initialize with a PHIR program. Returns num_qubits.
+    /// Initialize with a PHIR program. Returns `num_qubits`.
     #[pyo3(signature = (program, foreign_obj=None))]
     fn init(
         &mut self,
@@ -216,10 +211,9 @@ impl PyPhirClassicalInterpreter {
     }
 
     /// Reset to initial state.
-    fn reset(&mut self) -> PyResult<()> {
+    fn reset(&mut self) {
         self.inner = Arc::new(Mutex::new(RustInterpreter::new()));
         self.program_json = None;
-        Ok(())
     }
 
     /// Reset variable values for a new shot.
@@ -233,7 +227,13 @@ impl PyPhirClassicalInterpreter {
     }
 
     /// Add a classical variable dynamically.
-    fn add_cvar(&self, _py: Python<'_>, cvar: &str, dtype: &Bound<'_, PyAny>, size: usize) -> PyResult<()> {
+    fn add_cvar(
+        &self,
+        _py: Python<'_>,
+        cvar: &str,
+        dtype: &Bound<'_, PyAny>,
+        size: usize,
+    ) -> PyResult<()> {
         let dtype_str = dtype.str()?.to_string();
         let data_type = map_python_dtype(&dtype_str)?;
 
@@ -251,33 +251,36 @@ impl PyPhirClassicalInterpreter {
     /// When `sequence` is None or the program's own ops, uses the Rust AST walker.
     /// When `sequence` is a list of Python QOp/MOp objects (inner interpreter case),
     /// passes them through directly, buffering at measurement boundaries.
-    fn execute(
-        &self,
-        py: Python<'_>,
-        sequence: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
+    fn execute(&self, py: Python<'_>, sequence: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         // Check if sequence is a list of Python QOp objects (inner interpreter mode)
-        if let Some(seq) = sequence {
-            if !seq.is_none() {
-                if let Ok(py_list) = seq.downcast::<PyList>() {
-                    // Inner interpreter mode: pass through Python QOp objects
-                    return Ok(PyPhirPassthroughIter::new(py, py_list)?.into_pyobject(py)?.into_any().unbind());
-                }
-                // If it's some other iterable (like a list), try to convert
-                if let Ok(iter) = seq.try_iter() {
-                    let items: Vec<Py<PyAny>> = iter
-                        .map(|item| item.map(|i| i.unbind()))
-                        .collect::<PyResult<_>>()?;
-                    let py_list = PyList::new(py, &items)?;
-                    return Ok(PyPhirPassthroughIter::new(py, &py_list)?.into_pyobject(py)?.into_any().unbind());
-                }
+        if let Some(seq) = sequence
+            && !seq.is_none()
+        {
+            if let Ok(py_list) = seq.cast::<PyList>() {
+                // Inner interpreter mode: pass through Python QOp objects
+                return Ok(PyPhirPassthroughIter::new(py_list)
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind());
+            }
+            // If it's some other iterable (like a list), try to convert
+            if let Ok(iter) = seq.try_iter() {
+                let items: Vec<Py<PyAny>> = iter
+                    .map(|item| item.map(pyo3::Bound::unbind))
+                    .collect::<PyResult<_>>()?;
+                let py_list = PyList::new(py, &items)?;
+                return Ok(PyPhirPassthroughIter::new(&py_list)
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind());
             }
         }
 
         // Outer interpreter mode: use Rust AST walker
-        let json = self.program_json.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("No program initialized")
-        })?;
+        let json = self
+            .program_json
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("No program initialized"))?;
         let program: PHIRProgram = serde_json::from_str(json).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Failed to parse: {e}"))
         })?;
@@ -290,7 +293,10 @@ impl PyPhirClassicalInterpreter {
             done: false,
             qop_cls: None,
             mop_cls: None,
-        }.into_pyobject(py)?.into_any().unbind())
+        }
+        .into_pyobject(py)?
+        .into_any()
+        .unbind())
     }
 
     /// Receive measurement results from the quantum simulator.
@@ -306,7 +312,7 @@ impl PyPhirClassicalInterpreter {
             let mut meas = BTreeMap::new();
             for (key, val) in dict.iter() {
                 let v: i64 = val.extract()?;
-                if let Ok(tuple) = key.downcast::<PyTuple>() {
+                if let Ok(tuple) = key.cast::<PyTuple>() {
                     let name: String = tuple.get_item(0)?.extract()?;
                     let idx: usize = tuple.get_item(1)?.extract()?;
                     meas.insert(MeasKey::Bit(name, idx), v);
@@ -322,9 +328,8 @@ impl PyPhirClassicalInterpreter {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
     }
 
-    /// Extract measurement bits, filtering private variables.
+    /// Extract measurement bits, optionally filtering private variables.
     #[pyo3(signature = (bits, *, filter_private=true))]
-    #[allow(unused_variables)]
     fn result_bits(
         &self,
         py: Python<'_>,
@@ -347,6 +352,9 @@ impl PyPhirClassicalInterpreter {
                 let tuple = key.cast::<PyTuple>()?;
                 let name: String = tuple.get_item(0)?.extract()?;
                 let idx: usize = tuple.get_item(1)?.extract()?;
+                if filter_private && name.starts_with("__") {
+                    continue;
+                }
                 let v: i64 = val.extract()?;
                 meas.insert((name, idx), v);
             }
@@ -357,10 +365,13 @@ impl PyPhirClassicalInterpreter {
 
         let dict = PyDict::new(py);
         for ((name, idx), val) in &result {
-            let key = PyTuple::new(py, &[
-                name.into_pyobject(py)?.into_any(),
-                idx.into_pyobject(py)?.into_any(),
-            ])?;
+            let key = PyTuple::new(
+                py,
+                &[
+                    name.into_pyobject(py)?.into_any(),
+                    idx.into_pyobject(py)?.into_any(),
+                ],
+            )?;
             dict.set_item(key, val)?;
         }
         Ok(dict.into_any().unbind())
@@ -410,10 +421,10 @@ impl PyPhirClassicalInterpreter {
         Ok(dict.into_any().unbind())
     }
 
-    /// Expose `program` attribute for HybridEngine compatibility.
+    /// Expose `program` attribute for `HybridEngine` compatibility.
     ///
     /// Returns a wrapper with `ops` and `num_qubits` attributes.
-    /// `ops` returns a sentinel that our execute() recognizes.
+    /// `ops` returns a sentinel that our `execute()` recognizes.
     #[getter]
     fn program(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let num_qubits = {
@@ -429,6 +440,7 @@ impl PyPhirClassicalInterpreter {
 
     /// Expose `foreign_obj` attribute for protocol compatibility.
     #[getter]
+    #[allow(clippy::unused_self)] // PyO3 requires &self for getters
     fn foreign_obj(&self) -> Option<()> {
         // Foreign objects are stored internally in the Rust interpreter.
         // We return None here for protocol compatibility -- the actual
@@ -439,8 +451,8 @@ impl PyPhirClassicalInterpreter {
 
 /// Wrapper for the `program` attribute.
 ///
-/// HybridEngine accesses `cinterp.program.ops` and `cinterp.program.num_qubits`.
-/// The `ops` returns None since our execute() uses its own internal ops.
+/// `HybridEngine` accesses `cinterp.program.ops` and `cinterp.program.num_qubits`.
+/// The `ops` returns None since our `execute()` uses its own internal ops.
 #[pyclass(name = "_PhirProgramWrapper", module = "pecos_rslib")]
 struct PyProgramWrapper {
     #[pyo3(get)]
@@ -450,6 +462,7 @@ struct PyProgramWrapper {
 #[pymethods]
 impl PyProgramWrapper {
     #[getter]
+    #[allow(clippy::unused_self)] // PyO3 requires &self for getters
     fn ops(&self, py: Python<'_>) -> Py<PyAny> {
         py.None()
     }
@@ -459,7 +472,7 @@ impl PyProgramWrapper {
 
 /// Iterator that passes Python QOp/MOp objects through, buffering at measurement boundaries.
 ///
-/// Used by the inner interpreter which receives noisy QOp objects from `op_processor.process()`.
+/// Used by the inner interpreter which receives noisy `QOp` objects from `op_processor.process()`.
 #[pyclass(name = "_PhirPassthroughIter", module = "pecos_rslib")]
 struct PyPhirPassthroughIter {
     /// All ops as Python objects
@@ -472,14 +485,14 @@ struct PyPhirPassthroughIter {
 }
 
 impl PyPhirPassthroughIter {
-    fn new(py: Python<'_>, ops: &Bound<'_, PyList>) -> PyResult<Self> {
-        let items: Vec<Py<PyAny>> = ops.iter().map(|item| item.unbind()).collect();
-        Ok(Self {
+    fn new(ops: &Bound<'_, PyList>) -> Self {
+        let items: Vec<Py<PyAny>> = ops.iter().map(pyo3::Bound::unbind).collect();
+        Self {
             ops: items,
             idx: 0,
             buffer: Vec::new(),
             done: false,
-        })
+        }
     }
 }
 
@@ -539,14 +552,14 @@ pub struct PyPhirExecuteIter {
     interp: Arc<Mutex<RustInterpreter>>,
     /// Owned copy of the program ops
     ops: Vec<Operation>,
-    /// Stack of (current_index, ops_source)
+    /// Stack of (`current_index`, `ops_source`)
     stack: Vec<(usize, OpsRef)>,
     /// Buffer of yielded ops accumulated until a measurement
     buffer: Vec<YieldedOp>,
     done: bool,
-    /// Cached Python QOp class (avoid repeated import)
+    /// Cached Python `QOp` class (avoid repeated import)
     qop_cls: Option<Py<PyAny>>,
-    /// Cached Python MOp class
+    /// Cached Python `MOp` class
     mop_cls: Option<Py<PyAny>>,
 }
 
@@ -638,11 +651,8 @@ impl PyPhirExecuteIter {
                 } => {
                     let yielded = interp
                         .make_qop(qop, angles, args, returns, metadata)
-                        .map_err(|e| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!("{e}"))
-                        })?;
-                    let is_measure =
-                        matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+                    let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
                     self.buffer.push(YieldedOp::QOp(yielded));
 
                     if is_measure {
@@ -658,9 +668,7 @@ impl PyPhirExecuteIter {
                 } => {
                     let yielded = interp
                         .make_mop(mop, args, duration, metadata)
-                        .map_err(|e| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!("{e}"))
-                        })?;
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
                     self.buffer.push(YieldedOp::MOp(yielded));
                 }
 
@@ -671,9 +679,9 @@ impl PyPhirExecuteIter {
                     function,
                     ..
                 } => {
-                    interp.handle_cop(cop, args, returns, function).map_err(|e| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!("{e}"))
-                    })?;
+                    interp
+                        .handle_cop(cop, args, returns, function)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
                 }
 
                 Operation::Block {
@@ -715,7 +723,7 @@ impl PyPhirExecuteIter {
 
 // ── Python object conversion ────────────────────────────────────────
 
-/// Convert a batch of YieldedOps to a Python list of actual QOp/MOp objects.
+/// Convert a batch of `YieldedOps` to a Python list of actual QOp/MOp objects.
 ///
 /// Uses pre-cached class references for performance.
 fn convert_batch_to_python_cached<'py>(
@@ -724,7 +732,6 @@ fn convert_batch_to_python_cached<'py>(
     qop_cls: &Bound<'py, PyAny>,
     mop_cls: &Bound<'py, PyAny>,
 ) -> PyResult<Py<PyAny>> {
-
     let list = PyList::empty(py);
 
     for op in ops {
@@ -735,10 +742,13 @@ fn convert_batch_to_python_cached<'py>(
                     Some(rets) => {
                         let r = PyList::empty(py);
                         for (name, idx) in rets {
-                            let pair = PyList::new(py, &[
-                                name.into_pyobject(py)?.into_any(),
-                                idx.into_pyobject(py)?.into_any(),
-                            ])?;
+                            let pair = PyList::new(
+                                py,
+                                &[
+                                    name.into_pyobject(py)?.into_any(),
+                                    idx.into_pyobject(py)?.into_any(),
+                                ],
+                            )?;
                             r.append(pair)?;
                         }
                         r.into_any().unbind()
@@ -779,7 +789,7 @@ fn convert_batch_to_python_cached<'py>(
     Ok(list.into_any().unbind())
 }
 
-/// Convert QOpArgs to Python representation.
+/// Convert `QOpArgs` to Python representation.
 fn qop_args_to_python(py: Python<'_>, args: &QOpArgs) -> PyResult<Py<PyAny>> {
     match args {
         QOpArgs::Single(ids) => {
@@ -798,7 +808,7 @@ fn qop_args_to_python(py: Python<'_>, args: &QOpArgs) -> PyResult<Py<PyAny>> {
     }
 }
 
-/// Convert BTreeMap metadata to a Python dict.
+/// Convert `BTreeMap` metadata to a Python dict.
 fn metadata_to_python(
     py: Python<'_>,
     metadata: &BTreeMap<String, serde_json::Value>,
@@ -810,7 +820,7 @@ fn metadata_to_python(
     Ok(dict.into_any().unbind())
 }
 
-/// Convert a serde_json::Value to a Python object.
+/// Convert a `serde_json::Value` to a Python object.
 fn json_value_to_python(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match val {
         serde_json::Value::Null => Ok(py.None()),
@@ -845,7 +855,7 @@ fn json_value_to_python(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<
     }
 }
 
-/// Map a Python dtype string to Rust DataType.
+/// Map a Python dtype string to Rust `DataType`.
 fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
     let clean = dtype_str
         .trim_start_matches("<class '")
@@ -867,19 +877,20 @@ fn map_python_dtype(dtype_str: &str) -> PyResult<DataType> {
         other => other,
     };
 
-    DataType::from_str(mapped)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Unknown dtype '{dtype_str}': {e}")))
+    mapped.parse::<DataType>().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Unknown dtype '{dtype_str}': {e}"))
+    })
 }
 
 /// Build a Rust noise model from a Python object.
 ///
 /// Accepts:
-/// - Rust noise model builders (DepolarizingNoiseModelBuilder, GeneralNoiseModelBuilder, etc.)
-/// - Python GenericErrorModel (mapped to Rust DepolarizingNoiseModel)
-/// - Python NoErrorModel (mapped to PassThroughNoiseModel)
+/// - Rust noise model builders (`DepolarizingNoiseModelBuilder`, `GeneralNoiseModelBuilder`, etc.)
+/// - Python `GenericErrorModel` (mapped to Rust `DepolarizingNoiseModel`)
+/// - Python `NoErrorModel` (mapped to `PassThroughNoiseModel`)
 /// - A float (shorthand for uniform depolarizing probability)
 fn build_noise_model(
-    py: Python<'_>,
+    _py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> PyResult<Box<dyn pecos_engines::noise::NoiseModel>> {
     use crate::engine_builders::{
@@ -952,7 +963,7 @@ pub fn run_phir_sim(
     use pecos_engines::classical::ClassicalEngine;
     use pecos_engines::hybrid::HybridEngineBuilder;
     use pecos_engines::monte_carlo::MonteCarloEngineBuilder;
-    use pecos_engines::noise::{DepolarizingNoiseModel, PassThroughNoiseModel};
+    use pecos_engines::noise::PassThroughNoiseModel;
     use pecos_engines::quantum::SparseStabEngine;
     use pecos_engines::{QuantumSystem, StateVecEngine};
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
@@ -967,7 +978,7 @@ pub fn run_phir_sim(
         #[cfg(feature = "wasm")]
         {
             use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
-            if let Ok(wasm_ref) = fo.downcast::<PyWasmForeignObject>() {
+            if let Ok(wasm_ref) = fo.cast::<PyWasmForeignObject>() {
                 engine.set_foreign_object(wasm_ref.borrow().clone_boxed());
             } else {
                 let py_fo = PyForeignObject {
@@ -1013,8 +1024,7 @@ pub fn run_phir_sim(
         .build();
 
     // Build and run Monte Carlo engine
-    let mut mc_builder = MonteCarloEngineBuilder::new()
-        .with_hybrid_engine(hybrid);
+    let mut mc_builder = MonteCarloEngineBuilder::new().with_hybrid_engine(hybrid);
 
     if let Some(s) = seed {
         mc_builder = mc_builder.with_seed(s);
@@ -1022,9 +1032,9 @@ pub fn run_phir_sim(
 
     let mut mc = mc_builder.build();
 
-    let shot_vec = mc.run(shots).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("Simulation error: {e}"))
-    })?;
+    let shot_vec = mc
+        .run(shots)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Simulation error: {e}")))?;
 
     // Convert ShotVec to Python dict matching HybridEngine.run() format
     // {register_name: [bitstring, bitstring, ...]}

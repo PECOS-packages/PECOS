@@ -24,6 +24,7 @@ use pecos_core::Angle64;
 ///
 /// Takes the gate name and optional angles (in radians) and returns
 /// the name that simulators recognize.
+#[must_use]
 pub fn resolve_sim_name(name: &str, angles: Option<&[f64]>) -> String {
     match name {
         "RZZ" => resolve_rzz(angles),
@@ -34,42 +35,41 @@ pub fn resolve_sim_name(name: &str, angles: Option<&[f64]>) -> String {
 }
 
 fn resolve_rzz(angles: Option<&[f64]>) -> String {
-    if let Some(angs) = angles {
-        if angs.len() == 1 {
-            let a = Angle64::from_radians(angs[0]);
-            if a == Angle64::ZERO {
-                return "I".to_string();
-            }
-            if a == Angle64::QUARTER_TURN {
-                return "SZZ".to_string();
-            }
-            if a == Angle64::THREE_QUARTERS_TURN {
-                return "SZZdg".to_string();
-            }
+    if let Some(angs) = angles
+        && angs.len() == 1
+    {
+        let a = Angle64::from_radians(angs[0]);
+        if a == Angle64::ZERO {
+            return "I".to_string();
+        }
+        if a == Angle64::QUARTER_TURN {
+            return "SZZ".to_string();
+        }
+        if a == Angle64::THREE_QUARTERS_TURN {
+            return "SZZdg".to_string();
         }
     }
     "RZZ".to_string()
 }
 
 fn resolve_rz(angles: Option<&[f64]>) -> String {
-    if let Some(angs) = angles {
-        if angs.len() == 1 {
-            if let Some(name) = rz_angle_to_clifford(Angle64::from_radians(angs[0])) {
-                return name.to_string();
-            }
-        }
+    if let Some(angs) = angles
+        && angs.len() == 1
+        && let Some(name) = rz_angle_to_clifford(Angle64::from_radians(angs[0]))
+    {
+        return name.to_string();
     }
     "RZ".to_string()
 }
 
 fn resolve_r1xy(angles: Option<&[f64]>) -> String {
-    if let Some(angs) = angles {
-        if angs.len() == 2 {
-            let theta = Angle64::from_radians(angs[0]);
-            let phi = Angle64::from_radians(angs[1]);
-            if let Some(name) = r1xy_angles_to_clifford(theta, phi) {
-                return name.to_string();
-            }
+    if let Some(angs) = angles
+        && angs.len() == 2
+    {
+        let theta = Angle64::from_radians(angs[0]);
+        let phi = Angle64::from_radians(angs[1]);
+        if let Some(name) = r1xy_angles_to_clifford(theta, phi) {
+            return name.to_string();
         }
     }
     "R1XY".to_string()
@@ -204,12 +204,18 @@ mod tests {
     #[test]
     fn test_r1xy_3pi2_pi2_is_sydg() {
         // 3pi/2 == -pi/2 mod 2pi
-        assert_eq!(resolve_sim_name("R1XY", Some(&[PI * 1.5, FRAC_PI_2])), "SYdg");
+        assert_eq!(
+            resolve_sim_name("R1XY", Some(&[PI * 1.5, FRAC_PI_2])),
+            "SYdg"
+        );
     }
 
     #[test]
     fn test_r1xy_neg_pi2_pi2_is_sydg() {
-        assert_eq!(resolve_sim_name("R1XY", Some(&[-FRAC_PI_2, FRAC_PI_2])), "SYdg");
+        assert_eq!(
+            resolve_sim_name("R1XY", Some(&[-FRAC_PI_2, FRAC_PI_2])),
+            "SYdg"
+        );
     }
 
     #[test]

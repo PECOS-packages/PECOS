@@ -32,7 +32,7 @@ from pecos.simulators.quantum_simulator import QuantumSimulator
 
 def _make_classical_interpreter(
     spec: str | None,
-) -> "ClassicalInterpreterProtocol":
+) -> ClassicalInterpreterProtocol:
     """Create a classical interpreter from a string specifier.
 
     Args:
@@ -44,11 +44,12 @@ def _make_classical_interpreter(
     if spec == "python":
         return PhirClassicalInterpreter()
     if spec is None or spec == "rust":
-        from pecos_rslib import RustPhirClassicalInterpreter
+        from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
 
         return RustPhirClassicalInterpreter()
     msg = f"Unknown classical interpreter: {spec!r}. Use 'python' or 'rust'."
     raise ValueError(msg)
+
 
 if TYPE_CHECKING:
     from pecos.protocols import (
@@ -231,7 +232,11 @@ class HybridEngine:
         for k, v in shot_results.items():
             self.results.setdefault(k, []).append(v)
 
-    def _can_use_full_rust(self, program: PHIRProgram, foreign_object: Any) -> bool:
+    def _can_use_full_rust(
+        self,
+        _program: PHIRProgram,
+        _foreign_object: ForeignObjectProtocol | None,
+    ) -> bool:
         """Check if we can use the full Rust simulation path.
 
         Currently disabled by default -- the existing PhirJsonEngine has
@@ -244,14 +249,14 @@ class HybridEngine:
     def _run_full_rust(
         self,
         program: PHIRProgram,
-        foreign_object: Any,
+        foreign_object: ForeignObjectProtocol | None,
         shots: int,
         seed: int | None,
     ) -> dict:
         """Run the simulation entirely in Rust (zero per-shot Python overhead)."""
-        import json
+        import json  # noqa: PLC0415
 
-        from pecos_rslib import run_phir_sim
+        from pecos_rslib import run_phir_sim  # noqa: PLC0415
 
         phir_json = program if isinstance(program, str) else json.dumps(program)
 
@@ -303,7 +308,7 @@ class HybridEngine:
         if initialize and not return_int and self._can_use_full_rust(program, foreign_object):
             try:
                 return self._run_full_rust(program, foreign_object, shots, seed)
-            except Exception:
+            except (RuntimeError, ValueError, TypeError):
                 pass  # Fall through to Python loop
 
         measurements = MeasData()

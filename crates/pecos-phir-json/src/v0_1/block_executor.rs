@@ -144,8 +144,12 @@ impl BlockExecutor {
                 size,
             } => {
                 debug!("Processing variable definition: {data_type} {variable}");
-                self.processor
-                    .handle_variable_definition(data, data_type, variable, crate::v0_1::ast::infer_size(data_type, *size))?;
+                self.processor.handle_variable_definition(
+                    data,
+                    data_type,
+                    variable,
+                    crate::v0_1::ast::infer_size(data_type, *size),
+                )?;
             }
             Operation::QuantumOp {
                 qop, angles, args, ..

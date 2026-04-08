@@ -1,4 +1,4 @@
-use crate::v0_1::ast::{infer_size, Operation, PHIRProgram};
+use crate::v0_1::ast::{Operation, PHIRProgram, infer_size};
 use crate::v0_1::environment::DataType;
 use crate::v0_1::foreign_objects::ForeignObject;
 use crate::v0_1::operations::OperationProcessor;
@@ -122,7 +122,12 @@ impl PhirJsonEngine {
                 size,
             } = op
             {
-                let _ = processor.handle_variable_definition(data, data_type, variable, infer_size(data_type, *size));
+                let _ = processor.handle_variable_definition(
+                    data,
+                    data_type,
+                    variable,
+                    infer_size(data_type, *size),
+                );
             }
         }
 
@@ -156,7 +161,12 @@ impl PhirJsonEngine {
                 size,
             } = op
             {
-                processor.handle_variable_definition(data, data_type, variable, infer_size(data_type, *size))?;
+                processor.handle_variable_definition(
+                    data,
+                    data_type,
+                    variable,
+                    infer_size(data_type, *size),
+                )?;
             }
         }
 
@@ -262,9 +272,12 @@ impl PhirJsonEngine {
                     size,
                 } => {
                     debug!("Processing variable definition: {data} {data_type} {variable}");
-                    let _ = self
-                        .processor
-                        .handle_variable_definition(data, data_type, variable, infer_size(data_type, *size));
+                    let _ = self.processor.handle_variable_definition(
+                        data,
+                        data_type,
+                        variable,
+                        infer_size(data_type, *size),
+                    );
                     self.current_op += 1;
                     return self.generate_commands_impl();
                 }
@@ -719,7 +732,13 @@ impl ControlEngine for PhirJsonEngine {
         // For Bell state debugging - check if we have 2 qubits and get result patterns
         if let Some(prog) = &self.program
             && prog.ops.iter().any(|op| {
-                if let Operation::VariableDefinition { variable, size, data_type, .. } = op {
+                if let Operation::VariableDefinition {
+                    variable,
+                    size,
+                    data_type,
+                    ..
+                } = op
+                {
                     variable == "q" && infer_size(data_type, *size) == 2
                 } else {
                     false
@@ -895,8 +914,7 @@ impl ClassicalEngine for PhirJsonEngine {
                 .processor
                 .environment
                 .get_variable_info_opt(key)
-                .map(|info| info.size)
-                .unwrap_or(32);
+                .map_or(32, |info| info.size);
             results.add_register(key, *value, width);
             log::debug!("PHIR: Adding mapped register {key} = {value} (width={width})");
         }
@@ -1067,9 +1085,12 @@ impl Engine for PhirJsonEngine {
                                 log::debug!(
                                     "Processing variable definition: {data_type} {variable}"
                                 );
-                                let _ = self
-                                    .processor
-                                    .handle_variable_definition(data, data_type, variable, infer_size(data_type, *size));
+                                let _ = self.processor.handle_variable_definition(
+                                    data,
+                                    data_type,
+                                    variable,
+                                    infer_size(data_type, *size),
+                                );
                             }
                             Operation::ClassicalOp {
                                 cop,

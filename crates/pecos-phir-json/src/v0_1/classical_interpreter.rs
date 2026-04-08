@@ -17,7 +17,7 @@
 //! classical operations inline, and yields batches of quantum/machine operations
 //! at measurement boundaries.
 
-use crate::v0_1::ast::{infer_size, ArgItem, Expression, Operation, PHIRProgram, QubitArg};
+use crate::v0_1::ast::{ArgItem, Expression, Operation, PHIRProgram, QubitArg, infer_size};
 use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 pub struct YieldedQOp {
     /// Gate name (e.g. "H", "Measure", "RZ")
     pub name: String,
-    /// Simulator-specific name (resolved via name_resolver)
+    /// Simulator-specific name (resolved via `name_resolver`)
     pub sim_name: String,
     /// Qubit IDs -- flat list for single-qubit args, nested for multi-qubit
     pub args: QOpArgs,
@@ -74,8 +74,6 @@ pub enum YieldedOp {
 struct QVarMeta {
     /// Starting global qubit ID for this variable
     start_id: usize,
-    /// Number of qubits
-    size: usize,
 }
 
 /// Classical interpreter for PHIR programs.
@@ -88,11 +86,11 @@ pub struct PhirClassicalInterpreter {
     program: Option<PHIRProgram>,
     /// Classical variable environment
     environment: Environment,
-    /// Quantum variable metadata (name -> QVarMeta)
+    /// Quantum variable metadata (name -> `QVarMeta`)
     qvar_meta: BTreeMap<String, QVarMeta>,
     /// Total number of qubits
     num_qubits: usize,
-    /// Foreign object for FFCalls
+    /// Foreign object for `FFCalls`
     foreign_object: Option<Box<dyn ForeignObject>>,
 }
 
@@ -113,14 +111,18 @@ impl PhirClassicalInterpreter {
     ///
     /// Parses the JSON, extracts variable definitions, initializes the environment.
     /// Returns the number of qubits.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError::Input` if the JSON is invalid, the format/version is
+    /// unsupported, or a variable definition is malformed.
     pub fn init(
         &mut self,
         json: &str,
         foreign_object: Option<Box<dyn ForeignObject>>,
     ) -> Result<usize, PecosError> {
-        let program: PHIRProgram = serde_json::from_str(json).map_err(|e| {
-            PecosError::Input(format!("Failed to parse PHIR JSON: {e}"))
-        })?;
+        let program: PHIRProgram = serde_json::from_str(json)
+            .map_err(|e| PecosError::Input(format!("Failed to parse PHIR JSON: {e}")))?;
 
         // Validate format
         if program.format != "PHIR/JSON" && program.format != "PHIR" {
@@ -161,23 +163,17 @@ impl PhirClassicalInterpreter {
                 match data.as_str() {
                     "qvar_define" if data_type == "qubits" => {
                         let start_id = self.num_qubits;
-                        self.qvar_meta.insert(
-                            variable.clone(),
-                            QVarMeta {
-                                start_id,
-                                size: resolved_size,
-                            },
-                        );
+                        self.qvar_meta
+                            .insert(variable.clone(), QVarMeta { start_id });
                         self.num_qubits += resolved_size;
                         // Don't add quantum vars to the classical environment --
                         // they live in qvar_meta only, matching Python behavior
                         // where qvar_meta and csym2id are separate namespaces.
                     }
                     "cvar_define" => {
-                        let dt = DataType::from_str(data_type)?;
+                        let dt = data_type.parse::<DataType>()?;
                         if !self.environment.has_variable(variable) {
-                            self.environment
-                                .add_variable(variable, dt, resolved_size)?;
+                            self.environment.add_variable(variable, dt, resolved_size)?;
                         }
                     }
                     _ => {}
@@ -194,7 +190,11 @@ impl PhirClassicalInterpreter {
         self.environment.reset_values();
     }
 
-    /// Dynamically add a classical variable (used by HybridEngine for `__q{i}__` vars).
+    /// Dynamically add a classical variable (used by `HybridEngine` for `__q{i}__` vars).
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError::Input` if the variable cannot be added to the environment.
     pub fn add_cvar(
         &mut self,
         name: &str,
@@ -210,10 +210,7 @@ impl PhirClassicalInterpreter {
     /// Get a reference to the program ops.
     #[must_use]
     pub fn program_ops(&self) -> &[Operation] {
-        self.program
-            .as_ref()
-            .map(|p| p.ops.as_slice())
-            .unwrap_or(&[])
+        self.program.as_ref().map_or(&[], |p| p.ops.as_slice())
     }
 
     /// Take the program out temporarily for iteration.
@@ -238,8 +235,12 @@ impl PhirClassicalInterpreter {
     /// Execute the program, collecting all batches.
     ///
     /// This is a convenience method that handles the borrow issue by
-    /// temporarily taking the program out. For the PyO3 layer, a different
+    /// temporarily taking the program out. For the `PyO3` layer, a different
     /// approach is used (the iterator holds state separately).
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if any operation fails during execution.
     pub fn execute_program(&mut self) -> Result<Vec<Vec<YieldedOp>>, PecosError> {
         let program = self.take_program();
         let result = if let Some(ref prog) = program {
@@ -263,6 +264,10 @@ impl PhirClassicalInterpreter {
     /// Each dict entry maps either:
     /// - `(cvar_name, bit_idx)` -> value (bit-level assignment)
     /// - `cvar_name` -> value (whole variable assignment)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if a variable name is unknown or a bit index is out of range.
     pub fn receive_results(
         &mut self,
         results: &[BTreeMap<MeasKey, i64>],
@@ -287,13 +292,14 @@ impl PhirClassicalInterpreter {
     ///
     /// Returns `{(name, bit_idx): bit_value}` for each measurement bit,
     /// excluding variables that start with `__`.
+    #[must_use]
     pub fn result_bits(
         &self,
         measurements: &[BTreeMap<(String, usize), i64>],
     ) -> BTreeMap<(String, usize), i64> {
         let mut result = BTreeMap::new();
         for meas_dict in measurements {
-            for (key, _) in meas_dict {
+            for key in meas_dict.keys() {
                 let (name, idx) = key;
                 // Filter private vars
                 if name.starts_with("__") {
@@ -311,6 +317,7 @@ impl PhirClassicalInterpreter {
     ///
     /// If `return_int` is true, returns integer values.
     /// If false, returns zero-padded binary strings.
+    #[must_use]
     pub fn results(&self, return_int: bool) -> BTreeMap<String, ResultValue> {
         let mut result = BTreeMap::new();
         for info in self.environment.get_all_variables() {
@@ -321,9 +328,15 @@ impl PhirClassicalInterpreter {
                 if return_int {
                     let dtype_name = info.data_type.to_string();
                     if info.data_type.is_signed() {
-                        result.insert(info.name.clone(), ResultValue::Int(val.as_i64(), dtype_name));
+                        result.insert(
+                            info.name.clone(),
+                            ResultValue::Int(val.as_i64(), dtype_name),
+                        );
                     } else {
-                        result.insert(info.name.clone(), ResultValue::UInt(val.as_u64(), dtype_name));
+                        result.insert(
+                            info.name.clone(),
+                            ResultValue::UInt(val.as_u64(), dtype_name),
+                        );
                     }
                 } else {
                     // Match Python: format(cval, '0{size}b')
@@ -336,7 +349,11 @@ impl PhirClassicalInterpreter {
                     // in the full-width dtype.
                     let signed_val = val.as_i64();
                     let bits = if info.data_type.is_signed() && signed_val < 0 {
-                        format!("-{:0>width$b}", signed_val.unsigned_abs(), width = info.size)
+                        format!(
+                            "-{:0>width$b}",
+                            signed_val.unsigned_abs(),
+                            width = info.size
+                        )
                     } else {
                         format!("{:0>width$b}", val.as_u64(), width = info.size)
                     };
@@ -353,13 +370,14 @@ impl PhirClassicalInterpreter {
         self.num_qubits
     }
 
-    /// Resolve a QubitArg to integer qubit IDs.
+    /// Resolve a `QubitArg` to integer qubit IDs.
     fn resolve_qubit_arg(&self, arg: &QubitArg) -> Result<Vec<usize>, PecosError> {
         match arg {
             QubitArg::SingleQubit((var, idx)) => {
-                let meta = self.qvar_meta.get(var).ok_or_else(|| {
-                    PecosError::Input(format!("Unknown quantum variable: {var}"))
-                })?;
+                let meta = self
+                    .qvar_meta
+                    .get(var)
+                    .ok_or_else(|| PecosError::Input(format!("Unknown quantum variable: {var}")))?;
                 Ok(vec![meta.start_id + idx])
             }
             QubitArg::MultipleQubits(qubits) => {
@@ -375,7 +393,11 @@ impl PhirClassicalInterpreter {
         }
     }
 
-    /// Convert a QuantumOp AST node to a YieldedQOp.
+    /// Convert a `QuantumOp` AST node to a `YieldedQOp`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if qubit args reference unknown quantum variables.
     pub fn make_qop(
         &self,
         qop_name: &str,
@@ -425,12 +447,12 @@ impl PhirClassicalInterpreter {
             };
             let mut var_output = serde_json::Map::new();
             for (q, r) in flat_args.iter().zip(returns.iter()) {
-                var_output.insert(
-                    q.to_string(),
-                    serde_json::json!([r.0, r.1]),
-                );
+                var_output.insert(q.to_string(), serde_json::json!([r.0, r.1]));
             }
-            meta.insert("var_output".to_string(), serde_json::Value::Object(var_output));
+            meta.insert(
+                "var_output".to_string(),
+                serde_json::Value::Object(var_output),
+            );
         }
 
         let sim_name = resolve_sim_name(qop_name, angles.as_deref());
@@ -451,12 +473,16 @@ impl PhirClassicalInterpreter {
         })
     }
 
-    /// Convert a MachineOp AST node to a YieldedMOp.
+    /// Convert a `MachineOp` AST node to a `YieldedMOp`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if qubit args reference unknown quantum variables.
     pub fn make_mop(
         &self,
         mop_name: &str,
         args: &Option<Vec<QubitArg>>,
-        _duration: &Option<(f64, String)>,
+        duration: &Option<(f64, String)>,
         metadata: &Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<YieldedMOp, PecosError> {
         let resolved_args = if let Some(qargs) = args {
@@ -486,7 +512,7 @@ impl PhirClassicalInterpreter {
 
         // Include duration in metadata if present
         let mut meta = metadata.clone();
-        if let Some((val, unit)) = _duration {
+        if let Some((val, unit)) = duration {
             let m = meta.get_or_insert_with(BTreeMap::new);
             m.insert("duration".to_string(), serde_json::json!([val, unit]));
         }
@@ -501,7 +527,7 @@ impl PhirClassicalInterpreter {
 
     /// Assign an integer value to a whole classical variable.
     ///
-    /// The Environment's BitValue storage automatically masks to the declared
+    /// The Environment's `BitValue` storage automatically masks to the declared
     /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
         if self.environment.has_variable(name) {
@@ -519,20 +545,30 @@ impl PhirClassicalInterpreter {
     }
 
     /// Evaluate an expression using the current environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if the expression references unknown variables or
+    /// contains unsupported operations.
     pub fn eval_expr(&self, expr: &Expression) -> Result<i64, PecosError> {
         let mut evaluator = ExpressionEvaluator::new(&self.environment);
         let result = evaluator.eval_expr(expr)?;
         Ok(result.as_i64())
     }
 
-    /// Evaluate an ArgItem.
+    /// Evaluate an `ArgItem`.
     fn eval_arg(&self, arg: &ArgItem) -> Result<i64, PecosError> {
         let mut evaluator = ExpressionEvaluator::new(&self.environment);
         let result = evaluator.eval_arg(arg)?;
         Ok(result.as_i64())
     }
 
-    /// Handle a classical operation (assignment, Result, FFCall).
+    /// Handle a classical operation (assignment, Result, `FFCall`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if the operation references unknown variables,
+    /// a foreign function call fails, or the operation is unsupported.
     pub fn handle_cop(
         &mut self,
         cop: &str,
@@ -545,28 +581,25 @@ impl PhirClassicalInterpreter {
                 // Evaluate ALL args first (before any assignment),
                 // then assign to corresponding returns.
                 // This matches Python: args = [eval(a) for a in op.args]
-                let values: Vec<i64> = args
-                    .iter()
-                    .map(|arg| self.eval_arg(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let values: Vec<i64> =
+                    args.iter()
+                        .map(|arg| self.eval_arg(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
 
                 for (val, ret) in values.into_iter().zip(returns.iter()) {
                     match ret {
                         ArgItem::Simple(var) => {
                             if !self.environment.has_variable(var) {
-                                self.environment
-                                    .add_variable(var, DataType::I32, 32)?;
+                                self.environment.add_variable(var, DataType::I32, 32)?;
                             }
                             #[allow(clippy::cast_sign_loss)]
                             self.environment.set_raw(var, val as u64)?;
                         }
                         ArgItem::Indexed((var, idx)) => {
                             if !self.environment.has_variable(var) {
-                                self.environment
-                                    .add_variable(var, DataType::I32, 32)?;
+                                self.environment.add_variable(var, DataType::I32, 32)?;
                             }
-                            self.environment
-                                .set_bit(var, *idx, (val & 1) != 0)?;
+                            self.environment.set_bit(var, *idx, (val & 1) != 0)?;
                         }
                         _ => {
                             return Err(PecosError::Input(
@@ -580,8 +613,7 @@ impl PhirClassicalInterpreter {
                 // Map source register to destination register
                 for (src_arg, dst_arg) in args.iter().zip(returns.iter()) {
                     let src_name = match src_arg {
-                        ArgItem::Simple(name) => name.clone(),
-                        ArgItem::Indexed((name, _)) => name.clone(),
+                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
                         _ => {
                             return Err(PecosError::Input(
                                 "Result source must be a variable".to_string(),
@@ -589,8 +621,7 @@ impl PhirClassicalInterpreter {
                         }
                     };
                     let dst_name = match dst_arg {
-                        ArgItem::Simple(name) => name.clone(),
-                        ArgItem::Indexed((name, _)) => name.clone(),
+                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
                         _ => {
                             return Err(PecosError::Input(
                                 "Result destination must be a variable".to_string(),
@@ -602,9 +633,9 @@ impl PhirClassicalInterpreter {
                 }
             }
             "ffcall" => {
-                let func_name = function.as_ref().ok_or_else(|| {
-                    PecosError::Input("FFCall missing function name".to_string())
-                })?;
+                let func_name = function
+                    .as_ref()
+                    .ok_or_else(|| PecosError::Input("FFCall missing function name".to_string()))?;
 
                 let foreign_obj = self.foreign_object.as_ref().ok_or_else(|| {
                     PecosError::Input(format!(
@@ -628,20 +659,16 @@ impl PhirClassicalInterpreter {
                         match ret {
                             ArgItem::Simple(var) => {
                                 if !self.environment.has_variable(var) {
-                                    self.environment
-                                        .add_variable(var, DataType::I32, 32)?;
+                                    self.environment.add_variable(var, DataType::I32, 32)?;
                                 }
                                 #[allow(clippy::cast_sign_loss)]
-                                self.environment
-                                    .set_raw(var, result[i] as u64)?;
+                                self.environment.set_raw(var, result[i] as u64)?;
                             }
                             ArgItem::Indexed((var, idx)) => {
                                 if !self.environment.has_variable(var) {
-                                    self.environment
-                                        .add_variable(var, DataType::I32, 32)?;
+                                    self.environment.add_variable(var, DataType::I32, 32)?;
                                 }
-                                self.environment
-                                    .set_bit(var, *idx, (result[i] & 1) != 0)?;
+                                self.environment.set_bit(var, *idx, (result[i] & 1) != 0)?;
                             }
                             _ => {
                                 return Err(PecosError::Input(
@@ -718,6 +745,10 @@ impl<'a> ExecuteIter<'a> {
     /// Advance to the next yield point (measurement boundary or end of program).
     ///
     /// Returns `Some(batch)` with the buffered ops, or `None` when done.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError` if any operation fails during execution.
     pub fn next_batch(&mut self) -> Result<Option<Vec<YieldedOp>>, PecosError> {
         if self.done {
             return Ok(None);
@@ -725,16 +756,13 @@ impl<'a> ExecuteIter<'a> {
 
         loop {
             // Pop the top stack frame
-            let frame = match self.stack.last_mut() {
-                Some(f) => f,
-                None => {
-                    // Stack empty -- yield remaining buffer if non-empty
-                    self.done = true;
-                    if self.buffer.is_empty() {
-                        return Ok(None);
-                    }
-                    return Ok(Some(std::mem::take(&mut self.buffer)));
+            let Some(frame) = self.stack.last_mut() else {
+                // Stack empty -- yield remaining buffer if non-empty
+                self.done = true;
+                if self.buffer.is_empty() {
+                    return Ok(None);
                 }
+                return Ok(Some(std::mem::take(&mut self.buffer)));
             };
 
             let (ops, idx) = match frame {
@@ -770,10 +798,7 @@ impl<'a> ExecuteIter<'a> {
                     metadata,
                 } => {
                     let yielded = self.interp.make_qop(qop, angles, args, returns, metadata)?;
-                    let is_measure = matches!(
-                        qop.as_str(),
-                        "measure Z" | "Measure" | "Measure +Z"
-                    );
+                    let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
                     self.buffer.push(YieldedOp::QOp(yielded));
 
                     if is_measure {
@@ -827,9 +852,7 @@ impl<'a> ExecuteIter<'a> {
                         }
                     }
                     other => {
-                        return Err(PecosError::Input(format!(
-                            "Unknown block type: {other}"
-                        )));
+                        return Err(PecosError::Input(format!("Unknown block type: {other}")));
                     }
                 },
             }
@@ -901,9 +924,7 @@ mod tests {
         interp.init(SIMPLE_PROGRAM, None).unwrap();
 
         // Add private var
-        interp
-            .add_cvar("__q0__", DataType::I64, 1)
-            .unwrap();
+        interp.add_cvar("__q0__", DataType::I64, 1).unwrap();
 
         // Set some values
         interp.environment.set_raw("m", 3).unwrap();

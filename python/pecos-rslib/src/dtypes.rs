@@ -301,8 +301,13 @@ impl DType {
                 let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI8::new(int_val))?.into_any())
             }
+            #[allow(clippy::cast_sign_loss)]
             DType::U64 => {
-                let int_val = value.extract::<u64>()?;
+                let int_val = if let Ok(v) = value.extract::<u64>() {
+                    v
+                } else {
+                    value.extract::<i64>()? as u64
+                };
                 Ok(Py::new(py, ScalarU64::new(int_val))?.into_any())
             }
             DType::U32 => {
@@ -1833,6 +1838,13 @@ pub struct ScalarU64 {
     value: u64,
 }
 
+impl ScalarU64 {
+    /// Rust-only constructor (for internal use).
+    pub fn new(value: u64) -> Self {
+        Self { value }
+    }
+}
+
 #[pymethods]
 impl ScalarU64 {
     /// Item size in bytes (class attribute)
@@ -1841,8 +1853,18 @@ impl ScalarU64 {
     const itemsize: usize = 8;
 
     #[new]
-    fn new(value: u64) -> Self {
-        Self { value }
+    #[allow(clippy::cast_sign_loss)]
+    fn py_new(value: &Bound<'_, pyo3::PyAny>) -> PyResult<Self> {
+        // Try u64 first (for values > i64::MAX), then i64 (for negative values that wrap)
+        if let Ok(v) = value.extract::<u64>() {
+            Ok(Self { value: v })
+        } else if let Ok(v) = value.extract::<i64>() {
+            Ok(Self { value: v as u64 })
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                format!("u64() argument must be an integer, not '{}'", value.get_type().name()?),
+            ))
+        }
     }
 
     fn __repr__(&self) -> String {

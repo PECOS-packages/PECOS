@@ -430,7 +430,7 @@ impl OperationProcessor {
         log::debug!("Condition evaluated to: {condition_value}");
 
         // Execute the appropriate branch
-        if condition_value != 0 {
+        if condition_value.as_bool() {
             // Condition is true, return the true branch operations
             log::debug!(
                 "Condition is true, executing true branch with {} operations",

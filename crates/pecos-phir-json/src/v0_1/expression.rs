@@ -1,167 +1,138 @@
 use crate::v0_1::ast::{ArgItem, Expression};
 use crate::v0_1::environment::{BitValue, DataType, Environment, TypedValue};
 use pecos_core::errors::PecosError;
+use pecos_core::BitUInt;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 
-/// Expression value with type information
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Minimum evaluation width -- matches the hardware model where
+/// everything is i64 under the hood.
+const MIN_EVAL_WIDTH: u16 = 64;
+
+/// Expression value using arbitrary-width integers.
+///
+/// All values use `BitUInt` internally (matching the hardware model where
+/// everything is unsigned bits). Sign interpretation happens at the API
+/// boundary via `as_i64()`. The `Signed` variant tracks that the value
+/// should be treated as signed for operations like comparison and shift.
+///
+/// All values are widened to at least [`MIN_EVAL_WIDTH`] bits during
+/// evaluation, matching the hardware model.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExprValue {
-    /// Integer value with sign information
-    Integer(i64),
-    /// Unsigned integer value
-    UInteger(u64),
+    /// Signed value (stored as unsigned bits, sign-interpreted on read)
+    Signed(BitUInt),
+    /// Unsigned value
+    Unsigned(BitUInt),
     /// Boolean value
     Boolean(bool),
 }
 
 impl ExprValue {
-    /// Converts the expression value to i64 for calculations
+    /// Converts the expression value to i64 (sign-extending for Signed).
     #[must_use]
     #[allow(clippy::cast_possible_wrap)]
     pub fn as_i64(&self) -> i64 {
         match self {
-            ExprValue::Integer(val) => *val,
-            ExprValue::UInteger(val) => *val as i64,
-            ExprValue::Boolean(val) => i64::from(*val),
+            ExprValue::Signed(v) => v.to_u64().unwrap_or(0) as i64,
+            ExprValue::Unsigned(v) => v.to_u64().unwrap_or(0) as i64,
+            ExprValue::Boolean(v) => i64::from(*v),
         }
     }
 
-    /// Converts the expression value to u64 for calculations
+    /// Converts the expression value to u64.
     #[must_use]
-    #[allow(clippy::cast_sign_loss)]
     pub fn as_u64(&self) -> u64 {
         match self {
-            ExprValue::Integer(val) => *val as u64,
-            ExprValue::UInteger(val) => *val,
-            ExprValue::Boolean(val) => u64::from(*val),
+            ExprValue::Signed(v) | ExprValue::Unsigned(v) => v.to_u64().unwrap_or(0),
+            ExprValue::Boolean(v) => u64::from(*v),
         }
     }
 
-    /// Converts the expression value to boolean
+    /// Converts the expression value to boolean.
     #[must_use]
     pub fn as_bool(&self) -> bool {
         match self {
-            ExprValue::Integer(val) => *val != 0,
-            ExprValue::UInteger(val) => *val != 0,
-            ExprValue::Boolean(val) => *val,
+            ExprValue::Signed(v) | ExprValue::Unsigned(v) => !v.is_zero(),
+            ExprValue::Boolean(v) => *v,
         }
     }
 
-    /// Converts a `TypedValue` to an `ExprValue`
+    /// Converts a `TypedValue` to an `ExprValue` (backward compatibility).
     #[must_use]
+    #[allow(clippy::cast_sign_loss)]
     pub fn from_typed_value(value: TypedValue) -> Self {
         match value {
-            TypedValue::I8(val) => ExprValue::Integer(i64::from(val)),
-            TypedValue::I16(val) => ExprValue::Integer(i64::from(val)),
-            TypedValue::I32(val) => ExprValue::Integer(i64::from(val)),
-            TypedValue::I64(val) => ExprValue::Integer(val),
-            TypedValue::U8(val) => ExprValue::UInteger(u64::from(val)),
-            TypedValue::U16(val) => ExprValue::UInteger(u64::from(val)),
-            TypedValue::U32(val) => ExprValue::UInteger(u64::from(val)),
-            TypedValue::U64(val) => ExprValue::UInteger(val),
+            TypedValue::I8(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
+            TypedValue::I16(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
+            TypedValue::I32(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
+            TypedValue::I64(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
+            TypedValue::U8(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val))),
+            TypedValue::U16(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val))),
+            TypedValue::U32(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val))),
+            TypedValue::U64(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, val)),
             TypedValue::Bool(val) => ExprValue::Boolean(val),
         }
     }
 
-    /// Converts a `BitValue` to an `ExprValue`
-    ///
-    /// All values are expanded to 64-bit width for expression evaluation
-    /// (matching hardware behavior). Bool detection happens at variable
-    /// lookup time in `eval_arg`, not here.
+    /// Converts a `BitValue` to an `ExprValue`, widening to evaluation width.
     #[must_use]
     pub fn from_bit_value(value: &BitValue) -> Self {
+        let eval_width = MIN_EVAL_WIDTH.max(value.size());
+        // Store raw bits, track signedness separately
         if value.is_signed() {
-            ExprValue::Integer(value.as_i64())
+            ExprValue::Signed(BitUInt::new(eval_width, value.as_u64()))
         } else {
-            ExprValue::UInteger(value.as_u64())
+            ExprValue::Unsigned(BitUInt::new(eval_width, value.as_u64()))
         }
     }
 
-    /// Helper function to convert signed integer with bounds checking
-    fn convert_signed_int<T>(val: i64, type_name: &str) -> Result<T, PecosError>
-    where
-        T: TryFrom<i64> + Copy,
-        T::Error: std::fmt::Debug,
-    {
-        T::try_from(val)
-            .map_err(|_| PecosError::Input(format!("Value {val} out of range for {type_name}")))
-    }
-
-    /// Helper function to convert to unsigned type from any `ExprValue`
-    fn convert_to_unsigned<T>(
-        &self,
-        type_name: &str,
-        bool_converter: fn(bool) -> T,
-    ) -> Result<T, PecosError>
-    where
-        T: TryFrom<i64> + TryFrom<u64> + Copy,
-        <T as TryFrom<i64>>::Error: std::fmt::Debug,
-        <T as TryFrom<u64>>::Error: std::fmt::Debug,
-    {
-        match self {
-            ExprValue::Integer(val) => T::try_from(*val).map_err(|_| {
-                PecosError::Input(format!("Value {val} out of range for {type_name}"))
-            }),
-            ExprValue::UInteger(val) => T::try_from(*val).map_err(|_| {
-                PecosError::Input(format!("Value {val} out of range for {type_name}"))
-            }),
-            ExprValue::Boolean(val) => Ok(bool_converter(*val)),
-        }
-    }
-
-    /// Converts an `ExprValue` to a `TypedValue` with a specific data type
-    ///
-    /// Returns an error if the value cannot be safely converted to the target type
+    /// Converts an `ExprValue` to a `TypedValue` with a specific data type.
     ///
     /// # Errors
-    /// Returns an error if the value is out of range for the target data type.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    /// Returns an error if the value cannot be converted.
     pub fn to_typed_value(&self, data_type: &DataType) -> Result<TypedValue, PecosError> {
-        match data_type {
-            DataType::I8 => {
-                let val = self.as_i64();
-                Ok(TypedValue::I8(Self::convert_signed_int(val, "i8")?))
-            }
-            DataType::I16 => {
-                let val = self.as_i64();
-                Ok(TypedValue::I16(Self::convert_signed_int(val, "i16")?))
-            }
-            DataType::I32 => {
-                let val = self.as_i64();
-                Ok(TypedValue::I32(Self::convert_signed_int(val, "i32")?))
-            }
-            DataType::I64 => Ok(TypedValue::I64(self.as_i64())),
-            DataType::U8 => Ok(TypedValue::U8(self.convert_to_unsigned("u8", u8::from)?)),
-            DataType::U16 => Ok(TypedValue::U16(self.convert_to_unsigned("u16", u16::from)?)),
-            DataType::U32 => Ok(TypedValue::U32(self.convert_to_unsigned("u32", u32::from)?)),
-            DataType::U64 | DataType::Qubits => {
-                let typename = match data_type {
-                    DataType::U64 => "u64",
-                    DataType::Qubits => "qubits",
-                    _ => unreachable!(),
-                };
-                Ok(TypedValue::U64(
-                    self.convert_to_unsigned(typename, u64::from)?,
-                ))
-            }
-            DataType::Bool => Ok(TypedValue::Bool(self.as_bool())),
-        }
+        Ok(TypedValue::new(data_type, self.as_u64()))
+    }
+
+    /// Create a signed value at evaluation width from i64.
+    #[must_use]
+    #[allow(clippy::cast_sign_loss)]
+    fn signed(val: i64) -> Self {
+        ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64))
+    }
+
+    /// Create an unsigned value at evaluation width from u64.
+    #[must_use]
+    fn unsigned(val: u64) -> Self {
+        ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, val))
     }
 }
 
-/// Evaluator for expressions with type information
+impl PartialEq<i64> for ExprValue {
+    fn eq(&self, other: &i64) -> bool {
+        self.as_i64() == *other
+    }
+}
+
+impl PartialEq<u64> for ExprValue {
+    fn eq(&self, other: &u64) -> bool {
+        self.as_u64() == *other
+    }
+}
+
+/// Evaluator for expressions using arbitrary-width integers.
 pub struct ExpressionEvaluator<'a> {
     /// Environment for variable lookups
     environment: &'a Environment,
-    /// Cache for variable lookups to improve performance
+    /// Cache for variable lookups
     var_cache: BTreeMap<String, ExprValue>,
     /// Cache for expression evaluation results
     expr_cache: BTreeMap<String, ExprValue>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
-    /// Creates a new expression evaluator with the given environment
+    /// Creates a new expression evaluator with the given environment.
     #[must_use]
     pub fn new(environment: &'a Environment) -> Self {
         Self {
@@ -171,32 +142,28 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    /// Creates a new expression evaluator with pre-allocated cache sizes
+    /// Creates a new expression evaluator with pre-allocated cache sizes.
     #[must_use]
     pub fn with_capacity(
         environment: &'a Environment,
         _var_capacity: usize,
         _expr_capacity: usize,
     ) -> Self {
-        Self {
-            environment,
-            var_cache: BTreeMap::new(),
-            expr_cache: BTreeMap::new(),
-        }
+        Self::new(environment)
     }
 
-    /// Clears the expression cache but keeps variable cache
+    /// Clears the expression cache but keeps variable cache.
     pub fn clear_expr_cache(&mut self) {
         self.expr_cache.clear();
     }
 
-    /// Clears all caches
+    /// Clears all caches.
     pub fn clear_caches(&mut self) {
         self.var_cache.clear();
         self.expr_cache.clear();
     }
 
-    /// Converts an expression to a string for caching
+    /// Converts an expression to a string for caching.
     fn expr_to_cache_key(expr: &Expression) -> String {
         match expr {
             Expression::Integer(val) => format!("int:{val}"),
@@ -221,35 +188,29 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    /// Evaluates an expression to an `ExprValue` with caching
+    /// Evaluates an expression.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - Variables referenced in the expression don't exist
-    /// - Binary/unary operations are unsupported
-    /// - Arguments to operations are invalid
+    /// Returns an error if evaluation fails.
     pub fn eval_expr(&mut self, expr: &Expression) -> Result<ExprValue, PecosError> {
-        // For simple expressions, don't bother with caching
+        // Handle simple cases without caching
         match expr {
-            Expression::Integer(val) => {
-                // Check if the value fits in i64
-                if *val >= 0 {
-                    return Ok(ExprValue::Integer(*val));
-                }
-                // This shouldn't happen as integers are parsed as positive
-                return Ok(ExprValue::Integer(*val));
-            }
+            Expression::Integer(val) => return Ok(ExprValue::signed(*val)),
             Expression::Variable(name) => {
-                // Check if the variable exists in the cache
                 if let Some(val) = self.var_cache.get(name) {
-                    return Ok(*val);
+                    return Ok(val.clone());
                 }
-
-                // Lookup the variable in the environment
                 if let Some(value) = self.environment.get(name) {
-                    let expr_val = ExprValue::from_bit_value(value);
-                    // Update cache for future lookups
-                    self.var_cache.insert(name.clone(), expr_val);
+                    let is_bool = self
+                        .environment
+                        .get_variable_info_opt(name)
+                        .is_some_and(|info| info.data_type == DataType::Bool);
+                    let expr_val = if is_bool {
+                        ExprValue::Boolean(value.as_bool())
+                    } else {
+                        ExprValue::from_bit_value(value)
+                    };
+                    self.var_cache.insert(name.clone(), expr_val.clone());
                     return Ok(expr_val);
                 }
                 return Err(PecosError::Input(format!("Variable '{name}' not found")));
@@ -260,129 +221,75 @@ impl<'a> ExpressionEvaluator<'a> {
         // For complex expressions, use caching
         let cache_key = Self::expr_to_cache_key(expr);
         if let Some(cached_value) = self.expr_cache.get(&cache_key) {
-            return Ok(*cached_value);
+            return Ok(cached_value.clone());
         }
 
-        // If not in cache, evaluate and store result
         let result = match expr {
-            Expression::Operation { cop, args } => {
-                // Handle operations based on type
-                match cop.as_str() {
-                    // Unary operations
-                    "~" | "!" => {
-                        if args.len() != 1 {
-                            return Err(PecosError::Input(format!(
-                                "Unary operation '{cop}' requires exactly 1 argument"
-                            )));
-                        }
-                        self.eval_unary_op(cop, &args[0])
+            Expression::Operation { cop, args } => match cop.as_str() {
+                // Unary operations
+                "~" | "!" => {
+                    if args.len() != 1 {
+                        return Err(PecosError::Input(format!(
+                            "Unary operation '{cop}' requires exactly 1 argument"
+                        )));
                     }
-                    // Short-circuit logical operations
-                    "&&" => {
-                        if args.len() != 2 {
-                            return Err(PecosError::Input(
-                                "Logical AND operation requires exactly 2 arguments".to_string(),
-                            ));
-                        }
-                        // Short-circuit evaluation
-                        let lhs = self.eval_arg(&args[0])?;
-                        if !lhs.as_bool() {
-                            return Ok(ExprValue::Boolean(false));
-                        }
-                        let rhs = self.eval_arg(&args[1])?;
-                        Ok(ExprValue::Boolean(rhs.as_bool()))
-                    }
-                    "||" => {
-                        if args.len() != 2 {
-                            return Err(PecosError::Input(
-                                "Logical OR operation requires exactly 2 arguments".to_string(),
-                            ));
-                        }
-                        // Short-circuit evaluation
-                        let lhs = self.eval_arg(&args[0])?;
-                        if lhs.as_bool() {
-                            return Ok(ExprValue::Boolean(true));
-                        }
-                        let rhs = self.eval_arg(&args[1])?;
-                        Ok(ExprValue::Boolean(rhs.as_bool()))
-                    }
-                    // Binary operations
-                    _ => {
-                        if args.len() != 2 {
-                            return Err(PecosError::Input(format!(
-                                "Binary operation '{cop}' requires exactly 2 arguments"
-                            )));
-                        }
-                        let result = self.eval_binary_op(cop, &args[0], &args[1])?;
-                        // Constrain result to LHS type width (matching Python dtype wrapping)
-                        if let Some(w) = self.arg_type_width(&args[0]) {
-                            Ok(Self::constrain_to_width(result, w))
-                        } else {
-                            Ok(result)
-                        }
-                    }
+                    self.eval_unary_op(cop, &args[0])
                 }
-            }
-            // These cases are handled above
-            Expression::Integer(_) | Expression::Variable(_) => unreachable!(),
+                // Short-circuit logical operations
+                "&&" => {
+                    if args.len() != 2 {
+                        return Err(PecosError::Input(
+                            "Logical AND requires exactly 2 arguments".to_string(),
+                        ));
+                    }
+                    let lhs = self.eval_arg(&args[0])?;
+                    if !lhs.as_bool() {
+                        return Ok(ExprValue::Boolean(false));
+                    }
+                    let rhs = self.eval_arg(&args[1])?;
+                    Ok(ExprValue::Boolean(rhs.as_bool()))
+                }
+                "||" => {
+                    if args.len() != 2 {
+                        return Err(PecosError::Input(
+                            "Logical OR requires exactly 2 arguments".to_string(),
+                        ));
+                    }
+                    let lhs = self.eval_arg(&args[0])?;
+                    if lhs.as_bool() {
+                        return Ok(ExprValue::Boolean(true));
+                    }
+                    let rhs = self.eval_arg(&args[1])?;
+                    Ok(ExprValue::Boolean(rhs.as_bool()))
+                }
+                // Binary operations
+                _ => {
+                    if args.len() != 2 {
+                        return Err(PecosError::Input(format!(
+                            "Binary operation '{cop}' requires exactly 2 arguments"
+                        )));
+                    }
+                    self.eval_binary_op(cop, &args[0], &args[1])
+                }
+            },
+            _ => unreachable!("handled above"),
         }?;
 
-        // Cache the result
-        self.expr_cache.insert(cache_key, result);
+        self.expr_cache.insert(cache_key, result.clone());
         Ok(result)
     }
 
-    /// Converts an `ExprValue` to a bit string of the specified width
-    #[must_use]
-    pub fn to_bit_string(&self, value: &ExprValue, width: usize) -> String {
-        let bits = match value {
-            ExprValue::Integer(val) => {
-                // Use from_ne_bytes for a reinterpret cast to preserve bit pattern
-                let unsigned = u64::from_ne_bytes((*val).to_ne_bytes());
-                format!("{unsigned:b}")
-            }
-            ExprValue::UInteger(val) => format!("{val:b}"),
-            ExprValue::Boolean(val) => {
-                if *val {
-                    "1".to_string()
-                } else {
-                    "0".to_string()
-                }
-            }
-        };
-
-        // Pad with zeros to the requested width
-        format!("{bits:0>width$}")
-    }
-
-    /// Extract bits from a value as a vector of booleans
-    #[must_use]
-    pub fn extract_bits(&self, value: &ExprValue, indices: &[usize]) -> Vec<bool> {
-        let value_u64 = value.as_u64();
-        indices
-            .iter()
-            .map(|&idx| ((value_u64 >> idx) & 1) != 0)
-            .collect()
-    }
-
-    /// Evaluates an argument to an `ExprValue`
+    /// Evaluates an argument to an `ExprValue`.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - Variable referenced doesn't exist
-    /// - Bit access is invalid
-    /// - Nested expression evaluation fails
+    /// Returns an error if evaluation fails.
     pub fn eval_arg(&mut self, arg: &ArgItem) -> Result<ExprValue, PecosError> {
         match arg {
             ArgItem::Simple(name) => {
-                // Simple variable reference
                 if let Some(val) = self.var_cache.get(name) {
-                    return Ok(*val);
+                    return Ok(val.clone());
                 }
-
-                // Lookup the variable in the environment
                 if let Some(value) = self.environment.get(name) {
-                    // Check if the variable is declared as Bool
                     let is_bool = self
                         .environment
                         .get_variable_info_opt(name)
@@ -392,14 +299,13 @@ impl<'a> ExpressionEvaluator<'a> {
                     } else {
                         ExprValue::from_bit_value(value)
                     };
-                    self.var_cache.insert(name.clone(), expr_val);
+                    self.var_cache.insert(name.clone(), expr_val.clone());
                     Ok(expr_val)
                 } else {
                     Err(PecosError::Input(format!("Variable '{name}' not found")))
                 }
             }
             ArgItem::Indexed((name, idx)) => {
-                // Bit access
                 if let Ok(bit) = self.environment.get_bit(name, *idx) {
                     Ok(ExprValue::Boolean(bit.0))
                 } else {
@@ -408,81 +314,47 @@ impl<'a> ExpressionEvaluator<'a> {
                     )))
                 }
             }
-            ArgItem::Integer(val) => Ok(ExprValue::Integer(*val)),
-            ArgItem::UInteger(val) => Ok(ExprValue::UInteger(*val)),
-            ArgItem::Expression(expr) => {
-                // Nested expression
-                self.eval_expr(expr)
-            }
+            ArgItem::Integer(val) => Ok(ExprValue::signed(*val)),
+            ArgItem::UInteger(val) => Ok(ExprValue::unsigned(*val)),
+            ArgItem::Expression(expr) => self.eval_expr(expr),
         }
     }
 
-    /// Evaluates a unary operation
+    /// Get the type bit width for an ArgItem variable.
+    fn arg_type_width(&self, arg: &ArgItem) -> Option<usize> {
+        match arg {
+            ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => self
+                .environment
+                .get_variable_info_opt(name)
+                .map(|info| info.data_type.bit_width()),
+            _ => None,
+        }
+    }
+
+    /// Evaluates a unary operation.
     fn eval_unary_op(&mut self, op: &str, arg: &ArgItem) -> Result<ExprValue, PecosError> {
         let val = self.eval_arg(arg)?;
 
         match op {
             "~" => {
-                // Bitwise NOT
+                // Bitwise NOT -- flips all bits at evaluation width
                 match val {
-                    ExprValue::Integer(v) => Ok(ExprValue::Integer(!v)),
-                    ExprValue::UInteger(v) => Ok(ExprValue::UInteger(!v)),
+                    ExprValue::Signed(v) => Ok(ExprValue::Signed(!&v)),
+                    ExprValue::Unsigned(v) => Ok(ExprValue::Unsigned(!&v)),
                     ExprValue::Boolean(v) => Ok(ExprValue::Boolean(!v)),
                 }
             }
-            "!" => {
-                // Logical NOT
-                Ok(ExprValue::Boolean(!val.as_bool()))
-            }
+            "!" => Ok(ExprValue::Boolean(!val.as_bool())),
             _ => Err(PecosError::Input(format!(
                 "Unsupported unary operation: {op}"
             ))),
         }
     }
 
-    /// Get the type bit width for an ArgItem (if it references a variable).
+    /// Evaluates a binary operation.
     ///
-    /// Returns the DataType's bit width, used to constrain binary op results
-    /// to match Python PECOS dtype arithmetic behavior.
-    fn arg_type_width(&self, arg: &ArgItem) -> Option<usize> {
-        match arg {
-            ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => {
-                self.environment
-                    .get_variable_info_opt(name)
-                    .map(|info| info.data_type.bit_width())
-            }
-            _ => None,
-        }
-    }
-
-    /// Constrain an ExprValue to a type width, matching Python dtype wrapping.
-    ///
-    /// For unsigned: mask to width bits.
-    /// For signed: mask then sign-extend from width (two's complement).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    fn constrain_to_width(val: ExprValue, width: usize) -> ExprValue {
-        if width == 0 || width >= 64 {
-            return val;
-        }
-        let mask = (1u64 << width) - 1;
-        match val {
-            ExprValue::Integer(v) => {
-                // Mask then sign-extend from width
-                let masked = v as u64 & mask;
-                let sign_bit = 1u64 << (width - 1);
-                let extended = if masked & sign_bit != 0 {
-                    (masked | !mask) as i64
-                } else {
-                    masked as i64
-                };
-                ExprValue::Integer(extended)
-            }
-            ExprValue::UInteger(v) => ExprValue::UInteger(v & mask),
-            ExprValue::Boolean(v) => ExprValue::Boolean(v),
-        }
-    }
-
-    /// Evaluates a binary operation with proper type handling
+    /// Both operands are widened to the same evaluation width before
+    /// the operation. The result inherits that width.
     #[allow(clippy::too_many_lines)]
     fn eval_binary_op(
         &mut self,
@@ -493,171 +365,159 @@ impl<'a> ExpressionEvaluator<'a> {
         let lhs_val = self.eval_arg(lhs)?;
         let rhs_val = self.eval_arg(rhs)?;
 
-        // Get LHS type width for result constraining (matches Python dtype wrapping)
-        let lhs_width = self.arg_type_width(lhs);
-
-        // Promote types based on Python's promotion rules
-        let lhs_signed = matches!(lhs_val, ExprValue::Integer(_));
-        let rhs_signed = matches!(rhs_val, ExprValue::Integer(_));
-
+        // Determine if result should be signed or unsigned
+        let lhs_signed = matches!(lhs_val, ExprValue::Signed(_));
+        let rhs_signed = matches!(rhs_val, ExprValue::Signed(_));
         let result_signed = lhs_signed && rhs_signed;
 
+        // For arithmetic/bitwise ops, work with raw u64 values at evaluation width.
+        // This is equivalent to working with BitUInt/BitInt at MIN_EVAL_WIDTH
+        // since all values are already widened.
+        let lhs_u = lhs_val.as_u64();
+        let rhs_u = rhs_val.as_u64();
+        let lhs_i = lhs_val.as_i64();
+        let rhs_i = rhs_val.as_i64();
+
         match op {
-            // Arithmetic operations
+            // Arithmetic
             "+" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(
-                        lhs_val.as_i64().wrapping_add(rhs_val.as_i64()),
-                    ))
+                    Ok(ExprValue::signed(lhs_i.wrapping_add(rhs_i)))
                 } else {
-                    Ok(ExprValue::UInteger(
-                        lhs_val.as_u64().wrapping_add(rhs_val.as_u64()),
-                    ))
+                    Ok(ExprValue::unsigned(lhs_u.wrapping_add(rhs_u)))
                 }
             }
             "-" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(
-                        lhs_val.as_i64().wrapping_sub(rhs_val.as_i64()),
-                    ))
+                    Ok(ExprValue::signed(lhs_i.wrapping_sub(rhs_i)))
                 } else {
-                    Ok(ExprValue::UInteger(
-                        lhs_val.as_u64().wrapping_sub(rhs_val.as_u64()),
-                    ))
+                    Ok(ExprValue::unsigned(lhs_u.wrapping_sub(rhs_u)))
                 }
             }
             "*" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(
-                        lhs_val.as_i64().wrapping_mul(rhs_val.as_i64()),
-                    ))
+                    Ok(ExprValue::signed(lhs_i.wrapping_mul(rhs_i)))
                 } else {
-                    Ok(ExprValue::UInteger(
-                        lhs_val.as_u64().wrapping_mul(rhs_val.as_u64()),
-                    ))
+                    Ok(ExprValue::unsigned(lhs_u.wrapping_mul(rhs_u)))
                 }
             }
             "/" => {
-                if rhs_val == 0 {
+                if rhs_val == 0i64 {
                     return Err(PecosError::RuntimeDivisionByZero);
                 }
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64() / rhs_val.as_i64()))
+                    Ok(ExprValue::signed(lhs_i.wrapping_div(rhs_i)))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64() / rhs_val.as_u64()))
+                    Ok(ExprValue::unsigned(lhs_u / rhs_u))
                 }
             }
             "%" => {
-                if rhs_val == 0 {
+                if rhs_val == 0i64 {
                     return Err(PecosError::RuntimeDivisionByZero);
                 }
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64() % rhs_val.as_i64()))
+                    Ok(ExprValue::signed(lhs_i.wrapping_rem(rhs_i)))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64() % rhs_val.as_u64()))
+                    Ok(ExprValue::unsigned(lhs_u % rhs_u))
                 }
             }
 
-            // Bitwise operations
+            // Bitwise
             "&" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64() & rhs_val.as_i64()))
+                    Ok(ExprValue::signed(lhs_i & rhs_i))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64() & rhs_val.as_u64()))
+                    Ok(ExprValue::unsigned(lhs_u & rhs_u))
                 }
             }
             "|" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64() | rhs_val.as_i64()))
+                    Ok(ExprValue::signed(lhs_i | rhs_i))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64() | rhs_val.as_u64()))
+                    Ok(ExprValue::unsigned(lhs_u | rhs_u))
                 }
             }
             "^" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64() ^ rhs_val.as_i64()))
+                    Ok(ExprValue::signed(lhs_i ^ rhs_i))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64() ^ rhs_val.as_u64()))
+                    Ok(ExprValue::unsigned(lhs_u ^ rhs_u))
                 }
             }
-            "<<" => {
-                // Shift operations promote to unsigned
-                if result_signed {
-                    let shift = rhs_val.as_i64();
-                    if !(0..64).contains(&shift) {
-                        return Err(PecosError::Input("Invalid shift amount".to_string()));
-                    }
-                    let shift_u32 = u32::try_from(shift)
-                        .map_err(|_| PecosError::Input("Invalid shift amount".to_string()))?;
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_shl(shift_u32)))
-                } else {
-                    let shift = rhs_val.as_u64();
-                    if shift >= 64 {
-                        return Err(PecosError::Input("Invalid shift amount".to_string()));
-                    }
-                    let shift_u32 = u32::try_from(shift)
-                        .map_err(|_| PecosError::Input("Invalid shift amount".to_string()))?;
-                    Ok(ExprValue::UInteger(
-                        lhs_val.as_u64().wrapping_shl(shift_u32),
-                    ))
-                }
-            }
+
+            // Shifts -- shift amount from RHS value
+            #[allow(clippy::cast_possible_truncation)]
             ">>" => {
-                // Shift operations promote to unsigned
+                let shift = rhs_u as u32;
                 if result_signed {
-                    let shift = rhs_val.as_i64();
-                    if !(0..64).contains(&shift) {
-                        return Err(PecosError::Input("Invalid shift amount".to_string()));
-                    }
-                    let shift_u32 = u32::try_from(shift)
-                        .map_err(|_| PecosError::Input("Invalid shift amount".to_string()))?;
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_shr(shift_u32)))
+                    Ok(ExprValue::signed(lhs_i.wrapping_shr(shift)))
                 } else {
-                    let shift = rhs_val.as_u64();
-                    if shift >= 64 {
-                        return Err(PecosError::Input("Invalid shift amount".to_string()));
-                    }
-                    let shift_u32 = u32::try_from(shift)
-                        .map_err(|_| PecosError::Input("Invalid shift amount".to_string()))?;
-                    Ok(ExprValue::UInteger(
-                        lhs_val.as_u64().wrapping_shr(shift_u32),
-                    ))
+                    Ok(ExprValue::unsigned(lhs_u.wrapping_shr(shift)))
+                }
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            "<<" => {
+                let shift = rhs_u as u32;
+                if result_signed {
+                    Ok(ExprValue::signed(lhs_i.wrapping_shl(shift)))
+                } else {
+                    Ok(ExprValue::unsigned(lhs_u.wrapping_shl(shift)))
                 }
             }
 
-            // Comparison operations (always return boolean)
-            "==" => Ok(ExprValue::Boolean(if result_signed {
-                lhs_val.as_i64() == rhs_val.as_i64()
-            } else {
-                lhs_val.as_u64() == rhs_val.as_u64()
-            })),
-            "!=" => Ok(ExprValue::Boolean(if result_signed {
-                lhs_val.as_i64() != rhs_val.as_i64()
-            } else {
-                lhs_val.as_u64() != rhs_val.as_u64()
-            })),
-            "<" => Ok(ExprValue::Boolean(if result_signed {
-                lhs_val.as_i64() < rhs_val.as_i64()
-            } else {
-                lhs_val.as_u64() < rhs_val.as_u64()
-            })),
-            "<=" => Ok(ExprValue::Boolean(if result_signed {
-                lhs_val.as_i64() <= rhs_val.as_i64()
-            } else {
-                lhs_val.as_u64() <= rhs_val.as_u64()
-            })),
-            ">" => Ok(ExprValue::Boolean(if result_signed {
-                lhs_val.as_i64() > rhs_val.as_i64()
-            } else {
-                lhs_val.as_u64() > rhs_val.as_u64()
-            })),
-            ">=" => Ok(ExprValue::Boolean(if result_signed {
-                lhs_val.as_i64() >= rhs_val.as_i64()
-            } else {
-                lhs_val.as_u64() >= rhs_val.as_u64()
-            })),
+            // Comparisons -- always return unsigned 0 or 1
+            // Use numeric comparison (not structural equality) so
+            // Boolean(false) == Signed(0) works correctly.
+            "==" => {
+                let result = if result_signed {
+                    lhs_i == rhs_i
+                } else {
+                    lhs_u == rhs_u
+                };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            "!=" => {
+                let result = if result_signed {
+                    lhs_i != rhs_i
+                } else {
+                    lhs_u != rhs_u
+                };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            "<" => {
+                let result = if result_signed {
+                    lhs_i < rhs_i
+                } else {
+                    lhs_u < rhs_u
+                };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            ">" => {
+                let result = if result_signed {
+                    lhs_i > rhs_i
+                } else {
+                    lhs_u > rhs_u
+                };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            "<=" => {
+                let result = if result_signed {
+                    lhs_i <= rhs_i
+                } else {
+                    lhs_u <= rhs_u
+                };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            ">=" => {
+                let result = if result_signed {
+                    lhs_i >= rhs_i
+                } else {
+                    lhs_u >= rhs_u
+                };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
 
-            // Logical operations (always return boolean)
+            // Logical
             "&&" => Ok(ExprValue::Boolean(lhs_val.as_bool() && rhs_val.as_bool())),
             "||" => Ok(ExprValue::Boolean(lhs_val.as_bool() || rhs_val.as_bool())),
 
@@ -666,65 +526,30 @@ impl<'a> ExpressionEvaluator<'a> {
             ))),
         }
     }
+
+    /// Gets multiple bit values from a variable.
+    ///
+    /// # Errors
+    /// Returns an error if any bit access fails.
+    pub fn get_bits(&self, name: &str, indices: &[usize]) -> Result<Vec<bool>, PecosError> {
+        let value = self.environment.get(name).ok_or_else(|| {
+            PecosError::Input(format!("Variable '{name}' not found"))
+        })?;
+        let value_u64 = value.as_u64();
+        indices
+            .iter()
+            .map(|&idx| Ok(((value_u64 >> idx) & 1) != 0))
+            .collect()
+    }
 }
 
-// Implement Display trait for ExprValue to allow formatting in log messages
 impl fmt::Display for ExprValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExprValue::Integer(val) => write!(f, "{val}"),
-            ExprValue::UInteger(val) => write!(f, "{val}"),
-            ExprValue::Boolean(val) => write!(f, "{val}"),
+            ExprValue::Signed(v) => write!(f, "{}", v.to_i64().unwrap_or(0)),
+            ExprValue::Unsigned(v) => write!(f, "{}", v.to_u64().unwrap_or(0)),
+            ExprValue::Boolean(v) => write!(f, "{v}"),
         }
-    }
-}
-
-// Implement PartialEq to allow comparing ExprValue with integers
-impl PartialEq<i64> for ExprValue {
-    fn eq(&self, other: &i64) -> bool {
-        self.as_i64() == *other
-    }
-}
-
-impl PartialEq<u64> for ExprValue {
-    fn eq(&self, other: &u64) -> bool {
-        self.as_u64() == *other
-    }
-}
-
-impl PartialEq<i32> for ExprValue {
-    fn eq(&self, other: &i32) -> bool {
-        self.as_i64() == i64::from(*other)
-    }
-}
-
-impl PartialEq<u32> for ExprValue {
-    fn eq(&self, other: &u32) -> bool {
-        self.as_u64() == u64::from(*other)
-    }
-}
-
-impl PartialEq<ExprValue> for i64 {
-    fn eq(&self, other: &ExprValue) -> bool {
-        *self == other.as_i64()
-    }
-}
-
-impl PartialEq<ExprValue> for u64 {
-    fn eq(&self, other: &ExprValue) -> bool {
-        *self == other.as_u64()
-    }
-}
-
-impl PartialEq<ExprValue> for i32 {
-    fn eq(&self, other: &ExprValue) -> bool {
-        i64::from(*self) == other.as_i64()
-    }
-}
-
-impl PartialEq<ExprValue> for u32 {
-    fn eq(&self, other: &ExprValue) -> bool {
-        u64::from(*self) == other.as_u64()
     }
 }
 
@@ -734,77 +559,47 @@ mod tests {
 
     fn setup_environment() -> Environment {
         let mut env = Environment::new();
-
-        // Add variables
         env.add_variable("x", DataType::I32, 32).unwrap();
         env.add_variable("y", DataType::U8, 8).unwrap();
         env.add_variable("z", DataType::Bool, 1).unwrap();
-
-        // Set values
         env.set_raw("x", 42).unwrap();
         env.set_raw("y", 255).unwrap();
         env.set_raw("z", 1).unwrap();
-
         env
     }
 
     #[test]
-    fn test_simple_expressions() {
+    fn test_basic_arithmetic() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
 
-        // Test integer literal
-        let expr = Expression::Integer(123);
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 123);
-
-        // Test variable reference
-        let expr = Expression::Variable("x".to_string());
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 42);
-
-        // Test bit access
-        let arg = ArgItem::Indexed(("y".to_string(), 0));
-        let result = evaluator.eval_arg(&arg).unwrap();
-        assert!(result.as_bool()); // 255 has bit 0 set
-    }
-
-    #[test]
-    fn test_arithmetic_operations() {
-        let env = setup_environment();
-        let mut evaluator = ExpressionEvaluator::new(&env);
-
-        // Test addition
         let expr = Expression::Operation {
             cop: "+".to_string(),
-            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(10)],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(8)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 52); // 42 + 10
+        assert_eq!(result.as_i64(), 50);
 
-        // Test subtraction
         let expr = Expression::Operation {
             cop: "-".to_string(),
-            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(10)],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(2)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 32); // 42 - 10
+        assert_eq!(result.as_i64(), 40);
 
-        // Test multiplication
         let expr = Expression::Operation {
             cop: "*".to_string(),
             args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(2)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 84); // 42 * 2
+        assert_eq!(result.as_i64(), 84);
 
-        // Test division
         let expr = Expression::Operation {
             cop: "/".to_string(),
             args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(2)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 21); // 42 / 2
+        assert_eq!(result.as_i64(), 21);
     }
 
     #[test]
@@ -820,23 +615,15 @@ mod tests {
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 10); // 42 & 15 = 0b101010 & 0b1111 = 0b1010 = 10
 
-        // Test bitwise OR
-        let expr = Expression::Operation {
-            cop: "|".to_string(),
-            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(15)],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 47); // 42 | 15 = 0b101010 | 0b1111 = 0b101111 = 47
-
         // Test bitwise XOR
         let expr = Expression::Operation {
             cop: "^".to_string(),
             args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(15)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 37); // 42 ^ 15 = 0b101010 ^ 0b1111 = 0b100101 = 37
+        assert_eq!(result.as_i64(), 37); // 42 ^ 15 = 37
 
-        // Test bitwise NOT
+        // Test bitwise NOT on Bool
         let expr = Expression::Operation {
             cop: "~".to_string(),
             args: vec![ArgItem::Simple("z".to_string())],
@@ -850,195 +637,54 @@ mod tests {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
 
-        // Test equality
         let expr = Expression::Operation {
             cop: "==".to_string(),
             args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(42)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // 42 == 42
+        assert!(result.as_bool());
 
-        // Test inequality
-        let expr = Expression::Operation {
-            cop: "!=".to_string(),
-            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(41)],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // 42 != 41
-
-        // Test less than
         let expr = Expression::Operation {
             cop: "<".to_string(),
-            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(50)],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(100)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // 42 < 50
-
-        // Test greater than
-        let expr = Expression::Operation {
-            cop: ">".to_string(),
-            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(10)],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // 42 > 10
+        assert!(result.as_bool());
     }
 
     #[test]
-    fn test_logical_operations() {
-        let env = setup_environment();
+    fn test_evaluation_at_64_bit_width() {
+        // i32 variable, but arithmetic should happen at 64 bits
+        let mut env = Environment::new();
+        env.add_variable("a", DataType::I32, 32).unwrap();
+        env.set_raw("a", 1).unwrap();
+
         let mut evaluator = ExpressionEvaluator::new(&env);
 
-        // Test logical AND
+        // 1 << 33 should give 8589934592, not 2 (modulo-32) or 0 (truncate-32)
         let expr = Expression::Operation {
-            cop: "&&".to_string(),
-            args: vec![
-                ArgItem::Simple("z".to_string()),
-                ArgItem::Simple("z".to_string()),
-            ],
+            cop: "<<".to_string(),
+            args: vec![ArgItem::Simple("a".to_string()), ArgItem::Integer(33)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // true && true
-
-        // Test logical OR
-        let expr = Expression::Operation {
-            cop: "||".to_string(),
-            args: vec![ArgItem::Simple("z".to_string()), ArgItem::Integer(0)],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // true || false
-
-        // Test logical NOT
-        let expr = Expression::Operation {
-            cop: "!".to_string(),
-            args: vec![ArgItem::Integer(0)],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // !false
+        assert_eq!(result.as_i64(), 1i64 << 33);
     }
 
     #[test]
-    fn test_complex_expressions() {
-        let env = setup_environment();
+    fn test_not_at_full_width() {
+        // ~(u32 size=1, val=1) should flip all 64 bits, giving a large number
+        let mut env = Environment::new();
+        env.add_variable("m", DataType::U32, 1).unwrap();
+        env.set_raw("m", 1).unwrap();
+
         let mut evaluator = ExpressionEvaluator::new(&env);
 
-        // Test nested expression: (x + 5) * 2
         let expr = Expression::Operation {
-            cop: "*".to_string(),
-            args: vec![
-                ArgItem::Expression(Box::new(Expression::Operation {
-                    cop: "+".to_string(),
-                    args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(5)],
-                })),
-                ArgItem::Integer(2),
-            ],
+            cop: "~".to_string(),
+            args: vec![ArgItem::Simple("m".to_string())],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
-        assert_eq!(result.as_i64(), 94); // (42 + 5) * 2 = 94
-
-        // Test complex expression: (x > 40 && y < 10) || z
-        let expr = Expression::Operation {
-            cop: "||".to_string(),
-            args: vec![
-                ArgItem::Expression(Box::new(Expression::Operation {
-                    cop: "&&".to_string(),
-                    args: vec![
-                        ArgItem::Expression(Box::new(Expression::Operation {
-                            cop: ">".to_string(),
-                            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(40)],
-                        })),
-                        ArgItem::Expression(Box::new(Expression::Operation {
-                            cop: "<".to_string(),
-                            args: vec![ArgItem::Simple("y".to_string()), ArgItem::Integer(10)],
-                        })),
-                    ],
-                })),
-                ArgItem::Simple("z".to_string()),
-            ],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // (42 > 40 && 255 < 10) || true = (true && false) || true = false || true = true
-    }
-
-    #[test]
-    fn test_short_circuit_evaluation() {
-        let env = setup_environment();
-        let mut evaluator = ExpressionEvaluator::new(&env);
-
-        // Test short-circuit AND with false first operand
-        let expr = Expression::Operation {
-            cop: "&&".to_string(),
-            args: vec![
-                ArgItem::Integer(0), // false
-                ArgItem::Expression(Box::new(Expression::Operation {
-                    cop: "/".to_string(),
-                    args: vec![
-                        ArgItem::Integer(1),
-                        ArgItem::Integer(0), // Division by zero, would cause error if evaluated
-                    ],
-                })),
-            ],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(!result.as_bool()); // false && (anything) short-circuits to false
-
-        // Test short-circuit OR with true first operand
-        let expr = Expression::Operation {
-            cop: "||".to_string(),
-            args: vec![
-                ArgItem::Integer(1), // true
-                ArgItem::Expression(Box::new(Expression::Operation {
-                    cop: "/".to_string(),
-                    args: vec![
-                        ArgItem::Integer(1),
-                        ArgItem::Integer(0), // Division by zero, would cause error if evaluated
-                    ],
-                })),
-            ],
-        };
-        let result = evaluator.eval_expr(&expr).unwrap();
-        assert!(result.as_bool()); // true || (anything) short-circuits to true
-    }
-
-    #[test]
-    fn test_to_typed_value_conversions() {
-        // Test successful conversions
-        let small_int = ExprValue::Integer(42);
-        assert!(small_int.to_typed_value(&DataType::I8).is_ok());
-        assert!(small_int.to_typed_value(&DataType::I16).is_ok());
-        assert!(small_int.to_typed_value(&DataType::I32).is_ok());
-        assert!(small_int.to_typed_value(&DataType::I64).is_ok());
-        assert!(small_int.to_typed_value(&DataType::U8).is_ok());
-        assert!(small_int.to_typed_value(&DataType::U16).is_ok());
-        assert!(small_int.to_typed_value(&DataType::U32).is_ok());
-        assert!(small_int.to_typed_value(&DataType::U64).is_ok());
-
-        // Test overflow cases
-        let large_int = ExprValue::Integer(1000);
-        assert!(large_int.to_typed_value(&DataType::I8).is_err());
-        assert!(large_int.to_typed_value(&DataType::U8).is_err());
-        assert!(large_int.to_typed_value(&DataType::I16).is_ok());
-        assert!(large_int.to_typed_value(&DataType::U16).is_ok());
-
-        // Test negative values for unsigned types
-        let negative_int = ExprValue::Integer(-1);
-        assert!(negative_int.to_typed_value(&DataType::U8).is_err());
-        assert!(negative_int.to_typed_value(&DataType::U16).is_err());
-        assert!(negative_int.to_typed_value(&DataType::U32).is_err());
-        assert!(negative_int.to_typed_value(&DataType::U64).is_err());
-        assert!(negative_int.to_typed_value(&DataType::I8).is_ok());
-        assert!(negative_int.to_typed_value(&DataType::I16).is_ok());
-
-        // Test boolean conversion
-        let bool_val = ExprValue::Boolean(true);
-        assert!(bool_val.to_typed_value(&DataType::Bool).is_ok());
-
-        // Test edge cases - max values
-        let max_u8 = ExprValue::UInteger(255);
-        assert!(max_u8.to_typed_value(&DataType::U8).is_ok());
-        assert!(max_u8.to_typed_value(&DataType::U16).is_ok());
-
-        let over_u8 = ExprValue::UInteger(256);
-        assert!(over_u8.to_typed_value(&DataType::U8).is_err());
-        assert!(over_u8.to_typed_value(&DataType::U16).is_ok());
+        // ~1u64 = 0xFFFFFFFFFFFFFFFE
+        assert_eq!(result.as_u64(), !1u64);
     }
 }

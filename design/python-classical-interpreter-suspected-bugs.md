@@ -2,50 +2,10 @@
 
 Found during the Rust reimplementation and fuzz testing.
 
-## 1. Signed types not masked to register size
+## 1. Overflow rejected for values that fit the register but not the dtype
 
+**Confidence:** High
 **File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`
-**Line:** 345-349
-
-**Description:** `assign_int()` only masks unsigned types to the register's declared `size`. Signed types are stored at the full dtype width, ignoring `size`.
-
-```python
-if type(cval) not in signed_data_types.values():
-    # mask off bits given the size of the register
-    # (only valid for unsigned data types)
-    size = self.cvar_meta[cid].size
-    cval &= (1 << size) - 1
-```
-
-**PHIR spec says:** "assigning 5 to a 2-bit variable stores only the lower 2 bits" -- no unsigned-only qualifier.
-
-**Example:** An `i64` register with `size: 14` can store value 712872 (which needs 20 bits). The register should only hold the lower 14 bits (712872 & 0x3FFF = 8360).
-
-**Impact:** Signed registers with `size` < type width hold more information than declared. Classical expressions operating on these may produce unexpected results.
-
----
-
-## 2. Expression evaluation respects operand dtype width but not register size
-
-**File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`
-**Line:** 265-317 (`eval_expr`)
-
-**Description:** Expression evaluation operates through PECOS dtype arithmetic. Intermediate results wrap at the dtype's width (32 bits for u32, 64 bits for i64), but do NOT consider the register's declared `size`.
-
-**Example:**
-```
-v: u32 size=3, value=7 (all bits set in 3-bit register)
-result = v + 1
-```
-Python evaluates as `u32(7) + 1 = u32(8)`. The value 8 doesn't fit in 3 bits, but the addition happens at u32 width (32 bits). The masking to 3 bits only happens later in `assign_int`.
-
-This means intermediate expression values can exceed the register's `size`. Whether this is a bug depends on spec interpretation -- the spec defines register size for storage, not necessarily for arithmetic.
-
----
-
-## 3. Overflow rejected for values that fit the register but not the dtype
-
-**File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`  
 **Line:** 336 (`val = dtype(val)`)
 
 **Description:** `assign_int` converts the value through the PECOS dtype constructor (`dtype(val)`) before masking to register size. If the value exceeds the dtype's range but would fit in the register's `size`, Python throws `OverflowError`.
@@ -63,9 +23,21 @@ The PHIR spec says this should work: the value should be masked to `size=31` bit
 
 ---
 
-## 4. `PhirModel.model_validate` rejects valid PHIR programs with `Result` cop
+## 2. Bitwise NOT overflows when assigning cross-type
 
-**File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`  
+**Confidence:** High
+**Found via:** Edge case testing related to issue #213
+
+**Description:** `~m` where `m` is `u32 size=1` (measurement register) produces `u32(4294967295)`. Assigning to an `i32` variable does `i32(4294967295)` which throws `OverflowError` because 4294967295 > `i32::MAX`. The masking to register size happens AFTER the dtype conversion, so it never gets a chance to mask.
+
+**Rust behavior:** Evaluates `~0 = 0xFFFFFFFFFFFFFFFF`, constrains to i32 width (`-1`), stores fine.
+
+---
+
+## 3. `PhirModel.model_validate` rejects valid PHIR programs with `Result` cop
+
+**Confidence:** High (but in the `phir` pydantic model, not the interpreter itself)
+**File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`
 **Line:** 101-102
 
 **Description:** When `phir_validate=True` (default), the interpreter validates programs through `PhirModel.model_validate()` from the `phir` pydantic package. This validator rejects the `Result` classical operation, which is a valid PECOS-specific extension used in many test programs.
@@ -76,31 +48,17 @@ The PHIR spec says this should work: the value should be masked to `size=31` bit
 
 ---
 
-## 5. `_internal_cinterp` hardcoded to Python
+## Design questions (not clear-cut bugs)
 
-**File:** `python/quantum-pecos/src/pecos/engines/hybrid_engine.py`  
-**Line:** 94 (before our changes)
+### Signed types not masked to register size
 
-**Description:** (Now fixed in our branch.) `HybridEngine.__init__` previously hardcoded `_internal_cinterp = PhirClassicalInterpreter()` regardless of what `cinterp` was. This meant the inner interpreter was always Python even when the user chose a different interpreter.
+**File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`
+**Line:** 345-349
 
-**Status:** Fixed in this branch -- the inner interpreter now matches the outer.
+`assign_int()` only masks unsigned types to the register's declared `size`. Signed types are stored at the full dtype width. The code has a comment: `# (only valid for unsigned data types)` -- suggesting this was a deliberate choice.
 
----
+The PHIR spec says "assigning 5 to a 2-bit variable stores only the lower 2 bits" with no unsigned-only qualifier, but there may be good reasons for treating signed types differently (sign-extension from narrow widths is lossy).
 
-## 6. Shift by type width gives wrong result
+### Shift by type width is a no-op
 
-**Found via:** Edge case testing related to issue #213
-
-**Description:** `u32(1) << 32` gives `u32(1)` (no-op) instead of `u32(0)`. The PECOS `u32` dtype appears to implement shift modulo the type width, like hardware shift instructions (`32 % 32 = 0` -> no shift). But mathematically and per the PHIR spec, shifting a 32-bit value left by 32 should give 0.
-
-**Rust behavior:** Evaluates at 64-bit width: `1u64 << 32 = 4294967296`, then constrains to 32-bit: `0`. This is correct.
-
----
-
-## 7. Bitwise NOT overflows when assigning cross-type
-
-**Found via:** Edge case testing related to issue #213
-
-**Description:** `~m` where `m` is `u32 size=1` (measurement register) produces `u32(4294967295)`. Assigning to an `i32` variable does `i32(4294967295)` which throws `OverflowError` because 4294967295 > `i32::MAX`. The masking to register size happens AFTER the dtype conversion, so it never gets a chance to mask.
-
-**Rust behavior:** Evaluates `~0 = 0xFFFFFFFFFFFFFFFF`, constrains to i32 width (`-1`), stores fine.
+`u32(1) << 32` gives `u32(1)` instead of `u32(0)`. The PECOS dtype uses native hardware shift semantics (shift amount modulo type width). This matches x86/ARM behavior but not mathematical semantics. Whether the PHIR spec expects hardware or mathematical shift behavior is unclear.

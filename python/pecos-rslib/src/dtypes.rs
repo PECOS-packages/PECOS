@@ -3648,7 +3648,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: self.value + other_value,
+            value: self.value.wrapping_add(other_value),
         })
     }
 
@@ -3668,7 +3668,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: self.value - other_value,
+            value: self.value.wrapping_sub(other_value),
         })
     }
 
@@ -3680,7 +3680,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: other_value - self.value,
+            value: other_value.wrapping_sub(self.value),
         })
     }
 
@@ -3696,7 +3696,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: self.value * other_value,
+            value: self.value.wrapping_mul(other_value),
         })
     }
 

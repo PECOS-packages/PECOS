@@ -605,10 +605,16 @@ impl BitValue {
         }
     }
 
-    /// Get value as u64 (raw bits).
+    /// Get value as u64 (raw bits, truncates for >64 bit values).
     #[must_use]
     pub fn as_u64(&self) -> u64 {
         self.inner.to_u64().unwrap_or(0)
+    }
+
+    /// Get the inner `BitUInt` (for expression evaluation without truncation).
+    #[must_use]
+    pub fn to_bituint(&self) -> BitUInt {
+        self.inner.clone()
     }
 
     /// Get value as i64, interpreting sign via two's complement using the

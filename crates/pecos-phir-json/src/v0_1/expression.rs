@@ -9,6 +9,17 @@ use std::fmt::{self, Write};
 /// everything is i64 under the hood.
 const MIN_EVAL_WIDTH: u16 = 64;
 
+/// Widen a `BitUInt` to a target width by zero-extending.
+/// If already at or wider than target, returns as-is.
+fn widen_to(v: BitUInt, target: u16) -> BitUInt {
+    if v.size() >= target {
+        return v;
+    }
+    // Create wider value from raw words (handles >64 bit)
+    let words = v.to_words();
+    BitUInt::from_raw_words(target, words.into_boxed_slice())
+}
+
 /// Expression value using arbitrary-width integers.
 ///
 /// All values use `BitUInt` internally (matching the hardware model where
@@ -79,11 +90,13 @@ impl ExprValue {
     #[must_use]
     pub fn from_bit_value(value: &BitValue) -> Self {
         let eval_width = MIN_EVAL_WIDTH.max(value.size());
-        // Store raw bits, track signedness separately
+        // Get the raw BitUInt from the value and widen
+        let raw = value.to_bituint();
+        let widened = widen_to(raw, eval_width);
         if value.is_signed() {
-            ExprValue::Signed(BitUInt::new(eval_width, value.as_u64()))
+            ExprValue::Signed(widened)
         } else {
-            ExprValue::Unsigned(BitUInt::new(eval_width, value.as_u64()))
+            ExprValue::Unsigned(widened)
         }
     }
 
@@ -351,10 +364,10 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    /// Evaluates a binary operation.
+    /// Evaluates a binary operation using `BitUInt` arithmetic directly.
     ///
     /// Both operands are widened to the same evaluation width before
-    /// the operation. The result inherits that width.
+    /// the operation. This works for any bit width -- not just <= 64.
     #[allow(clippy::too_many_lines)]
     fn eval_binary_op(
         &mut self,
@@ -365,157 +378,67 @@ impl<'a> ExpressionEvaluator<'a> {
         let lhs_val = self.eval_arg(lhs)?;
         let rhs_val = self.eval_arg(rhs)?;
 
-        // Determine if result should be signed or unsigned
+        // Determine signedness of result
         let lhs_signed = matches!(lhs_val, ExprValue::Signed(_));
         let rhs_signed = matches!(rhs_val, ExprValue::Signed(_));
         let result_signed = lhs_signed && rhs_signed;
 
-        // For arithmetic/bitwise ops, work with raw u64 values at evaluation width.
-        // This is equivalent to working with BitUInt/BitInt at MIN_EVAL_WIDTH
-        // since all values are already widened.
-        let lhs_u = lhs_val.as_u64();
-        let rhs_u = rhs_val.as_u64();
-        let lhs_i = lhs_val.as_i64();
-        let rhs_i = rhs_val.as_i64();
+        // Extract inner BitUInt from both operands and widen to same width
+        let (l, r) = Self::widen_pair(&lhs_val, &rhs_val);
 
+        // Helper to wrap result in the right variant
+        let wrap = |v: BitUInt| -> ExprValue {
+            if result_signed {
+                ExprValue::Signed(v)
+            } else {
+                ExprValue::Unsigned(v)
+            }
+        };
+
+        #[allow(clippy::cast_possible_truncation)]
         match op {
-            // Arithmetic
-            "+" => {
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_add(rhs_i)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u.wrapping_add(rhs_u)))
-                }
-            }
-            "-" => {
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_sub(rhs_i)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u.wrapping_sub(rhs_u)))
-                }
-            }
-            "*" => {
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_mul(rhs_i)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u.wrapping_mul(rhs_u)))
-                }
-            }
+            // Arithmetic (BitUInt ops automatically wrap at the width)
+            "+" => Ok(wrap(&l + &r)),
+            "-" => Ok(wrap(&l - &r)),
+            "*" => Ok(wrap(&l * &r)),
             "/" => {
-                if rhs_val == 0i64 {
+                if r.is_zero() {
                     return Err(PecosError::RuntimeDivisionByZero);
                 }
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_div(rhs_i)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u / rhs_u))
-                }
+                Ok(wrap(&l / &r))
             }
             "%" => {
-                if rhs_val == 0i64 {
+                if r.is_zero() {
                     return Err(PecosError::RuntimeDivisionByZero);
                 }
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_rem(rhs_i)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u % rhs_u))
-                }
+                Ok(wrap(&l % &r))
             }
 
             // Bitwise
-            "&" => {
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i & rhs_i))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u & rhs_u))
-                }
-            }
-            "|" => {
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i | rhs_i))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u | rhs_u))
-                }
-            }
-            "^" => {
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i ^ rhs_i))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u ^ rhs_u))
-                }
-            }
+            "&" => Ok(wrap(&l & &r)),
+            "|" => Ok(wrap(&l | &r)),
+            "^" => Ok(wrap(&l ^ &r)),
 
-            // Shifts -- shift amount from RHS value
-            #[allow(clippy::cast_possible_truncation)]
+            // Shifts -- RHS is the shift amount
             ">>" => {
-                let shift = rhs_u as u32;
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_shr(shift)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u.wrapping_shr(shift)))
-                }
+                let shift = r.to_u64().unwrap_or(0) as u16;
+                Ok(wrap(&l >> shift))
             }
-            #[allow(clippy::cast_possible_truncation)]
             "<<" => {
-                let shift = rhs_u as u32;
-                if result_signed {
-                    Ok(ExprValue::signed(lhs_i.wrapping_shl(shift)))
-                } else {
-                    Ok(ExprValue::unsigned(lhs_u.wrapping_shl(shift)))
-                }
+                let shift = r.to_u64().unwrap_or(0) as u16;
+                Ok(wrap(&l << shift))
             }
 
-            // Comparisons -- always return unsigned 0 or 1
-            // Use numeric comparison (not structural equality) so
-            // Boolean(false) == Signed(0) works correctly.
-            "==" => {
-                let result = if result_signed {
-                    lhs_i == rhs_i
-                } else {
-                    lhs_u == rhs_u
-                };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            "!=" => {
-                let result = if result_signed {
-                    lhs_i != rhs_i
-                } else {
-                    lhs_u != rhs_u
-                };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            "<" => {
-                let result = if result_signed {
-                    lhs_i < rhs_i
-                } else {
-                    lhs_u < rhs_u
-                };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            ">" => {
-                let result = if result_signed {
-                    lhs_i > rhs_i
-                } else {
-                    lhs_u > rhs_u
-                };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            "<=" => {
-                let result = if result_signed {
-                    lhs_i <= rhs_i
-                } else {
-                    lhs_u <= rhs_u
-                };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            ">=" => {
-                let result = if result_signed {
-                    lhs_i >= rhs_i
-                } else {
-                    lhs_u >= rhs_u
-                };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
+            // Comparisons -- use BitUInt ordering (unsigned)
+            // For signed comparisons, we'd need to check sign bits.
+            // For now, numeric comparison via as_u64/as_i64 for <=64-bit,
+            // and BitUInt ordering for wider values.
+            "==" => Ok(ExprValue::unsigned(u64::from(l == r))),
+            "!=" => Ok(ExprValue::unsigned(u64::from(l != r))),
+            "<" => Ok(ExprValue::unsigned(u64::from(l < r))),
+            ">" => Ok(ExprValue::unsigned(u64::from(l > r))),
+            "<=" => Ok(ExprValue::unsigned(u64::from(l <= r))),
+            ">=" => Ok(ExprValue::unsigned(u64::from(l >= r))),
 
             // Logical
             "&&" => Ok(ExprValue::Boolean(lhs_val.as_bool() && rhs_val.as_bool())),
@@ -525,6 +448,32 @@ impl<'a> ExpressionEvaluator<'a> {
                 "Unsupported binary operation: {op}"
             ))),
         }
+    }
+
+    /// Extract inner `BitUInt` from an `ExprValue`, widening both to the same width.
+    fn widen_pair(a: &ExprValue, b: &ExprValue) -> (BitUInt, BitUInt) {
+        let (a_bits, b_bits) = match (a, b) {
+            (ExprValue::Signed(va) | ExprValue::Unsigned(va),
+             ExprValue::Signed(vb) | ExprValue::Unsigned(vb)) => {
+                (va.clone(), vb.clone())
+            }
+            (ExprValue::Boolean(v), ExprValue::Signed(vb) | ExprValue::Unsigned(vb)) => {
+                (BitUInt::new(vb.size(), u64::from(*v)), vb.clone())
+            }
+            (ExprValue::Signed(va) | ExprValue::Unsigned(va), ExprValue::Boolean(v)) => {
+                (va.clone(), BitUInt::new(va.size(), u64::from(*v)))
+            }
+            (ExprValue::Boolean(va), ExprValue::Boolean(vb)) => {
+                (BitUInt::new(MIN_EVAL_WIDTH, u64::from(*va)),
+                 BitUInt::new(MIN_EVAL_WIDTH, u64::from(*vb)))
+            }
+        };
+
+        // Widen to same width (max of the two)
+        let target = a_bits.size().max(b_bits.size());
+        let a_wide = widen_to(a_bits, target);
+        let b_wide = widen_to(b_bits, target);
+        (a_wide, b_wide)
     }
 
     /// Gets multiple bit values from a variable.

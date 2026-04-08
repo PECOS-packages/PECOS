@@ -5290,8 +5290,7 @@ impl Array {
                 let elements: Vec<String> = arr
                     .iter()
                     .map(|p| {
-                        let rust_pauli: RustPauli = unsafe { std::mem::transmute_copy(p) };
-                        match rust_pauli {
+                        match p.0 {
                             RustPauli::I => "Pauli.I",
                             RustPauli::X => "Pauli.X",
                             RustPauli::Y => "Pauli.Y",
@@ -5547,6 +5546,50 @@ impl Array {
         shape: &[usize],
         value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        // Macro to extract an array from Python for a given variant, avoiding
+        // the unsafe transmute_copy that the old generic function required.
+        macro_rules! extract_array_for_variant {
+            ($value:expr, Bool) => {
+                crate::array_buffer::extract_bool_array($value)
+            };
+            ($value:expr, Float64) => {
+                crate::array_buffer::extract_f64_array($value)
+            };
+            ($value:expr, Float32) => {
+                crate::array_buffer::extract_f32_array($value)
+            };
+            ($value:expr, Int64) => {
+                crate::array_buffer::extract_i64_array($value)
+            };
+            ($value:expr, Int32) => {
+                crate::array_buffer::extract_i32_array($value)
+            };
+            ($value:expr, Int16) => {
+                crate::array_buffer::extract_i16_array($value)
+            };
+            ($value:expr, Int8) => {
+                crate::array_buffer::extract_i8_array($value)
+            };
+            ($value:expr, Uint64) => {
+                crate::array_buffer::extract_u64_array($value)
+            };
+            ($value:expr, Uint32) => {
+                crate::array_buffer::extract_u32_array($value)
+            };
+            ($value:expr, Uint16) => {
+                crate::array_buffer::extract_u16_array($value)
+            };
+            ($value:expr, Uint8) => {
+                crate::array_buffer::extract_u8_array($value)
+            };
+            ($value:expr, Complex128) => {
+                crate::array_buffer::extract_complex64_array($value)
+            };
+            ($value:expr, Complex64) => {
+                crate::array_buffer::extract_complex32_array($value)
+            };
+        }
+
         // Macro to generate the mixed indexing assignment logic for each dtype
         macro_rules! apply_mixed_indexing_assignment_impl {
             ($arr:expr, $dtype:ty, $variant:ident) => {{
@@ -5638,9 +5681,7 @@ impl Array {
                     if let Ok(scalar_val) = value.extract::<$dtype>() {
                         // Scalar assignment - iterate over all target indices
                         Self::assign_to_mixed_indices($arr, &ranges, scalar_val);
-                    } else if let Ok(np_arr) =
-                        Self::extract_array_for_dtype::<$dtype>(value, stringify!($variant))
-                    {
+                    } else if let Ok(np_arr) = extract_array_for_variant!(value, $variant) {
                         // Check shape compatibility
                         if np_arr.shape() != result_shape.as_slice() {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -5715,9 +5756,7 @@ impl Array {
                         // Scalar assignment - iterate over all target indices
                         // Generate all combinations of indices
                         Self::assign_to_mixed_indices($arr, &ranges, scalar_val);
-                    } else if let Ok(np_arr) =
-                        Self::extract_array_for_dtype::<$dtype>(value, stringify!($variant))
-                    {
+                    } else if let Ok(np_arr) = extract_array_for_variant!(value, $variant) {
                         // Check shape compatibility
                         if np_arr.shape() != result_shape.as_slice() {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -5765,100 +5804,6 @@ impl Array {
             ArrayData::PauliString(_) => Err(pyo3::exceptions::PyNotImplementedError::new_err(
                 "Mixed integer/slice indexing assignment not yet implemented for PauliString arrays",
             )),
-        }
-    }
-
-    // Helper method: Extract array from Python based on dtype variant name
-    fn extract_array_for_dtype<T: Clone>(
-        value: &Bound<'_, PyAny>,
-        variant: &str,
-    ) -> PyResult<ndarray::ArrayD<T>> {
-        use crate::array_buffer;
-
-        // Map variant name to appropriate extraction function
-        match variant {
-            "Bool" => {
-                let arr = array_buffer::extract_bool_array(value)?;
-                // SAFETY: We know T is bool based on the macro invocation
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Float64" => {
-                let arr = array_buffer::extract_f64_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Float32" => {
-                let arr = array_buffer::extract_f32_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Int64" => {
-                let arr = array_buffer::extract_i64_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Int32" => {
-                let arr = array_buffer::extract_i32_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Int16" => {
-                let arr = array_buffer::extract_i16_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Int8" => {
-                let arr = array_buffer::extract_i8_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Uint64" => {
-                let arr = array_buffer::extract_u64_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Uint32" => {
-                let arr = array_buffer::extract_u32_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Uint16" => {
-                let arr = array_buffer::extract_u16_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Uint8" => {
-                let arr = array_buffer::extract_u8_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Complex128" => {
-                let arr = array_buffer::extract_complex64_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            "Complex64" => {
-                let arr = array_buffer::extract_complex32_array(value)?;
-                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
-                std::mem::forget(arr);
-                Ok(transmuted)
-            }
-            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Unsupported dtype variant for array extraction: {variant}"
-            ))),
         }
     }
 

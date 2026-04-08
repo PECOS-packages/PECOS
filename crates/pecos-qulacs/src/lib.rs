@@ -197,10 +197,7 @@ where
         _u10: Complex64,
         _u11: Complex64,
     ) -> &mut Self {
-        // This would need to be implemented in C++ side
-        // For now, we can use the basic gates to approximate
-        // TODO: Add proper single_qubit_unitary to C++ wrapper
-        self
+        unimplemented!("QulacsStateVec::single_qubit_rotation requires C++ wrapper support")
     }
 
     /// Apply a general two-qubit unitary given by a 4x4 complex matrix
@@ -210,9 +207,7 @@ where
         _qubit2: usize,
         _matrix: [[Complex64; 4]; 4],
     ) -> &mut Self {
-        // This would need to be implemented in C++ side
-        // TODO: Add proper two_qubit_unitary to C++ wrapper
-        self
+        unimplemented!("QulacsStateVec::two_qubit_unitary requires C++ wrapper support")
     }
 }
 

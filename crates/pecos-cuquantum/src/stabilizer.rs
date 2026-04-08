@@ -162,6 +162,11 @@ impl CuFrameSimulator {
                     "Failed to allocate M table: CUDA error {cuda_status}"
                 )));
             }
+
+            // Zero all GPU buffers (cudaMalloc does not guarantee zeroed memory)
+            (backend.cudaMemset)(x_table_device.cast(), 0, x_table_size);
+            (backend.cudaMemset)(z_table_device.cast(), 0, z_table_size);
+            (backend.cudaMemset)(m_table_device.cast(), 0, m_table_size);
         }
 
         Ok(Self {

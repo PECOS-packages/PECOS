@@ -44,6 +44,9 @@ impl Phase for QuarterPhase {
     }
 
     fn multiply(&self, other: &QuarterPhase) -> QuarterPhase {
+        use QuarterPhase::{MinusI, MinusOne, PlusI, PlusOne};
+        const VARIANTS: [QuarterPhase; 4] = [PlusOne, MinusOne, PlusI, MinusI];
+
         let lhs = *self as u8;
         let rhs = *other as u8;
 
@@ -53,10 +56,7 @@ impl Phase for QuarterPhase {
         // XOR imaginary parts
         let imaginary = (lhs ^ rhs) & 0b10;
 
-        let result = real | imaginary;
-
-        // Cast back to Phase
-        unsafe { std::mem::transmute(result) }
+        VARIANTS[(real | imaginary) as usize]
     }
 }
 

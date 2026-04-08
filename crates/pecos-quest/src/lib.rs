@@ -80,6 +80,9 @@ impl Drop for QuestEnvWrapper {
     }
 }
 
+// SAFETY: QuestEnvWrapper owns its env pointer exclusively.
+// WARNING: QuEST uses a global environment. Concurrent access from multiple threads is unsafe.
+// Sync is required by the Engine trait but callers must ensure single-threaded access.
 unsafe impl Send for QuestEnvWrapper {}
 unsafe impl Sync for QuestEnvWrapper {}
 
@@ -118,6 +121,9 @@ impl Drop for QuregWrapper {
     }
 }
 
+// SAFETY: QuregWrapper owns its qureg pointer exclusively.
+// WARNING: QuEST qureg operations are not thread-safe. Sync is required by the Engine trait
+// but callers must ensure single-threaded access (e.g., --test-threads=1).
 unsafe impl Send for QuregWrapper {}
 unsafe impl Sync for QuregWrapper {}
 
@@ -555,8 +561,10 @@ where
     }
 }
 
+// SAFETY: QuestStateVec owns all its fields exclusively.
+// WARNING: QuEST's global env is not thread-safe. Sync is required by the Engine trait
+// but callers must ensure single-threaded access.
 unsafe impl<R> Send for QuestStateVec<R> where R: Rng + SeedableRng + Debug + Send {}
-
 unsafe impl<R> Sync for QuestStateVec<R> where R: Rng + SeedableRng + Debug + Sync {}
 
 /// A quantum density matrix simulator using `QuEST`'s density matrix representation
@@ -1005,8 +1013,10 @@ where
     }
 }
 
+// SAFETY: QuestDensityMatrix owns all its fields exclusively.
+// WARNING: QuEST's global env is not thread-safe. Sync is required by the Engine trait
+// but callers must ensure single-threaded access.
 unsafe impl<R> Send for QuestDensityMatrix<R> where R: Rng + SeedableRng + Debug + Send {}
-
 unsafe impl<R> Sync for QuestDensityMatrix<R> where R: Rng + SeedableRng + Debug + Sync {}
 
 #[cfg(test)]

@@ -1052,6 +1052,7 @@ where
         for &(control, target) in pairs {
             let q1 = control.index();
             let q2 = target.index();
+            debug_assert_ne!(q1, q2, "CX requires distinct qubits");
 
             // Y-convention sign update (only on stabs, not destabs)
             // Toggle signs_minus where: col_x[q1] AND col_z[q2] AND NOT(col_z[q1] XOR col_x[q2])
@@ -1106,6 +1107,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SXX requires distinct qubits");
 
             // Sign update (stabs only): Q -> i*Q*XX. Per-qubit phase from
             // right-multiplying by X: Z*X=iY (c=+i), Y*X=-iZ (c=-i).
@@ -1182,6 +1184,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SZZ requires distinct qubits");
 
             // Sign update (stabs only): Q -> i*Q*ZZ. Per-qubit phase from
             // right-multiplying by Z: X*Z=-iY (c=-i), Y*Z=iX (c=+i).
@@ -1257,6 +1260,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SYY requires distinct qubits");
 
             // Sign update (stabs only): Q -> i*Q*YY. Per-qubit phase from
             // right-multiplying by Y: X*Y=iZ (c=+i), Z*Y=-iX (c=-i).

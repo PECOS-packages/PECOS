@@ -60,7 +60,10 @@ pub struct SeleneRuntime {
     pending_measurements: Vec<usize>,
 }
 
-// Safety: The Selene runtime is designed to be thread-safe
+// SAFETY: SeleneRuntime owns its instance pointer exclusively.
+// WARNING: The Selene FFI runtime may not be thread-safe for concurrent access.
+// Sync is required by the QisRuntime/Engine trait but callers must ensure
+// single-threaded access to any given instance.
 unsafe impl Send for SeleneRuntime {}
 unsafe impl Sync for SeleneRuntime {}
 

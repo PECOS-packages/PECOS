@@ -42,7 +42,7 @@ use pyo3::prelude::*;
 ///     >>> print(x)  # "X"
 #[pyclass(name = "Pauli", module = "pecos_rslib", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Pauli(RustPauli);
+pub struct Pauli(pub(crate) RustPauli);
 
 // SAFETY: Pauli is a simple Copy type wrapping a 2-bit enum.
 // It contains no Python objects or mutable state, so it's safe to send across threads.

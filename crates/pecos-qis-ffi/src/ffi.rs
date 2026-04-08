@@ -26,6 +26,90 @@ fn i64_to_usize(value: i64) -> usize {
     usize::try_from(value).expect("Invalid ID: value must be non-negative and fit in usize")
 }
 
+// --- Gate FFI Macros ---
+//
+// These macros generate the boilerplate for FFI gate functions.
+// Each macro handles a different gate signature pattern.
+
+/// Single-qubit gate: `fn name(qubit: i64)` -> `QuantumOp::Op(qubit_id)`
+macro_rules! ffi_gate_1q {
+    ($name:ident, $op:ident) => {
+        /// # Safety
+        /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(qubit: i64) {
+            let qubit_id = i64_to_usize(qubit);
+            with_interface(|interface| {
+                interface.queue_operation(QuantumOp::$op(qubit_id).into());
+            });
+        }
+    };
+}
+
+/// Two-qubit gate: `fn name(q1: i64, q2: i64)` -> `QuantumOp::Op(q1_id, q2_id)`
+macro_rules! ffi_gate_2q {
+    ($name:ident, $op:ident) => {
+        /// # Safety
+        /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(q1: i64, q2: i64) {
+            let q1_id = i64_to_usize(q1);
+            let q2_id = i64_to_usize(q2);
+            with_interface(|interface| {
+                interface.queue_operation(QuantumOp::$op(q1_id, q2_id).into());
+            });
+        }
+    };
+}
+
+/// Three-qubit gate: `fn name(q1: i64, q2: i64, q3: i64)` -> `QuantumOp::Op(q1_id, q2_id, q3_id)`
+macro_rules! ffi_gate_3q {
+    ($name:ident, $op:ident) => {
+        /// # Safety
+        /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(q1: i64, q2: i64, q3: i64) {
+            let q1_id = i64_to_usize(q1);
+            let q2_id = i64_to_usize(q2);
+            let q3_id = i64_to_usize(q3);
+            with_interface(|interface| {
+                interface.queue_operation(QuantumOp::$op(q1_id, q2_id, q3_id).into());
+            });
+        }
+    };
+}
+
+/// Rotation + single-qubit: `fn name(theta: f64, qubit: i64)` -> `QuantumOp::Op(theta, qubit_id)`
+macro_rules! ffi_gate_rot_1q {
+    ($name:ident, $op:ident) => {
+        /// # Safety
+        /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(theta: f64, qubit: i64) {
+            let qubit_id = i64_to_usize(qubit);
+            with_interface(|interface| {
+                interface.queue_operation(QuantumOp::$op(theta, qubit_id).into());
+            });
+        }
+    };
+}
+
+/// Rotation + two-qubit: `fn name(theta: f64, q1: i64, q2: i64)` -> `QuantumOp::Op(theta, q1_id, q2_id)`
+macro_rules! ffi_gate_rot_2q {
+    ($name:ident, $op:ident) => {
+        /// # Safety
+        /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(theta: f64, q1: i64, q2: i64) {
+            let q1_id = i64_to_usize(q1);
+            let q2_id = i64_to_usize(q2);
+            with_interface(|interface| {
+                interface.queue_operation(QuantumOp::$op(theta, q1_id, q2_id).into());
+            });
+        }
+    };
+}
+
 // --- Single-Qubit Gates ---
 
 /// Hadamard gate operation
@@ -68,213 +152,33 @@ pub unsafe extern "C" fn __quantum__qis__x__body(qubit: i64) {
     debug!("[FFI] __quantum__qis__x__body completed");
 }
 
-/// Pauli-Y gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__y__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Y(qubit_id).into());
-    });
-}
-
-/// Pauli-Z gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__z__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Z(qubit_id).into());
-    });
-}
-
-/// S gate (phase) operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__s__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::S(qubit_id).into());
-    });
-}
-
-/// S-dagger gate (inverse phase) operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__sdg__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Sdg(qubit_id).into());
-    });
-}
-
-/// T gate (π/8 phase) operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__t__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::T(qubit_id).into());
-    });
-}
-
-/// T-dagger gate (inverse π/8 phase) operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__tdg__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Tdg(qubit_id).into());
-    });
-}
+ffi_gate_1q!(__quantum__qis__y__body, Y);
+ffi_gate_1q!(__quantum__qis__z__body, Z);
+ffi_gate_1q!(__quantum__qis__s__body, S);
+ffi_gate_1q!(__quantum__qis__sdg__body, Sdg);
+ffi_gate_1q!(__quantum__qis__t__body, T);
+ffi_gate_1q!(__quantum__qis__tdg__body, Tdg);
 
 // --- Two-Qubit Gates ---
 
-/// Controlled-X (CNOT) gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__cx__body(control: i64, target: i64) {
-    let control_id = i64_to_usize(control);
-    let target_id = i64_to_usize(target);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::CX(control_id, target_id).into());
-    });
-}
+ffi_gate_2q!(__quantum__qis__cx__body, CX);
 
-/// CNOT gate operation (alias for CX)
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__cnot__body(control: i64, target: i64) {
-    // CNOT is an alias for CX
-    unsafe { __quantum__qis__cx__body(control, target) };
-}
+ffi_gate_2q!(__quantum__qis__cnot__body, CX);
 
-/// Controlled-Y gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__cy__body(control: i64, target: i64) {
-    let control_id = i64_to_usize(control);
-    let target_id = i64_to_usize(target);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::CY(control_id, target_id).into());
-    });
-}
-
-/// Controlled-Z gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__cz__body(control: i64, target: i64) {
-    let control_id = i64_to_usize(control);
-    let target_id = i64_to_usize(target);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::CZ(control_id, target_id).into());
-    });
-}
-
-/// Controlled-H gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__ch__body(control: i64, target: i64) {
-    let control_id = i64_to_usize(control);
-    let target_id = i64_to_usize(target);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::CH(control_id, target_id).into());
-    });
-}
+ffi_gate_2q!(__quantum__qis__cy__body, CY);
+ffi_gate_2q!(__quantum__qis__cz__body, CZ);
+ffi_gate_2q!(__quantum__qis__ch__body, CH);
 
 // --- Rotation Gates ---
 
-/// Rotation around X-axis
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__rx__body(theta: f64, qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::RX(theta, qubit_id).into());
-    });
-}
+ffi_gate_rot_1q!(__quantum__qis__rx__body, RX);
+ffi_gate_rot_1q!(__quantum__qis__ry__body, RY);
+ffi_gate_rot_1q!(__quantum__qis__rz__body, RZ);
 
-/// Rotation around Y-axis
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__ry__body(theta: f64, qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::RY(theta, qubit_id).into());
-    });
-}
+ffi_gate_rot_2q!(__quantum__qis__rzz__body, RZZ);
 
-/// Rotation around Z-axis
-///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__rz__body(theta: f64, qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::RZ(theta, qubit_id).into());
-    });
-}
-
-/// ZZ rotation gate
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameters must be valid
-/// non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__rzz__body(theta: f64, qubit1: i64, qubit2: i64) {
-    let qubit1_id = i64_to_usize(qubit1);
-    let qubit2_id = i64_to_usize(qubit2);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::RZZ(theta, qubit1_id, qubit2_id).into());
-    });
-}
-
-/// Single-qubit rotation in XY plane
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__qis__r1xy__body(theta: f64, phi: f64, qubit: i64) {
     let qubit_id = i64_to_usize(qubit);
@@ -283,52 +187,15 @@ pub unsafe extern "C" fn __quantum__qis__r1xy__body(theta: f64, phi: f64, qubit:
     });
 }
 
-/// Controlled rotation around Z-axis
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__crz__body(theta: f64, control: i64, target: i64) {
-    let control_id = i64_to_usize(control);
-    let target_id = i64_to_usize(target);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::CRZ(theta, control_id, target_id).into());
-    });
-}
+ffi_gate_rot_2q!(__quantum__qis__crz__body, CRZ);
 
 // --- Three-Qubit Gates ---
 
-/// Toffoli (CCX) gate operation
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. All qubit parameters must be valid
-/// non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__ccx__body(control1: i64, control2: i64, target: i64) {
-    let control1_id = i64_to_usize(control1);
-    let control2_id = i64_to_usize(control2);
-    let target_id = i64_to_usize(target);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::CCX(control1_id, control2_id, target_id).into());
-    });
-}
+ffi_gate_3q!(__quantum__qis__ccx__body, CCX);
 
 // --- ZZ Interaction ---
 
-/// ZZ interaction gate
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameters must be valid
-/// non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__zz__body(qubit1: i64, qubit2: i64) {
-    let qubit1_id = i64_to_usize(qubit1);
-    let qubit2_id = i64_to_usize(qubit2);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::ZZ(qubit1_id, qubit2_id).into());
-    });
-}
+ffi_gate_2q!(__quantum__qis__zz__body, ZZ);
 
 // --- Measurement and Reset ---
 
@@ -348,18 +215,7 @@ pub unsafe extern "C" fn __quantum__qis__m__body(qubit: i64, result: i64) -> i32
     0
 }
 
-/// Reset a qubit to |0⟩ state
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__reset__body(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Reset(qubit_id).into());
-    });
-}
+ffi_gate_1q!(__quantum__qis__reset__body, Reset);
 
 // --- Allocation and Deallocation ---
 
@@ -492,16 +348,7 @@ pub unsafe extern "C" fn __quantum__rt__record(data: *const std::ffi::c_char) {
 // They provide the same functionality as the QIS-style functions above but with
 // different names to support Selene-generated LLVM IR.
 
-/// Reset operation (Selene-style)
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___reset(qubit: i64) {
-    // Delegate to the QIS-style function
-    unsafe { __quantum__qis__reset__body(qubit) };
-}
+ffi_gate_1q!(___reset, Reset);
 
 /// RXY rotation (Selene-style)
 ///
@@ -566,27 +413,8 @@ pub unsafe extern "C" fn setup(_arg: i64) {
     // Nothing to do for now - the thread-local interface is automatically initialized
 }
 
-/// H gate function (Selene-style)
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___h(qubit: i64) {
-    // Delegate to the QIS-style function
-    unsafe { __quantum__qis__h__body(qubit) };
-}
-
-/// CX gate function (Selene-style)
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The control and target parameters must be
-/// valid non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___cx(control: i64, target: i64) {
-    // Delegate to the QIS-style function
-    unsafe { __quantum__qis__cx__body(control, target) };
-}
+ffi_gate_1q!(___h, H);
+ffi_gate_2q!(___cx, CX);
 
 /// Lazy measurement function (Selene/HUGR-LLVM style)
 ///

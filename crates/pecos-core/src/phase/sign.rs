@@ -31,9 +31,12 @@ impl Phase for Sign {
         *self
     }
 
-    /// Multiplies two `Sign` values using XOR (superfast).
+    /// Multiplies two `Sign` values using XOR.
     fn multiply(&self, other: &Self) -> Self {
-        unsafe { std::mem::transmute((*self as u8) ^ (*other as u8)) }
+        match (*self as u8) ^ (*other as u8) {
+            0 => Sign::PlusOne,
+            _ => Sign::MinusOne,
+        }
     }
 }
 
@@ -51,8 +54,10 @@ impl TryFrom<QuarterPhase> for Sign {
 
 impl From<Sign> for QuarterPhase {
     fn from(sign: Sign) -> QuarterPhase {
-        // Safe because `Sign` variants map directly to `Phase` variants
-        unsafe { std::mem::transmute(sign as u8) }
+        match sign {
+            Sign::PlusOne => QuarterPhase::PlusOne,
+            Sign::MinusOne => QuarterPhase::MinusOne,
+        }
     }
 }
 

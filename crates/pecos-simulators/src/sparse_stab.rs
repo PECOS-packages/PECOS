@@ -1298,9 +1298,10 @@ where
         for &(control, target) in pairs {
             let q1 = control.index();
             let q2 = target.index();
+            debug_assert_ne!(q1, q2, "CX requires distinct qubits");
 
             for g in &mut [&mut self.stabs, &mut self.destabs] {
-                // SAFETY: q1 != q2 is guaranteed by the caller.
+                // SAFETY: q1 != q2 is guaranteed by the caller (asserted above in debug).
                 // We need mutable access to two different column entries simultaneously.
                 // Using unsafe to avoid the split_at_mut overhead.
                 unsafe {
@@ -1344,6 +1345,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SXX requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
             for g in self.stabs.col_z[q1].iter() {
@@ -1437,6 +1439,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SZZ requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by +i for odd X-count generators.
             for g in self.stabs.col_x[q1].iter() {
@@ -1531,6 +1534,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SYY requires distinct qubits");
 
             // Sign update (stabs only): for affected generators ((x1^z1)^(x2^z2)=1),
             // multiply by -i when z1+z2 even, +i when z1+z2 odd.
@@ -2918,6 +2922,7 @@ where
         for &(control, target) in pairs {
             let q1 = control.index();
             let q2 = target.index();
+            debug_assert_ne!(q1, q2, "CX requires distinct qubits");
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 let (qu_min, qu_max) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
@@ -2972,6 +2977,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SXX requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by -i for odd Z-count generators.
             for g in self.stabs.col_z[q1].iter().copied() {
@@ -3051,6 +3057,7 @@ where
         for &(qa, qb) in pairs {
             let q1 = qa.index();
             let q2 = qb.index();
+            debug_assert_ne!(q1, q2, "SZZ requires distinct qubits");
 
             // Sign update (stabs only): multiply phase by +i for odd X-count generators.
             for g in self.stabs.col_x[q1].iter().copied() {

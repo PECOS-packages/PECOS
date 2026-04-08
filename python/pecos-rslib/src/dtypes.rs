@@ -290,38 +290,31 @@ impl DType {
                 Ok(Py::new(py, ScalarI64::new(int_val))?.into_any())
             }
             DType::I32 => {
-                // Convert to i32 and create Rust-backed scalar
-                let int_val = value.extract::<i32>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI32::new(int_val))?.into_any())
             }
             DType::I16 => {
-                // Convert to i16 and create Rust-backed scalar
-                let int_val = value.extract::<i16>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI16::new(int_val))?.into_any())
             }
             DType::I8 => {
-                // Convert to i8 and create Rust-backed scalar
-                let int_val = value.extract::<i8>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI8::new(int_val))?.into_any())
             }
             DType::U64 => {
-                // Convert to u64 and create Rust-backed scalar
                 let int_val = value.extract::<u64>()?;
                 Ok(Py::new(py, ScalarU64::new(int_val))?.into_any())
             }
             DType::U32 => {
-                // Convert to u32 and create Rust-backed scalar
-                let int_val = value.extract::<u32>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarU32::new(int_val))?.into_any())
             }
             DType::U16 => {
-                // Convert to u16 and create Rust-backed scalar
-                let int_val = value.extract::<u16>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarU16::new(int_val))?.into_any())
             }
             DType::U8 => {
-                // Convert to u8 and create Rust-backed scalar
-                let int_val = value.extract::<u8>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarU8::new(int_val))?.into_any())
             }
             DType::Complex128 => {
@@ -768,8 +761,9 @@ impl ScalarU8 {
     const itemsize: usize = 1;
 
     #[new]
-    fn new(value: u8) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn new(value: i64) -> Self {
+        Self { value: value as u8 }
     }
 
     fn __repr__(&self) -> String {
@@ -1127,8 +1121,9 @@ impl ScalarU16 {
     const itemsize: usize = 2;
 
     #[new]
-    fn new(value: u16) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn new(value: i64) -> Self {
+        Self { value: value as u16 }
     }
 
     fn __repr__(&self) -> String {
@@ -1486,8 +1481,9 @@ impl ScalarU32 {
     const itemsize: usize = 4;
 
     #[new]
-    fn new(value: u32) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn new(value: i64) -> Self {
+        Self { value: value as u32 }
     }
 
     fn __repr__(&self) -> String {
@@ -2216,8 +2212,9 @@ impl ScalarI8 {
     const itemsize: usize = 1;
 
     #[new]
-    fn new(value: i8) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation)]
+    fn new(value: i64) -> Self {
+        Self { value: value as i8 }
     }
 
     fn __repr__(&self) -> String {
@@ -2613,8 +2610,9 @@ impl ScalarI16 {
     const itemsize: usize = 2;
 
     #[new]
-    fn new(value: i16) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation)]
+    fn new(value: i64) -> Self {
+        Self { value: value as i16 }
     }
 
     fn __repr__(&self) -> String {
@@ -3009,8 +3007,9 @@ impl ScalarI32 {
     const itemsize: usize = 4;
 
     #[new]
-    fn new(value: i32) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation)]
+    fn new(value: i64) -> Self {
+        Self { value: value as i32 }
     }
 
     fn __repr__(&self) -> String {

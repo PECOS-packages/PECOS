@@ -65,12 +65,12 @@ impl ExprValue {
     }
 
     /// Converts a `BitValue` to an `ExprValue`
+    ///
+    /// All values are expanded to 64-bit width for expression evaluation
+    /// (matching hardware behavior). Bool detection happens at variable
+    /// lookup time in `eval_arg`, not here.
     #[must_use]
     pub fn from_bit_value(value: &BitValue) -> Self {
-        // 1-bit unsigned is treated as boolean for expression evaluation
-        if !value.is_signed() && value.size() == 1 {
-            return ExprValue::Boolean(value.as_bool());
-        }
         if value.is_signed() {
             ExprValue::Integer(value.as_i64())
         } else {
@@ -376,15 +376,22 @@ impl<'a> ExpressionEvaluator<'a> {
         match arg {
             ArgItem::Simple(name) => {
                 // Simple variable reference
-                // Check if the variable exists in the cache
                 if let Some(val) = self.var_cache.get(name) {
                     return Ok(*val);
                 }
 
                 // Lookup the variable in the environment
                 if let Some(value) = self.environment.get(name) {
-                    let expr_val = ExprValue::from_bit_value(value);
-                    // Update cache for future lookups
+                    // Check if the variable is declared as Bool
+                    let is_bool = self
+                        .environment
+                        .get_variable_info_opt(name)
+                        .is_some_and(|info| info.data_type == DataType::Bool);
+                    let expr_val = if is_bool {
+                        ExprValue::Boolean(value.as_bool())
+                    } else {
+                        ExprValue::from_bit_value(value)
+                    };
                     self.var_cache.insert(name.clone(), expr_val);
                     Ok(expr_val)
                 } else {

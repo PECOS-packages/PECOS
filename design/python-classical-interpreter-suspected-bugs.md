@@ -10,33 +10,17 @@ underlying dtype overflow issue remains.
 
 ## 1. Overflow rejected for values that fit the register but not the dtype
 
-**Confidence:** High
-**File:** `python/quantum-pecos/src/pecos/classical_interpreters/phir_classical_interpreter.py`
-**Line:** 336 (`val = dtype(val)`)
+**Status:** FIXED (dtype constructors now truncate instead of rejecting)
 
-**Description:** `assign_int` converts the value through the PECOS dtype constructor (`dtype(val)`) before masking to register size. If the value exceeds the dtype's range but would fit in the register's `size`, Python throws `OverflowError`.
-
-**Example:**
-```
-c: u32 size=31
-c = 8589934591  (= 2^33 - 1, fits in 31 bits after masking, but > u32::MAX)
-```
-Python: `u32(8589934591)` -> `OverflowError: out of range integral type conversion attempted`
-
-The PHIR spec says this should work: the value should be masked to `size=31` bits, giving `0x7FFFFFFF`.
-
-**Impact:** Programs that assign large literal values to narrow registers fail unnecessarily.
+**Description:** `assign_int` converts the value through the PECOS dtype constructor (`dtype(val)`) before masking to register size. If the value exceeded the dtype's range, Python threw `OverflowError`. Fixed by changing dtype constructors to accept `i64` and truncate via cast.
 
 ---
 
 ## 2. Bitwise NOT overflows when assigning cross-type
 
-**Confidence:** High
-**Found via:** Edge case testing related to issue #213
+**Status:** FIXED (dtype constructors now truncate instead of rejecting)
 
-**Description:** `~m` where `m` is `u32 size=1` (measurement register) produces `u32(4294967295)`. Assigning to an `i32` variable does `i32(4294967295)` which throws `OverflowError` because 4294967295 > `i32::MAX`. The masking to register size happens AFTER the dtype conversion, so it never gets a chance to mask.
-
-**Rust behavior:** Evaluates `~0 = 0xFFFFFFFFFFFFFFFF`, constrains to i32 width (`-1`), stores fine.
+**Description:** `~m` where `m` is `u32 size=1` produced `u32(4294967295)`. Assigning to an `i32` variable did `i32(4294967295)` which threw `OverflowError`. Fixed by the same dtype constructor change.
 
 ---
 

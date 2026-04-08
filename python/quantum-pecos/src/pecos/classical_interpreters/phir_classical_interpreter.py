@@ -266,29 +266,33 @@ class PhirClassicalInterpreter:
         self,
         expr: int | str | list | pt.opt.COp,
     ) -> int | Integer | None:
-        """Evaluates integer expressions."""
+        """Evaluates integer expressions.
+
+        All arithmetic is performed at Python int level (arbitrary precision),
+        matching the hardware model where evaluation happens at full register
+        width. The result is NOT wrapped in a PECOS dtype -- that happens at
+        the assignment boundary in handle_cops/assign_int.
+        """
         match expr:
             case int():
                 return expr
 
             case str():
-                return self.get_cval(expr)
+                return int(self.get_cval(expr))
             case list():
-                return self.get_bit(*expr)
+                return int(self.get_bit(*expr))
             case pt.opt.COp():
                 sym = expr.name
                 args = expr.args
 
                 if sym in {"~"}:  # Unary ops
                     lhs = self.eval_expr(args[0])
-                    dtype = type(lhs)
-                    return dtype(~lhs)
+                    return ~int(lhs)
 
                 # Binary operators
                 lhs, rhs = args
-                lhs = self.eval_expr(lhs)
-                rhs = self.eval_expr(rhs)
-                dtype = type(lhs)
+                lhs = int(self.eval_expr(lhs))
+                rhs = int(self.eval_expr(rhs))
 
                 # Map of operators to their functions
                 ops = {
@@ -311,7 +315,7 @@ class PhirClassicalInterpreter:
                 }
 
                 if sym in ops:
-                    return dtype(ops[sym](lhs, rhs))
+                    return ops[sym](lhs, rhs)
 
                 msg = f"Unknown expression type: {sym}"
                 raise ValueError(msg)
@@ -342,11 +346,13 @@ class PhirClassicalInterpreter:
             cval &= ~(one << i)
             cval |= (val & one) << i
 
-        if type(cval) not in signed_data_types.values():
-            # mask off bits given the size of the register
-            # (only valid for unsigned data types)
-            size = self.cvar_meta[cid].size
-            cval &= (1 << size) - 1
+        # Mask to the register's declared size.
+        # This applies to all types -- `size` constrains how many data bits
+        # the user can assign. The underlying dtype provides the total storage.
+        size = self.cvar_meta[cid].size
+        type_width = dtype.itemsize * 8
+        if size < type_width:
+            cval = dtype(int(cval) & ((1 << size) - 1))
         self.cenv[cid] = cval
 
     def handle_cops(self, op: pt.opt.COp) -> None:

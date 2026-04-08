@@ -570,16 +570,11 @@ impl BitValue {
     /// Create a new zero value for the given data type and size.
     #[must_use]
     pub fn zero(data_type: &DataType, size: usize) -> Self {
-        let tw = u16::try_from(data_type.bit_width()).unwrap_or(64);
-        // Signed types use type width for storage (matching Python which doesn't
-        // mask signed values to register size). Unsigned types use register size.
-        let storage_width = if data_type.is_signed() {
-            tw
-        } else {
-            u16::try_from(size).unwrap_or(64)
-        };
+        let raw_tw = data_type.bit_width();
+        // For types with 0 bit width (qubits), use the declared size
+        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size }).unwrap_or(64).max(1);
         Self {
-            inner: BitUInt::zero(storage_width),
+            inner: BitUInt::zero(tw),
             signed: data_type.is_signed(),
             type_width: tw,
         }
@@ -587,19 +582,24 @@ impl BitValue {
 
     /// Create a new value from a raw u64 for the given data type and size.
     ///
-    /// For unsigned types, the value is masked to `size` bits.
-    /// For signed types, the value is stored at the full type width
-    /// (matching Python behavior where signed values are not masked).
+    /// Storage is at the full type width. The value is masked to `size` bits
+    /// for user-assigned values (matching PHIR semantics where `size` limits
+    /// the data bits the user can write, but the underlying register is N bits).
     #[must_use]
     pub fn from_u64(data_type: &DataType, size: usize, value: u64) -> Self {
-        let tw = u16::try_from(data_type.bit_width()).unwrap_or(64);
-        let storage_width = if data_type.is_signed() {
-            tw
+        let raw_tw = data_type.bit_width();
+        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size }).unwrap_or(64).max(1);
+        let s = u16::try_from(size).unwrap_or(tw);
+        // Mask to `size` data bits before storing at type width.
+        // This ensures user-assigned values respect the declared register size,
+        // while the full type-width storage allows bitwise ops on all N bits.
+        let masked = if s < tw {
+            value & ((1u64 << s) - 1)
         } else {
-            u16::try_from(size).unwrap_or(64)
+            value
         };
         Self {
-            inner: BitUInt::new(storage_width, value),
+            inner: BitUInt::new(tw, masked),
             signed: data_type.is_signed(),
             type_width: tw,
         }

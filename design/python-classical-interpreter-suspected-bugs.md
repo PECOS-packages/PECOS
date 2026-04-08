@@ -2,6 +2,12 @@
 
 Found during the Rust reimplementation and fuzz testing.
 
+Bugs #1 and #2 are the same class of issue as
+[PECOS-packages/PECOS#213](https://github.com/PECOS-packages/PECOS/issues/213):
+PECOS dtype constructors reject values outside the type range instead of
+masking/wrapping. PR #214 fixed the specific operator overload case but the
+underlying dtype overflow issue remains.
+
 ## 1. Overflow rejected for values that fit the register but not the dtype
 
 **Confidence:** High

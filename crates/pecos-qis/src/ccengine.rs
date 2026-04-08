@@ -15,7 +15,7 @@
 use crate::program::QisInterfaceBuilder;
 use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, ProgramFormat};
 use crate::runtime::QisRuntime;
-use log::debug;
+use log::{debug, warn};
 use pecos_core::Angle64;
 use pecos_core::prelude::PecosError;
 use pecos_engines::noise::utils::NoiseUtils;
@@ -25,10 +25,16 @@ use pecos_engines::{
 };
 use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
 use pecos_random::PecosRng;
+use serde_json::json;
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
+
+static TRACE_ENGINE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Result from worker thread - returns both the operations and the interface
 type WorkerResult = Result<(OperationList, BoxedInterface), String>;
@@ -194,6 +200,18 @@ pub struct QisEngine {
     /// Persistent worker thread for dynamic execution (stays alive across shots)
     /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
     persistent_worker: Option<PersistentDynamicWorker>,
+
+    /// Directory where operation trace chunks are dumped as JSON.
+    operation_trace_dir: Option<PathBuf>,
+
+    /// Unique trace id for this engine instance.
+    trace_engine_id: u64,
+
+    /// 1-based shot index for operation traces.
+    trace_shot_index: usize,
+
+    /// 0-based chunk index within the current shot.
+    trace_chunk_index: usize,
 }
 
 impl QisEngine {
@@ -221,6 +239,10 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            operation_trace_dir: None,
+            trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+            trace_shot_index: 0,
+            trace_chunk_index: 0,
         }
     }
 
@@ -249,6 +271,11 @@ impl QisEngine {
         self.interface_builder = Some(builder);
         self.program_bytes = Some(program_source.as_bytes().to_vec());
         self.program_format = Some(ProgramFormat::LlvmIrText);
+    }
+
+    /// Configure a directory where Helios-collected operation chunks are written as JSON.
+    pub fn set_operation_trace_dir(&mut self, trace_dir: impl Into<PathBuf>) {
+        self.operation_trace_dir = Some(trace_dir.into());
     }
 
     /// Initialize the engine for dynamic execution
@@ -294,6 +321,10 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            operation_trace_dir: None,
+            trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+            trace_shot_index: 0,
+            trace_chunk_index: 0,
         }
     }
 
@@ -467,12 +498,78 @@ impl Clone for QisEngine {
                 .map(|b| dyn_clone::clone_box(&**b)),
             // Create a new persistent worker for this clone (can't share threads across clones)
             persistent_worker: None,
+            operation_trace_dir: self.operation_trace_dir.clone(),
+            trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+            trace_shot_index: 0,
+            trace_chunk_index: 0,
         }
     }
 }
 
 // Helper methods for dynamic execution
 impl QisEngine {
+    fn begin_trace_shot(&mut self) {
+        self.trace_shot_index = self.trace_shot_index.saturating_add(1);
+        self.trace_chunk_index = 0;
+    }
+
+    fn trace_operations_chunk(
+        &mut self,
+        stage: &str,
+        ops: &[Operation],
+        waiting_for_result_id: Option<u64>,
+    ) {
+        let Some(trace_dir) = self.operation_trace_dir.clone() else {
+            return;
+        };
+
+        if let Err(err) = fs::create_dir_all(&trace_dir) {
+            warn!(
+                "Failed to create operation trace directory {}: {err}",
+                trace_dir.display()
+            );
+            return;
+        }
+
+        let file_name = format!(
+            "engine_{:04}_shot_{:06}_chunk_{:04}_{}.json",
+            self.trace_engine_id, self.trace_shot_index, self.trace_chunk_index, stage
+        );
+        self.trace_chunk_index = self.trace_chunk_index.saturating_add(1);
+
+        let trace_json = json!({
+            "format": "pecos_qis_operation_trace_v1",
+            "engine_trace_id": self.trace_engine_id,
+            "shot_index": self.trace_shot_index,
+            "chunk_index": self.trace_chunk_index.saturating_sub(1),
+            "stage": stage,
+            "waiting_for_result_id": waiting_for_result_id,
+            "current_shot_seed": self.current_shot_seed,
+            "simulated_op_count": self.simulated_op_count,
+            "num_operations": ops.len(),
+            "operations": ops,
+        });
+
+        let trace_path = trace_dir.join(file_name);
+        let serialized = match serde_json::to_string_pretty(&trace_json) {
+            Ok(serialized) => serialized,
+            Err(err) => {
+                warn!(
+                    "Failed to serialize operation trace chunk for {}: {err}",
+                    trace_path.display()
+                );
+                return;
+            }
+        };
+
+        if let Err(err) = fs::write(&trace_path, serialized) {
+            warn!(
+                "Failed to write operation trace chunk {}: {err}",
+                trace_path.display()
+            );
+        }
+    }
+
     /// Start the LLVM program execution in a worker thread
     ///
     /// Uses a persistent worker thread to avoid TLS allocation issues from
@@ -609,8 +706,9 @@ impl QisEngine {
                     );
                     // Only store NEW operations (those after what we already simulated)
                     if total_ops > self.simulated_op_count {
-                        self.pending_dynamic_ops =
-                            collector.operations[self.simulated_op_count..].to_vec();
+                        let new_ops = collector.operations[self.simulated_op_count..].to_vec();
+                        self.trace_operations_chunk("pending_final", &new_ops, None);
+                        self.pending_dynamic_ops = new_ops;
                         debug!(
                             "Storing {} new operations for final processing",
                             self.pending_dynamic_ops.len()
@@ -924,6 +1022,7 @@ impl ControlEngine for QisEngine {
 
         // Store the shot seed for quantum engine access
         self.current_shot_seed = Some(shot_seed);
+        self.begin_trace_shot();
 
         // Reset the runtime to ensure clean state for new shot
         self.runtime
@@ -947,6 +1046,7 @@ impl ControlEngine for QisEngine {
             // Get pending operations
             if let Some(ops) = self.get_dynamic_operations() {
                 self.pending_dynamic_ops.clone_from(&ops);
+                self.trace_operations_chunk("pending_start", &ops, Some(result_id));
                 // Track how many operations we're sending for simulation
                 self.simulated_op_count = ops.len();
                 debug!(
@@ -1071,6 +1171,11 @@ impl ControlEngine for QisEngine {
                     // Only process NEW operations (after what we already simulated)
                     if ops.len() > self.simulated_op_count {
                         let new_ops: Vec<Operation> = ops[self.simulated_op_count..].to_vec();
+                        self.trace_operations_chunk(
+                            "pending_continue",
+                            &new_ops,
+                            Some(result_id),
+                        );
                         // Update count to include these new operations
                         self.simulated_op_count = ops.len();
                         debug!(
@@ -1119,3 +1224,84 @@ impl ControlEngine for QisEngine {
 
 // Tests for QisEngine are in integration tests since they require
 // actual interface and runtime implementations.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::{ClassicalState, Result as RuntimeResult};
+    use tempfile::TempDir;
+
+    #[derive(Clone, Default)]
+    struct DummyRuntime {
+        state: ClassicalState,
+    }
+
+    impl QisRuntime for DummyRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+    }
+
+    #[test]
+    fn test_operation_trace_chunk_writes_json() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.set_operation_trace_dir(temp_dir.path());
+        engine.current_shot_seed = Some(123);
+        engine.begin_trace_shot();
+
+        let ops = vec![
+            Operation::AllocateQubit { id: 0 },
+            QuantumOp::H(0).into(),
+            QuantumOp::Measure(0, 7).into(),
+        ];
+        engine.trace_operations_chunk("unit_test", &ops, Some(7));
+
+        let mut trace_files = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .map(|entry| entry.expect("dir entry").path())
+            .collect::<Vec<_>>();
+        trace_files.sort();
+        assert_eq!(trace_files.len(), 1);
+
+        let trace_json = std::fs::read_to_string(&trace_files[0]).expect("read trace json");
+        let value: serde_json::Value =
+            serde_json::from_str(&trace_json).expect("parse trace json");
+
+        assert_eq!(value["format"], "pecos_qis_operation_trace_v1");
+        assert_eq!(value["stage"], "unit_test");
+        assert_eq!(value["shot_index"], 1);
+        assert_eq!(value["waiting_for_result_id"], 7);
+        assert_eq!(value["current_shot_seed"], 123);
+        assert_eq!(value["num_operations"], 3);
+        assert_eq!(value["operations"][0]["AllocateQubit"]["id"], 0);
+        assert_eq!(value["operations"][1]["Quantum"]["H"], 0);
+    }
+}

@@ -221,6 +221,17 @@ def qis_engine() -> QisEngineBuilder:
     return QisEngineBuilder()
 
 
+def selene_engine(runtime_name: str | None = None) -> QisEngineBuilder:
+    """Create a Selene-backed QIS engine builder.
+
+    Args:
+        runtime_name: Optional built Selene runtime library name.
+            When omitted, the default simple Selene runtime is used.
+
+    Returns:
+        QisEngineBuilder: A builder for Selene-backed QIS/HUGR simulations.
+    """
+    return QisEngineBuilder().selene_runtime(runtime_name).interface(pecos_rslib.qis_helios_interface())
 __all__ = [
     # Builder classes
     "PhirJsonEngineBuilder",

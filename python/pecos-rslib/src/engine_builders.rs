@@ -176,6 +176,13 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
+    /// Dump Helios-collected operation chunks to the given directory as JSON.
+    #[pyo3(signature = (trace_dir))]
+    fn trace_operations(&mut self, trace_dir: &str) -> PyResult<Self> {
+        self.inner = self.inner.clone().trace_operations_to(trace_dir);
+        Ok(self.clone())
+    }
+
     /// Convert to simulation builder
     fn to_sim(&self) -> PyResult<PySimBuilder> {
         Ok(PySimBuilder {
@@ -188,6 +195,7 @@ impl PyQisEngineBuilder {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None,
+                operation_trace_dir: None,
             }),
         })
     }
@@ -344,6 +352,7 @@ pub struct PyQisControlSimBuilder {
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
     pub(crate) hugr_bytes: Option<Vec<u8>>,
+    pub(crate) operation_trace_dir: Option<String>,
 }
 
 /// Python wrapper for built QIS control simulation
@@ -352,6 +361,8 @@ pub struct PyQisControlSimulation {
     pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
     /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
     pub(crate) temp_dir: Option<String>,
+    /// Path to directory containing operation trace chunks (if enabled)
+    pub(crate) operation_trace_dir: Option<String>,
 }
 
 #[pymethods]
@@ -378,6 +389,12 @@ impl PyQisControlSimulation {
     #[getter]
     fn temp_dir(&self) -> Option<String> {
         self.temp_dir.clone()
+    }
+
+    /// Get the operation trace directory (if operation tracing was enabled)
+    #[getter]
+    fn operation_trace_dir(&self) -> Option<String> {
+        self.operation_trace_dir.clone()
     }
 
     /// Reset the simulation to its initial state (quantum state back to |0⟩).

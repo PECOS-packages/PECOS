@@ -10,7 +10,7 @@ use crate::prelude::*;
 // Import QASM WASM support
 use pecos_qasm::QasmEngineWasm;
 
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +20,18 @@ use crate::engine_builders::{
     PyQasmSimBuilder, PyQis, PyQisControlSimBuilder, PyQisEngineBuilder,
 };
 use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
+
+fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    match engine_builder.bind(py).getattr(pyo3::intern!(py, "_builder")) {
+        Ok(inner) => Ok(inner.into_any().unbind()),
+        Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => Ok(engine_builder),
+        Err(err) => Err(err),
+    }
+}
+
+fn clone_py_any_option(py: Python, value: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
+    value.as_ref().map(|inner| inner.clone_ref(py))
+}
 
 /// Check if a Python object is a Guppy function
 fn is_guppy_function(py: Python, obj: &Py<PyAny>) -> PyResult<bool> {
@@ -134,6 +146,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None, // QIS programs don't have HUGR bytes
+                operation_trace_dir: None,
             }),
         })
     } else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
@@ -220,6 +233,7 @@ impl PySimBuilder {
     #[allow(clippy::needless_pass_by_value)] // Py<PyAny> must be passed by value for PyO3
     fn classical(&mut self, engine_builder: Py<PyAny>) -> PyResult<Self> {
         Python::attach(|py| {
+            let engine_builder = unwrap_engine_builder_proxy(py, engine_builder)?;
             match &mut self.inner {
                 SimBuilderInner::Qasm(sim_builder) => {
                     if let Ok(mut qasm_engine) = engine_builder.extract::<PyQasmEngineBuilder>(py) {
@@ -276,9 +290,47 @@ impl PySimBuilder {
                         Ok(PySimBuilder {
                             inner: self.inner.clone(),
                         })
+                    } else if let Ok(qis_engine) = engine_builder.extract::<PyQisEngineBuilder>(py) {
+                        if sim_builder.foreign_object.is_some() {
+                            return Err(PyTypeError::new_err(
+                                "For HUGR programs, classical(QisEngineBuilder) is not compatible with foreign_object()",
+                            ));
+                        }
+
+                        let hugr_bytes = sim_builder.hugr_bytes.clone().ok_or_else(|| {
+                            PyRuntimeError::new_err(
+                                "HUGR program bytes are not available to switch this simulation onto the QIS/Helios path",
+                            )
+                        })?;
+                        let qis_engine = qis_engine
+                            .inner
+                            .clone()
+                            .try_program(Hugr::from_bytes(hugr_bytes.clone()))
+                            .map_err(|e| {
+                                PyRuntimeError::new_err(format!(
+                                    "Failed to load HUGR program into QIS engine: {e}"
+                                ))
+                            })?;
+
+                        Ok(PySimBuilder {
+                            inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                                engine_builder: Arc::new(Mutex::new(Some(qis_engine))),
+                                seed: sim_builder.seed,
+                                workers: sim_builder.workers,
+                                quantum_engine_builder: clone_py_any_option(
+                                    py,
+                                    &sim_builder.quantum_engine_builder,
+                                ),
+                                noise_builder: clone_py_any_option(py, &sim_builder.noise_builder),
+                                explicit_num_qubits: sim_builder.explicit_num_qubits,
+                                keep_intermediate_files: sim_builder.keep_intermediate_files,
+                                hugr_bytes: Some(hugr_bytes),
+                                operation_trace_dir: None,
+                            }),
+                        })
                     } else {
                         Err(PyTypeError::new_err(
-                            "For direct HUGR programs, classical() requires a HugrEngineBuilder",
+                            "For direct HUGR programs, classical() requires a HugrEngineBuilder or QisEngineBuilder",
                         ))
                     }
                 }
@@ -457,6 +509,27 @@ impl PySimBuilder {
             | SimBuilderInner::Empty => {
                 // These engine types don't support keep_intermediate_files yet
                 // Just ignore silently for now
+            }
+        }
+        Ok(PySimBuilder {
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Dump Helios-collected operation chunks to the given directory as JSON.
+    fn trace_operations(&mut self, trace_dir: &str) -> PyResult<Self> {
+        match &mut self.inner {
+            SimBuilderInner::QisControl(builder) => {
+                builder.operation_trace_dir = Some(trace_dir.to_string());
+            }
+            SimBuilderInner::Qasm(_)
+            | SimBuilderInner::Hugr(_)
+            | SimBuilderInner::PhirJson(_)
+            | SimBuilderInner::Phir(_)
+            | SimBuilderInner::Empty => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "trace_operations() is only supported for QIS control simulations",
+                ));
             }
         }
         Ok(PySimBuilder {
@@ -1116,6 +1189,11 @@ impl PySimBuilder {
                     let engine_builder = builder_lock
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+                    let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
+                        engine_builder.trace_operations_to(trace_dir)
+                    } else {
+                        engine_builder
+                    };
 
                     // Use the Rust sim_builder API directly (from pecos prelude)
                     let mut sim_builder = pecos_engines::sim_builder().classical(engine_builder);
@@ -1278,6 +1356,7 @@ impl PySimBuilder {
                         crate::engine_builders::PyQisControlSimulation {
                             inner: Arc::new(Mutex::new(engine)),
                             temp_dir,
+                            operation_trace_dir: builder.operation_trace_dir.clone(),
                         },
                     )?
                     .into_any())
@@ -1492,6 +1571,7 @@ impl Clone for SimBuilderInner {
                     explicit_num_qubits: builder.explicit_num_qubits,
                     keep_intermediate_files: builder.keep_intermediate_files,
                     hugr_bytes: builder.hugr_bytes.clone(),
+                    operation_trace_dir: builder.operation_trace_dir.clone(),
                 })
             }
             SimBuilderInner::PhirJson(builder) => SimBuilderInner::PhirJson(PyPhirJsonSimBuilder {

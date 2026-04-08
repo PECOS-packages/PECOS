@@ -241,6 +241,86 @@ class TestDemGeneration:
         assert isinstance(dem, str)
         assert "error" in dem
 
+    def test_generate_dem_from_patch_can_skip_stim_decomposition(self) -> None:
+        """Stim patch DEM helper should support raw vs decomposed DEM output."""
+        from pecos.qec.surface.decode import generate_dem_from_patch
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+
+        full_dem = generate_dem_from_patch(patch, num_rounds=4, noise=noise, basis="X", decompose_errors=False)
+        decomposed_dem = generate_dem_from_patch(patch, num_rounds=4, noise=noise, basis="X", decompose_errors=True)
+
+        assert "^" not in full_dem
+        assert "^" in decomposed_dem
+
+    def test_generate_dem_from_tick_circuit_supports_raw_and_decomposed_output(self) -> None:
+        """Native TickCircuit DEM helper should preserve both public output forms."""
+        patch = SurfacePatch.create(distance=3)
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=4, basis="X")
+        params = {"p1": 0.001, "p2": 0.01, "p_meas": 0.01, "p_init": 0.001}
+
+        raw_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
+        decomposed_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=True)
+
+        assert raw_dem != decomposed_dem
+        assert "^" not in raw_dem
+        assert "^" in decomposed_dem
+
+    def test_native_circuit_level_dem_threads_ancilla_budget(self) -> None:
+        """Native DEM helpers should use the requested ancilla-budgeted circuit family."""
+        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+        params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_init": noise.p_init}
+
+        full_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        batched_tc = generate_tick_circuit_from_patch(
+            patch,
+            num_rounds=2,
+            basis="X",
+            ancilla_budget=2,
+        )
+
+        full_dem = generate_circuit_level_dem_from_builder(patch, num_rounds=2, noise=noise, basis="X")
+        batched_dem = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="X",
+            ancilla_budget=2,
+        )
+
+        assert full_dem == generate_dem_from_tick_circuit(full_tc, **params, decompose_errors=False)
+        assert batched_dem == generate_dem_from_tick_circuit(batched_tc, **params, decompose_errors=False)
+        assert batched_dem != full_dem
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            ancilla_budget=2,
+            circuit_level_dem_mode="native_full",
+        )
+        assert decoder._get_circuit_level_dem("X") == batched_dem
+
+    def test_generate_dem_from_tick_circuit_maximal_decomposition_prefers_singletons(self) -> None:
+        """Maximal decomposition should no longer be a no-op."""
+        patch = SurfacePatch.create(distance=3)
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=20, basis="X")
+        params = {"p1": 0.0, "p2": 0.00235, "p_meas": 0.01972626855445279, "p_init": 0.0010045162906914633}
+
+        decomposed_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=True)
+        maximal_dem = generate_dem_from_tick_circuit(
+            tc,
+            **params,
+            decompose_errors=False,
+            maximal_decomposition=True,
+        )
+
+        assert maximal_dem != decomposed_dem
+        assert _count_singleton_error_parts(maximal_dem) > _count_singleton_error_parts(decomposed_dem)
     def test_dem_detector_count(self) -> None:
         """DEM should have correct number of detectors."""
         patch = SurfacePatch.create(distance=3)

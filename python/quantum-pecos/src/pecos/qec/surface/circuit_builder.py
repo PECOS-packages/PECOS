@@ -69,13 +69,46 @@ class QubitAllocation:
     @property
     def total(self) -> int:
         """Total number of qubits."""
-        return len(self.data_qubits) + len(self.x_ancilla_qubits) + len(self.z_ancilla_qubits)
+        return len(set(self.data_qubits) | set(self.x_ancilla_qubits) | set(self.z_ancilla_qubits))
+
+
+def _normalize_ancilla_budget(total_ancilla: int, ancilla_budget: int | None) -> int:
+    """Clamp ancilla budget to the valid range for a patch."""
+    if ancilla_budget is None:
+        return total_ancilla
+
+    if ancilla_budget < 1:
+        msg = f"ancilla_budget must be >= 1, got {ancilla_budget}"
+        raise ValueError(msg)
+
+    return min(ancilla_budget, total_ancilla)
+
+
+def _batched_stabilizers(
+    patch: SurfacePatch,
+    ancilla_budget: int,
+) -> list[list[tuple[str, int]]]:
+    """Partition stabilizers into ancilla-reuse batches.
+
+    This mirrors the public Guppy batching order so the abstract circuit and
+    its native DEMs match the actual low-ancilla circuit family.
+    """
+    geom = patch.geometry
+    stabilizers = [("X", stab.index) for stab in geom.x_stabilizers]
+    stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
+    stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
+
+    return [
+        stabilizers[start : start + ancilla_budget]
+        for start in range(0, len(stabilizers), ancilla_budget)
+    ]
 
 
 def build_surface_code_circuit(
     patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
+    ancilla_budget: int | None = None,
 ) -> tuple[list[CircuitOp], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
@@ -88,6 +121,9 @@ def build_surface_code_circuit(
         patch: Surface code patch with geometry
         num_rounds: Number of syndrome extraction rounds
         basis: 'Z' for |0_L> state or 'X' for |+_L> state
+        ancilla_budget: Optional cap on simultaneously live ancillas. When
+            provided below the total stabilizer count, ancillas are reused
+            across stabilizer batches following the public Guppy order.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -98,15 +134,36 @@ def build_surface_code_circuit(
     num_data = geom.num_data
     num_x_anc = len(geom.x_stabilizers)
     num_z_anc = len(geom.z_stabilizers)
+    total_ancilla = num_x_anc + num_z_anc
+    effective_ancilla_budget = _normalize_ancilla_budget(total_ancilla, ancilla_budget)
 
-    # Qubit allocation layout
-    allocation = QubitAllocation(
-        data_qubits=list(range(num_data)),
-        x_ancilla_qubits=list(range(num_data, num_data + num_x_anc)),
-        z_ancilla_qubits=list(
-            range(num_data + num_x_anc, num_data + num_x_anc + num_z_anc),
-        ),
-    )
+    # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
+    # shared ancilla pool and different stabilizers can intentionally share the
+    # same physical qubit id at different times.
+    if effective_ancilla_budget == total_ancilla:
+        allocation = QubitAllocation(
+            data_qubits=list(range(num_data)),
+            x_ancilla_qubits=list(range(num_data, num_data + num_x_anc)),
+            z_ancilla_qubits=list(
+                range(num_data + num_x_anc, num_data + num_x_anc + num_z_anc),
+            ),
+        )
+    else:
+        ancilla_pool = list(range(num_data, num_data + effective_ancilla_budget))
+        x_ancilla_qubits = [-1] * num_x_anc
+        z_ancilla_qubits = [-1] * num_z_anc
+        for batch in _batched_stabilizers(patch, effective_ancilla_budget):
+            for pool_idx, (stab_type, stab_idx) in enumerate(batch):
+                if stab_type == "X":
+                    x_ancilla_qubits[stab_idx] = ancilla_pool[pool_idx]
+                else:
+                    z_ancilla_qubits[stab_idx] = ancilla_pool[pool_idx]
+
+        allocation = QubitAllocation(
+            data_qubits=list(range(num_data)),
+            x_ancilla_qubits=x_ancilla_qubits,
+            z_ancilla_qubits=z_ancilla_qubits,
+        )
 
     def data_q(i: int) -> int:
         return allocation.data_qubits[i]
@@ -143,47 +200,115 @@ def build_surface_code_circuit(
         ops.append(
             CircuitOp(OpType.COMMENT, label=f"syndrome_extraction round {rnd + 1}"),
         )
+        if effective_ancilla_budget == total_ancilla:
+            ops.extend(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.extend(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
 
-        # Allocate X ancillas: ax{i} = qubit()
-        ops.extend(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
-        # Allocate Z ancillas: az{i} = qubit()
-        ops.extend(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
-
-        # H on X ancillas
-        ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-        ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)]) for s in geom.x_stabilizers)
-
-        ops.append(CircuitOp(OpType.TICK))
-
-        # 4 CNOT rounds
-        for rnd_idx, cx_round in enumerate(cnot_rounds):
-            ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
-            for stab_type, stab_idx, data_idx in cx_round:
-                if stab_type == "X":
-                    # cx(ax{stab_idx}, surf.data[{data_idx}])
-                    ops.append(
-                        CircuitOp(OpType.CX, [x_anc_q(stab_idx), data_q(data_idx)]),
-                    )
-                else:
-                    # cx(surf.data[{data_idx}], az{stab_idx})
-                    ops.append(
-                        CircuitOp(OpType.CX, [data_q(data_idx), z_anc_q(stab_idx)]),
-                    )
             ops.append(CircuitOp(OpType.TICK))
 
-        # H on X ancillas (second time)
-        ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-        ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)]) for s in geom.x_stabilizers)
+            for rnd_idx, cx_round in enumerate(cnot_rounds):
+                ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                for stab_type, stab_idx, data_idx in cx_round:
+                    if stab_type == "X":
+                        ops.append(
+                            CircuitOp(
+                                OpType.CX,
+                                [x_anc_q(stab_idx), data_q(data_idx)],
+                                f"X{stab_idx}",
+                            ),
+                        )
+                    else:
+                        ops.append(
+                            CircuitOp(
+                                OpType.CX,
+                                [data_q(data_idx), z_anc_q(stab_idx)],
+                                f"Z{stab_idx}",
+                            ),
+                        )
+                ops.append(CircuitOp(OpType.TICK))
 
-        # Measure X ancillas: sx{i} = measure(ax{i})
-        ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
-        ops.extend(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
+            ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
-        # Measure Z ancillas: sz{i} = measure(az{i})
-        ops.extend(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
+            ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
+            ops.extend(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
+            ops.extend(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
 
-        ops.append(CircuitOp(OpType.TICK))
+            ops.append(CircuitOp(OpType.TICK))
+        else:
+            stabilizer_batches = _batched_stabilizers(patch, effective_ancilla_budget)
+            for batch in stabilizer_batches:
+                ops.append(CircuitOp(OpType.COMMENT, label="Prepare ancillas"))
+                batch_ancillas = {
+                    (stab_type, stab_idx): x_anc_q(stab_idx) if stab_type == "X" else z_anc_q(stab_idx)
+                    for stab_type, stab_idx in batch
+                }
+
+                for stab_type, stab_idx in batch:
+                    ops.append(
+                        CircuitOp(
+                            OpType.ALLOC,
+                            [batch_ancillas[(stab_type, stab_idx)]],
+                            f"a{stab_type.lower()}{stab_idx}",
+                        ),
+                    )
+
+                x_stabilizers_in_batch = [stab_idx for stab_type, stab_idx in batch if stab_type == "X"]
+                if x_stabilizers_in_batch:
+                    ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+                    ops.extend(
+                        CircuitOp(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                        for stab_idx in x_stabilizers_in_batch
+                    )
+
+                ops.append(CircuitOp(OpType.TICK))
+
+                for rnd_idx, cx_round in enumerate(cnot_rounds):
+                    ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                    for stab_type, stab_idx, data_idx in cx_round:
+                        ancilla_q = batch_ancillas.get((stab_type, stab_idx))
+                        if ancilla_q is None:
+                            continue
+                        if stab_type == "X":
+                            ops.append(
+                                CircuitOp(
+                                    OpType.CX,
+                                    [ancilla_q, data_q(data_idx)],
+                                    f"X{stab_idx}",
+                                ),
+                            )
+                        else:
+                            ops.append(
+                                CircuitOp(
+                                    OpType.CX,
+                                    [data_q(data_idx), ancilla_q],
+                                    f"Z{stab_idx}",
+                                ),
+                            )
+                    ops.append(CircuitOp(OpType.TICK))
+
+                if x_stabilizers_in_batch:
+                    ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+                    ops.extend(
+                        CircuitOp(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                        for stab_idx in x_stabilizers_in_batch
+                    )
+
+                ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
+                for stab_type, stab_idx in batch:
+                    measure_label = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
+                    ops.append(
+                        CircuitOp(
+                            OpType.MEASURE,
+                            [batch_ancillas[(stab_type, stab_idx)]],
+                            measure_label,
+                        ),
+                    )
+
+                ops.append(CircuitOp(OpType.TICK))
 
     # =========================================================================
     # measure_z_basis / measure_x_basis
@@ -560,9 +685,24 @@ class TickCircuitRenderer(CircuitRenderer):
         # Format: {tick_idx: {'phase': str, 'round': int, 'cx_round': int, 'gates': [(label, role), ...]}}
         all_tick_metadata: dict[int, dict] = {}
 
+        def get_stabilizer_from_label(label: str) -> str:
+            """Decode surface stabilizer identity from an operation label."""
+            if not label:
+                return ""
+            if label[0] in {"X", "Z"} and label[1:].isdigit():
+                return label
+            if (label.startswith("ax") or label.startswith("sx")) and label[2:].isdigit():
+                return f"X{int(label[2:])}"
+            if (label.startswith("az") or label.startswith("sz")) and label[2:].isdigit():
+                return f"Z{int(label[2:])}"
+            return ""
+
         # Helper to get stabilizer name for a CX gate
-        def get_cx_stabilizer(control: int, target: int) -> str:
+        def get_cx_stabilizer(control: int, target: int, label: str = "") -> str:
             """Get stabilizer name for a CX gate (e.g., 'X0', 'Z2')."""
+            from_label = get_stabilizer_from_label(label)
+            if from_label:
+                return from_label
             if control in allocation.x_ancilla_qubits:
                 # X stabilizer: ancilla is control
                 stab_idx = allocation.x_ancilla_qubits.index(control)
@@ -573,6 +713,55 @@ class TickCircuitRenderer(CircuitRenderer):
                 return f"Z{stab_idx}"
             return ""
 
+        stabilizer_by_label = {
+            **{f"X{s.index}": s for s in geom.x_stabilizers},
+            **{f"Z{s.index}": s for s in geom.z_stabilizers},
+        }
+        stabilizer_by_ancilla_qubit = {
+            **{allocation.x_ancilla_qubits[s.index]: f"X{s.index}" for s in geom.x_stabilizers},
+            **{allocation.z_ancilla_qubits[s.index]: f"Z{s.index}" for s in geom.z_stabilizers},
+        }
+
+        def get_stabilizer_metadata(stab_label: str) -> dict[str, object]:
+            stab = stabilizer_by_label[stab_label]
+            return {
+                "stabilizer": stab_label,
+                "stabilizer_kind": stab.stab_type,
+                "stabilizer_index": stab.index,
+                "stabilizer_is_boundary": stab.is_boundary,
+                "stabilizer_region": get_stabilizer_region(stab, patch),
+            }
+
+        def get_ancilla_gate_metadata(qubit: int, label: str = "") -> dict[str, object]:
+            stab_label = get_stabilizer_from_label(label) or stabilizer_by_ancilla_qubit.get(qubit)
+            if stab_label is None:
+                return {}
+            metadata = get_stabilizer_metadata(stab_label)
+            metadata["ancilla_qubit"] = qubit
+            return metadata
+
+        def get_cx_gate_metadata(control: int, target: int, label: str = "") -> dict[str, object]:
+            stab_label = get_cx_stabilizer(control, target, label)
+            if not stab_label:
+                return {}
+            metadata = get_stabilizer_metadata(stab_label)
+            ancilla_qubit = next(
+                (q for q in (control, target) if q in stabilizer_by_ancilla_qubit),
+                None,
+            )
+            data_qubit = next((q for q in (control, target) if q in allocation.data_qubits), None)
+            if ancilla_qubit is not None:
+                metadata["ancilla_qubit"] = ancilla_qubit
+            if data_qubit is not None:
+                metadata["data_qubit"] = data_qubit
+                metadata["touch_label"] = get_stabilizer_touch_label(
+                    stabilizer_by_label[stab_label],
+                    patch,
+                    data_qubit,
+                )
+            if current_cx_round > 0:
+                metadata["cx_round_0based"] = current_cx_round - 1
+            return metadata
         def new_tick() -> TickHandle:
             nonlocal current_tick_handle, current_tick_idx, qubits_in_current_tick
             current_tick_handle = circuit.tick()
@@ -620,6 +809,9 @@ class TickCircuitRenderer(CircuitRenderer):
                     current_round = int(op.label.split()[-1]) - 1
                     current_phase = "syndrome_prep"
                     current_cx_round = 0
+                elif "Prepare ancillas" in op.label:
+                    current_phase = "syndrome_prep"
+                    current_cx_round = 0
                 elif "Hadamard on X ancillas" in op.label:
                     current_phase = "syndrome_h_pre" if current_phase == "syndrome_prep" else "syndrome_h_post"
                 elif "CX round" in op.label:
@@ -642,46 +834,65 @@ class TickCircuitRenderer(CircuitRenderer):
                     tick.pz([q])
                 mark_qubits_used([q])
                 # Label helps identify which qubit (e.g., "data[0]", "ax0")
-                queue_gate_metadata({"label": op.label} if op.label else None)
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.PREP:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).pz([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.H:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).h([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.X:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).x([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.Z:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).z([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.CX:
                 qubits = op.qubits
                 get_tick_for_qubits(qubits).cx([(qubits[0], qubits[1])])
                 mark_qubits_used(qubits)
-                # Stabilizer name helps identify which stabilizer (e.g., "X0", "Z2")
-                stab = get_cx_stabilizer(qubits[0], qubits[1])
-                queue_gate_metadata({"stabilizer": stab} if stab else None)
+                meta = get_cx_gate_metadata(qubits[0], qubits[1], op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).mz([q])
                 mark_qubits_used([q])
                 # Label helps identify measurement (e.g., "sx0", "sz0", "final[0]")
-                queue_gate_metadata({"label": op.label} if op.label else None)
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
                 # Track measurement index for detectors
                 if op.label.startswith("sx"):
@@ -825,7 +1036,8 @@ class TickCircuitRenderer(CircuitRenderer):
             circuit.set_meta("observables", json.dumps(observables))
             circuit.set_meta("num_measurements", str(meas_count))
             circuit.set_meta("num_detectors", str(len(detectors)))
-            circuit.set_meta("basis", basis.upper())
+        circuit.set_meta("basis", basis.upper())
+        circuit.set_meta("ancilla_budget", str(allocation.total - len(allocation.data_qubits)))
 
         return circuit
 
@@ -838,6 +1050,7 @@ def generate_stim_from_patch(
     num_rounds: int,
     basis: str = "Z",
     *,
+    ancilla_budget: int | None = None,
     p1: float = 0.0,
     p2: float = 0.0,
     p_meas: float = 0.0,
@@ -849,6 +1062,7 @@ def generate_stim_from_patch(
         patch: Surface code patch
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
+        ancilla_budget: Optional cap on simultaneously live ancillas
         p1: Single-qubit error rate
         p2: Two-qubit error rate
         p_meas: Measurement error rate
@@ -857,7 +1071,7 @@ def generate_stim_from_patch(
     Returns:
         Stim circuit string
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis)
+    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
     renderer = StimRenderer(p1=p1, p2=p2, p_meas=p_meas, p_init=p_init)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
@@ -894,6 +1108,7 @@ def generate_dag_circuit_from_patch(
     patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
+    ancilla_budget: int | None = None,
 ) -> DagCircuit:
     """Generate PECOS DagCircuit from SurfacePatch.
 
@@ -901,11 +1116,12 @@ def generate_dag_circuit_from_patch(
         patch: Surface code patch
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
+        ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         PECOS DagCircuit instance
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis)
+    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
     renderer = DagCircuitRenderer()
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
@@ -916,6 +1132,7 @@ def generate_tick_circuit_from_patch(
     basis: str = "Z",
     *,
     add_detectors: bool = True,
+    ancilla_budget: int | None = None,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
 
@@ -937,15 +1154,115 @@ def generate_tick_circuit_from_patch(
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
         add_detectors: Whether to add detector annotations as metadata
+        ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         PECOS TickCircuit instance
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis)
+    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
     renderer = TickCircuitRenderer(add_detectors=add_detectors)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
 
+def get_detector_descriptors_from_tick_circuit(
+    tick_circuit: TickCircuit,
+    patch: SurfacePatch,
+) -> list[SurfaceDetectorDescriptor]:
+    """Return structured detector descriptors for a generated TickCircuit.
+
+    The returned descriptors are cached in TickCircuit metadata when the circuit
+    is created by :func:`generate_tick_circuit_from_patch`.
+
+    Example:
+        >>> from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        >>> patch = SurfacePatch.create(distance=3)
+        >>> tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z")
+        >>> len(get_detector_descriptors_from_tick_circuit(tc, patch))
+        12
+    """
+    import json
+
+    cached = tick_circuit.get_meta("detector_descriptors")
+    if cached:
+        return json.loads(cached)
+
+    detectors = json.loads(tick_circuit.get_meta("detectors") or "[]")
+    return _build_detector_descriptors(detectors, patch)
+
+
+def get_observable_descriptors_from_tick_circuit(
+    tick_circuit: TickCircuit,
+    patch: SurfacePatch,
+) -> list[SurfaceObservableDescriptor]:
+    """Return structured logical observable descriptors for a TickCircuit.
+
+    Example:
+        >>> from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        >>> patch = SurfacePatch.create(distance=3)
+        >>> tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        >>> get_observable_descriptors_from_tick_circuit(tc, patch)[0]["basis"]
+        'X'
+    """
+    import json
+
+    cached = tick_circuit.get_meta("observable_descriptors")
+    if cached:
+        return json.loads(cached)
+
+    observables = json.loads(tick_circuit.get_meta("observables") or "[]")
+    basis = tick_circuit.get_meta("basis") or "Z"
+    return _build_observable_descriptors(observables, patch, basis)
+
+
+def describe_surface_memory_experiment(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str = "Z",
+    *,
+    add_detectors: bool = True,
+    ancilla_budget: int | None = None,
+) -> SurfaceMemoryExperimentDescriptor:
+    """Return a structured descriptor bundle for a surface-memory experiment.
+
+    This is a convenience wrapper for users who want one public entry point
+    that covers patch geometry, stabilizers, logicals, detectors, and
+    observables for a generated memory circuit.
+
+    The descriptor helpers are regression-covered on rotated memory circuits and
+    also exposed for non-rotated and asymmetric patches created by
+    :class:`pecos.qec.surface.SurfacePatch`.
+
+    Example:
+        >>> from pecos.qec.surface import SurfacePatch, describe_surface_memory_experiment
+        >>> summary = describe_surface_memory_experiment(SurfacePatch.create(distance=3), 2, basis="X")
+        >>> summary["basis"]
+        'X'
+    """
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=num_rounds,
+        basis=basis,
+        add_detectors=add_detectors,
+        ancilla_budget=ancilla_budget,
+    )
+    x_stabilizers = list(patch.iter_stabilizer_descriptors("X"))
+    z_stabilizers = list(patch.iter_stabilizer_descriptors("Z"))
+    logicals = list(patch.iter_logical_descriptors())
+    detectors = get_detector_descriptors_from_tick_circuit(tick_circuit, patch)
+    observables = get_observable_descriptors_from_tick_circuit(tick_circuit, patch)
+
+    return {
+        "patch": patch.get_patch_descriptor(),
+        "basis": basis.upper(),
+        "num_rounds": num_rounds,
+        "ancilla_budget": ancilla_budget,
+        "x_stabilizers": x_stabilizers,
+        "z_stabilizers": z_stabilizers,
+        "stabilizers": x_stabilizers + z_stabilizers,
+        "logicals": logicals,
+        "detectors": detectors,
+        "observables": observables,
+    }
 def tick_circuit_to_stim(
     tc: TickCircuit,
     *,

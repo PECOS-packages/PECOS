@@ -327,6 +327,8 @@ def generate_circuit_level_dem_from_builder(
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    decompose_errors: bool = False,
+    ancilla_budget: int | None = None,
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -344,6 +346,12 @@ def generate_circuit_level_dem_from_builder(
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
+        decompose_errors: If True, return PECOS's native decomposed DEM
+            representation, which is more appropriate for graph-based
+            decoders like PyMatching.
+        ancilla_budget: Optional cap on simultaneously live ancillas. When
+            provided below the total stabilizer count, the native DEM is built
+            from the same batched ancilla-reuse circuit family used by Guppy.
 
     Returns:
         DEM string in standard format
@@ -362,7 +370,12 @@ def generate_circuit_level_dem_from_builder(
     )
 
     # Generate TickCircuit (source of truth for circuit structure)
-    tc = generate_tick_circuit_from_patch(patch, num_rounds, basis)
+    tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+    )
 
     # Convert to DAG and build influence map via Rust fault propagation
     dag = tc.to_dag_circuit()
@@ -385,6 +398,8 @@ def generate_circuit_level_dem_from_builder(
         builder.with_observables_json(observables_json)
 
     dem = builder.build()
+    if decompose_errors:
+        return dem.to_string_decomposed()
     return dem.to_string()
 
 
@@ -756,6 +771,8 @@ class SurfaceDecoder:
         ] = "pymatching",
         *,
         use_circuit_level_dem: bool = True,
+        circuit_level_dem_mode: Literal["native_full", "native_decomposed"] = "native_full",
+        ancilla_budget: int | None = None,
     ) -> None:
         """Initialize decoder from surface code patch.
 
@@ -775,12 +792,23 @@ class SurfaceDecoder:
                 This provides proper error propagation through gates matching
                 the actual Guppy/Selene circuits. If False, use phenomenological
                 DEMs or check matrices.
+            circuit_level_dem_mode: Which PECOS-native DEM representation to use
+                when circuit-level DEMs are enabled. ``"native_full"`` preserves
+                the current non-decomposed DEM output. ``"native_decomposed"``
+                returns PECOS's graphlike decomposed DEM output, which is often
+                a better fit for graph decoders such as PyMatching.
+            ancilla_budget: Optional cap on simultaneously live ancillas for
+                the native circuit-level DEM path. When provided, the decoder
+                builds its DEM from the corresponding batched ancilla-reuse
+                circuit instead of the default dedicated-ancilla circuit.
         """
         self.patch = patch
         self.num_rounds = num_rounds
         self.noise = noise or NoiseModel(p2=0.01, p_meas=0.01)
         self.decoder_type = DecoderType(decoder_type)
         self.use_circuit_level_dem = use_circuit_level_dem
+        self.circuit_level_dem_mode = circuit_level_dem_mode
+        self.ancilla_budget = ancilla_budget
 
         # Lazily create decoders
         self._x_decoder = None
@@ -814,6 +842,8 @@ class SurfaceDecoder:
             self.num_rounds,
             self.noise,
             basis=basis,
+            decompose_errors=self.circuit_level_dem_mode == "native_decomposed",
+            ancilla_budget=self.ancilla_budget,
         )
 
     def _get_z_check_matrix(self) -> NDArray[np.uint8]:
@@ -1784,6 +1814,7 @@ def build_native_sampler(
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    ancilla_budget: int | None = None,
 ) -> NativeSampler:
     """Build a PECOS native sampler for threshold estimation.
 
@@ -1799,6 +1830,7 @@ def build_native_sampler(
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
+        ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         NativeSampler that can generate samples for threshold estimation
@@ -1819,7 +1851,12 @@ def build_native_sampler(
     )
 
     # Generate TickCircuit (source of truth for circuit structure)
-    tc = generate_tick_circuit_from_patch(patch, num_rounds, basis)
+    tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+    )
 
     # Convert to DAG and build influence map via Rust fault propagation
     dag = tc.to_dag_circuit()

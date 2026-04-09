@@ -26,7 +26,7 @@ use pecos_engines::{
 use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
 use pecos_random::PecosRng;
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -164,6 +164,12 @@ pub struct QisEngine {
     /// Number of qubits in the program
     num_qubits: usize,
 
+    /// Mapping from program-level qubit handles to physical simulator slots.
+    active_qubit_slots: BTreeMap<usize, usize>,
+
+    /// Reusable physical simulator slots freed by `ReleaseQubit`.
+    free_qubit_slots: BTreeSet<usize>,
+
     /// Whether we've started processing
     started: bool,
 
@@ -227,6 +233,8 @@ impl QisEngine {
             runtime,
             current_operations: None,
             num_qubits: 0,
+            active_qubit_slots: BTreeMap::new(),
+            free_qubit_slots: BTreeSet::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
@@ -309,6 +317,8 @@ impl QisEngine {
             runtime,
             current_operations: None,
             num_qubits: 0,
+            active_qubit_slots: BTreeMap::new(),
+            free_qubit_slots: BTreeSet::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
@@ -372,8 +382,162 @@ impl QisEngine {
         }
     }
 
-    /// Convert quantum operations to `ByteMessage` for the quantum engine
-    fn operations_to_bytemessage(
+    fn reset_qubit_slots(&mut self) {
+        self.active_qubit_slots.clear();
+        self.free_qubit_slots.clear();
+        self.num_qubits = 0;
+    }
+
+    fn allocate_qubit_slot(&mut self, program_id: usize) -> usize {
+        if let Some(&slot) = self.active_qubit_slots.get(&program_id) {
+            return slot;
+        }
+
+        let slot = if let Some(slot) = self.free_qubit_slots.pop_first() {
+            slot
+        } else {
+            self.num_qubits
+        };
+        self.num_qubits = self.num_qubits.max(slot + 1);
+        self.active_qubit_slots.insert(program_id, slot);
+        slot
+    }
+
+    fn release_qubit_slot(&mut self, program_id: usize) {
+        if let Some(slot) = self.active_qubit_slots.remove(&program_id) {
+            self.free_qubit_slots.insert(slot);
+        }
+    }
+
+    fn mapped_qubit(&self, program_id: usize, op: &QuantumOp) -> Result<usize, PecosError> {
+        self.active_qubit_slots.get(&program_id).copied().ok_or_else(|| {
+            PecosError::Generic(format!(
+                "QIS runtime emitted {op:?} for program qubit {program_id}, but no active physical slot is mapped to that handle"
+            ))
+        })
+    }
+
+    /// Convert dynamic QIS operations into a `ByteMessage` for the quantum engine.
+    ///
+    /// Guppy and the LLVM/QIS path allocate fresh qubit handles over time, even when
+    /// the source program is reusing ancillas logically. The quantum simulators used
+    /// by `sim()` operate on a fixed physical qubit pool, so we must honor
+    /// `AllocateQubit`/`ReleaseQubit` and remap program handles back onto reusable
+    /// physical slots before sending the quantum ops downstream.
+    fn operations_to_bytemessage(&mut self, ops: &[Operation]) -> Result<ByteMessage, PecosError> {
+        let mut builder = ByteMessageBuilder::new();
+        self.measurement_mapping.clear();
+
+        for op in ops {
+            match op {
+                Operation::AllocateQubit { id } => {
+                    let slot = self.allocate_qubit_slot(*id);
+                    // Guppy/QIS allocation semantics guarantee a fresh |0> qubit.
+                    // When we recycle a physical simulator slot, explicitly re-prepare
+                    // it so stale post-measurement state cannot leak across allocations.
+                    builder.pz(&[slot]);
+                }
+                Operation::ReleaseQubit { id } => {
+                    self.release_qubit_slot(*id);
+                }
+                Operation::AllocateResult { .. }
+                | Operation::RecordOutput { .. }
+                | Operation::Barrier => {}
+                Operation::Quantum(qop) => match qop {
+                    QuantumOp::H(qubit) => {
+                        builder.h(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::X(qubit) => {
+                        builder.x(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::Y(qubit) => {
+                        builder.y(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::Z(qubit) => {
+                        builder.z(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::S(qubit) => {
+                        builder.sz(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::Sdg(qubit) => {
+                        builder.szdg(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::T(qubit) => {
+                        builder.t(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::Tdg(qubit) => {
+                        builder.tdg(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::RX(angle, qubit) => {
+                        builder.rx(
+                            Angle64::from_radians(*angle),
+                            &[self.mapped_qubit(*qubit, qop)?],
+                        );
+                    }
+                    QuantumOp::RY(angle, qubit) => {
+                        builder.ry(
+                            Angle64::from_radians(*angle),
+                            &[self.mapped_qubit(*qubit, qop)?],
+                        );
+                    }
+                    QuantumOp::RZ(angle, qubit) => {
+                        builder.rz(
+                            Angle64::from_radians(*angle),
+                            &[self.mapped_qubit(*qubit, qop)?],
+                        );
+                    }
+                    QuantumOp::RXY(theta, phi, qubit) => {
+                        builder.r1xy(
+                            Angle64::from_radians(*theta),
+                            Angle64::from_radians(*phi),
+                            &[self.mapped_qubit(*qubit, qop)?],
+                        );
+                    }
+                    QuantumOp::CX(control, target) => {
+                        builder.cx(&[(
+                            self.mapped_qubit(*control, qop)?,
+                            self.mapped_qubit(*target, qop)?,
+                        )]);
+                    }
+                    QuantumOp::Measure(qubit, result_id) => {
+                        self.measurement_mapping.push(*result_id);
+                        builder.mz(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    QuantumOp::ZZ(qubit1, qubit2) => {
+                        builder.szz(&[(
+                            self.mapped_qubit(*qubit1, qop)?,
+                            self.mapped_qubit(*qubit2, qop)?,
+                        )]);
+                    }
+                    QuantumOp::RZZ(angle, qubit1, qubit2) => {
+                        builder.rzz(
+                            Angle64::from_radians(*angle),
+                            &[(
+                                self.mapped_qubit(*qubit1, qop)?,
+                                self.mapped_qubit(*qubit2, qop)?,
+                            )],
+                        );
+                    }
+                    QuantumOp::Reset(qubit) => {
+                        builder.pz(&[self.mapped_qubit(*qubit, qop)?]);
+                    }
+                    _ => {
+                        return Err(PecosError::Generic(format!(
+                            "Unsupported operation: {qop:?}"
+                        )));
+                    }
+                },
+            }
+        }
+
+        Ok(builder.build())
+    }
+
+    /// Convert already-materialized quantum ops into a `ByteMessage`.
+    ///
+    /// This path is used by runtimes that already present qubit ids in the fixed
+    /// simulator space, so no allocate/release remapping is needed.
+    fn quantum_ops_to_bytemessage(
         &mut self,
         ops: Vec<QuantumOp>,
     ) -> Result<ByteMessage, PecosError> {
@@ -430,7 +594,6 @@ impl QisEngine {
                     builder.mz(&[qubit]);
                 }
                 QuantumOp::ZZ(qubit1, qubit2) => {
-                    // ZZ gate is the same as SZZ in PECOS
                     builder.szz(&[(qubit1, qubit2)]);
                 }
                 QuantumOp::RZZ(angle, qubit1, qubit2) => {
@@ -440,8 +603,6 @@ impl QisEngine {
                     builder.pz(&[qubit]);
                 }
                 _ => {
-                    // For other operations, we'd need to add more builder methods
-                    // or convert to a generic gate representation
                     return Err(PecosError::Generic(format!(
                         "Unsupported operation: {op:?}"
                     )));
@@ -482,6 +643,8 @@ impl Clone for QisEngine {
             runtime: dyn_clone::clone_box(&*self.runtime),
             current_operations: self.current_operations.clone(),
             num_qubits: self.num_qubits,
+            active_qubit_slots: self.active_qubit_slots.clone(),
+            free_qubit_slots: self.free_qubit_slots.clone(),
             started: false,                       // Reset started flag for the clone
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
@@ -747,18 +910,6 @@ impl QisEngine {
         self.pending_dynamic_ops.clear();
     }
 
-    /// Convert a list of Operations to `QuantumOps` for the quantum engine
-    fn operations_to_quantum_ops(ops: &[Operation]) -> Vec<QuantumOp> {
-        ops.iter()
-            .filter_map(|op| {
-                if let Operation::Quantum(qop) = op {
-                    Some(qop.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
 }
 
 impl Engine for QisEngine {
@@ -808,7 +959,7 @@ impl Engine for QisEngine {
 
 impl ClassicalEngine for QisEngine {
     fn num_qubits(&self) -> usize {
-        let num_qubits = self.runtime.num_qubits();
+        let num_qubits = self.runtime.num_qubits().max(self.num_qubits);
         debug!("QisEngine: num_qubits() returning {num_qubits}");
         num_qubits
     }
@@ -830,7 +981,7 @@ impl ClassicalEngine for QisEngine {
                     debug!("QisEngine: Operation: {op:?}");
                 }
                 let quantum_ops: Vec<QuantumOp> = ops;
-                let msg = self.operations_to_bytemessage(quantum_ops)?;
+                let msg = self.quantum_ops_to_bytemessage(quantum_ops)?;
                 debug!(
                     "QisEngine: Generated ByteMessage with {} measurement mappings",
                     self.measurement_mapping.len()
@@ -1014,6 +1165,7 @@ impl ControlEngine for QisEngine {
         self.measurement_mapping.clear();
         self.pending_dynamic_ops.clear();
         self.simulated_op_count = 0;
+        self.reset_qubit_slots();
         debug!("QisEngine: Cleared previous measurement results for new shot");
 
         // Generate a per-shot seed from our RNG
@@ -1045,17 +1197,11 @@ impl ControlEngine for QisEngine {
             debug!("Worker needs result for id={result_id}");
             // Get pending operations
             if let Some(ops) = self.get_dynamic_operations() {
-                self.pending_dynamic_ops.clone_from(&ops);
                 self.trace_operations_chunk("pending_start", &ops, Some(result_id));
                 // Track how many operations we're sending for simulation
                 self.simulated_op_count = ops.len();
-                debug!(
-                    "Tracking {} operations as simulated",
-                    self.simulated_op_count
-                );
-                let quantum_ops = Self::operations_to_quantum_ops(&ops);
-                if !quantum_ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                if !ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(&ops)?;
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1066,14 +1212,10 @@ impl ControlEngine for QisEngine {
             // Worker completed but we still need to process any pending operations
             // through the quantum engine (e.g., programs without measurement-dependent conditionals)
             if !self.pending_dynamic_ops.is_empty() {
-                let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
+                let final_ops = self.pending_dynamic_ops.clone();
                 self.pending_dynamic_ops.clear();
-                if !quantum_ops.is_empty() {
-                    debug!(
-                        "Worker completed - sending {} final operations to quantum engine",
-                        quantum_ops.len()
-                    );
-                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                if !final_ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(&final_ops)?;
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1110,9 +1252,9 @@ impl ControlEngine for QisEngine {
             debug!("Worker already complete, finishing shot");
             // Process any final operations
             if !self.pending_dynamic_ops.is_empty() {
-                let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
-                if !quantum_ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                let final_ops = self.pending_dynamic_ops.clone();
+                if !final_ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(&final_ops)?;
                     self.pending_dynamic_ops.clear();
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
@@ -1178,15 +1320,8 @@ impl ControlEngine for QisEngine {
                         );
                         // Update count to include these new operations
                         self.simulated_op_count = ops.len();
-                        debug!(
-                            "Processing {} new operations, total simulated: {}",
-                            new_ops.len(),
-                            self.simulated_op_count
-                        );
-                        let quantum_ops = Self::operations_to_quantum_ops(&new_ops);
-                        self.pending_dynamic_ops = new_ops;
-                        if !quantum_ops.is_empty() {
-                            let commands = self.operations_to_bytemessage(quantum_ops)?;
+                        if !new_ops.is_empty() {
+                            let commands = self.operations_to_bytemessage(&new_ops)?;
                             return Ok(EngineStage::NeedsProcessing(commands));
                         }
                     }
@@ -1199,9 +1334,9 @@ impl ControlEngine for QisEngine {
             debug!("Worker completed after wait");
             // Process any final operations
             if !self.pending_dynamic_ops.is_empty() {
-                let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
-                if !quantum_ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                let final_ops = self.pending_dynamic_ops.clone();
+                if !final_ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(&final_ops)?;
                     self.pending_dynamic_ops.clear();
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }

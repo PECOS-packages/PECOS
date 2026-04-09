@@ -192,7 +192,7 @@ pub fn setup_qis_engine_with_runtime(
 #[cfg(feature = "selene")]
 pub fn selene_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()
-        .selene_runtime()?
+        .runtime(selene_simple_runtime()?)
         .interface(helios_interface_builder()))
 }
 
@@ -200,7 +200,7 @@ pub fn selene_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
 #[cfg(feature = "selene")]
 pub fn selene_engine_auto(lib_name: &str) -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()
-        .selene_runtime_named(lib_name)?
+        .runtime(selene_runtime_auto(lib_name)?)
         .interface(helios_interface_builder()))
 }
 
@@ -208,7 +208,7 @@ pub fn selene_engine_auto(lib_name: &str) -> Result<QisEngineBuilder, RuntimeFet
 #[cfg(feature = "selene")]
 pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()
-        .selene_soft_rz_runtime()?
+        .runtime(selene_soft_rz_runtime()?)
         .interface(helios_interface_builder()))
 }
 /// Setup a QIS control engine for a program file (deprecated)

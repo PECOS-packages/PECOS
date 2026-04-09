@@ -301,6 +301,28 @@ fn r1xy_negated_y_axis_acts_as_y() {
     assert_eq!(outcomes, vec![1]);
 }
 
+#[test]
+fn r1xy_quarter_turn_negated_x_axis_acts_as_sxdg() {
+    // R1XY(pi/2, pi) = SXdg, so SXdg * SX = I.
+    let outcomes = run_sparse_stab(1, |b| {
+        b.r1xy(Angle64::QUARTER_TURN, Angle64::HALF_TURN, &[0]);
+        b.r1xy(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]);
+        b.mz(&[0]);
+    });
+    assert_eq!(outcomes, vec![0]);
+}
+
+#[test]
+fn r1xy_quarter_turn_negated_y_axis_acts_as_sydg() {
+    // R1XY(pi/2, 3pi/2) = SYdg, so SYdg * SY = I.
+    let outcomes = run_sparse_stab(1, |b| {
+        b.r1xy(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &[0]);
+        b.r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &[0]);
+        b.mz(&[0]);
+    });
+    assert_eq!(outcomes, vec![0]);
+}
+
 // --- U gate tests ---
 
 #[test]

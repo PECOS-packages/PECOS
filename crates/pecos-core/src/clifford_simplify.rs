@@ -79,59 +79,32 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
 /// |-----------|---------------|---------------|
 /// | 0         | any           | I             |
 /// | pi/2      | 0             | SX            |
+/// | pi/2      | pi            | `SXdg`        |
 /// | pi/2      | pi/2          | SY            |
+/// | pi/2      | 3pi/2         | `SYdg`        |
 /// | pi        | 0 or pi       | X             |
 /// | pi        | pi/2 or 3pi/2 | Y             |
-/// | 3pi/2     | 0             | `SXdg`          |
-/// | 3pi/2     | pi/2          | `SYdg`          |
+/// | 3pi/2     | 0             | `SXdg`        |
+/// | 3pi/2     | pi            | SX            |
+/// | 3pi/2     | pi/2          | `SYdg`        |
+/// | 3pi/2     | 3pi/2         | SY            |
 ///
-/// For theta=pi, phi=pi (rotation about -X) and phi=3pi/2 (rotation about -Y)
-/// are equivalent to X and Y respectively up to global phase, which does not
-/// affect stabilizer simulation or measurement outcomes.
+/// A negative axis flips the sign of the rotation angle. That only collapses to
+/// the same Clifford up to global phase for half-turns (`pi`), not for the
+/// quarter-turn sqrt gates.
 #[must_use]
 pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
     if theta == A64::ZERO {
         return Some(GateType::I);
     }
 
-    // Determine which axis: X-like (phi = 0 or pi) or Y-like (phi = pi/2 or 3pi/2).
-    // phi=pi is the -X axis and phi=3pi/2 is the -Y axis; these are equivalent
-    // to the positive axis up to global phase for Clifford gates.
-    let is_x_axis = phi == A64::ZERO || phi == A64::HALF_TURN;
-    let is_y_axis = phi == A64::QUARTER_TURN || phi == A64::THREE_QUARTERS_TURN;
-
-    if !is_x_axis && !is_y_axis {
-        return None;
+    match phi {
+        A64::ZERO => simplify_rx(theta),
+        A64::HALF_TURN => simplify_rx(-theta),
+        A64::QUARTER_TURN => simplify_ry(theta),
+        A64::THREE_QUARTERS_TURN => simplify_ry(-theta),
+        _ => None,
     }
-
-    // Half turn: full Pauli gate
-    if theta == A64::HALF_TURN || theta == neg(A64::HALF_TURN) {
-        return if is_x_axis {
-            Some(GateType::X)
-        } else {
-            Some(GateType::Y)
-        };
-    }
-
-    // Quarter turn: sqrt gate
-    if theta == A64::QUARTER_TURN {
-        return if is_x_axis {
-            Some(GateType::SX)
-        } else {
-            Some(GateType::SY)
-        };
-    }
-
-    // Three-quarter turn: sqrt-dagger gate
-    if theta == A64::THREE_QUARTERS_TURN || theta == neg(A64::QUARTER_TURN) {
-        return if is_x_axis {
-            Some(GateType::SXdg)
-        } else {
-            Some(GateType::SYdg)
-        };
-    }
-
-    None
 }
 
 // -------------------------------------------------------------------------
@@ -469,6 +442,16 @@ mod tests {
             try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN),
             Some(GateType::SY)
         );
+        // theta=pi/2, phi=pi: rotation about -X is SXdg
+        assert_eq!(
+            try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::HALF_TURN),
+            Some(GateType::SXdg)
+        );
+        // theta=pi/2, phi=3pi/2: rotation about -Y is SYdg
+        assert_eq!(
+            try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN),
+            Some(GateType::SYdg)
+        );
     }
 
     #[test]
@@ -482,6 +465,16 @@ mod tests {
         assert_eq!(
             try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN),
             Some(GateType::SYdg)
+        );
+        // theta=3pi/2, phi=pi: rotation about -X is SX
+        assert_eq!(
+            try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::HALF_TURN),
+            Some(GateType::SX)
+        );
+        // theta=3pi/2, phi=3pi/2: rotation about -Y is SY
+        assert_eq!(
+            try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::THREE_QUARTERS_TURN),
+            Some(GateType::SY)
         );
         // theta=-pi/2 wraps to 3pi/2
         assert_eq!(

@@ -231,7 +231,13 @@ def selene_engine(runtime_name: str | None = None) -> QisEngineBuilder:
     Returns:
         QisEngineBuilder: A builder for Selene-backed QIS/HUGR simulations.
     """
-    return QisEngineBuilder().selene_runtime(runtime_name).interface(pecos_rslib.qis_helios_interface())
+    if runtime_name is not None:
+        msg = (
+            "Python selene_engine(runtime_name=...) is not currently supported by the wrapper. "
+            "Use the default runtime or call into pecos_rslib directly for custom runtime names."
+        )
+        raise NotImplementedError(msg)
+    return QisEngineBuilder().selene_runtime().interface(pecos_rslib.qis_helios_interface())
 __all__ = [
     # Builder classes
     "PhirJsonEngineBuilder",
@@ -241,4 +247,5 @@ __all__ = [
     "phir_json_engine",
     "qasm_engine",
     "qis_engine",
+    "selene_engine",
 ]

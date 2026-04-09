@@ -165,3 +165,40 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
 
     results = pecos.sim(pecos.Guppy(coin)).classical(selene).qubits(1).seed(42).run(10).to_dict()
     assert len(results["measurement_0"]) == 10
+
+
+def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
+    """Test that a recycled physical slot is reinitialized when Guppy reallocates a qubit."""
+    import pecos
+    from guppylang import guppy
+    from guppylang.std.quantum import measure, qubit, x
+
+    try:
+        selene = pecos.selene_engine()
+    except RuntimeError as exc:
+        if "Failed to load Selene runtime" in str(exc):
+            pytest.skip("Selene runtime not available in this test environment")
+        raise
+
+    @guppy
+    def allocate_measure_allocate_again() -> tuple[bool, bool]:
+        q0 = qubit()
+        x(q0)
+        m0 = measure(q0)
+        q1 = qubit()
+        m1 = measure(q1)
+        return m0, m1
+
+    results = (
+        pecos.sim(pecos.Guppy(allocate_measure_allocate_again))
+        .classical(selene)
+        .qubits(1)
+        .seed(7)
+        .run(10)
+        .to_dict()
+    )
+
+    assert len(results["measurement_0"]) == 10
+    assert len(results["measurement_1"]) == 10
+    assert all(results["measurement_0"])
+    assert not any(results["measurement_1"])

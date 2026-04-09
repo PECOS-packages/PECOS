@@ -508,9 +508,16 @@ sync-deps:
 build-selene:
     #!/usr/bin/env bash
     set -euo pipefail
+    PLUGIN_DIRS=()
+    for DIR in python/selene-plugins/pecos-selene-*/; do
+        [ -d "$DIR" ] || continue
+        [ -f "$DIR/Cargo.toml" ] || continue
+        [ -f "$DIR/pyproject.toml" ] || continue
+        PLUGIN_DIRS+=("$DIR")
+    done
     # Check if any selene source changed since last install
     NEEDS_BUILD=false
-    for DIR in python/selene-plugins/pecos-selene-*/; do
+    for DIR in "${PLUGIN_DIRS[@]}"; do
         PKG=$(basename "$DIR")
         DEST="$DIR/python/${PKG//-/_}/_dist/lib/"
         SO=$(find "$DEST" -name "*.so" 2>/dev/null | head -1 || true)
@@ -531,7 +538,7 @@ build-selene:
     fi
     echo "Building Selene plugins..."
     CARGO_ARGS=""
-    for DIR in python/selene-plugins/pecos-selene-*/; do
+    for DIR in "${PLUGIN_DIRS[@]}"; do
         CARGO_ARGS="$CARGO_ARGS -p $(basename "$DIR")"
     done
     if [ -n "$CARGO_ARGS" ]; then

@@ -256,6 +256,7 @@ from pecos._engine_builders import (
     phir_json_engine,
     qasm_engine,
     qis_engine,
+    selene_engine,
 )
 
 # Simulation entry point
@@ -434,6 +435,7 @@ __all__ = [
     "qec",  # Pure QEC geometry (no SLR dependencies)
     "qeccs",
     "qis_engine",
+    "selene_engine",
     "quantum",
     "random",
     "round",

@@ -104,9 +104,8 @@ impl PyForeignDecoder {
     /// Decode a syndrome, returning a dict with `observable`, `weight`, and optionally `converged`.
     fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<PyAny>> {
         let arr = ndarray::Array1::from_vec(syndrome);
-        let result = Decoder::decode(self, &arr.view()).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })?;
+        let result = Decoder::decode(self, &arr.view())
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("observable", &result.observable)?;

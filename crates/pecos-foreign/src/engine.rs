@@ -14,15 +14,15 @@
 //! as opposed to the decoder/simulator modules where foreign code provides
 //! implementations for PECOS to use.
 
-use pecos_core::errors::PecosError;
 use pecos_core::Angle64;
+use pecos_core::errors::PecosError;
+use pecos_engines::Engine;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use pecos_engines::byte_message::message::ByteMessage;
 use pecos_engines::quantum::{
     CliffordRzEngine, CoinTossEngine, DensityMatrixEngine, SparseStabEngine, StabilizerEngine,
     StateVecEngine,
 };
-use pecos_engines::Engine;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -115,15 +115,9 @@ pub unsafe extern "C" fn pecos_engine_create(
     } else {
         match type_str {
             "state_vec" => EngineInner::StateVec(StateVecEngine::with_seed(num_qubits, seed)),
-            "sparse_stab" => {
-                EngineInner::SparseStab(SparseStabEngine::with_seed(num_qubits, seed))
-            }
-            "stabilizer" => {
-                EngineInner::Stabilizer(StabilizerEngine::with_seed(num_qubits, seed))
-            }
-            "clifford_rz" => {
-                EngineInner::CliffordRz(CliffordRzEngine::with_seed(num_qubits, seed))
-            }
+            "sparse_stab" => EngineInner::SparseStab(SparseStabEngine::with_seed(num_qubits, seed)),
+            "stabilizer" => EngineInner::Stabilizer(StabilizerEngine::with_seed(num_qubits, seed)),
+            "clifford_rz" => EngineInner::CliffordRz(CliffordRzEngine::with_seed(num_qubits, seed)),
             "density_matrix" => {
                 EngineInner::DensityMatrix(DensityMatrixEngine::with_seed(num_qubits, seed))
             }
@@ -298,7 +292,11 @@ pub unsafe extern "C" fn pecos_circuit_sz(
 
 /// Add CNOT (CX) gate(s) to the circuit.
 ///
-/// `pairs` is interleaved [c0, t0, c1, t1, ...], `num_pairs` is pair count.
+/// `pairs` is interleaved `[c0, t0, c1, t1, ...]`, `num_pairs` is pair count.
+///
+/// # Panics
+///
+/// Panics if `num_pairs * 2` overflows `usize`.
 ///
 /// # Safety
 /// `circuit` must be valid. `pairs` must point to `2 * num_pairs` valid `usize` values.
@@ -349,6 +347,10 @@ pub unsafe extern "C" fn pecos_circuit_rz(
 
 /// Add RZZ rotation gate(s) to the circuit.
 ///
+/// # Panics
+///
+/// Panics if `num_pairs * 2` overflows `usize`.
+///
 /// # Safety
 /// `circuit` must be valid. `pairs` must point to `2 * num_pairs` valid `usize` values.
 #[unsafe(no_mangle)]
@@ -362,7 +364,8 @@ pub unsafe extern "C" fn pecos_circuit_rzz(
     let flat_len = num_pairs.checked_mul(2).expect("num_pairs overflow");
     let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
     let pair_vec: Vec<(usize, usize)> = flat.chunks_exact(2).map(|p| (p[0], p[1])).collect();
-    c.builder.rzz(Angle64::from_radians(theta_radians), &pair_vec);
+    c.builder
+        .rzz(Angle64::from_radians(theta_radians), &pair_vec);
 }
 
 /// Add Z-basis measurement(s) to the circuit.

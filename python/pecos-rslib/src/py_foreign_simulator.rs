@@ -91,10 +91,7 @@ impl PyForeignSimulator {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "PyForeignSimulator(rotations={})",
-            self.supports_rotations
-        )
+        format!("PyForeignSimulator(rotations={})", self.supports_rotations)
     }
 }
 

@@ -156,7 +156,10 @@ fn test_foreign_simulator_derived_gates() {
     sim.h(&[QubitId(1)]); // flip to |1>
     sim.z(&[QubitId(1)]); // no-op (SZ SZ)
     let results = sim.mz(&[QubitId(1)]);
-    assert!(results[0].outcome, "Z should not change computational basis");
+    assert!(
+        results[0].outcome,
+        "Z should not change computational basis"
+    );
 }
 
 #[test]
@@ -224,5 +227,7 @@ fn test_foreign_simulator_version_mismatch() {
     let result = unsafe { ForeignSimulator::new(handle, vtable) };
     assert!(result.is_none(), "wrong version should return None");
 
-    unsafe { let _ = Box::from_raw(handle.cast::<ToySimState>()); }
+    unsafe {
+        let _ = Box::from_raw(handle.cast::<ToySimState>());
+    }
 }

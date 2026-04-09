@@ -64,9 +64,7 @@ pub unsafe extern "C" fn pecos_foreign_decoder_check_count(
 /// # Safety
 /// `decoder` must be a valid pointer from `pecos_foreign_decoder_create`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_foreign_decoder_bit_count(
-    decoder: *const ForeignDecoder,
-) -> usize {
+pub unsafe extern "C" fn pecos_foreign_decoder_bit_count(decoder: *const ForeignDecoder) -> usize {
     use crate::pecos_decoder_core::Decoder;
     let d = unsafe { &*decoder };
     d.bit_count()

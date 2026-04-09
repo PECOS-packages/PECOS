@@ -134,9 +134,15 @@ impl StabilizerBehavior {
     fn apply_rz_clifford(&mut self, qubit: QubitId, theta: f64) -> Result<()> {
         match approximate_angle(theta, self.angle_threshold) {
             ApproxAngle::Zero => {}
-            ApproxAngle::FracPi2 => { self.sim.sz(&[qubit]); }
-            ApproxAngle::Pi => { self.sim.z(&[qubit]); }
-            ApproxAngle::Frac3Pi2 => { self.sim.szdg(&[qubit]); }
+            ApproxAngle::FracPi2 => {
+                self.sim.sz(&[qubit]);
+            }
+            ApproxAngle::Pi => {
+                self.sim.z(&[qubit]);
+            }
+            ApproxAngle::Frac3Pi2 => {
+                self.sim.szdg(&[qubit]);
+            }
             ApproxAngle::NotClifford => {
                 return Err(anyhow!("RZ({theta}) is not a Clifford rotation"));
             }
@@ -147,9 +153,15 @@ impl StabilizerBehavior {
     fn apply_rx_clifford(&mut self, qubit: QubitId, theta: f64) -> Result<()> {
         match approximate_angle(theta, self.angle_threshold) {
             ApproxAngle::Zero => {}
-            ApproxAngle::FracPi2 => { self.sim.sx(&[qubit]); }
-            ApproxAngle::Pi => { self.sim.x(&[qubit]); }
-            ApproxAngle::Frac3Pi2 => { self.sim.sxdg(&[qubit]); }
+            ApproxAngle::FracPi2 => {
+                self.sim.sx(&[qubit]);
+            }
+            ApproxAngle::Pi => {
+                self.sim.x(&[qubit]);
+            }
+            ApproxAngle::Frac3Pi2 => {
+                self.sim.sxdg(&[qubit]);
+            }
             ApproxAngle::NotClifford => {
                 return Err(anyhow!("RX({theta}) is not a Clifford rotation"));
             }
@@ -185,9 +197,15 @@ impl SeleneSimBehavior for StabilizerBehavior {
     fn apply_rzz(&mut self, q1: QubitId, q2: QubitId, theta: f64) -> Result<()> {
         match approximate_angle(theta, self.angle_threshold) {
             ApproxAngle::Zero => {}
-            ApproxAngle::FracPi2 => { self.sim.szz(&[(q1, q2)]); }
-            ApproxAngle::Pi => { self.sim.z(&[q1]).z(&[q2]); }
-            ApproxAngle::Frac3Pi2 => { self.sim.szzdg(&[(q1, q2)]); }
+            ApproxAngle::FracPi2 => {
+                self.sim.szz(&[(q1, q2)]);
+            }
+            ApproxAngle::Pi => {
+                self.sim.z(&[q1]).z(&[q2]);
+            }
+            ApproxAngle::Frac3Pi2 => {
+                self.sim.szzdg(&[(q1, q2)]);
+            }
             ApproxAngle::NotClifford => {
                 return Err(anyhow!("RZZ({theta}) is not a Clifford rotation"));
             }

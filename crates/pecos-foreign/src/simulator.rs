@@ -30,8 +30,8 @@
 //! - `destroy` -- free the simulator
 
 use pecos_core::{Angle64, QubitId};
-use pecos_random::rng_manageable::RngManageable;
 use pecos_random::PecosRng;
+use pecos_random::rng_manageable::RngManageable;
 use pecos_simulators::clifford_gateable::MeasurementResult;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 
@@ -131,6 +131,7 @@ impl ForeignSimulator {
     /// - All non-Option function pointers in `vtable` are valid
     /// - The foreign simulator lives until `destroy` is called
     /// - The foreign simulator is thread-safe (Send)
+    ///
     /// Returns `None` if the vtable version does not match the expected ABI version.
     pub unsafe fn new(handle: *mut (), vtable: ForeignSimulatorVTable) -> Option<Self> {
         if vtable.version != crate::version::SIMULATOR_VTABLE_VERSION {

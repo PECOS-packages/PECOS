@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme = "README.md"
 description = "Shared adapter for PECOS simulator plugins for the Selene quantum emulator"
 
 [lib]

@@ -53,8 +53,12 @@ pub struct ForeignDecoderVTable {
     /// - `result_out`: pointer to a `ForeignDecodingResultRaw` that the callee fills in
     ///
     /// Returns 0 on success, non-zero on error (with `result_out.error_ptr` set).
-    pub decode:
-        unsafe extern "C" fn(handle: *mut (), input_ptr: *const u8, input_len: usize, result_out: *mut ForeignDecodingResultRaw) -> i32,
+    pub decode: unsafe extern "C" fn(
+        handle: *mut (),
+        input_ptr: *const u8,
+        input_len: usize,
+        result_out: *mut ForeignDecodingResultRaw,
+    ) -> i32,
 
     /// Return the number of checks (rows in parity check matrix).
     pub check_count: unsafe extern "C" fn(handle: *const ()) -> usize,

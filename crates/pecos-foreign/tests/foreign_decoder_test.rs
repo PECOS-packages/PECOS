@@ -181,5 +181,7 @@ fn test_foreign_decoder_version_mismatch() {
     assert!(result.is_none(), "wrong version should return None");
 
     // Clean up the leaked state since ForeignDecoder didn't take ownership
-    unsafe { let _ = Box::from_raw(handle.cast::<XorDecoderState>()); }
+    unsafe {
+        let _ = Box::from_raw(handle.cast::<XorDecoderState>());
+    }
 }

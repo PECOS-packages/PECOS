@@ -50,7 +50,12 @@ unsafe fn run_circuit(
     let mut outcomes_ptr: *mut u32 = std::ptr::null_mut();
     let mut num_outcomes: usize = 0;
     let rc = unsafe {
-        pecos_parse_outcomes(output_bytes, output_len, &mut outcomes_ptr, &mut num_outcomes)
+        pecos_parse_outcomes(
+            output_bytes,
+            output_len,
+            &mut outcomes_ptr,
+            &mut num_outcomes,
+        )
     };
     unsafe { pecos_free_bytes(output_bytes, output_len) };
     assert_eq!(rc, 0, "parse outcomes failed");

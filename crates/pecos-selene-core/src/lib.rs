@@ -16,8 +16,9 @@ use std::path::Path;
 
 /// Simulator-specific behavior that each plugin provides.
 ///
-/// The generic adapter handles: bounds checking, gate dispatch (rxy/rz/rzz),
-/// measure, exit, shot_end. The behavior trait handles the rest.
+/// The generic adapter handles bounds checking, gate dispatch, measure, exit,
+/// and shot lifecycle. The behavior trait handles simulator-specific parts.
+#[allow(clippy::missing_errors_doc)]
 pub trait SeleneSimBehavior: Send {
     /// The underlying PECOS simulator type.
     type Sim: CliffordGateable;
@@ -28,18 +29,16 @@ pub trait SeleneSimBehavior: Send {
     /// Get a mutable reference to the simulator.
     fn sim_mut(&mut self) -> &mut Self::Sim;
 
-    /// Apply RXY(theta, phi) to a qubit. Angles in radians.
-    ///
-    /// Stabilizer simulators approximate angles; others pass through directly.
+    /// Apply `RXY(theta, phi)` to a qubit. Angles in radians.
     fn apply_rxy(&mut self, qubit: QubitId, theta: f64, phi: f64) -> Result<()>;
 
-    /// Apply RZ(theta) to a qubit. Angle in radians.
+    /// Apply `RZ(theta)` to a qubit. Angle in radians.
     fn apply_rz(&mut self, qubit: QubitId, theta: f64) -> Result<()>;
 
-    /// Apply RZZ(theta) to a pair of qubits. Angle in radians.
+    /// Apply `RZZ(theta)` to a pair of qubits. Angle in radians.
     fn apply_rzz(&mut self, q1: QubitId, q2: QubitId, theta: f64) -> Result<()>;
 
-    /// Reset a single qubit to |0>.
+    /// Reset a single qubit to `|0>`.
     fn reset_qubit(&mut self, qubit: QubitId) -> Result<()>;
 
     /// Postselect a qubit to a target value. Default: error (unsupported).
@@ -57,7 +56,7 @@ pub trait SeleneSimBehavior: Send {
         Err(anyhow!("State dumping is not supported by this simulator"))
     }
 
-    /// Called at shot_start after creating the simulator. Override for per-shot init.
+    /// Called at `shot_start` after creating the simulator. Override for per-shot init.
     fn on_shot_start(&mut self) {}
 }
 
@@ -69,6 +68,7 @@ pub struct SeleneAdapter<B: SeleneSimBehavior> {
 
 /// Convert u64 qubit index to usize. All qubit indices are bounds-checked
 /// before this is called, so truncation is safe.
+#[must_use]
 #[allow(clippy::cast_possible_truncation)]
 #[inline]
 pub const fn to_usize(value: u64) -> usize {
@@ -105,9 +105,7 @@ impl<B: SeleneSimBehavior> SimulatorInterface for SeleneAdapter<B> {
     }
 
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
-        let sim = self
-            .behavior
-            .create_sim(to_usize(self.num_qubits), seed);
+        let sim = self.behavior.create_sim(to_usize(self.num_qubits), seed);
         *self.behavior.sim_mut() = sim;
         self.behavior.on_shot_start();
         Ok(())
@@ -136,10 +134,7 @@ impl<B: SeleneSimBehavior> SimulatorInterface for SeleneAdapter<B> {
 
     fn measure(&mut self, qubit: u64) -> Result<bool> {
         self.check_qubit(qubit, "Measure")?;
-        let results = self
-            .behavior
-            .sim_mut()
-            .mz(&[QubitId(to_usize(qubit))]);
+        let results = self.behavior.sim_mut().mz(&[QubitId(to_usize(qubit))]);
         Ok(results[0].outcome)
     }
 

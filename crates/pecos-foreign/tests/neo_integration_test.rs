@@ -115,7 +115,10 @@ fn test_foreign_sim_with_circuit_runner() {
     let q0 = outcomes.get(QubitId(0)).unwrap();
     let q1 = outcomes.get(QubitId(1)).unwrap();
     assert!(q0.outcome, "qubit 0 should be |1> after H");
-    assert!(q1.outcome, "qubit 1 should be |1> after CX with control=|1>");
+    assert!(
+        q1.outcome,
+        "qubit 1 should be |1> after CX with control=|1>"
+    );
 }
 
 #[test]

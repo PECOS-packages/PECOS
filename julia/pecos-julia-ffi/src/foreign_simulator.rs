@@ -47,23 +47,11 @@ pub unsafe extern "C" fn pecos_foreign_simulator_create(
     handle: *mut (),
     vtable: *const CSimulatorVTable,
 ) -> *mut ForeignSimulator {
-    let vt = unsafe { &*vtable };
+    let vtable_copy = unsafe { *vtable };
 
-    let foreign_vtable = ForeignSimulatorVTable {
-        version: vt.version,
-        sz: vt.sz,
-        h: vt.h,
-        cx: vt.cx,
-        mz: vt.mz,
-        rx: vt.rx,
-        rz: vt.rz,
-        rzz: vt.rzz,
-        reset: vt.reset,
-        set_seed: vt.set_seed,
-        destroy: vt.destroy,
+    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
+        return std::ptr::null_mut();
     };
-
-    let sim = unsafe { ForeignSimulator::new(handle, foreign_vtable) };
     Box::into_raw(Box::new(sim))
 }
 

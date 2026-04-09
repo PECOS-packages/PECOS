@@ -5,7 +5,7 @@
 
 use pecos_foreign::{ForeignDecoder, ForeignDecoderVTable, ForeignDecodingResultRaw};
 
-/// C-compatible vtable passed from Go. Must match the Go `PecosDecoderVTable` struct layout.
+/// C-compatible vtable. Must match the `PecosDecoderVTable` struct layout from the C header.
 #[repr(C)]
 pub struct CDecoderVTable {
     pub version: u32,
@@ -22,7 +22,7 @@ pub struct CDecoderVTable {
     pub destroy: unsafe extern "C" fn(handle: *mut ()),
 }
 
-/// Create a `ForeignDecoder` from a Go-provided handle and vtable.
+/// Create a `ForeignDecoder` from a foreign-provided handle and vtable.
 ///
 /// Returns an opaque pointer to a boxed `ForeignDecoder`. The caller (Go) can
 /// later pass this to `pecos_foreign_decoder_decode` etc. to use it, and must
@@ -30,7 +30,7 @@ pub struct CDecoderVTable {
 ///
 /// # Safety
 ///
-/// - `handle` must be a valid decoder handle from Go's registry
+/// - `handle` must be a valid decoder handle
 /// - `vtable` must point to a valid, fully-populated `CDecoderVTable`
 /// - All function pointers in the vtable must remain valid until `destroy` is called
 #[unsafe(no_mangle)]

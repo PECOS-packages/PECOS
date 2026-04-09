@@ -92,7 +92,7 @@ fn make_toy_sim(num_qubits: usize) -> ForeignSimulator {
         destroy: toy_destroy,
     };
 
-    unsafe { ForeignSimulator::new(handle, vtable) }
+    unsafe { ForeignSimulator::new(handle, vtable) }.expect("vtable version should match")
 }
 
 #[test]
@@ -200,7 +200,6 @@ fn test_foreign_simulator_batch_gates() {
 }
 
 #[test]
-#[should_panic(expected = "ABI version mismatch")]
 fn test_foreign_simulator_version_mismatch() {
     let state = Box::new(ToySimState {
         bits: vec![false; 1],
@@ -221,6 +220,9 @@ fn test_foreign_simulator_version_mismatch() {
         destroy: toy_destroy,
     };
 
-    // Should panic with version mismatch message
-    let _sim = unsafe { ForeignSimulator::new(handle, vtable) };
+    // Should return None on version mismatch
+    let result = unsafe { ForeignSimulator::new(handle, vtable) };
+    assert!(result.is_none(), "wrong version should return None");
+
+    unsafe { let _ = Box::from_raw(handle.cast::<ToySimState>()); }
 }

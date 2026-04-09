@@ -150,7 +150,7 @@ typedef struct {
     void (*reset)(void *handle);
 
     /** Set the RNG seed for reproducibility. May be NULL. */
-    void (*set_seed)(void *handle, size_t seed);
+    void (*set_seed)(void *handle, uint64_t seed);
 
     /** Destroy the simulator and free all resources. NULL handle must be a no-op. */
     void (*destroy)(void *handle);

@@ -50,6 +50,7 @@ pub struct ForeignMeasurementResult {
 /// All functions use C calling convention. Qubit indices are passed as `usize`.
 /// Two-qubit gates receive interleaved pairs: [control0, target0, control1, target1, ...].
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ForeignSimulatorVTable {
     /// ABI version. Must equal [`crate::version::SIMULATOR_VTABLE_VERSION`].
     /// Checked on construction; mismatches are rejected with a clear error.
@@ -130,22 +131,21 @@ impl ForeignSimulator {
     /// - All non-Option function pointers in `vtable` are valid
     /// - The foreign simulator lives until `destroy` is called
     /// - The foreign simulator is thread-safe (Send)
-    /// # Panics
-    ///
-    /// Panics if `vtable.version` does not match the expected ABI version.
-    pub unsafe fn new(handle: *mut (), vtable: ForeignSimulatorVTable) -> Self {
-        assert_eq!(
-            vtable.version,
-            crate::version::SIMULATOR_VTABLE_VERSION,
-            "Foreign simulator ABI version mismatch: plugin has v{}, PECOS expects v{}",
-            vtable.version,
-            crate::version::SIMULATOR_VTABLE_VERSION,
-        );
-        Self {
+    /// Returns `None` if the vtable version does not match the expected ABI version.
+    pub unsafe fn new(handle: *mut (), vtable: ForeignSimulatorVTable) -> Option<Self> {
+        if vtable.version != crate::version::SIMULATOR_VTABLE_VERSION {
+            log::error!(
+                "Foreign simulator ABI version mismatch: plugin has v{}, PECOS expects v{}",
+                vtable.version,
+                crate::version::SIMULATOR_VTABLE_VERSION,
+            );
+            return None;
+        }
+        Some(Self {
             handle,
             vtable,
             rng: PecosRng::seed_from_u64(0),
-        }
+        })
     }
 
     /// Whether this simulator supports arbitrary rotation gates.

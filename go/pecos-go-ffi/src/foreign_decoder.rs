@@ -40,18 +40,11 @@ pub unsafe extern "C" fn pecos_foreign_decoder_create(
 ) -> *mut ForeignDecoder {
     let vt = unsafe { &*vtable };
 
-    let foreign_vtable = ForeignDecoderVTable {
-        version: vt.version,
-        decode: vt.decode,
-        check_count: vt.check_count,
-        bit_count: vt.bit_count,
-        free_result: vt.free_result,
-        free_error: vt.free_error,
-        destroy: vt.destroy,
-    };
+    let vtable_copy = unsafe { *vtable };
 
-    // SAFETY: Caller guarantees handle and vtable validity.
-    let decoder = unsafe { ForeignDecoder::new(handle, foreign_vtable) };
+    let Some(decoder) = (unsafe { ForeignDecoder::new(handle, vtable_copy) }) else {
+        return std::ptr::null_mut();
+    };
     Box::into_raw(Box::new(decoder))
 }
 

@@ -21,7 +21,6 @@ dirs.workspace = true
 libloading.workspace = true
 log.workspace = true
 ndarray.workspace = true
-thiserror.workspace = true
 
 [features]
 default = []

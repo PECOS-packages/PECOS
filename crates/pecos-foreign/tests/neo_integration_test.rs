@@ -89,7 +89,7 @@ fn make_toy_sim(num_qubits: usize) -> ForeignSimulator {
         destroy: toy_destroy,
     };
 
-    unsafe { ForeignSimulator::new(handle, vtable) }
+    unsafe { ForeignSimulator::new(handle, vtable) }.expect("vtable version should match")
 }
 
 #[test]

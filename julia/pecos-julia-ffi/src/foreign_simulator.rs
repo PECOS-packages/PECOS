@@ -5,7 +5,7 @@
 
 use pecos_foreign::{ForeignMeasurementResult, ForeignSimulator, ForeignSimulatorVTable};
 
-/// C-compatible vtable passed from Go. Must match the Go `PecosSimulatorVTable` struct layout.
+/// C-compatible vtable. Must match the `PecosSimulatorVTable` struct layout from the C header.
 #[repr(C)]
 pub struct CSimulatorVTable {
     pub version: u32,
@@ -32,7 +32,7 @@ pub struct CSimulatorVTable {
     pub destroy: unsafe extern "C" fn(handle: *mut ()),
 }
 
-/// Create a `ForeignSimulator` from a Go-provided handle and vtable.
+/// Create a `ForeignSimulator` from a foreign-provided handle and vtable.
 ///
 /// Returns an opaque pointer to a boxed `ForeignSimulator`.
 /// Caller must call `pecos_foreign_simulator_free` to destroy it.

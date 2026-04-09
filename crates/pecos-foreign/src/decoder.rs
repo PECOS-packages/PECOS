@@ -26,8 +26,8 @@ pub struct ForeignDecodingResultRaw {
     pub weight: f64,
     /// Whether the decoder converged (0 = false, 1 = true, -1 = unknown).
     pub converged: i8,
-    /// Error message pointer (null if no error). Must be a null-terminated UTF-8 string.
-    /// Owned by foreign code -- Rust copies it then calls `free_error`.
+    /// Error message pointer (null if no error). UTF-8 bytes of `error_len` length
+    /// (not necessarily null-terminated). Owned by foreign code -- Rust copies it then calls `free_error`.
     pub error_ptr: *const u8,
     /// Length of error message (excluding null terminator).
     pub error_len: usize,
@@ -38,6 +38,7 @@ pub struct ForeignDecodingResultRaw {
 /// All function pointers use the C calling convention and take the opaque
 /// decoder handle as their first argument.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ForeignDecoderVTable {
     /// ABI version. Must equal [`crate::version::DECODER_VTABLE_VERSION`].
     /// Checked on construction; mismatches are rejected with a clear error.
@@ -96,9 +97,7 @@ pub struct ForeignDecoder {
 impl ForeignDecoder {
     /// Create a new `ForeignDecoder` from an opaque handle and vtable.
     ///
-    /// # Panics
-    ///
-    /// Panics if `vtable.version` does not match the expected ABI version.
+    /// Returns `None` if the vtable version does not match the expected ABI version.
     ///
     /// # Safety
     ///
@@ -107,15 +106,16 @@ impl ForeignDecoder {
     /// - All function pointers in `vtable` are valid and follow the documented contracts
     /// - The foreign decoder lives until `destroy` is called
     /// - The foreign decoder is safe to call from any thread (Send)
-    pub unsafe fn new(handle: *mut (), vtable: ForeignDecoderVTable) -> Self {
-        assert_eq!(
-            vtable.version,
-            crate::version::DECODER_VTABLE_VERSION,
-            "Foreign decoder ABI version mismatch: plugin has v{}, PECOS expects v{}",
-            vtable.version,
-            crate::version::DECODER_VTABLE_VERSION,
-        );
-        Self { handle, vtable }
+    pub unsafe fn new(handle: *mut (), vtable: ForeignDecoderVTable) -> Option<Self> {
+        if vtable.version != crate::version::DECODER_VTABLE_VERSION {
+            log::error!(
+                "Foreign decoder ABI version mismatch: plugin has v{}, PECOS expects v{}",
+                vtable.version,
+                crate::version::DECODER_VTABLE_VERSION,
+            );
+            return None;
+        }
+        Some(Self { handle, vtable })
     }
 }
 

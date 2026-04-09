@@ -107,7 +107,7 @@ fn make_xor_decoder(checks: usize, bits: usize) -> ForeignDecoder {
         destroy: xor_destroy,
     };
 
-    unsafe { ForeignDecoder::new(handle, vtable) }
+    unsafe { ForeignDecoder::new(handle, vtable) }.expect("vtable version should match")
 }
 
 #[test]
@@ -162,7 +162,6 @@ fn test_foreign_decoder_trait_object() {
 }
 
 #[test]
-#[should_panic(expected = "ABI version mismatch")]
 fn test_foreign_decoder_version_mismatch() {
     let state = Box::new(XorDecoderState { checks: 1, bits: 1 });
     let handle = Box::into_raw(state).cast::<()>();
@@ -177,6 +176,10 @@ fn test_foreign_decoder_version_mismatch() {
         destroy: xor_destroy,
     };
 
-    // Should panic with version mismatch message
-    let _decoder = unsafe { ForeignDecoder::new(handle, vtable) };
+    // Should return None on version mismatch
+    let result = unsafe { ForeignDecoder::new(handle, vtable) };
+    assert!(result.is_none(), "wrong version should return None");
+
+    // Clean up the leaked state since ForeignDecoder didn't take ownership
+    unsafe { let _ = Box::from_raw(handle.cast::<XorDecoderState>()); }
 }

@@ -202,34 +202,19 @@ pub unsafe extern "C" fn pecos_run_conformance_tests(
     _num_qubits: usize,
     report_out: *mut ConformanceReport,
 ) -> i32 {
-    let vt = unsafe { &*vtable };
-    let vtable_copy = ForeignSimulatorVTable {
-        version: vt.version,
-        sz: vt.sz,
-        h: vt.h,
-        cx: vt.cx,
-        mz: vt.mz,
-        rx: vt.rx,
-        rz: vt.rz,
-        rzz: vt.rzz,
-        reset: vt.reset,
-        set_seed: vt.set_seed,
-        destroy: vt.destroy,
-    };
+    let vtable_copy = unsafe { *vtable };
 
-    // Note: we do NOT call destroy -- the caller owns the handle.
-    // Create a temporary ForeignSimulator that won't destroy on drop.
-    // To do this safely, we need to use the handle without taking ownership.
-    // Since ForeignSimulator::drop calls destroy, we use std::mem::forget after testing.
-    let mut sim = unsafe { ForeignSimulator::new(handle, vtable_copy) };
+    let Some(mut sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
+        // Version mismatch
+        unsafe { *report_out = ConformanceReport::new() };
+        return 0;
+    };
     let report = run_conformance_tests(&mut sim);
 
     // Prevent drop from calling destroy -- caller owns the handle
     std::mem::forget(sim);
 
-    unsafe {
-        *report_out = report;
-    }
+    unsafe { *report_out = report };
 
     i32::from(report.all_passed())
 }

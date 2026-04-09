@@ -154,38 +154,16 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginError> {
 
     // Wrap decoder if provided.
     let decoder = if !desc.decoder_handle.is_null() && !desc.decoder_vtable.is_null() {
-        let vt = unsafe { &*desc.decoder_vtable };
-        let vtable_copy = ForeignDecoderVTable {
-            version: vt.version,
-            decode: vt.decode,
-            check_count: vt.check_count,
-            bit_count: vt.bit_count,
-            free_result: vt.free_result,
-            free_error: vt.free_error,
-            destroy: vt.destroy,
-        };
-        Some(unsafe { ForeignDecoder::new(desc.decoder_handle, vtable_copy) })
+        let vtable_copy = unsafe { *desc.decoder_vtable };
+        unsafe { ForeignDecoder::new(desc.decoder_handle, vtable_copy) }
     } else {
         None
     };
 
     // Wrap simulator if provided.
     let simulator = if !desc.simulator_handle.is_null() && !desc.simulator_vtable.is_null() {
-        let vt = unsafe { &*desc.simulator_vtable };
-        let vtable_copy = ForeignSimulatorVTable {
-            version: vt.version,
-            sz: vt.sz,
-            h: vt.h,
-            cx: vt.cx,
-            mz: vt.mz,
-            rx: vt.rx,
-            rz: vt.rz,
-            rzz: vt.rzz,
-            reset: vt.reset,
-            set_seed: vt.set_seed,
-            destroy: vt.destroy,
-        };
-        Some(unsafe { ForeignSimulator::new(desc.simulator_handle, vtable_copy) })
+        let vtable_copy = unsafe { *desc.simulator_vtable };
+        unsafe { ForeignSimulator::new(desc.simulator_handle, vtable_copy) }
     } else {
         None
     };

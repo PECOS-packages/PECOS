@@ -39,18 +39,10 @@ pub unsafe extern "C" fn pecos_foreign_decoder_create(
     handle: *mut (),
     vtable: *const ForeignDecoderVTable,
 ) -> *mut ForeignDecoder {
-    let vt = unsafe { &*vtable };
-    // Clone the vtable (it's all function pointers + a u32, trivially copyable)
-    let vtable_copy = ForeignDecoderVTable {
-        version: vt.version,
-        decode: vt.decode,
-        check_count: vt.check_count,
-        bit_count: vt.bit_count,
-        free_result: vt.free_result,
-        free_error: vt.free_error,
-        destroy: vt.destroy,
+    let vtable_copy = unsafe { *vtable };
+    let Some(decoder) = (unsafe { ForeignDecoder::new(handle, vtable_copy) }) else {
+        return std::ptr::null_mut();
     };
-    let decoder = unsafe { ForeignDecoder::new(handle, vtable_copy) };
     Box::into_raw(Box::new(decoder))
 }
 
@@ -194,21 +186,10 @@ pub unsafe extern "C" fn pecos_foreign_simulator_create(
     handle: *mut (),
     vtable: *const ForeignSimulatorVTable,
 ) -> *mut ForeignSimulator {
-    let vt = unsafe { &*vtable };
-    let vtable_copy = ForeignSimulatorVTable {
-        version: vt.version,
-        sz: vt.sz,
-        h: vt.h,
-        cx: vt.cx,
-        mz: vt.mz,
-        rx: vt.rx,
-        rz: vt.rz,
-        rzz: vt.rzz,
-        reset: vt.reset,
-        set_seed: vt.set_seed,
-        destroy: vt.destroy,
+    let vtable_copy = unsafe { *vtable };
+    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
+        return std::ptr::null_mut();
     };
-    let sim = unsafe { ForeignSimulator::new(handle, vtable_copy) };
     Box::into_raw(Box::new(sim))
 }
 

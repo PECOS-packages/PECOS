@@ -1,7 +1,7 @@
-//! Integration test: ForeignSimulator with pecos-neo's CircuitRunner.
+//! Integration test: `ForeignSimulator` with pecos-neo's `CircuitRunner`.
 //!
 //! Proves that a foreign simulator (C-ABI vtable) can be used with
-//! pecos-neo's typed command system -- no ByteMessage serialization needed.
+//! pecos-neo's typed command system -- no `ByteMessage` serialization needed.
 
 use pecos_core::QubitId;
 use pecos_foreign::{ForeignMeasurementResult, ForeignSimulator, ForeignSimulatorVTable};

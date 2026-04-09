@@ -49,7 +49,7 @@ struct DecodingResult
     """Weight/cost of the solution."""
     weight::Float64
     """Whether the decoder converged (nothing = unknown)."""
-    converged::Union{Bool, Nothing}
+    converged::Union{Bool,Nothing}
 end
 
 DecodingResult(observable, weight) = DecodingResult(observable, weight, nothing)
@@ -58,9 +58,10 @@ DecodingResult(observable, weight) = DecodingResult(observable, weight, nothing)
 Abstract type for all PECOS-compatible decoders.
 
 Subtypes must implement:
-- `decode(d, syndrome::Vector{UInt8}) -> DecodingResult`
-- `check_count(d) -> Int`
-- `bit_count(d) -> Int`
+
+  - `decode(d, syndrome::Vector{UInt8}) -> DecodingResult`
+  - `check_count(d) -> Int`
+  - `bit_count(d) -> Int`
 """
 abstract type AbstractDecoder end
 
@@ -78,7 +79,7 @@ function bit_count end
 
 # Global registry: maps Ptr{Cvoid} handles to Julia decoder objects.
 # Julia objects can't cross FFI directly, so we use integer handles.
-const _decoder_registry = Dict{UInt, AbstractDecoder}()
+const _decoder_registry = Dict{UInt,AbstractDecoder}()
 const _decoder_next_handle = Ref{UInt}(0)
 const _decoder_lock = ReentrantLock()
 
@@ -97,7 +98,7 @@ function _unregister_decoder(handle::Ptr{Cvoid})
     end
 end
 
-function _lookup_decoder(handle::Ptr{Cvoid})::Union{AbstractDecoder, Nothing}
+function _lookup_decoder(handle::Ptr{Cvoid})::Union{AbstractDecoder,Nothing}
     lock(_decoder_lock) do
         get(_decoder_registry, UInt(handle), nothing)
     end

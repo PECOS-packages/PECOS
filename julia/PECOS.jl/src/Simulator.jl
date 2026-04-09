@@ -89,7 +89,7 @@ function rzz! end
 # Registry (same pattern as Decoder.jl)
 # ============================================================================
 
-const _sim_registry = Dict{UInt, AbstractCliffordSimulator}()
+const _sim_registry = Dict{UInt,AbstractCliffordSimulator}()
 const _sim_next_handle = Ref{UInt}(0)
 const _sim_lock = ReentrantLock()
 
@@ -108,7 +108,7 @@ function _unregister_simulator(handle::Ptr{Cvoid})
     end
 end
 
-function _lookup_simulator(handle::Ptr{Cvoid})::Union{AbstractCliffordSimulator, Nothing}
+function _lookup_simulator(handle::Ptr{Cvoid})::Union{AbstractCliffordSimulator,Nothing}
     lock(_sim_lock) do
         get(_sim_registry, UInt(handle), nothing)
     end

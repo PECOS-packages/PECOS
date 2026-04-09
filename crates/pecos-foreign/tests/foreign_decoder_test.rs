@@ -1,7 +1,7 @@
-//! Integration test for ForeignDecoder.
+//! Integration test for `ForeignDecoder`.
 //!
 //! Implements a trivial "XOR decoder" as C-ABI functions in Rust, wraps it
-//! into a ForeignDecoder, and verifies it works through the Decoder trait.
+//! into a `ForeignDecoder`, and verifies it works through the Decoder trait.
 
 use ndarray::array;
 use pecos_decoder_core::Decoder;
@@ -122,7 +122,7 @@ fn test_foreign_decoder_basic() {
 
     // XOR of [0, 1, 0, 1] = 0
     assert_eq!(result.observable, vec![0, 0]);
-    assert_eq!(result.weight, 1.0);
+    assert!((result.weight - 1.0).abs() < f64::EPSILON);
     assert_eq!(result.converged, Some(true));
 }
 

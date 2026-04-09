@@ -28,7 +28,7 @@ unsafe fn run_circuit(
 
     let mut circuit_bytes: *mut u8 = std::ptr::null_mut();
     let mut circuit_len: usize = 0;
-    unsafe { pecos_circuit_build(circuit, &mut circuit_bytes, &mut circuit_len) };
+    unsafe { pecos_circuit_build(circuit, &raw mut circuit_bytes, &raw mut circuit_len) };
     unsafe { pecos_circuit_free(circuit) };
 
     // Process
@@ -39,8 +39,8 @@ unsafe fn run_circuit(
             engine,
             circuit_bytes,
             circuit_len,
-            &mut output_bytes,
-            &mut output_len,
+            &raw mut output_bytes,
+            &raw mut output_len,
         )
     };
     unsafe { pecos_free_bytes(circuit_bytes, circuit_len) };
@@ -53,23 +53,21 @@ unsafe fn run_circuit(
         pecos_parse_outcomes(
             output_bytes,
             output_len,
-            &mut outcomes_ptr,
-            &mut num_outcomes,
+            &raw mut outcomes_ptr,
+            &raw mut num_outcomes,
         )
     };
     unsafe { pecos_free_bytes(output_bytes, output_len) };
     assert_eq!(rc, 0, "parse outcomes failed");
 
-    let results = if num_outcomes > 0 && !outcomes_ptr.is_null() {
+    if num_outcomes > 0 && !outcomes_ptr.is_null() {
         let slice = unsafe { std::slice::from_raw_parts(outcomes_ptr, num_outcomes) };
         let v = slice.to_vec();
         unsafe { pecos_free_outcomes(outcomes_ptr, num_outcomes) };
         v
     } else {
         vec![]
-    };
-
-    results
+    }
 }
 
 #[test]
@@ -105,7 +103,7 @@ fn test_bell_state_correlation() {
                 let q0: usize = 0;
                 let q1: usize = 1;
                 let pair = [q0, q1];
-                pecos_circuit_h(c, &q0, 1);
+                pecos_circuit_h(c, &raw const q0, 1);
                 pecos_circuit_cx(c, pair.as_ptr(), 1);
                 pecos_circuit_mz(c, [q0, q1].as_ptr(), 2);
             })
@@ -131,8 +129,8 @@ fn test_deterministic_x_gate() {
     let outcomes = unsafe {
         run_circuit(engine, |c| {
             let q: usize = 0;
-            pecos_circuit_x(c, &q, 1);
-            pecos_circuit_mz(c, &q, 1);
+            pecos_circuit_x(c, &raw const q, 1);
+            pecos_circuit_mz(c, &raw const q, 1);
         })
     };
 
@@ -148,8 +146,8 @@ fn test_circuit_reuse() {
     let outcomes1 = unsafe {
         run_circuit(engine, |c| {
             let q: usize = 0;
-            pecos_circuit_h(c, &q, 1);
-            pecos_circuit_mz(c, &q, 1);
+            pecos_circuit_h(c, &raw const q, 1);
+            pecos_circuit_mz(c, &raw const q, 1);
         })
     };
     assert_eq!(outcomes1.len(), 1);
@@ -177,8 +175,8 @@ fn test_rotation_gate() {
     let outcomes = unsafe {
         run_circuit(engine, |c| {
             let q: usize = 0;
-            pecos_circuit_rx(c, std::f64::consts::PI, &q, 1);
-            pecos_circuit_mz(c, &q, 1);
+            pecos_circuit_rx(c, std::f64::consts::PI, &raw const q, 1);
+            pecos_circuit_mz(c, &raw const q, 1);
         })
     };
 
@@ -189,26 +187,26 @@ fn test_rotation_gate() {
 #[test]
 fn test_circuit_builder_reset() {
     // Test that circuit builder reset works
-    let circuit = unsafe { pecos_circuit_new() };
+    let circuit = pecos_circuit_new();
 
     // Build first circuit
     unsafe {
         let q: usize = 0;
-        pecos_circuit_h(circuit, &q, 1);
+        pecos_circuit_h(circuit, &raw const q, 1);
     }
     let mut bytes1: *mut u8 = std::ptr::null_mut();
     let mut len1: usize = 0;
-    unsafe { pecos_circuit_build(circuit, &mut bytes1, &mut len1) };
+    unsafe { pecos_circuit_build(circuit, &raw mut bytes1, &raw mut len1) };
 
     // Reset and build second circuit
     unsafe { pecos_circuit_reset(circuit) };
     unsafe {
         let q: usize = 0;
-        pecos_circuit_x(circuit, &q, 1);
+        pecos_circuit_x(circuit, &raw const q, 1);
     }
     let mut bytes2: *mut u8 = std::ptr::null_mut();
     let mut len2: usize = 0;
-    unsafe { pecos_circuit_build(circuit, &mut bytes2, &mut len2) };
+    unsafe { pecos_circuit_build(circuit, &raw mut bytes2, &raw mut len2) };
 
     // Both should produce valid circuits
     assert!(len1 > 0);

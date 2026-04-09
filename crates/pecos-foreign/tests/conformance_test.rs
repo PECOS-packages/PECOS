@@ -1,8 +1,8 @@
 //! Test the conformance suite itself by running it against a real simulator
-//! wrapped as a ForeignSimulator.
+//! wrapped as a `ForeignSimulator`.
 //!
-//! We wrap PECOS's SparseStab in C-ABI callbacks and run the conformance tests.
-//! Since SparseStab is a correct Clifford simulator, all tests must pass.
+//! We wrap PECOS's `SparseStab` in C-ABI callbacks and run the conformance tests.
+//! Since `SparseStab` is a correct Clifford simulator, all tests must pass.
 
 use pecos_core::QubitId;
 use pecos_foreign::conformance::run_conformance_tests;
@@ -11,7 +11,7 @@ use pecos_simulators::{CliffordGateable, SparseStab};
 
 use std::cell::UnsafeCell;
 
-/// Wrap SparseStab behind C-ABI function pointers.
+/// Wrap `SparseStab` behind C-ABI function pointers.
 /// This is a "real" foreign simulator -- same interface a Go/C author would use.
 struct SimHolder {
     sim: UnsafeCell<SparseStab>,

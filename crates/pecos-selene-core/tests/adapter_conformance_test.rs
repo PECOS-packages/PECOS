@@ -1,6 +1,6 @@
-//! Verify the SeleneAdapter works with Selene's own conformance test suite.
+//! Verify the `SeleneAdapter` works with Selene's own conformance test suite.
 //!
-//! Tests both rotation-capable (StateVec) and Clifford-only (Stabilizer) paths.
+//! Tests both rotation-capable (`StateVec`) and Clifford-only (Stabilizer) paths.
 
 use anyhow::{Result, anyhow};
 use pecos_core::{Angle64, QubitId};

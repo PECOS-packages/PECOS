@@ -78,6 +78,7 @@ A decoder plugin implements 3 methods:
 ```python
 import pecos_rslib
 
+
 class MyDecoder:
     def __init__(self, checks, bits):
         self._checks = checks
@@ -93,6 +94,7 @@ class MyDecoder:
 
     def bit_count(self) -> int:
         return self._bits
+
 
 # Wrap and use
 decoder = pecos_rslib.PyForeignDecoder(MyDecoder(100, 50))
@@ -204,6 +206,7 @@ For universal (non-Clifford) simulators, add 3 rotation methods. All other rotat
 ```python
 import pecos_rslib
 
+
 class MyStabilizerSim:
     def __init__(self, n):
         self.n = n
@@ -224,13 +227,14 @@ class MyStabilizerSim:
     def mz(self, qubits: list[int]) -> list[tuple[bool, bool]]:
         results = []
         for q in qubits:
-            outcome = False       # measurement outcome
+            outcome = False  # measurement outcome
             deterministic = True  # whether outcome was deterministic
             results.append((outcome, deterministic))
         return results
 
     def reset(self):
         pass  # reset to |0...0>
+
 
 sim = pecos_rslib.PyForeignSimulator(MyStabilizerSim(10))
 ```

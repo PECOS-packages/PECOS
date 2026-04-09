@@ -1,7 +1,7 @@
-//! Integration test for ForeignSimulator.
+//! Integration test for `ForeignSimulator`.
 //!
 //! Implements a toy computational-basis simulator as C-ABI functions, wraps it
-//! into a ForeignSimulator, and verifies it works through CliffordGateable.
+//! into a `ForeignSimulator`, and verifies it works through `CliffordGateable`.
 //!
 //! The toy simulator only tracks classical bit flips -- it's not a real quantum
 //! simulator, but it exercises the full vtable -> trait pipeline.

@@ -24,6 +24,7 @@ wasm = ["dep:pecos-wasm"]
 [dependencies]
 # Core PECOS crates (direct deps instead of metacrate)
 pecos-core.workspace = true
+pecos-decoder-core.workspace = true
 pecos-quantum = { workspace = true, features = ["hugr"] }
 pecos-num.workspace = true
 pecos-random.workspace = true

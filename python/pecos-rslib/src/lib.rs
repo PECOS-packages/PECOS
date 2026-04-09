@@ -48,6 +48,8 @@ mod pecos_random_bindings;
 mod phir_classical_interpreter;
 mod phir_json_bridge;
 mod programs_module;
+mod py_foreign_decoder;
+mod py_foreign_simulator;
 mod quest_bindings;
 mod qulacs_bindings;
 mod shot_results_bindings;
@@ -353,6 +355,10 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // QASM-to-PHIR-JSON conversion
     m.add_function(wrap_pyfunction!(qasm_to_phir_json_py, m)?)?;
+
+    // Python foreign plugin types (Python-implemented decoders and simulators)
+    m.add_class::<py_foreign_decoder::PyForeignDecoder>()?;
+    m.add_class::<py_foreign_simulator::PyForeignSimulator>()?;
 
     // WebAssembly foreign object (optional)
     #[cfg(feature = "wasm")]

@@ -41,12 +41,12 @@ def _make_classical_interpreter(
     Returns:
         A classical interpreter instance.
     """
-    if spec == "python":
-        return PhirClassicalInterpreter()
-    if spec is None or spec == "rust":
+    if spec == "rust":
         from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
 
         return RustPhirClassicalInterpreter()
+    if spec is None or spec == "python":
+        return PhirClassicalInterpreter()
     msg = f"Unknown classical interpreter: {spec!r}. Use 'python' or 'rust'."
     raise ValueError(msg)
 
@@ -232,54 +232,6 @@ class HybridEngine:
         for k, v in shot_results.items():
             self.results.setdefault(k, []).append(v)
 
-    def _can_use_full_rust(
-        self,
-        _program: PHIRProgram,
-        _foreign_object: ForeignObjectProtocol | None,
-    ) -> bool:
-        """Check if we can use the full Rust simulation path.
-
-        Currently disabled by default -- the existing PhirJsonEngine has
-        behavioral differences (seeding, bit ordering) from the Python
-        PhirClassicalInterpreter. Use run_phir_sim() directly for the
-        full Rust path.
-        """
-        return False
-
-    def _run_full_rust(
-        self,
-        program: PHIRProgram,
-        foreign_object: ForeignObjectProtocol | None,
-        shots: int,
-        seed: int | None,
-    ) -> dict:
-        """Run the simulation entirely in Rust (zero per-shot Python overhead)."""
-        import json  # noqa: PLC0415
-
-        from pecos_rslib import run_phir_sim  # noqa: PLC0415
-
-        phir_json = program if isinstance(program, str) else json.dumps(program)
-
-        # Determine quantum backend from our qsim
-        quantum = "stabilizer"
-        if self.qsim is not None:
-            sim_type = type(self.qsim.state).__name__ if self.qsim.state else ""
-            if "StateVec" in sim_type:
-                quantum = "state-vector"
-
-        # Pass the error model directly -- run_phir_sim handles both Python
-        # and Rust noise models via build_noise_model()
-        noise = self.error_model if not isinstance(self.error_model, NoErrorModel) else None
-
-        return run_phir_sim(
-            phir_json,
-            shots=shots,
-            seed=seed,
-            quantum=quantum,
-            foreign_object=foreign_object,
-            noise_model=noise,
-        )
-
     def run(
         self,
         program: PHIRProgram,
@@ -304,13 +256,6 @@ class HybridEngine:
             return_int: Whether to return measurement results as integers.
 
         """
-        # Fast path: full Rust simulation when conditions allow
-        if initialize and not return_int and self._can_use_full_rust(program, foreign_object):
-            try:
-                return self._run_full_rust(program, foreign_object, shots, seed)
-            except (RuntimeError, ValueError, TypeError):
-                pass  # Fall through to Python loop
-
         measurements = MeasData()
 
         if initialize:

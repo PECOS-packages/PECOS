@@ -362,8 +362,11 @@ impl<'a> ExpressionEvaluator<'a> {
             "|" => Ok(wrap(&l | &r)),
             "^" => Ok(wrap(&l ^ &r)),
 
-            // Shifts -- RHS is the shift amount
+            // Shifts -- RHS is the shift amount (must be non-negative)
             ">>" => {
+                if ri < 0 {
+                    return Err(PecosError::Input(format!("Negative shift amount: {ri}")));
+                }
                 if lhs_signed {
                     // Arithmetic right shift: sign-extends (C/Rust behavior for signed)
                     let result = li.wrapping_shr(ri as u32);
@@ -374,6 +377,9 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
             }
             "<<" => {
+                if ri < 0 {
+                    return Err(PecosError::Input(format!("Negative shift amount: {ri}")));
+                }
                 let shift = r.to_u64().unwrap_or(0) as u16;
                 Ok(wrap(&l << shift))
             }

@@ -716,6 +716,25 @@ def test_division_by_zero(cop: str) -> None:
         run_both(phir, qsim="stabilizer")
 
 
+def test_signed_division_min_by_neg_one() -> None:
+    """i64::MIN / -1 wraps to i64::MIN in both interpreters.
+
+    This is a fragile parity: Rust uses wrapping_div (returns i64::MIN),
+    Python evaluates at arbitrary precision (gives 2**63) then truncates
+    on storage (back to i64::MIN). Lock it down with a regression test.
+    """
+    min_i64 = -(2**63)
+    phir = _make_classical_program(
+        [("a", "i64", 63), ("r", "i64", 63)],
+        [
+            {"cop": "=", "returns": ["a"], "args": [min_i64]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": "/", "args": ["a", -1]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r, f"Parity failure on i64::MIN / -1: py={py_r}, rs={rs_r}"
+
+
 # ── Nested expressions with narrow registers ────────────────────────
 
 

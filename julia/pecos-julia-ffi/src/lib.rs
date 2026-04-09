@@ -16,6 +16,9 @@ This crate provides C-compatible functions that can be called from Julia via cca
 These will be compiled by `BinaryBuilder` into a JLL package.
 */
 
+mod foreign_decoder;
+mod foreign_simulator;
+
 use pecos::QubitId;
 use std::ffi::CString;
 use std::os::raw::c_char;

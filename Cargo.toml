@@ -173,6 +173,7 @@ pecos-decoder-core = { version = "0.2.0-dev.0", path = "crates/pecos-decoder-cor
 pecos-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-decoders" }
 pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
+pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
 pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }

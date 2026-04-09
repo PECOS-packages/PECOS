@@ -3783,6 +3783,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-ffi"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-foreign",
+]
+
+[[package]]
+name = "pecos-foreign"
+version = "0.2.0-dev.0"
+dependencies = [
+ "dirs",
+ "libloading 0.9.0",
+ "log",
+ "ndarray 0.17.2",
+ "pecos-core",
+ "pecos-decoder-core",
+ "pecos-engines",
+ "pecos-neo",
+ "pecos-random",
+ "pecos-simulators",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pecos-fusion-blossom"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -3796,7 +3820,9 @@ dependencies = [
 name = "pecos-go-ffi"
 version = "0.1.0-dev0"
 dependencies = [
+ "ndarray 0.17.2",
  "pecos",
+ "pecos-foreign",
 ]
 
 [[package]]
@@ -3856,7 +3882,9 @@ dependencies = [
 name = "pecos-julia-ffi"
 version = "0.1.0-dev0"
 dependencies = [
+ "ndarray 0.17.2",
  "pecos",
+ "pecos-foreign",
 ]
 
 [[package]]
@@ -4157,6 +4185,7 @@ dependencies = [
  "pecos-build",
  "pecos-core",
  "pecos-cppsparsestab",
+ "pecos-decoder-core",
  "pecos-decoders",
  "pecos-engines",
  "pecos-experimental",
@@ -4211,6 +4240,17 @@ name = "pecos-selene-clifford-rz"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
+ "pecos-core",
+ "pecos-simulators",
+ "selene-core 0.2.1",
+]
+
+[[package]]
+name = "pecos-selene-core"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
+ "clap",
  "pecos-core",
  "pecos-simulators",
  "selene-core 0.2.1",

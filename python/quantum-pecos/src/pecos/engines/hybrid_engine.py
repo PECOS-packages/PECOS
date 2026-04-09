@@ -120,8 +120,15 @@ class HybridEngine:
         # Internal interpreter uses the same implementation as the outer one.
         # When given Python QOp objects (from op_processor), the Rust interpreter's
         # execute() uses a passthrough mode that buffers at measurement boundaries.
+        # Match the outer interpreter type for the internal one
+        try:
+            from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
+
+            outer_is_rust = isinstance(self.cinterp, RustPhirClassicalInterpreter)
+        except ImportError:
+            outer_is_rust = False
         self._internal_cinterp: ClassicalInterpreterProtocol = _make_classical_interpreter(
-            "rust" if type(self.cinterp).__name__ == "RustPhirClassicalInterpreter" else "python",
+            "rust" if outer_is_rust else "python",
         )
         self._internal_cinterp.phir_validate = self.cinterp.phir_validate
 

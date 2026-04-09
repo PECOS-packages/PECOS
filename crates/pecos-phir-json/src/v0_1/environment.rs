@@ -106,27 +106,6 @@ impl DataType {
             | DataType::Qubits => 0,
         }
     }
-
-    /// Applies type constraints to a value based on the bit width and signedness
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
-    )]
-    pub fn constrain_value(&self, value: u64) -> u64 {
-        match self {
-            DataType::I8 => (value as i8) as u64,
-            DataType::I16 => (value as i16) as u64,
-            DataType::I32 => (value as i32) as u64,
-            DataType::I64 => (value as i64) as u64,
-            DataType::U8 => value & 0xFF,
-            DataType::U16 => value & 0xFFFF,
-            DataType::U32 => value & 0xFFFF_FFFF,
-            DataType::U64 | DataType::Qubits => value, // Full 64-bit range for these types
-            DataType::Bool => value & 1,
-        }
-    }
 }
 
 // Implement Display for DataType

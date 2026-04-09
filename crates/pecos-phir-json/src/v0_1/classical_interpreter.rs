@@ -714,11 +714,8 @@ pub enum ResultValue {
 
 // ── Execution iterator ──────────────────────────────────────────────
 
-/// Stack frame for the iterative block flattener.
-enum StackFrame<'a> {
-    /// A slice of operations to process from an index.
-    Ops(&'a [Operation], usize),
-}
+/// Stack frame for the iterative block flattener: a slice of operations and current index.
+struct StackFrame<'a>(&'a [Operation], usize);
 
 /// Iterator that walks the PHIR program and yields batches of quantum/machine
 /// operations at measurement boundaries.
@@ -736,7 +733,7 @@ impl<'a> ExecuteIter<'a> {
     fn new(interp: &'a mut PhirClassicalInterpreter, ops: &'a [Operation]) -> Self {
         Self {
             interp,
-            stack: vec![StackFrame::Ops(ops, 0)],
+            stack: vec![StackFrame(ops, 0)],
             buffer: Vec::new(),
             done: false,
         }
@@ -765,9 +762,7 @@ impl<'a> ExecuteIter<'a> {
                 return Ok(Some(std::mem::take(&mut self.buffer)));
             };
 
-            let (ops, idx) = match frame {
-                StackFrame::Ops(ops, idx) => (ops, idx),
-            };
+            let StackFrame(ops, idx) = frame;
 
             if *idx >= ops.len() {
                 // This frame is exhausted, pop it
@@ -832,11 +827,11 @@ impl<'a> ExecuteIter<'a> {
                     ..
                 } => match block.as_str() {
                     "sequence" => {
-                        self.stack.push(StackFrame::Ops(block_ops, 0));
+                        self.stack.push(StackFrame(block_ops, 0));
                     }
                     "qparallel" => {
                         // Treat like sequence (Python does the same in _flatten_blocks)
-                        self.stack.push(StackFrame::Ops(block_ops, 0));
+                        self.stack.push(StackFrame(block_ops, 0));
                     }
                     "if" => {
                         let condition = condition.as_ref().ok_or_else(|| {
@@ -845,10 +840,10 @@ impl<'a> ExecuteIter<'a> {
                         let cond_val = self.interp.eval_expr(condition)?;
                         if cond_val != 0 {
                             if let Some(tb) = true_branch {
-                                self.stack.push(StackFrame::Ops(tb, 0));
+                                self.stack.push(StackFrame(tb, 0));
                             }
                         } else if let Some(fb) = false_branch {
-                            self.stack.push(StackFrame::Ops(fb, 0));
+                            self.stack.push(StackFrame(fb, 0));
                         }
                     }
                     other => {

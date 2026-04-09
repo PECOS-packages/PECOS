@@ -2,8 +2,7 @@ use crate::v0_1::ast::{ArgItem, Expression};
 use crate::v0_1::environment::{BitValue, DataType, Environment, TypedValue};
 use pecos_core::BitUInt;
 use pecos_core::errors::PecosError;
-use std::collections::BTreeMap;
-use std::fmt::{self, Write};
+use std::fmt;
 
 /// Minimum evaluation width -- matches the hardware model where
 /// everything is i64 under the hood.
@@ -92,15 +91,20 @@ impl ExprValue {
     }
 
     /// Converts a `BitValue` to an `ExprValue`, widening to evaluation width.
+    ///
+    /// For signed values, sign-extends from the type width (not zero-extends).
+    /// For example, i8(-1) stored as 0xFF is widened to 0xFFFFFFFFFFFFFFFF.
     #[must_use]
+    #[allow(clippy::cast_sign_loss)]
     pub fn from_bit_value(value: &BitValue) -> Self {
-        let eval_width = MIN_EVAL_WIDTH.max(value.size());
-        // Get the raw BitUInt from the value and widen
-        let raw = value.to_bituint();
-        let widened = widen_to(raw, eval_width);
         if value.is_signed() {
-            ExprValue::Signed(widened)
+            // Sign-extend via as_i64(), then store at eval width
+            let signed_val = value.as_i64();
+            ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, signed_val as u64))
         } else {
+            let eval_width = MIN_EVAL_WIDTH.max(value.size());
+            let raw = value.to_bituint();
+            let widened = widen_to(raw, eval_width);
             ExprValue::Unsigned(widened)
         }
     }
@@ -143,67 +147,13 @@ impl PartialEq<u64> for ExprValue {
 pub struct ExpressionEvaluator<'a> {
     /// Environment for variable lookups
     environment: &'a Environment,
-    /// Cache for variable lookups
-    var_cache: BTreeMap<String, ExprValue>,
-    /// Cache for expression evaluation results
-    expr_cache: BTreeMap<String, ExprValue>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     /// Creates a new expression evaluator with the given environment.
     #[must_use]
     pub fn new(environment: &'a Environment) -> Self {
-        Self {
-            environment,
-            var_cache: BTreeMap::new(),
-            expr_cache: BTreeMap::new(),
-        }
-    }
-
-    /// Creates a new expression evaluator with pre-allocated cache sizes.
-    #[must_use]
-    pub fn with_capacity(
-        environment: &'a Environment,
-        _var_capacity: usize,
-        _expr_capacity: usize,
-    ) -> Self {
-        Self::new(environment)
-    }
-
-    /// Clears the expression cache but keeps variable cache.
-    pub fn clear_expr_cache(&mut self) {
-        self.expr_cache.clear();
-    }
-
-    /// Clears all caches.
-    pub fn clear_caches(&mut self) {
-        self.var_cache.clear();
-        self.expr_cache.clear();
-    }
-
-    /// Converts an expression to a string for caching.
-    fn expr_to_cache_key(expr: &Expression) -> String {
-        match expr {
-            Expression::Integer(val) => format!("int:{val}"),
-            Expression::Variable(name) => format!("var:{name}"),
-            Expression::Operation { cop, args } => {
-                let mut key = format!("op:{cop}");
-                for arg in args {
-                    match arg {
-                        ArgItem::Simple(name) => write!(&mut key, ",simple:{name}").unwrap(),
-                        ArgItem::Indexed((name, idx)) => {
-                            write!(&mut key, ",indexed:{name}[{idx}]").unwrap();
-                        }
-                        ArgItem::Integer(val) => write!(&mut key, ",int:{val}").unwrap(),
-                        ArgItem::UInteger(val) => write!(&mut key, ",uint:{val}").unwrap(),
-                        ArgItem::Expression(expr) => {
-                            write!(&mut key, ",expr:{}", Self::expr_to_cache_key(expr)).unwrap();
-                        }
-                    }
-                }
-                key
-            }
-        }
+        Self { environment }
     }
 
     /// Evaluates an expression.
@@ -211,35 +161,23 @@ impl<'a> ExpressionEvaluator<'a> {
     /// # Errors
     /// Returns an error if evaluation fails.
     pub fn eval_expr(&mut self, expr: &Expression) -> Result<ExprValue, PecosError> {
-        // Handle simple cases without caching
         match expr {
             Expression::Integer(val) => return Ok(ExprValue::signed(*val)),
             Expression::Variable(name) => {
-                if let Some(val) = self.var_cache.get(name) {
-                    return Ok(val.clone());
-                }
                 if let Some(value) = self.environment.get(name) {
                     let is_bool = self
                         .environment
                         .get_variable_info_opt(name)
                         .is_some_and(|info| info.data_type == DataType::Bool);
-                    let expr_val = if is_bool {
+                    return Ok(if is_bool {
                         ExprValue::Boolean(value.as_bool())
                     } else {
                         ExprValue::from_bit_value(value)
-                    };
-                    self.var_cache.insert(name.clone(), expr_val.clone());
-                    return Ok(expr_val);
+                    });
                 }
                 return Err(PecosError::Input(format!("Variable '{name}' not found")));
             }
             Expression::Operation { .. } => {}
-        }
-
-        // For complex expressions, use caching
-        let cache_key = Self::expr_to_cache_key(expr);
-        if let Some(cached_value) = self.expr_cache.get(&cache_key) {
-            return Ok(cached_value.clone());
         }
 
         let result = match expr {
@@ -293,7 +231,6 @@ impl<'a> ExpressionEvaluator<'a> {
             _ => unreachable!("handled above"),
         }?;
 
-        self.expr_cache.insert(cache_key, result.clone());
         Ok(result)
     }
 
@@ -304,21 +241,16 @@ impl<'a> ExpressionEvaluator<'a> {
     pub fn eval_arg(&mut self, arg: &ArgItem) -> Result<ExprValue, PecosError> {
         match arg {
             ArgItem::Simple(name) => {
-                if let Some(val) = self.var_cache.get(name) {
-                    return Ok(val.clone());
-                }
                 if let Some(value) = self.environment.get(name) {
                     let is_bool = self
                         .environment
                         .get_variable_info_opt(name)
                         .is_some_and(|info| info.data_type == DataType::Bool);
-                    let expr_val = if is_bool {
+                    Ok(if is_bool {
                         ExprValue::Boolean(value.as_bool())
                     } else {
                         ExprValue::from_bit_value(value)
-                    };
-                    self.var_cache.insert(name.clone(), expr_val.clone());
-                    Ok(expr_val)
+                    })
                 } else {
                     Err(PecosError::Input(format!("Variable '{name}' not found")))
                 }
@@ -389,7 +321,12 @@ impl<'a> ExpressionEvaluator<'a> {
             }
         };
 
-        #[allow(clippy::cast_possible_truncation)]
+        // For signed operations we use i64 arithmetic (matching C/Rust behavior).
+        // This is correct for values <= 64 bits, which covers all practical PHIR types.
+        let li = lhs_val.as_i64();
+        let ri = rhs_val.as_i64();
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         match op {
             // Arithmetic (BitUInt ops automatically wrap at the width)
             "+" => Ok(wrap(&l + &r)),
@@ -399,13 +336,25 @@ impl<'a> ExpressionEvaluator<'a> {
                 if r.is_zero() {
                     return Err(PecosError::RuntimeDivisionByZero);
                 }
-                Ok(wrap(&l / &r))
+                if result_signed {
+                    // Signed division truncates toward zero (C/Rust behavior)
+                    let result = li.wrapping_div(ri);
+                    Ok(ExprValue::signed(result))
+                } else {
+                    Ok(wrap(&l / &r))
+                }
             }
             "%" => {
                 if r.is_zero() {
                     return Err(PecosError::RuntimeDivisionByZero);
                 }
-                Ok(wrap(&l % &r))
+                if result_signed {
+                    // Signed remainder (C/Rust behavior: sign follows dividend)
+                    let result = li.wrapping_rem(ri);
+                    Ok(ExprValue::signed(result))
+                } else {
+                    Ok(wrap(&l % &r))
+                }
             }
 
             // Bitwise
@@ -415,24 +364,39 @@ impl<'a> ExpressionEvaluator<'a> {
 
             // Shifts -- RHS is the shift amount
             ">>" => {
-                let shift = r.to_u64().unwrap_or(0) as u16;
-                Ok(wrap(&l >> shift))
+                if lhs_signed {
+                    // Arithmetic right shift: sign-extends (C/Rust behavior for signed)
+                    let result = li.wrapping_shr(ri as u32);
+                    Ok(ExprValue::signed(result))
+                } else {
+                    let shift = r.to_u64().unwrap_or(0) as u16;
+                    Ok(wrap(&l >> shift))
+                }
             }
             "<<" => {
                 let shift = r.to_u64().unwrap_or(0) as u16;
                 Ok(wrap(&l << shift))
             }
 
-            // Comparisons -- use BitUInt ordering (unsigned)
-            // For signed comparisons, we'd need to check sign bits.
-            // For now, numeric comparison via as_u64/as_i64 for <=64-bit,
-            // and BitUInt ordering for wider values.
+            // Comparisons -- signed when both operands are signed
             "==" => Ok(ExprValue::unsigned(u64::from(l == r))),
             "!=" => Ok(ExprValue::unsigned(u64::from(l != r))),
-            "<" => Ok(ExprValue::unsigned(u64::from(l < r))),
-            ">" => Ok(ExprValue::unsigned(u64::from(l > r))),
-            "<=" => Ok(ExprValue::unsigned(u64::from(l <= r))),
-            ">=" => Ok(ExprValue::unsigned(u64::from(l >= r))),
+            "<" => {
+                let result = if result_signed { li < ri } else { l < r };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            ">" => {
+                let result = if result_signed { li > ri } else { l > r };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            "<=" => {
+                let result = if result_signed { li <= ri } else { l <= r };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
+            ">=" => {
+                let result = if result_signed { li >= ri } else { l >= r };
+                Ok(ExprValue::unsigned(u64::from(result)))
+            }
 
             // Logical
             "&&" => Ok(ExprValue::Boolean(lhs_val.as_bool() && rhs_val.as_bool())),
@@ -630,5 +594,99 @@ mod tests {
         let result = evaluator.eval_expr(&expr).unwrap();
         // ~1u64 = 0xFFFFFFFFFFFFFFFE
         assert_eq!(result.as_u64(), !1u64);
+    }
+
+    #[test]
+    fn test_signed_comparison() {
+        // Integer literals are signed: -1 < 1 should be true
+        let env = Environment::new();
+        let mut evaluator = ExpressionEvaluator::new(&env);
+        let expr = Expression::Operation {
+            cop: "<".to_string(),
+            args: vec![ArgItem::Integer(-1), ArgItem::Integer(1)],
+        };
+        let result = evaluator.eval_expr(&expr).unwrap();
+        assert!(result.as_bool(), "-1 < 1 should be true");
+    }
+
+    #[test]
+    fn test_signed_comparison_greater() {
+        let env = Environment::new();
+        let mut evaluator = ExpressionEvaluator::new(&env);
+        let expr = Expression::Operation {
+            cop: ">".to_string(),
+            args: vec![ArgItem::Integer(-1), ArgItem::Integer(1)],
+        };
+        let result = evaluator.eval_expr(&expr).unwrap();
+        assert!(!result.as_bool(), "-1 > 1 should be false");
+    }
+
+    #[test]
+    fn test_signed_division() {
+        // -7 / 2 should be -3 (truncation toward zero)
+        let env = Environment::new();
+        let mut evaluator = ExpressionEvaluator::new(&env);
+        let expr = Expression::Operation {
+            cop: "/".to_string(),
+            args: vec![ArgItem::Integer(-7), ArgItem::Integer(2)],
+        };
+        let result = evaluator.eval_expr(&expr).unwrap();
+        assert_eq!(result.as_i64(), -3, "-7 / 2 should be -3");
+    }
+
+    #[test]
+    fn test_signed_modulo() {
+        // -7 % 3 should be -1 (remainder, sign follows dividend)
+        let env = Environment::new();
+        let mut evaluator = ExpressionEvaluator::new(&env);
+        let expr = Expression::Operation {
+            cop: "%".to_string(),
+            args: vec![ArgItem::Integer(-7), ArgItem::Integer(3)],
+        };
+        let result = evaluator.eval_expr(&expr).unwrap();
+        assert_eq!(result.as_i64(), -1, "-7 % 3 should be -1");
+    }
+
+    #[test]
+    fn test_signed_right_shift() {
+        // -1 >> 1 should be -1 (arithmetic shift, sign-extends)
+        let env = Environment::new();
+        let mut evaluator = ExpressionEvaluator::new(&env);
+        let expr = Expression::Operation {
+            cop: ">>".to_string(),
+            args: vec![ArgItem::Integer(-1), ArgItem::Integer(1)],
+        };
+        let result = evaluator.eval_expr(&expr).unwrap();
+        assert_eq!(
+            result.as_i64(),
+            -1,
+            "-1 >> 1 should be -1 (arithmetic shift)"
+        );
+    }
+
+    #[test]
+    fn test_sign_extension_from_narrow() {
+        // i8 with value 0xFF stored in 7-bit size.
+        // Type width is 8, so bit 7 is the sign bit.
+        // 0xFF masked to 7 bits = 0x7F. Sign bit (bit 7) = 0, so positive.
+        // But 0x7F in i8 is 127. as_i64() uses type_width=8, sign bit at 7.
+        // 0x7F has bit 7 = 0, so it's +127.
+        let mut env = Environment::new();
+        env.add_variable("a", DataType::I8, 7).unwrap();
+        env.set_raw("a", 0x7F).unwrap(); // 127 in i8 (max for 7-bit size)
+
+        let mut evaluator = ExpressionEvaluator::new(&env);
+        let result = evaluator
+            .eval_arg(&ArgItem::Simple("a".to_string()))
+            .unwrap();
+        assert_eq!(result.as_i64(), 127, "i8 size=7 val=0x7F should be 127");
+
+        // Now test sign extension with expression: 0 - 1 = -1 as signed
+        let expr = Expression::Operation {
+            cop: "-".to_string(),
+            args: vec![ArgItem::Simple("a".to_string()), ArgItem::Integer(128)],
+        };
+        let result = evaluator.eval_expr(&expr).unwrap();
+        assert_eq!(result.as_i64(), -1, "127 - 128 = -1 as signed");
     }
 }

@@ -453,36 +453,12 @@ def _make_random_quantum_program(rng: random.Random) -> dict:
 
 
 def test_fuzz_classical_programs() -> None:
-    """Fuzz test: random classical programs should produce identical or near-identical results.
-
-    A small number of differences is tolerated because the Rust evaluator uses
-    64-bit arithmetic (matching hardware) while Python PECOS dtypes evaluate at
-    the operand's type width (e.g., 32 bits for u32). Programs with narrower-than-i64
-    types that overflow can produce different intermediate values.
-    """
+    """Fuzz test: random classical programs must produce identical results."""
     rng = random.Random(2026)
-    identical = 0
-    different = 0
-    errors = 0
-
     for i in range(200):
         phir = _make_random_classical_program(rng)
-        try:
-            py_r, rs_r = run_both(phir, seed=i, qsim="stabilizer")
-            if py_r == rs_r:
-                identical += 1
-            else:
-                different += 1
-        except (OverflowError, TypeError):
-            errors += 1  # Known Python dtype limitations
-
-    # Known divergences: Rust evaluates at 64-bit width and stores unsigned
-    # at type width. Python evaluates at dtype width and stores unsigned at
-    # register size. Programs with narrow unsigned registers can differ.
-    # This test validates that crashes don't occur and tracks parity.
-    total = identical + different
-    assert total > 150, f"Too many errors: {errors}"
-    assert identical > 0, "No identical results at all -- something is very wrong"
+        py_r, rs_r = run_both(phir, seed=i, qsim="stabilizer")
+        assert py_r == rs_r, f"Classical fuzz program {i} produced different results"
 
 
 def test_fuzz_quantum_programs() -> None:
@@ -724,6 +700,20 @@ def test_division_modulo_positive(a_val: int, b_val: int, cop: str, expected: in
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r, f"Parity failure: py={py_r}, rs={rs_r}"
     assert int(py_r["r"]) == expected, f"{a_val} {cop} {b_val}: expected {expected}, got {int(py_r['r'])}"
+
+
+@pytest.mark.parametrize("cop", ["/", "%"])
+def test_division_by_zero(cop: str) -> None:
+    """Division and modulo by zero should raise an error in both interpreters."""
+    phir = _make_classical_program(
+        [("a", "i64", 32), ("r", "i64", 32)],
+        [
+            {"cop": "=", "returns": ["a"], "args": [42]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": cop, "args": ["a", 0]}]},
+        ],
+    )
+    with pytest.raises((ZeroDivisionError, RuntimeError)):
+        run_both(phir, qsim="stabilizer")
 
 
 # ── Nested expressions with narrow registers ────────────────────────

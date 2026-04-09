@@ -213,4 +213,3 @@ cython_debug/
 clib/*/.venv/
 clib/*/uv.lock
 python/selene-plugins/*/uv.lock
-design/qasm-to-phir-test-plan.md

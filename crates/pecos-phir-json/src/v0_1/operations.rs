@@ -211,20 +211,10 @@ impl OperationProcessor {
     /// This delegates directly to the environment which is the single source of truth.
     #[must_use]
     pub fn get_measurement_results(&self) -> BTreeMap<String, u32> {
-        // Get all measurement-related variables from the environment
-        let mut results = BTreeMap::new();
-        let all_results = self.environment.get_measurement_results();
-
-        // Convert TypedValue to u32
-        for (name, value) in all_results {
-            results.insert(name, value.as_u32());
-        }
-
-        // If no results were found, fall back to mapped results
+        let results = self.environment.get_measurement_results();
         if results.is_empty() {
             return self.environment.get_mapped_results();
         }
-
         results
     }
 

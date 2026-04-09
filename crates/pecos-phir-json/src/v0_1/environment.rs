@@ -126,232 +126,7 @@ impl fmt::Display for DataType {
     }
 }
 
-/// Represents a variable value that can be typed
-#[derive(Debug, Clone, Copy)]
-pub enum TypedValue {
-    I8(i8),
-    I16(i16),
-    I32(i32),
-    I64(i64),
-    U8(u8),
-    U16(u16),
-    U32(u32),
-    U64(u64),
-    Bool(bool),
-}
-
-impl TypedValue {
-    /// Creates a new `TypedValue` with the specified data type and value
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
-    )]
-    pub fn new(data_type: &DataType, value: u64) -> Self {
-        match data_type {
-            DataType::I8 => TypedValue::I8(value as i8),
-            DataType::I16 => TypedValue::I16(value as i16),
-            DataType::I32 => TypedValue::I32(value as i32),
-            DataType::I64 => TypedValue::I64(value as i64),
-            DataType::U8 => TypedValue::U8(value as u8),
-            DataType::U16 => TypedValue::U16(value as u16),
-            DataType::U32 => TypedValue::U32(value as u32),
-            DataType::U64 | DataType::Qubits => TypedValue::U64(value), // U64 and Qubits both use U64
-            DataType::Bool => TypedValue::Bool(value != 0),
-        }
-    }
-
-    /// Creates a typed value from a raw u64, inferring the type as i32
-    /// This is for backward compatibility with code that uses raw values
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    pub fn from_raw(value: u64) -> Self {
-        TypedValue::I32(value as i32)
-    }
-
-    /// Gets the value as a u64 (for uniform storage)
-    #[must_use]
-    #[allow(clippy::cast_sign_loss)]
-    pub fn as_u64(&self) -> u64 {
-        match self {
-            TypedValue::I8(val) => *val as u64,
-            TypedValue::I16(val) => *val as u64,
-            TypedValue::I32(val) => *val as u64,
-            TypedValue::I64(val) => *val as u64,
-            TypedValue::U8(val) => u64::from(*val),
-            TypedValue::U16(val) => u64::from(*val),
-            TypedValue::U32(val) => u64::from(*val),
-            TypedValue::U64(val) => *val,
-            TypedValue::Bool(val) => u64::from(*val),
-        }
-    }
-
-    /// Gets the value as an i64 (for expressions)
-    #[must_use]
-    #[allow(clippy::cast_possible_wrap)]
-    pub fn as_i64(&self) -> i64 {
-        match self {
-            TypedValue::I8(val) => i64::from(*val),
-            TypedValue::I16(val) => i64::from(*val),
-            TypedValue::I32(val) => i64::from(*val),
-            TypedValue::I64(val) => *val,
-            TypedValue::U8(val) => i64::from(*val),
-            TypedValue::U16(val) => i64::from(*val),
-            TypedValue::U32(val) => i64::from(*val),
-            TypedValue::U64(val) => *val as i64,
-            TypedValue::Bool(val) => i64::from(*val),
-        }
-    }
-
-    /// Gets the value as a boolean
-    #[must_use]
-    pub fn as_bool(&self) -> bool {
-        match self {
-            TypedValue::I8(val) => *val != 0,
-            TypedValue::I16(val) => *val != 0,
-            TypedValue::I32(val) => *val != 0,
-            TypedValue::I64(val) => *val != 0,
-            TypedValue::U8(val) => *val != 0,
-            TypedValue::U16(val) => *val != 0,
-            TypedValue::U32(val) => *val != 0,
-            TypedValue::U64(val) => *val != 0,
-            TypedValue::Bool(val) => *val,
-        }
-    }
-
-    /// Gets the value as a u32
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn as_u32(&self) -> u32 {
-        self.as_u64() as u32
-    }
-}
-
-// Implement Display for TypedValue for better logging
-impl fmt::Display for TypedValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypedValue::I8(val) => write!(f, "{val}"),
-            TypedValue::I16(val) => write!(f, "{val}"),
-            TypedValue::I32(val) => write!(f, "{val}"),
-            TypedValue::I64(val) => write!(f, "{val}"),
-            TypedValue::U8(val) => write!(f, "{val}"),
-            TypedValue::U16(val) => write!(f, "{val}"),
-            TypedValue::U32(val) => write!(f, "{val}"),
-            TypedValue::U64(val) => write!(f, "{val}"),
-            TypedValue::Bool(val) => write!(f, "{val}"),
-        }
-    }
-}
-
-// From implementation for TypedValue to u64
-impl From<TypedValue> for u64 {
-    fn from(value: TypedValue) -> Self {
-        value.as_u64()
-    }
-}
-
-// From implementation for u64 to TypedValue
-impl From<u64> for TypedValue {
-    fn from(value: u64) -> Self {
-        TypedValue::from_raw(value)
-    }
-}
-
-// From implementation for i64 to TypedValue
-impl From<i64> for TypedValue {
-    fn from(value: i64) -> Self {
-        TypedValue::I64(value)
-    }
-}
-
-// From implementation for i32 to TypedValue
-impl From<i32> for TypedValue {
-    fn from(value: i32) -> Self {
-        TypedValue::I32(value)
-    }
-}
-
-// From implementation for bool to TypedValue
-impl From<bool> for TypedValue {
-    fn from(value: bool) -> Self {
-        TypedValue::Bool(value)
-    }
-}
-
-// From implementation for TypedValue to u32
-impl From<TypedValue> for u32 {
-    #[allow(clippy::cast_possible_truncation)]
-    fn from(value: TypedValue) -> Self {
-        value.as_u64() as u32
-    }
-}
-
-// From implementation for u32 to TypedValue
-impl From<u32> for TypedValue {
-    fn from(value: u32) -> Self {
-        TypedValue::U32(value)
-    }
-}
-
-// From implementation for TypedValue to i64
-impl From<TypedValue> for i64 {
-    fn from(value: TypedValue) -> Self {
-        value.as_i64()
-    }
-}
-
-// To handle option comparisons safely, we implement PartialEq on our own types
-impl PartialEq<u64> for TypedValue {
-    fn eq(&self, other: &u64) -> bool {
-        self.as_u64() == *other
-    }
-}
-
-impl PartialEq<i64> for TypedValue {
-    fn eq(&self, other: &i64) -> bool {
-        self.as_i64() == *other
-    }
-}
-
-impl PartialEq<u32> for TypedValue {
-    fn eq(&self, other: &u32) -> bool {
-        self.as_u32() == *other
-    }
-}
-
-impl PartialEq<i32> for TypedValue {
-    fn eq(&self, other: &i32) -> bool {
-        self.as_i64() == i64::from(*other)
-    }
-}
-
-impl PartialEq<TypedValue> for u64 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        *self == other.as_u64()
-    }
-}
-
-impl PartialEq<TypedValue> for i64 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        *self == other.as_i64()
-    }
-}
-
-impl PartialEq<TypedValue> for u32 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        *self == other.as_u32()
-    }
-}
-
-impl PartialEq<TypedValue> for i32 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        i64::from(*self) == other.as_i64()
-    }
-}
-
-// Add integer support for BoolBit (already defined above)
+// Add integer support for BoolBit
 impl PartialEq<i32> for BoolBit {
     fn eq(&self, other: &i32) -> bool {
         (self.0 && *other != 0) || (!self.0 && *other == 0)
@@ -361,23 +136,6 @@ impl PartialEq<i32> for BoolBit {
 impl PartialEq<u32> for BoolBit {
     fn eq(&self, other: &u32) -> bool {
         (self.0 && *other != 0) || (!self.0 && *other == 0)
-    }
-}
-
-// Implement bit shifting for TypedValue
-impl std::ops::Shr<usize> for TypedValue {
-    type Output = u64;
-
-    fn shr(self, rhs: usize) -> Self::Output {
-        self.as_u64() >> rhs
-    }
-}
-
-impl std::ops::Shr<usize> for &TypedValue {
-    type Output = u64;
-
-    fn shr(self, rhs: usize) -> Self::Output {
-        self.as_u64() >> rhs
     }
 }
 
@@ -449,67 +207,6 @@ impl From<BoolBit> for u32 {
 impl From<BoolBit> for i32 {
     fn from(bit: BoolBit) -> Self {
         i32::from(bit.0)
-    }
-}
-
-impl TypedValue {
-    /// Gets the data type of this value
-    #[must_use]
-    pub fn get_type(&self) -> DataType {
-        match self {
-            TypedValue::I8(_) => DataType::I8,
-            TypedValue::I16(_) => DataType::I16,
-            TypedValue::I32(_) => DataType::I32,
-            TypedValue::I64(_) => DataType::I64,
-            TypedValue::U8(_) => DataType::U8,
-            TypedValue::U16(_) => DataType::U16,
-            TypedValue::U32(_) => DataType::U32,
-            TypedValue::U64(_) => DataType::U64,
-            TypedValue::Bool(_) => DataType::Bool,
-        }
-    }
-
-    /// Gets a specific bit from the value
-    ///
-    /// # Errors
-    /// Returns an error if the bit index is out of range for the data type.
-    pub fn get_bit(&self, idx: usize) -> Result<bool, PecosError> {
-        // Check that idx is within the bit width of the type
-        let bit_width = self.get_type().bit_width();
-        if idx >= bit_width {
-            return Err(PecosError::Input(format!(
-                "Bit index {idx} out of range for type with bit width {bit_width}"
-            )));
-        }
-
-        // Extract the bit
-        let val = self.as_u64();
-        Ok(((val >> idx) & 1) != 0)
-    }
-
-    /// Sets a specific bit in the value
-    ///
-    /// # Errors
-    /// Returns an error if the bit index is out of range for the data type.
-    pub fn with_bit_set(&self, idx: usize, bit_value: bool) -> Result<TypedValue, PecosError> {
-        // Check that idx is within the bit width of the type
-        let bit_width = self.get_type().bit_width();
-        if idx >= bit_width {
-            return Err(PecosError::Input(format!(
-                "Bit index {idx} out of range for type with bit width {bit_width}"
-            )));
-        }
-
-        // Update the bit
-        let val = self.as_u64();
-        let new_val = if bit_value {
-            val | (1 << idx)
-        } else {
-            val & !(1 << idx)
-        };
-
-        // Return new typed value
-        Ok(TypedValue::new(&self.get_type(), new_val))
     }
 }
 
@@ -714,12 +411,6 @@ impl BitValue {
             }
         }
     }
-
-    /// Convert to a `TypedValue` (for backward compatibility with existing code).
-    #[must_use]
-    pub fn to_typed_value(&self) -> TypedValue {
-        TypedValue::new(&self.get_type(), self.as_u64())
-    }
 }
 
 impl fmt::Display for BitValue {
@@ -821,12 +512,6 @@ impl Environment {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&BitValue> {
         self.name_to_index.get(name).map(|&idx| &self.values[idx])
-    }
-
-    /// Gets the value as a `TypedValue` (for backward compatibility).
-    #[must_use]
-    pub fn get_typed(&self, name: &str) -> Option<TypedValue> {
-        self.get(name).map(BitValue::to_typed_value)
     }
 
     /// Gets the raw u64 value of a variable.
@@ -940,18 +625,19 @@ impl Environment {
 
     /// Gets all measurement result variables and their values
     #[must_use]
-    pub fn get_measurement_results(&self) -> BTreeMap<String, TypedValue> {
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn get_measurement_results(&self) -> BTreeMap<String, u32> {
         let mut results = BTreeMap::new();
         for (i, info) in self.metadata.iter().enumerate() {
             if info.name.starts_with('m') || info.name.starts_with("measurement") {
-                results.insert(info.name.clone(), self.values[i].to_typed_value());
+                results.insert(info.name.clone(), self.values[i].as_u64() as u32);
             }
         }
 
         if results.is_empty() && !self.mappings.is_empty() {
             for (source, dest) in &self.mappings {
                 if let Some(&idx) = self.name_to_index.get(source) {
-                    results.insert(dest.clone(), self.values[idx].to_typed_value());
+                    results.insert(dest.clone(), self.values[idx].as_u64() as u32);
                 }
             }
         }

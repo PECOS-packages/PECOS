@@ -1,5 +1,5 @@
 use crate::v0_1::ast::{ArgItem, Expression};
-use crate::v0_1::environment::{BitValue, DataType, Environment, TypedValue};
+use crate::v0_1::environment::{BitValue, DataType, Environment};
 use pecos_core::BitUInt;
 use pecos_core::errors::PecosError;
 use std::fmt;
@@ -67,29 +67,6 @@ impl ExprValue {
         }
     }
 
-    /// Converts a `TypedValue` to an `ExprValue` (backward compatibility).
-    #[must_use]
-    #[allow(clippy::cast_sign_loss)]
-    pub fn from_typed_value(value: TypedValue) -> Self {
-        match value {
-            TypedValue::I8(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
-            TypedValue::I16(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
-            TypedValue::I32(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
-            TypedValue::I64(val) => ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64)),
-            TypedValue::U8(val) => {
-                ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val)))
-            }
-            TypedValue::U16(val) => {
-                ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val)))
-            }
-            TypedValue::U32(val) => {
-                ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, u64::from(val)))
-            }
-            TypedValue::U64(val) => ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, val)),
-            TypedValue::Bool(val) => ExprValue::Boolean(val),
-        }
-    }
-
     /// Converts a `BitValue` to an `ExprValue`, widening to evaluation width.
     ///
     /// For signed values, sign-extends from the type width (not zero-extends).
@@ -107,14 +84,6 @@ impl ExprValue {
             let widened = widen_to(raw, eval_width);
             ExprValue::Unsigned(widened)
         }
-    }
-
-    /// Converts an `ExprValue` to a `TypedValue` with a specific data type.
-    ///
-    /// # Errors
-    /// Returns an error if the value cannot be converted.
-    pub fn to_typed_value(&self, data_type: &DataType) -> Result<TypedValue, PecosError> {
-        Ok(TypedValue::new(data_type, self.as_u64()))
     }
 
     /// Create a signed value at evaluation width from i64.

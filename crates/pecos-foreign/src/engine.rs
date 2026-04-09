@@ -309,7 +309,8 @@ pub unsafe extern "C" fn pecos_circuit_cx(
     num_pairs: usize,
 ) {
     let c = unsafe { &mut *circuit };
-    let flat = unsafe { std::slice::from_raw_parts(pairs, num_pairs * 2) };
+    let flat_len = num_pairs.checked_mul(2).expect("num_pairs overflow");
+    let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
     let pair_vec: Vec<(usize, usize)> = flat.chunks_exact(2).map(|p| (p[0], p[1])).collect();
     c.builder.cx(&pair_vec);
 }
@@ -358,7 +359,8 @@ pub unsafe extern "C" fn pecos_circuit_rzz(
     num_pairs: usize,
 ) {
     let c = unsafe { &mut *circuit };
-    let flat = unsafe { std::slice::from_raw_parts(pairs, num_pairs * 2) };
+    let flat_len = num_pairs.checked_mul(2).expect("num_pairs overflow");
+    let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
     let pair_vec: Vec<(usize, usize)> = flat.chunks_exact(2).map(|p| (p[0], p[1])).collect();
     c.builder.rzz(Angle64::from_radians(theta_radians), &pair_vec);
 }

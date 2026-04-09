@@ -24,6 +24,7 @@ use crate::simulator::{ForeignSimulator, ForeignSimulatorVTable};
 use pecos_core::QubitId;
 use pecos_simulators::{CliffordGateable, QuantumSimulator};
 use std::ffi::CStr;
+use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 
 /// Result of the conformance test suite.
@@ -204,15 +205,14 @@ pub unsafe extern "C" fn pecos_run_conformance_tests(
 ) -> i32 {
     let vtable_copy = unsafe { *vtable };
 
-    let Some(mut sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
+    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
         // Version mismatch
         unsafe { *report_out = ConformanceReport::new() };
         return 0;
     };
+    // ManuallyDrop prevents Drop from calling vtable.destroy -- caller owns the handle.
+    let mut sim = ManuallyDrop::new(sim);
     let report = run_conformance_tests(&mut sim);
-
-    // Prevent drop from calling destroy -- caller owns the handle
-    std::mem::forget(sim);
 
     unsafe { *report_out = report };
 

@@ -3819,9 +3819,7 @@ dependencies = [
 name = "pecos-go-ffi"
 version = "0.1.0-dev0"
 dependencies = [
- "ndarray 0.17.2",
  "pecos",
- "pecos-foreign",
 ]
 
 [[package]]
@@ -3881,9 +3879,7 @@ dependencies = [
 name = "pecos-julia-ffi"
 version = "0.1.0-dev0"
 dependencies = [
- "ndarray 0.17.2",
  "pecos",
- "pecos-foreign",
 ]
 
 [[package]]

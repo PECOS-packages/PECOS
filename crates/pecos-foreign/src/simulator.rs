@@ -107,10 +107,10 @@ pub struct ForeignSimulatorVTable {
 }
 
 // SAFETY: The foreign simulator handle is opaque and accessed only through the vtable
-// function pointers. We require that the foreign implementation is thread-safe.
-// No concurrent shared access occurs -- all trait methods take `&mut self`.
+// function pointers. We require that the foreign implementation is safe to transfer
+// between threads (single-owner semantics). The GIL / mutex in the foreign code
+// provides mutual exclusion.
 unsafe impl Send for ForeignSimulator {}
-unsafe impl Sync for ForeignSimulator {}
 
 /// A quantum simulator implemented in a foreign language via C ABI.
 pub struct ForeignSimulator {

@@ -15,9 +15,6 @@ C-compatible FFI exports for PECOS Go bindings.
 This crate provides C-compatible functions that can be called from Go via cgo.
 */
 
-mod foreign_decoder;
-mod foreign_simulator;
-
 use pecos::QubitId;
 use std::ffi::CString;
 use std::os::raw::c_char;

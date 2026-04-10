@@ -90,21 +90,46 @@ class FitSummary:
     fit_root_mean_square_error: float
 
 
-def _backend_runtime_label(sample_backend: str) -> str:
+@dataclass(frozen=True)
+class _DecoderRuntime:
+    """Reusable decoder-side runtime for one native comparison point shape."""
+
+    patch: Any
+    logical_qubits: tuple[int, ...]
+    num_x_stab: int
+    num_z_stab: int
+    noise: Any
+    decoder: Any
+
+
+@dataclass(frozen=True)
+class _NativeSamplerRuntime:
+    """Reusable sampler + decoder bundle for one traced/native DEM shape."""
+
+    decoder_runtime: _DecoderRuntime
+    sampler: Any
+    dem_decoder: Any
+
+
+def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "abstract") -> str:
     """Describe one sampling backend in human-readable terms."""
     if sample_backend == "sim":
         return (
             "sim(Guppy(...)).classical(selene_engine()).quantum(pecos.stabilizer()) "
-            "+ PECOS depolarizing noise + noiseless "
+            f"+ PECOS depolarizing noise + native DEM source={native_circuit_source} + noiseless "
             "reference-trajectory calibration"
         )
     if sample_backend == "selene_sim":
         return (
             "direct selene_sim (compile_guppy_to_hugr + build/run_shots) with Selene Stim "
-            "+ Selene DepolarizingErrorModel + noiseless reference-trajectory calibration"
+            f"+ Selene DepolarizingErrorModel + native DEM source={native_circuit_source} "
+            "+ noiseless reference-trajectory calibration"
         )
     if sample_backend == "native_sampler":
-        return "build_native_sampler(...) + PyMatching on the native DEM"
+        return (
+            "build_native_sampler(..., circuit_source="
+            f"{native_circuit_source!r}) + PyMatching on the native DEM"
+        )
     raise ValueError(f"Unknown sample backend: {sample_backend}")
 
 
@@ -178,6 +203,95 @@ def _result_rows_for_key(result_dict: dict[str, Any], key: str) -> list[Any]:
             return rows
     available = ", ".join(sorted(result_dict))
     raise KeyError(f"Expected result register {key!r}, available registers: {available}")
+
+
+@lru_cache(maxsize=None)
+def _surface_patch(distance: int) -> Any:
+    """Cache surface patch geometry shared across many sweep points."""
+    from pecos.qec.surface import SurfacePatch
+
+    return SurfacePatch.create(distance=distance)
+
+
+@lru_cache(maxsize=None)
+def _decoder_runtime(
+    distance: int,
+    total_rounds: int,
+    basis: str,
+    physical_error_rate: float,
+    dem_mode: str,
+    native_circuit_source: str,
+) -> _DecoderRuntime:
+    """Build and cache the expensive native decoder-side objects once."""
+    from pecos.qec.surface import NoiseModel, SurfaceDecoder
+
+    basis = basis.upper()
+    patch = _surface_patch(distance)
+    noise = NoiseModel(
+        p1=physical_error_rate,
+        p2=physical_error_rate,
+        p_meas=physical_error_rate,
+        p_init=physical_error_rate,
+    )
+    decoder = SurfaceDecoder(
+        patch,
+        num_rounds=total_rounds,
+        noise=noise,
+        decoder_type="pymatching",
+        use_circuit_level_dem=True,
+        circuit_level_dem_mode=dem_mode,
+        circuit_level_dem_source=native_circuit_source,
+    )
+    return _DecoderRuntime(
+        patch=patch,
+        logical_qubits=_logical_qubits_for_basis(patch, basis),
+        num_x_stab=len(patch.geometry.x_stabilizers),
+        num_z_stab=len(patch.geometry.z_stabilizers),
+        noise=noise,
+        decoder=decoder,
+    )
+
+
+@lru_cache(maxsize=None)
+def _native_sampler_runtime(
+    distance: int,
+    total_rounds: int,
+    basis: str,
+    physical_error_rate: float,
+    dem_mode: str,
+    native_circuit_source: str,
+) -> _NativeSamplerRuntime:
+    """Build and cache the native sampler + PyMatching decoder bundle once."""
+    from pecos.qec.surface import build_native_sampler
+    from pecos_rslib.decoders import PyMatchingDecoder
+
+    runtime = _decoder_runtime(
+        distance,
+        total_rounds,
+        basis,
+        physical_error_rate,
+        dem_mode,
+        native_circuit_source,
+    )
+    sampler = build_native_sampler(
+        runtime.patch,
+        total_rounds,
+        runtime.noise,
+        basis=basis,
+        circuit_source=native_circuit_source,
+    )
+    dem_str = runtime.decoder.get_dem(basis.upper(), circuit_level=True)
+    dem_decoder = PyMatchingDecoder.from_dem(dem_str)
+    # The traced-QIS sampler stack has a noticeable one-time initialization cost
+    # on its first sample. Pay that once when the cached runtime is created so
+    # subsequent point evaluations stay on the true steady-state path.
+    warm_det_events, _ = sampler.sample(num_shots=1, seed=0)
+    dem_decoder.decode(warm_det_events[0].astype(int).tolist())
+    return _NativeSamplerRuntime(
+        decoder_runtime=runtime,
+        sampler=sampler,
+        dem_decoder=dem_decoder,
+    )
 
 
 @lru_cache(maxsize=None)
@@ -316,33 +430,26 @@ def _run_memory_point(
     total_rounds: int,
     num_shots: int,
     dem_mode: str,
+    native_circuit_source: str,
     seed: int,
 ) -> SweepPoint:
     """Run one surface-memory point and decode it with native PECOS DEMs."""
     import numpy as np
-    import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
-    from pecos.qec.surface import NoiseModel, SurfaceDecoder, SurfacePatch, build_native_sampler
 
-    patch = SurfacePatch.create(distance=distance)
-    num_x_stab = len(patch.geometry.x_stabilizers)
-    num_z_stab = len(patch.geometry.z_stabilizers)
-    logical_qubits = _logical_qubits_for_basis(patch, basis)
-
-    decoder_noise = NoiseModel(
-        p1=physical_error_rate,
-        p2=physical_error_rate,
-        p_meas=physical_error_rate,
-        p_init=physical_error_rate,
+    basis = basis.upper()
+    decoder_runtime = _decoder_runtime(
+        distance,
+        total_rounds,
+        basis,
+        physical_error_rate,
+        dem_mode,
+        native_circuit_source,
     )
-    decoder = SurfaceDecoder(
-        patch,
-        num_rounds=total_rounds,
-        noise=decoder_noise,
-        decoder_type="pymatching",
-        use_circuit_level_dem=True,
-        circuit_level_dem_mode=dem_mode,
-    )
+    patch = decoder_runtime.patch
+    num_x_stab = decoder_runtime.num_x_stab
+    num_z_stab = decoder_runtime.num_z_stab
+    logical_qubits = decoder_runtime.logical_qubits
+    decoder = decoder_runtime.decoder
 
     num_logical_errors = 0
     num_raw_errors: int | None = 0
@@ -409,16 +516,16 @@ def _run_memory_point(
                 is_error, _ = decoder.decode_memory_x(synx_list, synz_list, final)
             num_logical_errors += int(is_error)
     elif sample_backend == "native_sampler":
-        from pecos_rslib.decoders import PyMatchingDecoder
-
-        sampler = build_native_sampler(
-            patch,
+        native_runtime = _native_sampler_runtime(
+            distance,
             total_rounds,
-            decoder_noise,
-            basis=basis,
+            basis,
+            physical_error_rate,
+            dem_mode,
+            native_circuit_source,
         )
-        dem = decoder.get_dem(basis, circuit_level=True)
-        dem_decoder = PyMatchingDecoder.from_dem(dem)
+        sampler = native_runtime.sampler
+        dem_decoder = native_runtime.dem_decoder
         detection_events, observable_flips = sampler.sample(num_shots=num_shots, seed=seed)
 
         num_raw_errors = None
@@ -631,9 +738,11 @@ def _write_json_results(
             "error_rates": sorted(set(args.error_rates)),
             "shots": args.shots,
             "dem_mode": args.dem_mode,
+            "native_circuit_source": args.native_circuit_source,
             "seed": args.seed,
             "backend_runtime_descriptions": {
-                backend: _backend_runtime_label(backend) for backend in sorted({point.backend for point in points})
+                backend: _backend_runtime_label(backend, args.native_circuit_source)
+                for backend in sorted({point.backend for point in points})
             },
             "noise_model": "uniform depolarizing with p1 = p2 = p_meas = p_init = p",
             "fit_model": "p_L(r) = 0.5 * (1 - (1 - 2 * epsilon) ** r)",
@@ -902,6 +1011,17 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--native-circuit-source",
+        choices=["abstract", "traced_qis"],
+        default="abstract",
+        help=(
+            "Which ideal circuit the native PECOS DEM/sampler path should analyze. "
+            "'abstract' uses the existing high-level surface TickCircuit, while "
+            "'traced_qis' traces the lowered ideal Selene/QIS gate stream and "
+            "replays that exact circuit into the native PECOS analysis."
+        ),
+    )
+    parser.add_argument(
         "--dem-mode",
         choices=["native_decomposed", "native_full"],
         default="native_decomposed",
@@ -963,9 +1083,10 @@ def main() -> int:
     print(f"sample backend mode: {args.sample_backend}")
     print(f"executed backends: {backends}")
     print(f"DEM mode         : {args.dem_mode}")
+    print(f"native circuit source: {args.native_circuit_source}")
     print("decoder          : PyMatching via SurfaceDecoder(native PECOS DEM)")
     for backend in backends:
-        print(f"runtime[{backend}]  : {_backend_runtime_label(backend)}")
+        print(f"runtime[{backend}]  : {_backend_runtime_label(backend, args.native_circuit_source)}")
     print("noise model      : depolarizing with p1 = p2 = p_meas = p_init = p")
     print("fit model        : p_L(r) = 0.5 * (1 - (1 - 2 * epsilon) ** r)")
     if output_dir is not None:
@@ -997,6 +1118,7 @@ def main() -> int:
                             total_rounds=total_rounds,
                             num_shots=args.shots,
                             dem_mode=args.dem_mode,
+                            native_circuit_source=args.native_circuit_source,
                             seed=point_seed,
                         )
                         all_points.append(point)

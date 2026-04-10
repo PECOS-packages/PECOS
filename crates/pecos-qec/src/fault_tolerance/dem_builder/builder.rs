@@ -254,7 +254,13 @@ impl<'a> DemBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX | GateType::CZ => {
+                GateType::CX
+                | GateType::CZ
+                | GateType::CY
+                | GateType::SWAP
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
@@ -268,7 +274,14 @@ impl<'a> DemBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::U
+                | GateType::R1XY => {
                     if self.noise.p1 > 0.0 && !loc.before {
                         self.process_single_qubit_fault_source_tracked(
                             loc_idx,
@@ -338,7 +351,7 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        let prob = per_channel_probability(self.noise.p1, 3);
+        let prob = per_pauli_probability(self.noise.p1, 3);
 
         let x_effect =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
@@ -382,7 +395,7 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        let prob = per_channel_probability(self.noise.p2, 15);
+        let prob = per_pauli_probability(self.noise.p2, 15);
 
         // Compute base effects for X and Z on each qubit
         let x1 = self.compute_mechanism(loc1, Pauli::X, meas_to_detectors, meas_to_observables);
@@ -618,37 +631,34 @@ fn xor_toggle_2(vec: &mut SmallVec<[u32; 2]>, value: u32) {
     }
 }
 
-/// Computes the per-error probability for independent error channels.
+/// Computes the per-Pauli probability for a mutually exclusive depolarizing channel.
 ///
-/// For a depolarizing channel with total error probability `p` split among `n`
-/// independent Pauli channels, this computes the probability for each channel
-/// such that the combined probability of any error occurring equals `p`.
+/// PECOS's gate-level depolarizing noise samples exactly one non-identity Pauli
+/// when a gate fault occurs:
+/// - single-qubit gates: `X`, `Y`, or `Z` with probability `p / 3`
+/// - two-qubit gates: one of the 15 non-identity tensor-Paulis with probability `p / 15`
 ///
-/// Formula: `p_each = 1 - (1-p)^(1/n)`
-///
-/// This is derived from: `P(at least one error) = 1 - P(no errors) = 1 - (1-p_each)^n = p`
-///
-/// For small `p`, this is approximately `p/n`, but the exact formula accounts
-/// for the independence of error channels.
+/// The native DEM builder should match that same mutually exclusive channel
+/// semantics so the sampled circuit-level DEM and the gate-level simulator use
+/// the same physical error model.
 ///
 /// # Arguments
 ///
 /// * `total_prob` - Total depolarizing probability (e.g., 0.02 for 2% error rate)
-/// * `num_channels` - Number of independent error channels (3 for DEPOLARIZE1, 15 for DEPOLARIZE2)
+/// * `num_channels` - Number of non-identity Pauli channels (3 for DEPOLARIZE1, 15 for DEPOLARIZE2)
 ///
 /// # Returns
 ///
 /// Per-channel error probability
 #[inline]
-fn per_channel_probability(total_prob: f64, num_channels: u32) -> f64 {
+fn per_pauli_probability(total_prob: f64, num_channels: u32) -> f64 {
     if total_prob <= 0.0 {
         return 0.0;
     }
     if total_prob >= 1.0 {
-        return 1.0;
+        return 1.0 / f64::from(num_channels);
     }
-    // p_each = 1 - (1-p)^(1/n)
-    1.0 - (1.0 - total_prob).powf(1.0 / f64::from(num_channels))
+    total_prob / f64::from(num_channels)
 }
 
 // ============================================================================
@@ -931,34 +941,13 @@ mod tests {
     }
 
     #[test]
-    fn test_per_channel_probability() {
-        // Test DEPOLARIZE1: p=0.01, n=3
-        let p1 = per_channel_probability(0.01, 3);
-        // Should be 1 - (1-0.01)^(1/3) = 0.003344...
-        assert!((p1 - 0.003_344_506).abs() < 1e-6);
-
-        // Verify: combining 3 channels gives back ~p
-        let combined = 1.0 - (1.0 - p1).powi(3);
-        assert!((combined - 0.01).abs() < 1e-10);
-
-        // Test DEPOLARIZE2: p=0.02, n=15
-        let p2 = per_channel_probability(0.02, 15);
-        // Should be 1 - (1-0.02)^(1/15) = 0.001346...
-        assert!((p2 - 0.001_345_941).abs() < 1e-6);
-
-        // Verify: combining 15 channels gives back ~p
-        let combined2 = 1.0 - (1.0 - p2).powi(15);
-        assert!((combined2 - 0.02).abs() < 1e-10);
+    fn test_per_pauli_probability() {
+        assert!((per_pauli_probability(0.01, 3) - (0.01 / 3.0)).abs() < 1e-12);
+        assert!((per_pauli_probability(0.02, 15) - (0.02 / 15.0)).abs() < 1e-12);
 
         // Edge cases
-        assert!((per_channel_probability(0.0, 3) - 0.0).abs() < f64::EPSILON);
-        assert!((per_channel_probability(1.0, 3) - 1.0).abs() < f64::EPSILON);
-        assert!((per_channel_probability(-0.1, 3) - 0.0).abs() < f64::EPSILON);
-
-        // For small p, should be close to p/n
-        let small_p = per_channel_probability(0.001, 15);
-        let simple = 0.001 / 15.0;
-        // Difference should be < 0.1% for small p
-        assert!((small_p - simple).abs() / simple < 0.001);
+        assert!((per_pauli_probability(0.0, 3) - 0.0).abs() < f64::EPSILON);
+        assert!((per_pauli_probability(1.0, 3) - (1.0 / 3.0)).abs() < 1e-12);
+        assert!((per_pauli_probability(-0.1, 3) - 0.0).abs() < f64::EPSILON);
     }
 }

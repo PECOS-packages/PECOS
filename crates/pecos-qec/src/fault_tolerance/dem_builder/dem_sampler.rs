@@ -1482,7 +1482,13 @@ impl<'a> DemSamplerBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => {
+                GateType::CX
+                | GateType::CZ
+                | GateType::CY
+                | GateType::SWAP
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     // Two-qubit gate errors: only "after" locations, process as pairs
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
@@ -1497,7 +1503,14 @@ impl<'a> DemSamplerBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::U
+                | GateType::R1XY => {
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if self.p1 > 0.0 && !loc.before {
                         self.process_depolarizing_fault(

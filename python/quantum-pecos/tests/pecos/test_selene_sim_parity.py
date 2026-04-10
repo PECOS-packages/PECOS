@@ -13,9 +13,10 @@ share.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,53 @@ def _configure_selene_caches() -> None:
     os.environ.setdefault("ZIG_LOCAL_CACHE_DIR", str(tmpdir / "pecos_zig_local_cache"))
 
 
+def test_qis_trace_operations_write_chunks_on_run_path(tmp_path: Path) -> None:
+    """trace_operations() should work on the direct SimBuilder.run() QIS path too."""
+    import pecos
+
+    _require_selene_runtime()
+
+    (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .trace_operations(str(tmp_path))
+        .qubits(2)
+        .seed(123)
+        .run(1)
+    )
+
+    trace_files = sorted(tmp_path.glob("*.json"))
+    assert trace_files
+
+    payload = json.loads(trace_files[0].read_text())
+    assert payload["format"] == "pecos_qis_operation_trace_v1"
+    assert payload["num_operations"] > 0
+    assert payload["lowered_quantum_ops"]
+
+
+def test_capture_operation_trace_returns_in_memory_batches() -> None:
+    """capture_operation_trace() should return the structured trace in memory."""
+    import pecos
+
+    _require_selene_runtime()
+
+    trace = (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(2)
+        .seed(123)
+        .capture_operation_trace()
+    )
+
+    assert isinstance(trace, list)
+    assert trace
+    assert trace[0]["format"] == "pecos_qis_operation_trace_v1"
+    assert trace[0]["num_operations"] > 0
+    assert trace[0]["lowered_quantum_ops"]
+
+
 def _collect_selene_named_results(instance: Any, *, n_qubits: int, n_shots: int, p: float, seed: int):
     from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim
 
@@ -166,6 +214,64 @@ def _collect_selene_named_results(instance: Any, *, n_qubits: int, n_shots: int,
                 pass
 
     return dict(results)
+
+
+def _collect_selene_named_results_with_custom_noise(
+    instance: Any,
+    *,
+    n_qubits: int,
+    n_shots: int,
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_init: float,
+    seed: int,
+) -> dict[str, list[int] | list[list[int]]]:
+    from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim
+
+    results: dict[str, list[int] | list[list[int]]] = defaultdict(list)
+    try:
+        for shot_results in instance.run_shots(
+            simulator=Stim(),
+            n_qubits=n_qubits,
+            n_shots=n_shots,
+            error_model=DepolarizingErrorModel(
+                p_1q=p1,
+                p_2q=p2,
+                p_meas=p_meas,
+                p_init=p_init,
+            ),
+            runtime=SimpleRuntime(),
+            random_seed=seed,
+            n_processes=1,
+        ):
+            shot_rows: dict[str, list[int]] = defaultdict(list)
+            for name, values in shot_results:
+                shot_rows[name].extend(int(v) for v in values)
+            for name, values in shot_rows.items():
+                if len(values) == 1:
+                    results[name].append(values[0])
+                else:
+                    results[name].append(values)
+    finally:
+        delete_files = getattr(instance, "delete_files", None)
+        if callable(delete_files):
+            try:
+                delete_files()
+            except Exception:
+                pass
+
+    return dict(results)
+
+
+def _counter_total_variation(
+    lhs: Counter[tuple[int, ...] | int],
+    rhs: Counter[tuple[int, ...] | int],
+    *,
+    total_count: int,
+) -> float:
+    all_keys = set(lhs) | set(rhs)
+    return 0.5 * sum(abs(lhs[key] / total_count - rhs[key] / total_count) for key in all_keys)
 
 
 def _round_blocks_repeat(row: list[int], num_rounds: int) -> bool:
@@ -350,6 +456,58 @@ def test_tiny_syndrome_memory_matches_between_selene_backends() -> None:
     selene_results = _collect_selene_named_results(instance, n_qubits=2, n_shots=1, p=0.0, seed=123)
 
     assert sim_results == selene_results
+
+
+def test_tiny_syndrome_memory_p2_only_matches_between_selene_backends_statistically() -> None:
+    """The tiny CX-based syndrome probe should stay distributionally aligned under p2-only noise."""
+    import pecos
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+    from selene_sim import build
+
+    _require_selene_runtime()
+    _configure_selene_caches()
+
+    shots = 5_000
+    p2 = 0.01
+    program = make_tiny_x_syndrome_memory(3)
+
+    sim_results = (
+        pecos.sim(pecos.Guppy(program))
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(2)
+        .noise(
+            pecos.depolarizing_noise()
+            .with_p1_probability(0.0)
+            .with_p2_probability(p2)
+            .with_meas_probability(0.0)
+            .with_prep_probability(0.0)
+        )
+        .seed(123)
+        .run(shots)
+        .to_shot_map()
+        .to_dict()
+    )
+
+    instance = build(compile_guppy_to_hugr(program), name="tiny_x_syndrome_memory_p2_only")
+    selene_results = _collect_selene_named_results_with_custom_noise(
+        instance,
+        n_qubits=2,
+        n_shots=shots,
+        p1=0.0,
+        p2=p2,
+        p_meas=0.0,
+        p_init=0.0,
+        seed=123,
+    )
+
+    sim_synx = Counter(tuple(row) for row in sim_results["synx"])
+    selene_synx = Counter(tuple(row) for row in selene_results["synx"])
+    sim_final = Counter(sim_results["final"])
+    selene_final = Counter(selene_results["final"])
+
+    assert _counter_total_variation(sim_synx, selene_synx, total_count=shots) < 0.01
+    assert _counter_total_variation(sim_final, selene_final, total_count=shots) < 0.01
 
 
 def test_alloc_reuse_probe_matches_between_selene_backends() -> None:

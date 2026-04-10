@@ -1360,72 +1360,129 @@ def tick_circuit_to_stim(
         Stim circuit string
     """
     import json
+    import math
 
     lines = []
 
-    # Track measurement count for DETECTOR record references
-    measurement_count = 0
-
-    # Map gate type names to Stim instructions
-    gate_map = {
-        "H": "H",
-        "X": "X",
-        "Y": "Y",
-        "Z": "Z",
-        "CX": "CX",
-        "CY": "CY",
-        "CZ": "CZ",
-        "MZ": "M",
-        "PZ": "R",
-        "QAlloc": "R",  # QAlloc treated as reset
+    simple_gate_map = {
+        "H": ("H", "single"),
+        "X": ("X", "single"),
+        "Y": ("Y", "single"),
+        "Z": ("Z", "single"),
+        "CX": ("CX", "two"),
+        "CY": ("CY", "two"),
+        "CZ": ("CZ", "two"),
+        "MZ": ("M", "measure"),
+        "PZ": ("R", "prep"),
+        "QAlloc": ("R", "prep"),
     }
+
+    def _normalized_angle(angle: float) -> float:
+        value = angle % math.tau
+        if math.isclose(value, math.tau, abs_tol=1e-9):
+            return 0.0
+        return value
+
+    def _is_close_turn(angle: float, target: float) -> bool:
+        return math.isclose(_normalized_angle(angle), target, abs_tol=1e-9)
+
+    def _gate_to_stim(
+        gate: Any,
+    ) -> tuple[list[tuple[str, list[int]]], str | None]:
+        gate_name = gate.gate_type.name
+        qubits = [int(q) for q in gate.qubits]
+
+        mapped = simple_gate_map.get(gate_name)
+        if mapped is not None:
+            stim_name, noise_kind = mapped
+            return [(stim_name, qubits)], noise_kind
+
+        if gate_name == "RZ":
+            if not gate.angles:
+                return [], None
+            angle = float(gate.angles[0])
+            if _is_close_turn(angle, 0.0):
+                return [], None
+            if _is_close_turn(angle, math.pi):
+                return [("Z", qubits)], "single"
+            if _is_close_turn(angle, math.pi / 2):
+                return [("S", qubits)], "single"
+            if _is_close_turn(angle, 3 * math.pi / 2):
+                return [("S_DAG", qubits)], "single"
+            msg = f"Unsupported traced Clifford RZ angle: {angle!r}"
+            raise ValueError(msg)
+
+        if gate_name == "RZZ":
+            if not gate.angles:
+                return [], None
+            angle = float(gate.angles[0])
+            if _is_close_turn(angle, 0.0):
+                return [], None
+            if _is_close_turn(angle, math.pi / 2):
+                return [("SQRT_ZZ", qubits)], "two"
+            if _is_close_turn(angle, 3 * math.pi / 2):
+                return [("SQRT_ZZ_DAG", qubits)], "two"
+            msg = f"Unsupported traced Clifford RZZ angle: {angle!r}"
+            raise ValueError(msg)
+
+        if gate_name == "R1XY":
+            if len(gate.angles) < 2:
+                return [], None
+            theta = float(gate.angles[0])
+            phi = float(gate.angles[1])
+            if _is_close_turn(theta, 0.0):
+                return [], None
+            if _is_close_turn(theta, math.pi):
+                if _is_close_turn(phi, 0.0) or _is_close_turn(phi, math.pi):
+                    return [("X", qubits)], "single"
+                if _is_close_turn(phi, math.pi / 2) or _is_close_turn(phi, 3 * math.pi / 2):
+                    return [("Y", qubits)], "single"
+            if _is_close_turn(theta, math.pi / 2):
+                if _is_close_turn(phi, 0.0):
+                    return [("SQRT_X", qubits)], "single"
+                if _is_close_turn(phi, math.pi / 2):
+                    return [("SQRT_Y", qubits)], "single"
+                if _is_close_turn(phi, math.pi):
+                    return [("SQRT_X_DAG", qubits)], "single"
+                if _is_close_turn(phi, 3 * math.pi / 2):
+                    return [("SQRT_Y_DAG", qubits)], "single"
+            if _is_close_turn(theta, 3 * math.pi / 2):
+                if _is_close_turn(phi, 0.0):
+                    return [("SQRT_X_DAG", qubits)], "single"
+                if _is_close_turn(phi, math.pi / 2):
+                    return [("SQRT_Y_DAG", qubits)], "single"
+                if _is_close_turn(phi, math.pi):
+                    return [("SQRT_X", qubits)], "single"
+                if _is_close_turn(phi, 3 * math.pi / 2):
+                    return [("SQRT_Y", qubits)], "single"
+            msg = f"Unsupported traced Clifford R1XY angles: theta={theta!r}, phi={phi!r}"
+            raise ValueError(msg)
+
+        return [], None
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
-
-        # Group gates by type for efficient Stim output
-        gates_by_type: dict[str, list[int]] = {}
-
         for gate in tick.gates():
-            gate_type = gate.gate_type
-            stim_name = gate_map.get(gate_type.name)
-
-            if stim_name is None:
+            instructions, noise_kind = _gate_to_stim(gate)
+            if not instructions:
                 continue
 
-            qubits = list(gate.qubits)
-
-            if stim_name not in gates_by_type:
-                gates_by_type[stim_name] = []
-
-            if stim_name == "CX":
-                # Two-qubit gate
-                gates_by_type[stim_name].extend(qubits)
-            else:
-                # Single-qubit gate
-                gates_by_type[stim_name].extend(qubits)
-
-        # Output gates grouped by type
-        for stim_name, qubits in gates_by_type.items():
-            if not qubits:
-                continue
-
+            qubits = [int(q) for q in gate.qubits]
             qubit_str = " ".join(str(q) for q in qubits)
-            lines.append(f"{stim_name} {qubit_str}")
 
-            # Add noise after gates
-            if stim_name in ("H", "X", "Y", "Z") and p1 > 0:
+            if noise_kind == "measure" and p_meas > 0:
+                lines.append(f"X_ERROR({p_meas}) {qubit_str}")
+
+            for stim_name, op_qubits in instructions:
+                op_qubit_str = " ".join(str(q) for q in op_qubits)
+                lines.append(f"{stim_name} {op_qubit_str}")
+
+            if noise_kind == "single" and p1 > 0:
                 lines.append(f"DEPOLARIZE1({p1}) {qubit_str}")
-            elif stim_name == "CX" and p2 > 0:
+            elif noise_kind == "two" and p2 > 0:
                 lines.append(f"DEPOLARIZE2({p2}) {qubit_str}")
-            elif stim_name == "R" and p_init > 0:
+            elif noise_kind == "prep" and p_init > 0:
                 lines.append(f"X_ERROR({p_init}) {qubit_str}")
-            elif stim_name == "M":
-                if p_meas > 0:
-                    # Add measurement error before the M instruction
-                    # Need to insert before the M line
-                    lines.insert(-1, f"X_ERROR({p_meas}) {qubit_str}")
-                measurement_count += len(qubits)
 
         # Add TICK after each tick (except the last)
         if tick_idx < tc.num_ticks() - 1:

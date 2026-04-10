@@ -25,16 +25,43 @@ use pecos_engines::{
 };
 use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
 use pecos_random::PecosRng;
-use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 static TRACE_ENGINE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// One lowered quantum gate in a traced batch.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LoweredQuantumGateTrace {
+    pub gate_type: String,
+    pub angles: Vec<f64>,
+    pub params: Vec<f64>,
+    pub qubits: Vec<usize>,
+}
+
+/// One traced batch of QIS operations and their lowered simulator commands.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OperationTraceChunk {
+    pub format: &'static str,
+    pub engine_trace_id: u64,
+    pub shot_index: usize,
+    pub chunk_index: usize,
+    pub stage: String,
+    pub waiting_for_result_id: Option<u64>,
+    pub current_shot_seed: Option<u64>,
+    pub simulated_op_count: usize,
+    pub num_operations: usize,
+    pub operations: Vec<Operation>,
+    pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
+}
+
+/// Shared in-memory store for traced QIS operation batches.
+pub type OperationTraceStore = Arc<Mutex<Vec<OperationTraceChunk>>>;
 
 /// Result from worker thread - returns both the operations and the interface
 type WorkerResult = Result<(OperationList, BoxedInterface), String>;
@@ -210,6 +237,9 @@ pub struct QisEngine {
     /// Directory where operation trace chunks are dumped as JSON.
     operation_trace_dir: Option<PathBuf>,
 
+    /// Optional in-memory collector for traced chunks.
+    operation_trace_collector: Option<OperationTraceStore>,
+
     /// Unique trace id for this engine instance.
     trace_engine_id: u64,
 
@@ -248,6 +278,7 @@ impl QisEngine {
             interface_builder: None,
             persistent_worker: None,
             operation_trace_dir: None,
+            operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             trace_shot_index: 0,
             trace_chunk_index: 0,
@@ -284,6 +315,11 @@ impl QisEngine {
     /// Configure a directory where Helios-collected operation chunks are written as JSON.
     pub fn set_operation_trace_dir(&mut self, trace_dir: impl Into<PathBuf>) {
         self.operation_trace_dir = Some(trace_dir.into());
+    }
+
+    /// Configure an in-memory collector that receives traced operation chunks.
+    pub fn set_operation_trace_collector(&mut self, collector: OperationTraceStore) {
+        self.operation_trace_collector = Some(collector);
     }
 
     /// Initialize the engine for dynamic execution
@@ -332,6 +368,7 @@ impl QisEngine {
             interface_builder: None,
             persistent_worker: None,
             operation_trace_dir: None,
+            operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             trace_shot_index: 0,
             trace_chunk_index: 0,
@@ -662,6 +699,7 @@ impl Clone for QisEngine {
             // Create a new persistent worker for this clone (can't share threads across clones)
             persistent_worker: None,
             operation_trace_dir: self.operation_trace_dir.clone(),
+            operation_trace_collector: self.operation_trace_collector.clone(),
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             trace_shot_index: 0,
             trace_chunk_index: 0,
@@ -676,60 +714,96 @@ impl QisEngine {
         self.trace_chunk_index = 0;
     }
 
+    fn lowered_quantum_ops_trace(commands: &ByteMessage) -> Vec<LoweredQuantumGateTrace> {
+        match commands.quantum_ops() {
+            Ok(gates) => gates
+                .iter()
+                .map(|gate| LoweredQuantumGateTrace {
+                    gate_type: gate.gate_type.to_string(),
+                    angles: gate.angles.iter().map(Angle64::to_radians).collect::<Vec<_>>(),
+                    params: gate.params.iter().copied().collect::<Vec<_>>(),
+                    qubits: gate
+                        .qubits
+                        .iter()
+                        .map(|q| usize::from(*q))
+                        .collect::<Vec<_>>(),
+                })
+                .collect::<Vec<_>>(),
+            Err(err) => {
+                warn!("Failed to parse lowered quantum ops for tracing: {err}");
+                Vec::new()
+            }
+        }
+    }
+
     fn trace_operations_chunk(
         &mut self,
         stage: &str,
         ops: &[Operation],
         waiting_for_result_id: Option<u64>,
+        lowered_quantum_ops: Option<&ByteMessage>,
     ) {
-        let Some(trace_dir) = self.operation_trace_dir.clone() else {
-            return;
-        };
-
-        if let Err(err) = fs::create_dir_all(&trace_dir) {
-            warn!(
-                "Failed to create operation trace directory {}: {err}",
-                trace_dir.display()
-            );
+        if self.operation_trace_dir.is_none() && self.operation_trace_collector.is_none() {
             return;
         }
 
+        let lowered_trace = lowered_quantum_ops
+            .map(Self::lowered_quantum_ops_trace)
+            .unwrap_or_default();
         let file_name = format!(
             "engine_{:04}_shot_{:06}_chunk_{:04}_{}.json",
             self.trace_engine_id, self.trace_shot_index, self.trace_chunk_index, stage
         );
+        let chunk_index = self.trace_chunk_index;
         self.trace_chunk_index = self.trace_chunk_index.saturating_add(1);
+        let chunk = OperationTraceChunk {
+            format: "pecos_qis_operation_trace_v1",
+            engine_trace_id: self.trace_engine_id,
+            shot_index: self.trace_shot_index,
+            chunk_index,
+            stage: stage.to_string(),
+            waiting_for_result_id,
+            current_shot_seed: self.current_shot_seed,
+            simulated_op_count: self.simulated_op_count,
+            num_operations: ops.len(),
+            operations: ops.to_vec(),
+            lowered_quantum_ops: lowered_trace,
+        };
 
-        let trace_json = json!({
-            "format": "pecos_qis_operation_trace_v1",
-            "engine_trace_id": self.trace_engine_id,
-            "shot_index": self.trace_shot_index,
-            "chunk_index": self.trace_chunk_index.saturating_sub(1),
-            "stage": stage,
-            "waiting_for_result_id": waiting_for_result_id,
-            "current_shot_seed": self.current_shot_seed,
-            "simulated_op_count": self.simulated_op_count,
-            "num_operations": ops.len(),
-            "operations": ops,
-        });
+        if let Some(ref collector) = self.operation_trace_collector {
+            match collector.lock() {
+                Ok(mut guard) => guard.push(chunk.clone()),
+                Err(err) => warn!("Failed to store operation trace chunk in memory: {err}"),
+            }
+        }
 
-        let trace_path = trace_dir.join(file_name);
-        let serialized = match serde_json::to_string_pretty(&trace_json) {
-            Ok(serialized) => serialized,
-            Err(err) => {
+        if let Some(ref trace_dir) = self.operation_trace_dir {
+            if let Err(err) = fs::create_dir_all(trace_dir) {
                 warn!(
-                    "Failed to serialize operation trace chunk for {}: {err}",
-                    trace_path.display()
+                    "Failed to create operation trace directory {}: {err}",
+                    trace_dir.display()
                 );
                 return;
             }
-        };
 
-        if let Err(err) = fs::write(&trace_path, serialized) {
-            warn!(
-                "Failed to write operation trace chunk {}: {err}",
-                trace_path.display()
-            );
+            let trace_path = trace_dir.join(file_name);
+            let serialized = match serde_json::to_string_pretty(&chunk) {
+                Ok(serialized) => serialized,
+                Err(err) => {
+                    warn!(
+                        "Failed to serialize operation trace chunk for {}: {err}",
+                        trace_path.display()
+                    );
+                    return;
+                }
+            };
+
+            if let Err(err) = fs::write(&trace_path, serialized) {
+                warn!(
+                    "Failed to write operation trace chunk {}: {err}",
+                    trace_path.display()
+                );
+            }
         }
     }
 
@@ -870,7 +944,6 @@ impl QisEngine {
                     // Only store NEW operations (those after what we already simulated)
                     if total_ops > self.simulated_op_count {
                         let new_ops = collector.operations[self.simulated_op_count..].to_vec();
-                        self.trace_operations_chunk("pending_final", &new_ops, None);
                         self.pending_dynamic_ops = new_ops;
                         debug!(
                             "Storing {} new operations for final processing",
@@ -1197,11 +1270,11 @@ impl ControlEngine for QisEngine {
             debug!("Worker needs result for id={result_id}");
             // Get pending operations
             if let Some(ops) = self.get_dynamic_operations() {
-                self.trace_operations_chunk("pending_start", &ops, Some(result_id));
                 // Track how many operations we're sending for simulation
                 self.simulated_op_count = ops.len();
                 if !ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&ops)?;
+                    self.trace_operations_chunk("pending_start", &ops, Some(result_id), Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1216,6 +1289,7 @@ impl ControlEngine for QisEngine {
                 self.pending_dynamic_ops.clear();
                 if !final_ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&final_ops)?;
+                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1256,6 +1330,7 @@ impl ControlEngine for QisEngine {
                 if !final_ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&final_ops)?;
                     self.pending_dynamic_ops.clear();
+                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1313,15 +1388,16 @@ impl ControlEngine for QisEngine {
                     // Only process NEW operations (after what we already simulated)
                     if ops.len() > self.simulated_op_count {
                         let new_ops: Vec<Operation> = ops[self.simulated_op_count..].to_vec();
-                        self.trace_operations_chunk(
-                            "pending_continue",
-                            &new_ops,
-                            Some(result_id),
-                        );
                         // Update count to include these new operations
                         self.simulated_op_count = ops.len();
                         if !new_ops.is_empty() {
                             let commands = self.operations_to_bytemessage(&new_ops)?;
+                            self.trace_operations_chunk(
+                                "pending_continue",
+                                &new_ops,
+                                Some(result_id),
+                                Some(&commands),
+                            );
                             return Ok(EngineStage::NeedsProcessing(commands));
                         }
                     }
@@ -1338,6 +1414,7 @@ impl ControlEngine for QisEngine {
                 if !final_ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&final_ops)?;
                     self.pending_dynamic_ops.clear();
+                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1409,6 +1486,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("tempdir");
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         engine.set_operation_trace_dir(temp_dir.path());
+        let collector: OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
+        engine.set_operation_trace_collector(collector.clone());
         engine.current_shot_seed = Some(123);
         engine.begin_trace_shot();
 
@@ -1417,7 +1496,10 @@ mod tests {
             QuantumOp::H(0).into(),
             QuantumOp::Measure(0, 7).into(),
         ];
-        engine.trace_operations_chunk("unit_test", &ops, Some(7));
+        let commands = engine
+            .operations_to_bytemessage(&ops)
+            .expect("convert ops to bytemessage");
+        engine.trace_operations_chunk("unit_test", &ops, Some(7), Some(&commands));
 
         let mut trace_files = std::fs::read_dir(temp_dir.path())
             .expect("read trace dir")
@@ -1438,5 +1520,13 @@ mod tests {
         assert_eq!(value["num_operations"], 3);
         assert_eq!(value["operations"][0]["AllocateQubit"]["id"], 0);
         assert_eq!(value["operations"][1]["Quantum"]["H"], 0);
+        assert_eq!(value["lowered_quantum_ops"][0]["gate_type"], "PZ");
+        assert_eq!(value["lowered_quantum_ops"][1]["gate_type"], "H");
+        assert_eq!(value["lowered_quantum_ops"][2]["gate_type"], "MZ");
+
+        let in_memory = collector.lock().expect("collector lock");
+        assert_eq!(in_memory.len(), 1);
+        assert_eq!(in_memory[0].stage, "unit_test");
+        assert_eq!(in_memory[0].lowered_quantum_ops[0].gate_type, "PZ");
     }
 }

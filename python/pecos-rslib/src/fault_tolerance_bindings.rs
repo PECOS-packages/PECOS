@@ -1326,7 +1326,13 @@ impl PyNoisySampler {
                 match loc.gate_type {
                     GateType::PZ | GateType::QAlloc => p_init,
                     GateType::MZ | GateType::MeasureFree => p_meas,
-                    GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => p2,
+                    GateType::CX
+                    | GateType::CZ
+                    | GateType::CY
+                    | GateType::SWAP
+                    | GateType::RXX
+                    | GateType::RYY
+                    | GateType::RZZ => p2,
                     GateType::H
                     | GateType::SZ
                     | GateType::SZdg
@@ -1338,7 +1344,12 @@ impl PyNoisySampler {
                     | GateType::Y
                     | GateType::Z
                     | GateType::T
-                    | GateType::Tdg => p1,
+                    | GateType::Tdg
+                    | GateType::RX
+                    | GateType::RY
+                    | GateType::RZ
+                    | GateType::U
+                    | GateType::R1XY => p1,
                     _ => p1, // Default to p1 for unknown gates
                 }
             })

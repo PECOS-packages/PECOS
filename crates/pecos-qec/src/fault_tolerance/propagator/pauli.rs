@@ -17,6 +17,7 @@
 
 use super::PauliFault;
 use pecos_core::gate_type::GateType;
+use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 
@@ -49,10 +50,48 @@ pub enum Direction {
 /// - **Measure gates**: No transformation in either direction (for propagation purposes)
 #[inline]
 pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Direction) {
-    // Use gate.qubits directly - SmallVec derefs to &[QubitId], no allocation needed
-    let qubits = &gate.qubits;
+    if apply_named_gate(prop, gate.gate_type, &gate.qubits, direction) {
+        return;
+    }
 
     match gate.gate_type {
+        GateType::RZ | GateType::RX | GateType::RY | GateType::RZZ | GateType::RXX | GateType::RYY => {
+            if let Some(&angle) = gate.angles.first() {
+                if let Some(clifford) = try_simplify_rotation(gate.gate_type, angle) {
+                    let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
+                    return;
+                }
+
+                if let Some(pauli) = half_turn_decomposition(gate.gate_type, angle) {
+                    for &qubit in &gate.qubits {
+                        let _ = apply_named_gate(prop, pauli, &[qubit], direction);
+                    }
+                    return;
+                }
+            }
+        }
+        GateType::R1XY => {
+            if gate.angles.len() >= 2 {
+                let theta = gate.angles[0];
+                let phi = gate.angles[1];
+                if let Some(clifford) = try_simplify_r1xy(theta, phi) {
+                    let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[inline]
+fn apply_named_gate(
+    prop: &mut PauliProp,
+    gate_type: GateType,
+    qubits: &[pecos_core::QubitId],
+    direction: Direction,
+) -> bool {
+    match gate_type {
         // Self-adjoint single-qubit gates - same in both directions
         GateType::I => {
             prop.identity(qubits);
@@ -70,41 +109,41 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
             prop.h(qubits);
         }
 
-        // Non-self-adjoint gates - swap with adjoint for backward
+        // Non-self-adjoint single-qubit gates - swap with adjoint for backward
         GateType::SX => {
             match direction {
-                Direction::Forward => prop.sx(qubits),
-                Direction::Backward => prop.sxdg(qubits),
+            Direction::Forward => prop.sx(qubits),
+            Direction::Backward => prop.sxdg(qubits),
             };
         }
         GateType::SXdg => {
             match direction {
-                Direction::Forward => prop.sxdg(qubits),
-                Direction::Backward => prop.sx(qubits),
+            Direction::Forward => prop.sxdg(qubits),
+            Direction::Backward => prop.sx(qubits),
             };
         }
         GateType::SY => {
             match direction {
-                Direction::Forward => prop.sy(qubits),
-                Direction::Backward => prop.sydg(qubits),
+            Direction::Forward => prop.sy(qubits),
+            Direction::Backward => prop.sydg(qubits),
             };
         }
         GateType::SYdg => {
             match direction {
-                Direction::Forward => prop.sydg(qubits),
-                Direction::Backward => prop.sy(qubits),
+            Direction::Forward => prop.sydg(qubits),
+            Direction::Backward => prop.sy(qubits),
             };
         }
         GateType::SZ => {
             match direction {
-                Direction::Forward => prop.sz(qubits),
-                Direction::Backward => prop.szdg(qubits),
+            Direction::Forward => prop.sz(qubits),
+            Direction::Backward => prop.szdg(qubits),
             };
         }
         GateType::SZdg => {
             match direction {
-                Direction::Forward => prop.szdg(qubits),
-                Direction::Backward => prop.sz(qubits),
+            Direction::Forward => prop.szdg(qubits),
+            Direction::Backward => prop.sz(qubits),
             };
         }
 
@@ -130,10 +169,60 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
             }
         }
 
-        // No-op: Prep, QAlloc, Measure, MeasureFree, and other unsupported gate types
-        // don't transform Paulis for propagation purposes
-        _ => {}
+        // Non-self-adjoint two-qubit Clifford gates - swap with adjoint for backward
+        GateType::SXX => {
+            if qubits.len() >= 2 {
+                match direction {
+                    Direction::Forward => prop.sxx(&[(qubits[0], qubits[1])]),
+                    Direction::Backward => prop.sxxdg(&[(qubits[0], qubits[1])]),
+                };
+            }
+        }
+        GateType::SXXdg => {
+            if qubits.len() >= 2 {
+                match direction {
+                    Direction::Forward => prop.sxxdg(&[(qubits[0], qubits[1])]),
+                    Direction::Backward => prop.sxx(&[(qubits[0], qubits[1])]),
+                };
+            }
+        }
+        GateType::SYY => {
+            if qubits.len() >= 2 {
+                match direction {
+                    Direction::Forward => prop.syy(&[(qubits[0], qubits[1])]),
+                    Direction::Backward => prop.syydg(&[(qubits[0], qubits[1])]),
+                };
+            }
+        }
+        GateType::SYYdg => {
+            if qubits.len() >= 2 {
+                match direction {
+                    Direction::Forward => prop.syydg(&[(qubits[0], qubits[1])]),
+                    Direction::Backward => prop.syy(&[(qubits[0], qubits[1])]),
+                };
+            }
+        }
+        GateType::SZZ => {
+            if qubits.len() >= 2 {
+                match direction {
+                    Direction::Forward => prop.szz(&[(qubits[0], qubits[1])]),
+                    Direction::Backward => prop.szzdg(&[(qubits[0], qubits[1])]),
+                };
+            }
+        }
+        GateType::SZZdg => {
+            if qubits.len() >= 2 {
+                match direction {
+                    Direction::Forward => prop.szzdg(&[(qubits[0], qubits[1])]),
+                    Direction::Backward => prop.szz(&[(qubits[0], qubits[1])]),
+                };
+            }
+        }
+
+        _ => return false,
     }
+
+    true
 }
 
 /// Propagates a `PauliProp` through a circuit in the specified direction.

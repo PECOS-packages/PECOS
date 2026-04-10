@@ -537,6 +537,141 @@ impl PySimBuilder {
         })
     }
 
+    /// Capture one in-memory QIS operation trace shot and return it as Python data.
+    ///
+    /// This is the preferred programmatic tracing path for QIS-control simulations.
+    /// It collects the structured trace in memory first, and any JSON dumping
+    /// configured via `trace_operations(...)` becomes an optional mirror/export.
+    fn capture_operation_trace(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        use crate::engine_builders::{
+            PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
+            PyGeneralNoiseModelBuilder,
+        };
+        use crate::engine_builders::{
+            PyCliffordRzEngineBuilder, PyCoinTossEngineBuilder, PyDensityMatrixEngineBuilder,
+            PySparseStabEngineBuilder, PyStabilizerEngineBuilder, PyStateVectorEngineBuilder,
+        };
+
+        match &self.inner {
+            SimBuilderInner::QisControl(builder) => {
+                let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
+                let engine_builder = builder_lock
+                    .take()
+                    .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+                let collector: pecos_qis::OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
+                let engine_builder = engine_builder.trace_operations_in_memory_to(collector.clone());
+                let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
+                    engine_builder.trace_operations_to(trace_dir)
+                } else {
+                    engine_builder
+                };
+
+                let mut sim_builder = pecos_engines::sim_builder().classical(engine_builder);
+
+                if let Some(seed) = builder.seed {
+                    sim_builder = sim_builder.seed(seed);
+                }
+                if let Some(workers) = builder.workers {
+                    sim_builder = sim_builder.workers(workers);
+                }
+                let n = builder.explicit_num_qubits.ok_or_else(|| {
+                    PyRuntimeError::new_err(
+                        "QIS/HUGR programs require explicit qubit specification. \
+                        Please call .qubits(N) before capture_operation_trace().",
+                    )
+                })?;
+                sim_builder = sim_builder.qubits(n);
+
+                if let Some(ref qe_py) = builder.quantum_engine_builder {
+                    sim_builder = if let Ok(mut state_vec) = qe_py.extract::<PyStateVectorEngineBuilder>(py) {
+                        if let Some(inner) = state_vec.inner.take() {
+                            sim_builder.quantum(inner)
+                        } else {
+                            return Err(PyErr::new::<PyRuntimeError, _>(
+                                "Quantum engine builder has already been consumed",
+                            ));
+                        }
+                    } else if let Ok(mut sparse_stab) = qe_py.extract::<PySparseStabEngineBuilder>(py) {
+                        if let Some(inner) = sparse_stab.inner.take() {
+                            sim_builder.quantum(inner)
+                        } else {
+                            return Err(PyErr::new::<PyRuntimeError, _>(
+                                "Quantum engine builder has already been consumed",
+                            ));
+                        }
+                    } else if let Ok(mut clifford_rz) = qe_py.extract::<PyCliffordRzEngineBuilder>(py) {
+                        if let Some(inner) = clifford_rz.inner.take() {
+                            sim_builder.quantum(inner)
+                        } else {
+                            return Err(PyErr::new::<PyRuntimeError, _>(
+                                "Quantum engine builder has already been consumed",
+                            ));
+                        }
+                    } else if let Ok(mut density_mat) = qe_py.extract::<PyDensityMatrixEngineBuilder>(py) {
+                        if let Some(inner) = density_mat.inner.take() {
+                            sim_builder.quantum(inner)
+                        } else {
+                            return Err(PyErr::new::<PyRuntimeError, _>(
+                                "Quantum engine builder has already been consumed",
+                            ));
+                        }
+                    } else if let Ok(mut stab) = qe_py.extract::<PyStabilizerEngineBuilder>(py) {
+                        if let Some(inner) = stab.inner.take() {
+                            sim_builder.quantum(inner)
+                        } else {
+                            return Err(PyErr::new::<PyRuntimeError, _>(
+                                "Quantum engine builder has already been consumed",
+                            ));
+                        }
+                    } else if let Ok(mut ct) = qe_py.extract::<PyCoinTossEngineBuilder>(py) {
+                        if let Some(inner) = ct.inner.take() {
+                            sim_builder.quantum(inner)
+                        } else {
+                            return Err(PyErr::new::<PyRuntimeError, _>(
+                                "Quantum engine builder has already been consumed",
+                            ));
+                        }
+                    } else {
+                        sim_builder
+                    };
+                }
+
+                if let Some(ref noise_py) = builder.noise_builder {
+                    sim_builder = if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
+                        sim_builder.noise(general.inner.clone())
+                    } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {
+                        sim_builder.noise(depolarizing.inner.clone())
+                    } else if let Ok(biased) = noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py) {
+                        sim_builder.noise(biased.inner.clone())
+                    } else {
+                        sim_builder
+                    };
+                }
+
+                sim_builder.run(1).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Trace capture simulation failed: {e}"))
+                })?;
+
+                let trace = collector
+                    .lock()
+                    .expect("lock poisoned")
+                    .clone();
+                let trace_json = serde_json::to_string(&trace).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to serialize in-memory trace: {e}"))
+                })?;
+                let json = py.import(pyo3::intern!(py, "json"))?;
+                Ok(json.call_method1(pyo3::intern!(py, "loads"), (trace_json,))?.into())
+            }
+            SimBuilderInner::Qasm(_)
+            | SimBuilderInner::Hugr(_)
+            | SimBuilderInner::PhirJson(_)
+            | SimBuilderInner::Phir(_)
+            | SimBuilderInner::Empty => Err(PyTypeError::new_err(
+                "capture_operation_trace() is only supported for QIS control simulations",
+            )),
+        }
+    }
+
     /// Run the simulation
     #[allow(clippy::too_many_lines)] // Complex simulation dispatch with multiple engine types
     fn run(&self, shots: usize) -> PyResult<crate::shot_results_bindings::PyShotVec> {
@@ -684,6 +819,11 @@ impl PySimBuilder {
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+                let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
+                    engine_builder.trace_operations_to(trace_dir)
+                } else {
+                    engine_builder
+                };
 
                 // Use the Rust sim_builder API directly (from pecos prelude)
                 let mut sim_builder = pecos_engines::sim_builder().classical(engine_builder);

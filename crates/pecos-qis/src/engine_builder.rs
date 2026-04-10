@@ -1,6 +1,6 @@
 //! Builder for `QisEngine` that integrates with PECOS `sim()` API
 
-use crate::{IntoQisInterface, QisEngine};
+use crate::{IntoQisInterface, OperationTraceStore, QisEngine};
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_qis_ffi_types::OperationCollector;
@@ -13,6 +13,7 @@ pub struct QisEngineBuilder {
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
     operation_trace_dir: Option<PathBuf>,
+    operation_trace_collector: Option<OperationTraceStore>,
 }
 
 impl Clone for QisEngineBuilder {
@@ -27,6 +28,7 @@ impl Clone for QisEngineBuilder {
                 .map(|b| dyn_clone::clone_box(&**b)),
             program_source: self.program_source.clone(),
             operation_trace_dir: self.operation_trace_dir.clone(),
+            operation_trace_collector: self.operation_trace_collector.clone(),
         }
     }
 }
@@ -41,6 +43,7 @@ impl QisEngineBuilder {
             interface_builder: None,
             program_source: None,
             operation_trace_dir: None,
+            operation_trace_collector: None,
         }
     }
 
@@ -52,6 +55,13 @@ impl QisEngineBuilder {
     #[must_use]
     pub fn trace_operations_to(mut self, trace_dir: impl AsRef<Path>) -> Self {
         self.operation_trace_dir = Some(trace_dir.as_ref().to_path_buf());
+        self
+    }
+
+    /// Collect traced QIS batches in memory instead of requiring JSON output.
+    #[must_use]
+    pub fn trace_operations_in_memory_to(mut self, collector: OperationTraceStore) -> Self {
+        self.operation_trace_collector = Some(collector);
         self
     }
 
@@ -299,6 +309,9 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             let mut engine = QisEngine::new(dynamic_interface, runtime);
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
+            }
+            if let Some(collector) = self.operation_trace_collector {
+                engine.set_operation_trace_collector(collector);
             }
 
             // Store the builder and program source so clones can recreate their interfaces

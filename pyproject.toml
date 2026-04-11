@@ -39,7 +39,7 @@ dev = [
   "phir>=0.3.3",
   "polars>=1.0.0",     # DataFrame library for examples/benchmarks
   # WebAssembly runtimes for testing
-  "wasmtime>=13.0",
+  "wasmtime>=43.0.0",
   "jupyter>=1.1.1",
 ]
 test = [ # pinning testing environment

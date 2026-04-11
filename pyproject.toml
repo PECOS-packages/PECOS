@@ -23,7 +23,7 @@ quantum-pecos = { workspace = true }
 
 [dependency-groups]
 dev = [
-  "maturin>=1.2,<2.0",                      # For building (should match build requirements)
+  "maturin>=1.13.1,<2.0",                      # For building (should match build requirements)
   "patchelf; platform_system != 'Windows'", # For setting rpath in shared libraries (Linux/macOS only)
   "setuptools>=62.6",                       # Build system
   "pre-commit",                             # Git hooks

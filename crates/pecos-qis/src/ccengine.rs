@@ -248,9 +248,51 @@ pub struct QisEngine {
 
     /// 0-based chunk index within the current shot.
     trace_chunk_index: usize,
+
+    /// Scratch builder reused when materializing command batches.
+    command_builder: ByteMessageBuilder,
 }
 
 impl QisEngine {
+    fn parse_measurement_outcomes(message: &ByteMessage) -> Result<Vec<usize>, PecosError> {
+        message
+            .outcomes()
+            .map(|outcomes| outcomes.into_iter().map(|value| value as usize).collect())
+            .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))
+    }
+
+    fn map_measurements(
+        measurement_mapping: &[usize],
+        measurements: &[usize],
+    ) -> Vec<(usize, bool)> {
+        measurement_mapping
+            .iter()
+            .copied()
+            .zip(measurements.iter().copied())
+            .map(|(result_id, value)| (result_id, value != 0))
+            .collect()
+    }
+
+    fn store_measurement_updates(&mut self, updates: &[(usize, bool)]) {
+        for &(result_id, value) in updates {
+            self.measurement_results.insert(result_id, value);
+            debug!("QisEngine: Stored measurement result_id={result_id}, value={value}");
+        }
+    }
+
+    fn provide_measurement_updates_to_runtime(
+        &mut self,
+        updates: &[(usize, bool)],
+    ) -> Result<(), PecosError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let measurement_map: BTreeMap<usize, bool> = updates.iter().copied().collect();
+        self.runtime
+            .provide_measurements(measurement_map)
+            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))
+    }
+
     /// Create a new engine with the given interface and runtime
     ///
     /// Dynamic execution is always enabled - all LLVM runs on a worker thread.
@@ -282,6 +324,7 @@ impl QisEngine {
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             trace_shot_index: 0,
             trace_chunk_index: 0,
+            command_builder: ByteMessageBuilder::new(),
         }
     }
 
@@ -372,6 +415,7 @@ impl QisEngine {
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             trace_shot_index: 0,
             trace_chunk_index: 0,
+            command_builder: ByteMessageBuilder::new(),
         }
     }
 
@@ -462,112 +506,116 @@ impl QisEngine {
     /// `AllocateQubit`/`ReleaseQubit` and remap program handles back onto reusable
     /// physical slots before sending the quantum ops downstream.
     fn operations_to_bytemessage(&mut self, ops: &[Operation]) -> Result<ByteMessage, PecosError> {
-        let mut builder = ByteMessageBuilder::new();
+        let mut builder = std::mem::take(&mut self.command_builder);
+        builder.reset();
         self.measurement_mapping.clear();
 
-        for op in ops {
-            match op {
-                Operation::AllocateQubit { id } => {
-                    let slot = self.allocate_qubit_slot(*id);
-                    // Guppy/QIS allocation semantics guarantee a fresh |0> qubit.
-                    // When we recycle a physical simulator slot, explicitly re-prepare
-                    // it so stale post-measurement state cannot leak across allocations.
-                    builder.pz(&[slot]);
-                }
-                Operation::ReleaseQubit { id } => {
-                    self.release_qubit_slot(*id);
-                }
-                Operation::AllocateResult { .. }
-                | Operation::RecordOutput { .. }
-                | Operation::Barrier => {}
-                Operation::Quantum(qop) => match qop {
-                    QuantumOp::H(qubit) => {
-                        builder.h(&[self.mapped_qubit(*qubit, qop)?]);
+        let result = (|| -> Result<(), PecosError> {
+            for op in ops {
+                match op {
+                    Operation::AllocateQubit { id } => {
+                        let slot = self.allocate_qubit_slot(*id);
+                        builder.pz(&[slot]);
                     }
-                    QuantumOp::X(qubit) => {
-                        builder.x(&[self.mapped_qubit(*qubit, qop)?]);
+                    Operation::ReleaseQubit { id } => {
+                        self.release_qubit_slot(*id);
                     }
-                    QuantumOp::Y(qubit) => {
-                        builder.y(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::Z(qubit) => {
-                        builder.z(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::S(qubit) => {
-                        builder.sz(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::Sdg(qubit) => {
-                        builder.szdg(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::T(qubit) => {
-                        builder.t(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::Tdg(qubit) => {
-                        builder.tdg(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::RX(angle, qubit) => {
-                        builder.rx(
-                            Angle64::from_radians(*angle),
-                            &[self.mapped_qubit(*qubit, qop)?],
-                        );
-                    }
-                    QuantumOp::RY(angle, qubit) => {
-                        builder.ry(
-                            Angle64::from_radians(*angle),
-                            &[self.mapped_qubit(*qubit, qop)?],
-                        );
-                    }
-                    QuantumOp::RZ(angle, qubit) => {
-                        builder.rz(
-                            Angle64::from_radians(*angle),
-                            &[self.mapped_qubit(*qubit, qop)?],
-                        );
-                    }
-                    QuantumOp::RXY(theta, phi, qubit) => {
-                        builder.r1xy(
-                            Angle64::from_radians(*theta),
-                            Angle64::from_radians(*phi),
-                            &[self.mapped_qubit(*qubit, qop)?],
-                        );
-                    }
-                    QuantumOp::CX(control, target) => {
-                        builder.cx(&[(
-                            self.mapped_qubit(*control, qop)?,
-                            self.mapped_qubit(*target, qop)?,
-                        )]);
-                    }
-                    QuantumOp::Measure(qubit, result_id) => {
-                        self.measurement_mapping.push(*result_id);
-                        builder.mz(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    QuantumOp::ZZ(qubit1, qubit2) => {
-                        builder.szz(&[(
-                            self.mapped_qubit(*qubit1, qop)?,
-                            self.mapped_qubit(*qubit2, qop)?,
-                        )]);
-                    }
-                    QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                        builder.rzz(
-                            Angle64::from_radians(*angle),
-                            &[(
+                    Operation::AllocateResult { .. }
+                    | Operation::RecordOutput { .. }
+                    | Operation::Barrier => {}
+                    Operation::Quantum(qop) => match qop {
+                        QuantumOp::H(qubit) => {
+                            builder.h(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::X(qubit) => {
+                            builder.x(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::Y(qubit) => {
+                            builder.y(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::Z(qubit) => {
+                            builder.z(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::S(qubit) => {
+                            builder.sz(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::Sdg(qubit) => {
+                            builder.szdg(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::T(qubit) => {
+                            builder.t(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::Tdg(qubit) => {
+                            builder.tdg(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::RX(angle, qubit) => {
+                            builder.rx(
+                                Angle64::from_radians(*angle),
+                                &[self.mapped_qubit(*qubit, qop)?],
+                            );
+                        }
+                        QuantumOp::RY(angle, qubit) => {
+                            builder.ry(
+                                Angle64::from_radians(*angle),
+                                &[self.mapped_qubit(*qubit, qop)?],
+                            );
+                        }
+                        QuantumOp::RZ(angle, qubit) => {
+                            builder.rz(
+                                Angle64::from_radians(*angle),
+                                &[self.mapped_qubit(*qubit, qop)?],
+                            );
+                        }
+                        QuantumOp::RXY(theta, phi, qubit) => {
+                            builder.r1xy(
+                                Angle64::from_radians(*theta),
+                                Angle64::from_radians(*phi),
+                                &[self.mapped_qubit(*qubit, qop)?],
+                            );
+                        }
+                        QuantumOp::CX(control, target) => {
+                            builder.cx(&[(
+                                self.mapped_qubit(*control, qop)?,
+                                self.mapped_qubit(*target, qop)?,
+                            )]);
+                        }
+                        QuantumOp::Measure(qubit, result_id) => {
+                            self.measurement_mapping.push(*result_id);
+                            builder.mz(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        QuantumOp::ZZ(qubit1, qubit2) => {
+                            builder.szz(&[(
                                 self.mapped_qubit(*qubit1, qop)?,
                                 self.mapped_qubit(*qubit2, qop)?,
-                            )],
-                        );
-                    }
-                    QuantumOp::Reset(qubit) => {
-                        builder.pz(&[self.mapped_qubit(*qubit, qop)?]);
-                    }
-                    _ => {
-                        return Err(PecosError::Generic(format!(
-                            "Unsupported operation: {qop:?}"
-                        )));
-                    }
-                },
+                            )]);
+                        }
+                        QuantumOp::RZZ(angle, qubit1, qubit2) => {
+                            builder.rzz(
+                                Angle64::from_radians(*angle),
+                                &[(
+                                    self.mapped_qubit(*qubit1, qop)?,
+                                    self.mapped_qubit(*qubit2, qop)?,
+                                )],
+                            );
+                        }
+                        QuantumOp::Reset(qubit) => {
+                            builder.pz(&[self.mapped_qubit(*qubit, qop)?]);
+                        }
+                        _ => {
+                            return Err(PecosError::Generic(format!(
+                                "Unsupported operation: {qop:?}"
+                            )));
+                        }
+                    },
+                }
             }
-        }
 
-        Ok(builder.build())
+            Ok(())
+        })();
+
+        let message = result.map(|()| builder.build());
+        self.command_builder = builder;
+        message
     }
 
     /// Convert already-materialized quantum ops into a `ByteMessage`.
@@ -578,76 +626,83 @@ impl QisEngine {
         &mut self,
         ops: Vec<QuantumOp>,
     ) -> Result<ByteMessage, PecosError> {
-        let mut builder = ByteMessageBuilder::new();
+        let mut builder = std::mem::take(&mut self.command_builder);
+        builder.reset();
         self.measurement_mapping.clear();
 
-        for op in ops {
-            match op {
-                QuantumOp::H(qubit) => {
-                    builder.h(&[qubit]);
-                }
-                QuantumOp::X(qubit) => {
-                    builder.x(&[qubit]);
-                }
-                QuantumOp::Y(qubit) => {
-                    builder.y(&[qubit]);
-                }
-                QuantumOp::Z(qubit) => {
-                    builder.z(&[qubit]);
-                }
-                QuantumOp::S(qubit) => {
-                    builder.sz(&[qubit]);
-                }
-                QuantumOp::Sdg(qubit) => {
-                    builder.szdg(&[qubit]);
-                }
-                QuantumOp::T(qubit) => {
-                    builder.t(&[qubit]);
-                }
-                QuantumOp::Tdg(qubit) => {
-                    builder.tdg(&[qubit]);
-                }
-                QuantumOp::RX(angle, qubit) => {
-                    builder.rx(Angle64::from_radians(angle), &[qubit]);
-                }
-                QuantumOp::RY(angle, qubit) => {
-                    builder.ry(Angle64::from_radians(angle), &[qubit]);
-                }
-                QuantumOp::RZ(angle, qubit) => {
-                    builder.rz(Angle64::from_radians(angle), &[qubit]);
-                }
-                QuantumOp::RXY(theta, phi, qubit) => {
-                    builder.r1xy(
-                        Angle64::from_radians(theta),
-                        Angle64::from_radians(phi),
-                        &[qubit],
-                    );
-                }
-                QuantumOp::CX(control, target) => {
-                    builder.cx(&[(control, target)]);
-                }
-                QuantumOp::Measure(qubit, result_id) => {
-                    self.measurement_mapping.push(result_id);
-                    builder.mz(&[qubit]);
-                }
-                QuantumOp::ZZ(qubit1, qubit2) => {
-                    builder.szz(&[(qubit1, qubit2)]);
-                }
-                QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                    builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
-                }
-                QuantumOp::Reset(qubit) => {
-                    builder.pz(&[qubit]);
-                }
-                _ => {
-                    return Err(PecosError::Generic(format!(
-                        "Unsupported operation: {op:?}"
-                    )));
+        let result = (|| -> Result<(), PecosError> {
+            for op in ops {
+                match op {
+                    QuantumOp::H(qubit) => {
+                        builder.h(&[qubit]);
+                    }
+                    QuantumOp::X(qubit) => {
+                        builder.x(&[qubit]);
+                    }
+                    QuantumOp::Y(qubit) => {
+                        builder.y(&[qubit]);
+                    }
+                    QuantumOp::Z(qubit) => {
+                        builder.z(&[qubit]);
+                    }
+                    QuantumOp::S(qubit) => {
+                        builder.sz(&[qubit]);
+                    }
+                    QuantumOp::Sdg(qubit) => {
+                        builder.szdg(&[qubit]);
+                    }
+                    QuantumOp::T(qubit) => {
+                        builder.t(&[qubit]);
+                    }
+                    QuantumOp::Tdg(qubit) => {
+                        builder.tdg(&[qubit]);
+                    }
+                    QuantumOp::RX(angle, qubit) => {
+                        builder.rx(Angle64::from_radians(angle), &[qubit]);
+                    }
+                    QuantumOp::RY(angle, qubit) => {
+                        builder.ry(Angle64::from_radians(angle), &[qubit]);
+                    }
+                    QuantumOp::RZ(angle, qubit) => {
+                        builder.rz(Angle64::from_radians(angle), &[qubit]);
+                    }
+                    QuantumOp::RXY(theta, phi, qubit) => {
+                        builder.r1xy(
+                            Angle64::from_radians(theta),
+                            Angle64::from_radians(phi),
+                            &[qubit],
+                        );
+                    }
+                    QuantumOp::CX(control, target) => {
+                        builder.cx(&[(control, target)]);
+                    }
+                    QuantumOp::Measure(qubit, result_id) => {
+                        self.measurement_mapping.push(result_id);
+                        builder.mz(&[qubit]);
+                    }
+                    QuantumOp::ZZ(qubit1, qubit2) => {
+                        builder.szz(&[(qubit1, qubit2)]);
+                    }
+                    QuantumOp::RZZ(angle, qubit1, qubit2) => {
+                        builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
+                    }
+                    QuantumOp::Reset(qubit) => {
+                        builder.pz(&[qubit]);
+                    }
+                    _ => {
+                        return Err(PecosError::Generic(format!(
+                            "Unsupported operation: {op:?}"
+                        )));
+                    }
                 }
             }
-        }
 
-        Ok(builder.build())
+            Ok(())
+        })();
+
+        let message = result.map(|()| builder.build());
+        self.command_builder = builder;
+        message
     }
 }
 
@@ -703,6 +758,7 @@ impl Clone for QisEngine {
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             trace_shot_index: 0,
             trace_chunk_index: 0,
+            command_builder: ByteMessageBuilder::new(),
         }
     }
 }
@@ -936,15 +992,15 @@ impl QisEngine {
         if let Some(result) = result {
             match result {
                 Ok((collector, interface)) => {
-                    let total_ops = collector.operations.len();
+                    let mut operations = collector.operations;
+                    let total_ops = operations.len();
                     debug!(
                         "Worker completed with {} total operations, {} already simulated",
                         total_ops, self.simulated_op_count
                     );
                     // Only store NEW operations (those after what we already simulated)
                     if total_ops > self.simulated_op_count {
-                        let new_ops = collector.operations[self.simulated_op_count..].to_vec();
-                        self.pending_dynamic_ops = new_ops;
+                        self.pending_dynamic_ops = operations.split_off(self.simulated_op_count);
                         debug!(
                             "Storing {} new operations for final processing",
                             self.pending_dynamic_ops.len()
@@ -1154,9 +1210,7 @@ impl ClassicalEngine for QisEngine {
         debug!("QisEngine::handle_measurements called");
 
         // Extract measurements from ByteMessage
-        let measurements = message
-            .outcomes()
-            .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))?;
+        let measurements = Self::parse_measurement_outcomes(&message)?;
 
         debug!(
             "QisEngine: Received {} measurements: {:?}",
@@ -1169,28 +1223,15 @@ impl ClassicalEngine for QisEngine {
             self.measurement_mapping
         );
 
-        // Convert to BTreeMap for the runtime and store for get_results()
-        let mut measurement_map = BTreeMap::new();
-        for (idx, &value) in measurements.iter().enumerate() {
-            if idx < self.measurement_mapping.len() {
-                let result_id = self.measurement_mapping[idx];
-                let bool_value = value != 0;
-                measurement_map.insert(result_id, bool_value);
-
-                // Store for get_results()
-                self.measurement_results.insert(result_id, bool_value);
-                debug!("QisEngine: Stored measurement result_id={result_id}, value={bool_value}");
-            }
-        }
+        let updates = Self::map_measurements(&self.measurement_mapping, &measurements);
+        self.store_measurement_updates(&updates);
 
         debug!(
             "QisEngine: Final measurement_results: {:?}",
             self.measurement_results
         );
 
-        self.runtime
-            .provide_measurements(measurement_map)
-            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))
+        self.provide_measurement_updates_to_runtime(&updates)
     }
 
     fn compile(&self) -> Result<(), PecosError> {
@@ -1285,8 +1326,7 @@ impl ControlEngine for QisEngine {
             // Worker completed but we still need to process any pending operations
             // through the quantum engine (e.g., programs without measurement-dependent conditionals)
             if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = self.pending_dynamic_ops.clone();
-                self.pending_dynamic_ops.clear();
+                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
@@ -1315,10 +1355,16 @@ impl ControlEngine for QisEngine {
             ));
         }
 
-        // Process the response from quantum engine
-        if NoiseUtils::has_measurements(&input) {
-            self.handle_measurements(input.clone())?;
-        }
+        let measurement_updates = if NoiseUtils::has_measurements(&input) {
+            let measurements = Self::parse_measurement_outcomes(&input)?;
+            let mapping = std::mem::take(&mut self.measurement_mapping);
+            let updates = Self::map_measurements(&mapping, &measurements);
+            self.store_measurement_updates(&updates);
+            self.provide_measurement_updates_to_runtime(&updates)?;
+            updates
+        } else {
+            Vec::new()
+        };
 
         // First, check if worker already completed (before processing anything else)
         // This avoids unnecessary work if the worker finished
@@ -1326,10 +1372,9 @@ impl ControlEngine for QisEngine {
             debug!("Worker already complete, finishing shot");
             // Process any final operations
             if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = self.pending_dynamic_ops.clone();
+                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&final_ops)?;
-                    self.pending_dynamic_ops.clear();
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
@@ -1338,27 +1383,14 @@ impl ControlEngine for QisEngine {
             return Ok(EngineStage::Complete(shot));
         }
 
-        // Extract measurements from quantum engine response
-        let measurements = input
-            .outcomes()
-            .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))?;
-
-        // Map measurement values to result IDs and provide to worker
-        for (idx, &value) in measurements.iter().enumerate() {
-            if idx < self.measurement_mapping.len() {
-                let result_id = self.measurement_mapping[idx];
-                let bool_value = value != 0;
-                self.measurement_results.insert(result_id, bool_value);
-                debug!(
-                    "Stored and providing measurement: result_id={result_id} value={bool_value}"
-                );
-                // Provide result to worker thread
-                self.set_dynamic_result(result_id as u64, bool_value)?;
-            }
+        // Provide new measurement values to the dynamic worker thread.
+        for &(result_id, value) in &measurement_updates {
+            debug!("Stored and providing measurement: result_id={result_id} value={value}");
+            self.set_dynamic_result(result_id as u64, value)?;
         }
 
         // Signal that results are ready
-        if !measurements.is_empty() {
+        if !measurement_updates.is_empty() {
             self.signal_dynamic_result_ready()?;
         }
 
@@ -1375,10 +1407,9 @@ impl ControlEngine for QisEngine {
             // This is safe because result IDs are small sequential integers
             #[allow(clippy::cast_possible_truncation)]
             let result_key = result_id as usize;
-            if self.measurement_results.contains_key(&result_key) {
+            if let Some(&value) = self.measurement_results.get(&result_key) {
                 debug!("Result {result_id} already available, signaling immediately");
                 // Re-set the result in global storage (in case it was cleared)
-                let value = self.measurement_results[&result_key];
                 self.set_dynamic_result(result_id, value)?;
                 self.signal_dynamic_result_ready()?;
                 // Continue loop to wait for next result or completion
@@ -1387,9 +1418,10 @@ impl ControlEngine for QisEngine {
                 if let Some(ops) = self.get_dynamic_operations() {
                     // Only process NEW operations (after what we already simulated)
                     if ops.len() > self.simulated_op_count {
-                        let new_ops: Vec<Operation> = ops[self.simulated_op_count..].to_vec();
+                        let mut ops = ops;
+                        let new_ops = ops.split_off(self.simulated_op_count);
                         // Update count to include these new operations
-                        self.simulated_op_count = ops.len();
+                        self.simulated_op_count += new_ops.len();
                         if !new_ops.is_empty() {
                             let commands = self.operations_to_bytemessage(&new_ops)?;
                             self.trace_operations_chunk(
@@ -1410,10 +1442,9 @@ impl ControlEngine for QisEngine {
             debug!("Worker completed after wait");
             // Process any final operations
             if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = self.pending_dynamic_ops.clone();
+                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&final_ops)?;
-                    self.pending_dynamic_ops.clear();
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }

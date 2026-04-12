@@ -5,6 +5,7 @@ use crate::noise::{NoiseModel, PassThroughNoiseModel};
 use crate::quantum::QuantumEngine;
 use pecos_core::errors::PecosError;
 use std::fmt::Debug;
+use std::time::{Duration, Instant};
 
 /// A system that coordinates quantum simulation with noise application
 ///
@@ -31,6 +32,15 @@ pub struct QuantumSystem {
     // Core components
     noise_model: Box<dyn NoiseModel>,
     quantum_engine: Box<dyn QuantumEngine>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct QuantumSystemProcessProfile {
+    pub iterations: usize,
+    pub noise_start_duration: Duration,
+    pub engine_process_duration: Duration,
+    pub noise_continue_duration: Duration,
+    pub total_duration: Duration,
 }
 
 impl QuantumSystem {
@@ -124,6 +134,39 @@ impl QuantumSystem {
         // StateVecEngine is now a type alias for StateVectorEngine<StateVec>
         let debug_str = format!("{:?}", self.quantum_engine);
         debug_str.contains("StateVectorEngine") || debug_str.contains("StateVecEngine")
+    }
+
+    pub fn process_profiled(
+        &mut self,
+        input: ByteMessage,
+    ) -> Result<(ByteMessage, QuantumSystemProcessProfile), PecosError> {
+        let total_start = Instant::now();
+        let noise_start_begin = Instant::now();
+        let mut stage = self.controller_mut().start(input)?;
+        let mut profile = QuantumSystemProcessProfile {
+            noise_start_duration: noise_start_begin.elapsed(),
+            ..QuantumSystemProcessProfile::default()
+        };
+
+        loop {
+            match stage {
+                crate::engine_system::EngineStage::NeedsProcessing(engine_input) => {
+                    profile.iterations += 1;
+
+                    let engine_process_start = Instant::now();
+                    let engine_output = self.engine_mut().process(engine_input)?;
+                    profile.engine_process_duration += engine_process_start.elapsed();
+
+                    let noise_continue_start = Instant::now();
+                    stage = self.controller_mut().continue_processing(engine_output)?;
+                    profile.noise_continue_duration += noise_continue_start.elapsed();
+                }
+                crate::engine_system::EngineStage::Complete(output) => {
+                    profile.total_duration = total_start.elapsed();
+                    return Ok((output, profile));
+                }
+            }
+        }
     }
 }
 

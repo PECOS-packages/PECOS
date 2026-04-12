@@ -10,7 +10,7 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""PECOS Stab simulator plugin for Selene."""
+"""PECOS stabilizer simulator plugin for Selene."""
 
 import platform
 from dataclasses import dataclass
@@ -20,11 +20,11 @@ from selene_core import Simulator
 
 
 @dataclass
-class StabPlugin(Simulator):
-    """A plugin for using the PECOS Stab stabilizer simulator as a backend for Selene.
+class StabilizerPlugin(Simulator):
+    """A plugin for using the PECOS stabilizer simulator as a backend for Selene.
 
-    PECOS Stab is a stabilizer simulator that can efficiently simulate
-    Clifford circuits. As a stabilizer simulator, it can only simulate Clifford operations
+    The PECOS stabilizer simulator can efficiently simulate Clifford circuits.
+    As a stabilizer simulator, it can only simulate Clifford operations
     (rotations that are multiples of pi/2).
 
     Attributes:

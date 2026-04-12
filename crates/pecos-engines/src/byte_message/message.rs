@@ -405,6 +405,19 @@ impl ByteMessage {
     ///
     /// Returns an error if the message is malformed or contains invalid quantum operations.
     pub fn quantum_ops(&self) -> Result<Vec<Gate>, PecosError> {
+        let mut commands = Vec::new();
+        self.quantum_ops_into(&mut commands)?;
+        Ok(commands)
+    }
+
+    /// Parse quantum operations from this message into an existing vector.
+    ///
+    /// This lets hot callers reuse vector capacity across repeated parses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message is malformed or contains invalid quantum operations.
+    pub fn quantum_ops_into(&self, commands: &mut Vec<Gate>) -> Result<(), PecosError> {
         // Parse and validate the batch header
         let batch_header = self.parse_batch_header()?;
 
@@ -413,7 +426,8 @@ impl ByteMessage {
             batch_header.msg_count
         );
 
-        let mut commands = Vec::new();
+        commands.clear();
+        commands.reserve(batch_header.msg_count as usize);
         let mut offset = size_of::<BatchHeader>();
 
         // Process each message
@@ -433,7 +447,7 @@ impl ByteMessage {
 
         trace!("quantum_ops: Total gates parsed: {}", commands.len());
 
-        Ok(commands)
+        Ok(())
     }
 
     /// Parse measurement outcomes from this message

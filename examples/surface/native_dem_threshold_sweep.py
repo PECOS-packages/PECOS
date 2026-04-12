@@ -5,6 +5,8 @@ This example runs rotated surface-code memory experiments using:
 
 - Guppy surface-memory programs from ``pecos.guppy.surface.make_surface_code``
 - ``sim(...).classical(selene_engine())`` for end-to-end execution
+- direct ``selene_sim`` execution with either Selene ``Stim`` or the PECOS
+  Selene stabilizer plugin
 - optional native DEM sampling via ``build_native_sampler(...)``
 - a uniform depolarizing noise model with ``p1 = p2 = p_meas = p_init = p``
 - ``SurfaceDecoder(..., decoder_type="pymatching")`` with PECOS-native DEMs
@@ -47,10 +49,13 @@ Example:
 from __future__ import annotations
 
 import argparse
+import atexit
 import html
 import json
 import math
+import statistics
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -111,6 +116,23 @@ class _NativeSamplerRuntime:
     dem_decoder: Any
 
 
+_CACHED_SELENE_INSTANCES: list[Any] = []
+
+
+def _cleanup_cached_selene_instances() -> None:
+    """Best-effort cleanup for temporary Selene build directories."""
+    while _CACHED_SELENE_INSTANCES:
+        instance = _CACHED_SELENE_INSTANCES.pop()
+        try:
+            instance.delete_files()
+        except Exception:
+            # Temporary build directories are a cache convenience, not user data.
+            pass
+
+
+atexit.register(_cleanup_cached_selene_instances)
+
+
 def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "abstract") -> str:
     """Describe one sampling backend in human-readable terms."""
     if sample_backend == "sim":
@@ -124,6 +146,12 @@ def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "ab
             "direct selene_sim (compile_guppy_to_hugr + build/run_shots) with Selene Stim "
             f"+ Selene DepolarizingErrorModel + native DEM source={native_circuit_source} "
             "+ noiseless reference-trajectory calibration"
+        )
+    if sample_backend == "selene_stabilizer_plugin":
+        return (
+            "direct selene_sim (compile_guppy_to_hugr + build/run_shots) with the PECOS "
+            "Selene StabilizerPlugin + Selene DepolarizingErrorModel + native DEM source="
+            f"{native_circuit_source} + noiseless reference-trajectory calibration"
         )
     if sample_backend == "native_sampler":
         return (
@@ -347,6 +375,19 @@ def _compiled_guppy_hugr(distance: int, total_rounds: int, basis: str) -> bytes:
     return compile_guppy_to_hugr(program)
 
 
+@lru_cache(maxsize=None)
+def _selene_instance(distance: int, total_rounds: int, basis: str) -> Any:
+    """Cache a built Selene instance for one circuit shape."""
+    from selene_sim import build
+
+    instance = build(
+        _compiled_guppy_hugr(distance, total_rounds, basis),
+        name=f"surface_d{distance}_{basis.lower()}_r{total_rounds}",
+    )
+    _CACHED_SELENE_INSTANCES.append(instance)
+    return instance
+
+
 def _run_gate_backend_result_dict(
     *,
     sample_backend: str,
@@ -356,6 +397,7 @@ def _run_gate_backend_result_dict(
     total_rounds: int,
     num_shots: int,
     seed: int,
+    timing_sink: dict[str, float] | None = None,
 ) -> dict[str, list[list[int]]]:
     """Run one gate-level backend and normalize results to a shot-map-like dict."""
     import os
@@ -365,23 +407,10 @@ def _run_gate_backend_result_dict(
     import pecos
     from pecos.guppy import get_num_qubits, make_surface_code
 
-    if sample_backend == "sim":
-        noise_model = pecos.depolarizing_noise().with_uniform_probability(physical_error_rate)
-        program = make_surface_code(distance=distance, num_rounds=total_rounds, basis=basis)
-        shot_vec = (
-            pecos.sim(program)
-            .classical(pecos.selene_engine())
-            .quantum(pecos.stabilizer())
-            .qubits(get_num_qubits(distance))
-            .noise(noise_model)
-            .seed(seed)
-            .run(num_shots)
-        )
-        return shot_vec.to_shot_map().to_dict()
+    def run_direct_selene_backend(*, simulator: Any) -> dict[str, list[list[int]]]:
+        from selene_sim import DepolarizingErrorModel, SimpleRuntime
 
-    if sample_backend == "selene_sim":
-        from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim, build
-
+        backend_start = time.perf_counter()
         os.environ.setdefault(
             "ZIG_GLOBAL_CACHE_DIR",
             str(Path(tempfile.gettempdir()) / "pecos_zig_global_cache"),
@@ -391,19 +420,32 @@ def _run_gate_backend_result_dict(
             str(Path(tempfile.gettempdir()) / "pecos_zig_local_cache"),
         )
 
-        instance = build(
-            _compiled_guppy_hugr(distance, total_rounds, basis),
-            name=f"surface_d{distance}_{basis.lower()}_r{total_rounds}",
-        )
+        compile_start = time.perf_counter()
+        hugr_bytes = _compiled_guppy_hugr(distance, total_rounds, basis)
+        compile_seconds = time.perf_counter() - compile_start
+
+        build_start = time.perf_counter()
+        instance = _selene_instance(distance, total_rounds, basis)
+        build_seconds = time.perf_counter() - build_start
+
+        reset_start = time.perf_counter()
+        instance.delete_run_directories()
+        instance.runs.mkdir(parents=True, exist_ok=True)
+        reset_seconds = time.perf_counter() - reset_start
+
+        error_model_start = time.perf_counter()
         error_model = DepolarizingErrorModel(
             p_1q=physical_error_rate,
             p_2q=physical_error_rate,
             p_meas=physical_error_rate,
             p_init=physical_error_rate,
         )
+        error_model_seconds = time.perf_counter() - error_model_start
+
         result_dict: dict[str, list[list[int]]] = defaultdict(list)
+        run_start = time.perf_counter()
         for shot_results in instance.run_shots(
-            simulator=Stim(),
+            simulator=simulator,
             n_qubits=get_num_qubits(distance),
             n_shots=num_shots,
             error_model=error_model,
@@ -416,9 +458,182 @@ def _run_gate_backend_result_dict(
                 shot_rows[name].extend(int(v) for v in values)
             for name, values in shot_rows.items():
                 result_dict[name].append(values)
+        run_seconds = time.perf_counter() - run_start
+        if timing_sink is not None:
+            timing_sink.update(
+                {
+                    "compile_hugr_seconds": compile_seconds,
+                    "instance_build_seconds": build_seconds,
+                    "instance_reset_seconds": reset_seconds,
+                    "error_model_seconds": error_model_seconds,
+                    "run_and_parse_seconds": run_seconds,
+                    "total_seconds": time.perf_counter() - backend_start,
+                }
+            )
         return dict(result_dict)
 
+    if sample_backend == "sim":
+        backend_start = time.perf_counter()
+        noise_start = time.perf_counter()
+        noise_model = pecos.depolarizing_noise().with_uniform_probability(physical_error_rate)
+        noise_seconds = time.perf_counter() - noise_start
+        program_start = time.perf_counter()
+        program = make_surface_code(distance=distance, num_rounds=total_rounds, basis=basis)
+        program_seconds = time.perf_counter() - program_start
+        run_start = time.perf_counter()
+        shot_vec = (
+            pecos.sim(program)
+            .classical(pecos.selene_engine())
+            .quantum(pecos.stabilizer())
+            .qubits(get_num_qubits(distance))
+            .noise(noise_model)
+            .seed(seed)
+            .run(num_shots)
+        )
+        run_seconds = time.perf_counter() - run_start
+        shot_map_start = time.perf_counter()
+        shot_map = shot_vec.to_shot_map()
+        shot_map_seconds = time.perf_counter() - shot_map_start
+        dict_start = time.perf_counter()
+        result_dict = shot_map.to_dict()
+        dict_seconds = time.perf_counter() - dict_start
+        if timing_sink is not None:
+            timing_sink.update(
+                {
+                    "noise_model_seconds": noise_seconds,
+                    "program_build_seconds": program_seconds,
+                    "run_seconds": run_seconds,
+                    "to_shot_map_seconds": shot_map_seconds,
+                    "to_dict_seconds": dict_seconds,
+                    "total_seconds": time.perf_counter() - backend_start,
+                }
+            )
+        return result_dict
+
+    if sample_backend == "selene_sim":
+        from selene_sim import Stim
+
+        return run_direct_selene_backend(simulator=Stim())
+
+    if sample_backend == "selene_stabilizer_plugin":
+        from pecos_selene_stabilizer import StabilizerPlugin
+
+        return run_direct_selene_backend(simulator=StabilizerPlugin())
+
     raise ValueError(f"Unknown gate backend: {sample_backend}")
+
+
+def _profile_gate_backends(
+    *,
+    backends: list[str],
+    distances: list[int],
+    bases: list[str],
+    error_rates: list[float],
+    duration_multipliers: list[int],
+    shots: int,
+    seed: int,
+    warmup_repetitions: int,
+    benchmark_repetitions: int,
+) -> None:
+    """Profile gate backends and print a phase breakdown."""
+    if warmup_repetitions < 0:
+        raise ValueError("warmup_repetitions must be non-negative")
+    if benchmark_repetitions <= 0:
+        raise ValueError("benchmark_repetitions must be positive")
+
+    print()
+    print("Gate Backend Profile")
+    print(f"  warmup repetitions : {warmup_repetitions}")
+    print(f"  timed repetitions  : {benchmark_repetitions}")
+
+    profile_keys: dict[str, list[str]] = {
+        "selene_sim": [
+            "compile_hugr_seconds",
+            "instance_build_seconds",
+            "instance_reset_seconds",
+            "error_model_seconds",
+            "run_and_parse_seconds",
+        ],
+        "selene_stabilizer_plugin": [
+            "compile_hugr_seconds",
+            "instance_build_seconds",
+            "instance_reset_seconds",
+            "error_model_seconds",
+            "run_and_parse_seconds",
+        ],
+        "sim": [
+            "noise_model_seconds",
+            "program_build_seconds",
+            "run_seconds",
+            "to_shot_map_seconds",
+            "to_dict_seconds",
+        ],
+    }
+
+    combinations = [
+        (distance, basis, physical_error_rate, duration_multiplier * distance)
+        for basis in bases
+        for distance in distances
+        for physical_error_rate in error_rates
+        for duration_multiplier in duration_multipliers
+    ]
+
+    for combo_idx, (distance, basis, physical_error_rate, total_rounds) in enumerate(combinations, start=1):
+        print()
+        print(
+            f"[profile {combo_idx}/{len(combinations)}] "
+            f"basis={basis} d={distance} p={physical_error_rate:.5g} r={total_rounds} shots={shots}"
+        )
+        backend_totals: dict[str, float] = {}
+        for backend_index, backend in enumerate(backends, start=1):
+            combo_seed = seed + combo_idx * 1000 + backend_index * 100
+            for rep in range(warmup_repetitions):
+                _run_gate_backend_result_dict(
+                    sample_backend=backend,
+                    distance=distance,
+                    basis=basis,
+                    physical_error_rate=physical_error_rate,
+                    total_rounds=total_rounds,
+                    num_shots=shots,
+                    seed=combo_seed + rep,
+                )
+
+            runs: list[dict[str, float]] = []
+            for rep in range(benchmark_repetitions):
+                timing: dict[str, float] = {}
+                _run_gate_backend_result_dict(
+                    sample_backend=backend,
+                    distance=distance,
+                    basis=basis,
+                    physical_error_rate=physical_error_rate,
+                    total_rounds=total_rounds,
+                    num_shots=shots,
+                    seed=combo_seed + warmup_repetitions + rep,
+                    timing_sink=timing,
+                )
+                runs.append(timing)
+
+            total_values = [run["total_seconds"] for run in runs]
+            mean_total = statistics.fmean(total_values)
+            median_total = statistics.median(total_values)
+            shots_per_second = shots / mean_total if mean_total > 0 else float("inf")
+            backend_totals[backend] = mean_total
+            print(
+                f"  [{backend}] mean={mean_total:.3f}s "
+                f"median={median_total:.3f}s throughput={shots_per_second:.3f} shots/s"
+            )
+            for key in profile_keys[backend]:
+                phase_values = [run[key] for run in runs]
+                mean_phase = statistics.fmean(phase_values)
+                phase_fraction = mean_phase / mean_total if mean_total > 0 else 0.0
+                print(f"    {key}: {mean_phase:.3f}s ({phase_fraction:.1%})")
+
+        if "selene_sim" in backend_totals:
+            reference = backend_totals["selene_sim"]
+            print("  relative_to_selene_sim:")
+            for backend in backends:
+                ratio = backend_totals[backend] / reference if reference > 0 else float("inf")
+                print(f"    {backend}: {ratio:.3f}")
 
 
 def _run_memory_point(
@@ -454,7 +669,7 @@ def _run_memory_point(
     num_logical_errors = 0
     num_raw_errors: int | None = 0
 
-    if sample_backend in {"sim", "selene_sim"}:
+    if sample_backend in {"sim", "selene_sim", "selene_stabilizer_plugin"}:
         ref_synx_rows, ref_synz_rows, ref_final_row = _sim_reference_trajectory(
             sample_backend,
             distance,
@@ -719,12 +934,93 @@ def _basis_summary(summaries: list[FitSummary]) -> dict[str, Any]:
     }
 
 
+def _timing_summary(point_timings: list[dict[str, Any]], *, total_wall_clock_seconds: float) -> dict[str, Any]:
+    """Aggregate end-to-end sweep timings in a user-facing way."""
+
+    def aggregate(rows: list[dict[str, Any]]) -> dict[str, float | int]:
+        total_seconds = sum(float(row["elapsed_seconds"]) for row in rows)
+        total_shots = sum(int(row["num_shots"]) for row in rows)
+        return {
+            "seconds": total_seconds,
+            "shots": total_shots,
+            "shots_per_second": (total_shots / total_seconds) if total_seconds > 0.0 else 0.0,
+        }
+
+    backends = sorted({str(row["backend"]) for row in point_timings})
+    bases = sorted({str(row["basis"]) for row in point_timings})
+
+    per_backend = {
+        backend: aggregate([row for row in point_timings if row["backend"] == backend]) for backend in backends
+    }
+    per_basis = {basis: aggregate([row for row in point_timings if row["basis"] == basis]) for basis in bases}
+    per_backend_basis = {
+        backend: {
+            basis: aggregate(
+                [row for row in point_timings if row["backend"] == backend and row["basis"] == basis]
+            )
+            for basis in bases
+            if any(row["backend"] == backend and row["basis"] == basis for row in point_timings)
+        }
+        for backend in backends
+    }
+
+    return {
+        "total_wall_clock_seconds": total_wall_clock_seconds,
+        "total_point_seconds": sum(float(row["elapsed_seconds"]) for row in point_timings),
+        "total_points": len(point_timings),
+        "total_shots": sum(int(row["num_shots"]) for row in point_timings),
+        "overall_shots_per_second": (
+            sum(int(row["num_shots"]) for row in point_timings) / total_wall_clock_seconds
+            if total_wall_clock_seconds > 0.0
+            else 0.0
+        ),
+        "per_backend": per_backend,
+        "per_basis": per_basis,
+        "per_backend_basis": per_backend_basis,
+    }
+
+
+def _print_timing_summary(timing_summary: dict[str, Any]) -> None:
+    """Print a compact end-to-end timing summary."""
+    print()
+    print("Timing Summary")
+    print(f"  total wall clock : {timing_summary['total_wall_clock_seconds']:.3f}s")
+    print(f"  total point time : {timing_summary['total_point_seconds']:.3f}s")
+    print(f"  total points     : {timing_summary['total_points']}")
+    print(f"  total shots      : {timing_summary['total_shots']}")
+    print(f"  overall throughput: {timing_summary['overall_shots_per_second']:.3f} shots/s")
+
+    print("  by backend:")
+    for backend, entry in timing_summary["per_backend"].items():
+        print(
+            f"    {backend}: {entry['seconds']:.3f}s over {entry['shots']} shots "
+            f"({entry['shots_per_second']:.3f} shots/s)"
+        )
+
+    print("  by basis:")
+    for basis, entry in timing_summary["per_basis"].items():
+        print(
+            f"    {basis}: {entry['seconds']:.3f}s over {entry['shots']} shots "
+            f"({entry['shots_per_second']:.3f} shots/s)"
+        )
+
+    print("  by backend+basis:")
+    for backend, basis_rows in timing_summary["per_backend_basis"].items():
+        basis_text = ", ".join(
+            f"{basis}={entry['seconds']:.3f}s/{entry['shots']} shots"
+            for basis, entry in basis_rows.items()
+        )
+        print(f"    {backend}: {basis_text}")
+
+
 def _write_json_results(
     output_path: Path,
     *,
     args: argparse.Namespace,
     points: list[SweepPoint],
     summaries: list[FitSummary],
+    point_timings: list[dict[str, Any]],
+    timing_summary: dict[str, Any],
 ) -> None:
     """Write sweep results to a JSON artifact."""
     bases = sorted({summary.basis for summary in summaries})
@@ -748,7 +1044,9 @@ def _write_json_results(
             "fit_model": "p_L(r) = 0.5 * (1 - (1 - 2 * epsilon) ** r)",
         },
         "points": [asdict(point) for point in points],
+        "point_timings": point_timings,
         "fit_summaries": [asdict(summary) for summary in summaries],
+        "timing_summary": timing_summary,
         "summary": {
             backend: {
                 basis: _basis_summary(
@@ -938,13 +1236,22 @@ def _write_artifacts(
     args: argparse.Namespace,
     points: list[SweepPoint],
     summaries: list[FitSummary],
+    point_timings: list[dict[str, Any]],
+    timing_summary: dict[str, Any],
 ) -> None:
     """Write any optional JSON or plot artifacts requested by the user."""
     prefix = args.output_prefix
     backends = sorted({summary.backend for summary in summaries})
     if args.save_json:
         json_path = output_dir / f"{prefix}_results.json"
-        _write_json_results(json_path, args=args, points=points, summaries=summaries)
+        _write_json_results(
+            json_path,
+            args=args,
+            points=points,
+            summaries=summaries,
+            point_timings=point_timings,
+            timing_summary=timing_summary,
+        )
         print(f"Wrote JSON results to {json_path}")
 
     for backend in backends:
@@ -1001,13 +1308,27 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--shots", type=int, default=200, help="Shots per (distance, basis, p, rounds) point.")
     parser.add_argument(
         "--sample-backend",
-        choices=["sim", "selene_sim", "native_sampler", "compare", "compare_gate_backends", "compare_all"],
+        choices=[
+            "sim",
+            "selene_sim",
+            "selene_stabilizer_plugin",
+            "native_sampler",
+            "compare",
+            "compare_gate_backends",
+            "compare_all",
+            "profile_gate_backends",
+        ],
         default="sim",
         help=(
             "Sampling backend. 'sim' uses sim(Guppy(...)).classical(selene_engine()), "
-            "'selene_sim' uses direct selene_sim execution, 'native_sampler' uses the PECOS native DEM sampler, "
-            "'compare' runs sim + native_sampler, 'compare_gate_backends' runs selene_sim + sim, "
-            "and 'compare_all' runs selene_sim + sim + native_sampler."
+            "'selene_sim' uses direct selene_sim execution with Selene Stim, "
+            "'selene_stabilizer_plugin' uses direct selene_sim execution with the PECOS Selene StabilizerPlugin, "
+            "'native_sampler' uses the PECOS native DEM sampler, "
+            "'compare' runs sim + native_sampler, "
+            "'compare_gate_backends' runs selene_sim + selene_stabilizer_plugin + sim, "
+            "'compare_all' runs selene_sim + selene_stabilizer_plugin + sim + native_sampler, "
+            "and 'profile_gate_backends' reports timing breakdowns for selene_sim + "
+            "selene_stabilizer_plugin + sim without decoding."
         ),
     )
     parser.add_argument(
@@ -1047,6 +1368,18 @@ def _parse_args() -> argparse.Namespace:
         default="surface_threshold_sweep",
         help="Filename prefix for optional artifacts.",
     )
+    parser.add_argument(
+        "--benchmark-repetitions",
+        type=int,
+        default=3,
+        help="Timed repetitions for 'profile_gate_backends'.",
+    )
+    parser.add_argument(
+        "--benchmark-warmup",
+        type=int,
+        default=1,
+        help="Warmup repetitions before timed runs for 'profile_gate_backends'.",
+    )
     return parser.parse_args()
 
 
@@ -1054,15 +1387,18 @@ def main() -> int:
     args = _parse_args()
     wants_outputs = args.save_json or args.save_svg or args.save_pdf
     output_dir = _resolve_output_dir(args.output_dir, wants_outputs=wants_outputs)
+    sweep_start = time.perf_counter()
 
     distances = sorted(set(args.distances))
     bases = [basis.upper() for basis in args.bases]
     if args.sample_backend == "compare":
         backends = ["sim", "native_sampler"]
     elif args.sample_backend == "compare_gate_backends":
-        backends = ["selene_sim", "sim"]
+        backends = ["selene_sim", "selene_stabilizer_plugin", "sim"]
     elif args.sample_backend == "compare_all":
-        backends = ["selene_sim", "sim", "native_sampler"]
+        backends = ["selene_sim", "selene_stabilizer_plugin", "sim", "native_sampler"]
+    elif args.sample_backend == "profile_gate_backends":
+        backends = ["selene_sim", "selene_stabilizer_plugin", "sim"]
     else:
         backends = [args.sample_backend]
     duration_multipliers = sorted(set(args.duration_multipliers))
@@ -1092,8 +1428,23 @@ def main() -> int:
     if output_dir is not None:
         print(f"artifact dir     : {output_dir}")
 
+    if args.sample_backend == "profile_gate_backends":
+        _profile_gate_backends(
+            backends=backends,
+            distances=distances,
+            bases=bases,
+            error_rates=error_rates,
+            duration_multipliers=duration_multipliers,
+            shots=args.shots,
+            seed=args.seed,
+            warmup_repetitions=args.benchmark_warmup,
+            benchmark_repetitions=args.benchmark_repetitions,
+        )
+        return 0
+
     all_points: list[SweepPoint] = []
     fit_summaries: list[FitSummary] = []
+    point_timings: list[dict[str, Any]] = []
 
     total_points = len(distances) * len(bases) * len(error_rates) * len(duration_multipliers) * len(backends)
     point_idx = 0
@@ -1110,6 +1461,7 @@ def main() -> int:
                             f"[{point_idx:>3}/{total_points}] "
                             f"backend={backend} basis={basis} d={distance} p={physical_error_rate:.5g} r={total_rounds} ..."
                         )
+                        point_start = time.perf_counter()
                         point = _run_memory_point(
                             sample_backend=backend,
                             distance=distance,
@@ -1121,13 +1473,26 @@ def main() -> int:
                             native_circuit_source=args.native_circuit_source,
                             seed=point_seed,
                         )
+                        elapsed_seconds = time.perf_counter() - point_start
                         all_points.append(point)
+                        point_timings.append(
+                            {
+                                "backend": backend,
+                                "basis": basis,
+                                "distance": distance,
+                                "physical_error_rate": physical_error_rate,
+                                "total_rounds": total_rounds,
+                                "num_shots": args.shots,
+                                "elapsed_seconds": elapsed_seconds,
+                            }
+                        )
                         naive_per_round = ler_per_round_exp(point.logical_error_rate, point.total_rounds)
                         print(
                             "    "
                             f"LER={point.logical_error_rate:.6e} "
                             f"raw={_format_rate(point.raw_error_rate)} "
-                            f"naive_per_round={naive_per_round:.6e}"
+                            f"naive_per_round={naive_per_round:.6e} "
+                            f"elapsed={elapsed_seconds:.3f}s"
                         )
 
                 group_fit_summaries: dict[str, FitSummary] = {}
@@ -1214,8 +1579,21 @@ def main() -> int:
                 status = "suppressed" if is_suppressed else "not suppressed"
                 print(f"  p={p:.5g}: {status}")
 
+    timing_summary = _timing_summary(
+        point_timings,
+        total_wall_clock_seconds=time.perf_counter() - sweep_start,
+    )
+    _print_timing_summary(timing_summary)
+
     if output_dir is not None:
-        _write_artifacts(output_dir, args=args, points=all_points, summaries=fit_summaries)
+        _write_artifacts(
+            output_dir,
+            args=args,
+            points=all_points,
+            summaries=fit_summaries,
+            point_timings=point_timings,
+            timing_summary=timing_summary,
+        )
 
     return 0
 

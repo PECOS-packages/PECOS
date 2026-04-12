@@ -31,6 +31,7 @@ use rayon::{
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::builder::MonteCarloEngineBuilder;
 
@@ -95,6 +96,53 @@ pub struct MonteCarloEngine {
     pub seed: u64,
     /// Default number of worker threads
     pub default_workers: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MonteCarloRunProfile {
+    pub num_shots: usize,
+    pub num_workers: usize,
+    pub shots_per_worker: Vec<usize>,
+    pub worker_engine_clone_duration: Duration,
+    pub thread_pool_build_duration: Duration,
+    pub parallel_duration: Duration,
+    pub reset_duration: Duration,
+    pub run_shot_duration: Duration,
+    pub result_push_duration: Duration,
+    pub classical_start_duration: Duration,
+    pub quantum_process_duration: Duration,
+    pub classical_continue_duration: Duration,
+    pub quantum_noise_start_duration: Duration,
+    pub quantum_engine_process_duration: Duration,
+    pub quantum_noise_continue_duration: Duration,
+    pub thread_pool_drop_duration: Duration,
+    pub sort_duration: Duration,
+    pub aggregate_duration: Duration,
+    pub total_duration: Duration,
+}
+
+impl MonteCarloRunProfile {
+    #[must_use]
+    pub fn other_parallel_duration(&self) -> Duration {
+        let accounted =
+            self.reset_duration + self.run_shot_duration + self.result_push_duration;
+        self.parallel_duration
+            .checked_sub(accounted)
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkerRunProfile {
+    reset_duration: Duration,
+    run_shot_duration: Duration,
+    result_push_duration: Duration,
+    classical_start_duration: Duration,
+    quantum_process_duration: Duration,
+    classical_continue_duration: Duration,
+    quantum_noise_start_duration: Duration,
+    quantum_engine_process_duration: Duration,
+    quantum_noise_continue_duration: Duration,
 }
 
 impl MonteCarloEngine {
@@ -251,6 +299,13 @@ impl MonteCarloEngine {
         self.run_with_workers(num_shots, self.default_workers)
     }
 
+    pub fn run_profiled(
+        &mut self,
+        num_shots: usize,
+    ) -> Result<(ShotVec, MonteCarloRunProfile), PecosError> {
+        self.run_profiled_with_workers(num_shots, self.default_workers)
+    }
+
     /// Run the Monte Carlo simulation with a specified number of worker threads.
     ///
     /// This method runs the simulation with the specified number of shots and worker threads,
@@ -274,8 +329,28 @@ impl MonteCarloEngine {
         num_shots: usize,
         num_workers: usize,
     ) -> Result<ShotVec, PecosError> {
+        self.run_with_workers_internal(num_shots, num_workers, false)
+            .map(|(shot_vec, _)| shot_vec)
+    }
+
+    pub fn run_profiled_with_workers(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+    ) -> Result<(ShotVec, MonteCarloRunProfile), PecosError> {
+        let (shot_vec, profile) = self.run_with_workers_internal(num_shots, num_workers, true)?;
+        Ok((shot_vec, profile.expect("profile should be present when profiling is enabled")))
+    }
+
+    fn run_with_workers_internal(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+        profile_enabled: bool,
+    ) -> Result<(ShotVec, Option<MonteCarloRunProfile>), PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
+        let total_start = Instant::now();
 
         debug!("Running Monte Carlo simulation: {num_shots} shots, {num_workers} workers");
 
@@ -292,6 +367,7 @@ impl MonteCarloEngine {
         // This avoids potential deadlocks when worker threads try to clone engines
         // simultaneously, which can trigger concurrent library loading operations
         // that contend with each other or the dynamic linker.
+        let worker_engine_clone_start = Instant::now();
         let worker_engines: Vec<_> = (0..num_workers)
             .map(|worker_idx| {
                 let mut engine = self.hybrid_engine_template.clone();
@@ -300,38 +376,78 @@ impl MonteCarloEngine {
                 (worker_idx, shots_per_worker[worker_idx], engine)
             })
             .collect();
+        let worker_engine_clone_duration = worker_engine_clone_start.elapsed();
 
         // Create a dedicated thread pool for this simulation to avoid contention
         // with global Rayon thread pool when multiple simulations run concurrently.
         // CRITICAL: For QIS programs, we need to ensure each test gets its own
         // isolated thread pool to prevent TLS conflicts during library cleanup.
+        let thread_pool_build_start = Instant::now();
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_workers)
             .thread_name(|index| format!("pecos-mc-worker-{index}"))
             .build()
             .map_err(|e| PecosError::Processing(format!("Failed to create thread pool: {e}")))?;
+        let thread_pool_build_duration = thread_pool_build_start.elapsed();
 
         // Run shots in parallel across workers using dedicated thread pool
         // CRITICAL: Use install() to ensure all work completes before thread pool cleanup
+        let parallel_start = Instant::now();
         let parallel_result = thread_pool.install(|| {
             worker_engines
                 .into_par_iter()
                 .map(|(worker_idx, shots_this_worker, mut engine)| {
                     if shots_this_worker == 0 {
-                        return Ok(());
+                        return Ok(WorkerRunProfile::default());
                     }
 
                     // Process all shots for this worker
                     debug!("Worker {worker_idx} running {shots_this_worker} shots");
+                    let mut worker_profile = WorkerRunProfile::default();
 
                     for shot_idx in 0..shots_this_worker {
+                        let reset_start = if profile_enabled {
+                            Some(Instant::now())
+                        } else {
+                            None
+                        };
                         engine.reset()?;
+                        if let Some(start) = reset_start {
+                            worker_profile.reset_duration += start.elapsed();
+                        }
 
                         // Catch panics during shot execution and convert to PecosError
-                        let shot_result =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                engine.run_shot()
-                            }));
+                        let run_shot_start = if profile_enabled {
+                            Some(Instant::now())
+                        } else {
+                            None
+                        };
+                        let shot_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                            || {
+                                if profile_enabled {
+                                    engine.run_shot_profiled().map(|(shot, profile)| {
+                                        worker_profile.classical_start_duration +=
+                                            profile.classical_start_duration;
+                                        worker_profile.quantum_process_duration +=
+                                            profile.quantum_process_duration;
+                                        worker_profile.classical_continue_duration +=
+                                            profile.classical_continue_duration;
+                                        worker_profile.quantum_noise_start_duration +=
+                                            profile.quantum_noise_start_duration;
+                                        worker_profile.quantum_engine_process_duration +=
+                                            profile.quantum_engine_process_duration;
+                                        worker_profile.quantum_noise_continue_duration +=
+                                            profile.quantum_noise_continue_duration;
+                                        shot
+                                    })
+                                } else {
+                                    engine.run_shot()
+                                }
+                            },
+                        ));
+                        if let Some(start) = run_shot_start {
+                            worker_profile.run_shot_duration += start.elapsed();
+                        }
 
                         let shot_result = match shot_result {
                             Ok(Ok(result)) => result,
@@ -354,35 +470,91 @@ impl MonteCarloEngine {
                         };
 
                         // Store with worker/shot indices for deterministic ordering
+                        let result_push_start = if profile_enabled {
+                            Some(Instant::now())
+                        } else {
+                            None
+                        };
                         results_vec.lock().expect("results mutex poisoned").push((
                             worker_idx,
                             shot_idx,
                             shot_result,
                         ));
+                        if let Some(start) = result_push_start {
+                            worker_profile.result_push_duration += start.elapsed();
+                        }
                     }
 
-                    Ok(())
+                    Ok(worker_profile)
                 })
-                .collect::<Result<Vec<()>, PecosError>>()
+                .collect::<Result<Vec<WorkerRunProfile>, PecosError>>()
         });
+        let parallel_duration = parallel_start.elapsed();
 
         // Handle the parallel execution result
-        parallel_result?;
+        let worker_profiles = parallel_result?;
 
         // CRITICAL: Explicitly drop the thread pool to ensure clean shutdown
         // This helps prevent TLS issues during test cleanup
+        let thread_pool_drop_start = Instant::now();
         drop(thread_pool);
+        let thread_pool_drop_duration = thread_pool_drop_start.elapsed();
 
         // Ensure deterministic ordering of results
+        let sort_start = Instant::now();
         let mut results = results_vec.lock().expect("results mutex poisoned");
         results.sort_by(|(w1, s1, _), (w2, s2, _)| w1.cmp(w2).then(s1.cmp(s2)));
+        let sort_duration = sort_start.elapsed();
 
         // Convert to final results format
+        let aggregate_start = Instant::now();
         let shot_results: Vec<Shot> = results.iter().map(|(_, _, shot)| shot.clone()).collect();
         let combined_results = ShotVec::from_measurements(&shot_results);
+        let aggregate_duration = aggregate_start.elapsed();
 
         debug!("Monte Carlo simulation completed successfully");
-        Ok(combined_results)
+        let profile = if profile_enabled {
+            let mut profile = MonteCarloRunProfile {
+                num_shots,
+                num_workers,
+                shots_per_worker: shots_per_worker.clone(),
+                worker_engine_clone_duration,
+                thread_pool_build_duration,
+                parallel_duration,
+                reset_duration: Duration::default(),
+                run_shot_duration: Duration::default(),
+                result_push_duration: Duration::default(),
+                classical_start_duration: Duration::default(),
+                quantum_process_duration: Duration::default(),
+                classical_continue_duration: Duration::default(),
+                quantum_noise_start_duration: Duration::default(),
+                quantum_engine_process_duration: Duration::default(),
+                quantum_noise_continue_duration: Duration::default(),
+                thread_pool_drop_duration,
+                sort_duration,
+                aggregate_duration,
+                total_duration: total_start.elapsed(),
+            };
+            for worker_profile in worker_profiles {
+                profile.reset_duration += worker_profile.reset_duration;
+                profile.run_shot_duration += worker_profile.run_shot_duration;
+                profile.result_push_duration += worker_profile.result_push_duration;
+                profile.classical_start_duration += worker_profile.classical_start_duration;
+                profile.quantum_process_duration += worker_profile.quantum_process_duration;
+                profile.classical_continue_duration +=
+                    worker_profile.classical_continue_duration;
+                profile.quantum_noise_start_duration +=
+                    worker_profile.quantum_noise_start_duration;
+                profile.quantum_engine_process_duration +=
+                    worker_profile.quantum_engine_process_duration;
+                profile.quantum_noise_continue_duration +=
+                    worker_profile.quantum_noise_continue_duration;
+            }
+            Some(profile)
+        } else {
+            None
+        };
+        Ok((combined_results, profile))
     }
 
     /// Run a simulation using the provided engines directly.

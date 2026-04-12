@@ -203,10 +203,33 @@ Rejection happens in `process()` at ByteMessage decode time -- not at `build()` 
 
 ## Out of scope for v1
 
-- Shape B (record-and-replay `CliffordGateable` facade on `DemStabSim` struct itself).
-- Non-Clifford hybrid escape (falling back to `CliffordRz` for RZ slices). Land as v2 once basic path proven.
+- **Path B batch-mode fast-path** -- planned v2. Does the orchestrator surgery to let DemStabSim skip the per-shot streaming loop entirely. Grug do this *after* Path A lands so v1 doesn't drag along an orchestrator redesign.
+- Non-Clifford hybrid escape (falling back to `CliffordRz` for RZ slices). Land as v2+ once basic path proven.
 - GPU sampling via wgpu. Natural follow-up once CPU numbers are known.
 - Lindblad-derived noise input. Blocked on trajectory sim (item #7 in literature survey).
+
+## v2: Path B batch-mode fast-path (sketch)
+
+Kept in this doc so the v1 design does not paint v2 into a corner.
+
+**Goal.** When `SimBuilder` is configured with a batch-capable quantum backend, bypass the per-shot classical-engine loop and feed the whole compiled program to the backend in one call.
+
+**Mechanism.**
+- New trait in `pecos-engines`, e.g. `BatchQuantumEngine: QuantumEngine` with `run_shots(&mut self, shots: usize, rng: &mut dyn RngCore) -> ShotVec`. Default impl falls through to the current streaming loop for backends that do not implement it natively.
+- `MonteCarloEngine::run(shots)` downcasts on its `QuantumEngine` trait object: if batch-capable and circuit is static (no classical feed-forward from the classical engine), call `run_shots` once; otherwise current per-shot loop.
+- DemStabEngine implements `BatchQuantumEngine` natively: the internal sampler already does `sample_batch`, so `run_shots` is one call into `DemSampler::sample_batch` with a single RNG split.
+- Preserves the `sim(program).quantum(dem_stab()).noise(...).run(N)` user API -- the path split is internal.
+
+**Design constraints v1 must preserve:**
+- `DemStabEngine` already owns the built `DemSampler` across shots (Path A caches it). Path B just exposes a batch entry point alongside the streaming one. No duplication.
+- DAG must be fully captured before batch execution begins -- identical to Path A's lazy-build trigger. Path A's record step is reused.
+- `DemStabShotBatch` (the v1 return type of the sim) becomes the natural backing type for the batch return path.
+
+**What v2 does not need v1 to commit to:**
+- Final form of `BatchQuantumEngine` trait (single method vs. split detect/observable/measurement).
+- Whether batch fast-path is opt-in via config or auto-enabled on downcast success.
+
+Decide at the start of v2, with Path A's numbers as evidence.
 
 ## Open questions
 

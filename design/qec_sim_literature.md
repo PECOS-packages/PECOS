@@ -327,8 +327,8 @@ Because `QuantumEngine` is streaming and DemStabSim is batch-by-nature, grug see
 
 Hard limitation: **only valid for non-adaptive circuits** (no classical feed-forward affecting gate sequence across shots). That is fine for static syndrome-extraction memory experiments, which is most standard QEC research. DemStabSim must *reject* circuits where the ByteMessage stream depends on mid-circuit measurement outcomes, and clearly redirect users to `sparse_stab()` + `pecos-neo` for adaptive circuits.
 
-**Path B -- Batch-mode fast-path (later).**
-Extend `SimBuilder` with a batch-execution branch that, when a batch-capable backend is set, bypasses the per-shot classical loop entirely and hands the whole compiled program to the backend once. More invasive, semantically honest, unlocks GPU batch. Do this only after Path A proves out and numbers justify the orchestrator surgery.
+**Path B -- Batch-mode fast-path (confirmed on roadmap, after Path A).**
+Extend `SimBuilder` with a batch-execution branch that, when a batch-capable backend is set, bypasses the per-shot classical loop entirely and hands the whole compiled program to the backend once. More invasive, semantically honest, unlocks GPU batch. Both paths are on the roadmap: **Path A first** (record-and-replay inside the streaming `QuantumEngine` shape) to land the backend with minimal orchestrator churn, **Path B second** once Path A proves the numbers so the orchestrator surgery is paid for by real speedups.
 
 Action items:
 - [ ] Confirm how end-of-shot is signalled to `QuantumEngine` today (look for `reset()` / shot-boundary markers in `ByteMessage`).

@@ -302,6 +302,39 @@ Stim's core algorithm *is* "Pauli-frame propagation through a Clifford circuit w
 - Module: `src/dem_stab.rs` (or `fault_influence_sim.rs`).
 - Public type: `DemStabSim` (bikeshed: `InfluenceSampler`, `FaultFrameSim`).
 
+### SimBuilder audit (2026-04-11)
+
+Findings from `crates/pecos-engines/src/sim_builder.rs` and `python/pecos-rslib/src/sim.rs`:
+
+**Rust shape.** `SimBuilder` holds four pieces: `classical_builder` (required), `quantum_builder` (default `SparseStabEngine`), `noise_builder` (default `PassThroughNoiseModel`), `config`. Backend registration convention is a free function returning a builder:
+
+```rust
+.quantum(sparse_stab())           // IntoQuantumEngineBuilder
+.quantum(state_vector())          // same pattern
+.noise(DepolarizingNoise { p: 0.001 })   // IntoNoiseModel
+```
+
+**`QuantumEngine` trait is streaming.** It's a `process(ByteMessage) -> ByteMessage` interface driven per-tick by the classical engine, with the noise model intercepting `ByteMessage`s before they hit the quantum side. This is a fundamental fit-shape constraint for DemStabSim.
+
+**Python shape.** `sim(program)` dispatches on program type (QASM / QIS / HUGR / PHIR) and each variant carries a `quantum_engine_builder: Option<...>` slot -- same backend-selection pattern.
+
+### Implication: two honest integration paths
+
+Because `QuantumEngine` is streaming and DemStabSim is batch-by-nature, grug sees two options:
+
+**Path A -- Record-and-replay `QuantumEngine` impl (recommended first step).**
+`DemStabSimEngine` implements `QuantumEngine` by buffering all incoming `ByteMessage`s into an internal `DagCircuit`. On the first "end of circuit" signal (or lazy on first measurement query), it runs `DagFaultAnalyzer` -> `DemSamplerBuilder::build` once and caches the sampler. Subsequent shots short-circuit via `DemSampler::sample_batch`. Zero orchestrator changes; slots straight into `sim(program).quantum(dem_stab()).noise(...)`.
+
+Hard limitation: **only valid for non-adaptive circuits** (no classical feed-forward affecting gate sequence across shots). That is fine for static syndrome-extraction memory experiments, which is most standard QEC research. DemStabSim must *reject* circuits where the ByteMessage stream depends on mid-circuit measurement outcomes, and clearly redirect users to `sparse_stab()` + `pecos-neo` for adaptive circuits.
+
+**Path B -- Batch-mode fast-path (later).**
+Extend `SimBuilder` with a batch-execution branch that, when a batch-capable backend is set, bypasses the per-shot classical loop entirely and hands the whole compiled program to the backend once. More invasive, semantically honest, unlocks GPU batch. Do this only after Path A proves out and numbers justify the orchestrator surgery.
+
+Action items:
+- [ ] Confirm how end-of-shot is signalled to `QuantumEngine` today (look for `reset()` / shot-boundary markers in `ByteMessage`).
+- [ ] Confirm DemSampler cache can be safely reused across `MonteCarloEngine::run()` calls with fresh RNG (should be yes).
+- [ ] Decide rejection mechanics: return `PecosError::Input` on first classical-feedback instruction, or pre-scan once at build.
+
 ### Integration with the `sim()` entry point
 
 `sim()` is the main simulation entry on both sides:

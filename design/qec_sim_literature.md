@@ -283,6 +283,125 @@ Given PECOS already has DemSampler, CliffordRz, STN/MAST, pecos-neo:
 
 Rest (matchgate, decision diagrams, fermion-native, quasiprobability, fusion-based) are narrower or more research-y.
 
+---
+
+## Proposal: DemSampler-backed "fast stabilizer + depolarizing" simulator
+
+**Goal.** Expose the existing DemSampler / fault-influence-map machinery as a **first-class simulator** alongside `SparseStab`, `CliffordRz`, `StateVec`, etc. Stim is inspiration only -- PECOS stays self-contained.
+
+**What it gives the user.** A drop-in sim for the most common QEC research workload: Clifford circuit + per-location depolarizing-family noise -> detector + observable + raw-measurement samples at Stim-competitive speeds. Reuses every piece PECOS already has (`DagFaultAnalyzer`, `DemBuilder`, `DemSamplerBuilder`, `NoisySampler`) instead of adding a new algorithm.
+
+### Why this is a real simulator, not just sugar
+
+Stim's core algorithm *is* "Pauli-frame propagation through a Clifford circuit with per-location Pauli noise, aggregated into detector/observable signatures, then sampled shot-wise". That is exactly what PECOS's fault-influence + DemSampler pipeline does today. Wrapping it behind a simulator-shaped API makes the equivalence visible and reusable. Calling it what it is also keeps the story honest: it is a Clifford + Pauli-noise sim, not a general sim.
+
+### Proposed location and name
+
+- Crate: **`pecos-simulators`** (same place as `SparseStab`, `StateVec`).
+- Module: `src/dem_stab.rs` (or `fault_influence_sim.rs`).
+- Public type: `DemStabSim` (bikeshed: `InfluenceSampler`, `FaultFrameSim`).
+
+### Two API shapes (offer both)
+
+#### Shape A -- batch / circuit-at-a-time (primary, honest API)
+
+Takes a fully-specified `DagCircuit` (or `TickCircuit`) + noise model + detector/observable definitions, returns batch shot results. This is the *true* shape of the algorithm; no per-gate illusion.
+
+```rust
+let mut sim = DemStabSim::builder()
+    .circuit(&dag)
+    .noise(DepolarizingModel::uniform(p = 1e-3))  // or PauliLindblad, per-location, ...
+    .detectors(&detectors)
+    .observables(&observables)
+    .build()?;
+
+let shots = sim.sample_batch(num_shots, &mut rng);
+// shots: { detector_flips, observable_flips, [optional] raw_measurement_record }
+```
+
+Internally: `DagFaultAnalyzer -> DagFaultInfluenceMap -> DemSamplerBuilder -> DemSampler::sample_batch`.
+
+#### Shape B -- `CliffordGateable` facade (compat shim)
+
+A thin record-and-replay wrapper that implements `CliffordGateable` / `QuantumSimulator`. Gate calls append to an internal `DagCircuit`. First measurement / `end_shot` / explicit `.finalize()` triggers one-time influence-map build; subsequent shots reuse the cached analysis.
+
+```rust
+let mut sim = DemStabSimFacade::new(n_qubits)
+    .with_noise(DepolarizingModel::uniform(1e-3));
+
+sim.h(&[q0]).cx(&[(q0, q1)]).mz(&[q0, q1]);   // records
+let result = sim.run_shot(&mut rng);           // builds influence map lazily
+```
+
+Trade-off: per-gate method-chain is *not* cheap here (allocates into DAG). Document clearly: "prefer Shape A; Shape B exists only for trait-compatibility with code that assumes a streaming sim".
+
+### Noise model input
+
+Not locked to depolarizing. Start simple, extend via traits:
+
+- `UniformNoiseModel::depolarizing(p)` (already exists).
+- `PerLocationNoiseModel { cx: (px, py, pz, pxx, ...), mz: p_flip, idle: (t1, t2 + tick_duration), ... }`.
+- `PauliLindbladNoiseModel { generators: &[(support, rate)] }` -- maps learned IBM-style sparse Pauli-Lindblad to per-location effective Pauli rates; covers correlated noise. (See arXiv:2201.09866, 2311.15408.)
+- `FromChannelOp(ChannelMatrix)` -- lowers an arbitrary CPTP Pauli-twirled channel to rates; rejects non-Pauli parts with a warning (keeps honest).
+- Future: `FromLindblad(LindbladOp, gate_duration)` -- feeds a trajectory/exp-midpoint solver (item #7) to produce the Pauli channel per location.
+
+### Outputs
+
+- Detector flips (`Vec<u32>` per shot or bit-packed `PackedBits`).
+- Observable flips.
+- Optional: raw measurement record (toggleable via `MemBuilder` / measurement-noise-model path already present).
+- Sampling statistics (already exposed via `SamplingStatistics`).
+- Circuit-level Pauli error record per shot (useful for decoder dev / syndrome studies) -- TODO: confirm whether `NoisySampler::ShotResult::faults_fired` is exposed or internal.
+
+### Where PECOS should deliberately differ from Stim
+
+Stim is the inspiration; these are places to diverge on purpose:
+
+1. **First-class DAG / `TickCircuit` ingestion** -- no text round-trip, no external IR. PECOS's circuit types are the canonical input.
+2. **No text DEM format as the API boundary.** Expose `DetectorErrorModel` (typed Rust) directly; string form is a serialization detail.
+3. **Richer noise model hierarchy.** Pauli-Lindblad / channel / Lindblad-derived inputs as above, with clean trait plumbing instead of Stim's circuit-instruction-annotation-only model.
+4. **Native hybrid escape hatch.** When the circuit has T / RZ / RX / ... gates outside the Clifford subgroup, either (a) refuse and suggest `CliffordRz` / STN / MAST, or (b) fall back to `CliffordRz`-driven DEM generation for those slices. Not a Stim feature.
+5. **GPU path.** `pecos-gpu-sims` already has wgpu; DemSampler sampling is embarrassingly parallel (independent shots, independent mechanisms per shot). A wgpu backend for the batch sampler is natural.
+6. **Tighter decoder handoff.** PECOS controls its own decoder stack, so the DEM type can carry extra metadata (detector spacetime coords, hypergraph decomposition hints) without standard-format constraints.
+
+### Implementation plan
+
+1. New module `pecos-simulators/src/dem_stab.rs`.
+2. Re-export `DemStabSim` (Shape A) from `pecos-simulators` prelude.
+3. Implement `QuantumSimulator` on a facade type `DemStabSimFacade` (Shape B) with internal `DagCircuit` accumulator.
+4. Parity tests: Clifford + depolarizing circuit on `SparseStab + pecos-neo noise + Monte Carlo` vs `DemStabSim` (with and without statistical `compare_dems_statistical`) -- distributions must match.
+5. Micro-benchmarks vs direct stabilizer Monte Carlo (expect large speedup once shots > ~100).
+6. Python bindings through `pecos-rslib` (follow the `DemSamplerBuilder` existing path).
+7. Docs: `docs/concepts/dem-stabilizer-simulator.md` explaining the algorithm and the Stim parallel explicitly.
+
+### Open questions
+
+- [ ] Name: `DemStabSim` vs `InfluenceSampler` vs `FaultFrameSim`. (Grug prefers names that say what it is; `DemStabSim` is fine.)
+- [ ] Should Shape B exist at all, or is documentation + Shape A enough? (Grug lean: skip Shape B until a concrete consumer asks. Record-and-replay smells.)
+- [ ] Per-shot raw measurement record: always on (matches Stim) or opt-in (memory cost)? Default off, opt-in.
+- [ ] Seeding semantics when shots run in parallel (`rayon`): use per-shot seed derived from master seed (deterministic, embarrassingly parallel) vs thread-local split.
+
+---
+
+## Next simulator proposal (after DemStabSim)
+
+Given the current stack, grug recommend **open-system / Lindblad + quantum-trajectory simulator** as the next build, for these reasons:
+
+1. **Bridges device physics to PECOS's existing DEM pipeline.** Efficient-Lindblad-synthesis techniques (arXiv:2502.03462) lower a per-gate Lindbladian to an effective Pauli channel per location, which feeds straight into the `DemStabSim` noise-model input above. This turns every real-device characterization run into a honest PECOS noise model.
+2. **Only way to study coherent / non-Pauli errors honestly.** Pauli-twirling assumptions underlie every stabilizer-based sim; a trajectory sim is the validator.
+3. **Leverages existing `pecos-neo` scaffolding.** `pecos-neo` already has composable channels and Monte Carlo parallel execution -- a Lindblad / MCWF solver slots in as a new channel-evaluation backend.
+4. **Narrow, well-understood scope.** QuTiP, Dynamiqs, QuantumToolbox.jl are mature references; algorithm risk is low, the gain is PECOS-native performance + tight coupling with DEM generation.
+5. **Practical leverage right now.** Researchers using PECOS on near-term hardware benchmarks pay a lot for Pauli-twirled approximations when what they actually want is "what does this T1/T2/over-rotation budget imply for my logical error rate". This closes that loop.
+
+Bosonic / CV (candidate #6 in the ranking) is bigger scope but lower near-term leverage per engineer-week; it makes sense *after* Lindblad lands, since a CV Lindblad solver is essentially the same core solver with bigger Hilbert spaces.
+
+Concrete next steps (separate design doc):
+- Pick solver family (adaptive RK vs Magnus vs Krylov exp) for mid-size (N <= 10 qubits) Lindbladians.
+- Define `LindbladOp` + `TrajectoryResult` types.
+- Bridge API: `LindbladBackend::gate_channel(op, duration) -> PauliChannel` for DemStabSim consumption.
+- Trajectory mode (MCWF / quantum jumps) for variance-reduced sampling.
+- GPU path: start with rayon-parallel trajectories on CPU; wgpu later if cost justifies.
+
 ## TODOs before formalizing
 
 - [x] Confirm `PauliProp` does not already extract DEMs -- correction: `pecos-qec::fault_tolerance::dem_builder` already does.

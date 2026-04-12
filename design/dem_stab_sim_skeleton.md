@@ -10,14 +10,16 @@ Make the existing `pecos-qec::fault_tolerance::dem_builder` pipeline (DagFaultAn
 
 ## Crate layout
 
-Two parts, mirroring existing backends (`sparse_stab`, `state_vector`):
+Two parts:
 
 ```
-crates/pecos-simulators/src/dem_stab.rs                  (pure sim type)
+crates/pecos-qec/src/dem_stab.rs                         (pure sim type; peer of fault_tolerance)
 crates/pecos-engines/src/dem_stab_engine.rs              (QuantumEngine impl + builder)
 ```
 
-Reason for split: other backends follow this pattern (e.g. `pecos-simulators::SparseStab` + `pecos-engines::SparseStabEngine`).
+**Crate pivot from initial skeleton (2026-04-11).** `pecos-qec` depends on `pecos-simulators` (one-way), so a `dem_stab` module inside `pecos-simulators` would have to pull `pecos-qec` upward and create a cycle. The DemSampler / DemBuilder / DagFaultAnalyzer machinery already lives in `pecos-qec`, and DemStabSim is a thin wrapper over that machinery -- so `pecos-qec::dem_stab` is both the only legal home and the honest one. It sits as a peer of `fault_tolerance`, not inside it (it *uses* fault tolerance rather than being part of it).
+
+Other backends keep the `pecos-simulators` + `pecos-engines` split (`SparseStab` + `SparseStabEngine`); DemStabSim's split is `pecos-qec` + `pecos-engines` instead. Same orchestration pattern either way.
 
 ## Public surface -- Rust
 

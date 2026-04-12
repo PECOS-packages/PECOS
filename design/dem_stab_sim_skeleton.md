@@ -1,12 +1,26 @@
 # DemStabSim Module Skeleton
 
-Status: draft / skeleton
-Target crate: `pecos-simulators` (parent) + engine integration in `pecos-engines`
-Pairs with: `design/qec_sim_literature.md` (rationale, literature, build order)
+Status: partially superseded (2026-04-11). See **`design/stab_sample_orchestration.md`**.
+Target crate: `pecos-qec` (pure-sim types) + TBD (engine integration deferred)
+Pairs with: `design/qec_sim_literature.md`, `design/stab_sample_orchestration.md`
 
-## Goals in one paragraph
+## Current state
 
-Make the existing `pecos-qec::fault_tolerance::dem_builder` pipeline (DagFaultAnalyzer -> DemBuilder / DemSamplerBuilder) selectable through `sim(program).quantum(dem_stab()).noise(...)` as a first-class quantum backend. It behaves as "Clifford + depolarizing-family noise, sampled via precomputed fault influence". Non-adaptive circuits only. No Stim dependency.
+**Superseded parts:**
+- Original plan: wrap `DemStabSim` behind `sim().quantum(dem_stab())` via a `QuantumEngine` record-and-replay impl (Path A).
+- Replaced by: dedicated batch orchestration `pecos::sampling::stab(dag)` that preserves `sample_batch(N)` semantics end-to-end. Path A is rejected -- wrapping a batch primitive behind a per-shot streaming trait throws away the batch win. See `design/stab_sample_orchestration.md` for the new design.
+
+**Still current:**
+- `DemStabSim` / `MemStabSim` pure-sim types and their crate home in `pecos-qec`.
+- Noise trait hierarchy sketch (`Uniform`, `PerLocation`, `PauliLindblad`, `FromChannel`, `FromLindblad`).
+- Rejection semantics for non-Clifford / adaptive circuits.
+
+## Goals in one paragraph (revised)
+
+Make the existing `pecos-qec::fault_tolerance::dem_builder` pipeline usable via two surfaces:
+(1) typed pure-sim objects `DemStabSim` / `MemStabSim` (already shipped v0) for direct batch sampling and sampler introspection,
+(2) a user-facing orchestration entry `pecos::sampling::stab(dag)` (proposed in `stab_sample_orchestration.md`) that does compile + batch-sample in one call.
+Non-adaptive circuits only. No Stim dependency.
 
 ## Crate layout
 

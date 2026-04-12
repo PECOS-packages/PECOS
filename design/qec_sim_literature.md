@@ -274,14 +274,15 @@ The DemSampler today operates on a `DagFaultInfluenceMap` produced by circuit-le
 
 Given PECOS already has DemSampler, CliffordRz, STN/MAST, pecos-neo:
 
-1. **Lindblad / trajectory backend** (#7) -- only honest way to study coherent / non-Pauli noise. Wraps nicely into DemBuilder via channel->Pauli-rate lowering (Efficient Lindblad synthesis, arXiv:2502.03462). Highest leverage.
-2. **Bosonic / CV** (#6) -- bosonic codes are a major growth area; PECOS currently qubit-only. Biggest scope expansion.
-3. **Stim cross-validation bridge for DemSampler** (revised #1) -- low effort, high value for regression testing.
-4. **CliffordRz sparsification** (revised #4) -- confirmed absent, straightforward refinement of existing sim.
-5. **Pauli-Lindblad correlated noise into DEM** (#9) -- IBM-style learned noise -> PECOS DEM pipeline. Good synergy with item 1.
-6. **Pauli-based computation** (#5) -- matches FTQC resource accounting directly, good pairing with MAST.
+1. **DemStabSim** (new module; wraps existing DemSampler/influence-map as a first-class backend via `sim()`) -- see proposal below. Build first.
+2. **Lindblad / trajectory** (#7) -- only honest way to study coherent / non-Pauli noise; feeds DemStabSim via channel->Pauli-rate lowering (arXiv:2502.03462). Build second.
+3. **Pauli-Lindblad correlated noise -> DEM** (#9) -- learned IBM-style noise as a DemStabSim input; small addition once #1 lands.
+4. **CliffordRz sparsification** (revised #4) -- confirmed absent; standalone refinement, do when researcher hits the 2^t wall.
+5. **Pauli-based computation** (#5) -- matches FTQC resource accounting; pairs with MAST.
 
-Rest (matchgate, decision diagrams, fermion-native, quasiprobability, fusion-based) are narrower or more research-y.
+**Out of scope.** Bosonic / CV (#6), photonic FBQC (#11) -- PECOS does not work on these areas.
+
+**Rest** (matchgate, decision diagrams, fermion-native, quasiprobability) are narrower or more research-y and not on the near-term path.
 
 ---
 
@@ -300,6 +301,22 @@ Stim's core algorithm *is* "Pauli-frame propagation through a Clifford circuit w
 - Crate: **`pecos-simulators`** (same place as `SparseStab`, `StateVec`).
 - Module: `src/dem_stab.rs` (or `fault_influence_sim.rs`).
 - Public type: `DemStabSim` (bikeshed: `InfluenceSampler`, `FaultFrameSim`).
+
+### Integration with the `sim()` entry point
+
+`sim()` is the main simulation entry on both sides:
+
+- Rust: `crates/pecos-engines/src/sim_builder.rs:418` -- `pub fn sim<I: SimInput>(input: I) -> SimBuilder`.
+- Python: `python/pecos-rslib/src/sim.rs:66` -- `pub fn sim(py, program) -> PySimBuilder`.
+
+DemStabSim must be selectable through `sim(circuit).backend(...)` / equivalent, not live as a sidecar API. Concretely:
+
+- Register `DemStabSim` as a backend variant in whatever enum / dispatch `SimBuilder` uses today (check `engine_builder::SimInput` and existing backends like `SparseStab`, `StateVec`).
+- `sim(dag).dem_stab().noise(...).detectors(...).sample(n)` reads naturally at both call sites.
+- The builder path is the ergonomic home for the noise-model hierarchy and detector/observable definitions.
+- Python mirror: `pecos.sim(program).dem_stab().noise(...).sample(n)` via PyO3 bindings in `pecos-rslib`.
+
+**Action item.** Audit `SimBuilder` / `PySimBuilder` to confirm the shape of the backend-selection API before committing to a method name, so DemStabSim slots in next to existing backends consistently.
 
 ### Two API shapes (offer both)
 
@@ -383,6 +400,15 @@ Stim is the inspiration; these are places to diverge on purpose:
 
 ---
 
+## Build order
+
+**Confirmed build order (2026-04-11):**
+
+1. **DemStabSim first.** Wraps existing infrastructure, slots into `sim()` as a new backend, highest near-term leverage for QEC research. No new algorithmic risk.
+2. **Lindblad + quantum-trajectory second.** Closes the device-characterization -> effective-Pauli-channel -> DemStabSim loop. Anchored to `pecos-neo`.
+
+Out of scope for this roadmap (per project direction, 2026-04-11): **photonic / fusion-based**, **GKP / cat / bosonic codes**. Sections #6 and #11 remain documented for completeness but are not proposals.
+
 ## Next simulator proposal (after DemStabSim)
 
 Given the current stack, grug recommend **open-system / Lindblad + quantum-trajectory simulator** as the next build, for these reasons:
@@ -393,7 +419,7 @@ Given the current stack, grug recommend **open-system / Lindblad + quantum-traje
 4. **Narrow, well-understood scope.** QuTiP, Dynamiqs, QuantumToolbox.jl are mature references; algorithm risk is low, the gain is PECOS-native performance + tight coupling with DEM generation.
 5. **Practical leverage right now.** Researchers using PECOS on near-term hardware benchmarks pay a lot for Pauli-twirled approximations when what they actually want is "what does this T1/T2/over-rotation budget imply for my logical error rate". This closes that loop.
 
-Bosonic / CV (candidate #6 in the ranking) is bigger scope but lower near-term leverage per engineer-week; it makes sense *after* Lindblad lands, since a CV Lindblad solver is essentially the same core solver with bigger Hilbert spaces.
+Bosonic / CV and photonic FBQC are **out of scope** for the PECOS roadmap and are not candidates here.
 
 Concrete next steps (separate design doc):
 - Pick solver family (adaptive RK vs Magnus vs Krylov exp) for mid-size (N <= 10 qubits) Lindbladians.

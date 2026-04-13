@@ -63,6 +63,97 @@ impl PauliLindbladModel {
         self.rates.iter().copied().fold(0.0, f64::max)
     }
 
+    /// Per-Pauli residual `self - other`. Returns a vector of
+    /// `(pauli, self_rate, other_rate, residual)` for every Pauli in the
+    /// union of the two models' supports.
+    pub fn diff(&self, other: &Self) -> Vec<(PauliString, f64, f64, f64)> {
+        use std::collections::HashSet;
+        let mut all: HashSet<PauliString> = HashSet::new();
+        for p in self.supports.iter().chain(other.supports.iter()) {
+            all.insert(p.clone());
+        }
+        let mut out: Vec<_> = all
+            .into_iter()
+            .map(|p| {
+                let a = self.rate(&p);
+                let b = other.rate(&p);
+                (p, a, b, a - b)
+            })
+            .collect();
+        out.sort_by(|(_, _, _, x), (_, _, _, y)| {
+            y.abs().partial_cmp(&x.abs()).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        out
+    }
+
+    /// `L2` norm of the rate-residual vector between `self` and `other`.
+    pub fn residual_l2(&self, other: &Self) -> f64 {
+        self.diff(other).iter().map(|(_, _, _, r)| r * r).sum::<f64>().sqrt()
+    }
+
+    /// Pauli with the largest absolute residual against `other`. Returns
+    /// `None` if both models are empty.
+    pub fn max_residual(&self, other: &Self) -> Option<(PauliString, f64)> {
+        self.diff(other).into_iter().next().map(|(p, _, _, r)| (p, r))
+    }
+
+    /// Aggregate absolute residual by Pauli weight. Returns `weight -> sum
+    /// of |residual|`. Useful for diagnosing which weight class of physics
+    /// is missing from the model (e.g. weight-2 residual large =>
+    /// correlated two-qubit noise missing).
+    pub fn residual_by_weight(&self, other: &Self) -> Vec<(usize, f64)> {
+        use std::collections::BTreeMap;
+        let mut agg: BTreeMap<usize, f64> = BTreeMap::new();
+        for (p, _, _, r) in self.diff(other) {
+            *agg.entry(p.weight()).or_insert(0.0) += r.abs();
+        }
+        agg.into_iter().collect()
+    }
+
+    /// Heuristic diagnostic: given a predicted model (`self`) and a
+    /// measured model (`other`), suggest physical sources likely missing
+    /// from the prediction. Returns human-readable strings ordered by
+    /// residual magnitude. Thresholds are intentionally coarse; use as a
+    /// starting point, not a final verdict.
+    pub fn diagnose_gap(&self, other: &Self, tol: f64) -> Vec<String> {
+        let mut msgs = Vec::new();
+        let by_weight = self.residual_by_weight(other);
+
+        for (weight, total_abs) in &by_weight {
+            if *total_abs < tol {
+                continue;
+            }
+            match weight {
+                1 => msgs.push(format!(
+                    "weight-1 residual {:.3e}: suggests missing incoherent single-qubit noise \
+                     (T_1, T_phi mis-characterized, or extra dephasing/relaxation channels)",
+                    total_abs
+                )),
+                2 => msgs.push(format!(
+                    "weight-2 residual {:.3e}: suggests correlated 2-qubit noise not in model \
+                     (coherent ZZ crosstalk, leakage-induced correlations, or gate mis-calibration)",
+                    total_abs
+                )),
+                w if *w >= 3 => msgs.push(format!(
+                    "weight-{} residual {:.3e}: high-weight residual; suggests multi-qubit \
+                     crosstalk or higher-order Magnus corrections needed",
+                    w, total_abs
+                )),
+                _ => {}
+            }
+        }
+        // Highlight the single worst Pauli as a concrete pointer.
+        if let Some((p, r)) = self.max_residual(other) {
+            if r.abs() >= tol {
+                msgs.push(format!(
+                    "largest per-Pauli residual: |lambda_{{{}}}^pred - lambda_{{{}}}^meas| = {:.3e}",
+                    p, p, r
+                ));
+            }
+        }
+        msgs
+    }
+
     /// Sample an error realization over integrated duration `t_scale`:
     /// each Pauli term independently fires with probability
     /// `p_k = (1 - exp(-2 * lambda_k * t_scale)) / 2`. Returns the

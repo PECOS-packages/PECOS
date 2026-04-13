@@ -144,6 +144,20 @@ pub fn pauli_string_mat(ps: &PauliString) -> Matrix {
     acc
 }
 
+/// Check whether a d x d matrix is (numerically) Hermitian: `M = M^dag`.
+/// Returns true if all `|M_ij - conj(M_ji)| < tol`.
+pub fn is_hermitian(m: &Matrix, d: usize, tol: f64) -> bool {
+    assert_eq!(m.len(), d * d, "is_hermitian: wrong shape");
+    for i in 0..d {
+        for j in 0..d {
+            if (m[i * d + j] - m[j * d + i].conj()).norm() > tol {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Check whether a d x d matrix is (numerically) diagonal.
 pub fn is_diagonal(m: &Matrix, d: usize, tol: f64) -> bool {
     for i in 0..d {

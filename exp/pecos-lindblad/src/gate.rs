@@ -49,6 +49,8 @@ impl Gate {
         let d = 1usize << num_qubits;
         assert_eq!(ideal_hamiltonian.len(), d * d, "ideal H wrong shape");
         assert_eq!(noise.d, d, "noise dim mismatch");
+        assert!(tau_g >= 0.0, "tau_g must be non-negative, got {}", tau_g);
+        // Lindbladian::new checks Hermiticity of its Hamiltonian input.
         let ideal = Lindbladian::new(d, ideal_hamiltonian, Vec::new());
         Self {
             label: label.into(),

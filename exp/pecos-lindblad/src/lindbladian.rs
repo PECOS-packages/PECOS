@@ -29,8 +29,13 @@ pub struct Lindbladian {
 impl Lindbladian {
     pub fn new(d: usize, hamiltonian: Matrix, collapse: Vec<(Matrix, f64)>) -> Self {
         assert_eq!(hamiltonian.len(), d * d, "hamiltonian wrong shape");
-        for (c, _) in &collapse {
+        assert!(
+            matrix::is_hermitian(&hamiltonian, d, 1e-10),
+            "Lindbladian Hamiltonian must be Hermitian",
+        );
+        for (c, gamma) in &collapse {
             assert_eq!(c.len(), d * d, "collapse op wrong shape");
+            assert!(*gamma >= 0.0, "collapse rate must be non-negative, got {}", gamma);
         }
         Self { d, hamiltonian, collapse }
     }

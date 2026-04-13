@@ -16,6 +16,8 @@ from pecos.qec.surface import (
     NoiseModel,
     SurfaceDecoder,
     SurfacePatch,
+    generate_dem_from_tick_circuit,
+    generate_tick_circuit_from_patch,
     generate_surface_code_dem,
     syndromes_to_detection_events,
 )
@@ -30,6 +32,21 @@ def _require_selene_runtime() -> None:
         if "Failed to load Selene runtime" in str(exc):
             pytest.skip("Selene runtime not available in this test environment")
         raise
+
+
+def _count_singleton_error_parts(dem: str) -> int:
+    """Count decomposed error parts that touch exactly one detector."""
+    count = 0
+    for line in dem.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("error("):
+            continue
+        payload = stripped.split(")", 1)[1]
+        for part in payload.split("^"):
+            detectors = [token for token in part.split() if token.startswith("D")]
+            if len(detectors) == 1:
+                count += 1
+    return count
 
 
 class TestNoiseModel:

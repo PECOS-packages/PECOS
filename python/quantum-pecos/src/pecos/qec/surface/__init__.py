@@ -79,10 +79,14 @@ from pecos.qec.surface.parity import (
     parity_matrix_z,
 )
 from pecos.qec.surface.patch import (
+    LogicalDescriptor,
     LogicalOperator,
     PatchGeometry,
     PatchOrientation,
+    StabilizerDescriptor,
+    StabilizerScheduleEntry,
     Stabilizer,
+    SurfacePatchDescriptor,
     SurfacePatch,
     SurfacePatchBuilder,
 )
@@ -112,9 +116,13 @@ __all__ = [
     "parity_matrix_z",
     # Patch classes
     "LogicalOperator",
+    "LogicalDescriptor",
     "PatchGeometry",
     "PatchOrientation",
     "Stabilizer",
+    "StabilizerDescriptor",
+    "StabilizerScheduleEntry",
+    "SurfacePatchDescriptor",
     "SurfacePatch",
     "SurfacePatchBuilder",
     # Decoding

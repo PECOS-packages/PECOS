@@ -19,11 +19,65 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
-    from pecos.qec.surface.patch import SurfacePatch
+    from pecos.qec.surface.patch import (
+        LogicalDescriptor,
+        StabilizerDescriptor,
+        SurfacePatch,
+        SurfacePatchDescriptor,
+    )
     from pecos.quantum import DagCircuit, TickCircuit, TickHandle
+
+
+class SurfaceDetectorDescriptor(TypedDict):
+    """Public detector descriptor derived from TickCircuit metadata."""
+
+    detector_id: int
+    stabilizer_kind: str
+    stabilizer_index: int
+    round: int
+    is_final_round: bool
+    coords: list[int]
+    records: list[int]
+    stabilizer_is_boundary: bool
+    stabilizer_region: str
+    schedule_rounds: list[int]
+    schedule_start_round: int | None
+    schedule_end_round: int | None
+    schedule_entries: list[dict[str, int | str]]
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+
+
+class SurfaceObservableDescriptor(TypedDict):
+    """Public observable descriptor derived from TickCircuit metadata."""
+
+    observable_id: int
+    basis: str
+    records: list[int]
+    logical_type: str
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+    support_axis: str
+
+
+class SurfaceMemoryExperimentDescriptor(TypedDict):
+    """Public bundle describing a surface-memory experiment."""
+
+    patch: "SurfacePatchDescriptor"
+    basis: str
+    num_rounds: int
+    ancilla_budget: int | None
+    x_stabilizers: list["StabilizerDescriptor"]
+    z_stabilizers: list["StabilizerDescriptor"]
+    stabilizers: list["StabilizerDescriptor"]
+    logicals: list["LogicalDescriptor"]
+    detectors: list[SurfaceDetectorDescriptor]
+    observables: list[SurfaceObservableDescriptor]
 
 
 class OpType(Enum):
@@ -394,6 +448,73 @@ def get_stabilizer_schedule_metadata(stab: Any, patch: SurfacePatch) -> dict[str
         "schedule_end_round": rounds[-1] if rounds else None,
         "schedule_entries": entries,
     }
+
+
+def _build_detector_descriptors(
+    detectors: list[dict[str, object]],
+    patch: SurfacePatch,
+) -> list[SurfaceDetectorDescriptor]:
+    """Build enriched detector descriptors from TickCircuit detector metadata."""
+    num_x_anc = len(patch.x_stabilizers)
+    final_round = max((int(det["coords"][2]) for det in detectors), default=-1)
+    descriptors: list[SurfaceDetectorDescriptor] = []
+
+    for det in detectors:
+        coords = [int(value) for value in det["coords"]]
+        records = [int(value) for value in det["records"]]
+        raw_index = coords[0]
+        if coords[1] == 0:
+            stab_kind = "X"
+            stab_index = raw_index
+        else:
+            stab_kind = "Z"
+            stab_index = raw_index - num_x_anc
+
+        descriptor = patch.get_stabilizer_descriptor(stab_kind, stab_index)
+        descriptors.append(
+            {
+                "detector_id": int(det["id"]),
+                "stabilizer_kind": descriptor["stabilizer_kind"],
+                "stabilizer_index": descriptor["stabilizer_index"],
+                "round": coords[2],
+                "is_final_round": coords[2] == final_round,
+                "coords": coords,
+                "records": records,
+                "stabilizer_is_boundary": descriptor["stabilizer_is_boundary"],
+                "stabilizer_region": descriptor["stabilizer_region"],
+                "schedule_rounds": descriptor["schedule_rounds"],
+                "schedule_start_round": descriptor["schedule_start_round"],
+                "schedule_end_round": descriptor["schedule_end_round"],
+                "schedule_entries": descriptor["schedule_entries"],
+                "data_qubits": descriptor["data_qubits"],
+                "data_qubit_positions": descriptor["data_qubit_positions"],
+                "weight": descriptor["weight"],
+            },
+        )
+
+    return descriptors
+
+
+def _build_observable_descriptors(
+    observables: list[dict[str, object]],
+    patch: SurfacePatch,
+    basis: str,
+) -> list[SurfaceObservableDescriptor]:
+    """Build enriched logical observable descriptors from TickCircuit metadata."""
+    logical = patch.get_logical_descriptor(basis.upper())
+    return [
+        {
+            "observable_id": int(obs["id"]),
+            "basis": basis.upper(),
+            "records": [int(value) for value in obs["records"]],
+            "logical_type": logical["logical_type"],
+            "data_qubits": logical["data_qubits"],
+            "data_qubit_positions": logical["data_qubit_positions"],
+            "weight": logical["weight"],
+            "support_axis": logical["support_axis"],
+        }
+        for obs in observables
+    ]
 
 
 class CircuitRenderer(ABC):
@@ -1260,7 +1381,9 @@ def get_detector_descriptors_from_tick_circuit(
         return json.loads(cached)
 
     detectors = json.loads(tick_circuit.get_meta("detectors") or "[]")
-    return _build_detector_descriptors(detectors, patch)
+    descriptors = _build_detector_descriptors(detectors, patch)
+    tick_circuit.set_meta("detector_descriptors", json.dumps(descriptors))
+    return descriptors
 
 
 def get_observable_descriptors_from_tick_circuit(
@@ -1284,7 +1407,9 @@ def get_observable_descriptors_from_tick_circuit(
 
     observables = json.loads(tick_circuit.get_meta("observables") or "[]")
     basis = tick_circuit.get_meta("basis") or "Z"
-    return _build_observable_descriptors(observables, patch, basis)
+    descriptors = _build_observable_descriptors(observables, patch, basis)
+    tick_circuit.set_meta("observable_descriptors", json.dumps(descriptors))
+    return descriptors
 
 
 def describe_surface_memory_experiment(
@@ -1901,6 +2026,62 @@ def get_measurement_order_from_tick_circuit(tc: TickCircuit) -> list[int]:
     return _extract_measurement_order(tc)
 
 
+def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
+    """Prefer singleton graphlike components when the decomposed DEM exposes them.
+
+    This is a formatting-level refinement over the standard decomposed DEM:
+    when a 2-detector direct mechanism `D_i D_j` has corresponding singleton
+    components already present in the DEM, prefer `D_i ^ D_j` (or the boundary
+    form `D_i L0 ^ D_j L0`) instead.
+    """
+    standalone_detectors: set[str] = set()
+    det_l0_detectors: set[str] = set()
+    lines = dem_text.splitlines()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("error("):
+            continue
+        payload = stripped.split(")", 1)[1].strip()
+        if "^" in payload:
+            continue
+        tokens = payload.split()
+        detectors = [token for token in tokens if token.startswith("D")]
+        logicals = [token for token in tokens if token.startswith("L")]
+        if len(detectors) == 1 and not logicals:
+            standalone_detectors.add(detectors[0])
+        elif len(detectors) == 1 and logicals == ["L0"]:
+            det_l0_detectors.add(detectors[0])
+
+    rewritten_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("error("):
+            rewritten_lines.append(line)
+            continue
+        prefix, payload = stripped.split(")", 1)
+        payload = payload.strip()
+        if "^" in payload:
+            rewritten_lines.append(line)
+            continue
+        tokens = payload.split()
+        detectors = [token for token in tokens if token.startswith("D")]
+        logicals = [token for token in tokens if token.startswith("L")]
+        if len(detectors) == 2 and not logicals:
+            d0, d1 = detectors
+            replacement: str | None = None
+            if d0 in standalone_detectors and d1 in standalone_detectors:
+                replacement = f"{d0} ^ {d1}"
+            elif d0 in det_l0_detectors and d1 in det_l0_detectors:
+                replacement = f"{d0} L0 ^ {d1} L0"
+            if replacement is not None:
+                rewritten_lines.append(f"{prefix}) {replacement}")
+                continue
+        rewritten_lines.append(line)
+
+    return "\n".join(rewritten_lines)
+
+
 def generate_dem_from_tick_circuit(
     tc: TickCircuit,
     *,
@@ -1978,8 +2159,9 @@ def generate_dem_from_tick_circuit(
 
     dem = builder.build_with_source_tracking()
 
-    # Use decomposed output if either decompose_errors or maximal_decomposition is set
-    if decompose_errors or maximal_decomposition:
+    if maximal_decomposition:
+        return _maximally_decompose_graphlike_dem(dem.to_string_decomposed())
+    if decompose_errors:
         return dem.to_string_decomposed()
     return dem.to_string()
 

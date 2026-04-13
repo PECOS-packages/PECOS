@@ -9,7 +9,7 @@ with geometry stored as data structures.
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from pecos_rslib.num import zeros
 
@@ -55,6 +55,53 @@ class LogicalOperator:
 
     op_type: str
     data_qubits: tuple[int, ...]
+
+
+class StabilizerScheduleEntry(TypedDict):
+    """Public metadata for one stabilizer schedule touch."""
+
+    round_0based: int
+    data_qubit: int
+    touch_label: str
+
+
+class SurfacePatchDescriptor(TypedDict):
+    """Public summary of one surface-code patch."""
+
+    distance: int
+    dx: int
+    dz: int
+    rotated: bool
+    orientation: str
+    num_data: int
+    num_ancilla: int
+    num_qubits: int
+
+
+class StabilizerDescriptor(TypedDict):
+    """Public descriptor for one stabilizer."""
+
+    stabilizer_kind: str
+    stabilizer_index: int
+    stabilizer_is_boundary: bool
+    stabilizer_region: str
+    schedule_rounds: list[int]
+    schedule_start_round: int | None
+    schedule_end_round: int | None
+    schedule_entries: list[StabilizerScheduleEntry]
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+
+
+class LogicalDescriptor(TypedDict):
+    """Public descriptor for one logical operator."""
+
+    logical_type: str
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+    support_axis: str
 
 
 @dataclass
@@ -258,6 +305,88 @@ class SurfacePatch:
     def rotated(self) -> bool:
         """True if using rotated layout, False for standard layout."""
         return self.geometry.rotated
+
+    @property
+    def num_ancilla(self) -> int:
+        """Number of ancilla qubits."""
+        return self.geometry.num_ancilla
+
+    def get_patch_descriptor(self) -> SurfacePatchDescriptor:
+        """Return a public metadata summary for this patch."""
+        return {
+            "distance": self.distance,
+            "dx": self.dx,
+            "dz": self.dz,
+            "rotated": self.rotated,
+            "orientation": self.geometry.orientation.name,
+            "num_data": self.num_data,
+            "num_ancilla": self.num_ancilla,
+            "num_qubits": self.num_qubits,
+        }
+
+    def get_stabilizer_descriptor(
+        self,
+        stab_type: str,
+        index: int,
+    ) -> StabilizerDescriptor:
+        """Return one public stabilizer descriptor."""
+        from pecos.qec.surface.circuit_builder import get_stabilizer_schedule_metadata
+
+        stabs = self.x_stabilizers if stab_type.upper() == "X" else self.z_stabilizers
+        stab = stabs[index]
+        metadata = get_stabilizer_schedule_metadata(stab, self)
+        positions = [list(self.geometry.id_to_pos[q]) for q in stab.data_qubits]
+        return {
+            **metadata,
+            "data_qubits": list(stab.data_qubits),
+            "data_qubit_positions": positions,
+            "weight": stab.weight,
+        }
+
+    def iter_stabilizer_descriptors(
+        self,
+        stab_type: str | None = None,
+    ) -> list[StabilizerDescriptor]:
+        """Iterate over public stabilizer descriptors."""
+        if stab_type is None:
+            descriptors: list[StabilizerDescriptor] = []
+            descriptors.extend(self.iter_stabilizer_descriptors("X"))
+            descriptors.extend(self.iter_stabilizer_descriptors("Z"))
+            return descriptors
+
+        kind = stab_type.upper()
+        stabs = self.x_stabilizers if kind == "X" else self.z_stabilizers
+        return [self.get_stabilizer_descriptor(kind, stab.index) for stab in stabs]
+
+    def get_logical_descriptor(self, logical_type: str) -> LogicalDescriptor:
+        """Return one public logical-operator descriptor."""
+        kind = logical_type.upper()
+        logical = self.geometry.logical_x if kind == "X" else self.geometry.logical_z
+        if logical is None:
+            msg = f"Logical operator {kind} is not available"
+            raise ValueError(msg)
+
+        positions = [list(self.geometry.id_to_pos[q]) for q in logical.data_qubits]
+        rows = {row for row, _ in map(tuple, positions)}
+        cols = {col for _, col in map(tuple, positions)}
+        support_axis = "vertical" if len(cols) == 1 else "horizontal"
+        if len(rows) == 1 and len(cols) != 1:
+            support_axis = "horizontal"
+
+        return {
+            "logical_type": logical.op_type,
+            "data_qubits": list(logical.data_qubits),
+            "data_qubit_positions": positions,
+            "weight": len(logical.data_qubits),
+            "support_axis": support_axis,
+        }
+
+    def iter_logical_descriptors(self) -> list[LogicalDescriptor]:
+        """Iterate over logical descriptors in X, Z order."""
+        return [
+            self.get_logical_descriptor("X"),
+            self.get_logical_descriptor("Z"),
+        ]
 
     def get_parity_matrix(self, stab_type: str) -> "pecos.Array":
         """Get parity check matrix."""

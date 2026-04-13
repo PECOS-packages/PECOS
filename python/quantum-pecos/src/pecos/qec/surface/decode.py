@@ -1333,6 +1333,8 @@ def generate_dem_from_patch(
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    *,
+    decompose_errors: bool = True,
 ) -> str:
     """Generate a circuit-level DEM from our patch geometry.
 
@@ -1346,6 +1348,8 @@ def generate_dem_from_patch(
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
+        decompose_errors: If True, return Stim's decomposed graphlike DEM.
+            If False, return the raw hypergraph DEM.
 
     Returns:
         DEM string in Stim format
@@ -1361,7 +1365,7 @@ def generate_dem_from_patch(
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors)
     return str(dem)
 
 

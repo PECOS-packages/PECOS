@@ -65,6 +65,63 @@ pub fn synthesize_numerical_1q(gate: &Gate, n_steps: usize) -> PauliLindbladMode
     synthesize_numerical(gate, n_steps)
 }
 
+/// Synthesize a Pauli-Lindblad model for a gate with **purely coherent
+/// noise** (no collapse operators) via the exact error-unitary path.
+///
+/// For coherent noise the Pauli rates are quadratic in the perturbation
+/// strength (see `design/lindblad_magnus_algorithm.md` section 4.5). The
+/// linear-order [`synthesize_numerical`] path gives `alpha_b = 0` for
+/// coherent noise because `Tr(P_b L(P_b)) = 0` when `L` is a single
+/// commutator. This function computes the exact error unitary
+/// `U_err = U_ideal^dag * U_full` and extracts Pauli fidelities directly.
+///
+/// Requires `gate.noise.collapse` to be empty. Use
+/// [`synthesize_numerical`] for dissipative noise (AD, PD).
+pub fn synthesize_exact_unitary(gate: &Gate) -> PauliLindbladModel {
+    assert!(
+        gate.noise.collapse.is_empty(),
+        "synthesize_exact_unitary requires purely coherent noise (no c_ops)"
+    );
+    let n = gate.num_qubits;
+    let d = 1usize << n;
+    let tau = gate.tau_g;
+
+    let h_g = &gate.ideal.hamiltonian;
+    let h_delta = &gate.noise.hamiltonian;
+    let h_full = matrix::add(h_g, h_delta);
+
+    let u_full = matrix::expm(&matrix::scale(&h_full, Complex64::new(0.0, -tau)), d);
+    let u_ideal = matrix::expm(&matrix::scale(h_g, Complex64::new(0.0, -tau)), d);
+    let u_ideal_dag = matrix::dag(&u_ideal, d);
+    let u_err = matrix::matmul(&u_ideal_dag, &u_full, d);
+    let u_err_dag = matrix::dag(&u_err, d);
+
+    let paulis = PauliString::enumerate_nonidentity(n);
+    let alphas: Vec<f64> = paulis
+        .iter()
+        .map(|p| {
+            let p_mat = matrix::pauli_string_mat(p);
+            let up = matrix::matmul(&u_err, &p_mat, d);
+            let upudag = matrix::matmul(&up, &u_err_dag, d);
+            let inner = matrix::trace(&matrix::matmul(&p_mat, &upudag, d), d);
+            let f_b = inner.re / d as f64;
+            // For weak noise f_b ~ 1. Use alpha_b = -ln(f_b); equal to
+            // (1 - f_b) at leading order. Panic if f_b drifts out of the
+            // weak-noise regime (< 0.1 means you are outside the Magnus
+            // convergence radius and the PL model is not a good fit).
+            assert!(
+                f_b > 0.1,
+                "Pauli fidelity {} for {:?} below weak-noise threshold; noise too strong for PL model",
+                f_b,
+                p,
+            );
+            -f_b.ln()
+        })
+        .collect();
+
+    model_from_alphas_walsh(paulis, alphas, n)
+}
+
 /// Synthesize a Pauli-Lindblad model from an arbitrary gate. Enumerates all
 /// non-identity Paulis on `gate.num_qubits`, integrates `alpha_b * tau_g`
 /// for each via Simpson's rule on the interaction-frame Lindbladian, and

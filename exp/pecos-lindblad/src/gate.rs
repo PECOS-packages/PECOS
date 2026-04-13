@@ -66,6 +66,46 @@ impl Gate {
         }
     }
 
+    /// 3-qubit `CX_theta ⊗ I` gate with coherent IZZ crosstalk between
+    /// target (qubit 1) and spectator (qubit 2). `H_g = (omega/2)(IXI - ZXI)`,
+    /// `H_delta = (delta/2) IZZ`, `tau_g = theta/omega`.
+    ///
+    /// The spectator qubit (q2) is untouched by the ideal gate but
+    /// experiences a `ZZ` interaction with the target. This is the 3Q
+    /// crosstalk case from arXiv:2502.03462 eqs. 1007-1011, the only
+    /// non-trivial 3Q case in the paper.
+    ///
+    /// Noise on this gate is **purely coherent** (zero c_ops) -- use
+    /// [`crate::synthesize_exact_unitary`] to synthesize Pauli-Lindblad
+    /// rates (the Omega_1 dissipative-noise path gives zero for coherent
+    /// noise).
+    pub fn cx_theta_with_izz_crosstalk(omega: f64, theta: f64, delta: f64) -> Self {
+        use crate::basis::Pauli1;
+        assert!(omega > 0.0, "omega must be positive");
+        let d = 8;
+        let i2 = matrix::identity(2);
+        let x = matrix::pauli_1q(Pauli1::X);
+        let z = matrix::pauli_1q(Pauli1::Z);
+        // H_g = (omega / 2) * (IXI - ZXI)
+        let ixi = matrix::kron(&matrix::kron(&i2, &x, 2, 2), &i2, 4, 2);
+        let zxi = matrix::kron(&matrix::kron(&z, &x, 2, 2), &i2, 4, 2);
+        let diff = matrix::sub(&ixi, &zxi);
+        let h_g = matrix::scale(&diff, Complex64::new(omega / 2.0, 0.0));
+        let ideal = Lindbladian::new(d, h_g, Vec::new());
+        // H_delta = (delta / 2) * IZZ
+        let izz = matrix::kron(&matrix::kron(&i2, &z, 2, 2), &z, 4, 2);
+        let h_delta = matrix::scale(&izz, Complex64::new(delta / 2.0, 0.0));
+        let noise = Lindbladian::new(d, h_delta, Vec::new());
+        let tau_g = theta / omega;
+        Self {
+            label: format!("CX_{{{:.4}}}⊗I+IZZ({:.4})", theta, delta),
+            num_qubits: 3,
+            ideal,
+            noise,
+            tau_g,
+        }
+    }
+
     /// 2-qubit arbitrary-angle CX rotation:
     /// `CX_theta = exp(-i (theta/2) (IX - ZX))`. Block-diagonal in the
     /// computational basis with the top 2x2 block zero (identity action on

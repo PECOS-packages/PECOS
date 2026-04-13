@@ -46,32 +46,28 @@
 //!
 //! ```
 //! use pecos_lindblad::{
-//!     matrix::{self, Matrix},
-//!     synthesize_identity_1q, Gate, Lindbladian, Pauli1, PauliString,
+//!     noise_models::ad_pd_1q, synthesize_identity_1q, Gate, Pauli1, PauliString,
 //! };
 //!
-//! // Build a 1-qubit amplitude-damping + pure-dephasing Lindbladian.
-//! let beta_down = 1e-3; // per time unit
-//! let beta_phi = 2e-3;
-//! let d = 2;
-//! let hamiltonian = matrix::zeros(d);
-//! let collapse: Vec<(Matrix, f64)> = vec![
-//!     (matrix::sigma_minus(), beta_down),
-//!     (matrix::pauli_1q(Pauli1::Z), beta_phi / 2.0),
-//! ];
-//! let noise = Lindbladian::new(d, hamiltonian, collapse);
+//! // Specify the device in physical (T_1, T_2) parameters.
+//! let t1 = 100e-6;      // 100 us
+//! let t2 = 80e-6;       // 80 us (requires T_2 <= 2 T_1)
+//! let tau_g = 1e-6;     // 1 us gate duration
 //!
-//! // Construct an identity gate of duration 50.0 and synthesize.
-//! let gate = Gate::identity(1, noise, 50.0);
+//! let noise = ad_pd_1q(t1, t2);
+//! let gate = Gate::identity(1, noise, tau_g);
 //! let pl = synthesize_identity_1q(&gate);
 //!
 //! // Paper arXiv:2502.03462 line 812:
 //! //   lambda_x = lambda_y = beta_down * tau_g / 4
 //! //   lambda_z = beta_phi  * tau_g / 2
+//! // with beta_down = 1/T_1, beta_phi = 1/T_2 - 1/(2 T_1).
+//! let beta_down = 1.0 / t1;
+//! let beta_phi = 1.0 / t2 - 1.0 / (2.0 * t1);
 //! let lambda_x = pl.rate(&PauliString::single(Pauli1::X));
 //! let lambda_z = pl.rate(&PauliString::single(Pauli1::Z));
-//! assert!((lambda_x - beta_down * 50.0 / 4.0).abs() < 1e-12);
-//! assert!((lambda_z - beta_phi  * 50.0 / 2.0).abs() < 1e-12);
+//! assert!((lambda_x - beta_down * tau_g / 4.0).abs() < 1e-14);
+//! assert!((lambda_z - beta_phi  * tau_g / 2.0).abs() < 1e-14);
 //! ```
 //!
 //! See `design/lindblad_magnus_algorithm.md` for the math spec.
@@ -80,6 +76,7 @@ pub mod basis;
 pub mod gate;
 pub mod lindbladian;
 pub mod matrix;
+pub mod noise_models;
 pub mod pauli_lindblad;
 pub mod synthesis;
 

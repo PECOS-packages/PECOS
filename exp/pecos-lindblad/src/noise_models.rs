@@ -110,6 +110,100 @@ pub fn coherent_phase_2q(delta_iz: f64, delta_zi: f64, delta_zz: f64) -> Lindbla
     Lindbladian::new(d, h_delta, Vec::new())
 }
 
+/// Per-Pauli mean + standard-deviation statistics from a Monte-Carlo
+/// uncertainty propagation.
+#[derive(Clone, Debug, Default)]
+pub struct RateUncertainty {
+    pub paulis: Vec<crate::PauliString>,
+    /// `means[i]` = mean of `rates[i]` across MC samples.
+    pub means: Vec<f64>,
+    /// `stds[i]` = sample standard deviation of `rates[i]`.
+    pub stds: Vec<f64>,
+    /// Number of samples drawn.
+    pub n_samples: usize,
+}
+
+/// Propagate parameter uncertainty into the Pauli-Lindblad rates by
+/// Monte-Carlo sampling.
+///
+/// `synthesize_sample` is called once per MC draw. The user builds the
+/// `Gate` from the (possibly jittered) parameters and returns the
+/// synthesized [`PauliLindbladModel`]. This routine aggregates across
+/// draws: per-Pauli sample mean + sample standard deviation.
+///
+/// The first sample determines the support enumeration; later samples
+/// are matched by support equality, so stochastic supports (same Pauli
+/// but generated in a different order) are fine.
+pub fn propagate_uncertainty(
+    n_samples: usize,
+    mut synthesize_sample: impl FnMut(usize) -> crate::PauliLindbladModel,
+) -> RateUncertainty {
+    assert!(n_samples >= 2, "need >=2 samples to compute std");
+
+    // Use the first sample to fix the Pauli set.
+    let first = synthesize_sample(0);
+    let n_p = first.supports.len();
+    let mut sum = first.rates.clone();
+    let mut sum_sq: Vec<f64> = first.rates.iter().map(|r| r * r).collect();
+
+    for k in 1..n_samples {
+        let model = synthesize_sample(k);
+        assert_eq!(
+            model.supports.len(),
+            n_p,
+            "MC draw {}: support size {} != expected {}",
+            k,
+            model.supports.len(),
+            n_p,
+        );
+        for (i, p) in first.supports.iter().enumerate() {
+            let r = model.rate(p);
+            sum[i] += r;
+            sum_sq[i] += r * r;
+        }
+    }
+
+    let n = n_samples as f64;
+    let means: Vec<f64> = sum.iter().map(|s| s / n).collect();
+    let stds: Vec<f64> = sum_sq
+        .iter()
+        .zip(means.iter())
+        .map(|(ss, m)| {
+            let var = (ss / n - m * m).max(0.0);
+            var.sqrt()
+        })
+        .collect();
+
+    RateUncertainty {
+        paulis: first.supports,
+        means,
+        stds,
+        n_samples,
+    }
+}
+
+impl RateUncertainty {
+    /// Look up mean rate for a given Pauli; returns 0 if not in support.
+    pub fn mean(&self, p: &crate::PauliString) -> f64 {
+        self.paulis
+            .iter()
+            .zip(&self.means)
+            .find(|(s, _)| *s == p)
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+
+    /// Look up standard deviation for a given Pauli; returns 0 if not in support.
+    pub fn std(&self, p: &crate::PauliString) -> f64 {
+        self.paulis
+            .iter()
+            .zip(&self.stds)
+            .find(|(s, _)| *s == p)
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -63,6 +63,43 @@ impl PauliLindbladModel {
         self.rates.iter().copied().fold(0.0, f64::max)
     }
 
+    /// Adapter: export 1-qubit rates as `[lambda_X, lambda_Y, lambda_Z]`.
+    /// Panics if the model is not 1-qubit.
+    ///
+    /// Intended consumer: `pecos-qec::PerGateTypeNoise::with_1q_rates`.
+    pub fn to_noise_array_1q(&self) -> [f64; 3] {
+        assert!(
+            self.supports.iter().all(|s| s.num_qubits() == 1),
+            "to_noise_array_1q requires a 1-qubit model"
+        );
+        [
+            self.rate(&PauliString::single(Pauli1::X)),
+            self.rate(&PauliString::single(Pauli1::Y)),
+            self.rate(&PauliString::single(Pauli1::Z)),
+        ]
+    }
+
+    /// Adapter: export 2-qubit rates in `PAULI_2Q_ORDER` ordering
+    /// (IX, IY, IZ, XI, XX, XY, XZ, YI, YX, YY, YZ, ZI, ZX, ZY, ZZ).
+    /// Panics if the model is not 2-qubit.
+    ///
+    /// Intended consumer: `pecos-qec::PerGateTypeNoise::with_2q_rates`.
+    pub fn to_noise_array_2q(&self) -> [f64; 15] {
+        assert!(
+            self.supports.iter().all(|s| s.num_qubits() == 2),
+            "to_noise_array_2q requires a 2-qubit model"
+        );
+        const ORDER: [&str; 15] = [
+            "IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZI", "ZX", "ZY",
+            "ZZ",
+        ];
+        let mut out = [0.0; 15];
+        for (i, label) in ORDER.iter().enumerate() {
+            out[i] = self.rate(&PauliString::from_str(label).unwrap());
+        }
+        out
+    }
+
     /// Per-Pauli residual `self - other`. Returns a vector of
     /// `(pauli, self_rate, other_rate, residual)` for every Pauli in the
     /// union of the two models' supports.

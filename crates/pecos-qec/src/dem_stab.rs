@@ -51,7 +51,7 @@
 //! ```
 
 use crate::fault_tolerance::dem_builder::{
-    DemSampler, DemSamplerBuilder, DetectorDef, LogicalObservable, NoiseConfig,
+    DemSampler, DemSamplerBuilder, DetectorDef, LogicalObservable, NoiseConfig, PerGateTypeNoise,
 };
 use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
@@ -136,6 +136,7 @@ impl DemStabSim {
 pub struct DemStabSimBuilder {
     circuit: Option<DagCircuit>,
     noise: NoiseConfig,
+    per_gate_noise: Option<PerGateTypeNoise>,
     detectors: Vec<DetectorDef>,
     observables: Vec<LogicalObservable>,
     measurement_order: Option<Vec<usize>>,
@@ -149,10 +150,22 @@ impl DemStabSimBuilder {
         self
     }
 
-    /// Set the noise configuration.
+    /// Set the uniform-depolarizing noise configuration. When both this
+    /// and [`Self::per_gate_noise`] are set, the per-gate spec takes
+    /// precedence.
     #[must_use]
     pub fn noise(mut self, config: NoiseConfig) -> Self {
         self.noise = config;
+        self
+    }
+
+    /// Set a per-gate-type per-Pauli noise specification. Overrides
+    /// [`Self::noise`] scalars for any gate type present in the spec.
+    /// Intended consumer for `pecos-lindblad::PauliLindbladModel`
+    /// adapter output.
+    #[must_use]
+    pub fn per_gate_noise(mut self, cfg: PerGateTypeNoise) -> Self {
+        self.per_gate_noise = Some(cfg);
         self
     }
 
@@ -196,13 +209,18 @@ impl DemStabSimBuilder {
             .map(|o| o.records.to_vec())
             .collect();
 
-        let mut builder = DemSamplerBuilder::new(&influence_map)
-            .with_noise(
+        let mut builder = DemSamplerBuilder::new(&influence_map);
+        builder = if let Some(cfg) = self.per_gate_noise {
+            builder.with_per_gate_noise(cfg)
+        } else {
+            builder.with_noise(
                 self.noise.p1,
                 self.noise.p2,
                 self.noise.p_meas,
                 self.noise.p_init,
             )
+        };
+        builder = builder
             .with_detector_records(detector_records)
             .with_observable_records(observable_records);
 

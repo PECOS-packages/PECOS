@@ -97,6 +97,31 @@ impl PauliLindbladModel {
         self.diff(other).into_iter().next().map(|(p, _, _, r)| (p, r))
     }
 
+    /// Leading-order composition of two independent noise sources: rates
+    /// add per Pauli. Exact for small rates where `(1 - (1-p_A)(1-p_B)) ≈
+    /// p_A + p_B`. For larger rates, prefer [`synthesize_superop`] on the
+    /// combined physical Lindbladian directly (all-orders).
+    ///
+    /// Use case: combine a predicted physical-model PL with an
+    /// experimentally-observed residual-noise PL to get an effective
+    /// model for circuit-level noise.
+    pub fn compose_independent(&self, other: &Self) -> Self {
+        use std::collections::HashMap;
+        let mut combined: HashMap<PauliString, f64> = HashMap::new();
+        for (p, r) in self.supports.iter().zip(&self.rates) {
+            combined.insert(p.clone(), *r);
+        }
+        for (p, r) in other.supports.iter().zip(&other.rates) {
+            *combined.entry(p.clone()).or_insert(0.0) += *r;
+        }
+        let mut entries: Vec<_> = combined.into_iter().collect();
+        entries.sort_by(|(a, _), (b, _)| {
+            a.0.iter().map(|p| *p as u8).cmp(b.0.iter().map(|p| *p as u8))
+        });
+        let (supports, rates): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+        Self::new(supports, rates)
+    }
+
     /// Aggregate absolute residual by Pauli weight. Returns `weight -> sum
     /// of |residual|`. Useful for diagnosing which weight class of physics
     /// is missing from the model (e.g. weight-2 residual large =>

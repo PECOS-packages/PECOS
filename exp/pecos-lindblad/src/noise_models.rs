@@ -110,6 +110,55 @@ pub fn coherent_phase_2q(delta_iz: f64, delta_zi: f64, delta_zz: f64) -> Lindbla
     Lindbladian::new(d, h_delta, Vec::new())
 }
 
+/// Analytic back-solve: given measured PL rates from a 1Q identity gate
+/// with AD+PD noise, recover `(T_1, T_2)`.
+///
+/// Inverse of [`ad_pd_1q`] applied to [`crate::synthesize_identity_1q`]
+/// using the paper's closed form (line 812):
+///
+/// ```text
+/// lambda_x = lambda_y = beta_down * tau_g / 4  =>  T_1   = tau_g / (4 lambda_x)
+/// lambda_z = beta_phi  * tau_g / 2             =>  T_phi = tau_g / (2 lambda_z)
+/// 1/T_2 = 1/(2 T_1) + 1/T_phi                  =>  T_2   = 1 / (1/(2 T_1) + 1/T_phi)
+/// ```
+///
+/// Returns `None` if rates are inconsistent (e.g. negative or would imply
+/// `T_2 > 2 T_1`). Averages `lambda_x` and `lambda_y` for robustness
+/// against small measurement noise.
+pub fn recover_t1_t2_from_identity_1q(
+    model: &crate::PauliLindbladModel,
+    tau_g: f64,
+) -> Option<(f64, f64)> {
+    use crate::{Pauli1, PauliString};
+    if tau_g <= 0.0 {
+        return None;
+    }
+    let lam_x = model.rate(&PauliString::single(Pauli1::X));
+    let lam_y = model.rate(&PauliString::single(Pauli1::Y));
+    let lam_z = model.rate(&PauliString::single(Pauli1::Z));
+    // AD gives equal lambda_x and lambda_y; average for noise robustness.
+    let lam_avg_xy = 0.5 * (lam_x + lam_y);
+    if lam_avg_xy <= 0.0 || lam_z < 0.0 {
+        return None;
+    }
+    let t1 = tau_g / (4.0 * lam_avg_xy);
+    if t1 <= 0.0 {
+        return None;
+    }
+    // lambda_z = 0 is allowed (pure-T1 limit => T_2 = 2 T_1).
+    let t2 = if lam_z < 1e-30 {
+        2.0 * t1
+    } else {
+        let t_phi = tau_g / (2.0 * lam_z);
+        let inv_t2 = 1.0 / (2.0 * t1) + 1.0 / t_phi;
+        if inv_t2 <= 0.0 {
+            return None;
+        }
+        1.0 / inv_t2
+    };
+    Some((t1, t2))
+}
+
 /// Per-Pauli mean + standard-deviation statistics from a Monte-Carlo
 /// uncertainty propagation.
 #[derive(Clone, Debug, Default)]

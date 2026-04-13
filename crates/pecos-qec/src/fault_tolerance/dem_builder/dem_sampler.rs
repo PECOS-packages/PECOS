@@ -1519,15 +1519,18 @@ impl<'a> DemSamplerBuilder<'a> {
                 | GateType::X
                 | GateType::Y
                 | GateType::Z => {
-                    // Single-qubit gate errors: only "after" locations, depolarizing
-                    if self.p1 > 0.0 && !loc.before {
-                        self.process_depolarizing_fault(
-                            loc_idx,
-                            self.p1,
-                            im_to_tc.as_deref(),
-                            num_tc_measurements,
-                            &mut aggregated,
-                        );
+                    // Single-qubit gate errors: only "after" locations.
+                    if !loc.before {
+                        let rates = self.rates_1q(loc.gate_type);
+                        if rates.iter().any(|r| *r > 0.0) {
+                            self.process_depolarizing_fault_rates(
+                                loc_idx,
+                                rates,
+                                im_to_tc.as_deref(),
+                                num_tc_measurements,
+                                &mut aggregated,
+                            );
+                        }
                     }
                 }
                 _ => {}
@@ -1535,16 +1538,25 @@ impl<'a> DemSamplerBuilder<'a> {
         }
 
         // Process two-qubit gates as pairs
-        if self.p2 > 0.0 {
-            for loc_indices in cx_groups.values() {
+        let has_any_2q_noise = self.per_gate.is_some() || self.p2 > 0.0;
+        if has_any_2q_noise {
+            for (node, loc_indices) in &cx_groups {
                 if loc_indices.len() == 2 {
-                    self.process_two_qubit_fault(
-                        loc_indices[0],
-                        loc_indices[1],
-                        im_to_tc.as_deref(),
-                        num_tc_measurements,
-                        &mut aggregated,
-                    );
+                    // Use the gate_type of the first location (both locations of
+                    // a 2Q gate share the same gate_type).
+                    let gate_type = self.influence_map.locations[loc_indices[0]].gate_type;
+                    let rates = self.rates_2q(gate_type);
+                    if rates.iter().any(|r| *r > 0.0) {
+                        self.process_two_qubit_fault_rates(
+                            loc_indices[0],
+                            loc_indices[1],
+                            rates,
+                            im_to_tc.as_deref(),
+                            num_tc_measurements,
+                            &mut aggregated,
+                        );
+                    }
+                    let _ = node;
                 }
             }
         }
@@ -1654,18 +1666,42 @@ impl<'a> DemSamplerBuilder<'a> {
         }
     }
 
-    /// Process a depolarizing fault (X, Y, Z each with prob/3).
-    fn process_depolarizing_fault(
+    /// Resolve per-Pauli rates for a 1Q gate. Uses `per_gate` if set,
+    /// otherwise splits uniform `p1` evenly across `X, Y, Z`.
+    fn rates_1q(&self, gate: GateType) -> [f64; 3] {
+        if let Some(pg) = &self.per_gate {
+            [pg.rate_1q(gate, 0), pg.rate_1q(gate, 1), pg.rate_1q(gate, 2)]
+        } else {
+            [self.p1 / 3.0; 3]
+        }
+    }
+
+    /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs).
+    fn rates_2q(&self, gate: GateType) -> [f64; 15] {
+        if let Some(pg) = &self.per_gate {
+            std::array::from_fn(|i| pg.rate_2q(gate, i))
+        } else {
+            [self.p2 / 15.0; 15]
+        }
+    }
+
+    /// Process a 1Q depolarizing-family fault with explicit per-Pauli rates.
+    fn process_depolarizing_fault_rates(
         &self,
         loc_idx: usize,
-        prob: f64,
+        rates: [f64; 3],
         im_to_tc: Option<&[usize]>,
         num_tc_measurements: usize,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
-        let per_pauli_prob = prob / 3.0;
-        for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
-            let mechanism = self.compute_mechanism(loc_idx, pauli, im_to_tc, num_tc_measurements);
+        for (pauli, &per_pauli_prob) in
+            [Pauli::X, Pauli::Y, Pauli::Z].iter().zip(rates.iter())
+        {
+            if per_pauli_prob == 0.0 {
+                continue;
+            }
+            let mechanism =
+                self.compute_mechanism(loc_idx, *pauli, im_to_tc, num_tc_measurements);
             if !mechanism.is_empty() {
                 let entry = aggregated.entry(mechanism).or_insert(0.0);
                 *entry = combine_probabilities(*entry, per_pauli_prob);
@@ -1673,19 +1709,19 @@ impl<'a> DemSamplerBuilder<'a> {
         }
     }
 
-    /// Process a two-qubit gate fault (15 non-identity Pauli combinations with p2/15 each).
-    fn process_two_qubit_fault(
+    /// Process a two-qubit gate fault with explicit per-Pauli-pair rates.
+    /// `rates[i]` corresponds to [`PAULI_2Q_ORDER[i]`] ordering.
+    fn process_two_qubit_fault_rates(
         &self,
         loc1: usize,
         loc2: usize,
+        rates: [f64; 15],
         im_to_tc: Option<&[usize]>,
         num_tc_measurements: usize,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
-        let prob = self.p2 / 15.0;
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
-        // Cache single-qubit mechanisms for each Pauli on each location
         let mut effects1: [Option<DemMechanism>; 4] = [None, None, None, None];
         let mut effects2: [Option<DemMechanism>; 4] = [None, None, None, None];
 
@@ -1696,30 +1732,30 @@ impl<'a> DemSamplerBuilder<'a> {
                 Some(self.compute_mechanism(loc2, p, im_to_tc, num_tc_measurements));
         }
 
-        // Process all 15 non-trivial Pauli combinations
+        // Iterate (p1, p2) with global index = 4*p1 + p2 (skipping II at idx 0).
         for &p1 in &paulis {
             for &p2 in &paulis {
                 if p1 == Pauli::I && p2 == Pauli::I {
-                    continue; // Skip II
+                    continue;
                 }
-
+                let flat = 4 * (p1 as usize) + (p2 as usize);
+                let prob = rates[flat - 1];
+                if prob == 0.0 {
+                    continue;
+                }
                 let mechanism = if p1 == Pauli::I {
-                    // IX, IY, IZ - only second qubit
                     effects2[p2 as usize]
                         .clone()
                         .unwrap_or_else(DemMechanism::empty)
                 } else if p2 == Pauli::I {
-                    // XI, YI, ZI - only first qubit
                     effects1[p1 as usize]
                         .clone()
                         .unwrap_or_else(DemMechanism::empty)
                 } else {
-                    // Correlated: XOR the detector/observable effects
                     let e1 = effects1[p1 as usize].as_ref();
                     let e2 = effects2[p2 as usize].as_ref();
                     xor_mechanisms(e1, e2)
                 };
-
                 if !mechanism.is_empty() {
                     let entry = aggregated.entry(mechanism).or_insert(0.0);
                     *entry = combine_probabilities(*entry, prob);

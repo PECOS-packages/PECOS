@@ -197,6 +197,15 @@ pub struct QisEngine {
     /// Reusable physical simulator slots freed by `ReleaseQubit`.
     free_qubit_slots: BTreeSet<usize>,
 
+    /// Program-level qubit handles seen during the current shot.
+    ///
+    /// Some QIS interfaces model initial/static qubits via `allocated_qubits`
+    /// metadata instead of explicit `AllocateQubit` operations. We accept a
+    /// first use of such a handle and lazily materialize a simulator slot, but
+    /// still reject a later use-after-release unless a new `AllocateQubit`
+    /// arrives.
+    seen_program_qubits: BTreeSet<usize>,
+
     /// Whether we've started processing
     started: bool,
 
@@ -307,6 +316,7 @@ impl QisEngine {
             num_qubits: 0,
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
+            seen_program_qubits: BTreeSet::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
@@ -398,6 +408,7 @@ impl QisEngine {
             num_qubits: 0,
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
+            seen_program_qubits: BTreeSet::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
@@ -466,6 +477,7 @@ impl QisEngine {
     fn reset_qubit_slots(&mut self) {
         self.active_qubit_slots.clear();
         self.free_qubit_slots.clear();
+        self.seen_program_qubits.clear();
         self.num_qubits = 0;
     }
 
@@ -481,6 +493,7 @@ impl QisEngine {
         };
         self.num_qubits = self.num_qubits.max(slot + 1);
         self.active_qubit_slots.insert(program_id, slot);
+        self.seen_program_qubits.insert(program_id);
         slot
     }
 
@@ -490,12 +503,18 @@ impl QisEngine {
         }
     }
 
-    fn mapped_qubit(&self, program_id: usize, op: &QuantumOp) -> Result<usize, PecosError> {
-        self.active_qubit_slots.get(&program_id).copied().ok_or_else(|| {
-            PecosError::Generic(format!(
-                "QIS runtime emitted {op:?} for program qubit {program_id}, but no active physical slot is mapped to that handle"
-            ))
-        })
+    fn mapped_qubit(&mut self, program_id: usize, op: &QuantumOp) -> Result<usize, PecosError> {
+        if let Some(&slot) = self.active_qubit_slots.get(&program_id) {
+            return Ok(slot);
+        }
+
+        if self.seen_program_qubits.contains(&program_id) {
+            return Err(PecosError::Generic(format!(
+                "QIS runtime emitted {op:?} for program qubit {program_id}, but that handle is not currently active; it was likely released without a matching re-allocation"
+            )));
+        }
+
+        Ok(self.allocate_qubit_slot(program_id))
     }
 
     /// Convert dynamic QIS operations into a `ByteMessage` for the quantum engine.
@@ -737,6 +756,7 @@ impl Clone for QisEngine {
             num_qubits: self.num_qubits,
             active_qubit_slots: self.active_qubit_slots.clone(),
             free_qubit_slots: self.free_qubit_slots.clone(),
+            seen_program_qubits: self.seen_program_qubits.clone(),
             started: false,                       // Reset started flag for the clone
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
@@ -1544,5 +1564,43 @@ mod tests {
         assert_eq!(in_memory.len(), 1);
         assert_eq!(in_memory[0].stage, "unit_test");
         assert_eq!(in_memory[0].lowered_quantum_ops[0].gate_type, "PZ");
+    }
+
+    #[test]
+    fn test_operations_to_bytemessage_accepts_implicit_static_qubit_handles() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let ops = vec![QuantumOp::H(0).into(), QuantumOp::Measure(0, 7).into()];
+
+        let commands = engine
+            .operations_to_bytemessage(&ops)
+            .expect("convert ops with implicit static handles");
+
+        let lowered = commands.quantum_ops().expect("parse lowered commands");
+        assert_eq!(lowered.len(), 2);
+        assert_eq!(lowered[0].gate_type.to_string(), "H");
+        assert_eq!(lowered[0].qubits.as_slice(), &[pecos_core::QubitId(0)]);
+        assert_eq!(lowered[1].gate_type.to_string(), "MZ");
+        assert_eq!(lowered[1].qubits.as_slice(), &[pecos_core::QubitId(0)]);
+    }
+
+    #[test]
+    fn test_operations_to_bytemessage_rejects_use_after_release_without_reallocate() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let ops = vec![
+            Operation::AllocateQubit { id: 0 },
+            QuantumOp::H(0).into(),
+            Operation::ReleaseQubit { id: 0 },
+            QuantumOp::X(0).into(),
+        ];
+
+        let err = match engine.operations_to_bytemessage(&ops) {
+            Ok(_) => panic!("released qubit reuse should error"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string().contains("not currently active"),
+            "unexpected error: {err}"
+        );
     }
 }

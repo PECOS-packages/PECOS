@@ -402,6 +402,50 @@ Implement `PauliLindbladModel::sample(t)` via independent Bernoullis
 (skeleton Section "Glue into DemStabSim"). Rep-code memory experiment
 parity test.
 
+### Shipped work (2026-04-13)
+
+Implemented in `exp/pecos-lindblad/` Phases 1-5:
+
+| # | Scope | Phase |
+|---|---|---|
+| 1 | 1Q identity (exact) | [shipped] |
+| 2 | 1Q X_theta (leading-order) | [shipped] |
+| 3 | 2Q CZ_theta + n-qubit Walsh-Hadamard | [shipped] |
+| 4 | 2Q CX_theta + block-diagonal exp | [shipped] |
+| 5 | PL summary helpers + DemStabSim scalar-collapse scaffold | [shipped] |
+
+28 tests verify all four paper closed-form fixtures (1Q ident, X_theta,
+CZ_theta, CX_theta) to tol 1e-8 (1e-12 for the exact identity result).
+
+### Order-1 scope limit
+
+The `synthesize_numerical` entry point implements **Omega_1 only**. This is
+correct and tight for incoherent noise (amplitude damping, pure
+dephasing) because the rates enter linearly in `beta`. Coherent noise
+cases (2Q phase noise, 3Q ZZ crosstalk, 4Q ZZ crosstalk) have rates
+**quadratic in delta** and require Omega_2 + Pauli-twirl:
+
+- For purely coherent `L(rho) = -i[H_delta, rho]`:
+  `Tr(P_b * L(P_b))/d = 0` (first-order diagonal element vanishes by
+  cyclicity of trace for Hermitian H_delta).
+- Thus the Omega_1-diagonal shortcut gives `alpha_b = 0`, and the
+  extracted `lambda_k = 0`, which is wrong.
+- The correct second-order result comes from twirling the full channel
+  `exp(Omega_1 + Omega_2 + ...)`, where quadratic cross-terms in the
+  expansion produce non-vanishing Pauli-diagonal contributions.
+
+### Open for future phases
+
+- Phase 6: coherent-noise path. Either (a) implement Omega_2 + twirl, or
+  (b) add general `d x d` Hermitian matrix exponentiation and compute the
+  exact channel `U_err rho U_err^dag`. Target: 3Q IZZ crosstalk
+  (paper eqs. 1009-1011, weight-3 rates).
+- Phase 7: proper `pecos-qec::NoiseConfig` generalization and
+  per-gate-type Pauli-Lindblad input to `DemStabSim` (see
+  `design/lindblad_sim_skeleton.md` "Glue into DemStabSim" section).
+- Phase 8: 4-qubit ZZ crosstalk with weight-4 rates (paper eqs.
+  1044-1062). Blocked on Phase 6.
+
 **Phase 3 -- closed-form Appendix C lookup.**
 Transcribe Tables 1-2 into a Rust `const` table keyed by
 `(GateType, PauliLabel)`. Property-test each entry against Phase 1

@@ -159,12 +159,54 @@ pub fn is_diagonal(m: &Matrix, d: usize, tol: f64) -> bool {
     true
 }
 
+/// Is a 4x4 matrix 2x2-block-diagonal? I.e. off-diagonal 2x2 blocks zero.
+pub fn is_2x2_block_diagonal(m: &Matrix, tol: f64) -> bool {
+    assert_eq!(m.len(), 16, "is_2x2_block_diagonal requires 4x4 input");
+    for r in 0..2 {
+        for c in 2..4 {
+            if m[r * 4 + c].norm() > tol {
+                return false;
+            }
+            if m[c * 4 + r].norm() > tol {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// `exp(-i * H * t)` for a 4x4 2x2-block-diagonal Hermitian `H`, assuming
+/// each 2x2 block is traceless (true for CX_theta: blocks are `0_2` and
+/// `omega * X`).
+pub fn exp_minus_i_h_t_2x2_block_diag(h: &Matrix, t: f64) -> Matrix {
+    let d = 4;
+    assert_eq!(h.len(), d * d);
+    let mut ul = zeros(2);
+    let mut lr = zeros(2);
+    for r in 0..2 {
+        for c in 0..2 {
+            ul[r * 2 + c] = h[r * 4 + c];
+            lr[r * 2 + c] = h[(r + 2) * 4 + (c + 2)];
+        }
+    }
+    let ul_exp = exp_minus_i_h_t_1q_traceless(&ul, t);
+    let lr_exp = exp_minus_i_h_t_1q_traceless(&lr, t);
+    let mut out = zeros(d);
+    for r in 0..2 {
+        for c in 0..2 {
+            out[r * 4 + c] = ul_exp[r * 2 + c];
+            out[(r + 2) * 4 + (c + 2)] = lr_exp[r * 2 + c];
+        }
+    }
+    out
+}
+
 /// `exp(-i * H * t)` for a Hermitian `H`. Dispatches:
-/// - If `H` is diagonal -> elementwise exp (works for any `d`).
-/// - Else if `d == 2` and `H` is traceless -> Bloch form via
-///   [`exp_minus_i_h_t_1q_traceless`].
-/// - Else panics with "not implemented". Future work: add
-///   eigendecomposition path for `d > 2` non-diagonal.
+/// - `H` diagonal -> elementwise exp (any `d`).
+/// - `d == 2`, non-diagonal, traceless -> Bloch form.
+/// - `d == 4`, 2x2-block-diagonal with traceless blocks -> block-wise
+///   Bloch form (covers CX_theta).
+/// - else panics. Future work: general eigendecomposition path.
 pub fn exp_minus_i_h_t(h: &Matrix, d: usize, t: f64) -> Matrix {
     if is_diagonal(h, d, 1e-14) {
         let mut u = zeros(d);
@@ -177,7 +219,10 @@ pub fn exp_minus_i_h_t(h: &Matrix, d: usize, t: f64) -> Matrix {
     if d == 2 {
         return exp_minus_i_h_t_1q_traceless(h, t);
     }
-    panic!("exp_minus_i_h_t: non-diagonal and d={} > 2 not implemented", d);
+    if d == 4 && is_2x2_block_diagonal(h, 1e-14) {
+        return exp_minus_i_h_t_2x2_block_diag(h, t);
+    }
+    panic!("exp_minus_i_h_t: unsupported structure at d={}", d);
 }
 
 /// Matrix exponential `exp(-i * H * t)` for a 2x2 traceless Hermitian H.

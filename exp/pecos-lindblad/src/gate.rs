@@ -66,6 +66,36 @@ impl Gate {
         }
     }
 
+    /// 2-qubit arbitrary-angle CX rotation:
+    /// `CX_theta = exp(-i (theta/2) (IX - ZX))`. Block-diagonal in the
+    /// computational basis with the top 2x2 block zero (identity action on
+    /// `|0l>`) and the bottom block = `omega_cx * X` (X rotation on the
+    /// target when control = `|1>`).
+    /// Reference: arXiv:2502.03462 lines 913-924.
+    pub fn cx_theta(omega_cx: f64, theta: f64, noise: Lindbladian) -> Self {
+        use crate::basis::Pauli1;
+        assert!(omega_cx > 0.0, "omega_cx must be positive");
+        assert_eq!(noise.d, 4, "cx_theta is 2-qubit");
+        let d = 4;
+        let i2 = matrix::identity(2);
+        let x = matrix::pauli_1q(Pauli1::X);
+        let z = matrix::pauli_1q(Pauli1::Z);
+        let ix = matrix::kron(&i2, &x, 2, 2);
+        let zx = matrix::kron(&z, &x, 2, 2);
+        // H_g = (omega_cx / 2) * (IX - ZX)
+        let diff = matrix::sub(&ix, &zx);
+        let h_g = matrix::scale(&diff, Complex64::new(omega_cx / 2.0, 0.0));
+        let ideal = Lindbladian::new(d, h_g, Vec::new());
+        let tau_g = theta / omega_cx;
+        Self {
+            label: format!("CX_{{{:.4}}}", theta),
+            num_qubits: 2,
+            ideal,
+            noise,
+            tau_g,
+        }
+    }
+
     /// 2-qubit arbitrary-angle CZ rotation:
     /// `CZ_theta = exp(-i (theta/2) (II - IZ - ZI + ZZ))`.
     /// In computational basis `H_g = diag(0, 0, 0, 2 * omega_cz)`.

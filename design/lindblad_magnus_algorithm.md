@@ -1,0 +1,323 @@
+# Algorithm Spec: Lindblad -> Pauli-Lindblad Synthesis
+
+Status: draft (2026-04-12) -- extracted from scout deep-read.
+Pairs with: `design/lindblad_sim_skeleton.md` (uses this as the MagnusSynth kernel).
+
+**Primary reference.** Malekakhlagh, Seif, Puzzuoli, Govia, van den Berg,
+*Efficient Lindblad synthesis for noise model construction*, npj QI 2025,
+arXiv:2502.03462v1. Equation numbers below from the v1 HTML.
+
+**Secondary reference.** van den Berg, Minev, Kandala, Temme,
+*Probabilistic error cancellation with sparse Pauli-Lindblad models*,
+Nat. Phys. 2023, arXiv:2201.09866 (sparse PL generator + Pauli fidelity).
+
+**Caveat (scout).** Scout could not run shell / tar-extract the arxiv
+source tarball; spec derived from arxiv HTML endpoints. Tables 3-5 and
+Appendix D (3/4-qubit ZZ crosstalk) not verbatim -- manual re-scrape
+required before Rust transcription.
+
+---
+
+## 1. Inputs & outputs
+
+**Inputs.**
+- Gate Hamiltonian $H_g \in \mathbb{C}^{d\times d}$, $d=2^n$, Hermitian,
+  time-(quasi-)independent in the rotating frame (paper eq. 6-8).
+- Collapse operators $\{L_j\}$ with rates $\beta_j \ge 0$, or GKS matrix
+  $\beta_{jk}$; optional coherent shifts $\delta_j$.
+- Gate duration $\tau_g$ and gate angle $\theta = \omega_g \tau_g$
+  (with $\omega_g \in \{\omega_{cz}, \omega_{cx}\}$).
+- Pauli basis $\mathcal{K} \subseteq \{I,X,Y,Z\}^{\otimes n}\setminus\{I^{\otimes n}\}$
+  (typically weight-1 and weight-2 on device edges).
+- Magnus truncation order $N \in \{1,2,3,4\}$.
+
+**Output.** Rate vector $\{\lambda_k\}_{k\in\mathcal{K}}$ with
+$\lambda_k \ge 0$ (non-negativity only guaranteed to the truncation order;
+see open questions below).
+
+**Assumptions.**
+- Weak noise: $\beta\tau_g \ll 1$, equivalently $\beta/\omega_g \ll 1$ for
+  two-qubit gates. Magnus convergence radius.
+- Markovianity -- time-local Lindblad master equation.
+- $H_g$ time-independent in a convenient frame. Time-dependent $H_g(t)$
+  requires $U_g(t) = \mathcal{T}\exp(-i\int H_g(s)\,ds)$ via piecewise
+  integration (not v1).
+
+---
+
+## 2. Algorithm pseudocode
+
+```
+INPUT  H_g, {L_j, beta_j}, tau_g, K, N
+OUTPUT {lambda_k : k in K}
+
+// Step 1 -- interaction-frame jump operators (paper eq. 6-8)
+//   P_{jI}(t) = U_g(t)^dag L_j U_g(t)
+//   L_I(t)(rho) = -i sum_j delta_j [P_{jI}(t), rho]
+//               + sum_{jk} beta_{jk} ( P_{jI}(t) rho P_{kI}^dag(t)
+//                                    - 1/2 { P_{kI}^dag(t) P_{jI}(t), rho } )
+eigendecomp H_g = V D V^dag
+U_g(t) = V * diag(exp(-i D t)) * V^dag        // pure-phase matrix elements
+                                              // in H_g eigenbasis
+PjI(t) = U_g(t)^dag * L_j * U_g(t)
+
+// Step 2 -- Magnus terms (paper eq. 11, 12; App. C for higher orders)
+Omega_1 = integrate( L_I(t1),                      t1 in [0,tau_g] )
+Omega_2 = 0.5 * integrate_double(
+            comm( L_I(t1), L_I(t2) ),              0 <= t2 <= t1 <= tau_g )
+Omega_3 = (1/6) * integrate_triple(
+            comm(L_I(t1), comm(L_I(t2), L_I(t3)))
+          + comm(L_I(t3), comm(L_I(t2), L_I(t1))), 0 <= t3 <= t2 <= t1 <= tau_g )
+Omega_4 = // Blanes-Casas-Oteo-Ros 4-commutator formula (paper App. C)
+
+// Step 3 -- effective generator (paper eq. 9-10)
+L_eff = (1/tau_g) * sum_{n=1..N} Omega_n
+
+// Step 4 -- Pauli twirl projection
+//   Twirled generator is diagonal in Pauli basis.
+//   Diagonal coeff: alpha_b = -(1/d) tr( P_b * L_eff(P_b) )
+//   Rates recovered via Walsh-Hadamard on {0,1}^{2n}
+//   (2201.09866 eq. (1)):
+//     alpha_b = 2 sum_k lambda_k <b,k>_sp
+//     lambda_k = (1/4^n) sum_b (-1)^{<b,k>_sp} (alpha_b / 2)
+
+// Step 5 -- Dyson cross-check (paper eq. 13)
+//   T exp( int L_I ) = I + Omega_1 + Omega_2 + 1/2 Omega_1^2 + O(L_I^3)
+//   Compare Magnus-truncated channel vs Dyson-truncated channel.
+```
+
+**Key simplification for constant $H_g$.** Matrix elements of $P_{jI}(t)$
+in the $H_g$ eigenbasis are **pure phases $e^{i(E_a-E_b)t}$**. All Magnus
+time integrals become sums of exponentials times polynomials in $t$ --
+integrate **analytically**, no numerical quadrature. This is what makes
+closed-form Appendix C results possible.
+
+**Twirl representation.** $\mathcal{L}_{eff}$ is a $d^2\times d^2$ map
+$M_d\to M_d$ in the Pauli transfer matrix (PTM) representation; the
+diagonal entries are $-\alpha_b$. Off-diagonals measure residual coherence
+and must be small under the weak-noise assumption -- assert
+`||off-diagonal|| < tol` as a correctness check.
+
+---
+
+## 3. Closed-form fixtures (Appendix C, Tables 1-2)
+
+Transcribed for the golden-test path. Index convention: $P_b$ written as
+two-letter label `ab` = $P_a \otimes P_b$ on (left, right) qubit;
+$i\equiv I$. Rates $\beta_{\downarrow l}, \beta_{\downarrow r}$ are
+amplitude-damping on (left, right) qubit; $\beta_\phi$ is pure dephasing.
+
+### Amplitude damping, Table 1
+
+Identity $I_{\tau_g}$:
+$$
+\lambda_{ix}=\lambda_{iy}=\tfrac14\beta_{\downarrow r}\tau_g,\quad
+\lambda_{xi}=\lambda_{yi}=\tfrac14\beta_{\downarrow l}\tau_g;
+\text{ rest } = 0.
+$$
+
+$CZ_\theta$ ($\theta = \omega_{cz}\tau_g$):
+$$
+\lambda_{ix}=\lambda_{iy}=\tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_{\downarrow r}}{\omega_{cz}},\quad
+\lambda_{xi}=\lambda_{yi}=\tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cz}},
+$$
+$$
+\lambda_{xz}=\lambda_{yz}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cz}},\quad
+\lambda_{zx}=\lambda_{zy}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow r}}{\omega_{cz}}.
+$$
+
+$CX_\theta$ ($\theta = \omega_{cx}\tau_g$):
+$$
+\lambda_{ix}=\tfrac{\theta}{4}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},\quad
+\lambda_{iy}=\tfrac{12\theta+8\sin 2\theta+\sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},
+$$
+$$
+\lambda_{iz}=\lambda_{zz}=\tfrac{4\theta-\sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},\quad
+\lambda_{xi}=\lambda_{yi}=\tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cx}},
+$$
+$$
+\lambda_{xx}=\lambda_{yx}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cx}},\quad
+\lambda_{zy}=\tfrac{12\theta-8\sin 2\theta+\sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}}.
+$$
+
+### Pure dephasing, Table 2
+
+Only $\lambda_{iz}, \lambda_{zi}, \lambda_{iy}, \lambda_{zy}, \lambda_{zz}$
+nonzero.
+
+Identity: $\lambda_{iz}=\tfrac12\beta_{\phi r}\tau_g$,
+$\lambda_{zi}=\tfrac12\beta_{\phi l}\tau_g$.
+
+$CX_\theta$:
+$$
+\lambda_{iz}=\tfrac{12\theta+8\sin 2\theta+\sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}},\quad
+\lambda_{zz}=\tfrac{12\theta-8\sin 2\theta+\sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}}.
+$$
+
+**Test fixture usage.** Feed $H_{CR}$ and $L\in\{\sigma^-, Z\}$ into the
+algorithm; compare against these closed forms to `< 1e-10`. The cases above
+are the minimum golden set; extend with CZ pure-dephasing and CX non-left
+cases from Tables 1-2 (not transcribed here -- see paper).
+
+---
+
+## 4. Appendix D: multi-qubit ZZ crosstalk
+
+- **D.7** -- three-qubit ZZ crosstalk.
+- **D.8** -- four-qubit ZZ crosstalk.
+
+**Form.** Plain LaTeX tables; *not* SymPy/Mathematica-parseable.
+Each cell is a rational in $\theta$ with $\sin/\cos$ and one
+$\beta/\omega$ factor.
+
+**Effort estimate.** Tables 1-2 alone contain ~20 distinct formulae per
+gate column. Extrapolating to D.7+D.8 plus remaining Tables 3-5 yields
+roughly **200-300 closed-form $\lambda_k$ formulae total**. Transcribe
+into a Rust lookup `(gate_type, pauli_label) -> fn(theta, beta, omega)
+-> f64`. One focused afternoon of careful typing + property-test each
+entry against the numerical (Magnus-integrated) path.
+
+---
+
+## 5. Sparse Pauli-Lindblad generator (arXiv:2201.09866)
+
+**Generator.**
+$$
+\mathcal{L}(\rho) = \sum_{k\in\mathcal{K}}\lambda_k\bigl(P_k\rho P_k^\dagger - \rho\bigr),
+\quad \lambda_k \ge 0.
+$$
+
+**Pauli fidelity (2201.09866 eq. 1, 2311.15408 eq. 1).**
+$$
+f_b = \tfrac{1}{2^n}\operatorname{tr}\bigl(P_b\,\Lambda(P_b)\bigr)
+    = \exp\!\Bigl(-2\sum_{k\in\mathcal{K}}\lambda_k\,\langle b,k\rangle_{sp}\Bigr).
+$$
+
+**Symplectic inner product.** Write $P = i^{x\cdot z}X^x Z^z$,
+$(x,z)\in\mathbb{F}_2^{2n}$. Then
+$$
+\langle b,k\rangle_{sp} = x_b\cdot z_k + z_b\cdot x_k \pmod 2 \in \{0,1\},
+$$
+i.e. `0` if $P_b, P_k$ commute, `1` if they anticommute. Implementation:
+bitwise XOR + popcount + `& 1`. `O(n/64)` per pair.
+
+**Forward sampling over duration $t$.** Each $k$ acts as an independent
+single-Pauli channel $(1-p_k)\mathbb{1} + p_k\,P_k\cdot P_k$ with
+$$
+p_k = \tfrac12\bigl(1 - e^{-2\lambda_k t}\bigr).
+$$
+Per shot: for each $k$, draw Bernoulli($p_k$); if `1`, apply $P_k$.
+All $|\mathcal{K}|$ draws independent, $O(|\mathcal{K}|)$ per shot.
+
+For PEC the signed form $\gamma_k = \text{sign}(\lambda_k)$ would be
+tracked; forward QEC simulation uses $\lambda_k \ge 0$ only.
+
+---
+
+## 6. Complexity & data structures
+
+- **Magnus order $N$.** Each $\Omega_n$: $n$-fold nested commutator of
+  $d\times d$ matrices + analytic time integral. Dominant matmul cost
+  $O(N\cdot d^3)$; commutator sum $O(N\cdot M^n)$ with $M$ = number of
+  jump operators. For $n=2$, $d=4$, $d^3=64$ -- trivial.
+- **Pauli basis $\mathcal{K}$.** 1-local = $3n$; 2-local on device edges
+  $=9|E|$. On 100-qubit heavy-hex ($|E|\approx 140$): ~1560 terms.
+  $O(n^2)$ worst case.
+- **Dense path memory.** State matrix $d\times d$ complex
+  ($16\,d^2$ bytes). PTM $d^2\times d^2$ ($16\,d^4$ bytes). For 4-qubit
+  ($d=16$): 0.5 MB -- fine.
+- **Sparse path (> 6 qubits).** Represent $\mathcal{L}$ as a list of
+  `(P_j, P_k, beta_jk)` triples and form $\Omega_n$ symbolically in
+  Pauli basis via the Pauli-group multiplication table; never
+  materialize the PTM.
+- **Rust types.** `faer::Mat<Complex64>` for small dense path ($d\le 16$).
+  `SparsePauliOp` (`Vec<(PauliLabel, Complex64)>`) for sparse path.
+  Commutators via Pauli-group table -- this is where grug gets the
+  80/20 win.
+
+---
+
+## 7. Open questions / risks
+
+- **Positivity of $\lambda_k$.** Magnus-truncated generator is **not
+  guaranteed** GKS-positive at finite order. Paper dodges via weak-noise
+  assumption. PECOS policy decision: clip to $\max(0, \lambda_k)$
+  (lossy), warn/error on negative, or bump order (expensive). Start with
+  "warn + clip" and log the truncation residual.
+
+- **Omega_3 / Omega_4 prefactor verification.** Scout could not extract
+  Appendix C verbatim through the HTML endpoints. Blanes-Casas-Oteo-Ros
+  recurrence is the textbook safe default; first implementation must
+  regression-test against Tables 1-2 closed forms before trusting higher
+  orders. **Blocking item for order $>2$.**
+
+- **Time-dependent $H_g(t)$.** Paper assumes quasi-time-independent.
+  Real pulse shapes (Gaussian, DRAG) break this. Dyson path handles
+  numerically (time-ordered product); Magnus path needs piecewise
+  integration. Out of scope v1.
+
+- **Catastrophic cancellation near $\theta=0$.** Formulae like
+  $(2\theta-\sin 2\theta)/16$ lose precision at small $\theta$
+  ($\approx \theta^3/6$). Rust impl **must** use a Taylor branch for
+  $|\theta|<\epsilon$. Standard `sinmx` trick; test with
+  $\theta=10^{-10}$.
+
+- **PTM off-diagonal residuals.** Weak-noise -> near-diagonal in Pauli
+  basis. Assert `||off-diagonal|| < tol`; do not silently discard.
+
+- **Pauli basis $\mathcal{K}$ completeness.** If physical noise generates
+  a $\lambda_k$ outside $\mathcal{K}$ (e.g. amplified weight-3 ZZ), it is
+  silently dropped on projection. Log the norm of the projected-away part;
+  error if above a user-settable threshold.
+
+---
+
+## 8. Implementation phases
+
+**Phase 1 -- numerical (gold standard).**
+Eigendecompose $H_g$, integrate $\Omega_1$ and $\Omega_2$ analytically in
+the eigenbasis, assemble $\mathcal{L}_{eff}$ as a PTM, diagonal-read the
+$\alpha_b$, Walsh-Hadamard to $\lambda_k$. Test against Table 1 (CX,
+amplitude damping, right qubit only). This is the order-2 MagnusSynth
+default.
+
+**Phase 2 -- sparse Pauli-Lindblad sampler + DemStabSim glue.**
+Implement `PauliLindbladModel::sample(t)` via independent Bernoullis
+(Section 5). Implement `DemStabNoiseModel` for `PauliLindbladModel`
+(skeleton Section "Glue into DemStabSim"). Rep-code memory experiment
+parity test.
+
+**Phase 3 -- closed-form Appendix C lookup.**
+Transcribe Tables 1-2 into a Rust `const` table keyed by
+`(GateType, PauliLabel)`. Property-test each entry against Phase 1
+numerical path. Add Taylor branches for small $\theta$.
+
+**Phase 4 -- higher-order Magnus.**
+Implement $\Omega_3, \Omega_4$ with Blanes-Casas-Oteo-Ros; verify against
+Phase 3 + Phase 1 random Lindbladians. Out-of-regime detection.
+
+**Phase 5 -- Appendix D multi-qubit ZZ crosstalk.**
+Re-scrape paper for D.7/D.8 formulae. Transcribe. Property-test. 200-300
+entries.
+
+Phases 1-2 are the MVP that unblocks DemStabSim-with-Lindblad-noise.
+Phases 3-5 are refinements.
+
+---
+
+## 9. References
+
+Paper:
+- arXiv:2502.03462 -- Malekakhlagh et al., *Efficient Lindblad synthesis*
+- arXiv:2201.09866 -- van den Berg et al., *Sparse Pauli-Lindblad PEC*
+- arXiv:2311.15408 -- Chen et al., *Learning sparse PL*
+
+Cross-check:
+- arXiv:2407.03576 -- 4th-order commutator-free Magnus in Liouville space
+- Blanes, Casas, Oteo, Ros, *The Magnus expansion and some of its
+  applications* (Phys. Rep. 2009) -- textbook for $\Omega_n$ formulae
+
+Next scout TODO:
+- Re-scrape arxiv LaTeX source of 2502.03462 with a tool capable of
+  `curl + tar`. Extract Tables 3-5 and Appendix D verbatim. Feed into
+  Phase 5.

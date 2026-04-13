@@ -2,7 +2,7 @@
 
 Status: draft (2026-04-12)
 Target crate: new `pecos-lindblad` (or module inside `pecos-neo`; decision below)
-Pairs with: `design/qec_sim_literature.md` (#7), `design/dem_stab_sim_skeleton.md`, `design/stab_sample_orchestration.md`
+Pairs with: `design/qec_sim_literature.md` (#7), `design/lindblad_magnus_algorithm.md` (math spec + closed forms), `design/dem_stab_sim_skeleton.md`, `design/stab_sample_orchestration.md`
 
 ## Goals in one paragraph
 
@@ -215,9 +215,17 @@ impl NoiseChannel for LindbladChannel {
 }
 ```
 
-**Pre-req:** `NoiseEvent::AfterGate` must grow a `duration` field (today only
-`IdleTime` carries duration). Small, localized change in `pecos-neo/src/noise.rs`
--- flag as first integration PR. Without this the lookup table can't be keyed.
+**Pre-req path (audit 2026-04-12, revised).** No first-class duration field
+exists on `GateCommand` / `NoiseEvent::AfterGate`. Instead of a schema change,
+use the existing `TickCircuit` / `DagCircuit` `Attribute` metadata dictionary
+(`crates/pecos-quantum/src/tick_circuit.rs:1147`): standardize on the key
+`"gate_duration"` = `Attribute::Float(nanoseconds)`. The `pecos-neo` circuit
+converter reads this key at translation time into `GateCommand`, and
+`LindbladChannel` queries it via `ctx` at apply time. Zero breaking changes
+to core circuit types. The schema-extension option (adding
+`duration: Option<TimeUnits>` to `NoiseEvent::AfterGate`) is reserved for a
+later PR if the metadata convention proves insufficient -- grug do not prepay
+that complexity.
 
 ## Noise-model input hierarchy
 
@@ -280,9 +288,10 @@ plus sign/phase. Sparse storage `Vec<(PauliString, f64)>` for
 6. **End-to-end DemStabSim glue.** Small rep-code memory experiment: feed
    `MagnusSynth` output to `DemStabSim`, compare logical error rate against
    the trajectory path (path b) on the same circuit.
-7. **Integration regression.** After `NoiseEvent::AfterGate::duration` lands
-   in `pecos-neo`, add a parity test with `LindbladChannel` vs
-   `DemStabSim + PauliLindbladModel` on identical circuit.
+7. **Integration regression.** Once the `"gate_duration"` metadata convention
+   lands in `pecos-neo`'s circuit converter, add a parity test with
+   `LindbladChannel` vs `DemStabSim + PauliLindbladModel` on the same
+   circuit annotated with per-gate durations.
 
 ## Rejection / validation
 
@@ -320,9 +329,19 @@ plus sign/phase. Sparse storage `Vec<(PauliString, f64)>` for
       can we parse paper's LaTeX / Mathematica output, or transcribe? Manual
       transcription of 3-4 closed forms is honest work; skip symbolic
       pipelines.
-- [ ] Gate-duration data path: does `TickCircuit` today carry per-gate
-      duration metadata, or is duration attached at noise-lookup time via a
-      separate `GateDurationTable`? Audit `crates/pecos-circuits`.
+- [x] Gate-duration data path (**audit 2026-04-12**): no first-class field
+      on `GateCommand`, `TickCircuit`, `DagCircuit`, or `NoiseEvent::AfterGate`.
+      Only `GateCommand::idle(qubit, duration)` (stashed in `angles`, see
+      `exp/pecos-neo/src/command.rs:296`) and `NoiseEvent::IdleTime { duration }`
+      (`exp/pecos-neo/src/noise.rs:203-206`) carry duration today. **Decision:**
+      use `TickCircuit` / `DagCircuit` `Attribute` metadata dictionary
+      (`crates/pecos-quantum/src/tick_circuit.rs:1147`) with standardized key
+      `"gate_duration"` = `Attribute::Float(ns)`. Lower-risk than a schema
+      change; zero breaking changes to core circuit types. The
+      `pecos-neo/src/circuit.rs` converter reads this key when translating
+      to `GateCommand`; `LindbladChannel` queries it at lookup time. Promote
+      to a first-class field on `NoiseEvent::AfterGate` only if the metadata
+      convention proves itself insufficient in practice.
 - [ ] Seeding semantics for `MagnusSynth` (deterministic, no RNG needed) vs
       `TrajectorySim` (per-trajectory seed). Document clearly.
 
@@ -338,8 +357,9 @@ plus sign/phase. Sparse storage `Vec<(PauliString, f64)>` for
    `PauliLindbladModel`. Tests: #6.
 5. **`TrajectorySim`** (Path b) -- MCWF, rayon fan-out. Tests: #4 properly,
    small rep-code validation run.
-6. **`NoiseEvent::AfterGate::duration` + `LindbladChannel`** in `pecos-neo`.
-   Tests: #7.
+6. **`"gate_duration"` metadata convention + `LindbladChannel`** in
+   `pecos-neo` (converter reads `TickCircuit` attribute; channel looks up
+   cached Pauli rates). Tests: #7.
 7. **Higher-order Magnus (3, 4)** + convergence detection. Tests: #3.
 
 Stop after step 4 if that's all that's needed for the next research run.

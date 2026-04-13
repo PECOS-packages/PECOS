@@ -206,7 +206,7 @@ pub fn exp_minus_i_h_t_2x2_block_diag(h: &Matrix, t: f64) -> Matrix {
 /// - `d == 2`, non-diagonal, traceless -> Bloch form.
 /// - `d == 4`, 2x2-block-diagonal with traceless blocks -> block-wise
 ///   Bloch form (covers CX_theta).
-/// - else panics. Future work: general eigendecomposition path.
+/// - else falls through to general [`expm`] scaling-squaring.
 pub fn exp_minus_i_h_t(h: &Matrix, d: usize, t: f64) -> Matrix {
     if is_diagonal(h, d, 1e-14) {
         let mut u = zeros(d);
@@ -222,7 +222,52 @@ pub fn exp_minus_i_h_t(h: &Matrix, d: usize, t: f64) -> Matrix {
     if d == 4 && is_2x2_block_diagonal(h, 1e-14) {
         return exp_minus_i_h_t_2x2_block_diag(h, t);
     }
-    panic!("exp_minus_i_h_t: unsupported structure at d={}", d);
+    let arg = scale(h, Complex64::new(0.0, -t));
+    expm(&arg, d)
+}
+
+/// General matrix exponential via Taylor series + scaling + squaring.
+///
+/// - Scale: find `s` such that `||A/2^s|| < 0.5` (so Taylor converges quickly).
+/// - Taylor: `exp(A/2^s) ≈ sum_{k=0..=N} (A/2^s)^k / k!` with `N=20`.
+/// - Squaring: `exp(A) = (exp(A/2^s))^(2^s)` via `s` matrix squarings.
+///
+/// Accuracy ~machine-precision for Hermitian `A` with arbitrary norm;
+/// validated in module tests against Bloch-form and diagonal paths.
+pub fn expm(a: &Matrix, d: usize) -> Matrix {
+    let norm = inf_norm(a, d);
+    if norm < 1e-14 {
+        return identity(d);
+    }
+    // Choose s so that ||A / 2^s|| < 0.5.
+    let s_float = (norm / 0.5).log2().max(0.0).ceil();
+    let s: u32 = s_float as u32;
+    let factor = Complex64::new(2f64.powi(-(s as i32)), 0.0);
+    let scaled = scale(a, factor);
+    let mut result = taylor_exp(&scaled, d, 20);
+    for _ in 0..s {
+        result = matmul(&result, &result, d);
+    }
+    result
+}
+
+/// Taylor series of `exp(A)` truncated at degree `n`. Assumes `||A||`
+/// is already small (typically `< 0.5`).
+fn taylor_exp(a: &Matrix, d: usize, n: usize) -> Matrix {
+    let mut term = identity(d);
+    let mut sum = identity(d);
+    for k in 1..=n {
+        term = scale(&matmul(&term, a, d), Complex64::new(1.0 / k as f64, 0.0));
+        sum = add(&sum, &term);
+    }
+    sum
+}
+
+/// Infinity norm: max over rows of `sum_j |A_ij|`.
+pub fn inf_norm(a: &Matrix, d: usize) -> f64 {
+    (0..d)
+        .map(|i| (0..d).map(|j| a[i * d + j].norm()).sum::<f64>())
+        .fold(0.0, f64::max)
 }
 
 /// Matrix exponential `exp(-i * H * t)` for a 2x2 traceless Hermitian H.

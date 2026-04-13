@@ -3902,6 +3902,7 @@ dependencies = [
  "num-complex 0.4.6",
  "pecos-qec",
  "pecos-quantum",
+ "proptest",
  "rand 0.10.0",
  "serde",
  "serde_json",

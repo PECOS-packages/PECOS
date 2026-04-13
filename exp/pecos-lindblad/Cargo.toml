@@ -28,5 +28,6 @@ serde = { workspace = true, optional = true }
 approx = "0.5"
 pecos-qec.workspace = true
 pecos-quantum.workspace = true
+proptest = "1.4"
 rand.workspace = true
 serde_json.workspace = true

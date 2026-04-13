@@ -16,6 +16,7 @@ use std::fmt;
 
 /// Single-qubit Pauli operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum Pauli1 {
     I = 0,
@@ -72,6 +73,7 @@ impl Pauli1 {
 
 /// Multi-qubit Pauli string. Index 0 = leftmost factor.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PauliString(pub Vec<Pauli1>);
 
 impl PauliString {

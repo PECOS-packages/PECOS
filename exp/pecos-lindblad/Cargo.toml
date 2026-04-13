@@ -14,13 +14,19 @@ readme = "README.md"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 num-complex.workspace = true
 thiserror.workspace = true
 rand.workspace = true
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx = "0.5"
 pecos-qec.workspace = true
 pecos-quantum.workspace = true
 rand.workspace = true
+serde_json.workspace = true

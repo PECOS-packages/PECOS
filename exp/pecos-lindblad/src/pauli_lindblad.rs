@@ -21,6 +21,7 @@ use crate::basis::{Pauli1, PauliString};
 /// `rates[i]` is the integrated rate `lambda_k` (dimensionless) for
 /// `supports[i]`. All rates are non-negative for forward simulation.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PauliLindbladModel {
     pub supports: Vec<PauliString>,
     pub rates: Vec<f64>,

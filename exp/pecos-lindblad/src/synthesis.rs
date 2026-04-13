@@ -65,6 +65,93 @@ pub fn synthesize_numerical_1q(gate: &Gate, n_steps: usize) -> PauliLindbladMode
     synthesize_numerical(gate, n_steps)
 }
 
+/// Default number of time slices for `synthesize_superop`. Midpoint-rule
+/// propagator per slice is second-order accurate; `N=128` gives ~`1e-10`
+/// precision for single-oscillation gates.
+pub const DEFAULT_N_SLICES: usize = 128;
+
+/// **General** synthesis for any gate with any combination of coherent
+/// and dissipative noise via time-slicing of the interaction-frame
+/// Lindblad superoperator.
+///
+/// For each midpoint `t_k`, builds `L_I(t_k) = U_g^dag(t_k) L_noise
+/// U_g(t_k)`, exponentiates to get a per-slice propagator
+/// `exp(L_I(t_k) * dt)` and multiplies them left-to-right to form
+/// `U_total`. Applies to each `vec(P_b)`, extracts Pauli fidelity, inverts
+/// via Walsh-Hadamard.
+///
+/// This is the only path that handles **gates with `H_g != 0` AND
+/// simultaneous coherent + dissipative noise** -- the general case that
+/// `synthesize_numerical` (dissipative leading-order only) and
+/// `synthesize_exact_unitary` (coherent, asserts no c_ops) don't cover.
+///
+/// Cost: `n_slices` per-slice superoperator builds + exps at size
+/// `d^2 x d^2`. For 2Q gates `d^2=16`, comfortably sub-second at
+/// `n_slices=128`.
+pub fn synthesize_superop(gate: &Gate, n_slices: usize) -> PauliLindbladModel {
+    assert!(n_slices >= 1, "n_slices must be >= 1");
+    let n = gate.num_qubits;
+    let d = 1usize << n;
+    let d2 = d * d;
+    let tau = gate.tau_g;
+    let dt = tau / n_slices as f64;
+
+    let h_g = &gate.ideal.hamiltonian;
+    let h_delta = &gate.noise.hamiltonian;
+
+    // U_total = prod_k exp(L_I(t_k) * dt), built left-to-right (newest leftmost).
+    let mut u_total = matrix::identity(d2);
+    for k in 0..n_slices {
+        let t_mid = (k as f64 + 0.5) * dt;
+        let u_g = matrix::exp_minus_i_h_t(h_g, d, t_mid);
+        let u_g_dag = matrix::dag(&u_g, d);
+
+        // Transform noise operators to the interaction frame at t_mid.
+        let h_i = matrix::matmul(&matrix::matmul(&u_g_dag, h_delta, d), &u_g, d);
+        let collapse_i: Vec<(Matrix, f64)> = gate
+            .noise
+            .collapse
+            .iter()
+            .map(|(c, g)| {
+                (
+                    matrix::matmul(&matrix::matmul(&u_g_dag, c, d), &u_g, d),
+                    *g,
+                )
+            })
+            .collect();
+
+        // L_I(t_mid) superop.
+        let lind_i = Lindbladian::new(d, h_i, collapse_i);
+        let l_super = lind_i.superoperator();
+
+        // Per-slice propagator and accumulate.
+        let u_slice = matrix::expm(&matrix::scale(&l_super, Complex64::new(dt, 0.0)), d2);
+        u_total = matrix::matmul(&u_slice, &u_total, d2);
+    }
+
+    // Apply to each Pauli, extract fidelities, invert.
+    let paulis = PauliString::enumerate_nonidentity(n);
+    let alphas: Vec<f64> = paulis
+        .iter()
+        .map(|p| {
+            let p_mat = matrix::pauli_string_mat(p);
+            let vec_p = matrix::vec_of(&p_mat, d);
+            let vec_applied = matrix::matvec(&u_total, &vec_p, d2);
+            let applied = matrix::unvec(&vec_applied, d);
+            let inner = matrix::trace(&matrix::matmul(&p_mat, &applied, d), d);
+            let f_b = inner.re / d as f64;
+            assert!(
+                f_b > 0.1,
+                "Pauli fidelity {} too low for {:?}; noise outside weak regime",
+                f_b,
+                p,
+            );
+            -f_b.ln()
+        })
+        .collect();
+    model_from_alphas_walsh(paulis, alphas, n)
+}
+
 /// Synthesize a Pauli-Lindblad model from **mixed coherent + dissipative
 /// noise** on a time-independent ideal Hamiltonian (currently: identity
 /// gate, `H_g = 0`) via the full Lindblad superoperator path.

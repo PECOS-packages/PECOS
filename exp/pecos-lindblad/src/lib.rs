@@ -86,5 +86,6 @@ pub use lindbladian::Lindbladian;
 pub use pauli_lindblad::PauliLindbladModel;
 pub use synthesis::{
     synthesize_exact_unitary, synthesize_identity_1q, synthesize_numerical,
-    synthesize_numerical_1q, synthesize_superop_identity, DEFAULT_N_STEPS,
+    synthesize_numerical_1q, synthesize_superop, synthesize_superop_identity,
+    DEFAULT_N_SLICES, DEFAULT_N_STEPS,
 };

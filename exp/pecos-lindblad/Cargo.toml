@@ -21,3 +21,6 @@ rand.workspace = true
 
 [dev-dependencies]
 approx = "0.5"
+pecos-qec.workspace = true
+pecos-quantum.workspace = true
+rand.workspace = true

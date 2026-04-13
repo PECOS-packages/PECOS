@@ -180,19 +180,45 @@ pub struct TrajectoryBatch {
 
 ### Glue into DemStabSim
 
+**Current state (2026-04-13).** `pecos-qec::dem_stab::DemStabSim::builder()
+.noise(...)` only accepts `NoiseConfig { p1, p2, p_meas, p_init }` --
+four scalar uniform-depolarizing probabilities. `PauliLindbladModel`'s
+per-Pauli per-gate rates do not fit this shape without loss.
+
+**Scaffold integration shipped** in
+`exp/pecos-lindblad/tests/dem_stab_integration.rs`: collapse the PL model
+to `p1 = pl_1q.total_rate()` and `p2 = pl_cx.total_rate()` and feed those
+scalars to `NoiseConfig::new(p1, p2, 0.0, 0.0)`. End-to-end flow works,
+but the collapse loses per-Pauli structure -- order of magnitude right,
+per-Pauli wrong (treats AD+PD as symmetric X/Y/Z).
+
+**Proper integration requires changes in `pecos-qec`** (out of scope for
+`pecos-lindblad`):
+
 ```rust
-// in pecos-qec::dem_stab
+// Future API, once NoiseConfig is generalized:
 impl DemStabNoiseModel for pecos_lindblad::PauliLindbladModel { ... }
 
-// Usage:
-let pl_noise: PauliLindbladModel = MagnusSynth::order(2).synthesize(&gate_cx)?;
+let pl_noise = synthesize_numerical(&gate_cx, DEFAULT_N_STEPS);
 let sim = DemStabSim::builder()
     .circuit(dag)
-    .noise(pl_noise)           // directly consumed, no conversion layer
+    .noise(pl_noise)           // directly consumed, no scalar collapse
     .detectors(...)
     .observables(...)
     .build()?;
 ```
+
+Required changes on `pecos-qec` side:
+1. `NoiseSpec` trait or enum generalizing `NoiseConfig`. At minimum two
+   variants: `Uniform { p1, p2, p_meas, p_init }` (current) and
+   `PerGatePauliLindblad { per_gate_type: HashMap<GateType, PauliLindbladModel> }`.
+2. `DemSamplerBuilder::with_noise_spec(...)` replacing scalar `.with_noise(...)`.
+3. Mechanism builder: instead of splitting `p1` into `X/Y/Z` with weight
+   `1/3` each, read per-Pauli rates from the `PauliLindbladModel` for
+   that gate type.
+
+Land this as a separate PR against `crates/pecos-qec/`; `pecos-lindblad`
+stays as the pure-math supplier.
 
 ### Glue into pecos-neo (non-DEM stabilizer Monte Carlo)
 

@@ -3900,6 +3900,8 @@ version = "0.2.0-dev.0"
 dependencies = [
  "approx 0.5.1",
  "num-complex 0.4.6",
+ "pecos-qec",
+ "pecos-quantum",
  "rand 0.10.0",
  "thiserror 2.0.18",
 ]

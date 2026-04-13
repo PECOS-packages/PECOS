@@ -40,6 +40,28 @@ impl PauliLindbladModel {
         self.supports.iter().zip(&self.rates).find(|(s, _)| *s == p).map(|(_, r)| *r).unwrap_or(0.0)
     }
 
+    /// Sum of all rates. To leading order this is the total probability of
+    /// *any* Pauli error firing during the gate.
+    pub fn total_rate(&self) -> f64 {
+        self.rates.iter().sum()
+    }
+
+    /// Sum of rates restricted to a given Pauli weight (number of
+    /// non-identity factors).
+    pub fn rate_at_weight(&self, weight: usize) -> f64 {
+        self.supports
+            .iter()
+            .zip(&self.rates)
+            .filter(|(s, _)| s.weight() == weight)
+            .map(|(_, r)| *r)
+            .sum()
+    }
+
+    /// Largest single rate in the model.
+    pub fn max_rate(&self) -> f64 {
+        self.rates.iter().copied().fold(0.0, f64::max)
+    }
+
     /// Sample an error realization over integrated duration `t_scale`:
     /// each Pauli term independently fires with probability
     /// `p_k = (1 - exp(-2 * lambda_k * t_scale)) / 2`. Returns the
@@ -62,6 +84,21 @@ impl PauliLindbladModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_helpers() {
+        let supports = vec![
+            PauliString::from_str("IX").unwrap(),
+            PauliString::from_str("IZ").unwrap(),
+            PauliString::from_str("XX").unwrap(),
+        ];
+        let rates = vec![0.001, 0.003, 0.002];
+        let model = PauliLindbladModel::new(supports, rates);
+        assert!((model.total_rate() - 0.006).abs() < 1e-12);
+        assert!((model.rate_at_weight(1) - 0.004).abs() < 1e-12); // IX + IZ
+        assert!((model.rate_at_weight(2) - 0.002).abs() < 1e-12); // XX
+        assert!((model.max_rate() - 0.003).abs() < 1e-12);
+    }
 
     #[test]
     fn sample_zero_rates_is_identity() {

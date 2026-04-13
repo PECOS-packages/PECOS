@@ -12,7 +12,10 @@
 
 //! Gate type: ideal Hamiltonian + noise Lindbladian + duration.
 
+use num_complex::Complex64;
+
 use crate::lindbladian::Lindbladian;
+use crate::matrix::{self, Matrix};
 
 /// A physical gate with its ideal rotation, noise model, and duration.
 #[derive(Clone, Debug)]
@@ -37,6 +40,27 @@ impl Gate {
             label: "I".to_string(),
             num_qubits,
             ideal: Lindbladian::zero(d),
+            noise,
+            tau_g,
+        }
+    }
+
+    /// 1-qubit arbitrary-angle X rotation: `X_theta = exp(-i theta/2 X)`.
+    /// Parameterized by drive frequency `omega_x` and rotation angle
+    /// `theta`; gate duration is `theta / omega_x`.
+    pub fn x_theta(omega_x: f64, theta: f64, noise: Lindbladian) -> Self {
+        assert!(omega_x > 0.0, "omega_x must be positive");
+        assert_eq!(noise.d, 2, "x_theta is 1-qubit");
+        let d = 2;
+        // H_g = (omega_x / 2) * X
+        let h_g: Matrix =
+            matrix::scale(&matrix::pauli_1q(crate::basis::Pauli1::X), Complex64::new(omega_x / 2.0, 0.0));
+        let ideal = Lindbladian::new(d, h_g, Vec::new());
+        let tau_g = theta / omega_x;
+        Self {
+            label: format!("X_{{{:.4}}}", theta),
+            num_qubits: 1,
+            ideal,
             noise,
             tau_g,
         }

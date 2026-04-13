@@ -32,4 +32,4 @@ pub use basis::{Pauli1, PauliString};
 pub use gate::Gate;
 pub use lindbladian::Lindbladian;
 pub use pauli_lindblad::PauliLindbladModel;
-pub use synthesis::synthesize_identity_1q;
+pub use synthesis::{synthesize_identity_1q, synthesize_numerical_1q, DEFAULT_N_STEPS};

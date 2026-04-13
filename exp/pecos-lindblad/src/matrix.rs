@@ -106,3 +106,36 @@ pub fn sigma_minus() -> Matrix {
     let o = Complex64::new(1.0, 0.0);
     vec![z, z, o, z]
 }
+
+/// Matrix exponential `exp(-i * H * t)` for a 2x2 traceless Hermitian H.
+/// Uses the Bloch form: `exp(-i H t) = cos(r t) I - i sin(r t) H / r`
+/// where `r = sqrt(c_x^2 + c_y^2 + c_z^2)` is the Pauli-decomposition norm.
+/// Panics if `H` has nonzero trace (use a dedicated impl for those cases).
+pub fn exp_minus_i_h_t_1q(h: &Matrix, t: f64) -> Matrix {
+    assert_eq!(h.len(), 4, "exp_minus_i_h_t_1q requires a 2x2 matrix");
+    // Check Hermitian (tolerant).
+    let h00 = h[0];
+    let h01 = h[1];
+    let h10 = h[2];
+    let h11 = h[3];
+    assert!(h00.im.abs() < 1e-12 && h11.im.abs() < 1e-12, "H not Hermitian (diagonal)");
+    assert!((h10 - h01.conj()).norm() < 1e-12, "H not Hermitian (off-diagonal)");
+    let tr = (h00 + h11).re;
+    assert!(tr.abs() < 1e-12, "H must be traceless; got trace = {}", tr);
+
+    // Pauli decomposition: H = c_x X + c_y Y + c_z Z.
+    let c_x = h01.re;
+    let c_y = -h01.im; // since H_{01} = c_x - i c_y
+    let c_z = (h00.re - h11.re) * 0.5;
+
+    let r = (c_x * c_x + c_y * c_y + c_z * c_z).sqrt();
+    if r < 1e-15 {
+        return identity(2);
+    }
+    let c = (r * t).cos();
+    let s = (r * t).sin() / r;
+    let minus_i_s = Complex64::new(0.0, -s);
+    // result = c * I - i s * H
+    let i2 = identity(2);
+    add(&scale(&i2, Complex64::new(c, 0.0)), &scale(h, minus_i_s))
+}

@@ -159,6 +159,90 @@ pub fn recover_t1_t2_from_identity_1q(
     Some((t1, t2))
 }
 
+/// Recovered 2-qubit coherence-time parameters for the (left, right)
+/// qubits of a 2Q gate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RecoveredParams2Q {
+    pub t1_l: f64,
+    pub t2_l: f64,
+    pub t1_r: f64,
+    pub t2_r: f64,
+}
+
+/// Analytic 2Q recovery: given a measured `CZ_theta + AD+PD` PL model,
+/// back-solve `(T_1, T_2)` on each qubit.
+///
+/// Uses paper arXiv:2502.03462 eqs. 896-906:
+///
+/// ```text
+/// lambda_zi = (theta/2) * (beta_phi_l / omega_cz)
+/// lambda_iz = (theta/2) * (beta_phi_r / omega_cz)
+/// lambda_xi = lambda_yi = (2*theta + sin(2*theta))/16 * beta_down_l / omega_cz
+/// lambda_ix = lambda_iy = (2*theta + sin(2*theta))/16 * beta_down_r / omega_cz
+/// ```
+///
+/// Averages the degenerate-in-paper pairs (`lambda_xi` ≈ `lambda_yi`)
+/// for robustness against noisy measurements. Returns `None` if rates
+/// are inconsistent (e.g. negative) or would imply `T_2 > 2 T_1`.
+pub fn recover_ad_pd_2q_from_cz_theta(
+    model: &crate::PauliLindbladModel,
+    omega_cz: f64,
+    theta: f64,
+) -> Option<RecoveredParams2Q> {
+    use crate::PauliString;
+    if omega_cz <= 0.0 || theta <= 0.0 {
+        return None;
+    }
+    let r = |s: &str| model.rate(&PauliString::from_str(s).unwrap());
+    let factor_weight1_amp = (2.0 * theta + (2.0 * theta).sin()) / 16.0;
+
+    // Amplitude damping: average the two equal rates (paper's 2-fold degeneracy).
+    let beta_down_r = 0.5 * (r("IX") + r("IY")) * omega_cz / factor_weight1_amp;
+    let beta_down_l = 0.5 * (r("XI") + r("YI")) * omega_cz / factor_weight1_amp;
+
+    // Dephasing: single-rate back-solve.
+    let beta_phi_r = r("IZ") * 2.0 * omega_cz / theta;
+    let beta_phi_l = r("ZI") * 2.0 * omega_cz / theta;
+
+    if beta_down_l < 0.0 || beta_down_r < 0.0 || beta_phi_l < 0.0 || beta_phi_r < 0.0 {
+        return None;
+    }
+    if beta_down_l < 1e-300 || beta_down_r < 1e-300 {
+        return None;
+    }
+
+    let t1_l = 1.0 / beta_down_l;
+    let t1_r = 1.0 / beta_down_r;
+    // 1/T_2 = 1/(2 T_1) + 1/T_phi and 1/T_phi = beta_phi.
+    let inv_t2_l = 1.0 / (2.0 * t1_l) + beta_phi_l;
+    let inv_t2_r = 1.0 / (2.0 * t1_r) + beta_phi_r;
+    if inv_t2_l <= 0.0 || inv_t2_r <= 0.0 {
+        return None;
+    }
+    Some(RecoveredParams2Q {
+        t1_l,
+        t2_l: 1.0 / inv_t2_l,
+        t1_r,
+        t2_r: 1.0 / inv_t2_r,
+    })
+}
+
+/// Consistency residual for a `CZ_theta + AD+PD` recovery: for the
+/// recovered parameters, compute the L2 residual between observed
+/// degenerate-pair rates (`lambda_xi` vs `lambda_yi`, etc.). Large
+/// residuals flag model mismatch (noise source beyond AD+PD).
+pub fn cz_recovery_residual(model: &crate::PauliLindbladModel) -> f64 {
+    use crate::PauliString;
+    let r = |s: &str| model.rate(&PauliString::from_str(s).unwrap());
+    let pairs = [
+        (r("IX"), r("IY")),
+        (r("XI"), r("YI")),
+        (r("ZX"), r("ZY")),
+        (r("XZ"), r("YZ")),
+    ];
+    pairs.iter().map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt()
+}
+
 /// Per-Pauli mean + standard-deviation statistics from a Monte-Carlo
 /// uncertainty propagation.
 #[derive(Clone, Debug, Default)]

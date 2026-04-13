@@ -227,6 +227,69 @@ pub fn recover_ad_pd_2q_from_cz_theta(
     })
 }
 
+/// Analytic 2Q recovery: given a measured `CX_theta + AD+PD` PL model,
+/// back-solve `(T_1, T_2)` on each qubit.
+///
+/// Uses paper arXiv:2502.03462 eqs. 929-956. `beta_down_r` and
+/// `beta_phi_r` mix in `lambda_iz` / `lambda_zz`; we exploit the
+/// identity
+///
+/// ```text
+/// lambda_iz - lambda_zz = sin(2*theta)/4 * beta_phi_r / omega
+/// ```
+///
+/// to decouple the right-qubit dephasing. Requires `sin(2 theta) != 0`
+/// -- at `theta = 0, pi/2, pi` the formula is degenerate and only
+/// `beta_down_r + 6 beta_phi_r` is recoverable; we return `None`.
+/// `beta_down_l` and `beta_phi_l` come from clean single-unknown rates
+/// (`lambda_xi`, `lambda_zi`).
+pub fn recover_ad_pd_2q_from_cx_theta(
+    model: &crate::PauliLindbladModel,
+    omega_cx: f64,
+    theta: f64,
+) -> Option<RecoveredParams2Q> {
+    use crate::PauliString;
+    if omega_cx <= 0.0 || theta <= 0.0 {
+        return None;
+    }
+    let s2 = (2.0 * theta).sin();
+    if s2.abs() < 1e-10 {
+        // Degenerate: can't separate beta_down_r from beta_phi_r.
+        return None;
+    }
+    let r = |s: &str| model.rate(&PauliString::from_str(s).unwrap());
+
+    // Left qubit: clean single-parameter back-solves.
+    let factor_weight1_amp_l = (2.0 * theta + s2) / 16.0;
+    let beta_down_l = 0.5 * (r("XI") + r("YI")) * omega_cx / factor_weight1_amp_l;
+    let beta_phi_l = r("ZI") * 2.0 * omega_cx / theta;
+
+    // Right qubit: beta_down_r from clean lambda_ix; beta_phi_r via the
+    // (lambda_iz - lambda_zz) decoupling.
+    let beta_down_r = r("IX") * 4.0 * omega_cx / theta;
+    let beta_phi_r = (r("IZ") - r("ZZ")) * 4.0 * omega_cx / s2;
+
+    if beta_down_l < 0.0 || beta_down_r < 0.0 || beta_phi_l < 0.0 || beta_phi_r < 0.0 {
+        return None;
+    }
+    if beta_down_l < 1e-300 || beta_down_r < 1e-300 {
+        return None;
+    }
+    let t1_l = 1.0 / beta_down_l;
+    let t1_r = 1.0 / beta_down_r;
+    let inv_t2_l = 1.0 / (2.0 * t1_l) + beta_phi_l;
+    let inv_t2_r = 1.0 / (2.0 * t1_r) + beta_phi_r;
+    if inv_t2_l <= 0.0 || inv_t2_r <= 0.0 {
+        return None;
+    }
+    Some(RecoveredParams2Q {
+        t1_l,
+        t2_l: 1.0 / inv_t2_l,
+        t1_r,
+        t2_r: 1.0 / inv_t2_r,
+    })
+}
+
 /// Consistency residual for a `CZ_theta + AD+PD` recovery: for the
 /// recovered parameters, compute the L2 residual between observed
 /// degenerate-pair rates (`lambda_xi` vs `lambda_yi`, etc.). Large

@@ -134,5 +134,5 @@ pub use mem_builder::MemBuilder;
 pub use types::{
     DecomposedError, DetectorDef, DetectorErrorModel, ErrorContribution, ErrorMechanism,
     ErrorSourceType, LogicalObservable, MeasurementMechanism, MeasurementNoiseModel, NoiseConfig,
-    combine_probabilities,
+    PerGateTypeNoise, PAULI_1Q_ORDER, PAULI_2Q_ORDER, combine_probabilities,
 };

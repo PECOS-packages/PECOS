@@ -65,7 +65,7 @@ use smallvec::SmallVec;
 use std::collections::BTreeMap;
 use wide::u64x4;
 
-use super::types::combine_probabilities;
+use super::types::{combine_probabilities, PerGateTypeNoise};
 
 // ============================================================================
 // DEM Mechanism (used during building)
@@ -1351,6 +1351,11 @@ impl SamplingStatistics {
 /// Constructs a [`DemSampler`] from a fault influence map, noise parameters,
 /// and explicit detector/observable definitions.
 pub struct DemSamplerBuilder<'a> {
+    /// Optional per-gate-type noise specification. If set, overrides the
+    /// uniform scalar `p1, p2` for any gate type present in its maps.
+    /// Measurement / prep errors still use the scalar `p_meas, p_init`.
+    /// Wired in G2; currently plumbed through but unused in `build()`.
+    per_gate: Option<PerGateTypeNoise>,
     influence_map: &'a DagFaultInfluenceMap,
     p1: f64,
     p2: f64,
@@ -1372,6 +1377,7 @@ impl<'a> DemSamplerBuilder<'a> {
             p2: 0.01,
             p_meas: 0.01,
             p_init: 0.01,
+            per_gate: None,
             detector_records: Vec::new(),
             observable_records: Vec::new(),
             measurement_order: None,
@@ -1379,13 +1385,28 @@ impl<'a> DemSamplerBuilder<'a> {
         }
     }
 
-    /// Set noise parameters.
+    /// Set uniform-depolarizing noise parameters.
     #[must_use]
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_init: f64) -> Self {
         self.p1 = p1;
         self.p2 = p2;
         self.p_meas = p_meas;
         self.p_init = p_init;
+        self
+    }
+
+    /// Set per-gate-type per-Pauli noise specification. When provided,
+    /// overrides the uniform `p1, p2` for any gate type present in the
+    /// spec's maps. Measurement / prep fault rates come from
+    /// `p_meas, p_init` on the [`PerGateTypeNoise`] struct.
+    ///
+    /// Intended consumer: `pecos-lindblad::PauliLindbladModel` via
+    /// per-gate-type adapter helpers.
+    #[must_use]
+    pub fn with_per_gate_noise(mut self, cfg: PerGateTypeNoise) -> Self {
+        self.p_meas = cfg.p_meas;
+        self.p_init = cfg.p_init;
+        self.per_gate = Some(cfg);
         self
     }
 

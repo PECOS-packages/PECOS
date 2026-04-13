@@ -742,6 +742,103 @@ impl NoiseConfig {
 }
 
 // ============================================================================
+// Per-gate-type noise configuration
+// ============================================================================
+
+use pecos_quantum::GateType;
+
+/// Ordered indices for the 3 non-identity 1Q Paulis: `[X, Y, Z]`.
+pub const PAULI_1Q_ORDER: [&str; 3] = ["X", "Y", "Z"];
+
+/// Ordered indices for the 15 non-identity 2Q Pauli pairs. Row/col order:
+/// `I=0, X=1, Y=2, Z=3`; pair `p1 ⊗ p2` index is `4*p1 + p2 - 1` (skip II).
+/// Concretely: `["IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX",
+/// "YY", "YZ", "ZI", "ZX", "ZY", "ZZ"]`.
+pub const PAULI_2Q_ORDER: [&str; 15] = [
+    "IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZI", "ZX", "ZY", "ZZ",
+];
+
+/// Per-gate-type noise specification. Replaces the uniform scalar
+/// `NoiseConfig` with per-`GateType` per-Pauli rates — e.g. an `H` gate
+/// on qubit A can have different `X/Y/Z` rates from an `H` on qubit B
+/// (via different `GateType` tags, if you choose to differentiate).
+///
+/// # Layout
+///
+/// - `rates_1q`: `GateType -> [rate_X, rate_Y, rate_Z]`. For any 1Q gate
+///   type in the map, these rates replace `p1/3` in the uniform model.
+/// - `rates_2q`: `GateType -> [rate_IX, rate_IY, ..., rate_ZZ]`. Index
+///   follows [`PAULI_2Q_ORDER`]. Replaces `p2/15` for gates in the map.
+/// - `fallback`: uniform scalars used for any `GateType` not covered in
+///   `rates_1q` / `rates_2q` AND for measurement / preparation faults.
+///
+/// # Integration with `pecos-lindblad`
+///
+/// The intended workflow is:
+///   1. Synthesize a `PauliLindbladModel` for each gate type via
+///      `pecos_lindblad::synthesize_superop(...)` (or any other path).
+///   2. Convert to `[f64; 3]` / `[f64; 15]` arrays via adapter helpers
+///      in `pecos-lindblad` (G3).
+///   3. Bundle into a `PerGateTypeNoise`.
+///   4. Pass to `DemSamplerBuilder::with_per_gate_noise(...)` (G2).
+#[derive(Debug, Clone, Default)]
+pub struct PerGateTypeNoise {
+    pub rates_1q: HashMap<GateType, [f64; 3]>,
+    pub rates_2q: HashMap<GateType, [f64; 15]>,
+    pub p_meas: f64,
+    pub p_init: f64,
+    pub fallback: NoiseConfig,
+}
+
+impl PerGateTypeNoise {
+    /// Construct with empty gate maps; all gates fall back to `fallback`.
+    #[must_use]
+    pub fn from_fallback(fallback: NoiseConfig) -> Self {
+        Self {
+            rates_1q: HashMap::new(),
+            rates_2q: HashMap::new(),
+            p_meas: fallback.p_meas,
+            p_init: fallback.p_init,
+            fallback,
+        }
+    }
+
+    /// Attach rates for a 1Q gate type.
+    #[must_use]
+    pub fn with_1q_rates(mut self, g: GateType, rates: [f64; 3]) -> Self {
+        self.rates_1q.insert(g, rates);
+        self
+    }
+
+    /// Attach rates for a 2Q gate type.
+    #[must_use]
+    pub fn with_2q_rates(mut self, g: GateType, rates: [f64; 15]) -> Self {
+        self.rates_2q.insert(g, rates);
+        self
+    }
+
+    /// Lookup 1Q Pauli rate for a gate. Returns `fallback.p1 / 3.0` if
+    /// the gate type is not in the map. `pauli_idx` is 0=X, 1=Y, 2=Z.
+    #[must_use]
+    pub fn rate_1q(&self, gate: GateType, pauli_idx: usize) -> f64 {
+        self.rates_1q
+            .get(&gate)
+            .map(|r| r[pauli_idx])
+            .unwrap_or(self.fallback.p1 / 3.0)
+    }
+
+    /// Lookup 2Q Pauli pair rate for a gate. Returns `fallback.p2 / 15.0`
+    /// if the gate type is not in the map. `pair_idx` follows [`PAULI_2Q_ORDER`].
+    #[must_use]
+    pub fn rate_2q(&self, gate: GateType, pair_idx: usize) -> f64 {
+        self.rates_2q
+            .get(&gate)
+            .map(|r| r[pair_idx])
+            .unwrap_or(self.fallback.p2 / 15.0)
+    }
+}
+
+// ============================================================================
 // Detector Error Model
 // ============================================================================
 

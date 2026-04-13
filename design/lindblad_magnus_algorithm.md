@@ -11,10 +11,10 @@ arXiv:2502.03462v1. Equation numbers below from the v1 HTML.
 *Probabilistic error cancellation with sparse Pauli-Lindblad models*,
 Nat. Phys. 2023, arXiv:2201.09866 (sparse PL generator + Pauli fidelity).
 
-**Caveat (scout).** Scout could not run shell / tar-extract the arxiv
-source tarball; spec derived from arxiv HTML endpoints. Tables 3-5 and
-Appendix D (3/4-qubit ZZ crosstalk) not verbatim -- manual re-scrape
-required before Rust transcription.
+**Source status (2026-04-12).** LaTeX tarball extracted to
+`/tmp/lindblad_tex/Main.tex` (1082 lines). All closed-form $\lambda_k$
+expressions below are verbatim from the tex source; equation-label
+references are authoritative.
 
 ---
 
@@ -68,7 +68,13 @@ Omega_2 = 0.5 * integrate_double(
 Omega_3 = (1/6) * integrate_triple(
             comm(L_I(t1), comm(L_I(t2), L_I(t3)))
           + comm(L_I(t3), comm(L_I(t2), L_I(t1))), 0 <= t3 <= t2 <= t1 <= tau_g )
-Omega_4 = // Blanes-Casas-Oteo-Ros 4-commutator formula (paper App. C)
+// VERIFIED prefactor is 1/12 (paper eq. TDLindPT-G4 Sol), NOT 1/24 (BCOR textbook).
+Omega_4 = (1/12) * integrate_quadruple(
+            comm(L_I(t'), comm(L_I(t''), comm(L_I(t'''), L_I(t''''))))
+          + comm(L_I(t'), comm([L_I(t''), L_I(t''')], L_I(t'''')))
+          + comm([[L_I(t'), L_I(t'')], L_I(t''')], L_I(t''''))
+          + comm(L_I(t''), comm(L_I(t'''), comm(L_I(t''''), L_I(t')))),
+            0 <= t'''' <= t''' <= t'' <= t' <= tau_g )
 
 // Step 3 -- effective generator (paper eq. 9-10)
 L_eff = (1/tau_g) * sum_{n=1..N} Omega_n
@@ -100,82 +106,181 @@ and must be small under the weak-noise assumption -- assert
 
 ---
 
-## 3. Closed-form fixtures (Appendix C, Tables 1-2)
+## 3. Closed-form fixtures (Appendix E / `App:WhyPauliLind`)
 
-Transcribed for the golden-test path. Index convention: $P_b$ written as
-two-letter label `ab` = $P_a \otimes P_b$ on (left, right) qubit;
-$i\equiv I$. Rates $\beta_{\downarrow l}, \beta_{\downarrow r}$ are
-amplitude-damping on (left, right) qubit; $\beta_\phi$ is pure dephasing.
+All expressions verbatim from `/tmp/lindblad_tex/Main.tex`. Index convention:
+$P_b$ written as string label `ab` = $P_a \otimes P_b$ on (left, right) qubit;
+$i\equiv I$. Rates: $\beta_{\downarrow j}$ amplitude damping on qubit $j$,
+$\beta_{\phi j}$ pure dephasing on qubit $j$, for $j\in\{l, r\}$.
 
-### Amplitude damping, Table 1
+### Single-qubit identity + AD + PD (exact, non-perturbative)
 
-Identity $I_{\tau_g}$:
+Paper line 812, $\tau_g$-scale:
 $$
-\lambda_{ix}=\lambda_{iy}=\tfrac14\beta_{\downarrow r}\tau_g,\quad
-\lambda_{xi}=\lambda_{yi}=\tfrac14\beta_{\downarrow l}\tau_g;
-\text{ rest } = 0.
+\lambda_x = \lambda_y = \tfrac14\beta_{\downarrow}\tau_g,\quad
+\lambda_z = \tfrac12\beta_\phi\tau_g.
+$$
+Not perturbative -- exact twirled result for identity.
+
+### Single-qubit $X_\theta$ + AD + PD (paper eqs. 869-874)
+
+$$
+\lambda_x = \tfrac{\theta}{4}\tfrac{\beta_\downarrow}{\omega_x},
+$$
+$$
+\lambda_y = \tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_\downarrow}{\omega_x}
+         + \tfrac{2\theta-\sin 2\theta}{8}\tfrac{\beta_\phi}{\omega_x},
+$$
+$$
+\lambda_z = \tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_\downarrow}{\omega_x}
+         + \tfrac{2\theta+\sin 2\theta}{8}\tfrac{\beta_\phi}{\omega_x}.
 $$
 
-$CZ_\theta$ ($\theta = \omega_{cz}\tau_g$):
+### Two-qubit $CZ_\theta$ + AD + PD (paper eqs. 896-906)
+
+$\theta = \omega_{cz}\tau_g$. PD contributions separable from AD:
+$$
+\lambda_{iz} = \tfrac{\theta}{2}\tfrac{\beta_{\phi r}}{\omega_{cz}},\quad
+\lambda_{zi} = \tfrac{\theta}{2}\tfrac{\beta_{\phi l}}{\omega_{cz}},
+$$
 $$
 \lambda_{ix}=\lambda_{iy}=\tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_{\downarrow r}}{\omega_{cz}},\quad
 \lambda_{xi}=\lambda_{yi}=\tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cz}},
 $$
 $$
-\lambda_{xz}=\lambda_{yz}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cz}},\quad
-\lambda_{zx}=\lambda_{zy}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow r}}{\omega_{cz}}.
+\lambda_{zx}=\lambda_{zy}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow r}}{\omega_{cz}},\quad
+\lambda_{xz}=\lambda_{yz}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cz}}.
+$$
+At Clifford angles $\theta = n\pi/2$ the degeneracy becomes 4-fold:
+$\lambda_{ix}=\lambda_{iy}=\lambda_{zx}=\lambda_{zy}$ and
+$\lambda_{xi}=\lambda_{yi}=\lambda_{xz}=\lambda_{yz}$.
+
+### Two-qubit $CX_\theta$ + AD + PD (paper eqs. 929-956)
+
+$\theta = \omega_{cx}\tau_g$. AD and PD **mix** in $\lambda_{iy}, \lambda_{iz},
+\lambda_{zy}, \lambda_{zz}$:
+$$
+\lambda_{ix} = \tfrac{\theta}{4}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},\quad
+\lambda_{zi} = \tfrac{\theta}{2}\tfrac{\beta_{\phi l}}{\omega_{cx}},
+$$
+$$
+\lambda_{iy} = \tfrac{12\theta + 8\sin 2\theta + \sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}}
+            + \tfrac{4\theta - \sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}},
+$$
+$$
+\lambda_{iz} = \tfrac{4\theta - \sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}}
+            + \tfrac{12\theta + 8\sin 2\theta + \sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}},
+$$
+$$
+\lambda_{zy} = \tfrac{12\theta - 8\sin 2\theta + \sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}}
+            + \tfrac{4\theta - \sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}},
+$$
+$$
+\lambda_{zz} = \tfrac{4\theta - \sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}}
+            + \tfrac{12\theta - 8\sin 2\theta + \sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}},
+$$
+$$
+\lambda_{xi} = \lambda_{yi} = \tfrac{2\theta + \sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cx}},\quad
+\lambda_{xx} = \lambda_{yx} = \tfrac{2\theta - \sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cx}}.
 $$
 
-$CX_\theta$ ($\theta = \omega_{cx}\tau_g$):
+**Correction from earlier scout.** Initial scout transcribed
+$\lambda_{iz}=\lambda_{zz}=\frac{4\theta-\sin 4\theta}{128}\frac{\beta_{\downarrow r}}{\omega_{cx}}$
+and missed PD contributions entirely. Verbatim paper formulae above
+supersede.
+
+### Two-qubit phase noise (subsection SubApp:2QPhNoise, lines 962-1001)
+
+Quadratic-in-$\delta$ dependence (coherent noise $H_\delta = (\delta/2)ZZ$).
+Not transcribed here; see paper lines 962-1001 if PECOS needs coherent-
+noise fixtures before v1 ships.
+
+### Three-qubit ZZ crosstalk (paper eqs. 1009-1011)
+
+**Only non-trivial case**: $CX_\theta \otimes I$ with $IZZ$ crosstalk between
+target and spectator. $H_g = (\omega_{cz}/2)(IXI-ZXI)$,
+$H_\delta = (\delta_{izz}/2)IZZ$. Produces weight-2 **and weight-3** PL terms:
 $$
-\lambda_{ix}=\tfrac{\theta}{4}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},\quad
-\lambda_{iy}=\tfrac{12\theta+8\sin 2\theta+\sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},
+\lambda_{iyz} = \lambda_{zyz} = \tfrac{\sin^4\theta}{16}\tfrac{\delta_{izz}^2}{\omega_{cx}^2},
 $$
 $$
-\lambda_{iz}=\lambda_{zz}=\tfrac{4\theta-\sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}},\quad
-\lambda_{xi}=\lambda_{yi}=\tfrac{2\theta+\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cx}},
+\lambda_{izz} = \tfrac{[2\theta + \sin 2\theta]^2}{64}\tfrac{\delta_{izz}^2}{\omega_{cx}^2},\quad
+\lambda_{zzz} = \tfrac{[2\theta - \sin 2\theta]^2}{64}\tfrac{\delta_{izz}^2}{\omega_{cx}^2}.
+$$
+**Important for PECOS:** weight-3 terms break the standard weight-2-only
+sparse-PL sparsity assumption -- `PauliLindbladModel` must allow
+user-specified basis $\mathcal{K}$ with weight > 2.
+
+### Four-qubit ZZ crosstalk (paper eqs. 1044-1062)
+
+Only case (iv) -- $CX_\theta \otimes X_\theta C$ with $IZZI$ crosstalk on
+middle two qubits -- is non-trivial (case (iii) reduces to 3Q). Yields
+weight-3 and weight-4 PL terms.
+
+$H_g = (\omega_{cx}/2)[(IXII-ZXII) + (IIIX-IIZX)]$,
+$H_\delta = (\delta_{izzi}/2)IZZI$:
+$$
+\lambda_{iyyi} = \lambda_{iyyz} = \lambda_{izzz} = \lambda_{zyyi} = \lambda_{zyyz}
+= \tfrac{[4\theta - \sin 4\theta]^2}{4096}\tfrac{\delta_{izzi}^2}{\omega_{cx}^2},
 $$
 $$
-\lambda_{xx}=\lambda_{yx}=\tfrac{2\theta-\sin 2\theta}{16}\tfrac{\beta_{\downarrow l}}{\omega_{cx}},\quad
-\lambda_{zy}=\tfrac{12\theta-8\sin 2\theta+\sin 4\theta}{128}\tfrac{\beta_{\downarrow r}}{\omega_{cx}}.
+\lambda_{iyzi} = \lambda_{izyi} = \lambda_{iyzz} = \lambda_{zzyi}
+= \tfrac{\sin^4\theta [3 + \cos 2\theta]^2}{256}\tfrac{\delta_{izzi}^2}{\omega_{cx}^2},
+$$
+$$
+\lambda_{iyzz} = \lambda_{zyzz} = \lambda_{zzyi} = \lambda_{zzyz}
+= \tfrac{\sin^8\theta}{64}\tfrac{\delta_{izzi}^2}{\omega_{cx}^2},
+$$
+$$
+\lambda_{izzi} = \tfrac{[12\theta + 8\sin 2\theta + \sin 4\theta]^2}{4096}\tfrac{\delta_{izzi}^2}{\omega_{cx}^2},
+$$
+$$
+\lambda_{zzzz} = \tfrac{[12\theta - 8\sin 2\theta + \sin 4\theta]^2}{4096}\tfrac{\delta_{izzi}^2}{\omega_{cx}^2}.
 $$
 
-### Pure dephasing, Table 2
+Note: paper appears to have duplicate labels in the first group
+($\lambda_{iyyz}$ appears twice) -- possible typo; verify against any
+erratum before Rust transcription.
 
-Only $\lambda_{iz}, \lambda_{zi}, \lambda_{iy}, \lambda_{zy}, \lambda_{zz}$
-nonzero.
+### Leading-order precision (paper App:LindPertPrecision)
 
-Identity: $\lambda_{iz}=\tfrac12\beta_{\phi r}\tau_g$,
-$\lambda_{zi}=\tfrac12\beta_{\phi l}\tau_g$.
+For $CX_{\pi/4}$ at $\beta_\downarrow/\omega_{cx} \approx 10^{-2}$: deviation
+$\sim O(10^{-5})$. At $10^{-1}$: deviation $\sim O(10^{-4})$. Use as
+guidance for convergence-regime defaults in `MagnusSynth`.
 
-$CX_\theta$:
-$$
-\lambda_{iz}=\tfrac{12\theta+8\sin 2\theta+\sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}},\quad
-\lambda_{zz}=\tfrac{12\theta-8\sin 2\theta+\sin 4\theta}{64}\tfrac{\beta_{\phi r}}{\omega_{cx}}.
-$$
-
-**Test fixture usage.** Feed $H_{CR}$ and $L\in\{\sigma^-, Z\}$ into the
-algorithm; compare against these closed forms to `< 1e-10`. The cases above
-are the minimum golden set; extend with CZ pure-dephasing and CX non-left
-cases from Tables 1-2 (not transcribed here -- see paper).
+**Test fixture usage.** Feed $H_{CR}$ or $H_{CZ}$ and $L\in\{\sigma^-, Z\}$
+into the algorithm; compare against closed forms to `< 1e-10`. For 3Q/4Q
+crosstalk, feed $H_\delta = (\delta/2)P$ (coherent, not incoherent) and
+verify quadratic scaling in $\delta$.
 
 ---
 
-## 4. Appendix D: multi-qubit ZZ crosstalk
+## 4. Effort revision (post-latex-extract)
 
-- **D.7** -- three-qubit ZZ crosstalk.
-- **D.8** -- four-qubit ZZ crosstalk.
+**Scout initial estimate:** 200-300 formulae. **Actual (from verbatim
+tex extract):** ~25-30 distinct $\lambda_k$ expressions across the
+whole appendix. Most cases collapse: paper notes "the only non-trivial
+case is $CX_\theta \otimes I$ with $IZZ$" etc. Much less transcription
+work than scout estimated.
 
-**Form.** Plain LaTeX tables; *not* SymPy/Mathematica-parseable.
-Each cell is a rational in $\theta$ with $\sin/\cos$ and one
-$\beta/\omega$ factor.
+Breakdown of distinct formulae:
+- 1Q identity (AD+PD): 3 entries (non-perturbative).
+- 1Q $X_\theta$: 3 entries with AD+PD mixing.
+- 2Q $CZ_\theta$: 8 entries (mostly 2-fold/4-fold degenerate).
+- 2Q $CX_\theta$: 9 entries with AD+PD mixing on 4 of them.
+- 2Q phase noise: untranscribed; coherent ZZ, quadratic in $\delta$
+  (lines 962-1001).
+- 3Q ZZ crosstalk: 3 entries ($CX \otimes I$ only).
+- 4Q ZZ crosstalk: 5 groups (many-fold degenerate) for
+  $CX_\theta \otimes X_\theta C$ only.
 
-**Effort estimate.** Tables 1-2 alone contain ~20 distinct formulae per
-gate column. Extrapolating to D.7+D.8 plus remaining Tables 3-5 yields
-roughly **200-300 closed-form $\lambda_k$ formulae total**. Transcribe
-into a Rust lookup `(gate_type, pauli_label) -> fn(theta, beta, omega)
--> f64`. One focused afternoon of careful typing + property-test each
-entry against the numerical (Magnus-integrated) path.
+Rust lookup form: `(gate_type, pauli_label) -> fn(theta, beta_ad_l,
+beta_ad_r, beta_pd_l, beta_pd_r, omega) -> f64`. One afternoon. Test each
+against a numerical Magnus order-2 integration on the same inputs.
+
+**Ambiguity flag.** Paper's 4Q section has an apparent label typo
+(`lambda_iyyz` listed twice in one group). Manual review + possible
+erratum check required.
 
 ---
 
@@ -245,11 +350,13 @@ tracked; forward QEC simulation uses $\lambda_k \ge 0$ only.
   (lossy), warn/error on negative, or bump order (expensive). Start with
   "warn + clip" and log the truncation residual.
 
-- **Omega_3 / Omega_4 prefactor verification.** Scout could not extract
-  Appendix C verbatim through the HTML endpoints. Blanes-Casas-Oteo-Ros
-  recurrence is the textbook safe default; first implementation must
-  regression-test against Tables 1-2 closed forms before trusting higher
-  orders. **Blocking item for order $>2$.**
+- **Omega_3 / Omega_4 prefactor verification.** Resolved (2026-04-12):
+  $\Omega_3$ has prefactor $1/6$ and $\Omega_4$ has prefactor **$1/12$**
+  (paper eq. TDLindPT-G4 Sol, line 688 of Main.tex), with 4 specific
+  nested-commutator terms explicitly listed. Note: textbook BCOR uses
+  $1/24$ with a different term decomposition -- the paper's form is
+  equivalent by commutator identities but the prefactor is $1/12$ as
+  written. Use paper's form verbatim.
 
 - **Time-dependent $H_g(t)$.** Paper assumes quasi-time-independent.
   Real pulse shapes (Gaussian, DRAG) break this. Dyson path handles
@@ -318,6 +425,10 @@ Cross-check:
   applications* (Phys. Rep. 2009) -- textbook for $\Omega_n$ formulae
 
 Next scout TODO:
-- Re-scrape arxiv LaTeX source of 2502.03462 with a tool capable of
-  `curl + tar`. Extract Tables 3-5 and Appendix D verbatim. Feed into
-  Phase 5.
+- 2Q phase noise (paper subsection SubApp:2QPhNoise, lines 962-1001):
+  coherent-noise test fixtures. Low priority; only needed if coherent
+  $ZZ$ test path is in v1.
+- Verify paper's apparent 4Q label typo ($\lambda_{iyyz}$ listed twice).
+
+Source checked out at `/tmp/lindblad_tex/Main.tex` (ephemeral). For a
+permanent copy, pull from `arxiv.org/e-print/2502.03462`.

@@ -36,7 +36,6 @@ rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 rand.workspace = true
-pecos-quest.workspace = true
 paste.workspace = true
 
 [lints]

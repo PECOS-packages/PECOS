@@ -10,7 +10,7 @@
 
 use pecos_core::{QubitId, qid};
 use pecos_gpu_sims::GpuStabMulti;
-use pecos_gpu_sims::gpu_probe::{GpuAdapterInfo, GpuStartupError, request_default_gpu_device};
+use pecos_gpu_sims::gpu_probe::{GpuAdapterInfo, GpuStartupError, gpu_context};
 use pecos_random::PecosRng;
 use serde_json::json;
 use std::process::ExitCode;
@@ -71,7 +71,7 @@ fn main() -> ExitCode {
     let quiet = args.iter().any(|arg| arg == "-q" || arg == "--quiet");
     let json_output = args.iter().any(|arg| arg == "-j" || arg == "--json");
 
-    match request_default_gpu_device("gpu-check device") {
+    match gpu_context() {
         Ok(gpu) => match run_simulator_smoke_test() {
             Ok(()) => {
                 if json_output {

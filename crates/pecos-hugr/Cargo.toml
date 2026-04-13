@@ -44,7 +44,7 @@ tempfile.workspace = true
 # For creating test HUGRs from DagCircuit
 pecos-quantum = { workspace = true, features = ["hugr"] }
 # For integration testing with quantum simulator
-pecos-quest.workspace = true
+pecos-simulators.workspace = true
 # For compiling WAT to WASM in tests
 wat.workspace = true
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from pecos.reps.pyphir.op_types import QOp
-from pecos.simulators import Qulacs, StateVec
+from pecos.simulators import StateVec
 from pecos.simulators.sparsestab.state import SparseStabPy
 
 JSONType = dict[str, Any] | list[Any] | str | int | float | bool | None
@@ -33,21 +33,9 @@ except ImportError:
     MPS = None
 
 try:
-    from pecos.simulators import Qulacs
-except ImportError:
-    Qulacs = None
-
-
-try:
     from pecos.simulators import CuStateVec
 except ImportError:
     CuStateVec = None
-
-try:
-    from pecos.simulators import QuestDensityMatrix, QuestStateVec
-except ImportError:
-    QuestStateVec = None
-    QuestDensityMatrix = None
 
 try:
     from pecos.simulators import CudaStabilizer, CudaStateVec
@@ -61,7 +49,7 @@ class QuantumSimulator:
 
     This class provides a unified interface for various quantum simulation backends
     including stabilizer simulators, state vector simulators, and specialized
-    simulators like MPS, Qulacs, and cuQuantum.
+    simulators like MPS and cuQuantum.
     """
 
     def __init__(self, backend: str | object | None = None, **params: JSONType) -> None:
@@ -97,23 +85,12 @@ class QuantumSimulator:
         if isinstance(self.backend, str):
             if self.backend == "stabilizer":
                 self.state = SparseStabPy
-            elif self.backend in "state-vector":
-                if Qulacs is not None:
-                    self.state = Qulacs
-                else:
-                    self.state = StateVec
-            elif self.backend == "StateVec":
+            elif self.backend in "state-vector" or self.backend == "StateVec":
                 self.state = StateVec
             elif self.backend in {"MPS", "mps"}:
                 self.state = MPS
-            elif self.backend == "Qulacs":
-                self.state = Qulacs
             elif self.backend == "CuStateVec":
                 self.state = CuStateVec
-            elif self.backend == "QuestStateVec":
-                self.state = QuestStateVec
-            elif self.backend == "QuestDensityMatrix":
-                self.state = QuestDensityMatrix
             elif self.backend == "CudaStateVec":
                 self.state = CudaStateVec
             elif self.backend == "CudaStabilizer":

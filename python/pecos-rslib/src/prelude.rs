@@ -30,10 +30,6 @@ pub use pecos_hugr_qis::prelude::*;
 // PHIR-JSON format
 pub use pecos_phir_json::prelude::*;
 
-// C++ simulator backends
-pub use pecos_quest::{QuestDensityMatrix, QuestStateVec};
-pub use pecos_qulacs::QulacsStateVec;
-
 // WASM types (feature-gated)
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::ForeignObject;

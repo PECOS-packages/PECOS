@@ -43,6 +43,7 @@
 // Converting probability (f64) to fixed-point threshold (u32) is intentional
 #![allow(clippy::cast_sign_loss)]
 
+use crate::gpu_probe::gpu_context;
 use pecos_random::PecosRng;
 use pecos_simulators::measurement_sampler::MeasurementKind;
 
@@ -281,23 +282,9 @@ impl GpuMeasurementSampler {
             }
         }
 
-        // Initialize wgpu
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| "No GPU adapter found")?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("GpuMeasurementSampler Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: adapter.limits(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("Failed to create device: {e}"))?;
+        let ctx = gpu_context().map_err(|e| e.to_string())?;
+        let device = ctx.device;
+        let queue = ctx.queue;
 
         let num_measurements = measurements.len() as u32;
         let num_words = max_shots.div_ceil(32) as u32;
@@ -971,8 +958,6 @@ impl GpuMeasurementSampler {
         self.max_shots
     }
 }
-
-crate::impl_gpu_drop!(GpuMeasurementSampler);
 
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss)] // Test code computes ratios from counts

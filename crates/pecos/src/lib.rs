@@ -76,14 +76,6 @@ pub mod simulators {
         SparseStabEngineBuilder, StabilizerEngineBuilder, StateVectorEngineBuilder, clifford_rz,
         density_matrix, sparse_stab, stabilizer, state_vector,
     };
-    #[cfg(feature = "quest")]
-    pub use pecos_quest::{
-        QuestDensityMatrix, QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder,
-        QuestStateVec, QuestStateVecEngine, QuestStateVectorEngineBuilder, quest_density_matrix,
-        quest_state_vec,
-    };
-    #[cfg(feature = "qulacs")]
-    pub use pecos_qulacs::QulacsStateVec;
     pub use pecos_simulators::*;
 }
 
@@ -230,13 +222,6 @@ pub use pecos_qis::{
 };
 #[cfg(feature = "qis")]
 pub use pecos_qis::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
-#[cfg(feature = "quest")]
-pub use pecos_quest::{
-    QuestDensityMatrix, QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder, QuestStateVec,
-    QuestStateVecEngine, QuestStateVectorEngineBuilder, quest_density_matrix, quest_state_vec,
-};
-#[cfg(feature = "qulacs")]
-pub use pecos_qulacs::QulacsStateVec;
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
 #[cfg(feature = "runtime")]

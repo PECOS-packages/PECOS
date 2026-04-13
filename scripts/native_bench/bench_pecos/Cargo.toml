@@ -1,0 +1,30 @@
+[package]
+name = "bench-pecos"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "bench_pecos"
+path = "main.rs"
+
+[features]
+default = []
+gpu = ["dep:pecos-gpu-sims"]
+cuquantum = ["dep:pecos-cuquantum"]
+
+[dependencies]
+pecos-simulators = { path = "../../../crates/pecos-simulators", features = ["parallel"] }
+pecos-core = { path = "../../../crates/pecos-core" }
+pecos-gpu-sims = { path = "../../../crates/pecos-gpu-sims", optional = true }
+pecos-cuquantum = { path = "../../../crates/pecos-cuquantum", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.native]
+inherits = "release"

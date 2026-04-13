@@ -50,8 +50,6 @@ mod phir_json_bridge;
 mod programs_module;
 mod py_foreign_decoder;
 mod py_foreign_simulator;
-mod quest_bindings;
-mod qulacs_bindings;
 mod shot_results_bindings;
 mod sim;
 mod simulator_utils;
@@ -81,8 +79,6 @@ use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
 use pecos_random_bindings::RngPcg;
 use pyo3::prelude::*;
-use quest_bindings::{QuestDensityMatrix, QuestStateVec};
-use qulacs_bindings::PyQulacs;
 use sparse_stab_bindings::PySparseStab;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use stab_bindings::PyStabilizer;
@@ -243,7 +239,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_class::<PyStateVec>()?;
-    m.add_class::<PyQulacs>()?;
     m.add_class::<PyCoinToss>()?;
     m.add_class::<PyPauliProp>()?;
     m.add_class::<PyByteMessage>()?;
@@ -253,8 +248,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStateVecEngine>()?;
     m.add_class::<PySparseStabEngine>()?;
     m.add_class::<RngPcg>()?;
-    m.add_class::<QuestStateVec>()?;
-    m.add_class::<QuestDensityMatrix>()?;
     m.add_class::<Array>()?;
     m.add_class::<PyBitInt>()?;
     m.add_class::<PyBitUInt>()?;

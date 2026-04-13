@@ -159,6 +159,15 @@ impl CuStateVec {
         Ok(())
     }
 
+    /// Wait for all submitted GPU work to complete.
+    ///
+    /// Call this before timing measurements to ensure all asynchronous GPU
+    /// operations have finished. Without this, timing only captures dispatch
+    /// overhead, not actual GPU execution time.
+    pub fn sync(&self) {
+        unsafe { (self.backend.cudaDeviceSynchronize)() };
+    }
+
     /// Get the number of qubits
     #[must_use]
     pub fn num_qubits(&self) -> usize {

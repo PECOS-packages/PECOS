@@ -963,10 +963,10 @@ impl QisEngine {
         Ok(())
     }
 
-    /// Get pending operations from the dynamic execution
+    /// Get pending operations from the dynamic execution.
     ///
-    /// This reads from the global storage, which the worker thread
-    /// populates before blocking.
+    /// The worker exports only newly generated operations before each wait, so
+    /// this handoff stays proportional to fresh work instead of full history.
     fn get_dynamic_operations(&mut self) -> Option<Vec<Operation>> {
         let state = self.dynamic_state.as_ref()?;
         let handle = state.sync_handle.as_ref()?;
@@ -992,22 +992,13 @@ impl QisEngine {
         if let Some(result) = result {
             match result {
                 Ok((collector, interface)) => {
-                    let mut operations = collector.operations;
-                    let total_ops = operations.len();
+                    let operations = collector.operations;
+                    let remaining_ops = operations.len();
                     debug!(
-                        "Worker completed with {} total operations, {} already simulated",
-                        total_ops, self.simulated_op_count
+                        "Worker completed with {} remaining operations after {} already simulated",
+                        remaining_ops, self.simulated_op_count
                     );
-                    // Only store NEW operations (those after what we already simulated)
-                    if total_ops > self.simulated_op_count {
-                        self.pending_dynamic_ops = operations.split_off(self.simulated_op_count);
-                        debug!(
-                            "Storing {} new operations for final processing",
-                            self.pending_dynamic_ops.len()
-                        );
-                    } else {
-                        self.pending_dynamic_ops.clear();
-                    }
+                    self.pending_dynamic_ops = operations;
                     self.interface = Some(interface);
                     if let Some(ref mut state) = self.dynamic_state {
                         state.execution_complete = true;
@@ -1414,24 +1405,18 @@ impl ControlEngine for QisEngine {
                 self.signal_dynamic_result_ready()?;
                 // Continue loop to wait for next result or completion
             } else {
-                // Get pending operations
+                // Get newly exported operations.
                 if let Some(ops) = self.get_dynamic_operations() {
-                    // Only process NEW operations (after what we already simulated)
-                    if ops.len() > self.simulated_op_count {
-                        let mut ops = ops;
-                        let new_ops = ops.split_off(self.simulated_op_count);
-                        // Update count to include these new operations
-                        self.simulated_op_count += new_ops.len();
-                        if !new_ops.is_empty() {
-                            let commands = self.operations_to_bytemessage(&new_ops)?;
-                            self.trace_operations_chunk(
-                                "pending_continue",
-                                &new_ops,
-                                Some(result_id),
-                                Some(&commands),
-                            );
-                            return Ok(EngineStage::NeedsProcessing(commands));
-                        }
+                    self.simulated_op_count += ops.len();
+                    if !ops.is_empty() {
+                        let commands = self.operations_to_bytemessage(&ops)?;
+                        self.trace_operations_chunk(
+                            "pending_continue",
+                            &ops,
+                            Some(result_id),
+                            Some(&commands),
+                        );
+                        return Ok(EngineStage::NeedsProcessing(commands));
                     }
                 }
             }

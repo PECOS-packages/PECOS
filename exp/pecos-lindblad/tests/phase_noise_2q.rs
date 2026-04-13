@@ -121,6 +121,35 @@ fn cx_theta_phase_noise_mixing_case() {
 }
 
 #[test]
+fn cz_theta_phase_noise_commuting_case() {
+    // Paper eq. 981 case (ii): CZ_theta with phase noise.
+    // Since H_g = (omega_cz/2)(II-IZ-ZI+ZZ) is diagonal and phase noise is
+    // also diagonal, the Hamiltonians commute. Leading-order rates:
+    //   lambda_iz = theta_cz^2 / 4 * (delta_iz / omega_cz)^2
+    //   lambda_zi = same with delta_zi
+    //   lambda_zz = same with delta_zz
+    let omega_cz = 1.0;
+    let theta = std::f64::consts::FRAC_PI_3;
+    let delta_iz = 1e-6;
+    let delta_zi = 2e-6;
+    let delta_zz = 5e-7;
+    let noise = phase_noise_2q(delta_iz, delta_zi, delta_zz);
+    let gate = Gate::cz_theta(omega_cz, theta, noise);
+    let pl = synthesize_exact_unitary(&gate);
+
+    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let factor = theta.powi(2) / 4.0 / omega_cz.powi(2);
+    assert_abs_diff_eq!(rate("IZ"), factor * delta_iz.powi(2), epsilon = 1e-14);
+    assert_abs_diff_eq!(rate("ZI"), factor * delta_zi.powi(2), epsilon = 1e-14);
+    assert_abs_diff_eq!(rate("ZZ"), factor * delta_zz.powi(2), epsilon = 1e-14);
+
+    // All non-Z-basis rates should be zero (commuting case, no mixing).
+    for label in ["IX", "IY", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZX", "ZY"] {
+        assert_abs_diff_eq!(rate(label), 0.0, epsilon = 1e-14);
+    }
+}
+
+#[test]
 fn cx_theta_phase_noise_pi_over_2() {
     // theta = pi/2 => sin(2 theta) = 0; the mixing term vanishes and
     // lambda_iz = lambda_zz.

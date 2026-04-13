@@ -31,6 +31,34 @@ pub struct Gate {
 }
 
 impl Gate {
+    /// Construct a gate from an arbitrary ideal Hamiltonian `H_g`, a noise
+    /// [`Lindbladian`], and a duration `tau_g`. Provides a general escape
+    /// hatch for gate types beyond the named constructors (e.g. iSWAP,
+    /// XX_theta, arbitrary SU(4)).
+    ///
+    /// The ideal Hamiltonian is passed as a `d x d` matrix where
+    /// `d = 2^num_qubits`. It must be Hermitian (caller's responsibility;
+    /// [`matrix::expm`] assumes this for unitarity).
+    pub fn from_hamiltonian(
+        label: impl Into<String>,
+        num_qubits: usize,
+        ideal_hamiltonian: Matrix,
+        noise: Lindbladian,
+        tau_g: f64,
+    ) -> Self {
+        let d = 1usize << num_qubits;
+        assert_eq!(ideal_hamiltonian.len(), d * d, "ideal H wrong shape");
+        assert_eq!(noise.d, d, "noise dim mismatch");
+        let ideal = Lindbladian::new(d, ideal_hamiltonian, Vec::new());
+        Self {
+            label: label.into(),
+            num_qubits,
+            ideal,
+            noise,
+            tau_g,
+        }
+    }
+
     /// Identity gate (no ideal Hamiltonian) with a given noise Lindbladian
     /// and duration.
     pub fn identity(num_qubits: usize, noise: Lindbladian, tau_g: f64) -> Self {

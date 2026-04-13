@@ -82,10 +82,18 @@ L_eff = (1/tau_g) * sum_{n=1..N} Omega_n
 // Step 4 -- Pauli twirl projection
 //   Twirled generator is diagonal in Pauli basis.
 //   Diagonal coeff: alpha_b = -(1/d) tr( P_b * L_eff(P_b) )
-//   Rates recovered via Walsh-Hadamard on {0,1}^{2n}
-//   (2201.09866 eq. (1)):
-//     alpha_b = 2 sum_k lambda_k <b,k>_sp
-//     lambda_k = (1/4^n) sum_b (-1)^{<b,k>_sp} (alpha_b / 2)
+//   (alpha_b is a *rate* = 1/time; its integrated form is alpha_b * tau_g.)
+//   Rates recovered via Walsh-Hadamard on {0,1}^{2n} (2201.09866 eq. (1)):
+//     alpha_b = 2 sum_k lambda_k <b,k>_sp           // forward map
+//     lambda_k = -(1/4^n) sum_b (-1)^{<b,k>_sp} alpha_b  // for k != I
+//     lambda_I = 0   (by convention; not a physical rate)
+//
+// Derivation sketch: let W_{bk} = (-1)^{<b,k>_sp}, T = sum_k lambda_k.
+// Then (W lambda)_b = T - alpha_b (since <b,k>_sp = (1 - W_{bk})/2). W is
+// self-inverse up to a factor of 4^n, so applying W and using that
+// sum_b (-1)^{<b,k>_sp} vanishes for k != I gives the formula above.
+// For the 1-qubit case this collapses to the direct linear solve
+//   lambda_X = (alpha_Y + alpha_Z - alpha_X) / 4  (etc. by symmetry).
 
 // Step 5 -- Dyson cross-check (paper eq. 13)
 //   T exp( int L_I ) = I + Omega_1 + Omega_2 + 1/2 Omega_1^2 + O(L_I^3)

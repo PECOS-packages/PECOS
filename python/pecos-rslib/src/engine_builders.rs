@@ -8,7 +8,6 @@
 
 // Import from pecos metacrate prelude
 use crate::prelude::*;
-use pecos_engines::monte_carlo::engine::MonteCarloRunProfile;
 
 // Rename quantum engine builder types for clarity (from pecos prelude)
 type RustQasmEngineBuilder = pecos_qasm::QasmEngineBuilder;
@@ -25,7 +24,6 @@ type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use std::sync::{Arc, Mutex};
 
 // Import existing shot result types
@@ -33,96 +31,6 @@ use crate::shot_results_bindings::PyShotVec;
 
 // Import the unified SimBuilder from sim.rs
 use crate::sim::{PySimBuilder, SimBuilderInner};
-
-fn monte_carlo_profile_to_pydict(
-    py: Python<'_>,
-    profile: &MonteCarloRunProfile,
-) -> PyResult<Py<PyDict>> {
-    let dict = PyDict::new(py);
-    dict.set_item("num_shots", profile.num_shots)?;
-    dict.set_item("num_workers", profile.num_workers)?;
-    dict.set_item("shots_per_worker", profile.shots_per_worker.clone())?;
-    dict.set_item(
-        "worker_engine_clone_seconds",
-        profile.worker_engine_clone_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "thread_pool_build_seconds",
-        profile.thread_pool_build_duration.as_secs_f64(),
-    )?;
-    dict.set_item("parallel_seconds", profile.parallel_duration.as_secs_f64())?;
-    dict.set_item("reset_seconds", profile.reset_duration.as_secs_f64())?;
-    dict.set_item("run_shot_seconds", profile.run_shot_duration.as_secs_f64())?;
-    dict.set_item(
-        "result_push_seconds",
-        profile.result_push_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "classical_start_seconds",
-        profile.classical_start_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "quantum_process_seconds",
-        profile.quantum_process_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "classical_continue_seconds",
-        profile.classical_continue_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "quantum_noise_start_seconds",
-        profile.quantum_noise_start_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "quantum_engine_process_seconds",
-        profile.quantum_engine_process_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "quantum_noise_continue_seconds",
-        profile.quantum_noise_continue_duration.as_secs_f64(),
-    )?;
-    dict.set_item(
-        "other_parallel_seconds",
-        profile.other_parallel_duration().as_secs_f64(),
-    )?;
-    dict.set_item(
-        "thread_pool_drop_seconds",
-        profile.thread_pool_drop_duration.as_secs_f64(),
-    )?;
-    dict.set_item("sort_seconds", profile.sort_duration.as_secs_f64())?;
-    dict.set_item("aggregate_seconds", profile.aggregate_duration.as_secs_f64())?;
-    dict.set_item("total_seconds", profile.total_duration.as_secs_f64())?;
-    Ok(dict.unbind())
-}
-
-fn run_engine_profile(
-    py: Python<'_>,
-    engine: &mut MonteCarloEngine,
-    shots: usize,
-) -> PyResult<(PyShotVec, Py<PyDict>)> {
-    match engine.run_profiled(shots) {
-        Ok((shot_vec, profile)) => Ok((
-            PyShotVec::new(shot_vec),
-            monte_carlo_profile_to_pydict(py, &profile)?,
-        )),
-        Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
-    }
-}
-
-fn run_engine_profile_with_workers(
-    py: Python<'_>,
-    engine: &mut MonteCarloEngine,
-    shots: usize,
-    workers: usize,
-) -> PyResult<(PyShotVec, Py<PyDict>)> {
-    match engine.run_profiled_with_workers(shots, workers) {
-        Ok((shot_vec, profile)) => Ok((
-            PyShotVec::new(shot_vec),
-            monte_carlo_profile_to_pydict(py, &profile)?,
-        )),
-        Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
-    }
-}
 
 /// Python wrapper for QASM engine builder
 #[pyclass(name = "QasmEngineBuilder", from_py_object)]
@@ -379,23 +287,6 @@ impl PyQasmSimulation {
         }
     }
 
-    /// Run the simulation and return both shots and an internal timing profile.
-    fn run_profiled(&self, py: Python<'_>, shots: usize) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile(py, &mut engine, shots)
-    }
-
-    /// Run the simulation with specified workers and return shots plus timing profile.
-    fn run_profiled_with_workers(
-        &self,
-        py: Python<'_>,
-        shots: usize,
-        workers: usize,
-    ) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile_with_workers(py, &mut engine, shots, workers)
-    }
-
     /// Reset the simulation to its initial state (quantum state back to |0⟩).
     ///
     /// Returns the simulation object for method chaining.
@@ -435,23 +326,6 @@ impl PyPhirJsonSimulation {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
-    }
-
-    /// Run the simulation and return both shots and an internal timing profile.
-    fn run_profiled(&self, py: Python<'_>, shots: usize) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile(py, &mut engine, shots)
-    }
-
-    /// Run the simulation with specified workers and return shots plus timing profile.
-    fn run_profiled_with_workers(
-        &self,
-        py: Python<'_>,
-        shots: usize,
-        workers: usize,
-    ) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile_with_workers(py, &mut engine, shots, workers)
     }
 
     /// Reset the simulation to its initial state (quantum state back to |0⟩).
@@ -509,23 +383,6 @@ impl PyQisControlSimulation {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
-    }
-
-    /// Run the simulation and return both shots and an internal timing profile.
-    fn run_profiled(&self, py: Python<'_>, shots: usize) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile(py, &mut engine, shots)
-    }
-
-    /// Run the simulation with specified workers and return shots plus timing profile.
-    fn run_profiled_with_workers(
-        &self,
-        py: Python<'_>,
-        shots: usize,
-        workers: usize,
-    ) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile_with_workers(py, &mut engine, shots, workers)
     }
 
     /// Get the temp directory path (if `keep_intermediate_files` was enabled)
@@ -639,23 +496,6 @@ impl PyPhirSimulation {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
-    }
-
-    /// Run the simulation and return both shots and an internal timing profile.
-    fn run_profiled(&self, py: Python<'_>, shots: usize) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile(py, &mut engine, shots)
-    }
-
-    /// Run the simulation with specified workers and return shots plus timing profile.
-    fn run_profiled_with_workers(
-        &self,
-        py: Python<'_>,
-        shots: usize,
-        workers: usize,
-    ) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile_with_workers(py, &mut engine, shots, workers)
     }
 
     /// Reset the simulation to its initial state (quantum state back to |0>).
@@ -777,23 +617,6 @@ impl PyHugrSimulation {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
             Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
         }
-    }
-
-    /// Run the simulation and return both shots and an internal timing profile.
-    fn run_profiled(&self, py: Python<'_>, shots: usize) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile(py, &mut engine, shots)
-    }
-
-    /// Run the simulation with specified workers and return shots plus timing profile.
-    fn run_profiled_with_workers(
-        &self,
-        py: Python<'_>,
-        shots: usize,
-        workers: usize,
-    ) -> PyResult<(PyShotVec, Py<PyDict>)> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        run_engine_profile_with_workers(py, &mut engine, shots, workers)
     }
 
     /// Get the temp directory path (if `keep_intermediate_files` was enabled)

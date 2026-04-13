@@ -21,7 +21,6 @@ use dyn_clone;
 use log::debug;
 use pecos_core::errors::PecosError;
 use pecos_core::rng::rng_manageable::derive_seed;
-use std::time::{Duration, Instant};
 
 /// Coordinates between classical control and quantum simulation components
 ///
@@ -74,19 +73,6 @@ pub struct HybridEngine {
     pub classical_engine: Box<dyn ClassicalControlEngine>,
     /// The quantum system component responsible for executing quantum operations
     pub quantum_system: QuantumSystem,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct HybridShotProfile {
-    pub iterations: usize,
-    pub classical_start_duration: Duration,
-    pub quantum_process_duration: Duration,
-    pub classical_continue_duration: Duration,
-    pub quantum_iterations: usize,
-    pub quantum_noise_start_duration: Duration,
-    pub quantum_engine_process_duration: Duration,
-    pub quantum_noise_continue_duration: Duration,
-    pub total_duration: Duration,
 }
 
 impl HybridEngine {
@@ -190,47 +176,6 @@ impl HybridEngine {
         }
     }
 
-    pub fn run_shot_profiled(&mut self) -> Result<(Shot, HybridShotProfile), PecosError> {
-        let total_start = Instant::now();
-        let classical_start_begin = Instant::now();
-        let mut stage = self.classical_engine.start(())?;
-        let mut profile = HybridShotProfile {
-            classical_start_duration: classical_start_begin.elapsed(),
-            ..HybridShotProfile::default()
-        };
-
-        if let EngineStage::Complete(results) = stage {
-            profile.total_duration = total_start.elapsed();
-            return Ok((results, profile));
-        }
-
-        while let EngineStage::NeedsProcessing(command_message) = stage {
-            profile.iterations += 1;
-
-            let quantum_process_start = Instant::now();
-            let (measurement_message, quantum_profile) =
-                self.quantum_system.process_profiled(command_message)?;
-            profile.quantum_process_duration += quantum_process_start.elapsed();
-            profile.quantum_iterations += quantum_profile.iterations;
-            profile.quantum_noise_start_duration += quantum_profile.noise_start_duration;
-            profile.quantum_engine_process_duration += quantum_profile.engine_process_duration;
-            profile.quantum_noise_continue_duration += quantum_profile.noise_continue_duration;
-
-            let classical_continue_start = Instant::now();
-            stage = self
-                .classical_engine
-                .continue_processing(measurement_message)?;
-            profile.classical_continue_duration += classical_continue_start.elapsed();
-        }
-
-        match stage {
-            EngineStage::Complete(results) => {
-                profile.total_duration = total_start.elapsed();
-                Ok((results, profile))
-            }
-            EngineStage::NeedsProcessing(_) => unreachable!(),
-        }
-    }
 }
 
 impl Engine for HybridEngine {

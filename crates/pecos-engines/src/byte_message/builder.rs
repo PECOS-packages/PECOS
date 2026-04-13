@@ -283,81 +283,6 @@ impl ByteMessageBuilder {
         self
     }
 
-    #[inline]
-    fn add_single_qubit_gate_parts_radians(
-        &mut self,
-        gate_type: GateType,
-        qubit: usize,
-        angles_radians: &[f64],
-        params: &[f64],
-    ) -> &mut Self {
-        let payload_size = size_of::<GateHeader>()
-            + size_of::<u32>()
-            + (angles_radians.len() + params.len()) * size_of::<f64>();
-
-        self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
-
-        let header = GateHeader {
-            gate_type: gate_type as u8,
-            num_qubits: 1,
-            has_params: u8::from(!angles_radians.is_empty() || !params.is_empty()),
-            reserved: 0,
-        };
-        self.buffer.extend_from_slice(bytes_of(&header));
-
-        let qubit_u32 = u32::try_from(qubit).expect("Qubit index too large");
-        self.buffer.extend_from_slice(&qubit_u32.to_le_bytes());
-
-        for angle in angles_radians {
-            self.buffer.extend_from_slice(&angle.to_le_bytes());
-        }
-
-        for param in params {
-            self.buffer.extend_from_slice(&param.to_le_bytes());
-        }
-
-        self
-    }
-
-    #[inline]
-    fn add_two_qubit_gate_parts_radians(
-        &mut self,
-        gate_type: GateType,
-        qubit0: usize,
-        qubit1: usize,
-        angles_radians: &[f64],
-        params: &[f64],
-    ) -> &mut Self {
-        let payload_size = size_of::<GateHeader>()
-            + 2 * size_of::<u32>()
-            + (angles_radians.len() + params.len()) * size_of::<f64>();
-
-        self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
-
-        let header = GateHeader {
-            gate_type: gate_type as u8,
-            num_qubits: 2,
-            has_params: u8::from(!angles_radians.is_empty() || !params.is_empty()),
-            reserved: 0,
-        };
-        self.buffer.extend_from_slice(bytes_of(&header));
-
-        let qubit0_u32 = u32::try_from(qubit0).expect("Qubit index too large");
-        let qubit1_u32 = u32::try_from(qubit1).expect("Qubit index too large");
-        self.buffer.extend_from_slice(&qubit0_u32.to_le_bytes());
-        self.buffer.extend_from_slice(&qubit1_u32.to_le_bytes());
-
-        for angle in angles_radians {
-            self.buffer.extend_from_slice(&angle.to_le_bytes());
-        }
-
-        for param in params {
-            self.buffer.extend_from_slice(&param.to_le_bytes());
-        }
-
-        self
-    }
-
     /// Add a message with a header and payload
     ///
     /// This method adds a new message to the builder with the specified type, payload,
@@ -543,11 +468,6 @@ impl ByteMessageBuilder {
         )
     }
 
-    /// Add a single RZZ gate specified directly in radians.
-    pub fn rzz_radians(&mut self, theta: f64, qubit1: usize, qubit2: usize) -> &mut Self {
-        self.add_two_qubit_gate_parts_radians(GateType::RZZ, qubit1, qubit2, &[theta], &[])
-    }
-
     /// Add SZZ gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
@@ -588,22 +508,12 @@ impl ByteMessageBuilder {
         self.add_gate_parts(GateType::RZ, qubits, &[theta], &[])
     }
 
-    /// Add a single RZ gate specified directly in radians.
-    pub fn rz_radians(&mut self, theta: f64, qubit: usize) -> &mut Self {
-        self.add_single_qubit_gate_parts_radians(GateType::RZ, qubit, &[theta], &[])
-    }
-
     /// Add an R1XY gate
     pub fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
         if qubits.len() == 1 {
             return self.add_single_qubit_gate_parts(GateType::R1XY, qubits[0], &[theta, phi], &[]);
         }
         self.add_gate_parts(GateType::R1XY, qubits, &[theta, phi], &[])
-    }
-
-    /// Add a single R1XY gate specified directly in radians.
-    pub fn r1xy_radians(&mut self, theta: f64, phi: f64, qubit: usize) -> &mut Self {
-        self.add_single_qubit_gate_parts_radians(GateType::R1XY, qubit, &[theta, phi], &[])
     }
 
     /// Add a U gate
@@ -703,22 +613,12 @@ impl ByteMessageBuilder {
         self.add_gate_parts(GateType::RX, qubits, &[theta], &[])
     }
 
-    /// Add a single RX gate specified directly in radians.
-    pub fn rx_radians(&mut self, theta: f64, qubit: usize) -> &mut Self {
-        self.add_single_qubit_gate_parts_radians(GateType::RX, qubit, &[theta], &[])
-    }
-
     /// Add an RY gate
     pub fn ry(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
         if qubits.len() == 1 {
             return self.add_single_qubit_gate_parts(GateType::RY, qubits[0], &[theta], &[]);
         }
         self.add_gate_parts(GateType::RY, qubits, &[theta], &[])
-    }
-
-    /// Add a single RY gate specified directly in radians.
-    pub fn ry_radians(&mut self, theta: f64, qubit: usize) -> &mut Self {
-        self.add_single_qubit_gate_parts_radians(GateType::RY, qubit, &[theta], &[])
     }
 
     /// Add CY gates between pairs of qubits.
@@ -1116,6 +1016,37 @@ mod tests {
         assert!((commands[5].angles[1].to_radians() - 0.2).abs() < 1e-10);
         assert!(commands[5].params.is_empty());
         assert_eq!(commands[6].gate_type, GateType::MZ);
+    }
+
+    #[test]
+    fn test_single_item_fast_paths_match_generic_gate_encoding() {
+        let theta_rx = Angle64::from_radians(0.3);
+        let theta_ry = Angle64::from_radians(0.4);
+        let theta_rz = Angle64::from_radians(0.5);
+        let theta_r1xy = Angle64::from_radians(0.6);
+        let phi_r1xy = Angle64::from_radians(0.7);
+        let theta_rzz = Angle64::from_radians(0.8);
+
+        let mut generic_builder = ByteMessageBuilder::new();
+        let _ = generic_builder.for_quantum_operations();
+        generic_builder.add_gate_command(&Gate::rx(theta_rx, &[1]));
+        generic_builder.add_gate_command(&Gate::ry(theta_ry, &[2]));
+        generic_builder.add_gate_command(&Gate::rz(theta_rz, &[3]));
+        generic_builder.add_gate_command(&Gate::r1xy(theta_r1xy, phi_r1xy, &[4]));
+        generic_builder.add_gate_command(&Gate::rzz(theta_rzz, &[(5, 6)]));
+
+        let mut fast_path_builder = ByteMessageBuilder::new();
+        let _ = fast_path_builder.for_quantum_operations();
+        fast_path_builder.rx(theta_rx, &[1]);
+        fast_path_builder.ry(theta_ry, &[2]);
+        fast_path_builder.rz(theta_rz, &[3]);
+        fast_path_builder.r1xy(theta_r1xy, phi_r1xy, &[4]);
+        fast_path_builder.rzz(theta_rzz, &[(5, 6)]);
+
+        let generic_message = generic_builder.build();
+        let fast_path_message = fast_path_builder.build();
+
+        assert_eq!(generic_message.as_bytes(), fast_path_message.as_bytes());
     }
 
     #[test]

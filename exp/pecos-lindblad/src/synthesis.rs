@@ -10,12 +10,16 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Phase 1-2: numerical Pauli-Lindblad synthesis for 1-qubit gates.
+//! Phases 1-3: numerical Pauli-Lindblad synthesis for arbitrary-qubit
+//! gates via interaction-frame transform + Simpson's rule + Walsh-Hadamard
+//! inversion.
 //!
-//! - `synthesize_identity_1q`: fast path for `H_g = 0` (Phase 1; identity
-//!   under amplitude damping + pure dephasing is exact, non-perturbative).
-//! - `synthesize_numerical_1q`: general 1-qubit path (Phase 2) via
-//!   interaction-frame transform + Simpson's rule on Omega_1.
+//! Entry points:
+//! - [`synthesize_identity_1q`]: fast path for 1Q `H_g = 0` (Phase 1;
+//!   exact + non-perturbative under AD + PD).
+//! - [`synthesize_numerical_1q`]: 1Q, general `H_g`, Simpson integrand.
+//! - [`synthesize_numerical`]: n-qubit, general `H_g`, Simpson integrand,
+//!   Walsh-Hadamard rate recovery.
 //!
 //! See `design/lindblad_magnus_algorithm.md` for the math spec and paper
 //! arXiv:2502.03462 for closed-form fixtures.
@@ -30,15 +34,15 @@ use crate::pauli_lindblad::PauliLindbladModel;
 
 const PHASE1_PAULIS: [Pauli1; 3] = [Pauli1::X, Pauli1::Y, Pauli1::Z];
 
-/// Default number of Simpson intervals for 1-qubit time integration.
-/// Composite Simpson's 1/3 rule, order-4 accurate. 1024 gives ~1e-12 for
-/// smooth integrands on a bounded interval (sinusoidal at frequency
-/// `omega_x` up to a few cycles).
+/// Default number of Simpson intervals for time integration. Composite
+/// Simpson's 1/3 rule, order-4 accurate. 1024 gives ~1e-12 for smooth
+/// integrands on a bounded interval (sinusoidal at gate frequency up to a
+/// few cycles).
 pub const DEFAULT_N_STEPS: usize = 1024;
 
 /// Synthesize a 1-qubit Pauli-Lindblad model from an identity gate. Fast
 /// path: identity gate (`H_g = 0`) => interaction-frame Lindbladian is
-/// constant and `Omega_1 = L * tau_g`.
+/// constant and `Omega_1 = L * tau_g`, so no time integration needed.
 pub fn synthesize_identity_1q(gate: &Gate) -> PauliLindbladModel {
     assert_eq!(gate.num_qubits, 1, "synthesize_identity_1q requires 1 qubit");
     assert!(
@@ -46,8 +50,10 @@ pub fn synthesize_identity_1q(gate: &Gate) -> PauliLindbladModel {
         "synthesize_identity_1q requires H_g = 0",
     );
     let tau = gate.tau_g;
-    let alphas = PHASE1_PAULIS.map(|p| constant_alpha(&gate.noise, p) * tau);
-    model_from_alphas(alphas)
+    let paulis: Vec<PauliString> = PHASE1_PAULIS.iter().map(|&p| PauliString::single(p)).collect();
+    let alphas: Vec<f64> =
+        PHASE1_PAULIS.iter().map(|&p| constant_alpha(&gate.noise, p) * tau).collect();
+    model_from_alphas_walsh(paulis, alphas, 1)
 }
 
 /// Synthesize a 1-qubit Pauli-Lindblad model from an arbitrary 1-qubit
@@ -56,9 +62,20 @@ pub fn synthesize_identity_1q(gate: &Gate) -> PauliLindbladModel {
 /// `X_theta`, `Y_theta`, `Z_theta`.
 pub fn synthesize_numerical_1q(gate: &Gate, n_steps: usize) -> PauliLindbladModel {
     assert_eq!(gate.num_qubits, 1, "synthesize_numerical_1q requires 1 qubit");
+    synthesize_numerical(gate, n_steps)
+}
+
+/// Synthesize a Pauli-Lindblad model from an arbitrary gate. Enumerates all
+/// non-identity Paulis on `gate.num_qubits`, integrates `alpha_b * tau_g`
+/// for each via Simpson's rule on the interaction-frame Lindbladian, and
+/// inverts via Walsh-Hadamard.
+pub fn synthesize_numerical(gate: &Gate, n_steps: usize) -> PauliLindbladModel {
     assert!(n_steps >= 2 && n_steps % 2 == 0, "n_steps must be even and >= 2, got {}", n_steps);
-    let alphas = PHASE1_PAULIS.map(|p| integrated_alpha_1q(gate, p, n_steps));
-    model_from_alphas(alphas)
+    let n = gate.num_qubits;
+    let paulis = PauliString::enumerate_nonidentity(n);
+    let alphas: Vec<f64> =
+        paulis.iter().map(|p| integrated_alpha(gate, p, n_steps)).collect();
+    model_from_alphas_walsh(paulis, alphas, n)
 }
 
 /// `alpha_b = -Tr(P_b L(P_b)) / d` for time-independent L. Units: 1/time.
@@ -71,10 +88,12 @@ fn constant_alpha(noise: &Lindbladian, p: Pauli1) -> f64 {
 }
 
 /// Integrated `alpha_b * tau_g = -Tr(P_b * Omega_1(P_b)) / d` via Simpson's
-/// rule on `[0, tau_g]`.
-fn integrated_alpha_1q(gate: &Gate, p: Pauli1, n_steps: usize) -> f64 {
-    let d = 2;
-    let p_mat = matrix::pauli_1q(p);
+/// rule on `[0, tau_g]`. Works for any `n_qubits`.
+fn integrated_alpha(gate: &Gate, p: &PauliString, n_steps: usize) -> f64 {
+    let n = gate.num_qubits;
+    assert_eq!(p.num_qubits(), n);
+    let d = 1usize << n;
+    let p_mat = matrix::pauli_string_mat(p);
     let h_g = &gate.ideal.hamiltonian;
     let tau = gate.tau_g;
     let h_step = tau / n_steps as f64;
@@ -82,15 +101,11 @@ fn integrated_alpha_1q(gate: &Gate, p: Pauli1, n_steps: usize) -> f64 {
     // integrand(t) = -Tr(P_b * L_I(t)(P_b)).re / d
     //              = -Tr(P_b * U_g^†(t) L(U_g(t) P_b U_g^†(t)) U_g(t)) / d
     let integrand = |t: f64| -> f64 {
-        let u = matrix::exp_minus_i_h_t_1q(h_g, t);
+        let u = matrix::exp_minus_i_h_t(h_g, d, t);
         let u_dag = matrix::dag(&u, d);
-        // rotated = U_g(t) P_b U_g^†(t)
         let rotated = matrix::matmul(&matrix::matmul(&u, &p_mat, d), &u_dag, d);
-        // L applied to rotated
         let l_rotated = gate.noise.apply(&rotated);
-        // Conjugate back: U_g^†(t) L(rotated) U_g(t)
         let l_i_pb = matrix::matmul(&matrix::matmul(&u_dag, &l_rotated, d), &u, d);
-        // -Tr(P_b * L_I(t)(P_b)) / d
         let inner = matrix::trace(&matrix::matmul(&p_mat, &l_i_pb, d), d);
         -inner.re / d as f64
     };
@@ -105,24 +120,29 @@ fn integrated_alpha_1q(gate: &Gate, p: Pauli1, n_steps: usize) -> f64 {
     s * h_step / 3.0
 }
 
-fn model_from_alphas(alphas: [f64; 3]) -> PauliLindbladModel {
-    // alphas = [alpha_X * tau_g, alpha_Y * tau_g, alpha_Z * tau_g].
-    // Linear solve of alpha_b = 2 sum_{k != I} lambda_k <b,k>_sp:
-    //   alpha_X = 2(lambda_Y + lambda_Z)
-    //   alpha_Y = 2(lambda_X + lambda_Z)
-    //   alpha_Z = 2(lambda_X + lambda_Y)
-    let [ax, ay, az] = alphas;
-    let lambda_x = (ay + az - ax) / 4.0;
-    let lambda_y = (ax + az - ay) / 4.0;
-    let lambda_z = (ax + ay - az) / 4.0;
-
-    let supports = vec![
-        PauliString::single(Pauli1::X),
-        PauliString::single(Pauli1::Y),
-        PauliString::single(Pauli1::Z),
-    ];
-    let rates = vec![clip_negative(lambda_x), clip_negative(lambda_y), clip_negative(lambda_z)];
-    PauliLindbladModel::new(supports, rates)
+/// Walsh-Hadamard inversion:
+///   `lambda_k = -(1/4^n) * sum_{b non-identity} (-1)^{<k,b>_sp} alpha_b`
+/// (see `design/lindblad_magnus_algorithm.md` step 4). alpha_I = 0 is
+/// implicit.
+fn model_from_alphas_walsh(
+    paulis: Vec<PauliString>,
+    alphas: Vec<f64>,
+    n_qubits: usize,
+) -> PauliLindbladModel {
+    assert_eq!(paulis.len(), alphas.len());
+    let norm = 1.0 / (1usize << (2 * n_qubits)) as f64;
+    let rates: Vec<f64> = paulis
+        .iter()
+        .map(|k| {
+            let mut s = 0.0;
+            for (b, &alpha_b) in paulis.iter().zip(alphas.iter()) {
+                let sign = if k.symplectic_product(b) == 0 { 1.0 } else { -1.0 };
+                s += sign * alpha_b;
+            }
+            clip_negative(-norm * s)
+        })
+        .collect();
+    PauliLindbladModel::new(paulis, rates)
 }
 
 fn is_zero_matrix(m: &Matrix) -> bool {

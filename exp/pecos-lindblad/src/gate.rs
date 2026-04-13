@@ -65,4 +65,25 @@ impl Gate {
             tau_g,
         }
     }
+
+    /// 2-qubit arbitrary-angle CZ rotation:
+    /// `CZ_theta = exp(-i (theta/2) (II - IZ - ZI + ZZ))`.
+    /// In computational basis `H_g = diag(0, 0, 0, 2 * omega_cz)`.
+    /// Reference: arXiv:2502.03462 lines 885-891.
+    pub fn cz_theta(omega_cz: f64, theta: f64, noise: Lindbladian) -> Self {
+        assert!(omega_cz > 0.0, "omega_cz must be positive");
+        assert_eq!(noise.d, 4, "cz_theta is 2-qubit");
+        let d = 4;
+        let mut h_g = matrix::zeros(d);
+        h_g[3 * d + 3] = Complex64::new(2.0 * omega_cz, 0.0);
+        let ideal = Lindbladian::new(d, h_g, Vec::new());
+        let tau_g = theta / omega_cz;
+        Self {
+            label: format!("CZ_{{{:.4}}}", theta),
+            num_qubits: 2,
+            ideal,
+            noise,
+            tau_g,
+        }
+    }
 }

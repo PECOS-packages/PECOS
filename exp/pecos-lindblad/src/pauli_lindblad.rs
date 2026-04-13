@@ -47,30 +47,15 @@ impl PauliLindbladModel {
     pub fn sample(&self, t_scale: f64, rng: &mut impl Rng) -> PauliString {
         assert!(!self.supports.is_empty(), "cannot sample empty model");
         let n = self.supports[0].num_qubits();
-        let mut acc = vec![Pauli1::I; n];
+        let mut acc = PauliString(vec![Pauli1::I; n]);
         for (support, &lambda) in self.supports.iter().zip(&self.rates) {
             assert_eq!(support.num_qubits(), n, "ragged supports");
             let p_flip = 0.5 * (1.0 - (-2.0 * lambda * t_scale).exp());
             if rng.random_range(0.0..1.0) < p_flip {
-                for (a, b) in acc.iter_mut().zip(&support.0) {
-                    *a = pauli_multiply(*a, *b);
-                }
+                acc = acc.multiply(support);
             }
         }
-        PauliString(acc)
-    }
-}
-
-/// 1-qubit Pauli multiplication (ignoring phase -- supports are Hermitian
-/// so phase cancels in `P rho P^dag` style actions).
-fn pauli_multiply(a: Pauli1, b: Pauli1) -> Pauli1 {
-    use Pauli1::*;
-    match (a, b) {
-        (I, x) | (x, I) => x,
-        (X, X) | (Y, Y) | (Z, Z) => I,
-        (X, Y) | (Y, X) => Z,
-        (Y, Z) | (Z, Y) => X,
-        (X, Z) | (Z, X) => Y,
+        acc
     }
 }
 

@@ -43,6 +43,31 @@ impl Pauli1 {
             Pauli1::Z => 'Z',
         }
     }
+
+    /// Pauli multiplication ignoring global phase. Returns the Hermitian
+    /// Pauli factor: XY -> Z (phase `i` dropped), etc. Safe for our use in
+    /// `PauliLindbladModel::sample`, where rates are carried by commuting
+    /// structure and phases cancel in `P rho P^dag` style actions.
+    pub fn multiply(self, other: Pauli1) -> Pauli1 {
+        use Pauli1::*;
+        match (self, other) {
+            (I, x) | (x, I) => x,
+            (X, X) | (Y, Y) | (Z, Z) => I,
+            (X, Y) | (Y, X) => Z,
+            (Y, Z) | (Z, Y) => X,
+            (X, Z) | (Z, X) => Y,
+        }
+    }
+
+    /// 1 if two single-qubit Paulis anticommute, 0 if they commute.
+    pub fn anticommutes_with(self, other: Pauli1) -> u8 {
+        use Pauli1::*;
+        match (self, other) {
+            (I, _) | (_, I) => 0,
+            (a, b) if a == b => 0,
+            _ => 1,
+        }
+    }
 }
 
 /// Multi-qubit Pauli string. Index 0 = leftmost factor.
@@ -65,6 +90,51 @@ impl PauliString {
     /// Weight (number of non-identity factors).
     pub fn weight(&self) -> usize {
         self.0.iter().filter(|&&p| p != Pauli1::I).count()
+    }
+
+    /// Is this the identity string?
+    pub fn is_identity(&self) -> bool {
+        self.weight() == 0
+    }
+
+    /// Elementwise product with global phase dropped. See
+    /// [`Pauli1::multiply`].
+    pub fn multiply(&self, other: &PauliString) -> PauliString {
+        assert_eq!(self.num_qubits(), other.num_qubits(), "ragged multiply");
+        PauliString(self.0.iter().zip(&other.0).map(|(a, b)| a.multiply(*b)).collect())
+    }
+
+    /// Symplectic product `<self, other>_sp`: 1 if the two strings
+    /// anticommute, 0 if they commute. Equal to (sum of pairwise
+    /// anticommutes) mod 2.
+    pub fn symplectic_product(&self, other: &PauliString) -> u8 {
+        assert_eq!(self.num_qubits(), other.num_qubits(), "ragged symplectic");
+        self.0.iter().zip(&other.0).map(|(a, b)| a.anticommutes_with(*b)).sum::<u8>() & 1
+    }
+
+    /// Enumerate all non-identity Pauli strings on `n` qubits. Length
+    /// 4^n - 1 = 3, 15, 63, ...
+    pub fn enumerate_nonidentity(n: usize) -> Vec<PauliString> {
+        let total = 1usize << (2 * n);
+        (1..total)
+            .map(|idx| {
+                // idx in base 4: two bits per qubit, low bits = rightmost factor
+                let mut qs = Vec::with_capacity(n);
+                for q in 0..n {
+                    let shift = 2 * (n - 1 - q);
+                    let bits = (idx >> shift) & 0b11;
+                    let p = match bits {
+                        0 => Pauli1::I,
+                        1 => Pauli1::X,
+                        2 => Pauli1::Y,
+                        3 => Pauli1::Z,
+                        _ => unreachable!(),
+                    };
+                    qs.push(p);
+                }
+                PauliString(qs)
+            })
+            .collect()
     }
 }
 
@@ -99,5 +169,35 @@ mod tests {
     fn mixed_weight() {
         let s = PauliString::from_str("IXI").unwrap();
         assert_eq!(s.weight(), 1);
+    }
+
+    #[test]
+    fn symplectic_product_2q() {
+        let ix = PauliString::from_str("IX").unwrap();
+        let iz = PauliString::from_str("IZ").unwrap();
+        let zx = PauliString::from_str("ZX").unwrap();
+        assert_eq!(ix.symplectic_product(&iz), 1); // X,Z anticommute on right
+        assert_eq!(ix.symplectic_product(&ix), 0);
+        assert_eq!(zx.symplectic_product(&iz), 1); // X,Z on right anticommute
+        assert_eq!(zx.symplectic_product(&zx), 0);
+    }
+
+    #[test]
+    fn enumerate_1q_gives_xyz() {
+        let all = PauliString::enumerate_nonidentity(1);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0], PauliString::from_str("X").unwrap());
+        assert_eq!(all[1], PauliString::from_str("Y").unwrap());
+        assert_eq!(all[2], PauliString::from_str("Z").unwrap());
+    }
+
+    #[test]
+    fn enumerate_2q_gives_15() {
+        let all = PauliString::enumerate_nonidentity(2);
+        assert_eq!(all.len(), 15);
+        // First should be IX (idx 1 = 0b01 = 0|X).
+        assert_eq!(all[0], PauliString::from_str("IX").unwrap());
+        // Last should be ZZ (idx 15 = 0b1111 = Z|Z).
+        assert_eq!(all[14], PauliString::from_str("ZZ").unwrap());
     }
 }

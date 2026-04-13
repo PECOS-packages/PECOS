@@ -18,7 +18,7 @@
 
 use num_complex::Complex64;
 
-use crate::basis::Pauli1;
+use crate::basis::{Pauli1, PauliString};
 
 pub type Matrix = Vec<Complex64>;
 
@@ -107,12 +107,85 @@ pub fn sigma_minus() -> Matrix {
     vec![z, z, o, z]
 }
 
+/// Kronecker product of `a` (da x da) and `b` (db x db). Result is
+/// `(da * db) x (da * db)`.
+pub fn kron(a: &Matrix, b: &Matrix, da: usize, db: usize) -> Matrix {
+    let d = da * db;
+    let mut out = zeros(d);
+    for i in 0..da {
+        for j in 0..da {
+            let aij = a[i * da + j];
+            if aij == Complex64::new(0.0, 0.0) {
+                continue;
+            }
+            for k in 0..db {
+                for l in 0..db {
+                    let bkl = b[k * db + l];
+                    let row = i * db + k;
+                    let col = j * db + l;
+                    out[row * d + col] = aij * bkl;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Matrix representation of a multi-qubit Pauli string (tensor-product
+/// of 2x2 Pauli matrices, left-to-right).
+pub fn pauli_string_mat(ps: &PauliString) -> Matrix {
+    assert!(!ps.0.is_empty(), "empty PauliString");
+    let mut acc = pauli_1q(ps.0[0]);
+    let mut d = 2;
+    for p in ps.0.iter().skip(1) {
+        acc = kron(&acc, &pauli_1q(*p), d, 2);
+        d *= 2;
+    }
+    acc
+}
+
+/// Check whether a d x d matrix is (numerically) diagonal.
+pub fn is_diagonal(m: &Matrix, d: usize, tol: f64) -> bool {
+    for i in 0..d {
+        for j in 0..d {
+            if i == j {
+                continue;
+            }
+            if m[i * d + j].norm() > tol {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// `exp(-i * H * t)` for a Hermitian `H`. Dispatches:
+/// - If `H` is diagonal -> elementwise exp (works for any `d`).
+/// - Else if `d == 2` and `H` is traceless -> Bloch form via
+///   [`exp_minus_i_h_t_1q_traceless`].
+/// - Else panics with "not implemented". Future work: add
+///   eigendecomposition path for `d > 2` non-diagonal.
+pub fn exp_minus_i_h_t(h: &Matrix, d: usize, t: f64) -> Matrix {
+    if is_diagonal(h, d, 1e-14) {
+        let mut u = zeros(d);
+        for i in 0..d {
+            let arg = Complex64::new(0.0, -h[i * d + i].re * t);
+            u[i * d + i] = arg.exp();
+        }
+        return u;
+    }
+    if d == 2 {
+        return exp_minus_i_h_t_1q_traceless(h, t);
+    }
+    panic!("exp_minus_i_h_t: non-diagonal and d={} > 2 not implemented", d);
+}
+
 /// Matrix exponential `exp(-i * H * t)` for a 2x2 traceless Hermitian H.
 /// Uses the Bloch form: `exp(-i H t) = cos(r t) I - i sin(r t) H / r`
 /// where `r = sqrt(c_x^2 + c_y^2 + c_z^2)` is the Pauli-decomposition norm.
-/// Panics if `H` has nonzero trace (use a dedicated impl for those cases).
-pub fn exp_minus_i_h_t_1q(h: &Matrix, t: f64) -> Matrix {
-    assert_eq!(h.len(), 4, "exp_minus_i_h_t_1q requires a 2x2 matrix");
+/// Panics if `H` has nonzero trace.
+pub fn exp_minus_i_h_t_1q_traceless(h: &Matrix, t: f64) -> Matrix {
+    assert_eq!(h.len(), 4, "requires a 2x2 matrix");
     // Check Hermitian (tolerant).
     let h00 = h[0];
     let h01 = h[1];

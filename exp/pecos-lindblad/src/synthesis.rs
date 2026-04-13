@@ -65,6 +65,58 @@ pub fn synthesize_numerical_1q(gate: &Gate, n_steps: usize) -> PauliLindbladMode
     synthesize_numerical(gate, n_steps)
 }
 
+/// Synthesize a Pauli-Lindblad model from **mixed coherent + dissipative
+/// noise** on a time-independent ideal Hamiltonian (currently: identity
+/// gate, `H_g = 0`) via the full Lindblad superoperator path.
+///
+/// Builds `L_super` (`d^2 x d^2`), exponentiates to get the channel
+/// `exp(L_super * tau_g)`, applies to each `vec(P_b)`, extracts Pauli
+/// fidelity `f_b = (1/d) tr(P_b * Lambda(P_b))`, then inverts via
+/// Walsh-Hadamard. Unifies the coherent and dissipative paths for the
+/// identity case: matches [`synthesize_identity_1q`] for pure AD+PD,
+/// matches [`synthesize_exact_unitary`] for pure coherent noise on
+/// identity, and handles **both at once** (the case the other paths
+/// reject).
+///
+/// Requires `gate.ideal.hamiltonian` to be (numerically) zero -- for
+/// non-trivial `H_g` the interaction-frame Lindbladian is time-dependent
+/// and requires either Magnus order >= 1 time-ordering (existing
+/// `synthesize_numerical` path for linear-order dissipative) or
+/// time-slicing (future work).
+pub fn synthesize_superop_identity(gate: &Gate) -> PauliLindbladModel {
+    let n = gate.num_qubits;
+    let d = 1usize << n;
+    assert!(
+        is_zero_matrix(&gate.ideal.hamiltonian),
+        "synthesize_superop_identity requires H_g = 0 (time-independent L_I)"
+    );
+    let tau = gate.tau_g;
+    let l_super = gate.noise.superoperator();
+    // channel = exp(L_super * tau_g)
+    let channel = matrix::expm(&matrix::scale(&l_super, Complex64::new(tau, 0.0)), d * d);
+
+    let paulis = PauliString::enumerate_nonidentity(n);
+    let alphas: Vec<f64> = paulis
+        .iter()
+        .map(|p| {
+            let p_mat = matrix::pauli_string_mat(p);
+            let vec_p = matrix::vec_of(&p_mat, d);
+            let vec_applied = matrix::matvec(&channel, &vec_p, d * d);
+            let applied = matrix::unvec(&vec_applied, d);
+            let inner = matrix::trace(&matrix::matmul(&p_mat, &applied, d), d);
+            let f_b = inner.re / d as f64;
+            assert!(
+                f_b > 0.1,
+                "Pauli fidelity {} too low for {:?}; noise outside weak-coupling regime",
+                f_b,
+                p,
+            );
+            -f_b.ln()
+        })
+        .collect();
+    model_from_alphas_walsh(paulis, alphas, n)
+}
+
 /// Synthesize a Pauli-Lindblad model for a gate with **purely coherent
 /// noise** (no collapse operators) via the exact error-unitary path.
 ///

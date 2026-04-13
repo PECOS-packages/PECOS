@@ -45,6 +45,58 @@ impl Lindbladian {
         Self { d, hamiltonian: matrix::zeros(d), collapse: Vec::new() }
     }
 
+    /// Build the `d^2 x d^2` Liouville-superoperator matrix representation
+    /// of `L`. Column-stacking convention: `vec(L(rho)) = L_super * vec(rho)`.
+    ///
+    /// `L(rho) = -i[H, rho] + sum_j gamma_j * ( c_j rho c_j^dag
+    ///                                         - 1/2 {c_j^dag c_j, rho} )`
+    /// translates to:
+    ///
+    /// `L_super = -i (I ⊗ H - H^T ⊗ I)
+    ///            + sum_j gamma_j * ( conj(c_j) ⊗ c_j
+    ///                               - 1/2 I ⊗ c_j^dag c_j
+    ///                               - 1/2 (c_j^dag c_j)^T ⊗ I )`
+    ///
+    /// (Note `(c^dag)^T = conj(c)`.)
+    pub fn superoperator(&self) -> Matrix {
+        let d = self.d;
+        let d2 = d * d;
+        let id = matrix::identity(d);
+        let neg_i = Complex64::new(0.0, -1.0);
+
+        // Hamiltonian part: -i (I ⊗ H - H^T ⊗ I).
+        let h_t = matrix::transpose(&self.hamiltonian, d);
+        let coh = matrix::sub(
+            &matrix::kron(&id, &self.hamiltonian, d, d),
+            &matrix::kron(&h_t, &id, d, d),
+        );
+        let mut l_super = matrix::scale(&coh, neg_i);
+
+        for (c, gamma) in &self.collapse {
+            let c_bar = matrix::conj(c);
+            let c_dag = matrix::dag(c, d);
+            let cdag_c = matrix::matmul(&c_dag, c, d);
+            let cdag_c_t = matrix::transpose(&cdag_c, d);
+
+            // gamma * ( c_bar ⊗ c - 1/2 I ⊗ c^dag c - 1/2 (c^dag c)^T ⊗ I )
+            let term_a = matrix::kron(&c_bar, c, d, d);
+            let term_b = matrix::kron(&id, &cdag_c, d, d);
+            let term_c = matrix::kron(&cdag_c_t, &id, d, d);
+            let inner = matrix::sub(
+                &term_a,
+                &matrix::add(
+                    &matrix::scale(&term_b, Complex64::new(0.5, 0.0)),
+                    &matrix::scale(&term_c, Complex64::new(0.5, 0.0)),
+                ),
+            );
+            let scaled = matrix::scale(&inner, Complex64::new(*gamma, 0.0));
+            l_super = matrix::add(&l_super, &scaled);
+        }
+
+        assert_eq!(l_super.len(), d2 * d2);
+        l_super
+    }
+
     /// Apply `L` to a matrix `rho`. Returns `L(rho)`.
     pub fn apply(&self, rho: &Matrix) -> Matrix {
         let d = self.d;

@@ -61,6 +61,22 @@ pub fn dag(a: &Matrix, d: usize) -> Matrix {
     b
 }
 
+/// Plain transpose (no complex conjugation).
+pub fn transpose(a: &Matrix, d: usize) -> Matrix {
+    let mut b = zeros(d);
+    for i in 0..d {
+        for j in 0..d {
+            b[j * d + i] = a[i * d + j];
+        }
+    }
+    b
+}
+
+/// Element-wise complex conjugate.
+pub fn conj(a: &Matrix) -> Matrix {
+    a.iter().map(|c| c.conj()).collect()
+}
+
 pub fn trace(a: &Matrix, d: usize) -> Complex64 {
     (0..d).map(|i| a[i * d + i]).sum()
 }
@@ -282,6 +298,49 @@ pub fn inf_norm(a: &Matrix, d: usize) -> f64 {
     (0..d)
         .map(|i| (0..d).map(|j| a[i * d + j].norm()).sum::<f64>())
         .fold(0.0, f64::max)
+}
+
+/// Column-stack vectorization `vec(M)` of a `d x d` matrix (length `d^2`).
+/// Convention: `vec(A rho B) = (B^T ⊗ A) vec(rho)`.
+pub fn vec_of(m: &Matrix, d: usize) -> Vec<Complex64> {
+    assert_eq!(m.len(), d * d);
+    let mut out = vec![Complex64::new(0.0, 0.0); d * d];
+    // Column-major layout: vec(M)[i + d*j] = M[i, j] = m[i*d + j].
+    for i in 0..d {
+        for j in 0..d {
+            out[i + d * j] = m[i * d + j];
+        }
+    }
+    out
+}
+
+/// Inverse of [`vec_of`]: reshape a `d^2` vector back to a `d x d`
+/// matrix (row-major storage).
+pub fn unvec(v: &[Complex64], d: usize) -> Matrix {
+    assert_eq!(v.len(), d * d);
+    let mut m = vec![Complex64::new(0.0, 0.0); d * d];
+    for i in 0..d {
+        for j in 0..d {
+            m[i * d + j] = v[i + d * j];
+        }
+    }
+    m
+}
+
+/// Matrix-vector product `A * v` for a `n x n` matrix `A` and length-`n`
+/// vector `v`.
+pub fn matvec(a: &Matrix, v: &[Complex64], n: usize) -> Vec<Complex64> {
+    assert_eq!(a.len(), n * n);
+    assert_eq!(v.len(), n);
+    let mut out = vec![Complex64::new(0.0, 0.0); n];
+    for i in 0..n {
+        let mut s = Complex64::new(0.0, 0.0);
+        for j in 0..n {
+            s += a[i * n + j] * v[j];
+        }
+        out[i] = s;
+    }
+    out
 }
 
 /// Matrix exponential `exp(-i * H * t)` for a 2x2 traceless Hermitian H.

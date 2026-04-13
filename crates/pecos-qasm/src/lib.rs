@@ -73,6 +73,7 @@ pub mod util;
 
 #[cfg(feature = "phir")]
 pub mod qasm_to_phir;
+pub mod qasm_to_phir_json;
 
 #[cfg(feature = "wasm")]
 pub mod wasm_foreign_object;
@@ -88,6 +89,7 @@ pub use program::QASMProgram;
 pub use program::QasmEngineWasm;
 #[cfg(feature = "phir")]
 pub use qasm_to_phir::{qasm_program_to_phir_module, qasm_to_phir_module, qasm_to_ron};
+pub use qasm_to_phir_json::{program_to_phir_json, qasm_to_phir_json};
 pub use unified_engine_builder::{QasmEngineBuilder, qasm_engine};
 pub use util::{count_qubits_in_file, count_qubits_in_str};
 

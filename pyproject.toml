@@ -25,9 +25,9 @@ quantum-pecos = { workspace = true }
 
 [dependency-groups]
 dev = [
-  "maturin>=1.2,<2.0",                      # For building (should match build requirements)
+  "maturin>=1.13.1,<2.0",                      # For building (should match build requirements)
   "patchelf; platform_system != 'Windows'", # For setting rpath in shared libraries (Linux/macOS only)
-  "setuptools>=62.6",                       # Build system
+  "setuptools>=82.0.1",                       # Build system
   "pre-commit",                             # Git hooks
   "black",                                  # Code formatting
   "ruff",                                   # Fast Python linting
@@ -41,7 +41,7 @@ dev = [
   "phir>=0.3.3",
   "polars>=1.0.0",     # DataFrame library for examples/benchmarks
   # WebAssembly runtimes for testing
-  "wasmtime>=13.0",
+  "wasmtime>=43.0.0",
   "jupyter>=1.1.1",
 ]
 test = [ # pinning testing environment

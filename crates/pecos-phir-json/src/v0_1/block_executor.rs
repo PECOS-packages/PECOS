@@ -144,8 +144,12 @@ impl BlockExecutor {
                 size,
             } => {
                 debug!("Processing variable definition: {data_type} {variable}");
-                self.processor
-                    .handle_variable_definition(data, data_type, variable, *size)?;
+                self.processor.handle_variable_definition(
+                    data,
+                    data_type,
+                    variable,
+                    crate::v0_1::ast::infer_size(data_type, *size),
+                )?;
             }
             Operation::QuantumOp {
                 qop, angles, args, ..
@@ -218,6 +222,9 @@ impl BlockExecutor {
             Operation::Comment { comment } => {
                 debug!("Skipping comment: {comment}");
                 // Comments are no-ops
+            }
+            Operation::DataExport { .. } => {
+                // Data exports are no-ops during execution
             }
         }
 
@@ -831,7 +838,7 @@ mod tests {
                 data: "cvar_define".to_string(),
                 data_type: "i32".to_string(),
                 variable: "x".to_string(),
-                size: 32,
+                size: Some(32),
             },
             Operation::ClassicalOp {
                 cop: "=".to_string(),

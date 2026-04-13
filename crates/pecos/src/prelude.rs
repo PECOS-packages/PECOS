@@ -56,7 +56,7 @@
 //!
 //! - Unified simulation API: `sim()`, `SimBuilderExt`
 //! - Program utilities: `detect_program_type()`, etc.
-//! - Feature-gated quantum backends: `CppSparseStab`, `QuestStateVec`, etc.
+//! - Feature-gated quantum backends: `CppSparseStab`, etc.
 //!
 //! For organized access to specific functionality, use the namespace modules:
 //!
@@ -130,12 +130,6 @@ pub use crate::unified_sim::{ProgrammedSimBuilder, SimBuilderExt, sim};
 
 #[cfg(feature = "cppsparsestab")]
 pub use pecos_cppsparsestab::CppSparseStab;
-
-#[cfg(feature = "quest")]
-pub use pecos_quest::{QuestDensityMatrix, QuestStateVec};
-
-#[cfg(feature = "qulacs")]
-pub use pecos_qulacs::QulacsStateVec;
 
 // ============================================================================
 // WebAssembly foreign object support

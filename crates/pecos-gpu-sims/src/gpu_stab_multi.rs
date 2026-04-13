@@ -4,7 +4,7 @@
 //! All shots process the same circuit, but with independent random outcomes.
 //! This is ideal for Monte Carlo sampling where many shots are needed.
 
-use crate::gpu_probe::request_default_gpu_device;
+use crate::gpu_probe::gpu_context;
 use pecos_core::QubitId;
 use pecos_random::{PecosRng, Rng, SeedableRng};
 use std::fmt::Debug;
@@ -100,8 +100,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Returns an error if no GPU adapter is found or buffer allocation exceeds device limits.
     #[allow(clippy::cast_possible_truncation)] // GPU params: qubit/shot counts fit in u32
     pub fn with_seed(num_qubits: usize, num_shots: usize, seed: u64) -> Result<Self, String> {
-        let gpu = request_default_gpu_device("GPU Stab Multi Device")
-            .map_err(|error| error.to_string())?;
+        let gpu = gpu_context().map_err(|error| error.to_string())?;
         let device = gpu.device;
         let queue = gpu.queue;
 
@@ -1681,9 +1680,32 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// // results[shot][measurement_index] = true/false
     /// ```
     pub fn mz_queue(&mut self, qubits: &[QubitId]) {
-        let batch_shots = self.shots_per_batch;
+        // Mid-circuit semantics: each mz_queue call must observe the state at
+        // the TIME of the call. The queue is not drained until mz_fetch (or
+        // flush), but we must execute any previously-queued measurements
+        // BEFORE applying gates that arrived between then and now -- those
+        // prior measurements expect to see the state at their own call point.
+        //
+        // Order within this call:
+        //   1) execute any prior meas_queue items against the current
+        //      un-flushed state buffer (which still reflects the state at
+        //      their queue-time, modulo intervening non-measurement no-ops),
+        //   2) flush pending gates so the NEW measurements below will see
+        //      the state at this call point when later executed,
+        //   3) append the new qubits to meas_queue.
+        //
+        // Before the fix, mz_queue only appended qubit indices; mz_fetch
+        // later flushed every queued gate first, so every queued measurement
+        // saw the same final state regardless of when it was queued.
+        if !self.meas_queue.is_empty() {
+            let prev_qubits = std::mem::take(&mut self.meas_queue);
+            let prev_random = std::mem::take(&mut self.meas_queue_random_bits);
+            let prev_results = self.mz_gpu_sequential(&prev_qubits, &prev_random);
+            self.meas_pending_results.push(prev_results);
+        }
+        self.flush_gates();
 
-        // Pre-generate random bits for each qubit to measure
+        let batch_shots = self.shots_per_batch;
         for &qubit in qubits {
             let qubit = qubit.index();
             let random_bits: Vec<u32> = (0..batch_shots)
@@ -1763,12 +1785,18 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         combined
     }
 
-    /// Check if there are queued measurements waiting to be processed.
+    /// Check if there are measurements still waiting to be executed on the
+    /// current state. Does NOT count measurements that have already been
+    /// eagerly executed (by a subsequent `mz_queue` or flush) but not yet
+    /// fetched -- those are always returned in full on the next `mz_fetch`.
     pub fn has_queued_measurements(&self) -> bool {
         !self.meas_queue.is_empty()
     }
 
-    /// Get the number of queued measurements.
+    /// Number of measurements currently waiting to be executed on the current
+    /// state. With the mid-circuit semantics, each `mz_queue` call eagerly
+    /// executes all previously-queued measurements before appending new
+    /// qubits; this count therefore reflects only the latest batch.
     pub fn queued_measurement_count(&self) -> usize {
         self.meas_queue.len()
     }
@@ -1937,8 +1965,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         self
     }
 }
-
-crate::impl_gpu_drop!(GpuStabMulti<R>, R: Rng + SeedableRng);
 
 /// PCG-style hash for deterministic noise (CPU version, matches shader)
 fn hash_noise_cpu(seed: u32, gate_idx: u32, qubit: u32) -> u32 {
@@ -3201,19 +3227,21 @@ mod tests {
         let num_shots = 64;
         let mut sim = GpuStabMulti::<PecosRng>::with_seed(5, num_shots, 42).unwrap();
 
-        // Queue measurements in multiple calls
+        // Queue measurements in multiple calls. With mid-circuit eager
+        // semantics, each new mz_queue drains the previous queue, so
+        // queued_measurement_count() reflects only the latest batch.
         sim.x(&qid(0)); // Put qubit 0 in |1>
         sim.mz_queue(&[QubitId(0)]);
+        assert_eq!(sim.queued_measurement_count(), 1);
 
         sim.x(&qid(2)); // Put qubit 2 in |1>
         sim.mz_queue(&[QubitId(1), QubitId(2)]);
+        assert_eq!(sim.queued_measurement_count(), 2);
 
         sim.mz_queue(&[QubitId(3), QubitId(4)]);
+        assert_eq!(sim.queued_measurement_count(), 2);
 
-        // Should have 5 measurements queued
-        assert_eq!(sim.queued_measurement_count(), 5);
-
-        // Fetch all results
+        // Fetch returns the full 5 measurements accumulated across all calls.
         let results = sim.mz_fetch();
 
         assert_eq!(results.len(), num_shots);

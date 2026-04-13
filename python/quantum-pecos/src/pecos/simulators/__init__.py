@@ -32,13 +32,6 @@ from pecos.simulators.pauliprop import (
     PauliFaultProp,  # Backward compatibility
     PauliProp,
 )
-from pecos.simulators.quest_densitymatrix import QuestDensityMatrix
-
-# QuEST simulators
-from pecos.simulators.quest_statevec import QuestStateVec
-
-# Use Qulacs (Rust version) as the primary Qulacs implementation
-from pecos.simulators.qulacs import Qulacs
 
 # Pauli fault propagation sim
 from pecos.simulators.sparsestab import (
@@ -89,9 +82,6 @@ __all__ = [
     "DefaultSimulator",
     "PauliFaultProp",
     "PauliProp",
-    "QuestDensityMatrix",
-    "QuestStateVec",
-    "Qulacs",
     "SparseStab",
     "SparseStabPy",
     "Stabilizer",

@@ -285,43 +285,50 @@ impl DType {
                 Ok(Py::new(py, ScalarF64::new(float_val))?.into_any())
             }
             DType::I64 => {
-                // Convert to i64 and create Rust-backed scalar
-                let int_val = value.extract::<i64>()?;
+                // Try i64 first, then u64 (for values > i64::MAX that truncate)
+                #[allow(clippy::cast_possible_wrap)]
+                let int_val = if let Ok(v) = value.extract::<i64>() {
+                    v
+                } else if let Ok(v) = value.extract::<u64>() {
+                    v as i64
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "i64() argument must be an integer",
+                    ));
+                };
                 Ok(Py::new(py, ScalarI64::new(int_val))?.into_any())
             }
             DType::I32 => {
-                // Convert to i32 and create Rust-backed scalar
-                let int_val = value.extract::<i32>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI32::new(int_val))?.into_any())
             }
             DType::I16 => {
-                // Convert to i16 and create Rust-backed scalar
-                let int_val = value.extract::<i16>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI16::new(int_val))?.into_any())
             }
             DType::I8 => {
-                // Convert to i8 and create Rust-backed scalar
-                let int_val = value.extract::<i8>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarI8::new(int_val))?.into_any())
             }
+            #[allow(clippy::cast_sign_loss)]
             DType::U64 => {
-                // Convert to u64 and create Rust-backed scalar
-                let int_val = value.extract::<u64>()?;
+                let int_val = if let Ok(v) = value.extract::<u64>() {
+                    v
+                } else {
+                    value.extract::<i64>()? as u64
+                };
                 Ok(Py::new(py, ScalarU64::new(int_val))?.into_any())
             }
             DType::U32 => {
-                // Convert to u32 and create Rust-backed scalar
-                let int_val = value.extract::<u32>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarU32::new(int_val))?.into_any())
             }
             DType::U16 => {
-                // Convert to u16 and create Rust-backed scalar
-                let int_val = value.extract::<u16>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarU16::new(int_val))?.into_any())
             }
             DType::U8 => {
-                // Convert to u8 and create Rust-backed scalar
-                let int_val = value.extract::<u8>()?;
+                let int_val = value.extract::<i64>()?;
                 Ok(Py::new(py, ScalarU8::new(int_val))?.into_any())
             }
             DType::Complex128 => {
@@ -768,8 +775,9 @@ impl ScalarU8 {
     const itemsize: usize = 1;
 
     #[new]
-    fn new(value: u8) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn new(value: i64) -> Self {
+        Self { value: value as u8 }
     }
 
     fn __repr__(&self) -> String {
@@ -1127,8 +1135,11 @@ impl ScalarU16 {
     const itemsize: usize = 2;
 
     #[new]
-    fn new(value: u16) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn new(value: i64) -> Self {
+        Self {
+            value: value as u16,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -1486,8 +1497,11 @@ impl ScalarU32 {
     const itemsize: usize = 4;
 
     #[new]
-    fn new(value: u32) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn new(value: i64) -> Self {
+        Self {
+            value: value as u32,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -1837,6 +1851,13 @@ pub struct ScalarU64 {
     value: u64,
 }
 
+impl ScalarU64 {
+    /// Rust-only constructor (for internal use).
+    pub fn new(value: u64) -> Self {
+        Self { value }
+    }
+}
+
 #[pymethods]
 impl ScalarU64 {
     /// Item size in bytes (class attribute)
@@ -1845,8 +1866,19 @@ impl ScalarU64 {
     const itemsize: usize = 8;
 
     #[new]
-    fn new(value: u64) -> Self {
-        Self { value }
+    #[allow(clippy::cast_sign_loss)]
+    fn py_new(value: &Bound<'_, pyo3::PyAny>) -> PyResult<Self> {
+        // Try u64 first (for values > i64::MAX), then i64 (for negative values that wrap)
+        if let Ok(v) = value.extract::<u64>() {
+            Ok(Self { value: v })
+        } else if let Ok(v) = value.extract::<i64>() {
+            Ok(Self { value: v as u64 })
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "u64() argument must be an integer, not '{}'",
+                value.get_type().name()?
+            )))
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -2216,8 +2248,9 @@ impl ScalarI8 {
     const itemsize: usize = 1;
 
     #[new]
-    fn new(value: i8) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation)]
+    fn new(value: i64) -> Self {
+        Self { value: value as i8 }
     }
 
     fn __repr__(&self) -> String {
@@ -2613,8 +2646,11 @@ impl ScalarI16 {
     const itemsize: usize = 2;
 
     #[new]
-    fn new(value: i16) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation)]
+    fn new(value: i64) -> Self {
+        Self {
+            value: value as i16,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -3009,8 +3045,11 @@ impl ScalarI32 {
     const itemsize: usize = 4;
 
     #[new]
-    fn new(value: i32) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_truncation)]
+    fn new(value: i64) -> Self {
+        Self {
+            value: value as i32,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -3398,6 +3437,13 @@ pub struct ScalarI64 {
     value: i64,
 }
 
+impl ScalarI64 {
+    /// Rust-only constructor (for internal use).
+    pub fn new(value: i64) -> Self {
+        Self { value }
+    }
+}
+
 #[pymethods]
 impl ScalarI64 {
     /// Item size in bytes (class attribute)
@@ -3406,8 +3452,18 @@ impl ScalarI64 {
     const itemsize: usize = 8;
 
     #[new]
-    fn new(value: i64) -> Self {
-        Self { value }
+    #[allow(clippy::cast_possible_wrap)]
+    fn py_new(value: &Bound<'_, pyo3::PyAny>) -> PyResult<Self> {
+        // Try i64 first (normal case), then u64 (for values > i64::MAX that truncate)
+        if let Ok(v) = value.extract::<i64>() {
+            Ok(Self { value: v })
+        } else if let Ok(v) = value.extract::<u64>() {
+            Ok(Self { value: v as i64 })
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "i64() argument must be an integer",
+            ))
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -3649,7 +3705,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: self.value + other_value,
+            value: self.value.wrapping_add(other_value),
         })
     }
 
@@ -3669,7 +3725,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: self.value - other_value,
+            value: self.value.wrapping_sub(other_value),
         })
     }
 
@@ -3681,7 +3737,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: other_value - self.value,
+            value: other_value.wrapping_sub(self.value),
         })
     }
 
@@ -3697,7 +3753,7 @@ impl ScalarI64 {
             )));
         };
         Ok(Self {
-            value: self.value * other_value,
+            value: self.value.wrapping_mul(other_value),
         })
     }
 

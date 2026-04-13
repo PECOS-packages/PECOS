@@ -31,18 +31,14 @@ from pecos.noise.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
     CuStateVec,
-    QuestStateVec,
-    Qulacs,
     StateVec,
 )
 from pecos.testing import assert_allclose
 
 str_to_sim = {
     "StateVec": StateVec,
-    "Qulacs": Qulacs,
     "CuStateVec": CuStateVec,
     "MPS": MPS,
-    "QuestStateVec": QuestStateVec,
 }
 
 
@@ -82,9 +78,8 @@ def _compare_vectors(
 
     sim_vector_adjusted = sim_vector_normalized * phase
 
-    # Use looser tolerance for simulators that use gate decompositions
-    # QuestStateVec uses decompositions for RXX, RYY, RZZ which accumulate errors
-    rtol = 1e-3 if simulator == "QuestStateVec" else 1e-5
+    rtol = 1e-5
+    _ = simulator  # reserved for per-backend tolerance tuning
 
     # Add absolute tolerance to handle near-zero values with numerical noise
     # MPS uses tensor network approximations that can introduce ~1e-15 errors
@@ -180,10 +175,8 @@ def generate_random_state(seed: int | None = None) -> QuantumCircuit:
     "simulator",
     [
         "StateVec",
-        "Qulacs",
         "CuStateVec",
         "MPS",
-        "QuestStateVec",
     ],
 )
 def test_init(simulator: str) -> None:
@@ -201,10 +194,8 @@ def test_init(simulator: str) -> None:
     "simulator",
     [
         "StateVec",
-        "Qulacs",
         "CuStateVec",
         "MPS",
-        "QuestStateVec",
     ],
 )
 def test_H_measure(simulator: str) -> None:
@@ -220,10 +211,8 @@ def test_H_measure(simulator: str) -> None:
     "simulator",
     [
         "StateVec",
-        "Qulacs",
         "CuStateVec",
         "MPS",
-        "QuestStateVec",
     ],
 )
 def test_comp_basis_circ_and_measure(simulator: str) -> None:
@@ -354,10 +343,8 @@ def _test_all_gates_incremental(
     "simulator",
     [
         "StateVec",
-        "Qulacs",
         "CuStateVec",
         "MPS",
-        "QuestStateVec",
     ],
 )
 def test_all_gate_circ(simulator: str) -> None:
@@ -395,9 +382,7 @@ def test_all_gate_circ(simulator: str) -> None:
     "simulator",
     [
         "StateVec",
-        "Qulacs",
         "CuStateVec",
-        "QuestStateVec",
     ],
 )
 def test_hybrid_engine_no_noise(simulator: str) -> None:
@@ -430,9 +415,7 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
     "simulator",
     [
         "StateVec",
-        "Qulacs",
         "CuStateVec",
-        "QuestStateVec",
     ],
 )
 def test_hybrid_engine_noisy(simulator: str) -> None:

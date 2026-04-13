@@ -383,8 +383,6 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
 
     args.extend(&[
         "--exclude",
-        "pecos-quest",
-        "--exclude",
         "pecos-cuquantum", // Requires cuQuantum SDK, test separately if available
         "--exclude",
         "pecos-decoders",
@@ -398,15 +396,6 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
 
     if !run_cargo_command(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));
-    }
-
-    println!("Testing pecos-quest...");
-    let mut args = vec!["test", "-p", "pecos-quest", "--all-features"];
-    if !release_flag.is_empty() {
-        args.push(release_flag);
-    }
-    if !run_cargo_command(&args) {
-        return Err(Error::Config("cargo test (pecos-quest) failed".to_string()));
     }
 
     // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)
@@ -425,7 +414,6 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         println!("cuQuantum runtime not available - skipping pecos-cuquantum");
     }
 
-    // Test GPU simulator if GPU is available
     if include_gpu_sims {
         println!("Including pecos-gpu-sims in Rust tests");
         let mut args = vec!["test", "-p", "pecos-gpu-sims"];

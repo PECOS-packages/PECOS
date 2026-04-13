@@ -123,9 +123,6 @@ ERROR_MODEL = GenericErrorModel(
 CORE_BACKENDS = [
     "stabilizer",  # SparseStab - stabilizer simulator
     "StateVec",  # StateVec - state vector simulator
-    "Qulacs",  # Qulacs - state vector (Rust wrapper)
-    "QuestStateVec",  # QuEST - state vector (Rust wrapper)
-    "QuestDensityMatrix",  # QuEST - density matrix (Rust wrapper)
 ]
 
 

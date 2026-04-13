@@ -21,6 +21,9 @@ module PECOS
 
 export pecos_version, QubitId, libpecos_julia
 
+include("Decoder.jl")
+include("Simulator.jl")
+
 # Determine library path based on environment
 const libpecos_julia = begin
     # Check if we're in development mode (library built locally)

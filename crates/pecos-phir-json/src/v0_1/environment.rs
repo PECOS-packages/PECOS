@@ -1,6 +1,9 @@
-use pecos_core::errors::PecosError;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::str::FromStr;
+
+use pecos_core::BitUInt;
+use pecos_core::errors::PecosError;
 
 /// Represents the data type of a variable
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,13 +30,10 @@ pub enum DataType {
     Qubits,
 }
 
-impl DataType {
-    /// Creates a `DataType` from a string representation
-    ///
-    /// # Errors
-    /// Returns an error if the string doesn't match a supported data type.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Result<Self, PecosError> {
+impl FromStr for DataType {
+    type Err = PecosError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "i8" => Ok(DataType::I8),
             "i16" => Ok(DataType::I16),
@@ -48,7 +48,9 @@ impl DataType {
             _ => Err(PecosError::Input(format!("Unsupported data type: {s}"))),
         }
     }
+}
 
+impl DataType {
     /// Returns the bit width of the data type
     #[must_use]
     pub fn bit_width(&self) -> usize {
@@ -104,27 +106,6 @@ impl DataType {
             | DataType::Qubits => 0,
         }
     }
-
-    /// Applies type constraints to a value based on the bit width and signedness
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
-    )]
-    pub fn constrain_value(&self, value: u64) -> u64 {
-        match self {
-            DataType::I8 => (value as i8) as u64,
-            DataType::I16 => (value as i16) as u64,
-            DataType::I32 => (value as i32) as u64,
-            DataType::I64 => (value as i64) as u64,
-            DataType::U8 => value & 0xFF,
-            DataType::U16 => value & 0xFFFF,
-            DataType::U32 => value & 0xFFFF_FFFF,
-            DataType::U64 | DataType::Qubits => value, // Full 64-bit range for these types
-            DataType::Bool => value & 1,
-        }
-    }
 }
 
 // Implement Display for DataType
@@ -145,232 +126,7 @@ impl fmt::Display for DataType {
     }
 }
 
-/// Represents a variable value that can be typed
-#[derive(Debug, Clone, Copy)]
-pub enum TypedValue {
-    I8(i8),
-    I16(i16),
-    I32(i32),
-    I64(i64),
-    U8(u8),
-    U16(u16),
-    U32(u32),
-    U64(u64),
-    Bool(bool),
-}
-
-impl TypedValue {
-    /// Creates a new `TypedValue` with the specified data type and value
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
-    )]
-    pub fn new(data_type: &DataType, value: u64) -> Self {
-        match data_type {
-            DataType::I8 => TypedValue::I8(value as i8),
-            DataType::I16 => TypedValue::I16(value as i16),
-            DataType::I32 => TypedValue::I32(value as i32),
-            DataType::I64 => TypedValue::I64(value as i64),
-            DataType::U8 => TypedValue::U8(value as u8),
-            DataType::U16 => TypedValue::U16(value as u16),
-            DataType::U32 => TypedValue::U32(value as u32),
-            DataType::U64 | DataType::Qubits => TypedValue::U64(value), // U64 and Qubits both use U64
-            DataType::Bool => TypedValue::Bool(value != 0),
-        }
-    }
-
-    /// Creates a typed value from a raw u64, inferring the type as i32
-    /// This is for backward compatibility with code that uses raw values
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    pub fn from_raw(value: u64) -> Self {
-        TypedValue::I32(value as i32)
-    }
-
-    /// Gets the value as a u64 (for uniform storage)
-    #[must_use]
-    #[allow(clippy::cast_sign_loss)]
-    pub fn as_u64(&self) -> u64 {
-        match self {
-            TypedValue::I8(val) => *val as u64,
-            TypedValue::I16(val) => *val as u64,
-            TypedValue::I32(val) => *val as u64,
-            TypedValue::I64(val) => *val as u64,
-            TypedValue::U8(val) => u64::from(*val),
-            TypedValue::U16(val) => u64::from(*val),
-            TypedValue::U32(val) => u64::from(*val),
-            TypedValue::U64(val) => *val,
-            TypedValue::Bool(val) => u64::from(*val),
-        }
-    }
-
-    /// Gets the value as an i64 (for expressions)
-    #[must_use]
-    #[allow(clippy::cast_possible_wrap)]
-    pub fn as_i64(&self) -> i64 {
-        match self {
-            TypedValue::I8(val) => i64::from(*val),
-            TypedValue::I16(val) => i64::from(*val),
-            TypedValue::I32(val) => i64::from(*val),
-            TypedValue::I64(val) => *val,
-            TypedValue::U8(val) => i64::from(*val),
-            TypedValue::U16(val) => i64::from(*val),
-            TypedValue::U32(val) => i64::from(*val),
-            TypedValue::U64(val) => *val as i64,
-            TypedValue::Bool(val) => i64::from(*val),
-        }
-    }
-
-    /// Gets the value as a boolean
-    #[must_use]
-    pub fn as_bool(&self) -> bool {
-        match self {
-            TypedValue::I8(val) => *val != 0,
-            TypedValue::I16(val) => *val != 0,
-            TypedValue::I32(val) => *val != 0,
-            TypedValue::I64(val) => *val != 0,
-            TypedValue::U8(val) => *val != 0,
-            TypedValue::U16(val) => *val != 0,
-            TypedValue::U32(val) => *val != 0,
-            TypedValue::U64(val) => *val != 0,
-            TypedValue::Bool(val) => *val,
-        }
-    }
-
-    /// Gets the value as a u32
-    #[must_use]
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn as_u32(&self) -> u32 {
-        self.as_u64() as u32
-    }
-}
-
-// Implement Display for TypedValue for better logging
-impl fmt::Display for TypedValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypedValue::I8(val) => write!(f, "{val}"),
-            TypedValue::I16(val) => write!(f, "{val}"),
-            TypedValue::I32(val) => write!(f, "{val}"),
-            TypedValue::I64(val) => write!(f, "{val}"),
-            TypedValue::U8(val) => write!(f, "{val}"),
-            TypedValue::U16(val) => write!(f, "{val}"),
-            TypedValue::U32(val) => write!(f, "{val}"),
-            TypedValue::U64(val) => write!(f, "{val}"),
-            TypedValue::Bool(val) => write!(f, "{val}"),
-        }
-    }
-}
-
-// From implementation for TypedValue to u64
-impl From<TypedValue> for u64 {
-    fn from(value: TypedValue) -> Self {
-        value.as_u64()
-    }
-}
-
-// From implementation for u64 to TypedValue
-impl From<u64> for TypedValue {
-    fn from(value: u64) -> Self {
-        TypedValue::from_raw(value)
-    }
-}
-
-// From implementation for i64 to TypedValue
-impl From<i64> for TypedValue {
-    fn from(value: i64) -> Self {
-        TypedValue::I64(value)
-    }
-}
-
-// From implementation for i32 to TypedValue
-impl From<i32> for TypedValue {
-    fn from(value: i32) -> Self {
-        TypedValue::I32(value)
-    }
-}
-
-// From implementation for bool to TypedValue
-impl From<bool> for TypedValue {
-    fn from(value: bool) -> Self {
-        TypedValue::Bool(value)
-    }
-}
-
-// From implementation for TypedValue to u32
-impl From<TypedValue> for u32 {
-    #[allow(clippy::cast_possible_truncation)]
-    fn from(value: TypedValue) -> Self {
-        value.as_u64() as u32
-    }
-}
-
-// From implementation for u32 to TypedValue
-impl From<u32> for TypedValue {
-    fn from(value: u32) -> Self {
-        TypedValue::U32(value)
-    }
-}
-
-// From implementation for TypedValue to i64
-impl From<TypedValue> for i64 {
-    fn from(value: TypedValue) -> Self {
-        value.as_i64()
-    }
-}
-
-// To handle option comparisons safely, we implement PartialEq on our own types
-impl PartialEq<u64> for TypedValue {
-    fn eq(&self, other: &u64) -> bool {
-        self.as_u64() == *other
-    }
-}
-
-impl PartialEq<i64> for TypedValue {
-    fn eq(&self, other: &i64) -> bool {
-        self.as_i64() == *other
-    }
-}
-
-impl PartialEq<u32> for TypedValue {
-    fn eq(&self, other: &u32) -> bool {
-        self.as_u32() == *other
-    }
-}
-
-impl PartialEq<i32> for TypedValue {
-    fn eq(&self, other: &i32) -> bool {
-        self.as_i64() == i64::from(*other)
-    }
-}
-
-impl PartialEq<TypedValue> for u64 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        *self == other.as_u64()
-    }
-}
-
-impl PartialEq<TypedValue> for i64 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        *self == other.as_i64()
-    }
-}
-
-impl PartialEq<TypedValue> for u32 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        *self == other.as_u32()
-    }
-}
-
-impl PartialEq<TypedValue> for i32 {
-    fn eq(&self, other: &TypedValue) -> bool {
-        i64::from(*self) == other.as_i64()
-    }
-}
-
-// Add integer support for BoolBit (already defined above)
+// Add integer support for BoolBit
 impl PartialEq<i32> for BoolBit {
     fn eq(&self, other: &i32) -> bool {
         (self.0 && *other != 0) || (!self.0 && *other == 0)
@@ -380,23 +136,6 @@ impl PartialEq<i32> for BoolBit {
 impl PartialEq<u32> for BoolBit {
     fn eq(&self, other: &u32) -> bool {
         (self.0 && *other != 0) || (!self.0 && *other == 0)
-    }
-}
-
-// Implement bit shifting for TypedValue
-impl std::ops::Shr<usize> for TypedValue {
-    type Output = u64;
-
-    fn shr(self, rhs: usize) -> Self::Output {
-        self.as_u64() >> rhs
-    }
-}
-
-impl std::ops::Shr<usize> for &TypedValue {
-    type Output = u64;
-
-    fn shr(self, rhs: usize) -> Self::Output {
-        self.as_u64() >> rhs
     }
 }
 
@@ -471,67 +210,6 @@ impl From<BoolBit> for i32 {
     }
 }
 
-impl TypedValue {
-    /// Gets the data type of this value
-    #[must_use]
-    pub fn get_type(&self) -> DataType {
-        match self {
-            TypedValue::I8(_) => DataType::I8,
-            TypedValue::I16(_) => DataType::I16,
-            TypedValue::I32(_) => DataType::I32,
-            TypedValue::I64(_) => DataType::I64,
-            TypedValue::U8(_) => DataType::U8,
-            TypedValue::U16(_) => DataType::U16,
-            TypedValue::U32(_) => DataType::U32,
-            TypedValue::U64(_) => DataType::U64,
-            TypedValue::Bool(_) => DataType::Bool,
-        }
-    }
-
-    /// Gets a specific bit from the value
-    ///
-    /// # Errors
-    /// Returns an error if the bit index is out of range for the data type.
-    pub fn get_bit(&self, idx: usize) -> Result<bool, PecosError> {
-        // Check that idx is within the bit width of the type
-        let bit_width = self.get_type().bit_width();
-        if idx >= bit_width {
-            return Err(PecosError::Input(format!(
-                "Bit index {idx} out of range for type with bit width {bit_width}"
-            )));
-        }
-
-        // Extract the bit
-        let val = self.as_u64();
-        Ok(((val >> idx) & 1) != 0)
-    }
-
-    /// Sets a specific bit in the value
-    ///
-    /// # Errors
-    /// Returns an error if the bit index is out of range for the data type.
-    pub fn with_bit_set(&self, idx: usize, bit_value: bool) -> Result<TypedValue, PecosError> {
-        // Check that idx is within the bit width of the type
-        let bit_width = self.get_type().bit_width();
-        if idx >= bit_width {
-            return Err(PecosError::Input(format!(
-                "Bit index {idx} out of range for type with bit width {bit_width}"
-            )));
-        }
-
-        // Update the bit
-        let val = self.as_u64();
-        let new_val = if bit_value {
-            val | (1 << idx)
-        } else {
-            val & !(1 << idx)
-        };
-
-        // Return new typed value
-        Ok(TypedValue::new(&self.get_type(), new_val))
-    }
-}
-
 /// Metadata for a variable
 #[derive(Debug, Clone)]
 pub struct VariableInfo {
@@ -545,11 +223,211 @@ pub struct VariableInfo {
     pub metadata: Option<BTreeMap<String, serde_json::Value>>,
 }
 
+/// A variable value stored as a fixed-width integer using `BitUInt`.
+///
+/// All values are stored as `BitUInt` (unsigned) with the declared bit width.
+/// Signedness is tracked via the `DataType` in `VariableInfo` and applied
+/// during `as_i64()` using two's complement interpretation.
+///
+/// This matches how Python PECOS handles classical variables: raw bits are
+/// stored, and sign interpretation happens at the API boundary.
+#[derive(Debug, Clone)]
+pub struct BitValue {
+    /// The raw value as an N-bit unsigned integer (N = register size)
+    inner: BitUInt,
+    /// Whether this value should be interpreted as signed
+    signed: bool,
+    /// The data type's full bit width (e.g. 64 for i64, 32 for u32)
+    /// Used for sign interpretation: values are negative only when the
+    /// sign bit at this width is set, matching Python PECOS dtype behavior.
+    type_width: u16,
+}
+
+impl BitValue {
+    /// Create a new zero value for the given data type and size.
+    #[must_use]
+    pub fn zero(data_type: &DataType, size: usize) -> Self {
+        let raw_tw = data_type.bit_width();
+        // For types with 0 bit width (qubits), use the declared size
+        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size })
+            .unwrap_or(64)
+            .max(1);
+        Self {
+            inner: BitUInt::zero(tw),
+            signed: data_type.is_signed(),
+            type_width: tw,
+        }
+    }
+
+    /// Create a new value from a raw u64 for the given data type and size.
+    ///
+    /// Storage is at the full type width. The value is masked to `size` bits
+    /// for user-assigned values (matching PHIR semantics where `size` limits
+    /// the data bits the user can write, but the underlying register is N bits).
+    #[must_use]
+    pub fn from_u64(data_type: &DataType, size: usize, value: u64) -> Self {
+        let raw_tw = data_type.bit_width();
+        let tw = u16::try_from(if raw_tw > 0 { raw_tw } else { size })
+            .unwrap_or(64)
+            .max(1);
+        let s = u16::try_from(size).unwrap_or(tw);
+        // Mask to `size` data bits before storing at type width.
+        // This ensures user-assigned values respect the declared register size,
+        // while the full type-width storage allows bitwise ops on all N bits.
+        let masked = if s < tw {
+            value & ((1u64 << s) - 1)
+        } else {
+            value
+        };
+        Self {
+            inner: BitUInt::new(tw, masked),
+            signed: data_type.is_signed(),
+            type_width: tw,
+        }
+    }
+
+    /// Get value as u64 (raw bits, truncates for >64 bit values).
+    #[must_use]
+    pub fn as_u64(&self) -> u64 {
+        self.inner.to_u64().unwrap_or(0)
+    }
+
+    /// Get the inner `BitUInt` (for expression evaluation without truncation).
+    #[must_use]
+    pub fn to_bituint(&self) -> BitUInt {
+        self.inner.clone()
+    }
+
+    /// Get value as i64, interpreting sign via two's complement using the
+    /// TYPE's bit width (not the register size).
+    ///
+    /// This matches Python behavior where `i64(3)` is positive even if stored
+    /// in a 2-bit register, because the sign bit is at position 63 (i64 type
+    /// width), not at position 1 (register size).
+    #[must_use]
+    #[allow(clippy::cast_possible_wrap)]
+    pub fn as_i64(&self) -> i64 {
+        let raw = self.as_u64();
+        if self.signed {
+            let tw = self.type_width;
+            if tw >= 64 {
+                return raw as i64;
+            }
+            // Two's complement using TYPE width
+            let sign_bit = 1u64 << (tw - 1);
+            if raw & sign_bit != 0 {
+                let mask = !((1u64 << tw) - 1);
+                (raw | mask) as i64
+            } else {
+                raw as i64
+            }
+        } else {
+            raw as i64
+        }
+    }
+
+    /// Get value as u32.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn as_u32(&self) -> u32 {
+        self.as_u64() as u32
+    }
+
+    /// Get value as bool.
+    #[must_use]
+    pub fn as_bool(&self) -> bool {
+        !self.inner.is_zero()
+    }
+
+    /// Get the declared bit width.
+    #[must_use]
+    pub fn size(&self) -> u16 {
+        self.inner.size()
+    }
+
+    /// Whether this value is signed.
+    #[must_use]
+    pub fn is_signed(&self) -> bool {
+        self.signed
+    }
+
+    /// Get a specific bit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError::Input` if `idx` is out of range for this value's type width.
+    pub fn get_bit(&self, idx: usize) -> Result<bool, PecosError> {
+        let idx16 = u16::try_from(idx)
+            .map_err(|_| PecosError::Input(format!("Bit index {idx} too large")))?;
+        if idx16 >= self.inner.size() {
+            return Err(PecosError::Input(format!(
+                "Bit index {idx} out of range for type with bit width {}",
+                self.inner.size()
+            )));
+        }
+        Ok(self.inner.get_bit(idx16))
+    }
+
+    /// Set a specific bit, returning new value.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PecosError::Input` if `idx` is out of range for this value's type width.
+    pub fn with_bit_set(&self, idx: usize, bit: bool) -> Result<BitValue, PecosError> {
+        let idx16 = u16::try_from(idx)
+            .map_err(|_| PecosError::Input(format!("Bit index {idx} too large")))?;
+        if idx16 >= self.inner.size() {
+            return Err(PecosError::Input(format!(
+                "Bit index {idx} out of range for type with bit width {}",
+                self.inner.size()
+            )));
+        }
+        let mut new_inner = self.inner.clone();
+        new_inner.set_bit(idx16, bit);
+        Ok(BitValue {
+            inner: new_inner,
+            signed: self.signed,
+            type_width: self.type_width,
+        })
+    }
+
+    /// Get the data type of this value.
+    #[must_use]
+    pub fn get_type(&self) -> DataType {
+        let size = self.inner.size();
+        if self.signed {
+            match size {
+                1..=8 => DataType::I8,
+                9..=16 => DataType::I16,
+                17..=32 => DataType::I32,
+                _ => DataType::I64,
+            }
+        } else {
+            match size {
+                1..=8 => DataType::U8,
+                9..=16 => DataType::U16,
+                17..=32 => DataType::U32,
+                _ => DataType::U64,
+            }
+        }
+    }
+}
+
+impl fmt::Display for BitValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.signed {
+            write!(f, "{}", self.as_i64())
+        } else {
+            write!(f, "{}", self.as_u64())
+        }
+    }
+}
+
 /// Environment for storing variables with efficient access
 #[derive(Debug, Clone)]
 pub struct Environment {
-    /// Values of all variables (stored with their type information)
-    values: Vec<TypedValue>,
+    /// Values of all variables using proper fixed-width integer types
+    values: Vec<BitValue>,
     /// Maps variable names to indices in the values vector
     name_to_index: BTreeMap<String, usize>,
     /// Metadata for each variable
@@ -573,8 +451,7 @@ impl Environment {
     /// Resets all variable values to zero while keeping their definitions
     pub fn reset_values(&mut self) {
         for (i, info) in self.metadata.iter().enumerate() {
-            // Reset according to type
-            self.values[i] = TypedValue::new(&info.data_type, 0);
+            self.values[i] = BitValue::zero(&info.data_type, info.size);
         }
         self.mappings.clear();
     }
@@ -612,8 +489,8 @@ impl Environment {
         let index = self.values.len();
         self.name_to_index.insert(name.to_string(), index);
 
-        // Initialize with zero value of appropriate type
-        self.values.push(TypedValue::new(&data_type, 0));
+        // Initialize with zero value of appropriate type and declared size
+        self.values.push(BitValue::zero(&data_type, size));
 
         self.metadata.push(VariableInfo {
             name: name.to_string(),
@@ -631,55 +508,40 @@ impl Environment {
         self.name_to_index.contains_key(name)
     }
 
-    /// Gets the typed value of a variable
+    /// Gets the value of a variable as a `BitValue`.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<TypedValue> {
-        self.name_to_index.get(name).map(|&idx| self.values[idx])
+    pub fn get(&self, name: &str) -> Option<&BitValue> {
+        self.name_to_index.get(name).map(|&idx| &self.values[idx])
     }
 
-    /// Gets the raw u64 value of a variable (for backward compatibility)
+    /// Gets the raw u64 value of a variable.
     #[must_use]
     pub fn get_raw(&self, name: &str) -> Option<u64> {
-        self.get(name).map(|v| v.as_u64())
+        self.get(name).map(BitValue::as_u64)
     }
 
-    /// Sets the value of a variable with type checking
+    /// Sets the value of a variable using a u64.
     ///
-    /// Accepts any type that can be converted to `TypedValue`
+    /// The value is automatically masked to the variable's declared bit width
+    /// by the underlying `BitInt`/`BitUInt` storage. This is the same as `set_raw`.
     ///
     /// # Errors
     /// Returns an error if the variable doesn't exist.
-    pub fn set<T: Into<TypedValue>>(&mut self, name: &str, value: T) -> Result<(), PecosError> {
-        let typed_value = value.into();
-        if let Some(&idx) = self.name_to_index.get(name) {
-            // Get the data type of the variable
-            let expected_type = &self.metadata[idx].data_type;
-
-            // For now, we'll be lenient with type checking for backward compatibility
-            // Just apply constraints to ensure the value fits within the data type
-            let raw_value = typed_value.as_u64();
-            let constrained_value = expected_type.constrain_value(raw_value);
-
-            // Create a new typed value with the correct type and set it
-            self.values[idx] = TypedValue::new(expected_type, constrained_value);
-            Ok(())
-        } else {
-            Err(PecosError::Input(format!("Variable '{name}' not found")))
-        }
+    pub fn set(&mut self, name: &str, value: u64) -> Result<(), PecosError> {
+        self.set_raw(name, value)
     }
 
-    /// Sets the value of a variable using a raw u64 (for backward compatibility)
+    /// Sets the value of a variable using a raw u64.
+    ///
+    /// The value is automatically masked to the variable's declared bit width.
     ///
     /// # Errors
     /// Returns an error if the variable doesn't exist.
     pub fn set_raw(&mut self, name: &str, value: u64) -> Result<(), PecosError> {
         if let Some(&idx) = self.name_to_index.get(name) {
-            // Apply constraints based on data type
-            let data_type = &self.metadata[idx].data_type;
-            let constrained_value = data_type.constrain_value(value);
-
-            // Create a typed value and set it
-            self.values[idx] = TypedValue::new(data_type, constrained_value);
+            let info = &self.metadata[idx];
+            // BitValue::from_u64 automatically masks to the declared size
+            self.values[idx] = BitValue::from_u64(&info.data_type, info.size, value);
             Ok(())
         } else {
             Err(PecosError::Input(format!("Variable '{name}' not found")))
@@ -710,15 +572,6 @@ impl Environment {
     /// Returns an error if the variable doesn't exist or the bit index is out of range.
     pub fn get_bit(&self, var_name: &str, bit_index: usize) -> Result<BoolBit, PecosError> {
         if let Some(&idx) = self.name_to_index.get(var_name) {
-            // Check bit index is in range
-            if bit_index >= self.metadata[idx].size {
-                return Err(PecosError::Input(format!(
-                    "Bit index {} out of range for variable '{}' with size {}",
-                    bit_index, var_name, self.metadata[idx].size
-                )));
-            }
-
-            // Extract the bit using the TypedValue method
             self.values[idx].get_bit(bit_index).map(BoolBit)
         } else {
             Err(PecosError::Input(format!(
@@ -737,23 +590,10 @@ impl Environment {
         bit_index: usize,
         bit_value: T,
     ) -> Result<(), PecosError> {
-        let bool_bit = bit_value.into();
-        let bool_value = bool_bit.0;
+        let bool_value = bit_value.into().0;
 
         if let Some(&idx) = self.name_to_index.get(var_name) {
-            // Check bit index is in range
-            if bit_index >= self.metadata[idx].size {
-                return Err(PecosError::Input(format!(
-                    "Bit index {} out of range for variable '{}' with size {}",
-                    bit_index, var_name, self.metadata[idx].size
-                )));
-            }
-
-            // Create a new value with the bit set
-            let new_value = self.values[idx].with_bit_set(bit_index, bool_value)?;
-
-            // Set the new value
-            self.values[idx] = new_value;
+            self.values[idx] = self.values[idx].with_bit_set(bit_index, bool_value)?;
             Ok(())
         } else {
             Err(PecosError::Input(format!(
@@ -785,20 +625,19 @@ impl Environment {
 
     /// Gets all measurement result variables and their values
     #[must_use]
-    pub fn get_measurement_results(&self) -> BTreeMap<String, TypedValue> {
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn get_measurement_results(&self) -> BTreeMap<String, u32> {
         let mut results = BTreeMap::new();
         for (i, info) in self.metadata.iter().enumerate() {
-            // Include all variables that start with "m" or "measurement"
             if info.name.starts_with('m') || info.name.starts_with("measurement") {
-                results.insert(info.name.clone(), self.values[i]);
+                results.insert(info.name.clone(), self.values[i].as_u64() as u32);
             }
         }
 
-        // If no measurement variables were found, add all mapped variables
         if results.is_empty() && !self.mappings.is_empty() {
             for (source, dest) in &self.mappings {
                 if let Some(&idx) = self.name_to_index.get(source) {
-                    results.insert(dest.clone(), self.values[idx]);
+                    results.insert(dest.clone(), self.values[idx].as_u64() as u32);
                 }
             }
         }
@@ -875,8 +714,7 @@ impl Environment {
         // If no mappings exist or no values were found, return all variables that have values
         if results.is_empty() {
             for (i, info) in self.metadata.iter().enumerate() {
-                let value = self.values[i];
-                results.insert(info.name.clone(), value.as_u32());
+                results.insert(info.name.clone(), self.values[i].as_u32());
             }
         }
 
@@ -891,7 +729,7 @@ impl Environment {
     pub fn copy_variable(&mut self, src_name: &str, dst_name: &str) -> Result<(), PecosError> {
         // Check if source exists
         if let Some(src_idx) = self.name_to_index.get(src_name) {
-            let src_value = self.values[*src_idx];
+            let src_value = self.values[*src_idx].clone();
             let src_info = &self.metadata[*src_idx];
 
             // If destination doesn't exist, create it
@@ -956,12 +794,14 @@ mod tests {
         env.add_variable("i8_var", DataType::I8, 8).unwrap();
         env.add_variable("u8_var", DataType::U8, 8).unwrap();
 
-        // Test i8 constraints (-128 to 127)
+        // Test i8 constraints: 8-bit signed, raw bits stored as BitUInt(8)
         env.set_raw("i8_var", 127).unwrap();
         assert_eq!(env.get_raw("i8_var"), Some(127));
+        assert_eq!(env.get("i8_var").map(BitValue::as_i64), Some(127));
 
-        env.set_raw("i8_var", 128).unwrap(); // Should wrap to -128
-        assert_eq!(env.get_raw("i8_var"), Some(0xFFFF_FFFF_FFFF_FF80)); // -128 as u64
+        env.set_raw("i8_var", 128).unwrap(); // 128 masked to 8 bits = 0x80
+        assert_eq!(env.get_raw("i8_var"), Some(128)); // Raw bits: 0x80
+        assert_eq!(env.get("i8_var").map(BitValue::as_i64), Some(-128)); // Signed: -128
 
         // Test u8 constraints (0 to 255)
         env.set_raw("u8_var", 255).unwrap();

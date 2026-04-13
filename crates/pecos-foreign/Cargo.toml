@@ -1,0 +1,37 @@
+[package]
+name = "pecos-foreign"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+description = "Foreign language plugin interface for PECOS decoders and simulators"
+
+[dependencies]
+pecos-core.workspace = true
+pecos-decoder-core.workspace = true
+pecos-engines.workspace = true
+pecos-random.workspace = true
+pecos-simulators.workspace = true
+dirs.workspace = true
+libloading.workspace = true
+log.workspace = true
+ndarray.workspace = true
+
+[features]
+default = []
+neo = ["dep:pecos-neo"]
+
+[dependencies.pecos-neo]
+workspace = true
+optional = true
+
+[dev-dependencies]
+pecos-neo = { workspace = true }
+
+[lints]
+workspace = true

@@ -24,8 +24,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DEPS_DIR="$HOME/.pecos/deps"
 BUILD_DIR="$SCRIPT_DIR/build"
 
-QUEST_SRC="$DEPS_DIR/quest-v4.1.0"
-QULACS_SRC="$DEPS_DIR/qulacs-0.6.12"
+QUEST_SRC="$DEPS_DIR/quest-v4.2.0"
+QULACS_SRC="$DEPS_DIR/qulacs-0.6.13"
 
 # ---------------------------------------------------------------------------
 # Check sources exist
@@ -43,7 +43,7 @@ fi
 if [ "$missing" -eq 1 ]; then
     echo ""
     echo "Run the following to download the dependencies:"
-    echo "  cargo build -p pecos-quest -p pecos-qulacs"
+    echo "  scripts/native_bench/fetch_deps.sh"
     exit 1
 fi
 
@@ -84,7 +84,7 @@ mkdir -p "$QULACS_BUILD"
 BOOST_DIR="$DEPS_DIR/boost-1.83.0"
 if [ ! -d "$BOOST_DIR" ]; then
     echo "ERROR: Boost not found at $BOOST_DIR"
-    echo "Run: cargo build -p pecos-qulacs"
+    echo "Run: scripts/native_bench/fetch_deps.sh"
     exit 1
 fi
 
@@ -162,6 +162,17 @@ echo "Compiled."
 echo ""
 
 # ---------------------------------------------------------------------------
+# Build PECOS standalone benchmark (pure Rust, same timing as C benchmarks)
+# ---------------------------------------------------------------------------
+
+echo "--- Building PECOS standalone benchmark (Rust, Release, -C target-cpu=native) ---"
+PECOS_BENCH_DIR="$SCRIPT_DIR/bench_pecos"
+(cd "$PECOS_BENCH_DIR" && RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" cargo build --release 2>&1 | tail -3)
+PECOS_BIN="$PECOS_BENCH_DIR/target/release/bench_pecos"
+echo "PECOS benchmark built."
+echo ""
+
+# ---------------------------------------------------------------------------
 # Run standalone benchmarks
 # ---------------------------------------------------------------------------
 
@@ -173,21 +184,12 @@ echo "--- Running Qulacs benchmark ---"
 "$BUILD_DIR/bench_qulacs" | tee "$BUILD_DIR/qulacs_results.txt"
 echo ""
 
-# ---------------------------------------------------------------------------
-# Run PECOS Rust criterion benchmarks
-# ---------------------------------------------------------------------------
-
-echo "--- Running PECOS criterion benchmarks (--quick mode) ---"
-cd "$REPO_ROOT"
-
-# Capture criterion output; --quick runs minimal iterations for fast comparison
-CRITERION_OUT="$BUILD_DIR/criterion_output.txt"
-cargo bench -p benchmarks --profile native --bench benchmarks \
-    --features quest,qulacs -- "Native" --quick 2>&1 | tee "$CRITERION_OUT"
+echo "--- Running PECOS benchmark ---"
+"$PECOS_BIN" | tee "$BUILD_DIR/pecos_results.txt"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Parse criterion results and print comparison table
+# Comparison summary
 # ---------------------------------------------------------------------------
 
 echo "============================================================"
@@ -200,9 +202,8 @@ echo ""
 echo "Qulacs standalone results:"
 cat "$BUILD_DIR/qulacs_results.txt"
 echo ""
-echo "PECOS criterion results (see above for full output):"
-# Extract timing lines from criterion output
-grep -E "time:.*\[" "$CRITERION_OUT" 2>/dev/null || echo "(parse criterion output above for timings)"
+echo "PECOS standalone results:"
+cat "$BUILD_DIR/pecos_results.txt"
 echo ""
 echo "============================================================"
 echo "Done. Full outputs saved in: $BUILD_DIR/"

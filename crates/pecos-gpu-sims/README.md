@@ -50,6 +50,34 @@ let result = sim.mz(0);               // Measure
 
 If no GPU is available, `GpuStateVec::new()` returns `Err(GpuError::NoAdapter)`. Use a CPU-based simulator like `StateVec` as a fallback.
 
+### Precision (f64 vs f32)
+
+`GpuStateVec` aliases `GpuStateVec64` (double-precision, canonical). This requires the `SHADER_F64` GPU feature. On adapters without f64 support -- notably Metal on Apple Silicon -- `GpuStateVec::new()` returns `Err(GpuError::UnsupportedFeature("SHADER_F64"))`. Use `GpuStateVec32` for a universally portable f32 backend (about 2x smaller state, ~1e-7 rounding vs ~1e-15 for f64):
+
+```rust
+use pecos_gpu_sims::{GpuStateVec, GpuStateVec32, GpuError};
+
+// Try f64 (canonical), fall back to f32 on adapters without SHADER_F64.
+match GpuStateVec::new(4) {
+    Ok(sim) => { /* use f64 sim */ }
+    Err(GpuError::UnsupportedFeature(_)) => {
+        let sim = GpuStateVec32::new(4)?; // f32 works on Metal, DX12, Vulkan
+        /* use f32 sim */
+    }
+    Err(e) => return Err(e.into()),
+}
+```
+
+If you don't care about precision and just want *some* GPU state vector, use the opt-in `GpuStateVecAuto` wrapper, which tries f64 first and falls back to f32 automatically:
+
+```rust
+use pecos_gpu_sims::GpuStateVecAuto;
+
+let mut sim = GpuStateVecAuto::new(4)?; // f64 where available, else f32
+// sim implements the standard gate traits (CliffordGateable, ArbitraryRotationGateable).
+// Query sim.is_f64() if you need to know which backend was selected.
+```
+
 ## Development
 
 ### Current Optimizations

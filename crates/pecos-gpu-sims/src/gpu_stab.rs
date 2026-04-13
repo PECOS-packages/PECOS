@@ -10,6 +10,7 @@
 
 use crate::circuit_compiler::{CircuitCompiler, Gate as CompiledGate};
 use crate::clifford_fusion::CliffordFuser;
+use crate::gpu_probe::gpu_context;
 use pecos_core::QubitId;
 use pecos_random::{PecosRng, Rng, SeedableRng};
 use pecos_simulators::{CliffordGateable, MeasurementResult, QuantumSimulator};
@@ -286,34 +287,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         const MAX_BATCH_QUBITS: u64 = 32 * 1024;
         let rng = R::seed_from_u64(seed);
 
-        // Initialize wgpu
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| "No GPU adapter found")?;
-
-        // Check if subgroups are supported for optimized measurement
-        let adapter_features = adapter.features();
-        let has_subgroups = adapter_features.contains(wgpu::Features::SUBGROUP);
-
-        // Request subgroup feature if available
-        let required_features = if has_subgroups {
-            wgpu::Features::SUBGROUP
-        } else {
-            wgpu::Features::empty()
-        };
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("GpuStab Device"),
-            required_features,
-            required_limits: adapter.limits(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("Failed to create device: {e}"))?;
+        let ctx = gpu_context().map_err(|e| e.to_string())?;
+        let device = ctx.device;
+        let queue = ctx.queue;
 
         if num_qubits > 0x3FFF {
             return Err(format!(
@@ -2498,8 +2474,6 @@ impl<R: Rng + SeedableRng + Debug> Debug for GpuStab<R> {
             .finish_non_exhaustive()
     }
 }
-
-crate::impl_gpu_drop!(GpuStab<R>, R: Rng + SeedableRng);
 
 #[cfg(test)]
 mod tests {

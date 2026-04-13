@@ -38,6 +38,7 @@
 //! let flips = prop.measure_z_flips(&[0, 1]);
 //! ```
 
+use crate::gpu_probe::gpu_context;
 use pecos_random::{PecosRng, time_seed};
 use wgpu::util::DeviceExt;
 
@@ -132,23 +133,9 @@ impl GpuPauliProp {
     /// Returns an error if no GPU adapter is found or device creation fails.
     #[allow(clippy::cast_possible_truncation)] // GPU params: qubit/shot counts fit in u32
     pub fn with_seed(num_qubits: usize, num_shots: u32, seed: u64) -> Result<Self, String> {
-        // Initialize wgpu
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| "No GPU adapter found")?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("PauliProp Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: adapter.limits(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("Failed to create device: {e}"))?;
+        let ctx = gpu_context().map_err(|e| e.to_string())?;
+        let device = ctx.device;
+        let queue = ctx.queue;
 
         // Calculate dimensions
         let shot_words = num_shots.div_ceil(32);
@@ -385,7 +372,9 @@ impl GpuPauliProp {
         }
     }
 
-    /// Apply X gate. Toggles X fault.
+    /// Apply Pauli X gate. For Pauli-fault tracking this is a no-op on the bit
+    /// pattern (X P X = +/- P). To inject an X fault instead, call
+    /// [`Self::inject_x_fault`].
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn x(&mut self, qubits: &[usize]) {
         for &q in qubits {
@@ -393,7 +382,7 @@ impl GpuPauliProp {
         }
     }
 
-    /// Apply Y gate. Toggles both X and Z faults.
+    /// Apply Pauli Y gate. No-op on fault bits (Y P Y = +/- P).
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn y(&mut self, qubits: &[usize]) {
         for &q in qubits {
@@ -401,7 +390,7 @@ impl GpuPauliProp {
         }
     }
 
-    /// Apply Z gate. Toggles Z fault.
+    /// Apply Pauli Z gate. No-op on fault bits (Z P Z = +/- P).
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn z(&mut self, qubits: &[usize]) {
         for &q in qubits {
@@ -520,97 +509,60 @@ impl GpuPauliProp {
             return;
         }
 
-        // Separate 1Q and 2Q operations
-        let mut ops_1q: Vec<u32> = Vec::new();
-        let mut ops_2q: Vec<u32> = Vec::new();
+        // Dispatch each gate in its own shader invocation, in original order.
+        //
+        // This is required for correctness because (a) 1q and 2q gates do not
+        // commute in general so the previous reorder-into-two-batches broke
+        // semantics, and (b) two-qubit gates read the *other* qubit's fault
+        // state from the global buffer -- that read only sees values written
+        // back at the end of a dispatch, so a chain of 2q gates in a single
+        // dispatch would read stale global state for the chained qubits.
+        //
+        // Per-gate dispatch is O(n_gates) submits but keeps the shader simple
+        // and correct. 1q gates on distinct qubits could in principle be
+        // coalesced into one dispatch, but that needs a dependency tracker.
+        //
+        // No inter-gate `poll` is needed: `Queue::write_buffer` and
+        // `Queue::submit` on the same queue are sequenced. Each iteration's
+        // write happens before its submit, and that submit completes before
+        // the next iteration's write/submit run on the GPU. The CPU loop
+        // returns as soon as everything is queued; the actual GPU work is
+        // synced by the caller's `sync()` or readback.
+        let total_work_items = self.num_qubits as u32 * self.shot_words;
+        let workgroups = total_work_items.div_ceil(256);
 
         let mut i = 0;
         while i < self.gate_queue.len() {
             let gate_type = self.gate_queue[i];
-
-            // Check if this is a 2Q gate
-            let is_2q = matches!(gate_type, GATE_CX | GATE_CZ | GATE_SWAP);
-
-            // FAULT_DEPOL2 uses 4 words
             let op_len = if gate_type == FAULT_DEPOL2 { 4 } else { 3 };
 
-            if is_2q {
-                ops_2q.extend_from_slice(&self.gate_queue[i..i + op_len]);
-            } else {
-                ops_1q.extend_from_slice(&self.gate_queue[i..i + op_len]);
+            let mut queue_data = Vec::with_capacity(op_len + 1);
+            queue_data.push(op_len as u32);
+            queue_data.extend_from_slice(&self.gate_queue[i..i + op_len]);
+
+            self.queue.write_buffer(
+                &self.gate_queue_buffer,
+                0,
+                bytemuck::cast_slice(&queue_data),
+            );
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PauliProp gate encoder"),
+                });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("PauliProp gate pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.dispatch_workgroups(workgroups, 1, 1);
             }
+            self.queue.submit(std::iter::once(encoder.finish()));
 
             i += op_len;
-        }
-
-        let total_work_items = self.num_qubits as u32 * self.shot_words;
-        let workgroups = total_work_items.div_ceil(256);
-
-        // Dispatch 1Q operations first
-        if !ops_1q.is_empty() {
-            let mut queue_data = Vec::with_capacity(ops_1q.len() + 1);
-            queue_data.push(ops_1q.len() as u32);
-            queue_data.extend_from_slice(&ops_1q);
-
-            self.queue.write_buffer(
-                &self.gate_queue_buffer,
-                0,
-                bytemuck::cast_slice(&queue_data),
-            );
-
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("PauliProp 1Q Encoder"),
-                });
-
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("PauliProp 1Q Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.dispatch_workgroups(workgroups, 1, 1);
-            }
-
-            self.queue.submit(std::iter::once(encoder.finish()));
-
-            // Wait for 1Q to complete before 2Q
-            if !ops_2q.is_empty() {
-                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            }
-        }
-
-        // Dispatch 2Q operations
-        if !ops_2q.is_empty() {
-            let mut queue_data = Vec::with_capacity(ops_2q.len() + 1);
-            queue_data.push(ops_2q.len() as u32);
-            queue_data.extend_from_slice(&ops_2q);
-
-            self.queue.write_buffer(
-                &self.gate_queue_buffer,
-                0,
-                bytemuck::cast_slice(&queue_data),
-            );
-
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("PauliProp 2Q Encoder"),
-                });
-
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("PauliProp 2Q Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.dispatch_workgroups(workgroups, 1, 1);
-            }
-
-            self.queue.submit(std::iter::once(encoder.finish()));
         }
 
         self.gate_queue.clear();
@@ -800,8 +752,6 @@ impl GpuPauliProp {
         result
     }
 }
-
-crate::impl_gpu_drop!(GpuPauliProp);
 
 #[cfg(test)]
 mod tests {

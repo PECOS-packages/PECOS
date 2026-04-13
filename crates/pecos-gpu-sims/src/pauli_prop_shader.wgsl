@@ -90,17 +90,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             local_z = local_z ^ local_x;
         }
         else if (gate_type == GATE_X && qubit1 == qubit) {
-            // X: toggle X fault
-            local_x = ~local_x;
+            // Pauli X gate conjugation on a Pauli P (tracked-fault): X P X = +/- P
+            // with unchanged X/Z bit pattern. No change to local_x / local_z.
+            // (To inject an X fault, use FAULT_X; distinct from GATE_X.)
         }
         else if (gate_type == GATE_Y && qubit1 == qubit) {
-            // Y: toggle both X and Z
-            local_x = ~local_x;
-            local_z = ~local_z;
+            // Pauli Y conjugation: Y P Y = +/- P, bits unchanged.
         }
         else if (gate_type == GATE_Z && qubit1 == qubit) {
-            // Z: toggle Z fault
-            local_z = ~local_z;
+            // Pauli Z conjugation: Z P Z = +/- P, bits unchanged.
         }
         // Two-qubit gates: need to read from the other qubit
         else if (gate_type == GATE_CX) {

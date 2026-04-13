@@ -1,6 +1,8 @@
 pub mod ast;
+pub mod classical_interpreter;
 pub mod engine;
 pub mod foreign_objects;
+pub mod name_resolver;
 pub mod operations;
 pub mod phir_converter;
 pub mod wasm_foreign_object;
@@ -46,22 +48,6 @@ impl PhirImplementation for V0_1 {
                 "Unsupported PHIR-JSON version: found '{}', only version '0.1.0' is supported",
                 program.version
             )));
-        }
-
-        // Validate that at least one Result command exists
-        let has_result_command = program.ops.iter().any(|op| {
-            if let ast::Operation::ClassicalOp { cop, .. } = op {
-                cop == "Result"
-            } else {
-                false
-            }
-        });
-
-        if !has_result_command {
-            return Err(PecosError::Input(
-                "Invalid PHIR-JSON program structure: Program must contain at least one Result command to specify outputs"
-                    .to_string(),
-            ));
         }
 
         Ok(program)

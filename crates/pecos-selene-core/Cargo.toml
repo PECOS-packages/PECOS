@@ -1,0 +1,26 @@
+[package]
+name = "pecos-selene-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+description = "Shared adapter for PECOS simulator plugins for the Selene quantum emulator"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow.workspace = true
+pecos-core.workspace = true
+pecos-simulators.workspace = true
+selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "1794e8d1dba26120a18e904940c014f4e034bed6" }
+
+[dev-dependencies]
+pecos-simulators.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

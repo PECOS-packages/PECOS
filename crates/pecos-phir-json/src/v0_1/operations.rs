@@ -1,5 +1,5 @@
 use crate::v0_1::ast::{ArgItem, Expression, MEASUREMENT_PREFIX, Operation, QubitArg};
-use crate::v0_1::environment::{DataType, Environment, TypedValue};
+use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
@@ -211,20 +211,10 @@ impl OperationProcessor {
     /// This delegates directly to the environment which is the single source of truth.
     #[must_use]
     pub fn get_measurement_results(&self) -> BTreeMap<String, u32> {
-        // Get all measurement-related variables from the environment
-        let mut results = BTreeMap::new();
-        let all_results = self.environment.get_measurement_results();
-
-        // Convert TypedValue to u32
-        for (name, value) in all_results {
-            results.insert(name, value.as_u32());
-        }
-
-        // If no results were found, fall back to mapped results
+        let results = self.environment.get_measurement_results();
         if results.is_empty() {
             return self.environment.get_mapped_results();
         }
-
         results
     }
 
@@ -430,7 +420,7 @@ impl OperationProcessor {
         log::debug!("Condition evaluated to: {condition_value}");
 
         // Execute the appropriate branch
-        if condition_value != 0 {
+        if condition_value.as_bool() {
             // Condition is true, return the true branch operations
             log::debug!(
                 "Condition is true, executing true branch with {} operations",
@@ -842,7 +832,7 @@ impl OperationProcessor {
         size: usize,
     ) -> Result<(), PecosError> {
         // Convert string data type to DataType enum
-        let dt = DataType::from_str(data_type)?;
+        let dt = data_type.parse::<DataType>()?;
 
         // Only add to environment if it doesn't already exist
         // This is important for compatibility with test programs that might redefine variables
@@ -957,7 +947,7 @@ impl OperationProcessor {
             match arg {
                 ArgItem::Indexed((name, idx)) => Ok((name.clone(), *idx)),
                 ArgItem::Simple(name) => Ok((name.clone(), 0)),
-                ArgItem::Integer(_) => Err(PecosError::Input(
+                ArgItem::Integer(_) | ArgItem::UInteger(_) => Err(PecosError::Input(
                     "Expected variable reference, got integer literal".to_string(),
                 )),
                 ArgItem::Expression(_) => Err(PecosError::Input(
@@ -1021,8 +1011,10 @@ impl OperationProcessor {
 
                     // Calculate the new value and update exported_values
                     // Get the current value from environment or use 0 if it doesn't exist
-                    let env_value = self.environment.get(&var).unwrap_or(TypedValue::U32(0));
-                    let current_value = env_value.as_u32();
+                    let current_value = self
+                        .environment
+                        .get(&var)
+                        .map_or(0u32, super::environment::BitValue::as_u32);
 
                     // Clear the bit and set it to the new value
                     let mask = !(1 << idx);
@@ -1072,7 +1064,7 @@ impl OperationProcessor {
                     ArgItem::Indexed((var, idx)) => {
                         self.validate_variable_access(var, *idx)?;
                     }
-                    ArgItem::Integer(_) => {
+                    ArgItem::Integer(_) | ArgItem::UInteger(_) => {
                         // Integer literals are valid and don't need validation
                     }
                     ArgItem::Expression(_expr) => {
@@ -1809,10 +1801,12 @@ impl OperationProcessor {
                     return Ok(u32::from(bit_value.0));
                 }
                 Err(_) => {
-                    // Fall back to extracting bit from full value
+                    // Fall back to extracting bit from full u64 value
                     if let Some(full_val) = self.environment.get(var_name) {
-                        let bit_value = (full_val >> idx) & 1;
+                        let raw = full_val.as_u64();
+                        let bit_value = (raw >> idx) & 1;
                         log::debug!("Extracted bit from variable: {var_name}[{idx}] = {bit_value}");
+                        #[allow(clippy::cast_possible_truncation)]
                         return Ok(bit_value as u32);
                     }
                 }
@@ -1876,18 +1870,23 @@ impl OperationProcessor {
 
                 // Create destination variable if needed
                 if !self.environment.has_variable(&dst_name) {
-                    // Size depends on whether we're doing bit access
-                    let var_size = if let Some(idx) = dst_index {
-                        std::cmp::max(idx + 1, 32)
-                    } else {
-                        32
-                    };
+                    // Inherit type and size from source variable when possible
+                    let (var_type, var_size) = self
+                        .environment
+                        .get_variable_info_opt(&src_name)
+                        .map_or_else(
+                            || {
+                                if let Some(idx) = dst_index {
+                                    (DataType::I32, std::cmp::max(idx + 1, 32))
+                                } else {
+                                    (DataType::I32, 32)
+                                }
+                            },
+                            |info| (info.data_type.clone(), info.size),
+                        );
 
                     // Create the variable, but don't fail if it already exists
-                    if let Err(e) =
-                        self.environment
-                            .add_variable(&dst_name, DataType::I32, var_size)
-                    {
+                    if let Err(e) = self.environment.add_variable(&dst_name, var_type, var_size) {
                         log::warn!(
                             "Could not create variable: {dst_name}. Will try to update existing: {e}"
                         );
@@ -1975,6 +1974,13 @@ impl OperationProcessor {
             for var_info in self.environment.get_all_variables() {
                 // Skip variables we've already exported
                 if exported_values.contains_key(&var_info.name) {
+                    continue;
+                }
+                // Skip quantum variables and internal measurement variables
+                if var_info.data_type == DataType::Qubits {
+                    continue;
+                }
+                if var_info.name.starts_with("measurement_") {
                     continue;
                 }
 

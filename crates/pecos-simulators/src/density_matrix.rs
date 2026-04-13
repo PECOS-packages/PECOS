@@ -634,67 +634,46 @@ where
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
     pub fn apply_amplitude_damping(&mut self, qubit: usize, gamma: f64) -> &mut Self {
-        // Ensure gamma is in valid range
         let gamma = gamma.clamp(0.0, 1.0);
-
         if gamma < f64::EPSILON {
-            // No damping, return unchanged
             return self;
         }
 
-        // Amplitude damping channel can be implemented using the Kraus operators:
-        // E_0 = |0⟩⟨0| + sqrt(1 - gamma) |1⟩⟨1|
-        // E_1 = sqrt(gamma) |0⟩⟨1|
-
-        // Get the current state vector values
+        // Amplitude damping via Kraus ops
+        //   E_0 = |0><0| + sqrt(1-g)|1><1|,   E_1 = sqrt(g)|0><1|
+        // gives the density-matrix transformation
+        //   rho_{a,b} -> E(rho)_{a,b} =
+        //     (a,b both bit_q=0): rho_{a,b} + g * rho_{a|q, b|q}
+        //     (one of a,b bit_q=1): sqrt(1-g) * rho_{a,b}
+        //     (both bit_q=1):     (1-g) * rho_{a,b}
+        //
+        // Apply on the density matrix, then Cholesky-re-purify the Choi state.
+        // This preserves the invariant that `probability()` reads rho_{k,k} as
+        // sum_i |psi[(k<<n)|i]|^2 -- the direct-Choi shortcut used previously
+        // broke that identity for partial damping.
         let n = self.num_physical_qubits;
-        let original_sv = self.state_vector.state();
+        let dim = 1usize << n;
+        let qubit_mask = 1usize << qubit;
 
-        // Reset state first
-        let sv_size = 1 << (2 * n);
-        let mut new_state = vec![num_complex::Complex64::new(0.0, 0.0); sv_size];
-
-        // We need to apply each Kraus operator to the state
-        // We'll implement the amplitude damping channel by its action on the density matrix elements
-
-        let qubit_mask = 1 << qubit;
-
-        // Iterate through all basis states
-        for i in 0..(1 << n) {
-            for j in 0..(1 << n) {
-                // Find the corresponding index in the state vector
-                let idx_i_j = (i << n) | j;
-
-                // Check if the qubit is in state |1⟩ in basis state i and j
-                let i_has_1 = (i & qubit_mask) != 0;
-                let j_has_1 = (j & qubit_mask) != 0;
-
-                // Calculate the modified state
-                if i_has_1 && j_has_1 {
-                    // Case |1⟩⟨1| -> (1-gamma)|1⟩⟨1| + gamma|0⟩⟨0|
-                    let i_with_0 = i & !qubit_mask; // Flip the qubit to 0
-                    let j_with_0 = j & !qubit_mask;
-
-                    // Apply damping
-                    new_state[idx_i_j] += (1.0 - gamma) * original_sv[idx_i_j];
-                    new_state[(i_with_0 << n) | j_with_0] += gamma * original_sv[idx_i_j];
-                } else if i_has_1 && !j_has_1 {
-                    // Case |1⟩⟨0| -> sqrt(1-gamma)|1⟩⟨0|
-                    new_state[idx_i_j] += (1.0 - gamma).sqrt() * original_sv[idx_i_j];
-                } else if !i_has_1 && j_has_1 {
-                    // Case |0⟩⟨1| -> sqrt(1-gamma)|0⟩⟨1|
-                    new_state[idx_i_j] += (1.0 - gamma).sqrt() * original_sv[idx_i_j];
-                } else {
-                    // Case |0⟩⟨0| -> |0⟩⟨0| + damping from |1⟩ states (added above)
-                    new_state[idx_i_j] += original_sv[idx_i_j];
-                }
+        let rho = self.get_density_matrix();
+        let mut new_rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+        let sqrt_1mg = (1.0 - gamma).sqrt();
+        for i in 0..dim {
+            let i1 = (i & qubit_mask) != 0;
+            for j in 0..dim {
+                let j1 = (j & qubit_mask) != 0;
+                new_rho[i][j] = match (i1, j1) {
+                    (false, false) => {
+                        let ii = i | qubit_mask;
+                        let jj = j | qubit_mask;
+                        rho[i][j] + gamma * rho[ii][jj]
+                    }
+                    (true, true) => (1.0 - gamma) * rho[i][j],
+                    _ => sqrt_1mg * rho[i][j],
+                };
             }
         }
-
-        // Update the state vector
-        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
-        *self.state_vector_mut() = new_sv;
-
+        self.set_from_density_matrix(&new_rho);
         self
     }
 
@@ -712,55 +691,39 @@ where
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
     pub fn apply_phase_damping(&mut self, qubit: usize, lambda: f64) -> &mut Self {
-        // Ensure lambda is in valid range
         let lambda = lambda.clamp(0.0, 1.0);
-
         if lambda < f64::EPSILON {
-            // No damping, return unchanged
             return self;
         }
 
-        // Phase damping channel can be implemented using the Kraus operators:
-        // E_0 = |0⟩⟨0| + sqrt(1 - lambda) |1⟩⟨1|
-        // E_1 = sqrt(lambda) |1⟩⟨1|
-
-        // Get the current state vector values
+        // Phase damping via Kraus ops
+        //   E_0 = |0><0| + sqrt(1-l)|1><1|,   E_1 = sqrt(l)|1><1|
+        // gives
+        //   rho_{a,b} unchanged when bit_q(a) == bit_q(b)
+        //   rho_{a,b} -> sqrt(1-l) * rho_{a,b} when they differ
+        // (the two Kraus contributions sum so the diag is preserved).
+        //
+        // Apply on the density matrix, then Cholesky-re-purify so
+        // `probability()` / `purity()` stay consistent with the Choi state.
         let n = self.num_physical_qubits;
-        let original_sv = self.state_vector.state();
+        let dim = 1usize << n;
+        let qubit_mask = 1usize << qubit;
 
-        // Reset state first
-        let sv_size = 1 << (2 * n);
-        let mut new_state = vec![num_complex::Complex64::new(0.0, 0.0); sv_size];
-
-        // We need to apply each Kraus operator to the state
-        // Phase damping channel keeps diagonal elements constant,
-        // but reduces off-diagonal elements
-
-        let qubit_mask = 1 << qubit;
-
-        // Iterate through all basis states
-        for i in 0..(1 << n) {
-            for j in 0..(1 << n) {
-                // Find the corresponding index in the state vector
-                let idx_i_j = (i << n) | j;
-
-                // Check if the qubit is in different states in i and j
-                let i_has_1 = (i & qubit_mask) != 0;
-                let j_has_1 = (j & qubit_mask) != 0;
-
-                if i_has_1 == j_has_1 {
-                    // Diagonal elements are preserved
-                    new_state[idx_i_j] += original_sv[idx_i_j];
+        let rho = self.get_density_matrix();
+        let mut new_rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+        let sqrt_1ml = (1.0 - lambda).sqrt();
+        for i in 0..dim {
+            let i1 = (i & qubit_mask) != 0;
+            for j in 0..dim {
+                let j1 = (j & qubit_mask) != 0;
+                new_rho[i][j] = if i1 == j1 {
+                    rho[i][j]
                 } else {
-                    // Off-diagonal elements involving the qubit get damped
-                    new_state[idx_i_j] += (1.0 - lambda).sqrt() * original_sv[idx_i_j];
-                }
+                    sqrt_1ml * rho[i][j]
+                };
             }
         }
-
-        // Update the state vector
-        let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
-        *self.state_vector_mut() = new_sv;
+        self.set_from_density_matrix(&new_rho);
 
         self
     }

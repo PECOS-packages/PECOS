@@ -29,6 +29,28 @@ from pecos.noise.error_model import NoErrorModel
 from pecos.op_processors.generic_op_processor import GenericOpProc
 from pecos.simulators.quantum_simulator import QuantumSimulator
 
+
+def _make_classical_interpreter(
+    spec: str | None,
+) -> ClassicalInterpreterProtocol:
+    """Create a classical interpreter from a string specifier.
+
+    Args:
+        spec: One of "python", "rust", or None (defaults to "python").
+
+    Returns:
+        A classical interpreter instance.
+    """
+    if spec == "rust":
+        from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
+
+        return RustPhirClassicalInterpreter()
+    if spec is None or spec == "python":
+        return PhirClassicalInterpreter()
+    msg = f"Unknown classical interpreter: {spec!r}. Use 'python' or 'rust'."
+    raise ValueError(msg)
+
+
 if TYPE_CHECKING:
     from pecos.protocols import (
         ClassicalInterpreterProtocol,
@@ -62,7 +84,7 @@ class HybridEngine:
 
     def __init__(
         self,
-        cinterp: ClassicalInterpreterProtocol | None = None,
+        cinterp: ClassicalInterpreterProtocol | str | None = None,
         qsim: QuantumSimulator | str | None = None,
         machine: MachineProtocol | None = None,
         error_model: ErrorModelProtocol | None = None,
@@ -73,7 +95,9 @@ class HybridEngine:
 
         Args:
             cinterp: Classical interpreter for executing classical operations.
-                Defaults to PhirClassicalInterpreter if None.
+                Can be a ClassicalInterpreterProtocol instance, or a string:
+                "python" for PhirClassicalInterpreter (default), "rust" for
+                the Rust-backed RustPhirClassicalInterpreter.
             qsim: Quantum simulator for executing quantum operations. Can be a
                 QuantumSimulator instance or a string specifying the simulator type.
                 Defaults to QuantumSimulator if None.
@@ -87,11 +111,25 @@ class HybridEngine:
         """
         self.seed = None
 
-        self.cinterp: ClassicalInterpreterProtocol | None = cinterp
-        if self.cinterp is None:
-            self.cinterp: ClassicalInterpreterProtocol = PhirClassicalInterpreter()
+        # Resolve cinterp: string -> instance, None -> default
+        if isinstance(cinterp, str) or cinterp is None:
+            self.cinterp: ClassicalInterpreterProtocol = _make_classical_interpreter(cinterp)
+        else:
+            self.cinterp: ClassicalInterpreterProtocol = cinterp
 
-        self._internal_cinterp: ClassicalInterpreterProtocol = PhirClassicalInterpreter()
+        # Internal interpreter uses the same implementation as the outer one.
+        # When given Python QOp objects (from op_processor), the Rust interpreter's
+        # execute() uses a passthrough mode that buffers at measurement boundaries.
+        # Match the outer interpreter type for the internal one
+        try:
+            from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
+
+            outer_is_rust = isinstance(self.cinterp, RustPhirClassicalInterpreter)
+        except ImportError:
+            outer_is_rust = False
+        self._internal_cinterp: ClassicalInterpreterProtocol = _make_classical_interpreter(
+            "rust" if outer_is_rust else "python",
+        )
         self._internal_cinterp.phir_validate = self.cinterp.phir_validate
 
         self.qsim: QuantumSimulator | None = qsim

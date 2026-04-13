@@ -45,10 +45,11 @@ mod pauli_prop_bindings;
 mod pauli_sequence_bindings;
 mod pecos_array;
 mod pecos_random_bindings;
+mod phir_classical_interpreter;
 mod phir_json_bridge;
 mod programs_module;
-mod quest_bindings;
-mod qulacs_bindings;
+mod py_foreign_decoder;
+mod py_foreign_simulator;
 mod shot_results_bindings;
 mod sim;
 mod simulator_utils;
@@ -78,8 +79,6 @@ use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
 use pecos_random_bindings::RngPcg;
 use pyo3::prelude::*;
-use quest_bindings::{QuestDensityMatrix, QuestStateVec};
-use qulacs_bindings::PyQulacs;
 use sparse_stab_bindings::PySparseStab;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use stab_bindings::PyStabilizer;
@@ -100,6 +99,18 @@ use wasm_foreign_object_bindings::PyWasmForeignObject;
 #[pyfunction]
 fn find_llvm_tool(tool_name: &str) -> Option<String> {
     pecos_build::llvm::find_tool(tool_name).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Convert a QASM string to PHIR-JSON (as a Python dict).
+#[pyfunction]
+fn qasm_to_phir_json_py(py: Python<'_>, qasm: &str) -> PyResult<Py<PyAny>> {
+    let json_value =
+        pecos_qasm::qasm_to_phir_json(qasm).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let json_str = serde_json::to_string(&json_value)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    let json_mod = py.import("json")?;
+    let result = json_mod.call_method1("loads", (json_str,))?;
+    Ok(result.unbind())
 }
 
 /// Set up the `QuEST` CUDA backend path environment variable for runtime loading.
@@ -222,8 +233,12 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySparseStab>()?;
     m.add_class::<PyStabilizer>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
+    m.add_class::<phir_classical_interpreter::PyPhirClassicalInterpreter>()?;
+    m.add_function(pyo3::wrap_pyfunction!(
+        phir_classical_interpreter::run_phir_sim,
+        m
+    )?)?;
     m.add_class::<PyStateVec>()?;
-    m.add_class::<PyQulacs>()?;
     m.add_class::<PyCoinToss>()?;
     m.add_class::<PyPauliProp>()?;
     m.add_class::<PyByteMessage>()?;
@@ -233,8 +248,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStateVecEngine>()?;
     m.add_class::<PySparseStabEngine>()?;
     m.add_class::<RngPcg>()?;
-    m.add_class::<QuestStateVec>()?;
-    m.add_class::<QuestDensityMatrix>()?;
     m.add_class::<Array>()?;
     m.add_class::<PyBitInt>()?;
     m.add_class::<PyBitUInt>()?;
@@ -332,6 +345,13 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Array creation function (NumPy-like interface, no NumPy dependency)
     m.add_function(wrap_pyfunction!(pecos_array::array, m)?)?;
+
+    // QASM-to-PHIR-JSON conversion
+    m.add_function(wrap_pyfunction!(qasm_to_phir_json_py, m)?)?;
+
+    // Python foreign plugin types (Python-implemented decoders and simulators)
+    m.add_class::<py_foreign_decoder::PyForeignDecoder>()?;
+    m.add_class::<py_foreign_simulator::PyForeignSimulator>()?;
 
     // WebAssembly foreign object (optional)
     #[cfg(feature = "wasm")]

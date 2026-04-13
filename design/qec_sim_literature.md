@@ -186,11 +186,13 @@ The DemSampler today operates on a `DagFaultInfluenceMap` produced by circuit-le
 
 ### 7. Lindblad / master-equation + quantum-trajectory simulators
 
+**Design doc:** `design/lindblad_sim_skeleton.md` (2026-04-12).
+
 **What it is.** Continuous-time evolution under Lindbladians, optionally unraveled as stochastic quantum trajectories (Monte Carlo wavefunction / quantum jumps).
 
-**Why QEC needs it.** Realistic noise: T1/T2, coherent errors, leakage, crosstalk, cross-resonance dynamics; non-Markovian extensions; studying Pauli-twirl approximation error; modeling syndrome extraction in the analog regime.
+**Why QEC needs it.** Realistic noise: T1/T2, coherent errors, leakage, crosstalk, cross-resonance dynamics; non-Markovian extensions; studying Pauli-twirl approximation error; modeling syndrome extraction in the analog regime. **The wedge:** no mainline OSS (QuTiP, Dynamiqs, QuantumToolbox.jl) exposes `Lindbladian + gate_duration -> effective Pauli-Lindblad rates`. arXiv:2502.03462 defines this algorithm (Magnus/Dyson on superoperator, then Pauli-twirl).
 
-**PECOS status.** `pecos-neo` has composable noise channels at the gate/Pauli level, but no continuous-time Lindblad or trajectory solver (TODO: verify).
+**PECOS status (audit 2026-04-12).** `exp/pecos-neo/` has sample-only `NoiseChannel` trait (`src/noise.rs:607`); `NoiseResponse` is a Pauli-injection enum. Time only on `NoiseEvent::IdleTime` -- `AfterGate` lacks a `duration` field. No Kraus/CPTP infrastructure, no continuous-time solver. Clean gap.
 
 **Seminal refs.**
 - Dalibard, Castin, Molmer (1992) [MCWF].
@@ -205,7 +207,18 @@ The DemSampler today operates on a `DagFaultInfluenceMap` produced by circuit-le
 
 **Newer ref worth tracking.**
 - Lambert et al., *QuantumToolbox.jl* (2025), arXiv:2504.21440.
-- *Efficient Lindblad synthesis for noise model construction*, npj QI 11 (2025), arXiv:2502.03462 -- bridges Lindblad sims to Pauli-noise models (useful for feeding DEM pipelines).
+- Malekakhlagh et al., *Efficient Lindblad synthesis for noise model construction*, npj QI 11 (2025), arXiv:2502.03462 -- **key bridge paper**. Magnus-on-superoperator in interaction frame + Pauli-twirl gives diagonal Pauli-Lindblad generator. No public code. Defines the `Gate -> PauliLindbladModel` API PECOS needs.
+- Pichler & Zoller et al. / arXiv:2407.03576 -- 4th-order commutator-free Magnus in Liouville space (gold-standard cross-check for effective-generator synthesis).
+- arXiv:2402.16727 -- *Pauli approximation can underestimate logical failure rate* for 5-qubit code under realistic Lindblad; warns twirl is not free.
+- arXiv:2510.23797 -- coherent DEMs have hyperedges that vanish under Pauli twirl; motivates path (b) trajectory -> learned DEM as validator.
+- Daley 2014 (Adv. Phys.) -- canonical MCWF review; no post-2020 replacement.
+- arXiv:2306.14876 -- pseudo-Lindblad trajectories for non-GKSL (opt-in, post-v1).
+
+**Reference implementations (scout 2026-04-12).**
+- QuTiP: `mesolve` default `"adams"` (zvode), `mcsolve` uses bisection for jump times.
+- Dynamiqs (JAX/GPU): `Tsit5/Dopri5/Dopri8` + `jax.vmap+jit` for trajectory batching -- source of its ~30x dissipative-cat-CNOT speedup.
+- QuantumToolbox.jl: `DP5()` default via OrdinaryDiffEq; `EnsembleThreads` for trajectories. Closest architectural template for PECOS.
+- None expose `Lindbladian + duration -> Pauli rates`.
 
 ---
 

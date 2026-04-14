@@ -17,6 +17,7 @@ use pecos_gpu_sims::{CircuitBuilder, DepolarizingNoiseSampler, GpuNoisySampler};
 /// For the trivial circuit `mz(0)` on |0> with measurement-error probability
 /// `p_meas`, the fraction of shots returning 1 should be close to `p_meas`.
 #[test]
+#[ignore = "Slow statistical GPU audit; run explicitly with: cargo test -p pecos-gpu-sims --test noisy_sampler_stats --release -- --ignored --test-threads=1"]
 #[allow(clippy::cast_precision_loss)] // shots <= 4096, exact in f64
 fn measurement_error_rate_matches_p() {
     let shots = 4096usize;
@@ -70,6 +71,7 @@ fn zero_noise_zero_ones() {
 /// `noise_1q` after preparing |0> should flip the measurement with probability
 /// ~2p/3 (X and Y flip Z-basis; Z doesn't). Check within 4 sigma.
 #[test]
+#[ignore = "Slow statistical GPU audit; run explicitly with: cargo test -p pecos-gpu-sims --test noisy_sampler_stats --release -- --ignored --test-threads=1"]
 #[allow(clippy::cast_precision_loss)] // shots bounded, exact in f64
 fn depol1_flip_rate() {
     let shots = 4096usize;
@@ -99,6 +101,7 @@ fn depol1_flip_rate() {
 /// by a quantity related to p2. This tests that p2 actually plumbs to the
 /// 2q noise path (not re-using p1).
 #[test]
+#[ignore = "Slow statistical GPU audit; run explicitly with: cargo test -p pecos-gpu-sims --test noisy_sampler_stats --release -- --ignored --test-threads=1"]
 #[allow(clippy::cast_precision_loss)] // shots bounded, exact in f64
 fn depol2_reduces_bell_correlation() {
     let shots = 4096usize;

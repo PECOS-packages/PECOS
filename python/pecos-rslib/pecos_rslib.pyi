@@ -1272,6 +1272,14 @@ def qis_engine(**kwargs: object) -> QisEngineBuilder:
     """Create a QIS engine builder."""
     ...
 
+def selene_runtime(**kwargs: object) -> QisEngineBuilder:
+    """Create a QIS engine builder configured with the Selene runtime."""
+    ...
+
+def selene_engine(**kwargs: object) -> QisEngineBuilder:
+    """Backward-compatible alias for ``selene_runtime()``."""
+    ...
+
 def phir_json_engine(**kwargs: object) -> PhirJsonEngineBuilder:
     """Create a PHIR JSON engine builder."""
     ...
@@ -1282,6 +1290,10 @@ def state_vector(**kwargs: object) -> StateVectorEngineBuilder:
 
 def sparse_stab(**kwargs: object) -> SparseStabEngineBuilder:
     """Create a sparse stabilizer engine builder."""
+    ...
+
+def sparse_stabilizer(**kwargs: object) -> SparseStabEngineBuilder:
+    """Backward-compatible alias for ``sparse_stab()``."""
     ...
 
 def stabilizer(**kwargs: object) -> StabilizerEngineBuilder:

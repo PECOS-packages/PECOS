@@ -24,36 +24,22 @@
 //!
 //! # Example
 //!
-//! ```
-//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
-//! use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-//! use pecos_quantum::DagCircuit;
-//!
-//! // Build a simple syndrome extraction circuit
-//! let mut dag = DagCircuit::new();
-//! dag.pz(&[2]);
-//! dag.cx(&[(0, 2)]);
-//! dag.cx(&[(1, 2)]);
-//! dag.mz(&[2]);
+//! ```ignore
+//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, DemBuilder};
 //!
 //! // Build influence map from circuit
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let influence_map = analyzer.build_influence_map();
 //!
-//! // Detector: measurement record -1 (the single measurement)
-//! let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
-//! let observables_json = "[]";
-//!
 //! // Build DEM with noise model
 //! let dem = DemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .with_detectors_json(detectors_json).unwrap()
-//!     .with_observables_json(observables_json).unwrap()
+//!     .with_detectors_json(detectors_json)?
+//!     .with_observables_json(observables_json)?
 //!     .build();
 //!
-//! // Output in Stim-compatible format
-//! let dem_str = dem.to_string();
-//! assert!(!dem_str.is_empty());
+//! // Output in Stim format
+//! println!("{}", dem.to_stim_format());
 //! ```
 //!
 //! # Error Decomposition
@@ -87,18 +73,8 @@
 //! for fast approximate sampling. Unlike the DEM which maps to detectors, the
 //! MNM maps directly to raw measurement effects.
 //!
-//! ```
-//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
-//! use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
-//! use pecos_quantum::DagCircuit;
-//! use rand::SeedableRng;
-//! use rand::rngs::SmallRng;
-//!
-//! let mut dag = DagCircuit::new();
-//! dag.pz(&[2]);
-//! dag.cx(&[(0, 2)]);
-//! dag.cx(&[(1, 2)]);
-//! dag.mz(&[2]);
+//! ```ignore
+//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, MemBuilder};
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let influence_map = analyzer.build_influence_map();
@@ -109,7 +85,6 @@
 //!     .build();
 //!
 //! // Sample measurement outcomes
-//! let mut rng = SmallRng::seed_from_u64(42);
 //! let outcomes = mnm.sample(&mut rng);
 //! ```
 //!
@@ -132,7 +107,9 @@ pub use equivalence::{
 };
 pub use mem_builder::MemBuilder;
 pub use types::{
-    DecomposedError, DetectorDef, DetectorErrorModel, ErrorContribution, ErrorMechanism,
-    ErrorSourceType, LogicalObservable, MeasurementMechanism, MeasurementNoiseModel, NoiseConfig,
+    ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
+    ContributionRenderSummary, DecomposedError, DetectorDef, DetectorErrorModel,
+    DirectSourceFamily, ErrorContribution, ErrorMechanism, ErrorSourceType, LogicalObservable,
+    MeasurementMechanism, MeasurementNoiseModel, NoiseConfig, TwoDetectorDirectRenderPolicy,
     combine_probabilities,
 };

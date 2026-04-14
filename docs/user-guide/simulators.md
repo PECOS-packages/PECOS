@@ -78,13 +78,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Simulator | Type | Best For | Requirements |
 |-----------|------|----------|--------------|
 | **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
+| **Stabilizer** | Stabilizer | Dense Clifford circuits | None |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
-| **Qulacs** | State vector | High-performance state vector | None |
+| **CliffordRz** | Clifford + Rz | Clifford circuits with Z rotations | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU) | Large circuits with GPU | CUDA, cuQuantum |
 | **MPS** | Tensor network | Low-entanglement circuits | CUDA, cuQuantum |
-| **QuestStateVec** | State vector | Full state simulation | None |
-| **QuestDensityMatrix** | Density matrix | Noisy/mixed state simulation | None |
+| **density_matrix** | Density matrix | Noisy/mixed state simulation | None |
 
 ## Choosing a Simulator
 
@@ -99,15 +99,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         │                     │                     │
         ▼                     ▼                     ▼
    SparseStab ←───┐      ┌─────┴─────┐          PauliProp
-   (fastest)     │      │           │
+   Stabilizer    │      │           │
                  │   Small system?  GPU available?
                  │      │           │
                  │      ▼           ▼
                  │   StateVec    CuStateVec
-                 │   Qulacs         MPS
+                 │  CliffordRz      MPS
                  │      │
                  │      ▼
-                 └── Need mixed states? ──→ QuestDensityMatrix
+                 └── Need mixed states? ──→ density_matrix
 ```
 
 ## Setup
@@ -182,6 +182,26 @@ from pecos.simulators import SparseStabPy
 results = sim(Qasm(circuit)).quantum(SparseStabPy).run(100)
 ```
 
+### Stabilizer
+
+Dense Rust stabilizer backend for Clifford circuits.
+
+```python
+from pecos.simulators import Stabilizer
+
+results = sim(Qasm(circuit)).quantum(Stabilizer).run(100)
+```
+
+**Strengths:**
+
+- Rust backend with a straightforward dense stabilizer representation
+- Good compatibility fallback for Clifford-only workloads
+
+**Limitations:**
+
+- Only Clifford gates
+- Usually not as memory-efficient as `SparseStab` on sparse QEC circuits
+
 ## State Vector Simulators
 
 State vector simulators can simulate **any quantum circuit** but scale exponentially (2^n memory for n qubits). Practical for ~25-30 qubits on typical hardware.
@@ -211,36 +231,20 @@ Pure Rust state vector implementation.
 - Supports arbitrary gates (including T, rotation gates)
 - Good baseline performance
 
-### Qulacs (Python only)
+### CliffordRz
 
-High-performance state vector simulator via the Qulacs C++ library.
+Rust backend specialized for Clifford circuits plus Z-axis rotations.
 
 ```python
-from pecos.simulators import Qulacs
+from pecos.simulators import CliffordRz
 
-results = sim(Qasm(circuit)).quantum(Qulacs).run(100)
+results = sim(Qasm(circuit)).quantum(CliffordRz).run(100)
 ```
 
 **Strengths:**
 
-- Highly optimized C++ backend
-- SIMD acceleration
-- Often faster than StateVec for larger circuits
-
-### QuestStateVec (Python only)
-
-State vector simulator powered by the QuEST library.
-
-```python
-from pecos.simulators import QuestStateVec
-
-results = sim(Qasm(circuit)).quantum(QuestStateVec).run(100)
-```
-
-**Strengths:**
-
-- Full state vector simulation with high precision
-- Thread-safe: each instance operates on independent quantum registers
+- Efficient for Clifford-heavy workloads that need `RZ` support
+- Uses the native Rust backend that ships with PECOS
 
 ## GPU-Accelerated Simulators
 
@@ -250,6 +254,7 @@ For large circuits, GPU acceleration can provide significant speedups.
 
 NVIDIA cuQuantum-powered state vector simulator.
 
+<!--skip-if-no-cuda-->
 ```python
 from pecos.simulators import CuStateVec
 
@@ -290,12 +295,12 @@ results = sim(Qasm(circuit)).quantum(MPS).run(100)
 
 Density matrix simulators represent mixed quantum states, enabling simulation of decoherence and non-unitary operations.
 
-### QuestDensityMatrix (Python only)
+### density_matrix
 
 ```python
-from pecos.simulators import QuestDensityMatrix
+from pecos.simulators import density_matrix
 
-results = sim(Qasm(circuit)).quantum(QuestDensityMatrix).run(100)
+results = sim(Qasm(circuit)).quantum(density_matrix).run(100)
 ```
 
 **Use cases:**
@@ -386,11 +391,12 @@ Approximate performance characteristics (relative, not absolute):
 | Simulator | Speed (Clifford) | Speed (Universal) | Memory | Max Qubits |
 |-----------|------------------|-------------------|--------|------------|
 | SparseStab | ★★★★★ | N/A | Low | 1000+ |
+| Stabilizer | ★★★★ | N/A | Medium | 1000+ |
 | StateVec | ★★★ | ★★★ | 2^n | ~25-30 |
-| Qulacs | ★★★★ | ★★★★ | 2^n | ~25-30 |
+| CliffordRz | ★★★★ | Limited to Clifford + Rz | Low | 1000+ |
 | CuStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
 | MPS | ★★★ | ★★★ | ~n × chi² | Varies |
-| QuestDensityMatrix | ★★ | ★★ | 4^n | ~15 |
+| density_matrix | ★★ | ★★ | 4^n | ~15 |
 
 ## Using Simulators with sim()
 
@@ -400,7 +406,7 @@ The `sim()` API lets you switch simulators easily:
 
     ```python
     from pecos import sim, Qasm
-    from pecos.simulators import SparseStab, StateVec, Qulacs
+    from pecos.simulators import SparseStab, StateVec, Stabilizer
 
     circuit = Qasm(
         """
@@ -419,7 +425,7 @@ The `sim()` API lets you switch simulators easily:
 
     # Explicit simulator selection
     results = sim(circuit).quantum(StateVec).run(1000)
-    results = sim(circuit).quantum(Qulacs).run(1000)
+    results = sim(circuit).quantum(Stabilizer).run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"

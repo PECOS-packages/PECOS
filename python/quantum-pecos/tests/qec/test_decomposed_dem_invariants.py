@@ -184,7 +184,8 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
     )
 
     assert public_dem.to_string() == legacy_dem.to_string()
-    assert public_dem.to_string_decomposed() == legacy_dem.to_string_decomposed()
+    assert public_dem.num_contributions == legacy_dem.num_contributions
+    assert public_dem.all_contribution_effects() == legacy_dem.all_contribution_effects()
 
 
 def _find_gate_attrs(

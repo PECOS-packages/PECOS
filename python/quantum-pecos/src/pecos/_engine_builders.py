@@ -155,12 +155,22 @@ class QisEngineBuilder:
             self._builder = self._builder.program(program)
         return self
 
-    def selene_runtime(self) -> Self:
+    def selene_runtime(self, runtime_name: str | None = None) -> Self:
         """Use Selene simple runtime.
+
+        Args:
+            runtime_name: Optional runtime name. ``None`` and
+                ``"selene_simple_runtime"`` both select the default runtime.
 
         Returns:
             Self for method chaining.
         """
+        if runtime_name not in (None, "selene_simple_runtime"):
+            msg = (
+                "Python QisEngineBuilder.selene_runtime(runtime_name=...) only "
+                "supports the default 'selene_simple_runtime' wrapper today."
+            )
+            raise NotImplementedError(msg)
         self._builder = self._builder.selene_runtime()
         return self
 
@@ -231,7 +241,7 @@ def selene_engine(runtime_name: str | None = None) -> QisEngineBuilder:
     Returns:
         QisEngineBuilder: A builder for Selene-backed QIS/HUGR simulations.
     """
-    if runtime_name is not None:
+    if runtime_name not in (None, "selene_simple_runtime"):
         msg = (
             "Python selene_engine(runtime_name=...) is not currently supported by the wrapper. "
             "Use the default runtime or call into pecos_rslib directly for custom runtime names."

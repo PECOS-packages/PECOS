@@ -761,6 +761,12 @@ pub fn selene_runtime() -> PyResult<PyQisEngineBuilder> {
     })
 }
 
+/// Backward-compatible alias for `selene_runtime`.
+#[pyfunction]
+pub fn selene_engine() -> PyResult<PyQisEngineBuilder> {
+    selene_runtime()
+}
+
 /// Create a PHIR JSON engine builder
 #[pyfunction]
 pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
@@ -1393,6 +1399,12 @@ pub fn state_vector() -> PyStateVectorEngineBuilder {
 #[pyfunction]
 pub fn sparse_stab() -> PySparseStabEngineBuilder {
     PySparseStabEngineBuilder::new()
+}
+
+/// Backward-compatible alias for `sparse_stab`.
+#[pyfunction]
+pub fn sparse_stabilizer() -> PySparseStabEngineBuilder {
+    sparse_stab()
 }
 
 /// Python wrapper for `StabilizerEngineBuilder` (recommended stabilizer backend).

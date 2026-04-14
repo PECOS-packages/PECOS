@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 class SurfaceDetectorDescriptor(TypedDict):
     """Public detector descriptor derived from TickCircuit metadata."""
 
+    id: int
     detector_id: int
     stabilizer_kind: str
     stabilizer_index: int
@@ -55,6 +56,7 @@ class SurfaceDetectorDescriptor(TypedDict):
 class SurfaceObservableDescriptor(TypedDict):
     """Public observable descriptor derived from TickCircuit metadata."""
 
+    id: int
     observable_id: int
     basis: str
     records: list[int]
@@ -473,6 +475,7 @@ def _build_detector_descriptors(
         descriptor = patch.get_stabilizer_descriptor(stab_kind, stab_index)
         descriptors.append(
             {
+                "id": int(det["id"]),
                 "detector_id": int(det["id"]),
                 "stabilizer_kind": descriptor["stabilizer_kind"],
                 "stabilizer_index": descriptor["stabilizer_index"],
@@ -504,6 +507,7 @@ def _build_observable_descriptors(
     logical = patch.get_logical_descriptor(basis.upper())
     return [
         {
+            "id": int(obs["id"]),
             "observable_id": int(obs["id"]),
             "basis": basis.upper(),
             "records": [int(value) for value in obs["records"]],
@@ -994,7 +998,17 @@ class TickCircuitRenderer(CircuitRenderer):
                 meta: Optional dict with gate metadata (e.g., {"label": "data[0]"})
             """
             if current_tick_idx >= 0:
-                all_tick_metadata[current_tick_idx]["gates"].append(meta or {})
+                context = {
+                    "phase": current_phase,
+                }
+                if current_round >= 0:
+                    context["syndrome_round"] = current_round
+                if current_cx_round > 0:
+                    context["cx_round"] = current_cx_round
+                merged_meta = context
+                if meta:
+                    merged_meta = {**context, **meta}
+                all_tick_metadata[current_tick_idx]["gates"].append(merged_meta)
 
         for op in ops:
             if op.op_type == OpType.COMMENT:
@@ -1956,6 +1970,8 @@ def generate_dem_from_tick_circuit_via_stim(
     p2: float = 0.01,
     p_meas: float = 0.01,
     p_init: float = 0.01,
+    decompose_errors: bool = True,
+    maximal_decomposition: bool = False,
 ) -> str:
     """Generate DEM from TickCircuit via Stim conversion.
 
@@ -1969,6 +1985,12 @@ def generate_dem_from_tick_circuit_via_stim(
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_init: Initialization (prep) error rate
+        decompose_errors: If True (default), ask Stim to decompose hyperedge
+            errors into graphlike components. Set to False to preserve raw
+            hyperedges.
+        maximal_decomposition: If True, post-process Stim's graphlike output
+            into the same singleton-preferring maximal decomposition used by
+            the native DEM path. Ignored when False.
 
     Returns:
         DEM string in Stim format
@@ -1981,7 +2003,9 @@ def generate_dem_from_tick_circuit_via_stim(
 
     stim_str = tick_circuit_to_stim(tc, p1=p1, p2=p2, p_meas=p_meas, p_init=p_init)
     circuit = stim.Circuit(stim_str)
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
+    if maximal_decomposition:
+        return _maximally_decompose_graphlike_dem(str(dem))
     return str(dem)
 
 

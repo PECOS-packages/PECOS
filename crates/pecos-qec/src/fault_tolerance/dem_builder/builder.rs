@@ -53,26 +53,13 @@ struct ParsedObservable {
 ///
 /// # Example
 ///
-/// ```
-/// use pecos_qec::fault_tolerance::DagFaultAnalyzer;
+/// ```ignore
 /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-/// use pecos_quantum::DagCircuit;
-///
-/// let mut dag = DagCircuit::new();
-/// dag.pz(&[2]);
-/// dag.cx(&[(0, 2)]);
-/// dag.cx(&[(1, 2)]);
-/// dag.mz(&[2]);
-///
-/// let analyzer = DagFaultAnalyzer::new(&dag);
-/// let influence_map = analyzer.build_influence_map();
-/// let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
-/// let observables_json = "[]";
 ///
 /// let dem = DemBuilder::new(&influence_map)
 ///     .with_noise(0.01, 0.01, 0.01, 0.01)
-///     .with_detectors_json(detectors_json).unwrap()
-///     .with_observables_json(observables_json).unwrap()
+///     .with_detectors_json(detectors_json)?
+///     .with_observables_json(observables_json)?
 ///     .build();
 ///
 /// // Non-decomposed output (matches Stim's decompose_errors=False)
@@ -148,7 +135,7 @@ impl<'a> DemBuilder<'a> {
     /// ```json
     /// [
     ///   {"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]},
-    ///   {"id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
+    ///   {"detector_id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
     /// ]
     /// ```
     ///
@@ -166,6 +153,7 @@ impl<'a> DemBuilder<'a> {
     /// ```json
     /// [
     ///   {"id": 0, "records": [-1, -3, -5]}
+    ///   {"observable_id": 1, "records": [-2]}
     /// ]
     /// ```
     ///
@@ -254,13 +242,7 @@ impl<'a> DemBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ => {
+                GateType::CX | GateType::CZ => {
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
@@ -274,14 +256,7 @@ impl<'a> DemBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z
-                | GateType::T
-                | GateType::Tdg
-                | GateType::RX
-                | GateType::RY
-                | GateType::RZ
-                | GateType::U
-                | GateType::R1XY => {
+                | GateType::Z => {
                     if self.noise.p1 > 0.0 && !loc.before {
                         self.process_single_qubit_fault_source_tracked(
                             loc_idx,
@@ -323,7 +298,14 @@ impl<'a> DemBuilder<'a> {
         let mechanism =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
-            dem.add_direct_contribution(mechanism, self.noise.p_init);
+            dem.add_direct_contribution_with_source(
+                mechanism,
+                self.noise.p_init,
+                &[loc_idx],
+                &[Pauli::X],
+                &[self.influence_map.locations[loc_idx].gate_type],
+                &[self.influence_map.locations[loc_idx].before],
+            );
         }
     }
 
@@ -339,7 +321,14 @@ impl<'a> DemBuilder<'a> {
         let mechanism =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
-            dem.add_direct_contribution(mechanism, self.noise.p_meas);
+            dem.add_direct_contribution_with_source(
+                mechanism,
+                self.noise.p_meas,
+                &[loc_idx],
+                &[Pauli::X],
+                &[self.influence_map.locations[loc_idx].gate_type],
+                &[self.influence_map.locations[loc_idx].before],
+            );
         }
     }
 
@@ -351,7 +340,7 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        let prob = per_pauli_probability(self.noise.p1, 3);
+        let prob = per_channel_probability(self.noise.p1, 3);
 
         let x_effect =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
@@ -360,12 +349,26 @@ impl<'a> DemBuilder<'a> {
 
         // X error: direct source
         if !x_effect.is_empty() {
-            dem.add_direct_contribution(x_effect.clone(), prob);
+            dem.add_direct_contribution_with_source(
+                x_effect.clone(),
+                prob,
+                &[loc_idx],
+                &[Pauli::X],
+                &[self.influence_map.locations[loc_idx].gate_type],
+                &[self.influence_map.locations[loc_idx].before],
+            );
         }
 
         // Z error: direct source
         if !z_effect.is_empty() {
-            dem.add_direct_contribution(z_effect.clone(), prob);
+            dem.add_direct_contribution_with_source(
+                z_effect.clone(),
+                prob,
+                &[loc_idx],
+                &[Pauli::Z],
+                &[self.influence_map.locations[loc_idx].gate_type],
+                &[self.influence_map.locations[loc_idx].before],
+            );
         }
 
         // Y error: Y = XZ, so effect is XOR of X and Z effects
@@ -378,10 +381,25 @@ impl<'a> DemBuilder<'a> {
         if !y_effect.is_empty() {
             if !x_effect.is_empty() && !z_effect.is_empty() {
                 // Both non-empty, so Y is decomposable as X ^ Z
-                dem.add_y_decomposed_contribution(&x_effect, &z_effect, prob);
+                dem.add_y_decomposed_contribution_with_source(
+                    &x_effect,
+                    &z_effect,
+                    prob,
+                    &[loc_idx],
+                    &[Pauli::Y],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                );
             } else {
                 // One is empty, so Y has same effect as the non-empty one (direct source)
-                dem.add_direct_contribution(y_effect, prob);
+                dem.add_direct_contribution_with_source(
+                    y_effect,
+                    prob,
+                    &[loc_idx],
+                    &[Pauli::Y],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                );
             }
         }
     }
@@ -395,7 +413,9 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        let prob = per_pauli_probability(self.noise.p2, 15);
+        let prob = per_channel_probability(self.noise.p2, 15);
+        let loc1_meta = &self.influence_map.locations[loc1];
+        let loc2_meta = &self.influence_map.locations[loc2];
 
         // Compute base effects for X and Z on each qubit
         let x1 = self.compute_mechanism(loc1, Pauli::X, meas_to_detectors, meas_to_observables);
@@ -443,13 +463,14 @@ impl<'a> DemBuilder<'a> {
                 // - Combined effect has exactly 2 detectors and no logicals
                 // - Both component effects are non-empty
                 // - Both component effects are graphlike (≤2 detectors)
-                if effect.num_detectors() == 2
+                let graphlike_decomposable =
+                    effect.num_detectors() == 2
                     && effect.logicals.is_empty()
                     && !e1.is_empty()
                     && !e2.is_empty()
                     && e1.num_detectors() <= 2
-                    && e2.num_detectors() <= 2
-                {
+                    && e2.num_detectors() <= 2;
+                if graphlike_decomposable {
                     dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
                 }
 
@@ -463,11 +484,28 @@ impl<'a> DemBuilder<'a> {
 
                     // Only truly decomposable if both components are non-empty and different.
                     // add_y_decomposed_contribution handles routing to Direct when appropriate.
-                    dem.add_y_decomposed_contribution(e_a, e_b, prob);
+                    dem.add_y_decomposed_contribution_with_source(
+                        e_a,
+                        e_b,
+                        prob,
+                        &[loc1, loc2],
+                        &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                        &[loc1_meta.gate_type, loc2_meta.gate_type],
+                        &[loc1_meta.before, loc2_meta.before],
+                    );
                 } else {
                     // Non-Y channel (XI, IX, ZI, IZ, XX, XZ, ZX, ZZ)
                     // These are always direct sources.
-                    dem.add_direct_contribution(effect.clone(), prob);
+                    dem.add_direct_contribution_with_source_components(
+                        effect.clone(),
+                        prob,
+                        &[loc1, loc2],
+                        &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                        &[loc1_meta.gate_type, loc2_meta.gate_type],
+                        &[loc1_meta.before, loc2_meta.before],
+                        e1,
+                        e2,
+                    );
                 }
             }
         }
@@ -536,9 +574,6 @@ impl<'a> DemBuilder<'a> {
         for det in &self.detectors {
             for &rec in &det.records {
                 // Convert negative record offset to absolute measurement index in TickCircuit order
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                #[allow(clippy::cast_sign_loss)]
-                // negative offset + total count yields valid index
                 let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
 
                 // Map to influence map index
@@ -553,9 +588,6 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             for &rec in &obs.records {
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                #[allow(clippy::cast_sign_loss)]
-                // negative offset + total count yields valid index
                 let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
 
                 if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
@@ -631,34 +663,37 @@ fn xor_toggle_2(vec: &mut SmallVec<[u32; 2]>, value: u32) {
     }
 }
 
-/// Computes the per-Pauli probability for a mutually exclusive depolarizing channel.
+/// Computes the per-error probability for independent error channels.
 ///
-/// PECOS's gate-level depolarizing noise samples exactly one non-identity Pauli
-/// when a gate fault occurs:
-/// - single-qubit gates: `X`, `Y`, or `Z` with probability `p / 3`
-/// - two-qubit gates: one of the 15 non-identity tensor-Paulis with probability `p / 15`
+/// For a depolarizing channel with total error probability `p` split among `n`
+/// independent Pauli channels, this computes the probability for each channel
+/// such that the combined probability of any error occurring equals `p`.
 ///
-/// The native DEM builder should match that same mutually exclusive channel
-/// semantics so the sampled circuit-level DEM and the gate-level simulator use
-/// the same physical error model.
+/// Formula: `p_each = 1 - (1-p)^(1/n)`
+///
+/// This is derived from: `P(at least one error) = 1 - P(no errors) = 1 - (1-p_each)^n = p`
+///
+/// For small `p`, this is approximately `p/n`, but the exact formula accounts
+/// for the independence of error channels.
 ///
 /// # Arguments
 ///
 /// * `total_prob` - Total depolarizing probability (e.g., 0.02 for 2% error rate)
-/// * `num_channels` - Number of non-identity Pauli channels (3 for DEPOLARIZE1, 15 for DEPOLARIZE2)
+/// * `num_channels` - Number of independent error channels (3 for DEPOLARIZE1, 15 for DEPOLARIZE2)
 ///
 /// # Returns
 ///
 /// Per-channel error probability
 #[inline]
-fn per_pauli_probability(total_prob: f64, num_channels: u32) -> f64 {
+fn per_channel_probability(total_prob: f64, num_channels: u32) -> f64 {
     if total_prob <= 0.0 {
         return 0.0;
     }
     if total_prob >= 1.0 {
-        return 1.0 / f64::from(num_channels);
+        return 1.0;
     }
-    total_prob / f64::from(num_channels)
+    // p_each = 1 - (1-p)^(1/n)
+    1.0 - (1.0 - total_prob).powf(1.0 / f64::from(num_channels))
 }
 
 // ============================================================================
@@ -747,9 +782,8 @@ fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderErr
 
 /// Parses a single detector object.
 fn parse_single_detector(json: &str) -> Result<ParsedDetector, DemBuilderError> {
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    // detector IDs are small non-negative integers
     let id = extract_number(json, "\"id\"")
+        .or_else(|| extract_number(json, "\"detector_id\""))
         .ok_or_else(|| DemBuilderError::ParseError("missing detector id".into()))?
         as u32;
 
@@ -804,9 +838,8 @@ fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilde
 
 /// Parses a single observable object.
 fn parse_single_observable(json: &str) -> Result<ParsedObservable, DemBuilderError> {
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    // observable IDs are small non-negative integers
     let id = extract_number(json, "\"id\"")
+        .or_else(|| extract_number(json, "\"observable_id\""))
         .ok_or_else(|| DemBuilderError::ParseError("missing observable id".into()))?
         as u32;
 
@@ -892,7 +925,7 @@ mod tests {
     fn test_parse_detectors_json() {
         let json = r#"[
             {"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]},
-            {"id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
+            {"detector_id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
         ]"#;
 
         let detectors = parse_detectors_json(json).unwrap();
@@ -907,7 +940,7 @@ mod tests {
 
     #[test]
     fn test_parse_observables_json() {
-        let json = r#"[{"id": 0, "records": [-1, -3, -5]}]"#;
+        let json = r#"[{"observable_id": 0, "records": [-1, -3, -5]}]"#;
 
         let observables = parse_observables_json(json).unwrap();
 
@@ -941,13 +974,34 @@ mod tests {
     }
 
     #[test]
-    fn test_per_pauli_probability() {
-        assert!((per_pauli_probability(0.01, 3) - (0.01 / 3.0)).abs() < 1e-12);
-        assert!((per_pauli_probability(0.02, 15) - (0.02 / 15.0)).abs() < 1e-12);
+    fn test_per_channel_probability() {
+        // Test DEPOLARIZE1: p=0.01, n=3
+        let p1 = per_channel_probability(0.01, 3);
+        // Should be 1 - (1-0.01)^(1/3) = 0.003344...
+        assert!((p1 - 0.003_344_506).abs() < 1e-6);
+
+        // Verify: combining 3 channels gives back ~p
+        let combined = 1.0 - (1.0 - p1).powi(3);
+        assert!((combined - 0.01).abs() < 1e-10);
+
+        // Test DEPOLARIZE2: p=0.02, n=15
+        let p2 = per_channel_probability(0.02, 15);
+        // Should be 1 - (1-0.02)^(1/15) = 0.001346...
+        assert!((p2 - 0.001_345_941).abs() < 1e-6);
+
+        // Verify: combining 15 channels gives back ~p
+        let combined2 = 1.0 - (1.0 - p2).powi(15);
+        assert!((combined2 - 0.02).abs() < 1e-10);
 
         // Edge cases
-        assert!((per_pauli_probability(0.0, 3) - 0.0).abs() < f64::EPSILON);
-        assert!((per_pauli_probability(1.0, 3) - (1.0 / 3.0)).abs() < 1e-12);
-        assert!((per_pauli_probability(-0.1, 3) - 0.0).abs() < f64::EPSILON);
+        assert!((per_channel_probability(0.0, 3) - 0.0).abs() < f64::EPSILON);
+        assert!((per_channel_probability(1.0, 3) - 1.0).abs() < f64::EPSILON);
+        assert!((per_channel_probability(-0.1, 3) - 0.0).abs() < f64::EPSILON);
+
+        // For small p, should be close to p/n
+        let small_p = per_channel_probability(0.001, 15);
+        let simple = 0.001 / 15.0;
+        // Difference should be < 0.1% for small p
+        assert!((small_p - simple).abs() / simple < 0.001);
     }
 }

@@ -72,7 +72,6 @@ line-length = 120
 markers = [
   "optional_dependency: mark a test as using one or more optional dependencies",
   "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems",
-  "wasmer: mark test as using the 'wasmer' option",
-  "wasmtime: mark test as using the 'wasmtime' option",
+  "slow: mark tests that provide extra integration coverage but are excluded from the default fast Python test lane",
   "numpy: mark tests that verify NumPy compatibility (requires numpy installed)",
 ]

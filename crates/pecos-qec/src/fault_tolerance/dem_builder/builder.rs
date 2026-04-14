@@ -242,7 +242,13 @@ impl<'a> DemBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX | GateType::CZ => {
+                GateType::CX
+                | GateType::CZ
+                | GateType::CY
+                | GateType::SWAP
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
@@ -256,7 +262,14 @@ impl<'a> DemBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::U
+                | GateType::R1XY => {
                     if self.noise.p1 > 0.0 && !loc.before {
                         self.process_single_qubit_fault_source_tracked(
                             loc_idx,

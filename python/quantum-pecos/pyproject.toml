@@ -99,3 +99,8 @@ packages = ["src/pecos"]
 
 [tool.black]
 line-length = 120
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: mark tests that provide extra integration coverage but are excluded from the default fast Python test lane",
+]

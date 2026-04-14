@@ -11,12 +11,15 @@ These tests focus on algorithmic correctness of the decomposition itself:
 
 import json
 import re
+from functools import lru_cache
 
 import pytest
 
 stim = pytest.importorskip("stim")
 
 DIRECT_SOURCE_TYPES = {"Direct", "DirectOneSidedComponent"}
+FAST_DISTANCE = pytest.param(3, id="3")
+SLOW_DISTANCE = pytest.param(9, marks=pytest.mark.slow, id="9")
 
 
 def parse_dem_with_decomposed(dem_str: str) -> tuple[set[tuple[tuple[int, ...], tuple[int, ...]]], list[list[tuple[tuple[int, ...], tuple[int, ...]]]]]:
@@ -123,6 +126,7 @@ def combine_xor_probs(left: float, right: float) -> float:
     return left * (1.0 - right) + right * (1.0 - left)
 
 
+@lru_cache(maxsize=None)
 def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20):
     from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface import (
@@ -283,7 +287,7 @@ def test_surface_tick_gate_metadata_tracks_reused_ancillas_by_label() -> None:
     assert reused_cx["ancilla_qubit"] == patch.num_data
 
 
-@pytest.mark.parametrize("distance", [3, 9])
+@pytest.mark.parametrize("distance", [FAST_DISTANCE, SLOW_DISTANCE])
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_decomposed_components_are_graphlike_and_map_back_to_full_dem(distance: int, basis: str) -> None:
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
@@ -340,7 +344,7 @@ def test_native_decomposed_matches_stim_singleton_l0_edges_for_representative_ci
     assert singleton_l0_edges(native_direct) == singleton_l0_edges(stim_direct)
 
 
-@pytest.mark.parametrize("distance", [3, 9])
+@pytest.mark.parametrize("distance", [FAST_DISTANCE, SLOW_DISTANCE])
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_decomposed_preserves_all_stim_direct_observable_targets(distance: int, basis: str) -> None:
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
@@ -369,7 +373,7 @@ def test_native_decomposed_preserves_all_stim_direct_observable_targets(distance
     )
 
 
-@pytest.mark.parametrize("distance", [3, 9])
+@pytest.mark.parametrize("distance", [FAST_DISTANCE, SLOW_DISTANCE])
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_full_matches_stim_full_graph_summary_for_representative_circuit(distance: int, basis: str) -> None:
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch

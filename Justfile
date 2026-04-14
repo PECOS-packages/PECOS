@@ -156,7 +156,7 @@ pytest *args:
     else
         uv run pytest python/pecos-rslib/tests -m "not performance"
         uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-        uv run pytest python/quantum-pecos/tests -m "not optional_dependency"
+        uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run pytest python/selene-plugins
     fi
 
@@ -497,11 +497,12 @@ setup-quiet:
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: if quantum-pecos is importable, deps are likely fine
-    if uv run --frozen python -c "import pecos" 2>/dev/null; then
+    # Quick check: ensure the packages used by the default dev/test lane are importable.
+    # This catches newly added workspace members that an older .venv may be missing.
+    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_clifford_rz', 'pecos_selene_stabilizer', 'pecos_selene_statevec'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
         exit 0
     fi
-    echo "Python deps not installed, running uv sync..."
+    echo "Python deps incomplete, running uv sync..."
     uv sync --project . --all-packages
 
 [private]

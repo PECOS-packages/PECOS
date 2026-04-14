@@ -434,6 +434,34 @@ cases (2Q phase noise, 3Q ZZ crosstalk, 4Q ZZ crosstalk) have rates
   `exp(Omega_1 + Omega_2 + ...)`, where quadratic cross-terms in the
   expansion produce non-vanishing Pauli-diagonal contributions.
 
+### Non-Markovian (TCL) support (2026-04-14)
+
+Time-convolutionless (time-local) master equations are supported via
+`TimeDepLindbladian` + `synthesize_superop_time_dep`. The form
+
+```text
+drho/dt = -i [H_delta(t), rho] + sum_j gamma_j(t) * D[c_j] rho
+```
+
+with arbitrary time-dependence in `gamma_j(t)` and `H_delta(t)` is handled
+by per-slice superoperator evaluation. Covers 1/f dephasing (verified
+against analytic integrated-rate formula `gamma_0 * tau_g * ln(3)/4`),
+Gaussian coherence decay, coloured coherent noise, and pulse-dependent
+dephasing.
+
+**Genuinely structural limit**: time-nonlocal master equations of
+Nakajima-Zwanzig form
+
+```text
+drho/dt = int_0^t K(t-s) rho(s) ds
+```
+
+require convolution over the history of `rho` and are out of scope. These
+describe strongly-coupled reservoirs with long memory times; TCL
+approximation (which we support) captures the vast majority of
+near-Markovian deviations seen in superconducting / trapped-ion /
+neutral-atom qubits.
+
 ### Open for future phases
 
 - Phase 6: coherent-noise path. Either (a) implement Omega_2 + twirl, or

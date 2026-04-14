@@ -37,10 +37,14 @@
 //! - **Qubits**: 1 and 2, via diagonal and 2x2-block-diagonal `H_g` exp.
 //!   General N>=3 or arbitrary non-block-diagonal 2Q gates need a proper
 //!   Hermitian matrix-exponentiation path.
-//! - **DemStabSim integration**: scaffolded via lossy scalar collapse
-//!   (`PauliLindbladModel::total_rate`). The real bridge requires
-//!   `pecos-qec::NoiseConfig` generalization -- see
-//!   `design/lindblad_sim_skeleton.md`.
+//! - **DemStabSim integration**: per-gate-type per-Pauli rates flow
+//!   directly via `pecos-qec::PerGateTypeNoise` and
+//!   `DemStabSim::per_gate_noise(...)` (no scalar collapse).
+//! - **Non-Markovian**: time-convolutionless (TCL) time-local master
+//!   equations supported via [`TimeDepLindbladian`] +
+//!   [`synthesize_superop_time_dep`]. Covers 1/f dephasing, Gaussian
+//!   decay, coloured coherent noise. Time-nonlocal (Nakajima-Zwanzig)
+//!   memory-kernel equations remain a structural limit.
 //!
 //! # Example
 //!
@@ -79,6 +83,7 @@ pub mod matrix;
 pub mod noise_models;
 pub mod pauli_lindblad;
 pub mod synthesis;
+pub mod time_dep;
 
 pub use basis::{Pauli1, PauliString};
 pub use gate::Gate;
@@ -89,3 +94,4 @@ pub use synthesis::{
     synthesize_numerical_1q, synthesize_superop, synthesize_superop_identity,
     DEFAULT_N_SLICES, DEFAULT_N_STEPS,
 };
+pub use time_dep::{synthesize_superop_time_dep, HermitianFn, RateFn, TimeDepLindbladian};

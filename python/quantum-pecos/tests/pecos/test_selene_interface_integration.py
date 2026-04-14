@@ -120,6 +120,8 @@ def test_runtime_library_finding() -> None:
 
         # If we found loadable libraries, that's good enough for this diagnostic
         assert len(loadable_libraries) > 0, f"Found {len(loadable_libraries)} loadable Selene runtime libraries"
+
+
 def test_selene_engine_python_exports() -> None:
     """Test that the Selene engine convenience exports exist and are usable."""
     import pecos
@@ -190,12 +192,7 @@ def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
         return m0, m1
 
     results = (
-        pecos.sim(pecos.Guppy(allocate_measure_allocate_again))
-        .classical(selene)
-        .qubits(1)
-        .seed(7)
-        .run(10)
-        .to_dict()
+        pecos.sim(pecos.Guppy(allocate_measure_allocate_again)).classical(selene).qubits(1).seed(7).run(10).to_dict()
     )
 
     assert len(results["measurement_0"]) == 10

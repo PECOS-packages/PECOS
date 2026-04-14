@@ -435,10 +435,10 @@ __all__ = [
     "qec",  # Pure QEC geometry (no SLR dependencies)
     "qeccs",
     "qis_engine",
-    "selene_engine",
     "quantum",
     "random",
     "round",
+    "selene_engine",
     # Simulation entry point
     "sim",
     "simulators",

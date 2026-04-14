@@ -468,9 +468,9 @@ impl<'a> TickFaultAnalyzer<'a> {
         let qubits = &gate.qubits;
 
         if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
-                // Preparation resets the qubit - backward propagation stops here
-                // Any Pauli on a prepared qubit doesn't propagate further back
-                // Toggle off both X and Z if present
+            // Preparation resets the qubit - backward propagation stops here
+            // Any Pauli on a prepared qubit doesn't propagate further back
+            // Toggle off both X and Z if present
             for qid in qubits {
                 let q = qid.index();
                 if prop.contains_x(q) {

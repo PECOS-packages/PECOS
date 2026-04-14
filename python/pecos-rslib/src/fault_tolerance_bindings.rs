@@ -43,16 +43,16 @@
 //! ```
 
 use pecos_qec::fault_tolerance::dem_builder::{
-    ComparisonMethod as RustComparisonMethod, ContributionEffectSummary as RustContributionEffectSummary,
+    ComparisonMethod as RustComparisonMethod,
+    ContributionEffectSummary as RustContributionEffectSummary,
     ContributionRenderRecord as RustContributionRenderRecord,
     ContributionRenderStrategy as RustContributionRenderStrategy,
-    ContributionRenderSummary as RustContributionRenderSummary,
-    DemBuilder as RustDemBuilder, DetectorErrorModel as RustDetectorErrorModel,
-    DirectSourceFamily as RustDirectSourceFamily,
+    ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
+    DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, ErrorContribution as RustErrorContribution,
     ErrorSourceType as RustErrorSourceType, MeasurementNoiseModel as RustMeasurementNoiseModel,
-    TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     MemBuilder as RustMemBuilder, ParsedDem as RustParsedDem,
+    TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
     verify_dem_equivalence as rust_verify_dem_equivalence,
@@ -69,6 +69,23 @@ use pyo3::prelude::*;
 
 /// Type alias for batch sampling results: (`detection_events_per_shot`, `observable_flips_per_shot`)
 type BatchSampleResult = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
+fn json_record_offset(value: &serde_json::Value) -> PyResult<i32> {
+    let raw = value
+        .as_i64()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Record offset must be integer"))?;
+    i32::try_from(raw).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err("Record offset must fit into signed 32-bit range")
+    })
+}
+
+fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
+    if offset < 0 {
+        num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
+    } else {
+        usize::try_from(offset).ok()
+    }
+}
 
 // =============================================================================
 // Fault Location Types
@@ -614,7 +631,10 @@ fn contribution_summary_to_pydict(
     dict.set_item("direct_probability", summary.direct_probability)?;
     dict.set_item("y_decomposed_count", summary.y_decomposed_count)?;
     dict.set_item("y_decomposed_probability", summary.y_decomposed_probability)?;
-    dict.set_item("graphlike_decomposable_count", summary.graphlike_decomposable_count)?;
+    dict.set_item(
+        "graphlike_decomposable_count",
+        summary.graphlike_decomposable_count,
+    )?;
     Ok(dict.unbind())
 }
 
@@ -630,8 +650,14 @@ fn contribution_render_summary_to_pydict(
     dict.set_item("total_probability", summary.total_probability)?;
     dict.set_item("combined_probability", summary.combined_probability)?;
     dict.set_item("source_type_counts", summary.source_type_counts)?;
-    dict.set_item("source_type_probabilities", summary.source_type_probabilities)?;
-    dict.set_item("direct_source_family_counts", summary.direct_source_family_counts)?;
+    dict.set_item(
+        "source_type_probabilities",
+        summary.source_type_probabilities,
+    )?;
+    dict.set_item(
+        "direct_source_family_counts",
+        summary.direct_source_family_counts,
+    )?;
     dict.set_item(
         "direct_source_family_probabilities",
         summary.direct_source_family_probabilities,
@@ -651,9 +677,9 @@ fn contribution_render_record_to_pydict(
         RustContributionRenderStrategy::HyperedgeGraphlike => "HyperedgeGraphlike",
         RustContributionRenderStrategy::EffectDirect => "EffectDirect",
     };
-    dict.bind(py).set_item("rendered_targets", record.rendered_targets)?;
     dict.bind(py)
-        .set_item("render_strategy", render_strategy)?;
+        .set_item("rendered_targets", record.rendered_targets)?;
+    dict.bind(py).set_item("render_strategy", render_strategy)?;
     if let Some(targets) = record.recorded_component_targets {
         dict.bind(py)
             .set_item("recorded_component_targets", targets)?;
@@ -1034,7 +1060,7 @@ impl PyDemBuilder {
     /// Args:
     ///     json: JSON string with detector definitions.
     ///           Format: [{"id": 0, "coords": [x, y, t], "records": [-1, -5]}, ...]
-    ///           Public surface descriptors using "detector_id" are also accepted.
+    ///           Public surface descriptors using "`detector_id`" are also accepted.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -1048,7 +1074,7 @@ impl PyDemBuilder {
     /// Args:
     ///     json: JSON string with observable definitions.
     ///           Format: [{"id": 0, "records": [-1, -3, -5]}, ...]
-    ///           Public surface descriptors using "observable_id" are also accepted.
+    ///           Public surface descriptors using "`observable_id`" are also accepted.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -1169,11 +1195,7 @@ fn parse_detector_records(detectors_json: &str) -> PyResult<Vec<Vec<i32>>> {
 
         let offsets: Vec<i32> = records
             .iter()
-            .map(|r| {
-                r.as_i64().map(|v| v as i32).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
-                })
-            })
+            .map(json_record_offset)
             .collect::<PyResult<Vec<_>>>()?;
 
         detector_records.push(offsets);
@@ -1205,11 +1227,7 @@ fn parse_observable_records(observables_json: &str) -> PyResult<Vec<Vec<i32>>> {
 
         let offsets: Vec<i32> = records
             .iter()
-            .map(|r| {
-                r.as_i64().map(|v| v as i32).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
-                })
-            })
+            .map(json_record_offset)
             .collect::<PyResult<Vec<_>>>()?;
 
         observable_records.push(offsets);
@@ -1336,7 +1354,7 @@ impl PyMeasurementNoiseModel {
     ///     outcomes: List of boolean measurement outcomes (from `sample()`).
     ///     `detectors_json`: JSON string with detector definitions.
     ///         Format: [{"id": 0, "records": [-1, -5]}, ...]
-    ///         Public surface descriptors using "detector_id" are also accepted.
+    ///         Public surface descriptors using "`detector_id`" are also accepted.
     ///         Records are negative offsets from end of measurement list.
     ///
     /// Returns:
@@ -1877,12 +1895,11 @@ impl PyNoisySampler {
                 .map(|records| {
                     let mut fired = false;
                     for &offset in records {
-                        let abs_idx = if offset < 0 {
-                            (num_tc_measurements as i32 + offset) as usize
-                        } else {
-                            offset as usize
-                        };
-                        if abs_idx < num_tc_measurements && meas_outcomes[abs_idx] {
+                        if let Some(abs_idx) =
+                            record_offset_to_absolute_index(num_tc_measurements, offset)
+                            && abs_idx < num_tc_measurements
+                            && meas_outcomes[abs_idx]
+                        {
                             fired = !fired;
                         }
                     }
@@ -1896,12 +1913,11 @@ impl PyNoisySampler {
                 .map(|records| {
                     let mut flipped = false;
                     for &offset in records {
-                        let abs_idx = if offset < 0 {
-                            (num_tc_measurements as i32 + offset) as usize
-                        } else {
-                            offset as usize
-                        };
-                        if abs_idx < num_tc_measurements && meas_outcomes[abs_idx] {
+                        if let Some(abs_idx) =
+                            record_offset_to_absolute_index(num_tc_measurements, offset)
+                            && abs_idx < num_tc_measurements
+                            && meas_outcomes[abs_idx]
+                        {
                             flipped = !flipped;
                         }
                     }

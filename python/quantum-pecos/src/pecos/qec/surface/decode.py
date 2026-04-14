@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
+from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -53,7 +53,6 @@ import numpy as np
 if TYPE_CHECKING:
     import stim
     from numpy.typing import NDArray
-    from pecos_rslib.qec import MeasurementNoiseModel
 
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -133,7 +132,7 @@ def _surface_patch_cache_key(patch: SurfacePatch) -> tuple[int, int, str, bool]:
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _cached_surface_patch(patch_key: tuple[int, int, str, bool]) -> SurfacePatch:
     """Recreate a canonical patch from a geometry cache key."""
     from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
@@ -449,7 +448,7 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
     def scalar_arg(payload: Any, op_name: str) -> int:
         if isinstance(payload, list):
             msg = f"Expected scalar payload for {op_name}, got {payload!r}"
-            raise ValueError(msg)
+            raise TypeError(msg)
         return int(payload)
 
     def tuple_args(payload: Any, op_name: str, arity: int) -> tuple[Any, ...]:
@@ -469,11 +468,7 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
             release_slot(int(operation["ReleaseQubit"]["id"]))
             continue
 
-        if (
-            "AllocateResult" in operation
-            or "RecordOutput" in operation
-            or "Barrier" in operation
-        ):
+        if "AllocateResult" in operation or "RecordOutput" in operation or "Barrier" in operation:
             continue
 
         quantum = operation.get("Quantum")
@@ -538,8 +533,8 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
                         mapped_slot(int(control_a), op_name),
                         mapped_slot(int(control_b), op_name),
                         mapped_slot(int(target), op_name),
-                    )
-                ]
+                    ),
+                ],
             )
         elif op_name == "ZZ":
             qubit_a, qubit_b = tuple_args(payload, op_name, 2)
@@ -575,10 +570,7 @@ def _gate_triples(qubits: list[int], gate_type: str) -> list[tuple[int, int, int
     if len(qubits) % 3 != 0:
         msg = f"Lowered gate {gate_type!r} expected qubits in triples, got {qubits!r}"
         raise ValueError(msg)
-    return [
-        (qubits[i], qubits[i + 1], qubits[i + 2])
-        for i in range(0, len(qubits), 3)
-    ]
+    return [(qubits[i], qubits[i + 1], qubits[i + 2]) for i in range(0, len(qubits), 3)]
 
 
 def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) -> Any:
@@ -731,16 +723,14 @@ def _build_surface_tick_circuit_for_native_model(
 
 
 def _can_use_cached_surface_topology(
-    patch: SurfacePatch,
     *,
     ancilla_budget: int | None,
-    circuit_source: Literal["abstract", "traced_qis"],
 ) -> bool:
     """Return True when we can safely use the shared native topology cache."""
     return ancilla_budget is None
 
 
-@lru_cache(maxsize=None)
+@cache
 def _cached_surface_native_topology(
     patch_key: tuple[int, int, str, bool],
     num_rounds: int,
@@ -803,7 +793,7 @@ def _dem_string_from_cached_surface_topology(
     return dem.to_string_decomposed() if decompose_errors else dem.to_string()
 
 
-@lru_cache(maxsize=None)
+@cache
 def _cached_surface_native_dem_string(
     patch_key: tuple[int, int, str, bool],
     num_rounds: int,
@@ -831,7 +821,7 @@ def _cached_surface_native_dem_string(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _cached_parsed_dem(dem_str: str) -> Any:
     """Cache parsed DEM objects so repeated sampler builds only instantiate the sampler."""
     from pecos.qec import ParsedDem
@@ -893,8 +883,7 @@ def _build_native_sampler_from_tick_circuit(
     import json
 
     from pecos.qec import DagFaultAnalyzer, DemSamplerBuilder, MemBuilder, ParsedDem
-    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
-    from pecos.qec.surface.circuit_builder import _extract_measurement_order
+    from pecos.qec.surface.circuit_builder import _extract_measurement_order, generate_dem_from_tick_circuit
 
     dag = tc.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
@@ -950,6 +939,7 @@ def generate_circuit_level_dem_from_builder(
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    *,
     decompose_errors: bool = False,
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
@@ -994,11 +984,7 @@ def generate_circuit_level_dem_from_builder(
     """
     from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
 
-    if _can_use_cached_surface_topology(
-        patch,
-        ancilla_budget=ancilla_budget,
-        circuit_source=circuit_source,
-    ):
+    if _can_use_cached_surface_topology(ancilla_budget=ancilla_budget):
         patch_key = _surface_patch_cache_key(patch)
         return _cached_surface_native_dem_string(
             patch_key,
@@ -1010,7 +996,7 @@ def generate_circuit_level_dem_from_builder(
             noise.p2,
             noise.p_meas,
             noise.p_init,
-            decompose_errors,
+            decompose_errors=decompose_errors,
         )
 
     tc = _build_surface_tick_circuit_for_native_model(
@@ -2509,11 +2495,7 @@ def build_native_sampler(
         >>> sampler = build_native_sampler(patch, num_rounds=5, noise=noise)
         >>> detection_events, observable_flips = sampler.sample(num_shots=10000)
     """
-    if _can_use_cached_surface_topology(
-        patch,
-        ancilla_budget=ancilla_budget,
-        circuit_source=circuit_source,
-    ):
+    if _can_use_cached_surface_topology(ancilla_budget=ancilla_budget):
         basis = basis.upper()
         patch_key = _surface_patch_cache_key(patch)
         topology = _cached_surface_native_topology(
@@ -2534,7 +2516,7 @@ def build_native_sampler(
                 noise.p2,
                 noise.p_meas,
                 noise.p_init,
-                True,
+                decompose_errors=True,
             )
             sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
             return NativeSampler(

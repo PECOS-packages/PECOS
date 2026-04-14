@@ -13,12 +13,12 @@ share.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any
 
 import pytest
 from guppylang import guppy
@@ -38,7 +38,7 @@ def tagged_bits_named_array() -> None:
     result("final", final)
 
 
-def make_repeated_single_bit_results(num_rounds: int):
+def make_repeated_single_bit_results(num_rounds: int) -> object:
     """Create a tiny program that records the same named result repeatedly."""
 
     @guppy
@@ -51,7 +51,7 @@ def make_repeated_single_bit_results(num_rounds: int):
     return repeated_single_bit_results
 
 
-def make_tiny_x_syndrome_memory(num_rounds: int):
+def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
     """Create a tiny memory-style circuit with fresh ancilla allocation each round."""
 
     @guppy
@@ -74,7 +74,7 @@ def make_tiny_x_syndrome_memory(num_rounds: int):
     return tiny_x_syndrome_memory
 
 
-def make_tiny_x_syndrome_memory_raw(num_rounds: int):
+def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
     """Create the same tiny circuit but without named outputs.
 
     This helps us distinguish "raw measured bits are wrong" from
@@ -112,7 +112,7 @@ def alloc_reuse_probe() -> None:
     result("m2", array(b2))
 
 
-def _require_selene_runtime() -> Any:
+def _require_selene_runtime() -> object:
     import pecos
 
     try:
@@ -176,7 +176,14 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
     assert trace[0]["lowered_quantum_ops"]
 
 
-def _collect_selene_named_results(instance: Any, *, n_qubits: int, n_shots: int, p: float, seed: int):
+def _collect_selene_named_results(
+    instance: object,
+    *,
+    n_qubits: int,
+    n_shots: int,
+    p: float,
+    seed: int,
+) -> dict[str, list[int] | list[list[int]]]:
     from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim
 
     results: dict[str, list[int] | list[list[int]]] = defaultdict(list)
@@ -208,16 +215,14 @@ def _collect_selene_named_results(instance: Any, *, n_qubits: int, n_shots: int,
     finally:
         delete_files = getattr(instance, "delete_files", None)
         if callable(delete_files):
-            try:
+            with contextlib.suppress(Exception):
                 delete_files()
-            except Exception:
-                pass
 
     return dict(results)
 
 
 def _collect_selene_named_results_with_custom_noise(
-    instance: Any,
+    instance: object,
     *,
     n_qubits: int,
     n_shots: int,
@@ -256,10 +261,8 @@ def _collect_selene_named_results_with_custom_noise(
     finally:
         delete_files = getattr(instance, "delete_files", None)
         if callable(delete_files):
-            try:
+            with contextlib.suppress(Exception):
                 delete_files()
-            except Exception:
-                pass
 
     return dict(results)
 
@@ -278,10 +281,7 @@ def _round_blocks_repeat(row: list[int], num_rounds: int) -> bool:
     if len(row) % num_rounds != 0:
         return False
     block_size = len(row) // num_rounds
-    blocks = [
-        tuple(row[round_idx * block_size : (round_idx + 1) * block_size])
-        for round_idx in range(num_rounds)
-    ]
+    blocks = [tuple(row[round_idx * block_size : (round_idx + 1) * block_size]) for round_idx in range(num_rounds)]
     return all(block == blocks[0] for block in blocks[1:])
 
 
@@ -481,7 +481,7 @@ def test_tiny_syndrome_memory_p2_only_matches_between_selene_backends_statistica
             .with_p1_probability(0.0)
             .with_p2_probability(p2)
             .with_meas_probability(0.0)
-            .with_prep_probability(0.0)
+            .with_prep_probability(0.0),
         )
         .seed(123)
         .run(shots)

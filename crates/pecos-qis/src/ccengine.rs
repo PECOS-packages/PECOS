@@ -29,8 +29,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 static TRACE_ENGINE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -796,7 +796,11 @@ impl QisEngine {
                 .iter()
                 .map(|gate| LoweredQuantumGateTrace {
                     gate_type: gate.gate_type.to_string(),
-                    angles: gate.angles.iter().map(Angle64::to_radians).collect::<Vec<_>>(),
+                    angles: gate
+                        .angles
+                        .iter()
+                        .map(Angle64::to_radians)
+                        .collect::<Vec<_>>(),
                     params: gate.params.iter().copied().collect::<Vec<_>>(),
                     qubits: gate
                         .qubits
@@ -1049,7 +1053,6 @@ impl QisEngine {
         self.dynamic_state = None;
         self.pending_dynamic_ops.clear();
     }
-
 }
 
 impl Engine for QisEngine {
@@ -1326,7 +1329,12 @@ impl ControlEngine for QisEngine {
                 self.simulated_op_count = ops.len();
                 if !ops.is_empty() {
                     let commands = self.operations_to_bytemessage(&ops)?;
-                    self.trace_operations_chunk("pending_start", &ops, Some(result_id), Some(&commands));
+                    self.trace_operations_chunk(
+                        "pending_start",
+                        &ops,
+                        Some(result_id),
+                        Some(&commands),
+                    );
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
@@ -1545,8 +1553,7 @@ mod tests {
         assert_eq!(trace_files.len(), 1);
 
         let trace_json = std::fs::read_to_string(&trace_files[0]).expect("read trace json");
-        let value: serde_json::Value =
-            serde_json::from_str(&trace_json).expect("parse trace json");
+        let value: serde_json::Value = serde_json::from_str(&trace_json).expect("parse trace json");
 
         assert_eq!(value["format"], "pecos_qis_operation_trace_v1");
         assert_eq!(value["stage"], "unit_test");
@@ -1593,9 +1600,8 @@ mod tests {
             QuantumOp::X(0).into(),
         ];
 
-        let err = match engine.operations_to_bytemessage(&ops) {
-            Ok(_) => panic!("released qubit reuse should error"),
-            Err(err) => err,
+        let Err(err) = engine.operations_to_bytemessage(&ops) else {
+            panic!("released qubit reuse should error");
         };
 
         assert!(

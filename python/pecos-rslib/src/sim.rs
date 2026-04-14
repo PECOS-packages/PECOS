@@ -22,15 +22,20 @@ use crate::engine_builders::{
 use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
 
 fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {
-    match engine_builder.bind(py).getattr(pyo3::intern!(py, "_builder")) {
+    match engine_builder
+        .bind(py)
+        .getattr(pyo3::intern!(py, "_builder"))
+    {
         Ok(inner) => Ok(inner.into_any().unbind()),
-        Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => Ok(engine_builder),
+        Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
+            Ok(engine_builder)
+        }
         Err(err) => Err(err),
     }
 }
 
-fn clone_py_any_option(py: Python, value: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
-    value.as_ref().map(|inner| inner.clone_ref(py))
+fn clone_py_any_option(py: Python, value: Option<&Py<PyAny>>) -> Option<Py<PyAny>> {
+    value.map(|inner| inner.clone_ref(py))
 }
 
 /// Check if a Python object is a Guppy function
@@ -290,7 +295,8 @@ impl PySimBuilder {
                         Ok(PySimBuilder {
                             inner: self.inner.clone(),
                         })
-                    } else if let Ok(qis_engine) = engine_builder.extract::<PyQisEngineBuilder>(py) {
+                    } else if let Ok(qis_engine) = engine_builder.extract::<PyQisEngineBuilder>(py)
+                    {
                         if sim_builder.foreign_object.is_some() {
                             return Err(PyTypeError::new_err(
                                 "For HUGR programs, classical(QisEngineBuilder) is not compatible with foreign_object()",
@@ -319,9 +325,12 @@ impl PySimBuilder {
                                 workers: sim_builder.workers,
                                 quantum_engine_builder: clone_py_any_option(
                                     py,
-                                    &sim_builder.quantum_engine_builder,
+                                    sim_builder.quantum_engine_builder.as_ref(),
                                 ),
-                                noise_builder: clone_py_any_option(py, &sim_builder.noise_builder),
+                                noise_builder: clone_py_any_option(
+                                    py,
+                                    sim_builder.noise_builder.as_ref(),
+                                ),
                                 explicit_num_qubits: sim_builder.explicit_num_qubits,
                                 keep_intermediate_files: sim_builder.keep_intermediate_files,
                                 hugr_bytes: Some(hugr_bytes),
@@ -559,7 +568,8 @@ impl PySimBuilder {
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
                 let collector: pecos_qis::OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
-                let engine_builder = engine_builder.trace_operations_in_memory_to(collector.clone());
+                let engine_builder =
+                    engine_builder.trace_operations_in_memory_to(collector.clone());
                 let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                     engine_builder.trace_operations_to(trace_dir)
                 } else {
@@ -583,7 +593,9 @@ impl PySimBuilder {
                 sim_builder = sim_builder.qubits(n);
 
                 if let Some(ref qe_py) = builder.quantum_engine_builder {
-                    sim_builder = if let Ok(mut state_vec) = qe_py.extract::<PyStateVectorEngineBuilder>(py) {
+                    sim_builder = if let Ok(mut state_vec) =
+                        qe_py.extract::<PyStateVectorEngineBuilder>(py)
+                    {
                         if let Some(inner) = state_vec.inner.take() {
                             sim_builder.quantum(inner)
                         } else {
@@ -591,7 +603,9 @@ impl PySimBuilder {
                                 "Quantum engine builder has already been consumed",
                             ));
                         }
-                    } else if let Ok(mut sparse_stab) = qe_py.extract::<PySparseStabEngineBuilder>(py) {
+                    } else if let Ok(mut sparse_stab) =
+                        qe_py.extract::<PySparseStabEngineBuilder>(py)
+                    {
                         if let Some(inner) = sparse_stab.inner.take() {
                             sim_builder.quantum(inner)
                         } else {
@@ -599,7 +613,9 @@ impl PySimBuilder {
                                 "Quantum engine builder has already been consumed",
                             ));
                         }
-                    } else if let Ok(mut clifford_rz) = qe_py.extract::<PyCliffordRzEngineBuilder>(py) {
+                    } else if let Ok(mut clifford_rz) =
+                        qe_py.extract::<PyCliffordRzEngineBuilder>(py)
+                    {
                         if let Some(inner) = clifford_rz.inner.take() {
                             sim_builder.quantum(inner)
                         } else {
@@ -607,7 +623,9 @@ impl PySimBuilder {
                                 "Quantum engine builder has already been consumed",
                             ));
                         }
-                    } else if let Ok(mut density_mat) = qe_py.extract::<PyDensityMatrixEngineBuilder>(py) {
+                    } else if let Ok(mut density_mat) =
+                        qe_py.extract::<PyDensityMatrixEngineBuilder>(py)
+                    {
                         if let Some(inner) = density_mat.inner.take() {
                             sim_builder.quantum(inner)
                         } else {
@@ -637,30 +655,34 @@ impl PySimBuilder {
                 }
 
                 if let Some(ref noise_py) = builder.noise_builder {
-                    sim_builder = if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
-                        sim_builder.noise(general.inner.clone())
-                    } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {
-                        sim_builder.noise(depolarizing.inner.clone())
-                    } else if let Ok(biased) = noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py) {
-                        sim_builder.noise(biased.inner.clone())
-                    } else {
-                        sim_builder
-                    };
+                    sim_builder =
+                        if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
+                            sim_builder.noise(general.inner.clone())
+                        } else if let Ok(depolarizing) =
+                            noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
+                        {
+                            sim_builder.noise(depolarizing.inner.clone())
+                        } else if let Ok(biased) =
+                            noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
+                        {
+                            sim_builder.noise(biased.inner.clone())
+                        } else {
+                            sim_builder
+                        };
                 }
 
                 sim_builder.run(1).map_err(|e| {
                     PyRuntimeError::new_err(format!("Trace capture simulation failed: {e}"))
                 })?;
 
-                let trace = collector
-                    .lock()
-                    .expect("lock poisoned")
-                    .clone();
+                let trace = collector.lock().expect("lock poisoned").clone();
                 let trace_json = serde_json::to_string(&trace).map_err(|e| {
                     PyRuntimeError::new_err(format!("Failed to serialize in-memory trace: {e}"))
                 })?;
                 let json = py.import(pyo3::intern!(py, "json"))?;
-                Ok(json.call_method1(pyo3::intern!(py, "loads"), (trace_json,))?.into())
+                Ok(json
+                    .call_method1(pyo3::intern!(py, "loads"), (trace_json,))?
+                    .into())
             }
             SimBuilderInner::Qasm(_)
             | SimBuilderInner::Hugr(_)

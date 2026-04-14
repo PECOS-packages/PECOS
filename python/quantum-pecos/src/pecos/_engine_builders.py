@@ -248,6 +248,8 @@ def selene_engine(runtime_name: str | None = None) -> QisEngineBuilder:
         )
         raise NotImplementedError(msg)
     return QisEngineBuilder().selene_runtime().interface(pecos_rslib.qis_helios_interface())
+
+
 __all__ = [
     # Builder classes
     "PhirJsonEngineBuilder",

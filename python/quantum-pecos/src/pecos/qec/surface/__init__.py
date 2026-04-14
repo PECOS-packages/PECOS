@@ -30,7 +30,6 @@ from pecos.qec.surface.circuit_builder import (
     classify_stabilizer_boundary,
     describe_surface_memory_experiment,
     generate_dag_circuit_from_patch,
-    generate_dem_from_patch as generate_dem_from_patch_stim,
     generate_dem_from_tick_circuit,
     generate_dem_from_tick_circuit_via_autodetection,
     generate_dem_from_tick_circuit_via_pauli_frame,
@@ -46,6 +45,9 @@ from pecos.qec.surface.circuit_builder import (
     get_stabilizer_schedule_metadata,
     get_stabilizer_touch_label,
     tick_circuit_to_stim,
+)
+from pecos.qec.surface.circuit_builder import (
+    generate_dem_from_patch as generate_dem_from_patch_stim,
 )
 from pecos.qec.surface.decode import (
     DecoderType,
@@ -83,12 +85,12 @@ from pecos.qec.surface.patch import (
     LogicalOperator,
     PatchGeometry,
     PatchOrientation,
+    Stabilizer,
     StabilizerDescriptor,
     StabilizerScheduleEntry,
-    Stabilizer,
-    SurfacePatchDescriptor,
     SurfacePatch,
     SurfacePatchBuilder,
+    SurfacePatchDescriptor,
 )
 from pecos.qec.surface.plot import plot_patch, plot_surface_code
 from pecos.qec.surface.schedule import (

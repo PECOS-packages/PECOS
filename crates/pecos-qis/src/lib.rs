@@ -189,6 +189,10 @@ pub fn setup_qis_engine_with_runtime(
 }
 
 /// Create a QIS engine builder preconfigured with the default Selene simple runtime.
+///
+/// # Errors
+///
+/// Returns an error if the default Selene simple runtime cannot be located or loaded.
 #[cfg(feature = "selene")]
 pub fn selene_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()
@@ -197,6 +201,10 @@ pub fn selene_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
 }
 
 /// Create a QIS engine builder preconfigured with a named Selene runtime plugin.
+///
+/// # Errors
+///
+/// Returns an error if the requested Selene runtime plugin cannot be located or loaded.
 #[cfg(feature = "selene")]
 pub fn selene_engine_auto(lib_name: &str) -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()
@@ -205,6 +213,10 @@ pub fn selene_engine_auto(lib_name: &str) -> Result<QisEngineBuilder, RuntimeFet
 }
 
 /// Create a QIS engine builder preconfigured with the Selene soft-RZ runtime.
+///
+/// # Errors
+///
+/// Returns an error if the Selene soft-RZ runtime cannot be located or loaded.
 #[cfg(feature = "selene")]
 pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()

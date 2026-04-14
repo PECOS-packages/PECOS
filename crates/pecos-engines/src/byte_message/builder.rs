@@ -10,8 +10,8 @@ use crate::byte_message::protocol::{
     ReturnValueHeader, calc_padding,
 };
 use bytemuck::bytes_of;
-use pecos_core::gates::Gate;
 use pecos_core::Angle64;
+use pecos_core::gates::Gate;
 use std::mem::size_of;
 
 // ByteMessage guarantees 4-byte alignment by storing data in Vec<u32>
@@ -105,12 +105,7 @@ impl ByteMessageBuilder {
         }
     }
 
-    fn prepare_message(
-        &mut self,
-        msg_type: MessageType,
-        payload_size: usize,
-        flags: MessageFlags,
-    ) {
+    fn prepare_message(&mut self, msg_type: MessageType, payload_size: usize, flags: MessageFlags) {
         match msg_type {
             MessageType::Gate => {
                 assert!(
@@ -215,8 +210,9 @@ impl ByteMessageBuilder {
         angles: &[Angle64],
         params: &[f64],
     ) -> &mut Self {
-        let payload_size =
-            size_of::<GateHeader>() + size_of::<u32>() + (angles.len() + params.len()) * size_of::<f64>();
+        let payload_size = size_of::<GateHeader>()
+            + size_of::<u32>()
+            + (angles.len() + params.len()) * size_of::<f64>();
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -446,7 +442,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::CX,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(control, target)| [control, target]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
             &[],
             &[],
         )
@@ -462,7 +461,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::RZZ,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[theta],
             &[],
         )
@@ -478,7 +480,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SZZ,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -494,7 +499,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SZZdg,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -631,7 +639,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::CY,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(control, target)| [control, target]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
             &[],
             &[],
         )
@@ -647,7 +658,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::CZ,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(control, target)| [control, target]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
             &[],
             &[],
         )
@@ -683,7 +697,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SWAP,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -699,7 +716,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SXX,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -715,7 +735,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SXXdg,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -731,7 +754,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SYY,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -747,7 +773,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::SYYdg,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[],
             &[],
         )
@@ -763,7 +792,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::RXX,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[theta],
             &[],
         )
@@ -779,7 +811,10 @@ impl ByteMessageBuilder {
         self.add_gate_parts_from_usizes(
             GateType::RYY,
             pairs.len() * 2,
-            pairs.iter().copied().flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
             &[theta],
             &[],
         )

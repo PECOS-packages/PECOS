@@ -328,9 +328,10 @@ impl MonteCarloEngine {
                         engine.reset()?;
 
                         // Catch panics during shot execution and convert to PecosError
-                        let shot_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                            || engine.run_shot(),
-                        ));
+                        let shot_result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                engine.run_shot()
+                            }));
 
                         let shot_result = match shot_result {
                             Ok(Ok(result)) => result,

@@ -11,7 +11,7 @@ These tests focus on algorithmic correctness of the decomposition itself:
 
 import json
 import re
-from functools import lru_cache
+from functools import cache, lru_cache
 
 import pytest
 
@@ -22,7 +22,9 @@ FAST_DISTANCE = pytest.param(3, id="3")
 SLOW_DISTANCE = pytest.param(9, marks=pytest.mark.slow, id="9")
 
 
-def parse_dem_with_decomposed(dem_str: str) -> tuple[set[tuple[tuple[int, ...], tuple[int, ...]]], list[list[tuple[tuple[int, ...], tuple[int, ...]]]]]:
+def parse_dem_with_decomposed(
+    dem_str: str,
+) -> tuple[set[tuple[tuple[int, ...], tuple[int, ...]]], list[list[tuple[tuple[int, ...], tuple[int, ...]]]]]:
     """Parse direct and decomposed error targets from a DEM string."""
     direct_targets: set[tuple[tuple[int, ...], tuple[int, ...]]] = set()
     decomposed_targets: list[list[tuple[tuple[int, ...], tuple[int, ...]]]] = []
@@ -53,6 +55,7 @@ def parse_dem_with_decomposed(dem_str: str) -> tuple[set[tuple[tuple[int, ...], 
 
 
 def xor_targets(parts: list[tuple[tuple[int, ...], tuple[int, ...]]]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """XOR a decomposed list of detector/logical targets into one combined effect."""
     dets: set[int] = set()
     logs: set[int] = set()
     for part_dets, part_logs in parts:
@@ -70,6 +73,7 @@ def xor_targets(parts: list[tuple[tuple[int, ...], tuple[int, ...]]]) -> tuple[t
 
 
 def detector_union(parts: list[tuple[tuple[int, ...], tuple[int, ...]]]) -> set[int]:
+    """Return the union of detector ids touched by a decomposed effect."""
     out: set[int] = set()
     for dets, _logs in parts:
         out.update(dets)
@@ -77,14 +81,12 @@ def detector_union(parts: list[tuple[tuple[int, ...], tuple[int, ...]]]) -> set[
 
 
 def singleton_l0_edges(direct_targets: set[tuple[tuple[int, ...], tuple[int, ...]]]) -> set[int]:
-    return {
-        dets[0]
-        for dets, logs in direct_targets
-        if len(dets) == 1 and len(logs) == 1
-    }
+    """Collect singleton detector edges that also flip logical L0."""
+    return {dets[0] for dets, logs in direct_targets if len(dets) == 1 and len(logs) == 1}
 
 
 def xor_lists(left: list[int], right: list[int]) -> list[int]:
+    """XOR two integer lists interpreted as parity sets."""
     out = set(left)
     for value in right:
         if value in out:
@@ -95,6 +97,7 @@ def xor_lists(left: list[int], right: list[int]) -> list[int]:
 
 
 def xor_effect_rows(left: dict[str, list[int]], right: dict[str, list[int]]) -> tuple[list[int], list[int]]:
+    """XOR two structured detector/logical rows."""
     return (
         xor_lists(left["detectors"], right["detectors"]),
         xor_lists(left["logicals"], right["logicals"]),
@@ -102,6 +105,7 @@ def xor_effect_rows(left: dict[str, list[int]], right: dict[str, list[int]]) -> 
 
 
 def parse_dem_error_probabilities(dem_str: str) -> dict[str, float]:
+    """Map DEM target strings to their stated error probabilities."""
     out: dict[str, float] = {}
     for raw_line in dem_str.strip().split("\n"):
         line = raw_line.strip()
@@ -115,19 +119,18 @@ def parse_dem_error_probabilities(dem_str: str) -> dict[str, float]:
 
 
 def combine_independent_probs(left: float, right: float) -> float:
+    """Combine independent error probabilities landing on the same rendered term."""
     return left + right - left * right
 
 
 def combine_xor_probs(left: float, right: float) -> float:
+    """Combine probabilities for XOR-composed contributions."""
     return left * (1.0 - right) + right * (1.0 - left)
 
 
-def combine_xor_probs(left: float, right: float) -> float:
-    return left * (1.0 - right) + right * (1.0 - left)
-
-
-@lru_cache(maxsize=None)
-def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20):
+@cache
+def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20) -> object:
+    """Build and cache a source-tracked native DEM for one surface-code shape."""
     from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface import (
         NoiseModel,
@@ -155,6 +158,7 @@ def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20):
 
 
 def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
+    """Public surface descriptor JSON should reproduce the legacy builder output."""
     from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface import (
         NoiseModel,
@@ -171,7 +175,8 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
     influence_map = DagFaultAnalyzer(dag).build_influence_map()
     noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
 
-    def _build(detectors_json: str, observables_json: str | None):
+    def _build(detectors_json: str, observables_json: str | None) -> object:
+        """Build one source-tracked DEM from serialized detector metadata."""
         builder = DemBuilder(influence_map)
         builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_init)
         builder.with_num_measurements(int(tc.get_meta("num_measurements") or "0"))
@@ -193,13 +198,14 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
 
 
 def _find_gate_attrs(
-    dag,
+    dag: object,
     gate_type: str,
     *,
     phase: str | None = None,
     label_prefix: str | None = None,
     stabilizer: str | None = None,
-):
+) -> dict[str, object]:
+    """Find the first DAG gate attribute record matching the requested filters."""
     for node in sorted(dag.nodes()):
         gate = dag.gate(node)
         attrs = dag.gate_attrs(node) or {}
@@ -220,6 +226,7 @@ def _find_gate_attrs(
 
 
 def test_surface_tick_gate_metadata_preserves_phase_round_context_in_dag() -> None:
+    """Surface DAG metadata should retain round and stabilizer context."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
 
     patch = SurfacePatch.create(distance=3)
@@ -264,6 +271,7 @@ def test_surface_tick_gate_metadata_preserves_phase_round_context_in_dag() -> No
 
 
 def test_surface_tick_gate_metadata_tracks_reused_ancillas_by_label() -> None:
+    """Ancilla labels should keep metadata stable even when qubits are reused."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
 
     patch = SurfacePatch.create(distance=3)
@@ -290,6 +298,7 @@ def test_surface_tick_gate_metadata_tracks_reused_ancillas_by_label() -> None:
 @pytest.mark.parametrize("distance", [FAST_DISTANCE, SLOW_DISTANCE])
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_decomposed_components_are_graphlike_and_map_back_to_full_dem(distance: int, basis: str) -> None:
+    """Native decomposed graphlike pieces should reconstruct a full DEM effect."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
     from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
 
@@ -312,10 +321,8 @@ def test_native_decomposed_components_are_graphlike_and_map_back_to_full_dem(dis
             assert len(logs) <= 1, f"component is not graphlike by logical count: {parts!r}"
 
         combined = xor_targets(parts)
-        assert combined in full_targets, (
-            "decomposed components must XOR back to an effect present in the full DEM: "
-            f"{parts!r} -> {combined!r}"
-        )
+        msg = f"decomposed components must XOR back to an effect present in the full DEM: {parts!r} -> {combined!r}"
+        assert combined in full_targets, msg
 
         if combined[1]:
             saw_l0_decomposition = True
@@ -325,6 +332,7 @@ def test_native_decomposed_components_are_graphlike_and_map_back_to_full_dem(dis
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_decomposed_matches_stim_singleton_l0_edges_for_representative_circuit(basis: str) -> None:
+    """Native decomposition should preserve Stim's singleton logical-observable edges."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit,
@@ -347,6 +355,7 @@ def test_native_decomposed_matches_stim_singleton_l0_edges_for_representative_ci
 @pytest.mark.parametrize("distance", [FAST_DISTANCE, SLOW_DISTANCE])
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_decomposed_preserves_all_stim_direct_observable_targets(distance: int, basis: str) -> None:
+    """Native decomposition should include every direct observable target Stim exposes."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit,
@@ -367,15 +376,13 @@ def test_native_decomposed_preserves_all_stim_direct_observable_targets(distance
     stim_observable_direct = {target for target in stim_direct if target[1]}
 
     assert stim_observable_direct.issubset(native_observable_direct)
-    assert all(
-        len(dets) == 2 and len(logs) == 1
-        for dets, logs in native_observable_direct - stim_observable_direct
-    )
+    assert all(len(dets) == 2 and len(logs) == 1 for dets, logs in native_observable_direct - stim_observable_direct)
 
 
 @pytest.mark.parametrize("distance", [FAST_DISTANCE, SLOW_DISTANCE])
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_native_full_matches_stim_full_graph_summary_for_representative_circuit(distance: int, basis: str) -> None:
+    """Full native and Stim DEMs should produce matching PyMatching graph summaries."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit,
@@ -399,6 +406,7 @@ def test_native_full_matches_stim_full_graph_summary_for_representative_circuit(
 
 
 def test_generate_dem_from_tick_circuit_via_stim_can_skip_decomposition() -> None:
+    """Stim DEM generation should honor the explicit non-decomposed option."""
     from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
     from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit_via_stim
 
@@ -420,16 +428,13 @@ def test_generate_dem_from_tick_circuit_via_stim_can_skip_decomposition() -> Non
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_source_tracking_summaries_include_graphlike_decomposable_count(basis: str) -> None:
+    """Structured summaries should expose graphlike decomposition counts."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     summaries = dem.contribution_effect_summaries()
     assert summaries
 
-    pair_summaries = [
-        summary
-        for summary in summaries
-        if len(summary["detectors"]) == 2 and not summary["logicals"]
-    ]
+    pair_summaries = [summary for summary in summaries if len(summary["detectors"]) == 2 and not summary["logicals"]]
     assert pair_summaries
     assert all("graphlike_decomposable_count" in summary for summary in pair_summaries)
     assert all(summary["graphlike_decomposable_count"] >= 0 for summary in pair_summaries)
@@ -437,6 +442,7 @@ def test_structured_source_tracking_summaries_include_graphlike_decomposable_cou
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_source_tracking_bindings_are_self_consistent(basis: str) -> None:
+    """Structured contribution rows should sum back to their effect summaries."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     summaries = dem.contribution_effect_summaries()
@@ -466,16 +472,17 @@ def test_structured_source_tracking_bindings_are_self_consistent(basis: str) -> 
     assert total_probability == pytest.approx(observable_summary["total_probability"])
     assert len(direct_rows) == observable_summary["direct_count"]
     assert sum(float(row["probability"]) for row in direct_rows) == pytest.approx(
-        observable_summary["direct_probability"]
+        observable_summary["direct_probability"],
     )
     assert len(y_rows) == observable_summary["y_decomposed_count"]
     assert sum(float(row["probability"]) for row in y_rows) == pytest.approx(
-        observable_summary["y_decomposed_probability"]
+        observable_summary["y_decomposed_probability"],
     )
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_source_tracking_y_decomposed_rows_xor_back_to_effect(basis: str) -> None:
+    """Y-decomposed structured rows should XOR back to their parent effect."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     summaries = [row for row in dem.contribution_effect_summaries() if row["y_decomposed_count"] > 0]
@@ -492,6 +499,7 @@ def test_structured_source_tracking_y_decomposed_rows_xor_back_to_effect(basis: 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_direct_component_rows_xor_back_to_effect(basis: str) -> None:
+    """Stored direct components should reconstruct the parent effect via XOR."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     rows = []
@@ -521,6 +529,7 @@ def test_structured_direct_component_rows_xor_back_to_effect(basis: str) -> None
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_one_sided_direct_component_rows_are_exposed(basis: str) -> None:
+    """One-sided direct components should remain visible in the structured bindings."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     rows = []
@@ -553,13 +562,16 @@ def test_structured_one_sided_direct_component_rows_are_exposed(basis: str) -> N
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_direct_source_families_are_exposed_for_direct_rows(basis: str) -> None:
+    """Direct structured rows should advertise their underlying source family."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     rows = []
     for summary in dem.contribution_effect_summaries():
-        for row in dem.contributions_for_effect(summary["detectors"], summary["logicals"]):
-            if row["source_type"] in DIRECT_SOURCE_TYPES:
-                rows.append(row)
+        rows.extend(
+            row
+            for row in dem.contributions_for_effect(summary["detectors"], summary["logicals"])
+            if row["source_type"] in DIRECT_SOURCE_TYPES
+        )
 
     assert rows
     assert all("direct_source_family" in row for row in rows)
@@ -569,15 +581,13 @@ def test_structured_direct_source_families_are_exposed_for_direct_rows(basis: st
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_source_tracking_summaries_partition_all_contributions(basis: str) -> None:
+    """Effect summaries should form a lossless partition of all contributions."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     summaries = dem.contribution_effect_summaries()
     assert summaries
 
-    effect_keys = {
-        (tuple(summary["detectors"]), tuple(summary["logicals"]))
-        for summary in summaries
-    }
+    effect_keys = {(tuple(summary["detectors"]), tuple(summary["logicals"])) for summary in summaries}
     assert len(effect_keys) == len(summaries)
 
     total_count = 0
@@ -596,6 +606,7 @@ def test_structured_source_tracking_summaries_partition_all_contributions(basis:
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_render_summaries_reproduce_decomposed_regrouping(basis: str) -> None:
+    """Render summaries should regroup into the same decomposed DEM probabilities."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     render_summaries = dem.contribution_render_summaries()
@@ -620,6 +631,7 @@ def test_structured_render_summaries_reproduce_decomposed_regrouping(basis: str)
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_render_records_reproduce_render_summaries(basis: str) -> None:
+    """Per-contribution render records should rebuild the grouped render summaries."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     render_records = dem.contribution_render_records()
@@ -659,8 +671,11 @@ def test_structured_render_records_reproduce_render_summaries(basis: str) -> Non
 
         source_type = str(row["source_type"])
         bucket["source_type_counts"][source_type] = bucket["source_type_counts"].get(source_type, 0) + 1
-        bucket["source_type_probabilities"][source_type] = bucket["source_type_probabilities"].get(source_type, 0.0) + float(
-            row["probability"]
+        bucket["source_type_probabilities"][source_type] = bucket["source_type_probabilities"].get(
+            source_type,
+            0.0,
+        ) + float(
+            row["probability"],
         )
 
         direct_family = row.get("direct_source_family")
@@ -669,9 +684,9 @@ def test_structured_render_records_reproduce_render_summaries(basis: str) -> Non
             bucket["direct_source_family_counts"][direct_family] = (
                 bucket["direct_source_family_counts"].get(direct_family, 0) + 1
             )
-            bucket["direct_source_family_probabilities"][direct_family] = (
-                bucket["direct_source_family_probabilities"].get(direct_family, 0.0) + float(row["probability"])
-            )
+            bucket["direct_source_family_probabilities"][direct_family] = bucket[
+                "direct_source_family_probabilities"
+            ].get(direct_family, 0.0) + float(row["probability"])
 
     assert len(regrouped) == len(render_summaries)
     for summary in render_summaries:
@@ -688,18 +703,16 @@ def test_structured_render_records_reproduce_render_summaries(basis: str) -> Non
         assert bucket["direct_source_family_counts"] == summary["direct_source_family_counts"]
         assert bucket["source_type_probabilities"] == pytest.approx(summary["source_type_probabilities"])
         assert bucket["direct_source_family_probabilities"] == pytest.approx(
-            summary["direct_source_family_probabilities"]
+            summary["direct_source_family_probabilities"],
         )
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_keep_direct_policy_matches_default_render_outputs(basis: str) -> None:
+    """The explicit KeepDirect policy should match the default rendering behavior."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
-    assert (
-        dem.to_string_decomposed_with_two_detector_direct_policy("KeepDirect")
-        == dem.to_string_decomposed()
-    )
+    assert dem.to_string_decomposed_with_two_detector_direct_policy("KeepDirect") == dem.to_string_decomposed()
     assert (
         dem.contribution_render_summaries_with_two_detector_direct_policy("KeepDirect")
         == dem.contribution_render_summaries()
@@ -712,18 +725,17 @@ def test_structured_keep_direct_policy_matches_default_render_outputs(basis: str
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_structured_recorded_component_policy_exposes_alternative_records(basis: str) -> None:
+    """Recorded-component policy should expose alternate render strategies and targets."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     default_records = dem.contribution_render_records()
     policy_records = dem.contribution_render_records_with_two_detector_direct_policy(
-        "PreferRecordedComponents"
+        "PreferRecordedComponents",
     )
 
     assert len(policy_records) == len(default_records)
-    assert any(
-        row["render_strategy"] == "RecordedComponents" for row in policy_records
-    )
+    assert any(row["render_strategy"] == "RecordedComponents" for row in policy_records)
     assert any(
         policy_row["rendered_targets"] != default_row["rendered_targets"]
-        for default_row, policy_row in zip(default_records, policy_records)
+        for default_row, policy_row in zip(default_records, policy_records, strict=False)
     )

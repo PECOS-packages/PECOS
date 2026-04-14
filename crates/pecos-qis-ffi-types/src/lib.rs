@@ -73,13 +73,13 @@ impl OperationCollector {
         let id = self.next_result_id;
         self.next_result_id += 1;
         self.allocated_results.push(id);
-        if self.measurements.len() == id {
-            self.measurements.push(None);
-        } else {
-            if self.measurements.len() < id {
+        match self.measurements.len().cmp(&id) {
+            std::cmp::Ordering::Equal => self.measurements.push(None),
+            std::cmp::Ordering::Less => {
                 self.measurements.resize(id, None);
                 self.measurements.push(None);
-            } else {
+            }
+            std::cmp::Ordering::Greater => {
                 self.measurements[id] = None;
             }
         }

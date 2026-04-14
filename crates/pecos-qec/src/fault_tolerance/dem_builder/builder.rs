@@ -16,7 +16,8 @@
 //! influence maps and detector/observable metadata.
 
 use super::types::{
-    DetectorDef, DetectorErrorModel, ErrorMechanism, LogicalObservable, NoiseConfig,
+    DetectorDef, DetectorErrorModel, DirectSourceComponents, ErrorMechanism, LogicalObservable,
+    NoiseConfig, SourceMetadata,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -314,10 +315,12 @@ impl<'a> DemBuilder<'a> {
             dem.add_direct_contribution_with_source(
                 mechanism,
                 self.noise.p_init,
-                &[loc_idx],
-                &[Pauli::X],
-                &[self.influence_map.locations[loc_idx].gate_type],
-                &[self.influence_map.locations[loc_idx].before],
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::X],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
             );
         }
     }
@@ -337,10 +340,12 @@ impl<'a> DemBuilder<'a> {
             dem.add_direct_contribution_with_source(
                 mechanism,
                 self.noise.p_meas,
-                &[loc_idx],
-                &[Pauli::X],
-                &[self.influence_map.locations[loc_idx].gate_type],
-                &[self.influence_map.locations[loc_idx].before],
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::X],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
             );
         }
     }
@@ -365,10 +370,12 @@ impl<'a> DemBuilder<'a> {
             dem.add_direct_contribution_with_source(
                 x_effect.clone(),
                 prob,
-                &[loc_idx],
-                &[Pauli::X],
-                &[self.influence_map.locations[loc_idx].gate_type],
-                &[self.influence_map.locations[loc_idx].before],
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::X],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
             );
         }
 
@@ -377,10 +384,12 @@ impl<'a> DemBuilder<'a> {
             dem.add_direct_contribution_with_source(
                 z_effect.clone(),
                 prob,
-                &[loc_idx],
-                &[Pauli::Z],
-                &[self.influence_map.locations[loc_idx].gate_type],
-                &[self.influence_map.locations[loc_idx].before],
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::Z],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
             );
         }
 
@@ -398,20 +407,24 @@ impl<'a> DemBuilder<'a> {
                     &x_effect,
                     &z_effect,
                     prob,
-                    &[loc_idx],
-                    &[Pauli::Y],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
+                    SourceMetadata::new(
+                        &[loc_idx],
+                        &[Pauli::Y],
+                        &[self.influence_map.locations[loc_idx].gate_type],
+                        &[self.influence_map.locations[loc_idx].before],
+                    ),
                 );
             } else {
                 // One is empty, so Y has same effect as the non-empty one (direct source)
                 dem.add_direct_contribution_with_source(
                     y_effect,
                     prob,
-                    &[loc_idx],
-                    &[Pauli::Y],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
+                    SourceMetadata::new(
+                        &[loc_idx],
+                        &[Pauli::Y],
+                        &[self.influence_map.locations[loc_idx].gate_type],
+                        &[self.influence_map.locations[loc_idx].before],
+                    ),
                 );
             }
         }
@@ -476,8 +489,7 @@ impl<'a> DemBuilder<'a> {
                 // - Combined effect has exactly 2 detectors and no logicals
                 // - Both component effects are non-empty
                 // - Both component effects are graphlike (≤2 detectors)
-                let graphlike_decomposable =
-                    effect.num_detectors() == 2
+                let graphlike_decomposable = effect.num_detectors() == 2
                     && effect.logicals.is_empty()
                     && !e1.is_empty()
                     && !e2.is_empty()
@@ -501,10 +513,12 @@ impl<'a> DemBuilder<'a> {
                         e_a,
                         e_b,
                         prob,
-                        &[loc1, loc2],
-                        &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                        &[loc1_meta.gate_type, loc2_meta.gate_type],
-                        &[loc1_meta.before, loc2_meta.before],
+                        SourceMetadata::new(
+                            &[loc1, loc2],
+                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                            &[loc1_meta.gate_type, loc2_meta.gate_type],
+                            &[loc1_meta.before, loc2_meta.before],
+                        ),
                     );
                 } else {
                     // Non-Y channel (XI, IX, ZI, IZ, XX, XZ, ZX, ZZ)
@@ -512,12 +526,13 @@ impl<'a> DemBuilder<'a> {
                     dem.add_direct_contribution_with_source_components(
                         effect.clone(),
                         prob,
-                        &[loc1, loc2],
-                        &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                        &[loc1_meta.gate_type, loc2_meta.gate_type],
-                        &[loc1_meta.before, loc2_meta.before],
-                        e1,
-                        e2,
+                        SourceMetadata::new(
+                            &[loc1, loc2],
+                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                            &[loc1_meta.gate_type, loc2_meta.gate_type],
+                            &[loc1_meta.before, loc2_meta.before],
+                        ),
+                        DirectSourceComponents::new(e1, e2),
                     );
                 }
             }
@@ -586,11 +601,10 @@ impl<'a> DemBuilder<'a> {
 
         for det in &self.detectors {
             for &rec in &det.records {
-                // Convert negative record offset to absolute measurement index in TickCircuit order
-                let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
-
-                // Map to influence map index
-                if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
+                if let Some(tc_meas_idx) =
+                    record_offset_to_absolute_index(self.num_measurements, rec)
+                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                {
                     meas_to_detectors
                         .entry(influence_idx)
                         .or_default()
@@ -601,9 +615,10 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             for &rec in &obs.records {
-                let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
-
-                if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
+                if let Some(tc_meas_idx) =
+                    record_offset_to_absolute_index(self.num_measurements, rec)
+                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                {
                     meas_to_observables
                         .entry(influence_idx)
                         .or_default()
@@ -655,6 +670,14 @@ impl<'a> DemBuilder<'a> {
         triggered_obs.sort_unstable();
 
         ErrorMechanism::from_sorted(triggered_dets, triggered_obs)
+    }
+}
+
+fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
+    if offset < 0 {
+        num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
+    } else {
+        usize::try_from(offset).ok()
     }
 }
 
@@ -795,10 +818,12 @@ fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderErr
 
 /// Parses a single detector object.
 fn parse_single_detector(json: &str) -> Result<ParsedDetector, DemBuilderError> {
-    let id = extract_number(json, "\"id\"")
-        .or_else(|| extract_number(json, "\"detector_id\""))
-        .ok_or_else(|| DemBuilderError::ParseError("missing detector id".into()))?
-        as u32;
+    let id = extract_u32(
+        json,
+        &["\"id\"", "\"detector_id\""],
+        "missing detector id",
+        "detector id out of range",
+    )?;
 
     let coords = extract_coords(json);
     let records = extract_records(json);
@@ -851,10 +876,12 @@ fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilde
 
 /// Parses a single observable object.
 fn parse_single_observable(json: &str) -> Result<ParsedObservable, DemBuilderError> {
-    let id = extract_number(json, "\"id\"")
-        .or_else(|| extract_number(json, "\"observable_id\""))
-        .ok_or_else(|| DemBuilderError::ParseError("missing observable id".into()))?
-        as u32;
+    let id = extract_u32(
+        json,
+        &["\"id\"", "\"observable_id\""],
+        "missing observable id",
+        "observable id out of range",
+    )?;
 
     let records = extract_records(json);
 
@@ -870,6 +897,19 @@ fn extract_number(json: &str, key: &str) -> Option<i64> {
     let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-' && c != '.')?;
     let num_str = &rest[..end];
     num_str.parse().ok()
+}
+
+fn extract_u32(
+    json: &str,
+    keys: &[&str],
+    missing_message: &str,
+    range_message: &str,
+) -> Result<u32, DemBuilderError> {
+    let value = keys
+        .iter()
+        .find_map(|key| extract_number(json, key))
+        .ok_or_else(|| DemBuilderError::ParseError(missing_message.into()))?;
+    u32::try_from(value).map_err(|_| DemBuilderError::ParseError(range_message.into()))
 }
 
 /// Extracts coordinates array [x, y, t].

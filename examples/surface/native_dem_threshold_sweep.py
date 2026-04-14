@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Surface-code X/Z memory threshold sweep with native PECOS DEMs.
+r"""Surface-code X/Z memory threshold sweep with native PECOS DEMs.
 
 This example runs rotated surface-code memory experiments using:
 
@@ -50,14 +50,16 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
 import html
+import itertools
 import json
 import math
 import statistics
 import tempfile
 import time
 from dataclasses import asdict, dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -123,11 +125,8 @@ def _cleanup_cached_selene_instances() -> None:
     """Best-effort cleanup for temporary Selene build directories."""
     while _CACHED_SELENE_INSTANCES:
         instance = _CACHED_SELENE_INSTANCES.pop()
-        try:
+        with contextlib.suppress(Exception):
             instance.delete_files()
-        except Exception:
-            # Temporary build directories are a cache convenience, not user data.
-            pass
 
 
 atexit.register(_cleanup_cached_selene_instances)
@@ -154,17 +153,16 @@ def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "ab
             f"{native_circuit_source} + noiseless reference-trajectory calibration"
         )
     if sample_backend == "native_sampler":
-        return (
-            "build_native_sampler(..., circuit_source="
-            f"{native_circuit_source!r}) + PyMatching on the native DEM"
-        )
-    raise ValueError(f"Unknown sample backend: {sample_backend}")
+        return f"build_native_sampler(..., circuit_source={native_circuit_source!r}) + PyMatching on the native DEM"
+    msg = f"Unknown sample backend: {sample_backend}"
+    raise ValueError(msg)
 
 
-def _predicted_observable_flip(result: Any) -> int:
+def _predicted_observable_flip(result: object) -> int:
     """Extract the predicted logical observable flip from a DEM decoder result."""
-    if hasattr(result, "observables_mask"):
-        return int(result.observables_mask & 1)
+    observables_mask = getattr(result, "observables_mask", None)
+    if observables_mask is not None:
+        return int(observables_mask & 1)
     correction = getattr(result, "correction", [])
     return int(correction[0]) if len(correction) > 0 else 0
 
@@ -179,7 +177,8 @@ def _format_rate(value: float | None) -> str:
 def ler_per_round_exp(logical_error_rate: float, num_rounds: int) -> float:
     """Extract a per-round logical error rate from one duration point."""
     if num_rounds <= 0:
-        raise ValueError("num_rounds must be positive")
+        msg = "num_rounds must be positive"
+        raise ValueError(msg)
     if logical_error_rate <= 0.0:
         return 0.0
     if logical_error_rate >= 0.5:
@@ -190,7 +189,8 @@ def ler_per_round_exp(logical_error_rate: float, num_rounds: int) -> float:
 def ler_over_rounds(per_round_rate: float, num_rounds: int) -> float:
     """Project a per-round logical error rate over ``num_rounds`` rounds."""
     if num_rounds <= 0:
-        raise ValueError("num_rounds must be positive")
+        msg = "num_rounds must be positive"
+        raise ValueError(msg)
     if per_round_rate <= 0.0:
         return 0.0
     if per_round_rate >= 0.5:
@@ -215,7 +215,7 @@ def _reshape_round_values(flat_values: list[int], num_rounds: int, width: int, l
     return [values[i * width : (i + 1) * width] for i in range(num_rounds)]
 
 
-def _logical_qubits_for_basis(patch: Any, basis: str) -> tuple[int, ...]:
+def _logical_qubits_for_basis(patch: object, basis: str) -> tuple[int, ...]:
     """Get the logical support used for the final parity check."""
     geom = patch.geometry
     if basis.upper() == "Z":
@@ -230,18 +230,19 @@ def _result_rows_for_key(result_dict: dict[str, Any], key: str) -> list[Any]:
         if isinstance(rows, list):
             return rows
     available = ", ".join(sorted(result_dict))
-    raise KeyError(f"Expected result register {key!r}, available registers: {available}")
+    msg = f"Expected result register {key!r}, available registers: {available}"
+    raise KeyError(msg)
 
 
-@lru_cache(maxsize=None)
-def _surface_patch(distance: int) -> Any:
+@cache
+def _surface_patch(distance: int) -> object:
     """Cache surface patch geometry shared across many sweep points."""
     from pecos.qec.surface import SurfacePatch
 
     return SurfacePatch.create(distance=distance)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _decoder_runtime(
     distance: int,
     total_rounds: int,
@@ -280,7 +281,7 @@ def _decoder_runtime(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _native_sampler_runtime(
     distance: int,
     total_rounds: int,
@@ -322,7 +323,7 @@ def _native_sampler_runtime(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _sim_reference_trajectory(
     sample_backend: str,
     distance: int,
@@ -365,7 +366,7 @@ def _sim_reference_trajectory(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _compiled_guppy_hugr(distance: int, total_rounds: int, basis: str) -> bytes:
     """Cache compiled HUGR bytes for the direct selene_sim backend."""
     from pecos.compilation_pipeline import compile_guppy_to_hugr
@@ -375,8 +376,8 @@ def _compiled_guppy_hugr(distance: int, total_rounds: int, basis: str) -> bytes:
     return compile_guppy_to_hugr(program)
 
 
-@lru_cache(maxsize=None)
-def _selene_instance(distance: int, total_rounds: int, basis: str) -> Any:
+@cache
+def _selene_instance(distance: int, total_rounds: int, basis: str) -> object:
     """Cache a built Selene instance for one circuit shape."""
     from selene_sim import build
 
@@ -407,7 +408,7 @@ def _run_gate_backend_result_dict(
     import pecos
     from pecos.guppy import get_num_qubits, make_surface_code
 
-    def run_direct_selene_backend(*, simulator: Any) -> dict[str, list[list[int]]]:
+    def run_direct_selene_backend(*, simulator: object) -> dict[str, list[list[int]]]:
         from selene_sim import DepolarizingErrorModel, SimpleRuntime
 
         backend_start = time.perf_counter()
@@ -421,7 +422,7 @@ def _run_gate_backend_result_dict(
         )
 
         compile_start = time.perf_counter()
-        hugr_bytes = _compiled_guppy_hugr(distance, total_rounds, basis)
+        _compiled_guppy_hugr(distance, total_rounds, basis)
         compile_seconds = time.perf_counter() - compile_start
 
         build_start = time.perf_counter()
@@ -468,7 +469,7 @@ def _run_gate_backend_result_dict(
                     "error_model_seconds": error_model_seconds,
                     "run_and_parse_seconds": run_seconds,
                     "total_seconds": time.perf_counter() - backend_start,
-                }
+                },
             )
         return dict(result_dict)
 
@@ -506,7 +507,7 @@ def _run_gate_backend_result_dict(
                     "to_shot_map_seconds": shot_map_seconds,
                     "to_dict_seconds": dict_seconds,
                     "total_seconds": time.perf_counter() - backend_start,
-                }
+                },
             )
         return result_dict
 
@@ -520,7 +521,8 @@ def _run_gate_backend_result_dict(
 
         return run_direct_selene_backend(simulator=StabilizerPlugin())
 
-    raise ValueError(f"Unknown gate backend: {sample_backend}")
+    msg = f"Unknown gate backend: {sample_backend}"
+    raise ValueError(msg)
 
 
 def _profile_gate_backends(
@@ -537,9 +539,11 @@ def _profile_gate_backends(
 ) -> None:
     """Profile gate backends and print a phase breakdown."""
     if warmup_repetitions < 0:
-        raise ValueError("warmup_repetitions must be non-negative")
+        msg = "warmup_repetitions must be non-negative"
+        raise ValueError(msg)
     if benchmark_repetitions <= 0:
-        raise ValueError("benchmark_repetitions must be positive")
+        msg = "benchmark_repetitions must be positive"
+        raise ValueError(msg)
 
     print()
     print("Gate Backend Profile")
@@ -582,7 +586,7 @@ def _profile_gate_backends(
         print()
         print(
             f"[profile {combo_idx}/{len(combinations)}] "
-            f"basis={basis} d={distance} p={physical_error_rate:.5g} r={total_rounds} shots={shots}"
+            f"basis={basis} d={distance} p={physical_error_rate:.5g} r={total_rounds} shots={shots}",
         )
         backend_totals: dict[str, float] = {}
         for backend_index, backend in enumerate(backends, start=1):
@@ -620,7 +624,7 @@ def _profile_gate_backends(
             backend_totals[backend] = mean_total
             print(
                 f"  [{backend}] mean={mean_total:.3f}s "
-                f"median={median_total:.3f}s throughput={shots_per_second:.3f} shots/s"
+                f"median={median_total:.3f}s throughput={shots_per_second:.3f} shots/s",
             )
             for key in profile_keys[backend]:
                 phase_values = [run[key] for run in runs]
@@ -694,9 +698,12 @@ def _run_memory_point(
         final_rows = _result_rows_for_key(result_dict, "final")
 
         if len(synx_rows) != num_shots or len(synz_rows) != num_shots or len(final_rows) != num_shots:
-            raise ValueError(
+            msg = (
                 "Result register lengths do not match the requested shot count: "
                 f"synx={len(synx_rows)}, synz={len(synz_rows)}, final={len(final_rows)}, shots={num_shots}"
+            )
+            raise ValueError(
+                msg,
             )
 
         for shot_idx in range(num_shots):
@@ -705,8 +712,9 @@ def _run_memory_point(
             final = np.asarray(final_rows[shot_idx], dtype=np.uint8)
 
             if final.size != patch.geometry.num_data:
+                msg = f"Register 'final' has {final.size} bits for one shot, expected {patch.geometry.num_data}"
                 raise ValueError(
-                    f"Register 'final' has {final.size} bits for one shot, expected {patch.geometry.num_data}"
+                    msg,
                 )
 
             # Decode relative to the noiseless gate-level baseline so the native
@@ -722,7 +730,9 @@ def _run_memory_point(
             final = final ^ ref_final
 
             raw_parity = int(sum(int(final[q]) for q in logical_qubits) % 2)
-            assert num_raw_errors is not None
+            if num_raw_errors is None:
+                msg = "Gate-level backends must track raw parity counts"
+                raise RuntimeError(msg)
             num_raw_errors += raw_parity
 
             if basis.upper() == "Z":
@@ -751,7 +761,8 @@ def _run_memory_point(
             true_flip = int(observable_flips[shot_idx, 0]) if observable_flips.shape[1] > 0 else 0
             num_logical_errors += int(predicted_flip != true_flip)
     else:
-        raise ValueError(f"Unknown sample backend: {sample_backend}")
+        msg = f"Unknown sample backend: {sample_backend}"
+        raise ValueError(msg)
 
     logical_error_rate = num_logical_errors / num_shots if num_shots else 0.0
     raw_error_rate = None if num_raw_errors is None else (num_raw_errors / num_shots if num_shots else 0.0)
@@ -773,15 +784,15 @@ def _run_memory_point(
 def _fit_per_round_rate(points: list[SweepPoint]) -> float:
     """Fit one per-round logical error rate to several memory durations."""
     if not points:
-        raise ValueError("Need at least one point to fit a per-round logical error rate")
+        msg = "Need at least one point to fit a per-round logical error rate"
+        raise ValueError(msg)
     if len(points) == 1:
         point = points[0]
         return ler_per_round_exp(point.logical_error_rate, point.total_rounds)
 
     def objective(per_round_rate: float) -> float:
         return sum(
-            (ler_over_rounds(per_round_rate, point.total_rounds) - point.logical_error_rate) ** 2
-            for point in points
+            (ler_over_rounds(per_round_rate, point.total_rounds) - point.logical_error_rate) ** 2 for point in points
         )
 
     left = 0.0
@@ -813,15 +824,13 @@ def _fit_per_round_rate(points: list[SweepPoint]) -> float:
 def _fit_summary_from_points(points: list[SweepPoint]) -> FitSummary:
     """Fit a per-round logical rate for one ``(d, basis, p)`` group."""
     if not points:
-        raise ValueError("Cannot summarize an empty point group")
+        msg = "Cannot summarize an empty point group"
+        raise ValueError(msg)
 
     ordered = sorted(points, key=lambda point: point.total_rounds)
     first = ordered[0]
     fitted_per_round = _fit_per_round_rate(ordered)
-    residuals = [
-        ler_over_rounds(fitted_per_round, point.total_rounds) - point.logical_error_rate
-        for point in ordered
-    ]
+    residuals = [ler_over_rounds(fitted_per_round, point.total_rounds) - point.logical_error_rate for point in ordered]
     rms_error = math.sqrt(sum(residual * residual for residual in residuals) / len(residuals))
     return FitSummary(
         backend=first.backend,
@@ -863,10 +872,10 @@ def _estimate_threshold(summaries: list[FitSummary]) -> float | None:
                 p,
                 large.fitted_projected_logical_error_rate_over_d_rounds
                 - small.fitted_projected_logical_error_rate_over_d_rounds,
-            )
+            ),
         )
 
-    for (p0, diff0), (p1, diff1) in zip(diffs, diffs[1:], strict=False):
+    for (p0, diff0), (p1, diff1) in itertools.pairwise(diffs):
         if diff0 == 0.0:
             return p0
         if diff0 * diff1 < 0.0:
@@ -883,10 +892,8 @@ def _suppression_summary(summaries: list[FitSummary]) -> list[tuple[float, bool]
 
     rows: list[tuple[float, bool]] = []
     for p in error_rates:
-        ordered = [
-            by_key[(distance, p)].fitted_projected_logical_error_rate_over_d_rounds for distance in distances
-        ]
-        rows.append((p, all(next_value < value for value, next_value in zip(ordered, ordered[1:], strict=False))))
+        ordered = [by_key[(distance, p)].fitted_projected_logical_error_rate_over_d_rounds for distance in distances]
+        rows.append((p, all(next_value < value for value, next_value in itertools.pairwise(ordered))))
     return rows
 
 
@@ -956,7 +963,7 @@ def _timing_summary(point_timings: list[dict[str, Any]], *, total_wall_clock_sec
     per_backend_basis = {
         backend: {
             basis: aggregate(
-                [row for row in point_timings if row["backend"] == backend and row["basis"] == basis]
+                [row for row in point_timings if row["backend"] == backend and row["basis"] == basis],
             )
             for basis in bases
             if any(row["backend"] == backend and row["basis"] == basis for row in point_timings)
@@ -994,21 +1001,20 @@ def _print_timing_summary(timing_summary: dict[str, Any]) -> None:
     for backend, entry in timing_summary["per_backend"].items():
         print(
             f"    {backend}: {entry['seconds']:.3f}s over {entry['shots']} shots "
-            f"({entry['shots_per_second']:.3f} shots/s)"
+            f"({entry['shots_per_second']:.3f} shots/s)",
         )
 
     print("  by basis:")
     for basis, entry in timing_summary["per_basis"].items():
         print(
             f"    {basis}: {entry['seconds']:.3f}s over {entry['shots']} shots "
-            f"({entry['shots_per_second']:.3f} shots/s)"
+            f"({entry['shots_per_second']:.3f} shots/s)",
         )
 
     print("  by backend+basis:")
     for backend, basis_rows in timing_summary["per_backend_basis"].items():
         basis_text = ", ".join(
-            f"{basis}={entry['seconds']:.3f}s/{entry['shots']} shots"
-            for basis, entry in basis_rows.items()
+            f"{basis}={entry['seconds']:.3f}s/{entry['shots']} shots" for basis, entry in basis_rows.items()
         )
         print(f"    {backend}: {basis_text}")
 
@@ -1050,7 +1056,7 @@ def _write_json_results(
         "summary": {
             backend: {
                 basis: _basis_summary(
-                    [summary for summary in summaries if summary.backend == backend and summary.basis == basis]
+                    [summary for summary in summaries if summary.backend == backend and summary.basis == basis],
                 )
                 for basis in bases
             }
@@ -1138,27 +1144,28 @@ def _write_svg_plot(
         y = _y_pos(tick, y_min, y_max, plot_top, plot_height)
         parts.append(
             f'<line x1="{plot_left:.1f}" y1="{y:.1f}" x2="{plot_left + plot_width:.1f}" y2="{y:.1f}" '
-            'stroke="#e2e8f0" stroke-width="1"/>'
+            'stroke="#e2e8f0" stroke-width="1"/>',
         )
         parts.append(
             f'<text x="{plot_left - 10:.1f}" y="{y + 4:.1f}" text-anchor="end" font-size="12" fill="#475569">'
-            f"{tick:.2e}</text>"
+            f"{tick:.2e}</text>",
         )
 
     for p in error_rates:
         x = _x_pos(p, x_min, x_max, plot_left, plot_width)
         parts.append(
             f'<line x1="{x:.1f}" y1="{plot_top:.1f}" x2="{x:.1f}" y2="{plot_top + plot_height:.1f}" '
-            'stroke="#f1f5f9" stroke-width="1"/>'
+            'stroke="#f1f5f9" stroke-width="1"/>',
         )
         parts.append(
-            f'<text x="{x:.1f}" y="{plot_top + plot_height + 22:.1f}" text-anchor="middle" font-size="12" fill="#475569">'
-            f"{p:.4g}</text>"
+            f'<text x="{x:.1f}" y="{plot_top + plot_height + 22:.1f}" '
+            'text-anchor="middle" font-size="12" fill="#475569">'
+            f"{p:.4g}</text>",
         )
 
     parts.append(
         f'<rect x="{plot_left:.1f}" y="{plot_top:.1f}" width="{plot_width:.1f}" height="{plot_height:.1f}" '
-        'fill="none" stroke="#0f172a" stroke-width="1.5"/>'
+        'fill="none" stroke="#0f172a" stroke-width="1.5"/>',
     )
 
     legend_x = plot_left + 14.0
@@ -1172,10 +1179,10 @@ def _write_svg_plot(
             value = max(getattr(summary, metric), y_min)
             curve_points.append(
                 f"{_x_pos(p, x_min, x_max, plot_left, plot_width):.1f},"
-                f"{_y_pos(value, y_min, y_max, plot_top, plot_height):.1f}"
+                f"{_y_pos(value, y_min, y_max, plot_top, plot_height):.1f}",
             )
         parts.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="3" points="{" ".join(curve_points)}"/>'
+            f'<polyline fill="none" stroke="{color}" stroke-width="3" points="{" ".join(curve_points)}"/>',
         )
         for p in error_rates:
             summary = by_key[(distance, p)]
@@ -1186,11 +1193,11 @@ def _write_svg_plot(
         legend_row_y = legend_y + index * 24.0
         parts.append(
             f'<line x1="{legend_x:.1f}" y1="{legend_row_y:.1f}" x2="{legend_x + 22:.1f}" y2="{legend_row_y:.1f}" '
-            f'stroke="{color}" stroke-width="3"/>'
+            f'stroke="{color}" stroke-width="3"/>',
         )
         parts.append(
             f'<text x="{legend_x + 30:.1f}" y="{legend_row_y + 4:.1f}" font-size="14" fill="#0f172a">'
-            f"d={distance}</text>"
+            f"d={distance}</text>",
         )
 
     parts.append("</svg>")
@@ -1209,7 +1216,8 @@ def _write_pdf_plot(
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("matplotlib is required for --save-pdf") from exc
+        msg = "matplotlib is required for --save-pdf"
+        raise RuntimeError(msg) from exc
 
     distances = sorted({summary.distance for summary in summaries})
     error_rates = sorted({summary.physical_error_rate for summary in summaries})
@@ -1223,7 +1231,7 @@ def _write_pdf_plot(
     ax.set_title(title)
     ax.set_xlabel("Physical error rate p")
     ax.set_ylabel(y_label)
-    ax.grid(True, which="both", alpha=0.25)
+    ax.grid(visible=True, which="both", alpha=0.25)
     ax.legend()
     fig.tight_layout()
     fig.savefig(output_path)
@@ -1256,7 +1264,9 @@ def _write_artifacts(
 
     for backend in backends:
         for basis in sorted({summary.basis for summary in summaries if summary.backend == backend}):
-            basis_summaries = [summary for summary in summaries if summary.backend == backend and summary.basis == basis]
+            basis_summaries = [
+                summary for summary in summaries if summary.backend == backend and summary.basis == basis
+            ]
             plot_specs = [
                 (
                     "fitted_projected_logical_error_rate_over_d_rounds",
@@ -1384,6 +1394,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Run the threshold sweep CLI and optionally write summary artifacts."""
     args = _parse_args()
     wants_outputs = args.save_json or args.save_svg or args.save_pdf
     output_dir = _resolve_output_dir(args.output_dir, wants_outputs=wants_outputs)
@@ -1405,9 +1416,11 @@ def main() -> int:
     error_rates = sorted(set(args.error_rates))
 
     if any(distance <= 0 or distance % 2 == 0 for distance in distances):
-        raise ValueError("Distances must be positive odd integers")
+        msg = "Distances must be positive odd integers"
+        raise ValueError(msg)
     if any(multiplier <= 0 for multiplier in duration_multipliers):
-        raise ValueError("Duration multipliers must be positive")
+        msg = "Duration multipliers must be positive"
+        raise ValueError(msg)
 
     print("Native PECOS Surface Threshold Sweep")
     print("=" * 40)
@@ -1458,8 +1471,10 @@ def main() -> int:
                         point_idx += 1
                         point_seed = args.seed + point_idx
                         print(
-                            f"[{point_idx:>3}/{total_points}] "
-                            f"backend={backend} basis={basis} d={distance} p={physical_error_rate:.5g} r={total_rounds} ..."
+                            f"[{point_idx:>3}/{total_points}] "(
+                                f"backend={backend} basis={basis} d={distance} "
+                                f"p={physical_error_rate:.5g} r={total_rounds} ..."
+                            ),
                         )
                         point_start = time.perf_counter()
                         point = _run_memory_point(
@@ -1484,7 +1499,7 @@ def main() -> int:
                                 "total_rounds": total_rounds,
                                 "num_shots": args.shots,
                                 "elapsed_seconds": elapsed_seconds,
-                            }
+                            },
                         )
                         naive_per_round = ler_per_round_exp(point.logical_error_rate, point.total_rounds)
                         print(
@@ -1492,7 +1507,7 @@ def main() -> int:
                             f"LER={point.logical_error_rate:.6e} "
                             f"raw={_format_rate(point.raw_error_rate)} "
                             f"naive_per_round={naive_per_round:.6e} "
-                            f"elapsed={elapsed_seconds:.3f}s"
+                            f"elapsed={elapsed_seconds:.3f}s",
                         )
 
                 group_fit_summaries: dict[str, FitSummary] = {}
@@ -1522,7 +1537,7 @@ def main() -> int:
                         f"fit_epsilon={fit_summary.fitted_logical_error_rate_per_round:.6e} "
                         f"fit_proj_d={fit_summary.fitted_projected_logical_error_rate_over_d_rounds:.6e} "
                         f"fit_rms={fit_summary.fit_root_mean_square_error:.3e} "
-                        f"[{observed}]"
+                        f"[{observed}]",
                     )
 
                 if "selene_sim" in group_fit_summaries:
@@ -1531,19 +1546,33 @@ def main() -> int:
                         if backend == "selene_sim":
                             continue
                         summary = group_fit_summaries[backend]
+                        delta_epsilon = (
+                            summary.fitted_logical_error_rate_per_round
+                            - ref_summary.fitted_logical_error_rate_per_round
+                        )
+                        delta_proj_d = (
+                            summary.fitted_projected_logical_error_rate_over_d_rounds
+                            - ref_summary.fitted_projected_logical_error_rate_over_d_rounds
+                        )
                         print(
                             "    "
                             f"compare_vs_selene_sim[{backend}] "
-                            f"delta_epsilon={summary.fitted_logical_error_rate_per_round - ref_summary.fitted_logical_error_rate_per_round:+.3e} "
-                            f"delta_proj_d={summary.fitted_projected_logical_error_rate_over_d_rounds - ref_summary.fitted_projected_logical_error_rate_over_d_rounds:+.3e}"
+                            f"delta_epsilon={delta_epsilon:+.3e} "
+                            f"delta_proj_d={delta_proj_d:+.3e}",
                         )
                 elif len(backends) == 2 and "sim" in group_fit_summaries and "native_sampler" in group_fit_summaries:
                     sim_summary = group_fit_summaries["sim"]
                     sampler_summary = group_fit_summaries["native_sampler"]
+                    delta_epsilon = (
+                        sampler_summary.fitted_logical_error_rate_per_round
+                        - sim_summary.fitted_logical_error_rate_per_round
+                    )
+                    delta_proj_d = (
+                        sampler_summary.fitted_projected_logical_error_rate_over_d_rounds
+                        - sim_summary.fitted_projected_logical_error_rate_over_d_rounds
+                    )
                     print(
-                        "    compare "
-                        f"delta_epsilon={sampler_summary.fitted_logical_error_rate_per_round - sim_summary.fitted_logical_error_rate_per_round:+.3e} "
-                        f"delta_proj_d={sampler_summary.fitted_projected_logical_error_rate_over_d_rounds - sim_summary.fitted_projected_logical_error_rate_over_d_rounds:+.3e}"
+                        f"    compare delta_epsilon={delta_epsilon:+.3e} delta_proj_d={delta_proj_d:+.3e}",
                     )
 
     for backend in backends:
@@ -1566,12 +1595,15 @@ def main() -> int:
             print()
             if crossing is None:
                 print(
-                    f"{basis} basis [{backend}]: no d={min(distances)} vs d={max(distances)} crossing was detected on this sweep."
+                    (
+                        f"{basis} basis [{backend}]: no d={min(distances)} vs "
+                        f"d={max(distances)} crossing was detected on this sweep."
+                    ),
                 )
             else:
                 print(
                     f"{basis} basis [{backend}]: approximate threshold crossing "
-                    f"(smallest vs largest distance, fitted d-round LER) is near p ~= {crossing:.6g}."
+                    f"(smallest vs largest distance, fitted d-round LER) is near p ~= {crossing:.6g}.",
                 )
 
             print(f"{basis} basis [{backend}] suppression check (fitted d-round LER decreases with distance):")

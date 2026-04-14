@@ -125,7 +125,6 @@ impl QuantumSystem {
         let debug_str = format!("{:?}", self.quantum_engine);
         debug_str.contains("StateVectorEngine") || debug_str.contains("StateVecEngine")
     }
-
 }
 
 // Explicitly implement Engine for QuantumSystem

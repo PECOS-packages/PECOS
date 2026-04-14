@@ -25,11 +25,8 @@ fn quantum_error<S: Into<String>>(msg: S) -> PecosError {
 ///
 /// Most commands contain a single pair, so avoid heap allocation in that case
 /// and reuse a scratch buffer for the rarer batched-pair path.
-fn with_flat_pairs<F>(
-    qubits: &[QubitId],
-    pair_scratch: &mut Vec<(QubitId, QubitId)>,
-    mut f: F,
-) where
+fn with_flat_pairs<F>(qubits: &[QubitId], pair_scratch: &mut Vec<(QubitId, QubitId)>, mut f: F)
+where
     F: FnMut(&[(QubitId, QubitId)]),
 {
     debug_assert_eq!(qubits.len() % 2, 0);
@@ -242,13 +239,9 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 if cmd.angles.len() >= 3 {
                     let mut result: Result<(), String> = Ok(());
                     with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        result = sim.try_rxxryyrzz(
-                            cmd.angles[0],
-                            cmd.angles[1],
-                            cmd.angles[2],
-                            pairs,
-                        )
-                        .map(|_| ());
+                        result = sim
+                            .try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs)
+                            .map(|_| ());
                     });
                     result.map_err(PecosError::Processing)?;
                 }

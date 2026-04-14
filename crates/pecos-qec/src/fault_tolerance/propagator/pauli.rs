@@ -55,7 +55,12 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
     }
 
     match gate.gate_type {
-        GateType::RZ | GateType::RX | GateType::RY | GateType::RZZ | GateType::RXX | GateType::RYY => {
+        GateType::RZ
+        | GateType::RX
+        | GateType::RY
+        | GateType::RZZ
+        | GateType::RXX
+        | GateType::RYY => {
             if let Some(&angle) = gate.angles.first() {
                 if let Some(clifford) = try_simplify_rotation(gate.gate_type, angle) {
                     let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
@@ -66,7 +71,6 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
                     for &qubit in &gate.qubits {
                         let _ = apply_named_gate(prop, pauli, &[qubit], direction);
                     }
-                    return;
                 }
             }
         }
@@ -76,7 +80,6 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
                 let phi = gate.angles[1];
                 if let Some(clifford) = try_simplify_r1xy(theta, phi) {
                     let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
-                    return;
                 }
             }
         }
@@ -112,38 +115,38 @@ fn apply_named_gate(
         // Non-self-adjoint single-qubit gates - swap with adjoint for backward
         GateType::SX => {
             match direction {
-            Direction::Forward => prop.sx(qubits),
-            Direction::Backward => prop.sxdg(qubits),
+                Direction::Forward => prop.sx(qubits),
+                Direction::Backward => prop.sxdg(qubits),
             };
         }
         GateType::SXdg => {
             match direction {
-            Direction::Forward => prop.sxdg(qubits),
-            Direction::Backward => prop.sx(qubits),
+                Direction::Forward => prop.sxdg(qubits),
+                Direction::Backward => prop.sx(qubits),
             };
         }
         GateType::SY => {
             match direction {
-            Direction::Forward => prop.sy(qubits),
-            Direction::Backward => prop.sydg(qubits),
+                Direction::Forward => prop.sy(qubits),
+                Direction::Backward => prop.sydg(qubits),
             };
         }
         GateType::SYdg => {
             match direction {
-            Direction::Forward => prop.sydg(qubits),
-            Direction::Backward => prop.sy(qubits),
+                Direction::Forward => prop.sydg(qubits),
+                Direction::Backward => prop.sy(qubits),
             };
         }
         GateType::SZ => {
             match direction {
-            Direction::Forward => prop.sz(qubits),
-            Direction::Backward => prop.szdg(qubits),
+                Direction::Forward => prop.sz(qubits),
+                Direction::Backward => prop.szdg(qubits),
             };
         }
         GateType::SZdg => {
             match direction {
-            Direction::Forward => prop.szdg(qubits),
-            Direction::Backward => prop.sz(qubits),
+                Direction::Forward => prop.szdg(qubits),
+                Direction::Backward => prop.sz(qubits),
             };
         }
 

@@ -1124,7 +1124,9 @@ mod tests {
     #[test]
     fn test_rzz_propagation_matches_szz() {
         let mut rotated = TickCircuit::new();
-        rotated.tick().rzz(pecos_core::Angle64::QUARTER_TURN, &[(0, 1)]);
+        rotated
+            .tick()
+            .rzz(pecos_core::Angle64::QUARTER_TURN, &[(0, 1)]);
 
         let mut simplified = TickCircuit::new();
         simplified.tick().szz(&[(0, 1)]);

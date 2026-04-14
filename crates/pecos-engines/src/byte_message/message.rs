@@ -3,12 +3,13 @@ use crate::byte_message::protocol::{
     BatchHeader, GateHeader, MessageHeader, MessageType, OutcomeHeader, ReturnValueHeader,
     calc_padding,
 };
-use log::trace;
 use log::Level;
+use log::trace;
 use pecos_core::errors::PecosError;
 use pecos_core::gate_type::GateType;
 use pecos_core::gates::{Gate, GateAngles, GateParams, GateQubits};
 use pecos_core::{Angle64, QubitId};
+use std::fmt::Write as _;
 use std::mem::size_of;
 
 /// A message encoded using the PECOS byte protocol
@@ -281,7 +282,6 @@ impl ByteMessage {
                         if i > 0 {
                             hex_bytes.push(' ');
                         }
-                        use std::fmt::Write as _;
                         let _ = write!(&mut hex_bytes, "{byte:02x}");
                     }
                     trace!("  Raw bytes: {hex_bytes}");
@@ -621,11 +621,7 @@ impl ByteMessage {
     }
 
     /// Parse qubit indices from the payload and convert to `QubitIds` directly
-    fn parse_qubit_indices(
-        payload: &[u8],
-        qubits_offset: usize,
-        num_qubits: usize,
-    ) -> GateQubits {
+    fn parse_qubit_indices(payload: &[u8], qubits_offset: usize, num_qubits: usize) -> GateQubits {
         let mut qubits = GateQubits::with_capacity(num_qubits);
         for i in 0..num_qubits {
             let qubit_offset = qubits_offset + i * size_of::<u32>();
@@ -754,8 +750,7 @@ impl ByteMessage {
             if trace_enabled {
                 trace!(
                     "parse_gate_command: Parsed parameters: angles={:?}, params={:?}",
-                    parsed.0,
-                    parsed.1
+                    parsed.0, parsed.1
                 );
             }
             parsed

@@ -17,8 +17,8 @@ from pecos.qec.surface import (
     SurfaceDecoder,
     SurfacePatch,
     generate_dem_from_tick_circuit,
-    generate_tick_circuit_from_patch,
     generate_surface_code_dem,
+    generate_tick_circuit_from_patch,
     syndromes_to_detection_events,
 )
 
@@ -360,12 +360,12 @@ class TestDemGeneration:
             ancilla_budget=2,
             circuit_level_dem_mode="native_full",
         )
-        assert decoder._get_circuit_level_dem("X") == batched_dem
+        assert decoder.get_dem("X", circuit_level=True) == batched_dem
 
     def test_native_circuit_level_dem_cache_respects_patch_geometry(self) -> None:
         """Shared native DEM caching should preserve asymmetric patch geometry."""
-        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
         from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch
+        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
         patch = SurfacePatch.create(dx=3, dz=5)
         noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
@@ -447,7 +447,7 @@ class TestDemGeneration:
             circuit_level_dem_mode="native_decomposed",
             circuit_level_dem_source="traced_qis",
         )
-        decoder_dem = decoder._get_circuit_level_dem("Z")
+        decoder_dem = decoder.get_dem("Z", circuit_level=True)
         assert "error(" in decoder_dem
         assert decoder_dem.count("detector(") == dem.count("detector(")
         assert decoder_dem.count("logical_observable") == dem.count("logical_observable")
@@ -593,6 +593,7 @@ class TestDemGeneration:
 
         assert maximal_dem != decomposed_dem
         assert _count_singleton_error_parts(maximal_dem) > _count_singleton_error_parts(decomposed_dem)
+
     def test_dem_detector_count(self) -> None:
         """DEM should have correct number of detectors."""
         patch = SurfacePatch.create(distance=3)

@@ -8,12 +8,11 @@ experiments, independent of the DEM decomposition internals.
 """
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
-
 from pecos.qec.surface import (
     SurfacePatch,
-    SurfacePatchDescriptor,
     classify_stabilizer_boundary,
     describe_surface_memory_experiment,
     generate_tick_circuit_from_patch,
@@ -27,8 +26,12 @@ from pecos.qec.surface import (
     get_stabilizer_touch_label,
 )
 
+if TYPE_CHECKING:
+    from pecos.qec.surface import SurfacePatchDescriptor
+
 
 def test_surface_schedule_helpers_expose_region_and_touch_labels() -> None:
+    """Surface metadata helpers should expose stable boundary and touch labels."""
     patch = SurfacePatch.create(distance=3)
 
     x_top = patch.x_stabilizers[0]
@@ -75,6 +78,7 @@ def test_surface_schedule_helpers_expose_region_and_touch_labels() -> None:
 
 
 def test_surface_patch_exposes_stabilizer_descriptors() -> None:
+    """Surface patches should publish detailed stabilizer descriptors."""
     patch = SurfacePatch.create(distance=3)
 
     x0 = patch.get_stabilizer_descriptor("X", 0)
@@ -102,6 +106,7 @@ def test_surface_patch_exposes_stabilizer_descriptors() -> None:
 
 
 def test_surface_patch_exposes_patch_descriptor() -> None:
+    """Surface patches should expose a compact patch descriptor."""
     patch = SurfacePatch.create(distance=3)
 
     descriptor: SurfacePatchDescriptor = patch.get_patch_descriptor()
@@ -118,6 +123,7 @@ def test_surface_patch_exposes_patch_descriptor() -> None:
 
 
 def test_surface_patch_exposes_logical_descriptors() -> None:
+    """Surface patches should expose public logical support descriptors."""
     patch = SurfacePatch.create(distance=3)
 
     logical_x = patch.get_logical_descriptor("X")
@@ -140,6 +146,7 @@ def test_surface_patch_exposes_logical_descriptors() -> None:
 
 
 def test_tick_circuit_exposes_detector_descriptors() -> None:
+    """Tick circuits should publish detector descriptors consistent with cached metadata."""
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
 
@@ -152,9 +159,7 @@ def test_tick_circuit_exposes_detector_descriptors() -> None:
     first_x = next(
         row
         for row in descriptors
-        if row["stabilizer_kind"] == "X"
-        and row["stabilizer_index"] == 0
-        and row["round"] == 0
+        if row["stabilizer_kind"] == "X" and row["stabilizer_index"] == 0 and row["round"] == 0
     )
     assert first_x["coords"] == [0, 0, 0]
     assert first_x["stabilizer_region"] == "top+left"
@@ -167,15 +172,14 @@ def test_tick_circuit_exposes_detector_descriptors() -> None:
     final_x = next(
         row
         for row in descriptors
-        if row["stabilizer_kind"] == "X"
-        and row["stabilizer_index"] == 0
-        and row["is_final_round"]
+        if row["stabilizer_kind"] == "X" and row["stabilizer_index"] == 0 and row["is_final_round"]
     )
     assert final_x["round"] == 2
     assert final_x["coords"] == [0, 0, 2]
 
 
 def test_tick_circuit_exposes_observable_descriptors() -> None:
+    """Tick circuits should publish observable descriptors derived from logical metadata."""
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
 
@@ -195,6 +199,7 @@ def test_tick_circuit_exposes_observable_descriptors() -> None:
 
 
 def test_tick_circuit_exposes_measurement_order() -> None:
+    """Tick circuits should expose measurement order matching their MZ gates."""
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
 
@@ -219,6 +224,7 @@ def test_tick_circuit_exposes_measurement_order() -> None:
 
 
 def test_tick_circuit_respects_ancilla_budget_in_measurement_order() -> None:
+    """Measurement ordering should reflect ancilla reuse when a budget is imposed."""
     patch = SurfacePatch.create(distance=3)
     full_tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="Z")
     batched_tc = generate_tick_circuit_from_patch(
@@ -256,6 +262,7 @@ def test_surface_metadata_helpers_support_nonrotated_and_asymmetric_patches(
     patch_kwargs: dict[str, object],
     basis: str,
 ) -> None:
+    """Surface metadata helpers should also work on non-rotated and asymmetric patches."""
     patch = SurfacePatch.create(**patch_kwargs)
     summary = describe_surface_memory_experiment(patch, num_rounds=1, basis=basis)
 
@@ -272,6 +279,7 @@ def test_surface_metadata_helpers_support_nonrotated_and_asymmetric_patches(
 
 
 def test_describe_surface_memory_experiment_returns_descriptor_bundle() -> None:
+    """Experiment summaries should bundle patch, stabilizer, detector, and observable metadata."""
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
     summary = describe_surface_memory_experiment(patch, num_rounds=2, basis="X")

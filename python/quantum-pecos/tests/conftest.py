@@ -29,8 +29,10 @@ except ImportError:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register test-tree-local markers used by direct pytest invocations."""
-
     config.addinivalue_line(
         "markers",
-        "slow: mark tests that provide extra integration coverage but are excluded from the default fast Python test lane",
+        (
+            "slow: mark tests that provide extra integration coverage but are "
+            "excluded from the default fast Python test lane"
+        ),
     )

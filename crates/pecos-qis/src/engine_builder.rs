@@ -213,8 +213,9 @@ impl QisEngineBuilder {
             } else if let Some(hugr_prog) = any_program.downcast_ref::<pecos_programs::Hugr>() {
                 #[cfg(feature = "hugr")]
                 {
-                    self.program_source =
-                        Some(pecos_hugr_qis::compile_hugr_bytes_to_string(&hugr_prog.hugr)?);
+                    self.program_source = Some(pecos_hugr_qis::compile_hugr_bytes_to_string(
+                        &hugr_prog.hugr,
+                    )?);
                 }
                 #[cfg(not(feature = "hugr"))]
                 {

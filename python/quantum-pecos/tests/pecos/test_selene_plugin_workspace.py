@@ -40,6 +40,7 @@ def _nonempty_selene_plugin_dirs(repo_root: Path) -> tuple[list[str], list[str]]
 
 
 def test_selene_plugin_workspace_members_are_explicit_and_complete() -> None:
+    """Workspace manifests should enumerate exactly the real Selene plugin packages."""
     repo_root = _repo_root()
 
     cargo_toml = _load_toml(repo_root / "Cargo.toml")
@@ -51,18 +52,16 @@ def test_selene_plugin_workspace_members_are_explicit_and_complete() -> None:
     cargo_plugin_members = [member for member in cargo_members if member.startswith("python/selene-plugins/")]
     uv_plugin_members = [member for member in uv_members if member.startswith("python/selene-plugins/")]
 
-    assert all("*" not in member for member in cargo_plugin_members), (
-        "Cargo workspace should list Selene plugins explicitly instead of using a wildcard"
-    )
-    assert all("*" not in member for member in uv_plugin_members), (
-        "uv workspace should list Selene plugins explicitly instead of using a wildcard"
-    )
+    assert all(
+        "*" not in member for member in cargo_plugin_members
+    ), "Cargo workspace should list Selene plugins explicitly instead of using a wildcard"
+    assert all(
+        "*" not in member for member in uv_plugin_members
+    ), "uv workspace should list Selene plugins explicitly instead of using a wildcard"
 
     actual_plugin_dirs, stray_dirs = _nonempty_selene_plugin_dirs(repo_root)
-    assert stray_dirs == [], (
-        "Found non-empty pecos-selene-* directories that are not real plugin packages: "
-        f"{stray_dirs}"
-    )
+    msg = f"Found non-empty pecos-selene-* directories that are not real plugin packages: {stray_dirs}"
+    assert stray_dirs == [], msg
     assert cargo_plugin_members == actual_plugin_dirs, (
         "Cargo workspace Selene plugin members are out of sync with the actual plugin packages on disk: "
         f"{cargo_plugin_members} vs {actual_plugin_dirs}"

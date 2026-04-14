@@ -19,11 +19,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
+        Stabilizer,
         StabilizerDescriptor,
         SurfacePatch,
         SurfacePatchDescriptor,
@@ -70,14 +71,14 @@ class SurfaceObservableDescriptor(TypedDict):
 class SurfaceMemoryExperimentDescriptor(TypedDict):
     """Public bundle describing a surface-memory experiment."""
 
-    patch: "SurfacePatchDescriptor"
+    patch: SurfacePatchDescriptor
     basis: str
     num_rounds: int
     ancilla_budget: int | None
-    x_stabilizers: list["StabilizerDescriptor"]
-    z_stabilizers: list["StabilizerDescriptor"]
-    stabilizers: list["StabilizerDescriptor"]
-    logicals: list["LogicalDescriptor"]
+    x_stabilizers: list[StabilizerDescriptor]
+    z_stabilizers: list[StabilizerDescriptor]
+    stabilizers: list[StabilizerDescriptor]
+    logicals: list[LogicalDescriptor]
     detectors: list[SurfaceDetectorDescriptor]
     observables: list[SurfaceObservableDescriptor]
 
@@ -154,10 +155,7 @@ def _batched_stabilizers(
     stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
     stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
 
-    return [
-        stabilizers[start : start + ancilla_budget]
-        for start in range(0, len(stabilizers), ancilla_budget)
-    ]
+    return [stabilizers[start : start + ancilla_budget] for start in range(0, len(stabilizers), ancilla_budget)]
 
 
 def build_surface_code_circuit(
@@ -388,7 +386,7 @@ def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d
     return _classify_boundary(stab_type, data_qubits, d)
 
 
-def get_stabilizer_region(stab: Any, patch: SurfacePatch) -> str:
+def get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
     """Return a coarse region label like ``top+left`` for a stabilizer."""
     geom = patch.geometry
     positions = [geom.id_to_pos[q] for q in stab.data_qubits]
@@ -399,7 +397,7 @@ def get_stabilizer_region(stab: Any, patch: SurfacePatch) -> str:
     return f"{row_label}+{col_label}"
 
 
-def get_stabilizer_touch_label(stab: Any, patch: SurfacePatch, data_qubit: int) -> str:
+def get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
     """Label how a data qubit sits relative to a stabilizer support."""
     geom = patch.geometry
     if data_qubit not in stab.data_qubits:
@@ -421,7 +419,7 @@ def get_stabilizer_touch_label(stab: Any, patch: SurfacePatch, data_qubit: int) 
     return vertical + horizontal
 
 
-def get_stabilizer_schedule_entries(stab: Any, patch: SurfacePatch) -> list[dict[str, int | str]]:
+def get_stabilizer_schedule_entries(stab: Stabilizer, patch: SurfacePatch) -> list[dict[str, int | str]]:
     """Return the per-round touch schedule for one stabilizer."""
     from pecos.qec.surface.schedule import get_stab_schedule
 
@@ -436,7 +434,7 @@ def get_stabilizer_schedule_entries(stab: Any, patch: SurfacePatch) -> list[dict
     ]
 
 
-def get_stabilizer_schedule_metadata(stab: Any, patch: SurfacePatch) -> dict[str, object]:
+def get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
     """Return metadata describing one stabilizer's schedule and geometry."""
     entries = get_stabilizer_schedule_entries(stab, patch)
     rounds = [int(entry["round_0based"]) for entry in entries]
@@ -888,9 +886,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 return ""
             if label[0] in {"X", "Z"} and label[1:].isdigit():
                 return label
-            if (label.startswith("ax") or label.startswith("sx")) and label[2:].isdigit():
+            if label.startswith(("ax", "sx")) and label[2:].isdigit():
                 return f"X{int(label[2:])}"
-            if (label.startswith("az") or label.startswith("sz")) and label[2:].isdigit():
+            if label.startswith(("az", "sz")) and label[2:].isdigit():
                 return f"Z{int(label[2:])}"
             return ""
 
@@ -1475,6 +1473,8 @@ def describe_surface_memory_experiment(
         "detectors": detectors,
         "observables": observables,
     }
+
+
 def tick_circuit_to_stim(
     tc: TickCircuit,
     *,
@@ -1526,7 +1526,7 @@ def tick_circuit_to_stim(
         return math.isclose(_normalized_angle(angle), target, abs_tol=1e-9)
 
     def _gate_to_stim(
-        gate: Any,
+        gate: object,
     ) -> tuple[list[tuple[str, list[int]]], str | None]:
         gate_name = gate.gate_type.name
         qubits = [int(q) for q in gate.qubits]

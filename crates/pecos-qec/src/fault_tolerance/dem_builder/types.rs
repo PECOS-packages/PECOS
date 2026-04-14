@@ -153,6 +153,42 @@ pub struct ErrorContribution {
     pub direct_component_effects: Option<(ErrorMechanism, ErrorMechanism)>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SourceMetadata<'a, Index> {
+    location_indices: &'a [Index],
+    paulis: &'a [Pauli],
+    gate_types: &'a [GateType],
+    before_flags: &'a [bool],
+}
+
+impl<'a, Index> SourceMetadata<'a, Index> {
+    pub(crate) const fn new(
+        location_indices: &'a [Index],
+        paulis: &'a [Pauli],
+        gate_types: &'a [GateType],
+        before_flags: &'a [bool],
+    ) -> Self {
+        Self {
+            location_indices,
+            paulis,
+            gate_types,
+            before_flags,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DirectSourceComponents<'a> {
+    first: &'a ErrorMechanism,
+    second: &'a ErrorMechanism,
+}
+
+impl<'a> DirectSourceComponents<'a> {
+    pub(crate) const fn new(first: &'a ErrorMechanism, second: &'a ErrorMechanism) -> Self {
+        Self { first, second }
+    }
+}
+
 impl ErrorContribution {
     fn classify_direct_source_family(
         location_indices: &[u32],
@@ -206,26 +242,27 @@ impl ErrorContribution {
 
     /// Creates a new direct error contribution with source metadata.
     #[must_use]
-    pub fn direct_with_source(
+    fn direct_with_source(
         effect: ErrorMechanism,
         probability: f64,
-        location_indices: &[u32],
-        paulis: &[Pauli],
-        gate_types: &[GateType],
-        before_flags: &[bool],
+        source: SourceMetadata<'_, u32>,
     ) -> Self {
-        debug_assert_eq!(location_indices.len(), paulis.len());
-        debug_assert_eq!(location_indices.len(), gate_types.len());
-        debug_assert_eq!(location_indices.len(), before_flags.len());
+        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
+        debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
         Self {
             effect,
             probability,
             source_type: ErrorSourceType::Direct,
-            location_indices: location_indices.iter().copied().collect(),
-            paulis: paulis.iter().copied().collect(),
-            source_gate_types: gate_types.iter().copied().collect(),
-            source_before_flags: before_flags.iter().copied().collect(),
-            direct_source_family: Self::classify_direct_source_family(location_indices, paulis, None),
+            location_indices: source.location_indices.iter().copied().collect(),
+            paulis: source.paulis.iter().copied().collect(),
+            source_gate_types: source.gate_types.iter().copied().collect(),
+            source_before_flags: source.before_flags.iter().copied().collect(),
+            direct_source_family: Self::classify_direct_source_family(
+                source.location_indices,
+                source.paulis,
+                None,
+            ),
             direct_component_effects: None,
         }
     }
@@ -233,21 +270,17 @@ impl ErrorContribution {
     /// Creates a new direct error contribution with source metadata and
     /// per-location component effects.
     #[must_use]
-    pub fn direct_with_source_components(
+    fn direct_with_source_components(
         effect: ErrorMechanism,
         probability: f64,
-        location_indices: &[u32],
-        paulis: &[Pauli],
-        gate_types: &[GateType],
-        before_flags: &[bool],
-        first_component: &ErrorMechanism,
-        second_component: &ErrorMechanism,
+        source: SourceMetadata<'_, u32>,
+        components: DirectSourceComponents<'_>,
     ) -> Self {
-        debug_assert_eq!(location_indices.len(), paulis.len());
-        debug_assert_eq!(location_indices.len(), gate_types.len());
-        debug_assert_eq!(location_indices.len(), before_flags.len());
-        let source_type = if (first_component == &effect && second_component.is_empty())
-            || (second_component == &effect && first_component.is_empty())
+        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
+        debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
+        let source_type = if (components.first == &effect && components.second.is_empty())
+            || (components.second == &effect && components.first.is_empty())
         {
             ErrorSourceType::DirectOneSidedComponent
         } else {
@@ -257,16 +290,16 @@ impl ErrorContribution {
             effect,
             probability,
             source_type,
-            location_indices: location_indices.iter().copied().collect(),
-            paulis: paulis.iter().copied().collect(),
-            source_gate_types: gate_types.iter().copied().collect(),
-            source_before_flags: before_flags.iter().copied().collect(),
+            location_indices: source.location_indices.iter().copied().collect(),
+            paulis: source.paulis.iter().copied().collect(),
+            source_gate_types: source.gate_types.iter().copied().collect(),
+            source_before_flags: source.before_flags.iter().copied().collect(),
             direct_source_family: Self::classify_direct_source_family(
-                location_indices,
-                paulis,
-                Some((first_component, second_component)),
+                source.location_indices,
+                source.paulis,
+                Some((components.first, components.second)),
             ),
-            direct_component_effects: Some((first_component.clone(), second_component.clone())),
+            direct_component_effects: Some((components.first.clone(), components.second.clone())),
         }
     }
 
@@ -301,19 +334,16 @@ impl ErrorContribution {
 
     /// Creates a new Y-decomposed error contribution with source metadata.
     #[must_use]
-    pub fn y_decomposed_with_source(
+    fn y_decomposed_with_source(
         combined_effect: ErrorMechanism,
         x_effect: &ErrorMechanism,
         z_effect: &ErrorMechanism,
         probability: f64,
-        location_indices: &[u32],
-        paulis: &[Pauli],
-        gate_types: &[GateType],
-        before_flags: &[bool],
+        source: SourceMetadata<'_, u32>,
     ) -> Self {
-        debug_assert_eq!(location_indices.len(), paulis.len());
-        debug_assert_eq!(location_indices.len(), gate_types.len());
-        debug_assert_eq!(location_indices.len(), before_flags.len());
+        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
+        debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
         Self {
             effect: combined_effect,
             probability,
@@ -323,10 +353,10 @@ impl ErrorContribution {
                 z_detectors: z_effect.detectors.clone(),
                 z_logicals: z_effect.logicals.clone(),
             },
-            location_indices: location_indices.iter().copied().collect(),
-            paulis: paulis.iter().copied().collect(),
-            source_gate_types: gate_types.iter().copied().collect(),
-            source_before_flags: before_flags.iter().copied().collect(),
+            location_indices: source.location_indices.iter().copied().collect(),
+            paulis: source.paulis.iter().copied().collect(),
+            source_gate_types: source.gate_types.iter().copied().collect(),
+            source_before_flags: source.before_flags.iter().copied().collect(),
             direct_source_family: None,
             direct_component_effects: None,
         }
@@ -775,7 +805,8 @@ impl DecomposedError {
 /// The search returns the first valid decomposition found using a deterministic
 /// ordering that prefers detector pairs before singlets, similar to Stim's
 /// decompose pass over known graphlike symptoms.
-pub fn find_hyperedge_decomposition(
+#[cfg(test)]
+fn find_hyperedge_decomposition(
     hyperedge: &ErrorMechanism,
     graphlike_set: &HashSet<ErrorMechanism>,
 ) -> Option<Vec<ErrorMechanism>> {
@@ -815,8 +846,11 @@ impl GraphlikeDecompositionIndex {
         }
     }
 
-    fn find_hyperedge_decomposition(&self, hyperedge: &ErrorMechanism) -> Option<Vec<ErrorMechanism>> {
-    // If already graphlike, no decomposition needed
+    fn find_hyperedge_decomposition(
+        &self,
+        hyperedge: &ErrorMechanism,
+    ) -> Option<Vec<ErrorMechanism>> {
+        // If already graphlike, no decomposition needed
         if hyperedge.is_graphlike() {
             return Some(vec![hyperedge.clone()]);
         }
@@ -824,7 +858,6 @@ impl GraphlikeDecompositionIndex {
         // Collect the set of detectors in the hyperedge
         let hyperedge_dets: HashSet<u32> = hyperedge.detectors.iter().copied().collect();
 
-        // Helper to check if all detectors in a decomposition are in the hyperedge
         let decomp_dets_valid = |decomp: &[ErrorMechanism]| -> bool {
             decomp
                 .iter()
@@ -832,72 +865,68 @@ impl GraphlikeDecompositionIndex {
                 .all(|d| hyperedge_dets.contains(d))
         };
 
-        fn search_decomposition(
-            remaining: &ErrorMechanism,
-            graphlike_set: &HashSet<ErrorMechanism>,
-            candidates_by_detector: &BTreeMap<u32, Vec<ErrorMechanism>>,
-            memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
-        ) -> Option<Vec<ErrorMechanism>> {
-            if let Some(cached) = memo.get(remaining) {
-                return cached.clone();
-            }
+        let mut memo = HashMap::new();
+        let result = self.search_decomposition(hyperedge, &mut memo);
+        result.filter(|decomp| decomp_dets_valid(decomp))
+    }
 
-            if remaining.is_empty() {
-                let result = Some(Vec::new());
-                memo.insert(remaining.clone(), result.clone());
-                return result;
-            }
-
-            if remaining.is_graphlike() && graphlike_set.contains(remaining) {
-                let result = Some(vec![remaining.clone()]);
-                memo.insert(remaining.clone(), result.clone());
-                return result;
-            }
-
-            if let Some(&pivot) = remaining.detectors.first() {
-                if let Some(candidates) = candidates_by_detector.get(&pivot) {
-                    for candidate in candidates {
-                        if !candidate.detectors.iter().all(|d| remaining.detectors.contains(d)) {
-                            continue;
-                        }
-                        if !shares_element(candidate, remaining) {
-                            continue;
-                        }
-
-                        let next = remaining.xor(candidate);
-
-                        // Require strict detector-count progress to prevent cycles.
-                        if next.detectors.len() >= remaining.detectors.len() {
-                            continue;
-                        }
-
-                        if let Some(suffix) =
-                            search_decomposition(&next, graphlike_set, candidates_by_detector, memo)
-                        {
-                            let mut combined = Vec::with_capacity(suffix.len() + 1);
-                            combined.push(candidate.clone());
-                            combined.extend(suffix);
-                            combined.sort();
-                            let result = Some(combined);
-                            memo.insert(remaining.clone(), result.clone());
-                            return result;
-                        }
-                    }
-                }
-            }
-
-            memo.insert(remaining.clone(), None);
-            None
+    fn search_decomposition(
+        &self,
+        remaining: &ErrorMechanism,
+        memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
+    ) -> Option<Vec<ErrorMechanism>> {
+        if let Some(cached) = memo.get(remaining) {
+            return cached.clone();
         }
 
-        let mut memo = HashMap::new();
-        let result = search_decomposition(
-            hyperedge,
-            &self.graphlike_set,
-            &self.candidates_by_detector,
-            &mut memo,
-        );
-        result.filter(|decomp| decomp_dets_valid(decomp))
+        if remaining.is_empty() {
+            let result = Some(Vec::new());
+            memo.insert(remaining.clone(), result.clone());
+            return result;
+        }
+
+        if remaining.is_graphlike() && self.graphlike_set.contains(remaining) {
+            let result = Some(vec![remaining.clone()]);
+            memo.insert(remaining.clone(), result.clone());
+            return result;
+        }
+
+        if let Some(&pivot) = remaining.detectors.first()
+            && let Some(candidates) = self.candidates_by_detector.get(&pivot)
+        {
+            for candidate in candidates {
+                if !candidate
+                    .detectors
+                    .iter()
+                    .all(|d| remaining.detectors.contains(d))
+                {
+                    continue;
+                }
+                if !shares_element(candidate, remaining) {
+                    continue;
+                }
+
+                let next = remaining.xor(candidate);
+
+                // Require strict detector-count progress to prevent cycles.
+                if next.detectors.len() >= remaining.detectors.len() {
+                    continue;
+                }
+
+                if let Some(suffix) = self.search_decomposition(&next, memo) {
+                    let mut combined = Vec::with_capacity(suffix.len() + 1);
+                    combined.push(candidate.clone());
+                    combined.extend(suffix);
+                    combined.sort();
+                    let result = Some(combined);
+                    memo.insert(remaining.clone(), result.clone());
+                    return result;
+                }
+            }
+        }
+
+        memo.insert(remaining.clone(), None);
+        None
     }
 }
 
@@ -938,47 +967,49 @@ fn find_singleton_decomposition(
         });
     }
 
-    fn search(
-        remaining: &ErrorMechanism,
-        candidates_by_detector: &HashMap<u32, Vec<ErrorMechanism>>,
-        memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
-    ) -> Option<Vec<ErrorMechanism>> {
-        if let Some(cached) = memo.get(remaining) {
-            return cached.clone();
-        }
-        if remaining.is_empty() {
-            return Some(Vec::new());
-        }
+    let mut memo: HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>> = HashMap::new();
+    search_singleton_decomposition(effect, &candidates_by_detector, &mut memo)
+}
 
-        let Some(&first_det) = remaining.detectors.first() else {
-            memo.insert(remaining.clone(), None);
-            return None;
-        };
-
-        let result = candidates_by_detector
-            .get(&first_det)
-            .and_then(|candidates| {
-                for candidate in candidates {
-                    let next = remaining.xor(candidate);
-                    if next.num_detectors() >= remaining.num_detectors() {
-                        continue;
-                    }
-                    if let Some(mut tail) = search(&next, candidates_by_detector, memo) {
-                        let mut parts = Vec::with_capacity(tail.len() + 1);
-                        parts.push(candidate.clone());
-                        parts.append(&mut tail);
-                        return Some(parts);
-                    }
-                }
-                None
-            });
-
-        memo.insert(remaining.clone(), result.clone());
-        result
+fn search_singleton_decomposition(
+    remaining: &ErrorMechanism,
+    candidates_by_detector: &HashMap<u32, Vec<ErrorMechanism>>,
+    memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
+) -> Option<Vec<ErrorMechanism>> {
+    if let Some(cached) = memo.get(remaining) {
+        return cached.clone();
+    }
+    if remaining.is_empty() {
+        return Some(Vec::new());
     }
 
-    let mut memo: HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>> = HashMap::new();
-    search(effect, &candidates_by_detector, &mut memo)
+    let Some(&first_det) = remaining.detectors.first() else {
+        memo.insert(remaining.clone(), None);
+        return None;
+    };
+
+    let result = candidates_by_detector
+        .get(&first_det)
+        .and_then(|candidates| {
+            for candidate in candidates {
+                let next = remaining.xor(candidate);
+                if next.num_detectors() >= remaining.num_detectors() {
+                    continue;
+                }
+                if let Some(mut tail) =
+                    search_singleton_decomposition(&next, candidates_by_detector, memo)
+                {
+                    let mut parts = Vec::with_capacity(tail.len() + 1);
+                    parts.push(candidate.clone());
+                    parts.append(&mut tail);
+                    return Some(parts);
+                }
+            }
+            None
+        });
+
+    memo.insert(remaining.clone(), result.clone());
+    result
 }
 
 /// Checks if two mechanisms share at least one detector or logical.
@@ -996,6 +1027,21 @@ fn shares_element(a: &ErrorMechanism, b: &ErrorMechanism) -> bool {
         }
     }
     false
+}
+
+fn convert_location_indices(location_indices: &[usize]) -> SmallVec<[u32; 2]> {
+    location_indices
+        .iter()
+        .map(|&idx| u32::try_from(idx).expect("fault location index must fit into u32"))
+        .collect()
+}
+
+fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
+    if offset < 0 {
+        num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
+    } else {
+        usize::try_from(offset).ok()
+    }
 }
 
 // ============================================================================
@@ -1293,10 +1339,8 @@ impl DetectorErrorModel {
         detectors: &[u32],
         logicals: &[u32],
     ) -> Vec<ErrorContribution> {
-        let target = ErrorMechanism::from_unsorted(
-            detectors.iter().copied(),
-            logicals.iter().copied(),
-        );
+        let target =
+            ErrorMechanism::from_unsorted(detectors.iter().copied(), logicals.iter().copied());
         self.contributions
             .iter()
             .filter(|contrib| contrib.effect == target)
@@ -1364,9 +1408,8 @@ impl DetectorErrorModel {
         let mut by_effect: BTreeMap<ErrorMechanism, ContributionEffectSummary> = BTreeMap::new();
 
         for contrib in &self.contributions {
-            let summary = by_effect
-                .entry(contrib.effect.clone())
-                .or_insert_with(|| ContributionEffectSummary {
+            let summary = by_effect.entry(contrib.effect.clone()).or_insert_with(|| {
+                ContributionEffectSummary {
                     effect: contrib.effect.clone(),
                     num_contributions: 0,
                     total_probability: 0.0,
@@ -1375,7 +1418,8 @@ impl DetectorErrorModel {
                     y_decomposed_count: 0,
                     y_decomposed_probability: 0.0,
                     graphlike_decomposable_count: 0,
-                });
+                }
+            });
 
             summary.num_contributions += 1;
             summary.total_probability += contrib.probability;
@@ -1393,8 +1437,10 @@ impl DetectorErrorModel {
 
         for summary in by_effect.values_mut() {
             if summary.effect.logicals.is_empty() && summary.effect.detectors.len() == 2 {
-                summary.graphlike_decomposable_count =
-                    self.graphlike_decomposable_count(summary.effect.detectors[0], summary.effect.detectors[1]);
+                summary.graphlike_decomposable_count = self.graphlike_decomposable_count(
+                    summary.effect.detectors[0],
+                    summary.effect.detectors[1],
+                );
             }
         }
 
@@ -1461,7 +1507,7 @@ impl DetectorErrorModel {
                 continue;
             }
 
-            let rendered_targets = self.contribution_targets(
+            let rendered_targets = Self::contribution_targets(
                 contrib,
                 &graphlike_index,
                 None,
@@ -1477,7 +1523,9 @@ impl DetectorErrorModel {
                 combine_independent_probs(acc.combined_probability, contrib.probability);
 
             let source_label = source_type_label(&contrib.source_type).to_string();
-            *acc.source_type_counts.entry(source_label.clone()).or_insert(0) += 1;
+            *acc.source_type_counts
+                .entry(source_label.clone())
+                .or_insert(0) += 1;
             *acc.source_type_probabilities
                 .entry(source_label)
                 .or_insert(0.0) += contrib.probability;
@@ -1495,17 +1543,19 @@ impl DetectorErrorModel {
 
         by_render
             .into_iter()
-            .map(|((effect, rendered_targets), acc)| ContributionRenderSummary {
-                effect,
-                rendered_targets,
-                num_contributions: acc.num_contributions,
-                total_probability: acc.total_probability,
-                combined_probability: acc.combined_probability,
-                source_type_counts: acc.source_type_counts,
-                source_type_probabilities: acc.source_type_probabilities,
-                direct_source_family_counts: acc.direct_source_family_counts,
-                direct_source_family_probabilities: acc.direct_source_family_probabilities,
-            })
+            .map(
+                |((effect, rendered_targets), acc)| ContributionRenderSummary {
+                    effect,
+                    rendered_targets,
+                    num_contributions: acc.num_contributions,
+                    total_probability: acc.total_probability,
+                    combined_probability: acc.combined_probability,
+                    source_type_counts: acc.source_type_counts,
+                    source_type_probabilities: acc.source_type_probabilities,
+                    direct_source_family_counts: acc.direct_source_family_counts,
+                    direct_source_family_probabilities: acc.direct_source_family_probabilities,
+                },
+            )
             .collect()
     }
 
@@ -1540,7 +1590,7 @@ impl DetectorErrorModel {
             }
 
             let (rendered_targets, render_strategy, recorded_component_targets) =
-                self.contribution_render_details(
+                Self::contribution_render_details(
                     contrib,
                     &graphlike_index,
                     None,
@@ -1573,62 +1623,53 @@ impl DetectorErrorModel {
     }
 
     /// Adds a direct error contribution with source metadata.
-    pub fn add_direct_contribution_with_source(
+    pub(crate) fn add_direct_contribution_with_source(
         &mut self,
         effect: ErrorMechanism,
         probability: f64,
-        location_indices: &[usize],
-        paulis: &[Pauli],
-        gate_types: &[GateType],
-        before_flags: &[bool],
+        source: SourceMetadata<'_, usize>,
     ) {
         if effect.is_empty() || probability <= 0.0 {
             return;
         }
-        let location_indices: SmallVec<[u32; 2]> = location_indices
-            .iter()
-            .map(|idx| u32::try_from(*idx).expect("fault location index must fit into u32"))
-            .collect();
-        self.contributions.push(ErrorContribution::direct_with_source(
-            effect,
-            probability,
-            &location_indices,
-            paulis,
-            gate_types,
-            before_flags,
-        ));
+        let location_indices = convert_location_indices(source.location_indices);
+        self.contributions
+            .push(ErrorContribution::direct_with_source(
+                effect,
+                probability,
+                SourceMetadata::new(
+                    &location_indices,
+                    source.paulis,
+                    source.gate_types,
+                    source.before_flags,
+                ),
+            ));
     }
 
     /// Adds a direct error contribution with source metadata and per-location
     /// component effects.
-    pub fn add_direct_contribution_with_source_components(
+    pub(crate) fn add_direct_contribution_with_source_components(
         &mut self,
         effect: ErrorMechanism,
         probability: f64,
-        location_indices: &[usize],
-        paulis: &[Pauli],
-        gate_types: &[GateType],
-        before_flags: &[bool],
-        first_component: &ErrorMechanism,
-        second_component: &ErrorMechanism,
+        source: SourceMetadata<'_, usize>,
+        components: DirectSourceComponents<'_>,
     ) {
         if effect.is_empty() || probability <= 0.0 {
             return;
         }
-        let location_indices: SmallVec<[u32; 2]> = location_indices
-            .iter()
-            .map(|idx| u32::try_from(*idx).expect("fault location index must fit into u32"))
-            .collect();
+        let location_indices = convert_location_indices(source.location_indices);
         self.contributions
             .push(ErrorContribution::direct_with_source_components(
                 effect,
                 probability,
-                &location_indices,
-                paulis,
-                gate_types,
-                before_flags,
-                first_component,
-                second_component,
+                SourceMetadata::new(
+                    &location_indices,
+                    source.paulis,
+                    source.gate_types,
+                    source.before_flags,
+                ),
+                components,
             ));
     }
 
@@ -1679,15 +1720,12 @@ impl DetectorErrorModel {
     }
 
     /// Adds a Y-decomposed error contribution with source metadata.
-    pub fn add_y_decomposed_contribution_with_source(
+    pub(crate) fn add_y_decomposed_contribution_with_source(
         &mut self,
         x_effect: &ErrorMechanism,
         z_effect: &ErrorMechanism,
         probability: f64,
-        location_indices: &[usize],
-        paulis: &[Pauli],
-        gate_types: &[GateType],
-        before_flags: &[bool],
+        source: SourceMetadata<'_, usize>,
     ) {
         if probability <= 0.0 {
             return;
@@ -1699,31 +1737,24 @@ impl DetectorErrorModel {
         }
 
         if x_effect.is_empty() || z_effect.is_empty() {
-            self.add_direct_contribution_with_source(
-                combined,
-                probability,
-                location_indices,
-                paulis,
-                gate_types,
-                before_flags,
-            );
+            self.add_direct_contribution_with_source(combined, probability, source);
             return;
         }
 
-        let location_indices: SmallVec<[u32; 2]> = location_indices
-            .iter()
-            .map(|idx| u32::try_from(*idx).expect("fault location index must fit into u32"))
-            .collect();
-        self.contributions.push(ErrorContribution::y_decomposed_with_source(
-            combined,
-            x_effect,
-            z_effect,
-            probability,
-            &location_indices,
-            paulis,
-            gate_types,
-            before_flags,
-        ));
+        let location_indices = convert_location_indices(source.location_indices);
+        self.contributions
+            .push(ErrorContribution::y_decomposed_with_source(
+                combined,
+                x_effect,
+                z_effect,
+                probability,
+                SourceMetadata::new(
+                    &location_indices,
+                    source.paulis,
+                    source.gate_types,
+                    source.before_flags,
+                ),
+            ));
     }
 
     /// Marks a 2-detector mechanism as having a graphlike decomposable source.
@@ -1829,7 +1860,6 @@ impl DetectorErrorModel {
     }
 
     fn maximally_decompose_graphlike_effect(
-        &self,
         effect: &ErrorMechanism,
         singleton_set: &HashSet<ErrorMechanism>,
     ) -> Vec<ErrorMechanism> {
@@ -1839,7 +1869,6 @@ impl DetectorErrorModel {
     }
 
     fn maybe_maximally_decompose_parts(
-        &self,
         parts: Vec<ErrorMechanism>,
         singleton_set: Option<&HashSet<ErrorMechanism>>,
     ) -> Vec<ErrorMechanism> {
@@ -1850,7 +1879,10 @@ impl DetectorErrorModel {
         let mut out = Vec::new();
         for part in parts {
             if part.is_graphlike() {
-                out.extend(self.maximally_decompose_graphlike_effect(&part, singleton_set));
+                out.extend(Self::maximally_decompose_graphlike_effect(
+                    &part,
+                    singleton_set,
+                ));
             } else {
                 out.push(part);
             }
@@ -1859,24 +1891,22 @@ impl DetectorErrorModel {
     }
 
     fn recorded_component_targets(
-        &self,
         contrib: &ErrorContribution,
         singleton_set: Option<&HashSet<ErrorMechanism>>,
     ) -> Option<String> {
         let (first, second) = contrib.direct_component_effects()?;
-        let targets = self
-            .maybe_maximally_decompose_parts(
-                [first, second]
-                    .into_iter()
-                    .filter(|part| !part.is_empty())
-                    .collect(),
-                singleton_set,
-            )
-            .iter()
-            .map(format_mechanism_targets)
-            .filter(|targets| !targets.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ^ ");
+        let targets = Self::maybe_maximally_decompose_parts(
+            [first, second]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect(),
+            singleton_set,
+        )
+        .iter()
+        .map(format_mechanism_targets)
+        .filter(|targets| !targets.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ^ ");
         if targets.is_empty() {
             None
         } else {
@@ -1885,11 +1915,10 @@ impl DetectorErrorModel {
     }
 
     fn two_detector_direct_targets(
-        &self,
         effect: &ErrorMechanism,
         singleton_set: Option<&HashSet<ErrorMechanism>>,
     ) -> String {
-        self.maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
+        Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
             .iter()
             .map(format_mechanism_targets)
             .collect::<Vec<_>>()
@@ -1897,21 +1926,20 @@ impl DetectorErrorModel {
     }
 
     fn contribution_render_details(
-        &self,
         contrib: &ErrorContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
         singleton_set: Option<&HashSet<ErrorMechanism>>,
         two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
         cache: &mut HashMap<(ErrorMechanism, ErrorSourceType), String>,
     ) -> (String, ContributionRenderStrategy, Option<String>) {
-        let recorded_component_targets = self.recorded_component_targets(contrib, singleton_set);
+        let recorded_component_targets = Self::recorded_component_targets(contrib, singleton_set);
         let key = (contrib.effect.clone(), contrib.source_type.clone());
         if let Some(cached) = cache.get(&key) {
             let strategy = if contrib.decomposition_components().is_some() {
                 ContributionRenderStrategy::SourceComponents
             } else if contrib.effect.num_detectors() == 2 && contrib.effect.logicals.is_empty() {
                 let direct_targets =
-                    self.two_detector_direct_targets(&contrib.effect, singleton_set);
+                    Self::two_detector_direct_targets(&contrib.effect, singleton_set);
                 if matches!(
                     two_detector_direct_policy,
                     TwoDetectorDirectRenderPolicy::PreferRecordedComponents
@@ -1931,19 +1959,17 @@ impl DetectorErrorModel {
         }
 
         let effect = &contrib.effect;
-        let (targets, strategy) = if let Some((x_effect, z_effect)) = contrib.decomposition_components() {
+        let (targets, strategy) = if let Some((x_effect, z_effect)) =
+            contrib.decomposition_components()
+        {
             let x_graphlike = x_effect.is_empty() || x_effect.is_graphlike();
             let z_graphlike = z_effect.is_empty() || z_effect.is_graphlike();
 
             if !x_effect.is_empty() && !z_effect.is_empty() && x_graphlike && z_graphlike {
-                let x_parts = self.maybe_maximally_decompose_parts(
-                    vec![x_effect.clone()],
-                    singleton_set,
-                );
-                let z_parts = self.maybe_maximally_decompose_parts(
-                    vec![z_effect.clone()],
-                    singleton_set,
-                );
+                let x_parts =
+                    Self::maybe_maximally_decompose_parts(vec![x_effect.clone()], singleton_set);
+                let z_parts =
+                    Self::maybe_maximally_decompose_parts(vec![z_effect.clone()], singleton_set);
                 let targets = x_parts
                     .iter()
                     .chain(z_parts.iter())
@@ -1951,37 +1977,46 @@ impl DetectorErrorModel {
                     .filter(|targets| !targets.is_empty())
                     .collect::<Vec<_>>()
                     .join(" ^ ");
-                let targets = if !targets.is_empty() {
-                    targets
-                } else {
+                let targets = if targets.is_empty() {
                     String::new()
+                } else {
+                    targets
                 };
                 (targets, ContributionRenderStrategy::SourceComponents)
             } else if effect.num_detectors() == 2 && effect.logicals.is_empty() {
-                let direct_targets = self.two_detector_direct_targets(effect, singleton_set);
+                let direct_targets = Self::two_detector_direct_targets(effect, singleton_set);
                 if matches!(
                     two_detector_direct_policy,
                     TwoDetectorDirectRenderPolicy::PreferRecordedComponents
                 ) {
                     if let Some(component_targets) = recorded_component_targets.as_ref() {
-                        if component_targets != &direct_targets {
+                        if component_targets == &direct_targets {
+                            (
+                                direct_targets,
+                                ContributionRenderStrategy::TwoDetectorDirect,
+                            )
+                        } else {
                             (
                                 component_targets.clone(),
                                 ContributionRenderStrategy::RecordedComponents,
                             )
-                        } else {
-                            (direct_targets, ContributionRenderStrategy::TwoDetectorDirect)
                         }
                     } else {
-                        (direct_targets, ContributionRenderStrategy::TwoDetectorDirect)
+                        (
+                            direct_targets,
+                            ContributionRenderStrategy::TwoDetectorDirect,
+                        )
                     }
                 } else {
-                    (direct_targets, ContributionRenderStrategy::TwoDetectorDirect)
+                    (
+                        direct_targets,
+                        ContributionRenderStrategy::TwoDetectorDirect,
+                    )
                 }
             } else if effect.is_hyperedge() {
                 if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(effect) {
                     (
-                        self.maybe_maximally_decompose_parts(decomp, singleton_set)
+                        Self::maybe_maximally_decompose_parts(decomp, singleton_set)
                             .iter()
                             .map(format_mechanism_targets)
                             .collect::<Vec<_>>()
@@ -1989,11 +2024,14 @@ impl DetectorErrorModel {
                         ContributionRenderStrategy::HyperedgeGraphlike,
                     )
                 } else {
-                    (format_mechanism_targets(effect), ContributionRenderStrategy::EffectDirect)
+                    (
+                        format_mechanism_targets(effect),
+                        ContributionRenderStrategy::EffectDirect,
+                    )
                 }
             } else {
                 (
-                    self.maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
+                    Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
                         .iter()
                         .map(format_mechanism_targets)
                         .collect::<Vec<_>>()
@@ -2002,30 +2040,39 @@ impl DetectorErrorModel {
                 )
             }
         } else if effect.num_detectors() == 2 && effect.logicals.is_empty() {
-            let direct_targets = self.two_detector_direct_targets(effect, singleton_set);
+            let direct_targets = Self::two_detector_direct_targets(effect, singleton_set);
             if matches!(
                 two_detector_direct_policy,
                 TwoDetectorDirectRenderPolicy::PreferRecordedComponents
             ) {
                 if let Some(component_targets) = recorded_component_targets.as_ref() {
-                    if component_targets != &direct_targets {
+                    if component_targets == &direct_targets {
+                        (
+                            direct_targets,
+                            ContributionRenderStrategy::TwoDetectorDirect,
+                        )
+                    } else {
                         (
                             component_targets.clone(),
                             ContributionRenderStrategy::RecordedComponents,
                         )
-                    } else {
-                        (direct_targets, ContributionRenderStrategy::TwoDetectorDirect)
                     }
                 } else {
-                    (direct_targets, ContributionRenderStrategy::TwoDetectorDirect)
+                    (
+                        direct_targets,
+                        ContributionRenderStrategy::TwoDetectorDirect,
+                    )
                 }
             } else {
-                (direct_targets, ContributionRenderStrategy::TwoDetectorDirect)
+                (
+                    direct_targets,
+                    ContributionRenderStrategy::TwoDetectorDirect,
+                )
             }
         } else if effect.is_hyperedge() {
             if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(effect) {
                 (
-                    self.maybe_maximally_decompose_parts(decomp, singleton_set)
+                    Self::maybe_maximally_decompose_parts(decomp, singleton_set)
                         .iter()
                         .map(format_mechanism_targets)
                         .collect::<Vec<_>>()
@@ -2033,11 +2080,14 @@ impl DetectorErrorModel {
                     ContributionRenderStrategy::HyperedgeGraphlike,
                 )
             } else {
-                (format_mechanism_targets(effect), ContributionRenderStrategy::EffectDirect)
+                (
+                    format_mechanism_targets(effect),
+                    ContributionRenderStrategy::EffectDirect,
+                )
             }
         } else {
             (
-                self.maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
+                Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
                     .iter()
                     .map(format_mechanism_targets)
                     .collect::<Vec<_>>()
@@ -2051,14 +2101,13 @@ impl DetectorErrorModel {
     }
 
     fn contribution_targets(
-        &self,
         contrib: &ErrorContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
         singleton_set: Option<&HashSet<ErrorMechanism>>,
         two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
         cache: &mut HashMap<(ErrorMechanism, ErrorSourceType), String>,
     ) -> String {
-        self.contribution_render_details(
+        Self::contribution_render_details(
             contrib,
             graphlike_index,
             singleton_set,
@@ -2137,7 +2186,7 @@ impl DetectorErrorModel {
             if contrib.effect.is_empty() || contrib.probability <= 0.0 {
                 continue;
             }
-            let targets = self.contribution_targets(
+            let targets = Self::contribution_targets(
                 contrib,
                 &graphlike_index,
                 singleton_set.as_ref(),
@@ -2487,14 +2536,10 @@ impl MeasurementNoiseModel {
         for records in detector_records {
             let mut fired = false;
             for &offset in records {
-                // Convert negative offset to absolute index
-                let abs_idx = if offset < 0 {
-                    (num_measurements as i32 + offset) as usize
-                } else {
-                    offset as usize
-                };
-
-                if abs_idx < num_measurements && outcomes[abs_idx] {
+                if let Some(abs_idx) = record_offset_to_absolute_index(num_measurements, offset)
+                    && abs_idx < num_measurements
+                    && outcomes[abs_idx]
+                {
                     fired = !fired; // XOR
                 }
             }
@@ -2812,7 +2857,10 @@ mod tests {
     fn test_contribution_effect_summaries_include_graphlike_decomposable_count() {
         let mut dem = DetectorErrorModel::new();
 
-        dem.add_direct_contribution(ErrorMechanism::from_unsorted([0, 1], std::iter::empty()), 0.01);
+        dem.add_direct_contribution(
+            ErrorMechanism::from_unsorted([0, 1], std::iter::empty()),
+            0.01,
+        );
         dem.add_direct_contribution(ErrorMechanism::from_unsorted([0], std::iter::empty()), 0.02);
         dem.mark_graphlike_decomposable(0, 1);
         dem.mark_graphlike_decomposable(1, 0);
@@ -2821,13 +2869,17 @@ mod tests {
 
         let pair_summary = summaries
             .iter()
-            .find(|summary| summary.effect.detectors.as_slice() == [0, 1] && summary.effect.logicals.is_empty())
+            .find(|summary| {
+                summary.effect.detectors.as_slice() == [0, 1] && summary.effect.logicals.is_empty()
+            })
             .expect("pair summary missing");
         assert_eq!(pair_summary.graphlike_decomposable_count, 2);
 
         let singleton_summary = summaries
             .iter()
-            .find(|summary| summary.effect.detectors.as_slice() == [0] && summary.effect.logicals.is_empty())
+            .find(|summary| {
+                summary.effect.detectors.as_slice() == [0] && summary.effect.logicals.is_empty()
+            })
             .expect("singleton summary missing");
         assert_eq!(singleton_summary.graphlike_decomposable_count, 0);
     }
@@ -2915,11 +2967,17 @@ mod tests {
             .iter()
             .fold(ErrorMechanism::new(), |acc, part| acc.xor(part));
         assert_eq!(recomposed, hyperedge);
-        assert!(decomposition.iter().all(|part| part.is_graphlike()));
-        assert!(decomposition
-            .iter()
-            .flat_map(|part| part.detectors.iter())
-            .all(|det| hyperedge_dets.contains(det)));
+        assert!(
+            decomposition
+                .iter()
+                .all(super::ErrorMechanism::is_graphlike)
+        );
+        assert!(
+            decomposition
+                .iter()
+                .flat_map(|part| part.detectors.iter())
+                .all(|det| hyperedge_dets.contains(det))
+        );
         assert_eq!(decomposition.len(), 2);
     }
 
@@ -2940,7 +2998,11 @@ mod tests {
             .iter()
             .fold(ErrorMechanism::new(), |acc, part| acc.xor(part));
         assert_eq!(recomposed, hyperedge);
-        assert!(decomposition.iter().all(|part| part.is_graphlike()));
+        assert!(
+            decomposition
+                .iter()
+                .all(super::ErrorMechanism::is_graphlike)
+        );
         assert_eq!(decomposition.len(), 4);
     }
 
@@ -3009,12 +3071,13 @@ mod tests {
         let contribution = ErrorContribution::direct_with_source_components(
             effect.clone(),
             0.01,
-            &[3, 4],
-            &[Pauli::Z, Pauli::I],
-            &[GateType::CX, GateType::CX],
-            &[false, false],
-            &first,
-            &second,
+            SourceMetadata::new(
+                &[3, 4],
+                &[Pauli::Z, Pauli::I],
+                &[GateType::CX, GateType::CX],
+                &[false, false],
+            ),
+            DirectSourceComponents::new(&first, &second),
         );
 
         assert!(contribution.is_direct());
@@ -3034,12 +3097,13 @@ mod tests {
         let contribution = ErrorContribution::direct_with_source_components(
             effect.clone(),
             0.01,
-            &[3, 4],
-            &[Pauli::Z, Pauli::I],
-            &[GateType::CX, GateType::CX],
-            &[false, false],
-            &first,
-            &second,
+            SourceMetadata::new(
+                &[3, 4],
+                &[Pauli::Z, Pauli::I],
+                &[GateType::CX, GateType::CX],
+                &[false, false],
+            ),
+            DirectSourceComponents::new(&first, &second),
         );
 
         assert!(contribution.is_direct());
@@ -3073,10 +3137,7 @@ mod tests {
             &x,
             &z,
             0.02,
-            &[7],
-            &[Pauli::Y],
-            &[GateType::H],
-            &[false],
+            SourceMetadata::new(&[7], &[Pauli::Y], &[GateType::H], &[false]),
         );
 
         let contributions = dem.contributions_for_effect(&[1, 44], &[]);
@@ -3092,5 +3153,4 @@ mod tests {
             Some(DirectSourceFamily::SingleLocationY)
         );
     }
-
 }

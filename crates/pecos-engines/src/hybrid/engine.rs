@@ -175,7 +175,6 @@ impl HybridEngine {
             EngineStage::NeedsProcessing(_) => unreachable!(),
         }
     }
-
 }
 
 impl Engine for HybridEngine {

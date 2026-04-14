@@ -2941,6 +2941,7 @@ dependencies = [
  "rand 0.10.0",
  "selene-simple-runtime",
  "selene-soft-rz-runtime",
+ "serde",
  "serde_json",
  "tempfile",
 ]

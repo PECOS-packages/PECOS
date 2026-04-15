@@ -172,6 +172,66 @@ impl PauliLindbladModel {
         agg.into_iter().collect()
     }
 
+    /// Return the top `n` Pauli terms sorted by rate (descending).
+    /// Ties broken by lexicographic order on the Pauli string.
+    pub fn top_contributors(&self, n: usize) -> Vec<(PauliString, f64)> {
+        let mut pairs: Vec<_> = self
+            .supports
+            .iter()
+            .cloned()
+            .zip(self.rates.iter().copied())
+            .collect();
+        pairs.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| {
+                a.0.0
+                    .iter()
+                    .map(|p| *p as u8)
+                    .cmp(b.0.0.iter().map(|p| *p as u8))
+            })
+        });
+        pairs.truncate(n);
+        pairs
+    }
+
+    /// Human-readable noise-budget table: total rate, per-weight-class
+    /// breakdown, and top contributors. Useful for answering "where
+    /// is my logical error budget going?"
+    ///
+    /// Format is stable for eyeballing; not an interchange format
+    /// (use `serde` for that).
+    pub fn explain(&self) -> String {
+        let total = self.total_rate();
+        let n_terms = self.supports.len();
+
+        let mut by_weight: std::collections::BTreeMap<usize, f64> =
+            std::collections::BTreeMap::new();
+        for (p, r) in self.supports.iter().zip(&self.rates) {
+            *by_weight.entry(p.weight()).or_insert(0.0) += *r;
+        }
+
+        let mut out = String::new();
+        out.push_str(&format!(
+            "Pauli-Lindblad noise budget ({} terms, total rate = {:.3e})\n",
+            n_terms, total,
+        ));
+        out.push_str(&"=".repeat(60));
+        out.push('\n');
+        out.push_str("By weight:\n");
+        for (w, r) in &by_weight {
+            let pct = if total > 0.0 { 100.0 * r / total } else { 0.0 };
+            out.push_str(&format!("  weight-{}: {:>11.3e}  {:5.1}%\n", w, r, pct));
+        }
+        out.push('\n');
+
+        let top_n = 10;
+        out.push_str(&format!("Top {} contributors:\n", top_n.min(n_terms)));
+        for (p, r) in self.top_contributors(top_n) {
+            let pct = if total > 0.0 { 100.0 * r / total } else { 0.0 };
+            out.push_str(&format!("  {:<12} {:>11.3e}  {:5.1}%\n", p.to_string(), r, pct));
+        }
+        out
+    }
+
     /// Heuristic diagnostic: given a predicted model (`self`) and a
     /// measured model (`other`), suggest physical sources likely missing
     /// from the prediction. Returns human-readable strings ordered by

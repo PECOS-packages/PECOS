@@ -31,7 +31,9 @@ def _nonempty_selene_plugin_dirs(repo_root: Path) -> tuple[list[str], list[str]]
         children = list(path.iterdir())
         if not children:
             continue
-        rel = str(path.relative_to(repo_root))
+        # Cargo.toml / pyproject.toml members use forward slashes on all platforms;
+        # normalize via as_posix() so the comparison does not fail on Windows.
+        rel = path.relative_to(repo_root).as_posix()
         if (path / "Cargo.toml").is_file() and (path / "pyproject.toml").is_file():
             real_dirs.append(rel)
         else:

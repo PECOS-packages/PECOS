@@ -46,7 +46,7 @@ dev = [
 ]
 test = [ # pinning testing environment
   "pytest==9.0.3",
-  "pytest-cov==6.0.0",
+  "pytest-cov==7.1.0",
   "pytest-timeout>=2.3.1",
   "hypothesis==6.152.1",
 ]

@@ -937,7 +937,7 @@ impl GraphlikeDecompositionIndex {
 /// standalone mechanisms in the DEM.
 fn find_singleton_decomposition(
     effect: &ErrorMechanism,
-    singleton_set: &BTreeSet<ErrorMechanism>,
+    index: &SingletonDecompositionIndex,
 ) -> Option<Vec<ErrorMechanism>> {
     if effect.is_empty() {
         return Some(Vec::new());
@@ -945,38 +945,70 @@ fn find_singleton_decomposition(
     if effect.num_detectors() <= 1 {
         return Some(vec![effect.clone()]);
     }
-
-    // Detector IDs are dense 0..num_detectors, so we bucket the singleton
-    // candidates into a Vec<Vec<_>> indexed by detector ID. Profiling flagged
-    // the old `BTreeMap<u32, Vec<ErrorMechanism>>` as ~16% of
-    // `to_string_decomposed_maximally` time (entry::or_default + drop).
-    let max_det = singleton_set
-        .iter()
-        .filter(|c| c.detectors.len() == 1)
-        .map(|c| c.detectors[0])
-        .max();
-    let Some(max_det) = max_det else {
+    if index.is_empty() {
         return None;
-    };
-    let mut candidates_by_detector: Vec<Vec<ErrorMechanism>> = vec![Vec::new(); max_det as usize + 1];
-    for candidate in singleton_set {
-        if candidate.detectors.len() != 1 {
-            continue;
-        }
-        candidates_by_detector[candidate.detectors[0] as usize].push(candidate.clone());
-    }
-    for candidates in &mut candidates_by_detector {
-        candidates.sort_by(|a, b| {
-            a.logicals
-                .len()
-                .cmp(&b.logicals.len())
-                .then_with(|| a.logicals.cmp(&b.logicals))
-                .then_with(|| a.detectors.cmp(&b.detectors))
-        });
     }
 
     let mut memo: BTreeMap<ErrorMechanism, Option<Vec<ErrorMechanism>>> = BTreeMap::new();
-    search_singleton_decomposition(effect, &candidates_by_detector, &mut memo)
+    search_singleton_decomposition(effect, &index.candidates_by_detector, &mut memo)
+}
+
+/// Pre-computed bucket of singleton (1-detector) mechanisms indexed by detector ID.
+///
+/// Built once per render pass; detector IDs are dense `0..num_detectors`, so a
+/// `Vec<Vec<_>>` indexed by detector ID beats a `BTreeMap<u32, Vec<_>>` both on
+/// lookup (O(1) vs O(log n)) and on per-call rebuild cost. Profiling flagged the
+/// rebuild-per-call pattern as ~28% of `to_string_decomposed_maximally` time
+/// before this was lifted out.
+struct SingletonDecompositionIndex {
+    /// `candidates_by_detector[det]` lists every singleton mechanism whose sole
+    /// detector is `det`, sorted by `(logicals.len, logicals, detectors)` so the
+    /// decomposition search prefers simpler candidates deterministically.
+    candidates_by_detector: Vec<Vec<ErrorMechanism>>,
+}
+
+impl SingletonDecompositionIndex {
+    fn new() -> Self {
+        Self {
+            candidates_by_detector: Vec::new(),
+        }
+    }
+
+    fn from_contributions(contributions: &[ErrorContribution]) -> Self {
+        let mut singletons: BTreeSet<ErrorMechanism> = BTreeSet::new();
+        for contrib in contributions {
+            if contrib.effect.num_detectors() == 1 {
+                singletons.insert(contrib.effect.clone());
+            }
+        }
+
+        let Some(max_det) = singletons.iter().map(|c| c.detectors[0]).max() else {
+            return Self::new();
+        };
+
+        let mut candidates_by_detector: Vec<Vec<ErrorMechanism>> =
+            vec![Vec::new(); max_det as usize + 1];
+        for candidate in singletons {
+            let det = candidate.detectors[0] as usize;
+            candidates_by_detector[det].push(candidate);
+        }
+        for candidates in &mut candidates_by_detector {
+            candidates.sort_by(|a, b| {
+                a.logicals
+                    .len()
+                    .cmp(&b.logicals.len())
+                    .then_with(|| a.logicals.cmp(&b.logicals))
+                    .then_with(|| a.detectors.cmp(&b.detectors))
+            });
+        }
+        Self {
+            candidates_by_detector,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.candidates_by_detector.is_empty()
+    }
 }
 
 fn search_singleton_decomposition(
@@ -1869,19 +1901,13 @@ impl DetectorErrorModel {
         lines.join("\n")
     }
 
-    fn collect_singleton_mechanisms(&self) -> BTreeSet<ErrorMechanism> {
-        let mut singletons = BTreeSet::new();
-        for contrib in &self.contributions {
-            if contrib.effect.num_detectors() == 1 {
-                singletons.insert(contrib.effect.clone());
-            }
-        }
-        singletons
+    fn collect_singleton_index(&self) -> SingletonDecompositionIndex {
+        SingletonDecompositionIndex::from_contributions(&self.contributions)
     }
 
     fn maximally_decompose_graphlike_effect(
         effect: &ErrorMechanism,
-        singleton_set: &BTreeSet<ErrorMechanism>,
+        singleton_set: &SingletonDecompositionIndex,
     ) -> Vec<ErrorMechanism> {
         find_singleton_decomposition(effect, singleton_set)
             .filter(|parts| !parts.is_empty())
@@ -1890,7 +1916,7 @@ impl DetectorErrorModel {
 
     fn maybe_maximally_decompose_parts(
         parts: Vec<ErrorMechanism>,
-        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
+        singleton_set: Option<&SingletonDecompositionIndex>,
     ) -> Vec<ErrorMechanism> {
         let Some(singleton_set) = singleton_set else {
             return parts;
@@ -1912,7 +1938,7 @@ impl DetectorErrorModel {
 
     fn recorded_component_targets(
         contrib: &ErrorContribution,
-        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
+        singleton_set: Option<&SingletonDecompositionIndex>,
     ) -> Option<String> {
         let (first, second) = contrib.direct_component_effects()?;
         let targets = Self::maybe_maximally_decompose_parts(
@@ -1936,7 +1962,7 @@ impl DetectorErrorModel {
 
     fn two_detector_direct_targets(
         effect: &ErrorMechanism,
-        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
+        singleton_set: Option<&SingletonDecompositionIndex>,
     ) -> String {
         Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
             .iter()
@@ -1948,7 +1974,7 @@ impl DetectorErrorModel {
     fn contribution_render_details(
         contrib: &ErrorContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
-        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
+        singleton_set: Option<&SingletonDecompositionIndex>,
         two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
         cache: &mut BTreeMap<(ErrorMechanism, ErrorSourceType), String>,
     ) -> (String, ContributionRenderStrategy, Option<String>) {
@@ -2123,7 +2149,7 @@ impl DetectorErrorModel {
     fn contribution_targets(
         contrib: &ErrorContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
-        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
+        singleton_set: Option<&SingletonDecompositionIndex>,
         two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
         cache: &mut BTreeMap<(ErrorMechanism, ErrorSourceType), String>,
     ) -> String {
@@ -2184,7 +2210,7 @@ impl DetectorErrorModel {
 
         let graphlike_set = self.collect_graphlike_mechanisms();
         let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
-        let singleton_set = maximal_decomposition.then(|| self.collect_singleton_mechanisms());
+        let singleton_set = maximal_decomposition.then(|| self.collect_singleton_index());
         let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
         let mut rendered_targets_cache: BTreeMap<(ErrorMechanism, ErrorSourceType), String> =
             BTreeMap::new();

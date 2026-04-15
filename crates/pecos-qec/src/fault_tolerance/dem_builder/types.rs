@@ -946,18 +946,26 @@ fn find_singleton_decomposition(
         return Some(vec![effect.clone()]);
     }
 
-    let mut candidates_by_detector: BTreeMap<u32, Vec<ErrorMechanism>> = BTreeMap::new();
+    // Detector IDs are dense 0..num_detectors, so we bucket the singleton
+    // candidates into a Vec<Vec<_>> indexed by detector ID. Profiling flagged
+    // the old `BTreeMap<u32, Vec<ErrorMechanism>>` as ~16% of
+    // `to_string_decomposed_maximally` time (entry::or_default + drop).
+    let max_det = singleton_set
+        .iter()
+        .filter(|c| c.detectors.len() == 1)
+        .map(|c| c.detectors[0])
+        .max();
+    let Some(max_det) = max_det else {
+        return None;
+    };
+    let mut candidates_by_detector: Vec<Vec<ErrorMechanism>> = vec![Vec::new(); max_det as usize + 1];
     for candidate in singleton_set {
         if candidate.detectors.len() != 1 {
             continue;
         }
-        let det = candidate.detectors[0];
-        candidates_by_detector
-            .entry(det)
-            .or_default()
-            .push(candidate.clone());
+        candidates_by_detector[candidate.detectors[0] as usize].push(candidate.clone());
     }
-    for candidates in candidates_by_detector.values_mut() {
+    for candidates in &mut candidates_by_detector {
         candidates.sort_by(|a, b| {
             a.logicals
                 .len()
@@ -973,7 +981,7 @@ fn find_singleton_decomposition(
 
 fn search_singleton_decomposition(
     remaining: &ErrorMechanism,
-    candidates_by_detector: &BTreeMap<u32, Vec<ErrorMechanism>>,
+    candidates_by_detector: &[Vec<ErrorMechanism>],
     memo: &mut BTreeMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
 ) -> Option<Vec<ErrorMechanism>> {
     if let Some(cached) = memo.get(remaining) {
@@ -989,7 +997,7 @@ fn search_singleton_decomposition(
     };
 
     let result = candidates_by_detector
-        .get(&first_det)
+        .get(first_det as usize)
         .and_then(|candidates| {
             for candidate in candidates {
                 let next = remaining.xor(candidate);

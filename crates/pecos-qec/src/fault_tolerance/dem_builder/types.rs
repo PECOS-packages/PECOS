@@ -865,6 +865,9 @@ impl GraphlikeDecompositionIndex {
                 .all(|d| hyperedge_dets.contains(d))
         };
 
+        // Lookup-only cache: see matching comment in `find_singleton_decomposition`
+        // below. HashMap is safe here because `memo` is only consulted via
+        // `.get()` / `.insert()` and never iterated.
         let mut memo = HashMap::new();
         let result = self.search_decomposition(hyperedge, &mut memo);
         result.filter(|decomp| decomp_dets_valid(decomp))

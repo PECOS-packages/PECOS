@@ -2925,6 +2925,7 @@ numpy-compat = [
 ]
 test = [
     { name = "hypothesis" },
+    { name = "matplotlib" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
@@ -2960,6 +2961,7 @@ numpy-compat = [
 ]
 test = [
     { name = "hypothesis", specifier = "==6.152.1" },
+    { name = "matplotlib", specifier = ">=2.2.0" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },

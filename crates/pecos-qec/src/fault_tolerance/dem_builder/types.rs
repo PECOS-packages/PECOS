@@ -41,7 +41,7 @@ use pecos_core::gate_type::GateType;
 use rand::RngExt;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -59,7 +59,7 @@ use crate::fault_tolerance::propagator::Pauli;
 /// - Direct one-sided component errors -> output as direct form for now, but
 ///   keep their source family distinct for later decomposition policy work
 /// - Y-decomposed errors -> output as decomposed form (X ^ Z)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ErrorSourceType {
     /// Direct X or Z error channel - outputs as direct form only.
     /// These represent single Pauli errors that cannot be further decomposed.
@@ -808,18 +808,18 @@ impl DecomposedError {
 #[cfg(test)]
 fn find_hyperedge_decomposition(
     hyperedge: &ErrorMechanism,
-    graphlike_set: &HashSet<ErrorMechanism>,
+    graphlike_set: &BTreeSet<ErrorMechanism>,
 ) -> Option<Vec<ErrorMechanism>> {
     GraphlikeDecompositionIndex::new(graphlike_set).find_hyperedge_decomposition(hyperedge)
 }
 
 struct GraphlikeDecompositionIndex {
-    graphlike_set: HashSet<ErrorMechanism>,
+    graphlike_set: BTreeSet<ErrorMechanism>,
     candidates_by_detector: BTreeMap<u32, Vec<ErrorMechanism>>,
 }
 
 impl GraphlikeDecompositionIndex {
-    fn new(graphlike_set: &HashSet<ErrorMechanism>) -> Self {
+    fn new(graphlike_set: &BTreeSet<ErrorMechanism>) -> Self {
         let mut candidates_by_detector: BTreeMap<u32, Vec<ErrorMechanism>> = BTreeMap::new();
         for candidate in graphlike_set {
             if candidate.detectors.is_empty() {
@@ -856,7 +856,7 @@ impl GraphlikeDecompositionIndex {
         }
 
         // Collect the set of detectors in the hyperedge
-        let hyperedge_dets: HashSet<u32> = hyperedge.detectors.iter().copied().collect();
+        let hyperedge_dets: BTreeSet<u32> = hyperedge.detectors.iter().copied().collect();
 
         let decomp_dets_valid = |decomp: &[ErrorMechanism]| -> bool {
             decomp
@@ -865,10 +865,7 @@ impl GraphlikeDecompositionIndex {
                 .all(|d| hyperedge_dets.contains(d))
         };
 
-        // Lookup-only cache: see matching comment in `find_singleton_decomposition`
-        // below. HashMap is safe here because `memo` is only consulted via
-        // `.get()` / `.insert()` and never iterated.
-        let mut memo = HashMap::new();
+        let mut memo = BTreeMap::new();
         let result = self.search_decomposition(hyperedge, &mut memo);
         result.filter(|decomp| decomp_dets_valid(decomp))
     }
@@ -876,7 +873,7 @@ impl GraphlikeDecompositionIndex {
     fn search_decomposition(
         &self,
         remaining: &ErrorMechanism,
-        memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
+        memo: &mut BTreeMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
     ) -> Option<Vec<ErrorMechanism>> {
         if let Some(cached) = memo.get(remaining) {
             return cached.clone();
@@ -940,7 +937,7 @@ impl GraphlikeDecompositionIndex {
 /// standalone mechanisms in the DEM.
 fn find_singleton_decomposition(
     effect: &ErrorMechanism,
-    singleton_set: &HashSet<ErrorMechanism>,
+    singleton_set: &BTreeSet<ErrorMechanism>,
 ) -> Option<Vec<ErrorMechanism>> {
     if effect.is_empty() {
         return Some(Vec::new());
@@ -970,17 +967,14 @@ fn find_singleton_decomposition(
         });
     }
 
-    // Lookup-only cache: we never iterate `memo`, so HashMap's non-deterministic
-    // iteration order cannot leak into the DEM output. If a future change ever
-    // iterates this map, switch to BTreeMap to keep the output deterministic.
-    let mut memo: HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>> = HashMap::new();
+    let mut memo: BTreeMap<ErrorMechanism, Option<Vec<ErrorMechanism>>> = BTreeMap::new();
     search_singleton_decomposition(effect, &candidates_by_detector, &mut memo)
 }
 
 fn search_singleton_decomposition(
     remaining: &ErrorMechanism,
     candidates_by_detector: &BTreeMap<u32, Vec<ErrorMechanism>>,
-    memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
+    memo: &mut BTreeMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
 ) -> Option<Vec<ErrorMechanism>> {
     if let Some(cached) = memo.get(remaining) {
         return cached.clone();
@@ -1516,8 +1510,8 @@ impl DetectorErrorModel {
 
         let graphlike_set = self.collect_graphlike_mechanisms();
         let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
-        let mut rendered_targets_cache: HashMap<(ErrorMechanism, ErrorSourceType), String> =
-            HashMap::new();
+        let mut rendered_targets_cache: BTreeMap<(ErrorMechanism, ErrorSourceType), String> =
+            BTreeMap::new();
         let mut by_render: BTreeMap<(ErrorMechanism, String), Accumulator> = BTreeMap::new();
 
         for contrib in &self.contributions {
@@ -1598,8 +1592,8 @@ impl DetectorErrorModel {
     ) -> Vec<ContributionRenderRecord> {
         let graphlike_set = self.collect_graphlike_mechanisms();
         let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
-        let mut rendered_targets_cache: HashMap<(ErrorMechanism, ErrorSourceType), String> =
-            HashMap::new();
+        let mut rendered_targets_cache: BTreeMap<(ErrorMechanism, ErrorSourceType), String> =
+            BTreeMap::new();
         let mut records = Vec::new();
 
         for contrib in &self.contributions {
@@ -1867,8 +1861,8 @@ impl DetectorErrorModel {
         lines.join("\n")
     }
 
-    fn collect_singleton_mechanisms(&self) -> HashSet<ErrorMechanism> {
-        let mut singletons = HashSet::new();
+    fn collect_singleton_mechanisms(&self) -> BTreeSet<ErrorMechanism> {
+        let mut singletons = BTreeSet::new();
         for contrib in &self.contributions {
             if contrib.effect.num_detectors() == 1 {
                 singletons.insert(contrib.effect.clone());
@@ -1879,7 +1873,7 @@ impl DetectorErrorModel {
 
     fn maximally_decompose_graphlike_effect(
         effect: &ErrorMechanism,
-        singleton_set: &HashSet<ErrorMechanism>,
+        singleton_set: &BTreeSet<ErrorMechanism>,
     ) -> Vec<ErrorMechanism> {
         find_singleton_decomposition(effect, singleton_set)
             .filter(|parts| !parts.is_empty())
@@ -1888,7 +1882,7 @@ impl DetectorErrorModel {
 
     fn maybe_maximally_decompose_parts(
         parts: Vec<ErrorMechanism>,
-        singleton_set: Option<&HashSet<ErrorMechanism>>,
+        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
     ) -> Vec<ErrorMechanism> {
         let Some(singleton_set) = singleton_set else {
             return parts;
@@ -1910,7 +1904,7 @@ impl DetectorErrorModel {
 
     fn recorded_component_targets(
         contrib: &ErrorContribution,
-        singleton_set: Option<&HashSet<ErrorMechanism>>,
+        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
     ) -> Option<String> {
         let (first, second) = contrib.direct_component_effects()?;
         let targets = Self::maybe_maximally_decompose_parts(
@@ -1934,7 +1928,7 @@ impl DetectorErrorModel {
 
     fn two_detector_direct_targets(
         effect: &ErrorMechanism,
-        singleton_set: Option<&HashSet<ErrorMechanism>>,
+        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
     ) -> String {
         Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
             .iter()
@@ -1946,9 +1940,9 @@ impl DetectorErrorModel {
     fn contribution_render_details(
         contrib: &ErrorContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
-        singleton_set: Option<&HashSet<ErrorMechanism>>,
+        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
         two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
-        cache: &mut HashMap<(ErrorMechanism, ErrorSourceType), String>,
+        cache: &mut BTreeMap<(ErrorMechanism, ErrorSourceType), String>,
     ) -> (String, ContributionRenderStrategy, Option<String>) {
         let recorded_component_targets = Self::recorded_component_targets(contrib, singleton_set);
         let key = (contrib.effect.clone(), contrib.source_type.clone());
@@ -2121,9 +2115,9 @@ impl DetectorErrorModel {
     fn contribution_targets(
         contrib: &ErrorContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
-        singleton_set: Option<&HashSet<ErrorMechanism>>,
+        singleton_set: Option<&BTreeSet<ErrorMechanism>>,
         two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
-        cache: &mut HashMap<(ErrorMechanism, ErrorSourceType), String>,
+        cache: &mut BTreeMap<(ErrorMechanism, ErrorSourceType), String>,
     ) -> String {
         Self::contribution_render_details(
             contrib,
@@ -2184,8 +2178,8 @@ impl DetectorErrorModel {
         let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
         let singleton_set = maximal_decomposition.then(|| self.collect_singleton_mechanisms());
         let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
-        let mut rendered_targets_cache: HashMap<(ErrorMechanism, ErrorSourceType), String> =
-            HashMap::new();
+        let mut rendered_targets_cache: BTreeMap<(ErrorMechanism, ErrorSourceType), String> =
+            BTreeMap::new();
 
         let mut add_targets = |targets: String, probability: f64| {
             if targets.is_empty() || probability <= 0.0 {
@@ -2271,8 +2265,8 @@ impl DetectorErrorModel {
     ///
     /// Returns a set of mechanisms with ≤2 detectors,
     /// which can be used as components for hyperedge decomposition.
-    fn collect_graphlike_mechanisms(&self) -> HashSet<ErrorMechanism> {
-        let mut graphlike = HashSet::new();
+    fn collect_graphlike_mechanisms(&self) -> BTreeSet<ErrorMechanism> {
+        let mut graphlike = BTreeSet::new();
         for contrib in &self.contributions {
             if contrib.effect.is_graphlike() {
                 graphlike.insert(contrib.effect.clone());
@@ -2979,7 +2973,7 @@ mod tests {
     #[test]
     fn test_find_hyperedge_decomposition_returns_graphlike_subset_components() {
         let hyperedge = ErrorMechanism::from_unsorted([0, 1, 2], [0]);
-        let graphlike_set = HashSet::from([
+        let graphlike_set = BTreeSet::from([
             ErrorMechanism::from_unsorted([0], std::iter::empty()),
             ErrorMechanism::from_unsorted([1], std::iter::empty()),
             ErrorMechanism::from_unsorted([2], [0]),
@@ -2988,7 +2982,7 @@ mod tests {
 
         let decomposition = find_hyperedge_decomposition(&hyperedge, &graphlike_set)
             .expect("expected a valid decomposition");
-        let hyperedge_dets: HashSet<u32> = hyperedge.detectors.iter().copied().collect();
+        let hyperedge_dets: BTreeSet<u32> = hyperedge.detectors.iter().copied().collect();
 
         let recomposed = decomposition
             .iter()
@@ -3011,7 +3005,7 @@ mod tests {
     #[test]
     fn test_find_hyperedge_decomposition_can_use_four_parts() {
         let hyperedge = ErrorMechanism::from_unsorted([0, 1, 2, 3], [0]);
-        let graphlike_set = HashSet::from([
+        let graphlike_set = BTreeSet::from([
             ErrorMechanism::from_unsorted([0], std::iter::empty()),
             ErrorMechanism::from_unsorted([1], std::iter::empty()),
             ErrorMechanism::from_unsorted([2], std::iter::empty()),

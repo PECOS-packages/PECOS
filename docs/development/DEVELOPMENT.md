@@ -49,6 +49,18 @@ For developers who want to contribute or modify PECOS:
    uv sync
    ```
 
+   `uv sync` installs the default `dev` and `test` groups (lint, build,
+   docs, and pytest tooling). Optional groups you may want to add:
+
+   | Group         | When to enable                                              | Command                       |
+   |---------------|-------------------------------------------------------------|-------------------------------|
+   | `examples`    | Running notebooks under `examples/` or DataFrame benchmarks | `uv sync --group examples`    |
+   | `numpy-compat`| Verifying older NumPy/SciPy minimums                        | `uv sync --group numpy-compat`|
+   | `cuda`        | Building/running GPU simulators (requires CUDA toolkit)     | `uv sync --group cuda`        |
+
+   Combine groups with multiple `--group` flags
+   (e.g. `uv sync --group examples --group cuda`).
+
 5. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
 
    PECOS requires LLVM version 14 for LLVM IR execution features.

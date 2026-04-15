@@ -45,7 +45,7 @@ dev = [
   "jupyter>=1.1.1",
 ]
 test = [ # pinning testing environment
-  "pytest==8.3.3",         # 8.3.4 seems to be causing errors
+  "pytest==9.0.3",
   "pytest-cov==6.0.0",
   "pytest-timeout>=2.3.1",
   "hypothesis==6.122.3",

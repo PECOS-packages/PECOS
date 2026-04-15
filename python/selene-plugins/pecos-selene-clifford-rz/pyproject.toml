@@ -11,7 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-    "pytest>=7",
+    "pytest>=9.0",
     "selene-sim>=0.2",
     "guppylang>=0.14",
 ]

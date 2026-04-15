@@ -43,11 +43,18 @@
 //! ```
 
 use pecos_qec::fault_tolerance::dem_builder::{
-    ComparisonMethod as RustComparisonMethod, DemBuilder as RustDemBuilder,
-    DetectorErrorModel as RustDetectorErrorModel, EquivalenceResult as RustEquivalenceResult,
-    MeasurementNoiseModel as RustMeasurementNoiseModel, MemBuilder as RustMemBuilder,
-    ParsedDem as RustParsedDem, compare_dems_exact as rust_compare_dems_exact,
-    compare_dems_statistical as rust_compare_dems_statistical,
+    ComparisonMethod as RustComparisonMethod,
+    ContributionEffectSummary as RustContributionEffectSummary,
+    ContributionRenderRecord as RustContributionRenderRecord,
+    ContributionRenderStrategy as RustContributionRenderStrategy,
+    ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
+    DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
+    EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
+    FaultSourceType as RustFaultSourceType, MeasurementNoiseModel as RustMeasurementNoiseModel,
+    MemBuilder as RustMemBuilder, ParsedDem as RustParsedDem,
+    TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
+    compare_dems_exact as rust_compare_dems_exact,
+    compare_dems_statistical as rust_compare_dems_statistical, record_offset_to_absolute_index,
     verify_dem_equivalence as rust_verify_dem_equivalence,
 };
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
@@ -56,13 +63,25 @@ use pecos_qec::fault_tolerance::propagator::{
     DagSpacetimeLocation, Pauli,
 };
 use pecos_quantum::DagCircuit;
+use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
 
 /// Type alias for batch sampling results: (`detection_events_per_shot`, `observable_flips_per_shot`)
 type BatchSampleResult = (Vec<Vec<bool>>, Vec<Vec<bool>>);
 
-// --- Fault Location Types ---
+fn json_record_offset(value: &serde_json::Value) -> PyResult<i32> {
+    let raw = value
+        .as_i64()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Record offset must be integer"))?;
+    i32::try_from(raw).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err("Record offset must fit into signed 32-bit range")
+    })
+}
+
+// =============================================================================
+// Fault Location Types
+// =============================================================================
 
 /// A spacetime location for a fault in a DAG circuit.
 ///
@@ -127,14 +146,16 @@ impl From<&DagSpacetimeLocation> for PyFaultLocation {
     fn from(loc: &DagSpacetimeLocation) -> Self {
         Self {
             node: loc.node,
-            qubits: loc.qubits.iter().map(pecos_core::QubitId::index).collect(),
+            qubits: loc.qubits.iter().map(QubitId::index).collect(),
             before: loc.before,
             gate_type: format!("{:?}", loc.gate_type),
         }
     }
 }
 
-// --- Fault Influence Map ---
+// =============================================================================
+// Fault Influence Map
+// =============================================================================
 
 /// A fault influence map built from a DAG circuit.
 ///
@@ -365,7 +386,9 @@ impl PyDagFaultInfluenceMap {
     }
 }
 
-// --- DAG Fault Analyzer ---
+// =============================================================================
+// DAG Fault Analyzer
+// =============================================================================
 
 /// Analyzes fault tolerance properties of a DAG circuit.
 ///
@@ -453,7 +476,9 @@ impl PyDagFaultAnalyzer {
     }
 }
 
-// --- Influence Builder ---
+// =============================================================================
+// Influence Builder
+// =============================================================================
 
 /// Builder for fault influence maps with proper detector definitions.
 ///
@@ -556,7 +581,9 @@ impl PyInfluenceBuilder {
     }
 }
 
-// --- Detector Error Model ---
+// =============================================================================
+// Detector Error Model
+// =============================================================================
 
 /// A Detector Error Model (DEM) in Stim-compatible format.
 ///
@@ -581,6 +608,172 @@ impl PyInfluenceBuilder {
 #[pyclass(name = "DetectorErrorModel", module = "pecos_rslib.qec")]
 pub struct PyDetectorErrorModel {
     inner: RustDetectorErrorModel,
+}
+
+fn contribution_summary_to_pydict(
+    py: Python<'_>,
+    summary: RustContributionEffectSummary,
+) -> PyResult<Py<pyo3::types::PyDict>> {
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("detectors", summary.effect.detectors.to_vec())?;
+    dict.set_item("logicals", summary.effect.logicals.to_vec())?;
+    dict.set_item("num_contributions", summary.num_contributions)?;
+    dict.set_item("total_probability", summary.total_probability)?;
+    dict.set_item("direct_count", summary.direct_count)?;
+    dict.set_item("direct_probability", summary.direct_probability)?;
+    dict.set_item("y_decomposed_count", summary.y_decomposed_count)?;
+    dict.set_item("y_decomposed_probability", summary.y_decomposed_probability)?;
+    dict.set_item(
+        "graphlike_decomposable_count",
+        summary.graphlike_decomposable_count,
+    )?;
+    Ok(dict.unbind())
+}
+
+fn contribution_render_summary_to_pydict(
+    py: Python<'_>,
+    summary: RustContributionRenderSummary,
+) -> PyResult<Py<pyo3::types::PyDict>> {
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("detectors", summary.effect.detectors.to_vec())?;
+    dict.set_item("logicals", summary.effect.logicals.to_vec())?;
+    dict.set_item("rendered_targets", summary.rendered_targets)?;
+    dict.set_item("num_contributions", summary.num_contributions)?;
+    dict.set_item("total_probability", summary.total_probability)?;
+    dict.set_item("combined_probability", summary.combined_probability)?;
+    dict.set_item("source_type_counts", summary.source_type_counts)?;
+    dict.set_item(
+        "source_type_probabilities",
+        summary.source_type_probabilities,
+    )?;
+    dict.set_item(
+        "direct_source_family_counts",
+        summary.direct_source_family_counts,
+    )?;
+    dict.set_item(
+        "direct_source_family_probabilities",
+        summary.direct_source_family_probabilities,
+    )?;
+    Ok(dict.unbind())
+}
+
+fn contribution_render_record_to_pydict(
+    py: Python<'_>,
+    record: RustContributionRenderRecord,
+) -> PyResult<Py<pyo3::types::PyDict>> {
+    let dict = contribution_record_to_pydict(py, record.contribution)?;
+    let render_strategy = match record.render_strategy {
+        RustContributionRenderStrategy::SourceComponents => "SourceComponents",
+        RustContributionRenderStrategy::RecordedComponents => "RecordedComponents",
+        RustContributionRenderStrategy::TwoDetectorDirect => "TwoDetectorDirect",
+        RustContributionRenderStrategy::HyperedgeGraphlike => "HyperedgeGraphlike",
+        RustContributionRenderStrategy::EffectDirect => "EffectDirect",
+    };
+    dict.bind(py)
+        .set_item("rendered_targets", record.rendered_targets)?;
+    dict.bind(py).set_item("render_strategy", render_strategy)?;
+    if let Some(targets) = record.recorded_component_targets {
+        dict.bind(py)
+            .set_item("recorded_component_targets", targets)?;
+    }
+    Ok(dict)
+}
+
+fn parse_two_detector_direct_render_policy(
+    policy: &str,
+) -> PyResult<RustTwoDetectorDirectRenderPolicy> {
+    match policy {
+        "KeepDirect" => Ok(RustTwoDetectorDirectRenderPolicy::KeepDirect),
+        "PreferRecordedComponents" => {
+            Ok(RustTwoDetectorDirectRenderPolicy::PreferRecordedComponents)
+        }
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Unknown two-detector direct render policy: {policy}"
+        ))),
+    }
+}
+
+fn contribution_record_to_pydict(
+    py: Python<'_>,
+    contribution: RustFaultContribution,
+) -> PyResult<Py<pyo3::types::PyDict>> {
+    fn pauli_label(pauli: Pauli) -> &'static str {
+        match pauli {
+            Pauli::I => "I",
+            Pauli::X => "X",
+            Pauli::Y => "Y",
+            Pauli::Z => "Z",
+        }
+    }
+
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("detectors", contribution.effect.detectors.to_vec())?;
+    dict.set_item("logicals", contribution.effect.logicals.to_vec())?;
+    dict.set_item("probability", contribution.probability)?;
+    dict.set_item("location_indices", contribution.location_indices.to_vec())?;
+    dict.set_item(
+        "pauli_labels",
+        contribution
+            .paulis
+            .iter()
+            .map(|pauli| pauli_label(*pauli))
+            .collect::<Vec<_>>(),
+    )?;
+    dict.set_item(
+        "gate_type_labels",
+        contribution
+            .source_gate_types
+            .iter()
+            .map(|gate_type| format!("{gate_type:?}"))
+            .collect::<Vec<_>>(),
+    )?;
+    dict.set_item("before_flags", contribution.source_before_flags.to_vec())?;
+    if let Some(family) = contribution.direct_source_family {
+        let family_label = match family {
+            RustDirectSourceFamily::SingleLocation => "SingleLocation",
+            RustDirectSourceFamily::SingleLocationY => "SingleLocationY",
+            RustDirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
+            RustDirectSourceFamily::TwoLocationComponent => "TwoLocationComponent",
+            RustDirectSourceFamily::TwoLocationOneSidedComponent => "TwoLocationOneSidedComponent",
+            RustDirectSourceFamily::Other => "Other",
+        };
+        dict.set_item("direct_source_family", family_label)?;
+    }
+
+    match contribution.source_type {
+        RustFaultSourceType::Direct => {
+            dict.set_item("source_type", "Direct")?;
+            if let Some((first, second)) = contribution.direct_component_effects {
+                dict.set_item("component_1_detectors", first.detectors.to_vec())?;
+                dict.set_item("component_1_logicals", first.logicals.to_vec())?;
+                dict.set_item("component_2_detectors", second.detectors.to_vec())?;
+                dict.set_item("component_2_logicals", second.logicals.to_vec())?;
+            }
+        }
+        RustFaultSourceType::DirectOneSidedComponent => {
+            dict.set_item("source_type", "DirectOneSidedComponent")?;
+            if let Some((first, second)) = contribution.direct_component_effects {
+                dict.set_item("component_1_detectors", first.detectors.to_vec())?;
+                dict.set_item("component_1_logicals", first.logicals.to_vec())?;
+                dict.set_item("component_2_detectors", second.detectors.to_vec())?;
+                dict.set_item("component_2_logicals", second.logicals.to_vec())?;
+            }
+        }
+        RustFaultSourceType::YDecomposed {
+            x_detectors,
+            x_logicals,
+            z_detectors,
+            z_logicals,
+        } => {
+            dict.set_item("source_type", "YDecomposed")?;
+            dict.set_item("x_detectors", x_detectors.to_vec())?;
+            dict.set_item("x_logicals", x_logicals.to_vec())?;
+            dict.set_item("z_detectors", z_detectors.to_vec())?;
+            dict.set_item("z_logicals", z_logicals.to_vec())?;
+        }
+    }
+
+    Ok(dict.unbind())
 }
 
 #[pymethods]
@@ -624,6 +817,25 @@ impl PyDetectorErrorModel {
         self.inner.to_string_decomposed()
     }
 
+    /// Convert the DEM to a string with an explicit direct-2det render policy.
+    fn to_string_decomposed_with_two_detector_direct_policy(
+        &self,
+        policy: &str,
+    ) -> PyResult<String> {
+        let policy = parse_two_detector_direct_render_policy(policy)?;
+        Ok(self
+            .inner
+            .to_string_decomposed_with_two_detector_direct_policy(policy))
+    }
+
+    /// Convert the DEM to a maximally decomposed graphlike representation.
+    ///
+    /// When possible, graphlike 2-detector mechanisms are further rewritten
+    /// into XORs of standalone singleton detector effects.
+    fn to_string_decomposed_maximally(&self) -> String {
+        self.inner.to_string_decomposed_maximally()
+    }
+
     /// Number of tracked error contributions.
     #[getter]
     fn num_contributions(&self) -> usize {
@@ -649,6 +861,86 @@ impl PyDetectorErrorModel {
         self.inner.all_contribution_effects()
     }
 
+    /// Returns structured summaries for all unique contribution effects.
+    fn contribution_effect_summaries(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .contribution_effect_summaries()
+            .into_iter()
+            .map(|summary| contribution_summary_to_pydict(py, summary))
+            .collect()
+    }
+
+    /// Returns structured summaries for render buckets before final regrouping.
+    fn contribution_render_summaries(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .contribution_render_summaries()
+            .into_iter()
+            .map(|summary| contribution_render_summary_to_pydict(py, summary))
+            .collect()
+    }
+
+    /// Returns structured summaries for render buckets under an explicit
+    /// direct-2det render policy.
+    fn contribution_render_summaries_with_two_detector_direct_policy(
+        &self,
+        py: Python<'_>,
+        policy: &str,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        let policy = parse_two_detector_direct_render_policy(policy)?;
+        self.inner
+            .contribution_render_summaries_with_two_detector_direct_policy(policy)
+            .into_iter()
+            .map(|summary| contribution_render_summary_to_pydict(py, summary))
+            .collect()
+    }
+
+    /// Returns per-contribution render records before final regrouping.
+    fn contribution_render_records(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .contribution_render_records()
+            .into_iter()
+            .map(|record| contribution_render_record_to_pydict(py, record))
+            .collect()
+    }
+
+    /// Returns per-contribution render records under an explicit direct-2det
+    /// render policy.
+    fn contribution_render_records_with_two_detector_direct_policy(
+        &self,
+        py: Python<'_>,
+        policy: &str,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        let policy = parse_two_detector_direct_render_policy(policy)?;
+        self.inner
+            .contribution_render_records_with_two_detector_direct_policy(policy)
+            .into_iter()
+            .map(|record| contribution_render_record_to_pydict(py, record))
+            .collect()
+    }
+
+    /// Returns source-tracked contributions for a full detector/logical effect.
+    fn contributions_for_effect(
+        &self,
+        py: Python<'_>,
+        detectors: Vec<u32>,
+        logicals: Vec<u32>,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .contributions_for_effect(&detectors, &logicals)
+            .into_iter()
+            .map(|contribution| contribution_record_to_pydict(py, contribution))
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "DetectorErrorModel(detectors={}, observables={}, contributions={})",
@@ -663,7 +955,9 @@ impl PyDetectorErrorModel {
     }
 }
 
-// --- DEM Builder ---
+// =============================================================================
+// DEM Builder
+// =============================================================================
 
 /// Builder for Detector Error Models (DEMs).
 ///
@@ -682,7 +976,13 @@ impl PyDetectorErrorModel {
 /// # Build DEM
 /// builder = DemBuilder(influence_map)
 /// builder.with_noise(0.01, 0.01, 0.01, 0.01)
-/// builder.with_detectors_json('[{"id": 0, "coords": [0, 0, 0], "records": [-1]}]')
+/// builder.with_detectors_json(
+///     '[{"id": 0, "coords": [0, 0, 0], "records": [-1]}, '
+///     '{"detector_id": 1, "coords": [1, 0, 0], "records": [-2]}]'
+/// )
+/// builder.with_observables_json(
+///     '[{"id": 0, "records": [-1]}, {"observable_id": 1, "records": [-2]}]'
+/// )
 /// dem = builder.build()
 ///
 /// print(dem.to_string())
@@ -752,6 +1052,7 @@ impl PyDemBuilder {
     /// Args:
     ///     json: JSON string with detector definitions.
     ///           Format: [{"id": 0, "coords": [x, y, t], "records": [-1, -5]}, ...]
+    ///           Public surface descriptors using "`detector_id`" are also accepted.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -765,6 +1066,7 @@ impl PyDemBuilder {
     /// Args:
     ///     json: JSON string with observable definitions.
     ///           Format: [{"id": 0, "records": [-1, -3, -5]}, ...]
+    ///           Public surface descriptors using "`observable_id`" are also accepted.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -858,7 +1160,9 @@ impl PyDemBuilder {
     }
 }
 
-// --- Helper Functions ---
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 /// Parse detector records from JSON string.
 ///
@@ -883,12 +1187,7 @@ fn parse_detector_records(detectors_json: &str) -> PyResult<Vec<Vec<i32>>> {
 
         let offsets: Vec<i32> = records
             .iter()
-            .map(|r| {
-                #[allow(clippy::cast_possible_truncation)] // measurement record offsets fit in i32
-                r.as_i64().map(|v| v as i32).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
-                })
-            })
+            .map(json_record_offset)
             .collect::<PyResult<Vec<_>>>()?;
 
         detector_records.push(offsets);
@@ -920,12 +1219,7 @@ fn parse_observable_records(observables_json: &str) -> PyResult<Vec<Vec<i32>>> {
 
         let offsets: Vec<i32> = records
             .iter()
-            .map(|r| {
-                #[allow(clippy::cast_possible_truncation)] // measurement record offsets fit in i32
-                r.as_i64().map(|v| v as i32).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err("Record offset must be integer")
-                })
-            })
+            .map(json_record_offset)
             .collect::<PyResult<Vec<_>>>()?;
 
         observable_records.push(offsets);
@@ -934,7 +1228,9 @@ fn parse_observable_records(observables_json: &str) -> PyResult<Vec<Vec<i32>>> {
     Ok(observable_records)
 }
 
-// --- Measurement Noise Model ---
+// =============================================================================
+// Measurement Noise Model
+// =============================================================================
 
 /// A Measurement Noise Model (MNM) for fast approximate sampling.
 ///
@@ -1050,6 +1346,7 @@ impl PyMeasurementNoiseModel {
     ///     outcomes: List of boolean measurement outcomes (from `sample()`).
     ///     `detectors_json`: JSON string with detector definitions.
     ///         Format: [{"id": 0, "records": [-1, -5]}, ...]
+    ///         Public surface descriptors using "`detector_id`" are also accepted.
     ///         Records are negative offsets from end of measurement list.
     ///
     /// Returns:
@@ -1225,7 +1522,9 @@ impl PyMeasurementNoiseModel {
     }
 }
 
-// --- Noisy Sampler (DEM-style sampling) ---
+// =============================================================================
+// Noisy Sampler (DEM-style sampling)
+// =============================================================================
 
 /// Fast noisy sampler for threshold estimation.
 ///
@@ -1311,7 +1610,7 @@ impl PyNoisySampler {
         p_init: f64,
         seed: Option<u64>,
     ) -> Self {
-        use pecos_quantum::GateType;
+        use pecos_core::gate_type::GateType;
         use rand::RngExt;
 
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
@@ -1588,15 +1887,11 @@ impl PyNoisySampler {
                 .map(|records| {
                     let mut fired = false;
                     for &offset in records {
-                        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                        #[allow(clippy::cast_sign_loss)]
-                        // negative offset + total count, or non-negative offset
-                        let abs_idx = if offset < 0 {
-                            (num_tc_measurements as i32 + offset) as usize
-                        } else {
-                            offset as usize
-                        };
-                        if abs_idx < num_tc_measurements && meas_outcomes[abs_idx] {
+                        if let Some(abs_idx) =
+                            record_offset_to_absolute_index(num_tc_measurements, offset)
+                            && abs_idx < num_tc_measurements
+                            && meas_outcomes[abs_idx]
+                        {
                             fired = !fired;
                         }
                     }
@@ -1610,15 +1905,11 @@ impl PyNoisySampler {
                 .map(|records| {
                     let mut flipped = false;
                     for &offset in records {
-                        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                        #[allow(clippy::cast_sign_loss)]
-                        // negative offset + total count, or non-negative offset
-                        let abs_idx = if offset < 0 {
-                            (num_tc_measurements as i32 + offset) as usize
-                        } else {
-                            offset as usize
-                        };
-                        if abs_idx < num_tc_measurements && meas_outcomes[abs_idx] {
+                        if let Some(abs_idx) =
+                            record_offset_to_absolute_index(num_tc_measurements, offset)
+                            && abs_idx < num_tc_measurements
+                            && meas_outcomes[abs_idx]
+                        {
                             flipped = !flipped;
                         }
                     }
@@ -1644,7 +1935,9 @@ impl PyNoisySampler {
     }
 }
 
-// --- MNM Builder ---
+// =============================================================================
+// MNM Builder
+// =============================================================================
 
 /// Builder for Measurement Noise Models (MNMs).
 ///
@@ -1781,7 +2074,9 @@ impl PyMemBuilder {
     }
 }
 
-// --- DEM Sampler (Fast DEM-style sampling) ---
+// =============================================================================
+// DEM Sampler (Fast DEM-style sampling)
+// =============================================================================
 
 /// Fast DEM-style sampler for threshold estimation.
 ///
@@ -1803,6 +2098,8 @@ impl PyMemBuilder {
 /// influence_map = analyzer.build_influence_map()
 ///
 /// # Build sampler with explicit detector/observable definitions
+/// # `detectors_json` may use either `id` or `detector_id`.
+/// # `observables_json` may use either `id` or `observable_id`.
 /// sampler = DemSamplerBuilder(influence_map) \
 ///     .with_noise(0.01, 0.01, 0.01, 0.01) \
 ///     .with_detectors_json(detectors_json) \
@@ -1983,12 +2280,18 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set detector definitions from JSON.
+    ///
+    /// Accepts either legacy detector rows with an `"id"` key or public surface
+    /// descriptor rows with a `"detector_id"` key.
     fn with_detectors_json(mut slf: PyRefMut<'_, Self>, json: String) -> PyRefMut<'_, Self> {
         slf.detectors_json = Some(json);
         slf
     }
 
     /// Set observable definitions from JSON.
+    ///
+    /// Accepts either legacy observable rows with an `"id"` key or public surface
+    /// descriptor rows with an `"observable_id"` key.
     fn with_observables_json(mut slf: PyRefMut<'_, Self>, json: String) -> PyRefMut<'_, Self> {
         slf.observables_json = Some(json);
         slf
@@ -2042,7 +2345,9 @@ impl PyDemSamplerBuilder {
     }
 }
 
-// --- DEM Equivalence Validation ---
+// =============================================================================
+// DEM Equivalence Validation
+// =============================================================================
 
 /// Result of DEM equivalence comparison.
 ///
@@ -2503,7 +2808,9 @@ fn assert_dems_equivalent(
     }
 }
 
-// --- Module Registration ---
+// =============================================================================
+// Module Registration
+// =============================================================================
 
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {

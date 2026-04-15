@@ -17,17 +17,13 @@ default = []
 parallel = ["pecos-simulators/parallel"]
 gpu-sims = ["dep:pecos-gpu-sims"]
 cuquantum = ["dep:pecos-cuquantum"]
-quest = ["dep:pecos-quest"]
-qulacs = ["dep:pecos-qulacs"]
 cppsparsestab = ["dep:pecos-cppsparsestab"]
-all-sims = ["gpu-sims", "cuquantum", "quest", "qulacs", "cppsparsestab"]
+all-sims = ["gpu-sims", "cuquantum", "cppsparsestab"]
 
 [dependencies]
 # Optional simulator dependencies for benchmarking
 pecos-gpu-sims = { workspace = true, optional = true }
 pecos-cuquantum = { workspace = true, optional = true }
-pecos-quest = { workspace = true, optional = true }
-pecos-qulacs = { workspace = true, optional = true }
 pecos-cppsparsestab = { workspace = true, optional = true }
 pecos-core.workspace = true
 pecos-simulators.workspace = true

@@ -13,18 +13,14 @@
 //! State vector simulator benchmarks comparing GPU and CPU implementations.
 //!
 //! Compares performance of:
-//! - `GpuStateVec` (GPU via wgpu/Vulkan/Metal/DX12)
+//! - `StateVecSoA` (pecos-simulators pure Rust CPU baseline)
+//! - `GpuStateVec32` (GPU via wgpu/Vulkan/Metal/DX12)
 //! - `CuStateVec` (GPU via NVIDIA cuQuantum/CUDA)
-//! - `QuestStateVec` (`QuEST` - CPU or CUDA)
-//! - `QulacsStateVec` (Qulacs - CPU)
-//! - `StateVec` (pecos-simulators pure Rust CPU)
 //!
 //! Run with specific features:
 //! ```
-//! cargo bench -p benchmarks --features gpu-sims        # GpuStateVec only
+//! cargo bench -p benchmarks --features gpu-sims        # GpuStateVec32 only
 //! cargo bench -p benchmarks --features cuquantum       # CuStateVec (NVIDIA CUDA)
-//! cargo bench -p benchmarks --features quest            # QuEST (CPU + CUDA if available at runtime)
-//! cargo bench -p benchmarks --features all-sims        # All simulators
 //! ```
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
@@ -35,19 +31,10 @@ use pecos_simulators::{
 use std::hint::black_box;
 
 #[cfg(feature = "gpu-sims")]
-use pecos_gpu_sims::GpuStateVec;
+use pecos_gpu_sims::GpuStateVec32;
 
 #[cfg(feature = "cuquantum")]
 use pecos_cuquantum::CuStateVec;
-
-#[cfg(feature = "quest")]
-use pecos_quest::QuestCudaStateVecEngine;
-
-#[cfg(feature = "quest")]
-use pecos_quest::QuestStateVec;
-
-#[cfg(feature = "qulacs")]
-use pecos_qulacs::QulacsStateVec;
 
 /// Run a benchmark circuit: layers of H + RZ + CX gates.
 fn benchmark_circuit<S>(sim: &mut S, num_qubits: usize, num_layers: usize)
@@ -285,10 +272,10 @@ fn bench_measurement_scaling<M: Measurement>(c: &mut Criterion<M>) {
         #[cfg(feature = "gpu-sims")]
         {
             #[allow(clippy::cast_possible_truncation)]
-            if let Ok(mut sim) = GpuStateVec::new(nq as u32) {
+            if let Ok(mut sim) = GpuStateVec32::new(nq as u32) {
                 group.bench_with_input(BenchmarkId::new("GpuStateVec_wgpu", nq), &nq, |b, &nq| {
                     b.iter(|| {
-                        sim.reset();
+                        GpuStateVec32::reset(&mut sim);
                         for q in 0..nq {
                             sim.h(&[QubitId(q)]);
                         }
@@ -491,13 +478,13 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
         {
             // Safe: num_qubits comes from configs array with small values (10-22)
             #[allow(clippy::cast_possible_truncation)]
-            if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
+            if let Ok(mut sim) = GpuStateVec32::new(num_qubits as u32) {
                 group.bench_with_input(
                     BenchmarkId::new("GpuStateVec_wgpu", &label),
                     &(num_qubits, num_layers),
                     |b, &(nq, nl)| {
                         b.iter(|| {
-                            sim.reset();
+                            GpuStateVec32::reset(&mut sim);
                             benchmark_circuit(&mut sim, nq, nl);
                             black_box(());
                         });
@@ -526,76 +513,6 @@ fn bench_state_vec_scaling<M: Measurement>(c: &mut Criterion<M>) {
                 Err(e) => {
                     eprintln!("Warning: Failed to create CuStateVec({num_qubits}): {e}");
                 }
-            }
-        }
-
-        // Benchmark QuEST (CPU mode)
-        #[cfg(feature = "quest")]
-        {
-            let mut sim = QuestStateVec::new(num_qubits);
-            group.bench_with_input(
-                BenchmarkId::new("QuestStateVec_CPU", &label),
-                &(num_qubits, num_layers),
-                |b, &(nq, nl)| {
-                    b.iter(|| {
-                        sim.reset();
-                        benchmark_circuit(&mut sim, nq, nl);
-                        black_box(());
-                    });
-                },
-            );
-        }
-
-        // NOTE: QuEST CUDA benchmarks are disabled in the loop due to a QuEST bug:
-        // 1. QuEST CUDA only supports ONE qureg at a time
-        // 2. After destroying a qureg, subsequent qureg creation fails
-        // The CUDA benchmark is run separately below for a single configuration.
-
-        // Benchmark Qulacs
-        #[cfg(feature = "qulacs")]
-        {
-            let mut sim = QulacsStateVec::new(num_qubits);
-            group.bench_with_input(
-                BenchmarkId::new("QulacsStateVec_CPU", &label),
-                &(num_qubits, num_layers),
-                |b, &(nq, nl)| {
-                    b.iter(|| {
-                        sim.reset();
-                        benchmark_circuit(&mut sim, nq, nl);
-                        black_box(());
-                    });
-                },
-            );
-        }
-    }
-
-    // QuEST CUDA benchmark - run separately due to QuEST bugs:
-    // 1. Only one qureg can exist at a time
-    // 2. After destroying a qureg, subsequent creations fail
-    // 3. Creating quregs with 12+ qubits fails (QuEST CUDA configuration limit?)
-    // We run a single configuration (10 qubits) to compare against CPU implementations.
-    #[cfg(feature = "quest")]
-    {
-        let cuda_config = (10, 20); // 10 qubits, 20 layers - max reliable size
-        let (num_qubits, num_layers) = cuda_config;
-        let label = format!("{num_qubits}q_{num_layers}l");
-
-        match QuestCudaStateVecEngine::new(num_qubits) {
-            Ok(mut sim) => {
-                group.bench_with_input(
-                    BenchmarkId::new("QuestCuda_GPU", &label),
-                    &(num_qubits, num_layers),
-                    |b, &(nq, nl)| {
-                        b.iter(|| {
-                            sim.reset();
-                            benchmark_circuit(&mut sim, nq, nl);
-                            black_box(());
-                        });
-                    },
-                );
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to create QuestCudaStateVecEngine: {e}");
             }
         }
     }

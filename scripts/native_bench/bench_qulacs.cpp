@@ -21,8 +21,10 @@
 #include <vector>
 
 #include "cppsim/state.hpp"
+#include "cppsim/state_dm.hpp"
 #include "cppsim/gate_factory.hpp"
 #include "csim/update_ops.hpp"
+#include "csim/update_ops_dm.hpp"
 
 // ---------------------------------------------------------------------------
 // Timing helpers
@@ -262,6 +264,42 @@ static void bench_gate_rz_csim(int num_qubits, int iters, int reps) {
 }
 
 // ---------------------------------------------------------------------------
+// Density matrix circuit: direct csim dm kernels
+// ---------------------------------------------------------------------------
+
+static void run_dm_circuit_csim(DensityMatrixCpu& state, int num_qubits, int num_layers) {
+    CTYPE* data = state.data_c();
+    ITYPE dim = state.dim;
+
+    for (int layer = 0; layer < num_layers; layer++) {
+        for (int q = 0; q < num_qubits; q++) {
+            dm_H_gate((UINT)q, data, dim);
+            dm_RZ_gate((UINT)q, -0.1, data, dim);
+        }
+        for (int q = 0; q < num_qubits - 1; q++) {
+            dm_CNOT_gate((UINT)q, (UINT)(q + 1), data, dim);
+        }
+    }
+}
+
+static void bench_dm_circuit(int num_qubits, int num_layers, int reps) {
+    DensityMatrixCpu state(num_qubits);
+    std::vector<double> times(reps);
+
+    for (int r = 0; r < reps; r++) {
+        state.set_zero_state();
+        double t0 = now_sec();
+        run_dm_circuit_csim(state, num_qubits, num_layers);
+        double t1 = now_sec();
+        times[r] = t1 - t0;
+    }
+
+    double med = median(times);
+    std::printf("dm_circ  %2dq %2dl  %12.3f us\n",
+                num_qubits, num_layers, med * 1e6);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -269,19 +307,19 @@ int main() {
     int reps = 5;
 
     std::printf("=== Qulacs standalone benchmarks ===\n");
-    std::printf("\n-- Layered circuits (median of %d runs) --\n", reps);
+    std::printf("\n-- State vector: layered circuits (median of %d runs) --\n", reps);
 
-    int configs[][2] = {
+    int sv_configs[][2] = {
         {10, 20}, {14, 20}, {18, 20}, {20, 20}, {22, 10}, {24, 5}
     };
-    int n_configs = sizeof(configs) / sizeof(configs[0]);
+    int n_sv = sizeof(sv_configs) / sizeof(sv_configs[0]);
 
-    for (int i = 0; i < n_configs; i++) {
-        bench_circuit(configs[i][0], configs[i][1], reps, "gate_api", run_circuit_gate_api);
-        bench_circuit(configs[i][0], configs[i][1], reps, "csim", run_circuit_csim);
+    for (int i = 0; i < n_sv; i++) {
+        bench_circuit(sv_configs[i][0], sv_configs[i][1], reps, "gate_api", run_circuit_gate_api);
+        bench_circuit(sv_configs[i][0], sv_configs[i][1], reps, "csim", run_circuit_csim);
     }
 
-    std::printf("\n-- Individual gates at 18 qubits, 100 iters (median of %d runs) --\n", reps);
+    std::printf("\n-- State vector: individual gates at 18 qubits, 100 iters (median of %d runs) --\n", reps);
 
     bench_gate_h_api(18, 100, reps);
     bench_gate_h_csim(18, 100, reps);
@@ -294,6 +332,17 @@ int main() {
 
     bench_gate_rz_api(18, 100, reps);
     bench_gate_rz_csim(18, 100, reps);
+
+    std::printf("\n-- Density matrix: layered circuits (median of %d runs) --\n", reps);
+
+    int dm_configs[][2] = {
+        {6, 20}, {8, 20}, {10, 20}, {12, 10}, {13, 5}
+    };
+    int n_dm = sizeof(dm_configs) / sizeof(dm_configs[0]);
+
+    for (int i = 0; i < n_dm; i++) {
+        bench_dm_circuit(dm_configs[i][0], dm_configs[i][1], reps);
+    }
 
     return 0;
 }

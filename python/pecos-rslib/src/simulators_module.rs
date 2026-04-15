@@ -18,11 +18,8 @@
 //! - `SparseStab` - Rust sparse stabilizer simulator
 //! - `Stabilizer` - Generic stabilizer simulator (recommended)
 //! - `StateVec` - State vector simulator
-//! - `Qulacs` - Qulacs-based state vector simulator
 //! - `CoinToss` - Random measurement simulator for testing
 //! - `PauliProp` - Pauli propagation/fault tracking simulator
-//! - `QuestStateVec` - `QuEST` state vector simulator
-//! - `QuestDensityMatrix` - `QuEST` density matrix simulator
 
 use pyo3::prelude::*;
 
@@ -51,11 +48,6 @@ pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> 
 
     // State vector simulators
     simulators.add("StateVec", parent.getattr("StateVec")?)?;
-    simulators.add("Qulacs", parent.getattr("Qulacs")?)?;
-
-    // QuEST simulators
-    simulators.add("QuestStateVec", parent.getattr("QuestStateVec")?)?;
-    simulators.add("QuestDensityMatrix", parent.getattr("QuestDensityMatrix")?)?;
 
     // Other simulators
     simulators.add("CoinToss", parent.getattr("CoinToss")?)?;

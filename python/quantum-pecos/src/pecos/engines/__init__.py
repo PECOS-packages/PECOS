@@ -53,7 +53,6 @@ from pecos_rslib import (
     get_compilation_backends,
     qis_helios_interface,
     qis_selene_helios_interface,
-    selene_runtime,
     sim_builder,
 )
 from pecos_rslib.engines import (
@@ -104,6 +103,5 @@ __all__ = [
     "qis_engine",
     "qis_helios_interface",
     "qis_selene_helios_interface",
-    "selene_runtime",
     "sim_builder",
 ]

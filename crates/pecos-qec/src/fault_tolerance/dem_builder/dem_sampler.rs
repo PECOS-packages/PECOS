@@ -71,7 +71,7 @@ use super::types::{combine_probabilities, PerGateTypeNoise};
 // DEM Mechanism (used during building)
 // ============================================================================
 
-/// A single error mechanism with its detector/observable effects.
+/// A single fault mechanism with its detector/observable effects.
 /// Used during building, then converted to `SoA` layout.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct DemMechanism {
@@ -1509,7 +1509,13 @@ impl<'a> DemSamplerBuilder<'a> {
                         }
                     }
                 }
-                GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => {
+                GateType::CX
+                | GateType::CZ
+                | GateType::CY
+                | GateType::SWAP
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     // Two-qubit gate errors: only "after" locations, process as pairs
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
@@ -1525,11 +1531,18 @@ impl<'a> DemSamplerBuilder<'a> {
                 | GateType::X
                 | GateType::Y
                 | GateType::Z
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::U
+                | GateType::R1XY
                 | GateType::Idle => {
                     // Single-qubit gate errors: only "after" locations.
-                    // Idle locations use the per-qubit lookup so users can
-                    // say "qubit 3's idle noise is different from qubit 5's"
-                    // via `.with_1q_rates_for_qubit(GateType::Idle, q, rates)`.
+                    // Idle and arbitrary rotations use the per-qubit lookup
+                    // so users can say "qubit 3's noise is different from
+                    // qubit 5's" via `.with_1q_rates_for_qubit(...)`.
                     if !loc.before {
                         let rates = self.rates_1q(loc.gate_type, &loc.qubits);
                         if rates.iter().any(|r| *r > 0.0) {

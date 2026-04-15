@@ -19,7 +19,7 @@
 //! with DAG circuits, which provides 5-50x speedup through sparse traversal.
 
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
-use super::{SpacetimeLocation, extract_spacetime_locations};
+use super::{Direction, SpacetimeLocation, apply_gate, extract_spacetime_locations};
 use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
 use pecos_simulators::PauliProp;
@@ -465,129 +465,25 @@ impl<'a> TickFaultAnalyzer<'a> {
     /// - SZ (S gate): X → -Y, Y → X, Z → Z (adjoint of forward)
     #[inline]
     fn apply_gate_backward(prop: &mut PauliProp, gate: &pecos_core::Gate) {
-        // Access gate.qubits directly - no allocation needed
         let qubits = &gate.qubits;
 
-        match gate.gate_type {
-            GateType::CX => {
-                // CX is self-adjoint, same propagation as forward
-                // X on control -> X on control AND target
-                // X on target -> X on target
-                // Z on control -> Z on control
-                // Z on target -> Z on control AND target
-                if qubits.len() >= 2 {
-                    let control = qubits[0].index();
-                    let target = qubits[1].index();
-
-                    let ctrl_x = prop.contains_x(control);
-                    let tgt_z = prop.contains_z(target);
-
-                    // X spreads from control to target
-                    if ctrl_x {
-                        prop.track_x(&[target]);
-                    }
-                    // Z spreads from target to control
-                    if tgt_z {
-                        prop.track_z(&[control]);
-                    }
+        if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+            // Preparation resets the qubit - backward propagation stops here
+            // Any Pauli on a prepared qubit doesn't propagate further back
+            // Toggle off both X and Z if present
+            for qid in qubits {
+                let q = qid.index();
+                if prop.contains_x(q) {
+                    prop.track_x(&[q]); // toggles off
+                }
+                if prop.contains_z(q) {
+                    prop.track_z(&[q]); // toggles off
                 }
             }
-
-            GateType::CZ => {
-                // CZ is self-adjoint
-                // X on either qubit -> X on that qubit AND Z on the other
-                if qubits.len() >= 2 {
-                    let q0 = qubits[0].index();
-                    let q1 = qubits[1].index();
-
-                    let x0 = prop.contains_x(q0);
-                    let x1 = prop.contains_x(q1);
-
-                    if x0 {
-                        prop.track_z(&[q1]);
-                    }
-                    if x1 {
-                        prop.track_z(&[q0]);
-                    }
-                }
-            }
-
-            GateType::H => {
-                // H is self-adjoint: X <-> Z
-                if let Some(qid) = qubits.first() {
-                    let q = qid.index();
-                    let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
-
-                    // Swap X and Z using toggle
-                    if has_x && !has_z {
-                        // Remove X by toggling, add Z
-                        prop.track_x(&[q]); // toggles off
-                        prop.track_z(&[q]);
-                    } else if has_z && !has_x {
-                        // Remove Z by toggling, add X
-                        prop.track_z(&[q]); // toggles off
-                        prop.track_x(&[q]);
-                    }
-                    // If both or neither, no change needed
-                }
-            }
-
-            GateType::SZ => {
-                // SZ† (adjoint): X -> -Y (we track as XZ), Y -> X, Z -> Z
-                // Since we track Paulis mod phase, X -> Y means X -> XZ
-                if let Some(qid) = qubits.first() {
-                    let q = qid.index();
-                    let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
-
-                    if has_x && !has_z {
-                        // X -> XZ (Y with phase)
-                        prop.track_z(&[q]);
-                    } else if has_x && has_z {
-                        // Y (XZ) -> X: remove Z by toggling
-                        prop.track_z(&[q]); // toggles off
-                    }
-                    // Z -> Z (no change)
-                }
-            }
-
-            GateType::SZdg => {
-                // SZdg = SZ†, so SZdg† = SZ
-                // Forward SZ: X -> Y, Y -> -X, Z -> Z
-                if let Some(qid) = qubits.first() {
-                    let q = qid.index();
-                    let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
-
-                    if has_x && !has_z {
-                        // X -> XZ (Y)
-                        prop.track_z(&[q]);
-                    } else if has_x && has_z {
-                        // Y -> X: remove Z by toggling
-                        prop.track_z(&[q]); // toggles off
-                    }
-                }
-            }
-
-            GateType::PZ | GateType::QAlloc => {
-                // Preparation resets the qubit - backward propagation stops here
-                // Any Pauli on a prepared qubit doesn't propagate further back
-                // Toggle off both X and Z if present
-                for qid in qubits {
-                    let q = qid.index();
-                    if prop.contains_x(q) {
-                        prop.track_x(&[q]); // toggles off
-                    }
-                    if prop.contains_z(q) {
-                        prop.track_z(&[q]); // toggles off
-                    }
-                }
-            }
-
-            // Pauli gates (X,Y,Z), Measure, MeasureFree, and other gates - no Pauli frame change
-            _ => {}
+            return;
         }
+
+        apply_gate(prop, gate, Direction::Backward);
     }
 
     /// Builds reverse maps (detector -> faults, logical -> faults).

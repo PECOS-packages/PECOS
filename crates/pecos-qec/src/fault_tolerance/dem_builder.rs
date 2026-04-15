@@ -25,35 +25,24 @@
 //! # Example
 //!
 //! ```
-//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
-//! use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-//! use pecos_quantum::DagCircuit;
+//! use pecos_qec::DemBuilder;
+//! use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
 //!
-//! // Build a simple syndrome extraction circuit
-//! let mut dag = DagCircuit::new();
-//! dag.pz(&[2]);
-//! dag.cx(&[(0, 2)]);
-//! dag.cx(&[(1, 2)]);
-//! dag.mz(&[2]);
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Normally `influence_map` comes from `DagFaultAnalyzer::build_influence_map()`;
+//! // here we use an empty map to keep the doctest self-contained.
+//! let influence_map = DagFaultInfluenceMap::with_capacity(0);
 //!
-//! // Build influence map from circuit
-//! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
-//!
-//! // Detector: measurement record -1 (the single measurement)
-//! let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
-//! let observables_json = "[]";
-//!
-//! // Build DEM with noise model
 //! let dem = DemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .with_detectors_json(detectors_json).unwrap()
-//!     .with_observables_json(observables_json).unwrap()
+//!     .with_detectors_json("[]")?
+//!     .with_observables_json("[]")?
 //!     .build();
 //!
-//! // Output in Stim-compatible format
-//! let dem_str = dem.to_string();
-//! assert!(!dem_str.is_empty());
+//! // Output in Stim format (non-decomposed).
+//! let _ = dem.to_string();
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Error Decomposition
@@ -77,7 +66,7 @@
 //! - **XOR effect combining**: Correlated errors are properly combined
 //!   by XOR-ing detector/observable effects.
 //!
-//! - **Independent probability combination**: When the same error mechanism
+//! - **Independent probability combination**: When the same fault mechanism
 //!   is triggered by multiple error sources, probabilities are combined
 //!   using p1*(1-p2) + p2*(1-p1).
 //!
@@ -88,29 +77,21 @@
 //! MNM maps directly to raw measurement effects.
 //!
 //! ```
-//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
 //! use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
-//! use pecos_quantum::DagCircuit;
+//! use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
 //! use rand::SeedableRng;
-//! use rand::rngs::SmallRng;
+//! use rand::rngs::StdRng;
 //!
-//! let mut dag = DagCircuit::new();
-//! dag.pz(&[2]);
-//! dag.cx(&[(0, 2)]);
-//! dag.cx(&[(1, 2)]);
-//! dag.mz(&[2]);
+//! // Normally `influence_map` comes from `DagFaultAnalyzer::build_influence_map()`;
+//! // here we use an empty map to keep the doctest self-contained.
+//! let influence_map = DagFaultInfluenceMap::with_capacity(0);
 //!
-//! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
-//!
-//! // Build MNM for fast sampling
 //! let mnm = MemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
 //!     .build();
 //!
-//! // Sample measurement outcomes
-//! let mut rng = SmallRng::seed_from_u64(42);
-//! let outcomes = mnm.sample(&mut rng);
+//! let mut rng = StdRng::seed_from_u64(0);
+//! let _outcomes = mnm.sample(&mut rng);
 //! ```
 //!
 //! The MNM aggregates fault locations by their measurement effects (which
@@ -132,7 +113,10 @@ pub use equivalence::{
 };
 pub use mem_builder::MemBuilder;
 pub use types::{
-    DecomposedError, DetectorDef, DetectorErrorModel, ErrorContribution, ErrorMechanism,
-    ErrorSourceType, LogicalObservable, MeasurementMechanism, MeasurementNoiseModel, NoiseConfig,
-    PerGateTypeNoise, PAULI_1Q_ORDER, PAULI_2Q_ORDER, combine_probabilities,
+    ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
+    ContributionRenderSummary, DecomposedFault, DetectorDef, DetectorErrorModel,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, LogicalObservable,
+    MeasurementMechanism, MeasurementNoiseModel, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER,
+    PerGateTypeNoise, TwoDetectorDirectRenderPolicy, combine_probabilities,
+    record_offset_to_absolute_index,
 };

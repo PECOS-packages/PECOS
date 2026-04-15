@@ -2648,10 +2648,10 @@ mod tests {
     // --- Integration Tests with Quantum Simulator ---
 
     #[test]
-    fn test_bell_state_with_quest() {
-        // Test HugrEngine with Quest quantum simulator for a Bell state circuit
+    fn test_bell_state_with_statevec() {
+        // Test HugrEngine with PECOS DenseStateVecEngine for a Bell state circuit
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2662,10 +2662,10 @@ mod tests {
         let num_qubits = hugr_engine.num_qubits();
         println!("Bell state HUGR has {num_qubits} qubits");
 
-        // Create HybridEngine with HugrEngine and Quest
+        // Create HybridEngine with HugrEngine and DenseStateVecEngine
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(Box::new(hugr_engine))
-            .with_quantum_engine(Box::new(QuestStateVecEngine::new(num_qubits)))
+            .with_quantum_engine(Box::new(DenseStateVecEngine::new(num_qubits)))
             .build();
 
         // Set seed for reproducibility
@@ -2690,10 +2690,10 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_hadamard_with_quest() {
-        // Test a simple Hadamard + measure circuit with Quest
+    fn test_simple_hadamard_with_statevec() {
+        // Test a simple Hadamard + measure circuit with DenseStateVecEngine
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2707,7 +2707,7 @@ mod tests {
         // Create HybridEngine
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(Box::new(hugr_engine))
-            .with_quantum_engine(Box::new(QuestStateVecEngine::new(num_qubits)))
+            .with_quantum_engine(Box::new(DenseStateVecEngine::new(num_qubits)))
             .build();
 
         hybrid.set_seed(42);
@@ -2741,10 +2741,10 @@ mod tests {
     }
 
     #[test]
-    fn test_conditional_with_quest() {
+    fn test_conditional_with_statevec() {
         // Test conditional circuit with real quantum simulation
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2760,7 +2760,7 @@ mod tests {
         // Create HybridEngine - use more qubits in case HUGR structure differs
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(Box::new(hugr_engine))
-            .with_quantum_engine(Box::new(QuestStateVecEngine::new(4))) // Use 4 qubits to be safe
+            .with_quantum_engine(Box::new(DenseStateVecEngine::new(4))) // Use 4 qubits to be safe
             .build();
 
         hybrid.set_seed(42);
@@ -3067,8 +3067,8 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_simple_conditional_with_quest() {
-        // Test the simple conditional circuit with Quest simulation
+    fn test_simple_conditional_with_statevec() {
+        // Test the simple conditional circuit with DenseStateVecEngine
         // Circuit: H(q0), measure(q0), if result=1: X(q1), measure(q1)
         //
         // Expected behavior:
@@ -3078,7 +3078,7 @@ mod tests {
         //   - If m0=1: X applied, so m1=1
         // Key invariant: m0 == m1 for every shot
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3097,7 +3097,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3164,8 +3164,8 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_conditional_branch_with_quest() {
-        // Test the conditional branch circuit with Quest simulation
+    fn test_conditional_branch_with_statevec() {
+        // Test the conditional branch circuit with DenseStateVecEngine
         // Circuit: measure(q0), if m0=0: H(q1), else: X(q1), measure(q1)
         //
         // Expected behavior:
@@ -3173,7 +3173,7 @@ mod tests {
         // - Second measurement (m1): 50/50 (H applied since m0=0)
         // Key invariant: m0 is always 0
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3193,7 +3193,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3258,8 +3258,8 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_conditional_h_with_quest() {
-        // Test the conditional H circuit with Quest simulation
+    fn test_conditional_h_with_statevec() {
+        // Test the conditional H circuit with DenseStateVecEngine
         // Circuit: H(control), measure(control), if control=1: H(result), measure(result)
         //
         // Expected behavior:
@@ -3269,7 +3269,7 @@ mod tests {
         //   - If control=1: result is 50/50 (H applied)
         // Key invariant: when control=0, result must be 0
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3289,7 +3289,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3413,8 +3413,8 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_while_loop_with_quest() {
-        // Test the while loop circuit with Quest simulation
+    fn test_while_loop_with_statevec() {
+        // Test the while loop circuit with DenseStateVecEngine
         // Circuit: while not result: q=qubit(), H(q), result=measure(q)
         //
         // Expected behavior:
@@ -3423,7 +3423,7 @@ mod tests {
         // - Final result is always True (1) since that's the exit condition
         use pecos_engines::ControlEngine;
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3481,7 +3481,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3531,14 +3531,14 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_function_call_with_quest() {
-        // Test function call circuit with Quest simulation
+    fn test_function_call_with_statevec() {
+        // Test function call circuit with DenseStateVecEngine
         // Circuit: q = qubit(), q = apply_h(q), measure(q)
         // where apply_h applies H gate
         //
         // Expected behavior: 50/50 measurement outcome
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3576,7 +3576,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3649,11 +3649,11 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines, clippy::cast_sign_loss)]
-    fn test_multiple_function_calls_with_quest() {
+    fn test_multiple_function_calls_with_statevec() {
         // Test multiple function calls: apply_h to two qubits
         // Expected: both measurements are 50/50 independent
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3704,7 +3704,7 @@ mod tests {
 
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3800,11 +3800,11 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_nested_function_calls_with_quest() {
+    fn test_nested_function_calls_with_statevec() {
         // Test nested function calls: main -> outer_func -> inner_h
         // Expected: 50/50 measurement outcome
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3829,7 +3829,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);
@@ -3907,11 +3907,11 @@ mod tests {
 
     #[test]
     #[allow(clippy::cast_sign_loss)]
-    fn test_multi_qubit_function_with_quest() {
+    fn test_multi_qubit_function_with_statevec() {
         // Test multi-qubit function: apply_cx creates Bell state
         // Expected: measurements are correlated (00 or 11, never 01 or 10)
         use pecos_engines::hybrid::HybridEngineBuilder;
-        use pecos_quest::QuestStateVecEngine;
+        use pecos_engines::quantum::DenseStateVecEngine;
 
         let hugr_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3941,7 +3941,7 @@ mod tests {
             let hugr_engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
             let mut hybrid = HybridEngineBuilder::new()
                 .with_classical_engine(Box::new(hugr_engine))
-                .with_quantum_engine(Box::new(QuestStateVecEngine::new(estimated_qubits)))
+                .with_quantum_engine(Box::new(DenseStateVecEngine::new(estimated_qubits)))
                 .build();
 
             hybrid.set_seed(shot_num as u64);

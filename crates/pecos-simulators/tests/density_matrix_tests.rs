@@ -194,18 +194,40 @@ fn test_amplitude_damping() {
 
 #[test]
 fn test_phase_damping() {
-    // Test the concept of phase damping
-    // In reality, phase damping should cause decoherence
-
-    // Create a mixed state with both 0 and 1 components
     let mut dm = DensityMatrix::new(1);
     dm.prepare_maximally_mixed();
-
-    // Verify the state is mixed
     assert!(!dm.is_pure());
+}
 
-    // For now, we skip the detailed phase damping test since
-    // our implementation is simplified and mainly conceptual
+#[test]
+fn test_phase_damping_preserves_diagonal() {
+    // Regression: full dephasing of |+> yields I/2 so P(0) = P(1) = 0.5 and
+    // they must sum to 1. Earlier impl violated this by treating the Choi
+    // state as flattened rho for the update but as a purification for
+    // probability()/purity().
+    let mut dm = DensityMatrix::new(1);
+    dm.h(&qid(0));
+    dm.apply_phase_damping(0, 1.0);
+    let p0 = dm.probability(0);
+    let p1 = dm.probability(1);
+    assert!((p0 - 0.5).abs() < 1e-10, "P(0)={p0}");
+    assert!((p1 - 0.5).abs() < 1e-10, "P(1)={p1}");
+    assert!((p0 + p1 - 1.0).abs() < 1e-10);
+}
+
+#[test]
+fn test_amplitude_damping_preserves_trace() {
+    // Regression: partial amplitude damping on |+><+| should keep tr(rho)=1.
+    // Pre-Cholesky impl gave P(0)+P(1) ≈ 0.895 for gamma=0.3.
+    let mut dm = DensityMatrix::new(1);
+    dm.h(&qid(0));
+    dm.apply_amplitude_damping(0, 0.3);
+    let p0 = dm.probability(0);
+    let p1 = dm.probability(1);
+    assert!((p0 + p1 - 1.0).abs() < 1e-10, "tr = {} != 1", p0 + p1);
+    // rho_00 = 0.5 + 0.5*0.3 = 0.65, rho_11 = 0.5*0.7 = 0.35.
+    assert!((p0 - 0.65).abs() < 1e-10, "P(0)={p0} expected 0.65");
+    assert!((p1 - 0.35).abs() < 1e-10, "P(1)={p1} expected 0.35");
 }
 
 #[test]

@@ -3,11 +3,13 @@ use crate::byte_message::protocol::{
     BatchHeader, GateHeader, MessageHeader, MessageType, OutcomeHeader, ReturnValueHeader,
     calc_padding,
 };
+use log::Level;
 use log::trace;
 use pecos_core::errors::PecosError;
 use pecos_core::gate_type::GateType;
-use pecos_core::gates::Gate;
+use pecos_core::gates::{Gate, GateAngles, GateParams, GateQubits};
 use pecos_core::{Angle64, QubitId};
+use std::fmt::Write as _;
 use std::mem::size_of;
 
 /// A message encoded using the PECOS byte protocol
@@ -221,6 +223,7 @@ impl ByteMessage {
     ///
     /// Returns an error if the message is malformed.
     fn process_gate_message(&self, offset: usize) -> Result<(usize, Option<Gate>), PecosError> {
+        let trace_enabled = log::log_enabled!(Level::Trace);
         // Parse message header
         let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
             // If we can't parse the header, just return the current offset with no gate
@@ -231,7 +234,9 @@ impl ByteMessage {
         // Get message type
         let Ok(msg_type) = msg_header.get_type() else {
             // Skip invalid message types
-            trace!("Skipping message with invalid type");
+            if trace_enabled {
+                trace!("Skipping message with invalid type");
+            }
 
             // Calculate the new offset after this message
             let payload_size = msg_header.payload_size as usize;
@@ -260,7 +265,7 @@ impl ByteMessage {
         // Process based on message type - we only care about Gate messages here
         let result = if msg_type == MessageType::Gate {
             // Debug: dump payload bytes for RZ gates
-            if payload.len() >= size_of::<GateHeader>() {
+            if trace_enabled && payload.len() >= size_of::<GateHeader>() {
                 let header =
                     *bytemuck::from_bytes::<GateHeader>(&payload[0..size_of::<GateHeader>()]);
                 if header.gate_type == GateType::RZ as u8 {
@@ -271,17 +276,24 @@ impl ByteMessage {
                         header.gate_type, header.num_qubits, header.has_params
                     );
 
-                    // Dump raw bytes in hex
-                    let hex_bytes: Vec<String> =
-                        payload.iter().map(|b| format!("{b:02x}")).collect();
-                    trace!("  Raw bytes: {}", hex_bytes.join(" "));
+                    // Dump raw bytes in hex only when trace logging is enabled.
+                    let mut hex_bytes = String::with_capacity(payload.len().saturating_mul(3));
+                    for (i, byte) in payload.iter().enumerate() {
+                        if i > 0 {
+                            hex_bytes.push(' ');
+                        }
+                        let _ = write!(&mut hex_bytes, "{byte:02x}");
+                    }
+                    trace!("  Raw bytes: {hex_bytes}");
                 }
             }
 
             match Self::parse_gate_command(payload) {
                 Ok(cmd) => Some(cmd),
                 Err(e) => {
-                    trace!("Error parsing gate: {e}");
+                    if trace_enabled {
+                        trace!("Error parsing gate: {e}");
+                    }
                     None
                 }
             }
@@ -314,6 +326,7 @@ impl ByteMessage {
     ///
     /// Returns an error if the message is malformed.
     fn process_outcome_message(&self, offset: usize) -> Result<(usize, Option<u32>), PecosError> {
+        let trace_enabled = log::log_enabled!(Level::Trace);
         // Parse message header
         let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
             // If we can't parse the header, just return the current offset with no outcome
@@ -324,7 +337,9 @@ impl ByteMessage {
         // Get message type
         let Ok(msg_type) = msg_header.get_type() else {
             // Skip invalid message types
-            trace!("Skipping message with invalid type");
+            if trace_enabled {
+                trace!("Skipping message with invalid type");
+            }
 
             // Calculate the new offset after this message
             let payload_size = msg_header.payload_size as usize;
@@ -405,15 +420,32 @@ impl ByteMessage {
     ///
     /// Returns an error if the message is malformed or contains invalid quantum operations.
     pub fn quantum_ops(&self) -> Result<Vec<Gate>, PecosError> {
+        let mut commands = Vec::new();
+        self.quantum_ops_into(&mut commands)?;
+        Ok(commands)
+    }
+
+    /// Parse quantum operations from this message into an existing vector.
+    ///
+    /// This lets hot callers reuse vector capacity across repeated parses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message is malformed or contains invalid quantum operations.
+    pub fn quantum_ops_into(&self, commands: &mut Vec<Gate>) -> Result<(), PecosError> {
         // Parse and validate the batch header
         let batch_header = self.parse_batch_header()?;
+        let trace_enabled = log::log_enabled!(Level::Trace);
 
-        trace!(
-            "quantum_ops: Processing {} messages",
-            batch_header.msg_count
-        );
+        if trace_enabled {
+            trace!(
+                "quantum_ops: Processing {} messages",
+                batch_header.msg_count
+            );
+        }
 
-        let mut commands = Vec::new();
+        commands.clear();
+        commands.reserve(batch_header.msg_count as usize);
         let mut offset = size_of::<BatchHeader>();
 
         // Process each message
@@ -424,16 +456,20 @@ impl ByteMessage {
 
             // Add any gate we found to our commands list
             if let Some(gate) = maybe_gate {
-                trace!("quantum_ops: Message {msg_idx} parsed as gate: {gate:?}");
+                if trace_enabled {
+                    trace!("quantum_ops: Message {msg_idx} parsed as gate: {gate:?}");
+                }
                 commands.push(gate);
-            } else {
+            } else if trace_enabled {
                 trace!("quantum_ops: Message {msg_idx} did not yield a gate");
             }
         }
 
-        trace!("quantum_ops: Total gates parsed: {}", commands.len());
+        if trace_enabled {
+            trace!("quantum_ops: Total gates parsed: {}", commands.len());
+        }
 
-        Ok(commands)
+        Ok(())
     }
 
     /// Parse measurement outcomes from this message
@@ -498,6 +534,7 @@ impl ByteMessage {
         &self,
         offset: usize,
     ) -> Result<(usize, Option<i64>), PecosError> {
+        let trace_enabled = log::log_enabled!(Level::Trace);
         // Parse message header
         let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
             // If we can't parse the header, just return the current offset with no value
@@ -508,7 +545,9 @@ impl ByteMessage {
         // Get message type
         let Ok(msg_type) = msg_header.get_type() else {
             // Skip invalid message types
-            trace!("Skipping message with invalid type");
+            if trace_enabled {
+                trace!("Skipping message with invalid type");
+            }
 
             // Calculate the new offset after this message
             let payload_size = msg_header.payload_size as usize;
@@ -582,12 +621,8 @@ impl ByteMessage {
     }
 
     /// Parse qubit indices from the payload and convert to `QubitIds` directly
-    fn parse_qubit_indices(
-        payload: &[u8],
-        qubits_offset: usize,
-        num_qubits: usize,
-    ) -> Vec<QubitId> {
-        let mut qubits = Vec::with_capacity(num_qubits);
+    fn parse_qubit_indices(payload: &[u8], qubits_offset: usize, num_qubits: usize) -> GateQubits {
+        let mut qubits = GateQubits::with_capacity(num_qubits);
         for i in 0..num_qubits {
             let qubit_offset = qubits_offset + i * size_of::<u32>();
             let qubit = u32::from_le_bytes([
@@ -606,43 +641,48 @@ impl ByteMessage {
         payload: &[u8],
         params_offset: usize,
         gate_type: GateType,
-    ) -> Result<Vec<f64>, PecosError> {
+    ) -> Result<(GateAngles, GateParams), PecosError> {
+        let trace_enabled = log::log_enabled!(Level::Trace);
         // Get the number of parameters this gate type requires
         let param_count = gate_type.classical_arity();
         if param_count == 0 {
-            return Ok(Vec::new());
+            return Ok((GateAngles::new(), GateParams::new()));
         }
 
-        trace!("parse_gate_parameters: Gate {gate_type:?} requires {param_count} parameters");
+        if trace_enabled {
+            trace!("parse_gate_parameters: Gate {gate_type:?} requires {param_count} parameters");
+        }
 
         // Validate the parameter size
         let required_size = param_count * size_of::<f64>();
-        Self::validate_params_size(
-            payload,
-            params_offset,
-            required_size,
-            &format!("{gate_type:?} parameters"),
-        )?;
+        Self::validate_params_size(payload, params_offset, required_size, gate_type)?;
 
-        // Parse all parameters
-        let mut params = Vec::with_capacity(param_count);
+        let angle_count = gate_type.angle_arity();
+        let mut angles = GateAngles::with_capacity(angle_count);
+        let mut params = GateParams::with_capacity(param_count.saturating_sub(angle_count));
         for i in 0..param_count {
             let param_offset = params_offset + i * size_of::<f64>();
             let param = Self::parse_f64_param(payload, param_offset);
-            trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
-            params.push(param);
+            if trace_enabled {
+                trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
+            }
+            if i < angle_count {
+                angles.push(Angle64::from_radians(param));
+            } else {
+                params.push(param);
+            }
         }
 
         // Special logging for RZ gate parameters
-        if matches!(gate_type, GateType::RZ) && !params.is_empty() {
+        if trace_enabled && matches!(gate_type, GateType::RZ) && !angles.is_empty() {
             trace!(
                 "parse_gate_parameters: RZ angle parsed as {} radians ({} degrees)",
-                params[0],
-                params[0].to_degrees()
+                angles[0].to_radians(),
+                angles[0].to_radians().to_degrees()
             );
         }
 
-        Ok(params)
+        Ok((angles, params))
     }
 
     /// Validate if the payload has enough bytes for parameters
@@ -650,11 +690,11 @@ impl ByteMessage {
         payload: &[u8],
         params_offset: usize,
         required_size: usize,
-        gate_name: &str,
+        gate_type: GateType,
     ) -> Result<(), PecosError> {
         if payload.len() < params_offset + required_size {
             return Err(PecosError::Input(format!(
-                "Quantum gate message payload too small for {gate_name}"
+                "Quantum gate message payload too small for {gate_type:?} parameters"
             )));
         }
         Ok(())
@@ -674,6 +714,7 @@ impl ByteMessage {
 
     /// Parse a quantum gate message payload to `Gate`
     fn parse_gate_command(payload: &[u8]) -> Result<Gate, PecosError> {
+        let trace_enabled = log::log_enabled!(Level::Trace);
         Self::validate_gate_payload_size(payload)?;
 
         // Parse gate header - guaranteed aligned since payload starts at aligned boundary
@@ -682,9 +723,11 @@ impl ByteMessage {
         let has_params = header.has_params != 0;
         let gate_type = GateType::from(header.gate_type);
 
-        trace!(
-            "parse_gate_command: Parsing gate type {gate_type:?}, num_qubits: {num_qubits}, has_params: {has_params}"
-        );
+        if trace_enabled {
+            trace!(
+                "parse_gate_command: Parsing gate type {gate_type:?}, num_qubits: {num_qubits}, has_params: {has_params}"
+            );
+        }
 
         // Calculate sizes
         let qubits_byte_size = num_qubits * size_of::<u32>();
@@ -695,31 +738,28 @@ impl ByteMessage {
         // Parse qubit indices directly to QubitId
         let qubits = Self::parse_qubit_indices(payload, qubits_offset, num_qubits);
 
-        trace!("parse_gate_command: Parsed qubits: {qubits:?}");
+        if trace_enabled {
+            trace!("parse_gate_command: Parsed qubits: {qubits:?}");
+        }
 
         // Parse parameters if present
         // The wire format stores all classical parameters as f64, with angles first (in radians)
         let (angles, params) = if has_params {
             let params_offset = qubits_offset + qubits_byte_size;
-            let parsed_params = Self::parse_gate_parameters(payload, params_offset, gate_type)?;
-            trace!("parse_gate_command: Parsed parameters: {parsed_params:?}");
-
-            // Split into angles and other params based on gate type
-            let angle_count = gate_type.angle_arity();
-            let angles: Vec<Angle64> = parsed_params
-                .iter()
-                .take(angle_count)
-                .map(|&r| Angle64::from_radians(r))
-                .collect();
-            let other_params: Vec<f64> = parsed_params.into_iter().skip(angle_count).collect();
-
-            (angles, other_params)
+            let parsed = Self::parse_gate_parameters(payload, params_offset, gate_type)?;
+            if trace_enabled {
+                trace!(
+                    "parse_gate_command: Parsed parameters: angles={:?}, params={:?}",
+                    parsed.0, parsed.1
+                );
+            }
+            parsed
         } else {
-            (Vec::new(), Vec::new())
+            (GateAngles::new(), GateParams::new())
         };
 
         // Special logging for RZ gates
-        if matches!(gate_type, GateType::RZ) {
+        if trace_enabled && matches!(gate_type, GateType::RZ) {
             trace!(
                 "parse_gate_command: RZ gate parsed with angle: {:?}, qubit: {:?}",
                 angles.first(),

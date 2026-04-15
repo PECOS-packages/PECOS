@@ -171,93 +171,13 @@ impl NoiseUtils {
     /// - `gate` is `None` when processing a measurement gate
     /// - The gate type is invalid or has insufficient parameters/qubits for the operation
     pub fn add_gate_to_builder(builder: &mut ByteMessageBuilder, gate: &Gate) {
-        use crate::byte_message::GateType;
-
-        match gate.gate_type {
-            // Single-qubit gates that operate directly on qubit lists
-            GateType::X => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.x(&qubits_usize);
-            }
-            GateType::Y => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.y(&qubits_usize);
-            }
-            GateType::Z => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.z(&qubits_usize);
-            }
-            GateType::H => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.h(&qubits_usize);
-            }
-            GateType::PZ => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.pz(&qubits_usize);
-            }
-
-            // Two-qubit gates that need qubit validation
-            GateType::CX if gate.qubits.len() >= 2 => {
-                builder.cx(&[(*gate.qubits[0], *gate.qubits[1])]);
-            }
-            GateType::SZZ if gate.qubits.len() >= 2 => {
-                builder.szz(&[(*gate.qubits[0], *gate.qubits[1])]);
-            }
-            GateType::SZZdg if gate.qubits.len() >= 2 => {
-                builder.szzdg(&[(*gate.qubits[0], *gate.qubits[1])]);
-            }
-
-            // Rotation gates - angles are now stored in gate.angles field
-            GateType::RX if !gate.angles.is_empty() => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.rx(gate.angles[0], &qubits_usize);
-            }
-            GateType::RY if !gate.angles.is_empty() => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.ry(gate.angles[0], &qubits_usize);
-            }
-            GateType::RZ if !gate.angles.is_empty() => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.rz(gate.angles[0], &qubits_usize);
-            }
-            GateType::RZZ if gate.qubits.len() >= 2 && !gate.angles.is_empty() => {
-                builder.rzz(gate.angles[0], &[(*gate.qubits[0], *gate.qubits[1])]);
-            }
-            GateType::R1XY if gate.angles.len() >= 2 => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.r1xy(gate.angles[0], gate.angles[1], &qubits_usize);
-            }
-            GateType::U if gate.angles.len() >= 3 => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.u(
-                    gate.angles[0],
-                    gate.angles[1],
-                    gate.angles[2],
-                    &qubits_usize,
-                );
-            }
-
-            // Measurement gates
-            GateType::MZ if !gate.qubits.is_empty() => {
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.mz(&qubits_usize);
-            }
-
-            // Idle gates need special handling for qubit lists
-            GateType::Idle if !gate.params.is_empty() => {
-                // Use gate params for idle time
-                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.idle(gate.params[0], &qubits_usize);
-            }
-
-            // Custom is a placeholder (actual gate name is in metadata) -- skip.
-            GateType::Custom => {}
-
-            // All other gates: use generic serialization (gate type + qubits + angles/params).
-            _ => {
-                builder.add_gate_command(gate);
-            }
+        if gate.gate_type == crate::byte_message::GateType::Custom {
+            return;
         }
+
+        // Generic serialization is cheaper here because it reuses the parsed gate directly
+        // instead of rebuilding temporary qubit vectors first.
+        builder.add_gate_command(gate);
     }
 
     /// Check if a message contains measurement results

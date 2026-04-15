@@ -37,8 +37,6 @@ serde_json = { workspace = true, optional = true }
 
 # Quantum simulator backends (optional - for Python bindings and advanced users)
 pecos-cppsparsestab = { workspace = true, optional = true }
-pecos-quest = { workspace = true, optional = true }
-pecos-qulacs = { workspace = true, optional = true }
 
 # WebAssembly foreign object support (optional)
 pecos-wasm = { workspace = true, optional = true }
@@ -89,9 +87,7 @@ wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
 cppsparsestab = ["sim", "dep:pecos-cppsparsestab"]
-quest = ["sim", "dep:pecos-quest"]
-qulacs = ["sim", "dep:pecos-qulacs"]
-all-simulators = ["cppsparsestab", "quest", "qulacs"]
+all-simulators = ["cppsparsestab"]
 
 # Decoder backends
 ldpc = ["sim", "dep:pecos-decoders", "pecos-decoders/ldpc"]
@@ -125,10 +121,6 @@ serde_json.workspace = true
 [[test]]
 name = "unified_sim_api_test"
 required-features = ["runtime", "qis"]
-
-[[example]]
-name = "quest_example"
-required-features = ["quest"]
 
 [[example]]
 name = "sim_api_final"

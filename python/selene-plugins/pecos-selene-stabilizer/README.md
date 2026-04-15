@@ -16,13 +16,13 @@ pip install pecos-selene-stabilizer
 
 ```python
 from selene_sim.build import build
-from pecos_selene_stabilizer import StabPlugin
+from pecos_selene_stabilizer import StabilizerPlugin
 
 # Create a plugin instance
-simulator = StabPlugin()
+simulator = StabilizerPlugin()
 
 # Or customize the angle threshold for Clifford approximation
-simulator = StabPlugin(angle_threshold=1e-4)
+simulator = StabilizerPlugin(angle_threshold=1e-4)
 
 # Use with Selene
 runner = build(program)

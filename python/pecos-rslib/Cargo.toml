@@ -47,8 +47,6 @@ pecos-wasm = { workspace = true, optional = true }
 
 # C++ simulator backends
 pecos-cppsparsestab.workspace = true
-pecos-quest.workspace = true
-pecos-qulacs.workspace = true
 
 # Decoders (all backends)
 pecos-decoders = { workspace = true, features = ["all"] }

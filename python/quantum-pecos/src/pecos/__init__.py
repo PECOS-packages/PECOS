@@ -256,6 +256,7 @@ from pecos._engine_builders import (
     phir_json_engine,
     qasm_engine,
     qis_engine,
+    selene_engine,
 )
 
 # Simulation entry point
@@ -437,6 +438,7 @@ __all__ = [
     "quantum",
     "random",
     "round",
+    "selene_engine",
     # Simulation entry point
     "sim",
     "simulators",

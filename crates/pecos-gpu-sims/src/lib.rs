@@ -10,47 +10,36 @@
 //!
 //! # Simulators
 //!
-//! - [`GpuStateVec`]: State vector simulator for universal quantum circuits
+//! - [`GpuStateVec`] / [`GpuStateVec64`]: State vector simulator (f64 precision, default)
+//! - [`GpuStateVec32`]: State vector simulator (f32 precision, faster)
 //! - [`GpuStab`]: Stabilizer tableau simulator for Clifford circuits (experimental)
 //!
 //! # Example
+//!
+//! `GpuStateVec` aliases the f64 backend, which requires `SHADER_F64`. On
+//! adapters without f64 support (e.g. Metal on Apple Silicon) `new()` returns
+//! [`GpuError::UnsupportedFeature`]; the doctest skips in that case so it can
+//! still exercise real GPU code where available. Use [`GpuStateVec32`] for a
+//! universally portable f32 backend.
 //!
 //! ```
 //! use pecos_gpu_sims::GpuStateVec;
 //! use pecos_simulators::CliffordGateable;
 //! use pecos_core::{qid, QubitId};
 //!
-//! let mut sim = GpuStateVec::new(4).unwrap(); // 4 qubits
+//! // Skip cleanly on platforms without a GPU or without SHADER_F64.
+//! let Ok(mut sim) = GpuStateVec::new(4) else { return };
 //! sim.h(&qid(0));         // Hadamard on qubit 0
 //! sim.cx(&[(QubitId(0), QubitId(1))]);    // CNOT with control=0, target=1
-//! let result = sim.mz(&[QubitId(0)]);  // Measure qubit 0
+//! let _result = sim.mz(&[QubitId(0)]);  // Measure qubit 0
 //! ```
-
-/// Implement Drop to poll the wgpu device before resources are freed.
-/// All GPU simulator types that own a `device: Arc<wgpu::Device>` need this
-/// to prevent resource cleanup races.
-macro_rules! impl_gpu_drop {
-    ($ty:ty) => {
-        impl Drop for $ty {
-            fn drop(&mut self) {
-                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            }
-        }
-    };
-    ($ty:ty, $($bound:tt)+) => {
-        impl<$($bound)+> Drop for $ty {
-            fn drop(&mut self) {
-                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            }
-        }
-    };
-}
-
-pub(crate) use impl_gpu_drop;
 
 pub mod circuit_compiler;
 mod clifford_fusion;
 mod gpu;
+mod gpu64;
+mod gpu_auto;
+mod gpu_density_matrix;
 mod gpu_influence_sampler;
 mod gpu_noisy_sampler;
 mod gpu_pauli_prop;
@@ -64,7 +53,19 @@ pub mod prelude;
 mod gpu_sampler_validation;
 
 pub use circuit_compiler::{CompiledCircuit, Gate as CompiledGate, GateType};
-pub use gpu::{GpuError, GpuStateVec};
+pub use gpu::{GpuError, GpuStateVec32, RequiredFeature};
+pub use gpu_auto::GpuStateVecAuto;
+pub use gpu_density_matrix::{
+    GpuDensityMatrix, GpuDensityMatrix32, GpuDensityMatrix64, GpuStateVecBackend,
+};
+pub use gpu64::GpuStateVec64;
+
+/// Default GPU state vector simulator (f64 precision).
+///
+/// Use [`GpuStateVec32`] for f32 precision (faster but less accurate), or
+/// [`GpuStateVecAuto`] to opt in to runtime precision selection (tries f64
+/// first, falls back to f32 on adapters without `SHADER_F64`).
+pub type GpuStateVec = GpuStateVec64;
 pub use gpu_influence_sampler::{GpuInfluenceMapData, GpuInfluenceSampler, GpuSamplingResult};
 pub use gpu_noisy_sampler::{
     BiasedDepolarizingNoiseSampler, CircuitBuilder, CircuitOp, DepolarizingNoiseSampler,
@@ -144,6 +145,12 @@ pub mod gates {
 
     /// SX-dagger gate
     pub const SXDG: [f32; 8] = [0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5];
+
+    /// SY gate (sqrt(Y))
+    pub const SY: [f32; 8] = [0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5];
+
+    /// SY-dagger gate
+    pub const SYDG: [f32; 8] = [0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5];
 
     /// Create RX(theta) gate matrix
     #[must_use]

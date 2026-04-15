@@ -120,3 +120,63 @@ def test_runtime_library_finding() -> None:
 
         # If we found loadable libraries, that's good enough for this diagnostic
         assert len(loadable_libraries) > 0, f"Found {len(loadable_libraries)} loadable Selene runtime libraries"
+
+
+def test_selene_engine_python_exports() -> None:
+    """Test that the Selene engine convenience exports exist and are usable."""
+    import pecos
+    import pecos_rslib
+
+    assert hasattr(pecos_rslib, "selene_engine")
+    assert hasattr(pecos, "selene_engine")
+
+    builder = pecos.selene_engine()
+    assert isinstance(builder, pecos.QisEngineBuilder)
+
+    named_builder = pecos.qis_engine().selene_runtime("selene_simple_runtime")
+    assert isinstance(named_builder, pecos.QisEngineBuilder)
+
+
+def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
+    """Test that sim(Guppy(...)).classical(selene_engine()) routes HUGR through the QIS path."""
+    import pecos
+    from guppylang import guppy
+    from guppylang.std.quantum import h, measure, qubit
+
+    selene = pecos.selene_engine()
+
+    @guppy
+    def coin() -> bool:
+        q = qubit()
+        h(q)
+        return measure(q)
+
+    results = pecos.sim(pecos.Guppy(coin)).classical(selene).qubits(1).seed(42).run(10).to_dict()
+    assert len(results["measurement_0"]) == 10
+
+
+def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
+    """Test that a recycled physical slot is reinitialized when Guppy reallocates a qubit."""
+    import pecos
+    from guppylang import guppy
+    from guppylang.std.quantum import measure, qubit, x
+
+    selene = pecos.selene_engine()
+
+    @guppy
+    def allocate_measure_allocate_again() -> tuple[bool, bool]:
+        q0 = qubit()
+        x(q0)
+        m0 = measure(q0)
+        q1 = qubit()
+        m1 = measure(q1)
+        return m0, m1
+
+    results = (
+        pecos.sim(pecos.Guppy(allocate_measure_allocate_again)).classical(selene).qubits(1).seed(7).run(10).to_dict()
+    )
+
+    assert len(results["measurement_0"]) == 10
+    assert len(results["measurement_1"]) == 10
+    assert all(results["measurement_0"])
+    assert not any(results["measurement_1"])

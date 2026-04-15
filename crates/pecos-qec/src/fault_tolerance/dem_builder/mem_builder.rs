@@ -183,7 +183,13 @@ impl<'a> MemBuilder<'a> {
                         self.process_meas_fault(loc_idx, &mut mem);
                     }
                 }
-                GateType::CX | GateType::CZ => {
+                GateType::CX
+                | GateType::CZ
+                | GateType::CY
+                | GateType::SWAP
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     // Two-qubit gate errors: only "after" locations
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
@@ -198,7 +204,14 @@ impl<'a> MemBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::U
+                | GateType::R1XY => {
                     // Single-qubit gate errors: only "after" locations
                     if self.noise.p1 > 0.0 && !loc.before {
                         self.process_single_qubit_fault(loc_idx, &mut mem);

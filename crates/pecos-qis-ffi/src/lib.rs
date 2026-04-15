@@ -63,7 +63,7 @@ pub struct ExecutionContext {
     /// Storage for pending operations (shared between threads)
     pub pending_ops: Mutex<Vec<Operation>>,
     /// Storage for measurement results (shared between threads)
-    pub measurement_results: Mutex<BTreeMap<u64, bool>>,
+    pub measurement_results: Mutex<Vec<Option<bool>>>,
     /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
     pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
 }
@@ -78,7 +78,7 @@ impl ExecutionContext {
             sync_state: Mutex::new(DynamicSyncState::default()),
             sync_condvar: Condvar::new(),
             pending_ops: Mutex::new(Vec::new()),
-            measurement_results: Mutex::new(BTreeMap::new()),
+            measurement_results: Mutex::new(Vec::new()),
             named_results: Mutex::new(BTreeMap::new()),
         }
     }
@@ -245,6 +245,12 @@ pub fn reset_interface() {
 #[must_use]
 pub fn get_interface_clone() -> OperationCollector {
     with_interface(|interface| interface.clone())
+}
+
+/// Take the thread-local operation collector, leaving an empty collector behind.
+#[must_use]
+pub fn take_interface() -> OperationCollector {
+    with_interface(std::mem::take)
 }
 
 /// Set measurement results in the thread-local operation collector
@@ -506,13 +512,17 @@ pub fn wait_for_result_ready(result_id: u64, timeout_ms: u64) -> bool {
     // SAFETY: Context is valid for duration of execution
     let ctx = unsafe { &*ctx };
 
-    // Export pending operations to context storage before blocking
-    // This allows the main thread to access them
+    // Move all operations accumulated since the previous handoff into the
+    // shared pending buffer. In dynamic mode the thread-local operations vec
+    // is treated as an unsent queue, so this avoids cloning the fresh segment.
     INTERFACE.with(|interface| {
-        let iface = interface.borrow();
+        let mut iface = interface.borrow_mut();
         if let Ok(mut pending) = ctx.pending_ops.lock() {
-            pending.clear();
-            pending.extend(iface.operations.iter().cloned());
+            if pending.is_empty() {
+                std::mem::swap(&mut *pending, &mut iface.operations);
+            } else if !iface.operations.is_empty() {
+                pending.append(&mut iface.operations);
+            }
             log::debug!(
                 "wait_for_result_ready: exported {} pending operations",
                 pending.len()
@@ -567,10 +577,11 @@ pub fn is_dynamic_mode_active() -> bool {
 #[must_use]
 pub fn get_measurement_result(result_id: u64) -> Option<bool> {
     let ctx = get_execution_context()?;
+    let result_index = usize::try_from(result_id).ok()?;
     // SAFETY: Context is valid for duration of execution
     let ctx = unsafe { &*ctx };
     if let Ok(results) = ctx.measurement_results.lock() {
-        let value = results.get(&result_id).copied();
+        let value = results.get(result_index).copied().flatten();
         log::debug!("get_measurement_result: result_id={result_id}, value={value:?}");
         value
     } else {
@@ -589,10 +600,17 @@ pub fn get_measurement_result(result_id: u64) -> Option<bool> {
 pub extern "C" fn pecos_set_measurement_result(result_id: u64, value: bool) {
     log::debug!("pecos_set_measurement_result: result_id={result_id}, value={value}");
     if let Some(ctx) = get_execution_context() {
+        let Ok(result_index) = usize::try_from(result_id) else {
+            log::warn!("pecos_set_measurement_result: result_id {result_id} does not fit in usize");
+            return;
+        };
         // SAFETY: Context is valid for duration of execution
         let ctx = unsafe { &*ctx };
         if let Ok(mut results) = ctx.measurement_results.lock() {
-            results.insert(result_id, value);
+            if results.len() <= result_index {
+                results.resize(result_index + 1, None);
+            }
+            results[result_index] = Some(value);
         }
     } else {
         log::warn!("pecos_set_measurement_result: no execution context registered");
@@ -629,9 +647,9 @@ pub extern "C" fn pecos_get_pending_operations() -> *mut OperationCollector {
     let ctx = unsafe { &*ctx };
 
     let ops = match ctx.pending_ops.lock() {
-        Ok(pending) => {
+        Ok(mut pending) => {
             log::debug!("pecos_get_pending_operations: {} operations", pending.len());
-            pending.clone()
+            std::mem::take(&mut *pending)
         }
         Err(_) => return std::ptr::null_mut(),
     };
@@ -784,7 +802,8 @@ mod tests {
         context.dynamic_mode_active.store(true, Ordering::SeqCst);
         context.waiting_for_result.store(42, Ordering::SeqCst);
         if let Ok(mut results) = context.measurement_results.lock() {
-            results.insert(0, true);
+            results.resize(1, None);
+            results[0] = Some(true);
         }
         if let Ok(mut ops) = context.pending_ops.lock() {
             ops.push(Operation::AllocateQubit { id: 0 });
@@ -1035,6 +1054,10 @@ mod tests {
 
         // Free the collector
         unsafe { pecos_free_operations(ptr) };
+
+        // Second read should be empty because the handoff drains pending ops.
+        let ptr = pecos_get_pending_operations();
+        assert!(ptr.is_null());
 
         teardown_context(ctx);
     }
@@ -1329,6 +1352,76 @@ mod tests {
         // Worker should get the result
         let result = worker.join().unwrap();
         assert_eq!(result, Some(true));
+
+        unsafe {
+            pecos_register_execution_context(std::ptr::null_mut());
+            pecos_destroy_execution_context(ctx);
+        }
+    }
+
+    #[test]
+    fn test_wait_for_result_ready_exports_only_new_operations() {
+        use std::sync::Barrier;
+
+        let ctx = pecos_create_execution_context();
+        let ctx_ptr = ctx as usize;
+
+        unsafe { pecos_register_execution_context(ctx) };
+        pecos_enable_dynamic_mode();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let worker_barrier = Arc::clone(&barrier);
+
+        let worker = thread::spawn(move || {
+            let ctx = ctx_ptr as *mut ExecutionContext;
+            unsafe { pecos_register_execution_context(ctx) };
+
+            with_interface(|iface| {
+                iface.queue_operation(Operation::AllocateQubit { id: 0 });
+            });
+
+            worker_barrier.wait();
+
+            assert!(wait_for_result_ready(0, 500));
+
+            with_interface(|iface| {
+                assert!(iface.operations.is_empty());
+            });
+
+            with_interface(|iface| {
+                iface.queue_operation(Operation::Quantum(QuantumOp::H(0)));
+            });
+
+            assert!(wait_for_result_ready(1, 500));
+
+            with_interface(|iface| {
+                assert!(iface.operations.is_empty());
+            });
+
+            unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
+        });
+
+        barrier.wait();
+
+        let needed_id = pecos_wait_for_need_result(500);
+        assert_eq!(needed_id, 0);
+        let ops_ptr = pecos_get_pending_operations();
+        assert!(!ops_ptr.is_null());
+        let ops = unsafe { &*ops_ptr };
+        assert_eq!(ops.operations, vec![Operation::AllocateQubit { id: 0 }]);
+        unsafe { pecos_free_operations(ops_ptr) };
+        pecos_signal_result_ready();
+
+        let needed_id = pecos_wait_for_need_result(500);
+        assert_eq!(needed_id, 1);
+        let ops_ptr = pecos_get_pending_operations();
+        assert!(!ops_ptr.is_null());
+        let ops = unsafe { &*ops_ptr };
+        assert_eq!(ops.operations, vec![Operation::Quantum(QuantumOp::H(0))]);
+        unsafe { pecos_free_operations(ops_ptr) };
+        pecos_signal_result_ready();
+
+        worker.join().unwrap();
 
         unsafe {
             pecos_register_execution_context(std::ptr::null_mut());

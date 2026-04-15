@@ -14,7 +14,7 @@ from pecos_rslib.qec import (
 )
 
 
-class TestErrorMechanismParsing:
+class TestFaultMechanismParsing:
     """Test parsing of error mechanisms."""
 
     def test_parse_simple_mechanism(self) -> None:

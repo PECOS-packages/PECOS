@@ -7,9 +7,11 @@ Provides a flexible, runtime-configurable surface code patch
 with geometry stored as data structures.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from pecos_rslib.num import zeros
 
@@ -21,6 +23,7 @@ from pecos.qec.surface.layouts import (
     get_rotated_logical_x,
     get_rotated_logical_z,
 )
+from pecos.qec.surface.schedule import get_stab_schedule
 
 if TYPE_CHECKING:
     import pecos
@@ -55,6 +58,114 @@ class LogicalOperator:
 
     op_type: str
     data_qubits: tuple[int, ...]
+
+
+class StabilizerScheduleEntry(TypedDict):
+    """Public metadata for one stabilizer schedule touch."""
+
+    round_0based: int
+    data_qubit: int
+    touch_label: str
+
+
+class SurfacePatchDescriptor(TypedDict):
+    """Public summary of one surface-code patch."""
+
+    distance: int
+    dx: int
+    dz: int
+    rotated: bool
+    orientation: str
+    num_data: int
+    num_ancilla: int
+    num_qubits: int
+
+
+class StabilizerDescriptor(TypedDict):
+    """Public descriptor for one stabilizer."""
+
+    stabilizer_kind: str
+    stabilizer_index: int
+    stabilizer_is_boundary: bool
+    stabilizer_region: str
+    schedule_rounds: list[int]
+    schedule_start_round: int | None
+    schedule_end_round: int | None
+    schedule_entries: list[StabilizerScheduleEntry]
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+
+
+class LogicalDescriptor(TypedDict):
+    """Public descriptor for one logical operator."""
+
+    logical_type: str
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+    support_axis: str
+
+
+def _get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
+    """Return a coarse region label like ``top+left`` for a stabilizer."""
+    geom = patch.geometry
+    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
+    avg_row = sum(row for row, _ in positions) / len(positions)
+    avg_col = sum(col for _, col in positions) / len(positions)
+    row_label = "top" if avg_row < (geom.dx - 1) / 2 else "bottom"
+    col_label = "left" if avg_col < (geom.dz - 1) / 2 else "right"
+    return f"{row_label}+{col_label}"
+
+
+def _get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
+    """Label how a data qubit sits relative to a stabilizer support."""
+    geom = patch.geometry
+    if data_qubit not in stab.data_qubits:
+        msg = f"Qubit {data_qubit} is not in stabilizer {stab.stab_type}{stab.index}"
+        raise ValueError(msg)
+
+    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
+    data_row, data_col = geom.id_to_pos[data_qubit]
+    rows = [row for row, _ in positions]
+    cols = [col for _, col in positions]
+
+    if len(set(rows)) == 1:
+        return "left" if data_col == min(cols) else "right"
+    if len(set(cols)) == 1:
+        return "top" if data_row == min(rows) else "bottom"
+
+    vertical = "T" if data_row == min(rows) else "B"
+    horizontal = "L" if data_col == min(cols) else "R"
+    return vertical + horizontal
+
+
+def _get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
+    """Return metadata describing one stabilizer's schedule and geometry."""
+    entries: list[StabilizerScheduleEntry] = [
+        {
+            "round_0based": round_0based,
+            "data_qubit": data_qubit,
+            "touch_label": _get_stabilizer_touch_label(stab, patch, data_qubit),
+        }
+        for round_0based, data_qubit in get_stab_schedule(
+            stab.stab_type,
+            stab.data_qubits,
+            stab.is_boundary,
+            patch.distance,
+        )
+    ]
+    rounds = [int(entry["round_0based"]) for entry in entries]
+    return {
+        "stabilizer_kind": stab.stab_type,
+        "stabilizer_index": stab.index,
+        "stabilizer_is_boundary": stab.is_boundary,
+        "stabilizer_region": _get_stabilizer_region(stab, patch),
+        "schedule_rounds": rounds,
+        "schedule_start_round": rounds[0] if rounds else None,
+        "schedule_end_round": rounds[-1] if rounds else None,
+        "schedule_entries": entries,
+    }
 
 
 @dataclass
@@ -187,7 +298,7 @@ class SurfacePatch:
         orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM,
         *,
         rotated: bool = True,
-    ) -> "SurfacePatch":
+    ) -> SurfacePatch:
         """Create a surface code patch.
 
         Args:
@@ -259,7 +370,87 @@ class SurfacePatch:
         """True if using rotated layout, False for standard layout."""
         return self.geometry.rotated
 
-    def get_parity_matrix(self, stab_type: str) -> "pecos.Array":
+    @property
+    def num_ancilla(self) -> int:
+        """Number of ancilla qubits."""
+        return self.geometry.num_ancilla
+
+    def get_patch_descriptor(self) -> SurfacePatchDescriptor:
+        """Return a public metadata summary for this patch."""
+        return {
+            "distance": self.distance,
+            "dx": self.dx,
+            "dz": self.dz,
+            "rotated": self.rotated,
+            "orientation": self.geometry.orientation.name,
+            "num_data": self.num_data,
+            "num_ancilla": self.num_ancilla,
+            "num_qubits": self.num_qubits,
+        }
+
+    def get_stabilizer_descriptor(
+        self,
+        stab_type: str,
+        index: int,
+    ) -> StabilizerDescriptor:
+        """Return one public stabilizer descriptor."""
+        stabs = self.x_stabilizers if stab_type.upper() == "X" else self.z_stabilizers
+        stab = stabs[index]
+        metadata = _get_stabilizer_schedule_metadata(stab, self)
+        positions = [list(self.geometry.id_to_pos[q]) for q in stab.data_qubits]
+        return {
+            **metadata,
+            "data_qubits": list(stab.data_qubits),
+            "data_qubit_positions": positions,
+            "weight": stab.weight,
+        }
+
+    def iter_stabilizer_descriptors(
+        self,
+        stab_type: str | None = None,
+    ) -> list[StabilizerDescriptor]:
+        """Iterate over public stabilizer descriptors."""
+        if stab_type is None:
+            descriptors: list[StabilizerDescriptor] = []
+            descriptors.extend(self.iter_stabilizer_descriptors("X"))
+            descriptors.extend(self.iter_stabilizer_descriptors("Z"))
+            return descriptors
+
+        kind = stab_type.upper()
+        stabs = self.x_stabilizers if kind == "X" else self.z_stabilizers
+        return [self.get_stabilizer_descriptor(kind, stab.index) for stab in stabs]
+
+    def get_logical_descriptor(self, logical_type: str) -> LogicalDescriptor:
+        """Return one public logical-operator descriptor."""
+        kind = logical_type.upper()
+        logical = self.geometry.logical_x if kind == "X" else self.geometry.logical_z
+        if logical is None:
+            msg = f"Logical operator {kind} is not available"
+            raise ValueError(msg)
+
+        positions = [list(self.geometry.id_to_pos[q]) for q in logical.data_qubits]
+        rows = {row for row, _ in map(tuple, positions)}
+        cols = {col for _, col in map(tuple, positions)}
+        support_axis = "vertical" if len(cols) == 1 else "horizontal"
+        if len(rows) == 1 and len(cols) != 1:
+            support_axis = "horizontal"
+
+        return {
+            "logical_type": logical.op_type,
+            "data_qubits": list(logical.data_qubits),
+            "data_qubit_positions": positions,
+            "weight": len(logical.data_qubits),
+            "support_axis": support_axis,
+        }
+
+    def iter_logical_descriptors(self) -> list[LogicalDescriptor]:
+        """Iterate over logical descriptors in X, Z order."""
+        return [
+            self.get_logical_descriptor("X"),
+            self.get_logical_descriptor("Z"),
+        ]
+
+    def get_parity_matrix(self, stab_type: str) -> pecos.Array:
         """Get parity check matrix."""
         stabs = self.x_stabilizers if stab_type == "X" else self.z_stabilizers
         num_stab = len(stabs)
@@ -293,23 +484,23 @@ class SurfacePatchBuilder:
         self._orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM
         self._rotated: bool = True
 
-    def with_distance(self, distance: int) -> "SurfacePatchBuilder":
+    def with_distance(self, distance: int) -> SurfacePatchBuilder:
         """Set symmetric distance."""
         self._distance = distance
         return self
 
-    def with_distances(self, dx: int, dz: int) -> "SurfacePatchBuilder":
+    def with_distances(self, dx: int, dz: int) -> SurfacePatchBuilder:
         """Set asymmetric distances."""
         self._dx = dx
         self._dz = dz
         return self
 
-    def with_orientation(self, orientation: PatchOrientation) -> "SurfacePatchBuilder":
+    def with_orientation(self, orientation: PatchOrientation) -> SurfacePatchBuilder:
         """Set patch orientation."""
         self._orientation = orientation
         return self
 
-    def rotated(self) -> "SurfacePatchBuilder":
+    def rotated(self) -> SurfacePatchBuilder:
         """Use rotated surface code layout (default).
 
         The rotated layout is more common and uses fewer physical qubits
@@ -318,7 +509,7 @@ class SurfacePatchBuilder:
         self._rotated = True
         return self
 
-    def standard(self) -> "SurfacePatchBuilder":
+    def standard(self) -> SurfacePatchBuilder:
         """Use standard (non-rotated) surface code layout.
 
         The standard layout uses more physical qubits but may be preferred

@@ -59,7 +59,7 @@ repository = "https://github.com/PECOS-packages/PECOS"
 
 [project.optional-dependencies]
 stim = [
-    "stim>=1.12.0",  # For Stim circuit conversion and interoperability
+    "stim>=1.15.0",  # For Stim circuit conversion and interoperability
 ]
 visualization = [
     "matplotlib>=2.2.0",
@@ -99,3 +99,8 @@ packages = ["src/pecos"]
 
 [tool.black]
 line-length = 120
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: mark tests that provide extra integration coverage but are excluded from the default fast Python test lane",
+]

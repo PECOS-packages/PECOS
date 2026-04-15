@@ -5,11 +5,13 @@
 //!
 //! The actual FFI implementation (with `#[no_mangle]` functions) is in `pecos-qis-ffi`.
 
-use std::collections::BTreeMap;
-
 mod operations;
 
 pub use operations::{Operation, QuantumOp};
+
+const DEFAULT_OPERATION_CAPACITY: usize = 1024;
+const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;
+const DEFAULT_ID_CAPACITY: usize = 128;
 
 /// Collection of quantum operations from program execution
 ///
@@ -21,7 +23,7 @@ pub struct OperationCollector {
     pub operations: Vec<Operation>,
 
     /// Mapping of measurement result IDs to their values (when known)
-    pub measurements: BTreeMap<usize, Option<bool>>,
+    pub measurements: Vec<Option<bool>>,
 
     /// Allocated qubit IDs
     pub allocated_qubits: Vec<usize>,
@@ -44,10 +46,10 @@ impl OperationCollector {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            operations: Vec::new(),
-            measurements: BTreeMap::new(),
-            allocated_qubits: Vec::new(),
-            allocated_results: Vec::new(),
+            operations: Vec::with_capacity(DEFAULT_OPERATION_CAPACITY),
+            measurements: Vec::with_capacity(DEFAULT_MEASUREMENT_CAPACITY),
+            allocated_qubits: Vec::with_capacity(DEFAULT_ID_CAPACITY),
+            allocated_results: Vec::with_capacity(DEFAULT_ID_CAPACITY),
             next_qubit_id: 0,
             next_result_id: 0,
         }
@@ -71,26 +73,41 @@ impl OperationCollector {
         let id = self.next_result_id;
         self.next_result_id += 1;
         self.allocated_results.push(id);
-        self.measurements.insert(id, None);
+        match self.measurements.len().cmp(&id) {
+            std::cmp::Ordering::Equal => self.measurements.push(None),
+            std::cmp::Ordering::Less => {
+                self.measurements.resize(id, None);
+                self.measurements.push(None);
+            }
+            std::cmp::Ordering::Greater => {
+                self.measurements[id] = None;
+            }
+        }
         id
     }
 
     /// Store a measurement result (used by runtime when results are available)
     pub fn store_result(&mut self, result_id: usize, value: bool) {
-        self.measurements.insert(result_id, Some(value));
+        if self.measurements.len() <= result_id {
+            self.measurements.resize(result_id + 1, None);
+        }
+        self.measurements[result_id] = Some(value);
     }
 
     /// Get a measurement result (blocks until available in actual runtime)
     #[must_use]
     pub fn get_result(&self, result_id: usize) -> Option<bool> {
-        self.measurements.get(&result_id).and_then(|v| *v)
+        self.measurements.get(result_id).copied().flatten()
     }
 
     /// Pre-populate measurement results (for conditional execution)
     /// This allows setting measurement outcomes before program execution
     pub fn set_measurement_results(&mut self, results: impl IntoIterator<Item = (usize, bool)>) {
         for (result_id, value) in results {
-            self.measurements.insert(result_id, Some(value));
+            if self.measurements.len() <= result_id {
+                self.measurements.resize(result_id + 1, None);
+            }
+            self.measurements[result_id] = Some(value);
         }
     }
 
@@ -165,8 +182,8 @@ mod tests {
         assert_eq!(r1, 1);
         assert_eq!(collector.allocated_results, vec![0, 1]);
         // Results should be initialized to None
-        assert_eq!(collector.measurements.get(&0), Some(&None));
-        assert_eq!(collector.measurements.get(&1), Some(&None));
+        assert_eq!(collector.measurements.first(), Some(&None));
+        assert_eq!(collector.measurements.get(1), Some(&None));
     }
 
     #[test]

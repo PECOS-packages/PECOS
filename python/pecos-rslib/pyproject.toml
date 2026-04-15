@@ -30,7 +30,7 @@ classifiers = [
 ]
 
 [build-system]
-requires = ["maturin>=1.2,<2.0"]
+requires = ["maturin>=1.13.1,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
@@ -41,7 +41,7 @@ dev = [
     "patchelf; platform_system != 'Windows'",  # For setting rpath in shared libraries during development (Linux/macOS only)
 ]
 test = [
-    "pytest>=7.0",
+    "pytest>=9.0",
 ]
 numpy-compat = [  # NumPy/SciPy compatibility tests
     "numpy>=1.20",

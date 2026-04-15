@@ -1065,4 +1065,83 @@ mod tests {
         // Should have 2 measurements (2 rounds)
         assert_eq!(map.detectors.len(), 2);
     }
+
+    fn pauli_signature(prop: &PauliProp, qubits: &[usize]) -> Vec<(bool, bool)> {
+        qubits
+            .iter()
+            .map(|&q| (prop.contains_x(q), prop.contains_z(q)))
+            .collect()
+    }
+
+    #[test]
+    fn test_rz_propagation_matches_sz() {
+        let mut rotated = TickCircuit::new();
+        rotated.tick().rz(pecos_core::Angle64::QUARTER_TURN, &[0]);
+
+        let mut simplified = TickCircuit::new();
+        simplified.tick().sz(&[0]);
+
+        let mut rotated_prop = PauliProp::new();
+        rotated_prop.track_x(&[0]);
+        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward);
+
+        let mut simplified_prop = PauliProp::new();
+        simplified_prop.track_x(&[0]);
+        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward);
+
+        assert_eq!(
+            pauli_signature(&rotated_prop, &[0]),
+            pauli_signature(&simplified_prop, &[0])
+        );
+    }
+
+    #[test]
+    fn test_r1xy_propagation_matches_sx() {
+        let mut rotated = TickCircuit::new();
+        rotated.tick().r1xy(
+            pecos_core::Angle64::QUARTER_TURN,
+            pecos_core::Angle64::ZERO,
+            &[0],
+        );
+
+        let mut simplified = TickCircuit::new();
+        simplified.tick().sx(&[0]);
+
+        let mut rotated_prop = PauliProp::new();
+        rotated_prop.track_z(&[0]);
+        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward);
+
+        let mut simplified_prop = PauliProp::new();
+        simplified_prop.track_z(&[0]);
+        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward);
+
+        assert_eq!(
+            pauli_signature(&rotated_prop, &[0]),
+            pauli_signature(&simplified_prop, &[0])
+        );
+    }
+
+    #[test]
+    fn test_rzz_propagation_matches_szz() {
+        let mut rotated = TickCircuit::new();
+        rotated
+            .tick()
+            .rzz(pecos_core::Angle64::QUARTER_TURN, &[(0, 1)]);
+
+        let mut simplified = TickCircuit::new();
+        simplified.tick().szz(&[(0, 1)]);
+
+        let mut rotated_prop = PauliProp::new();
+        rotated_prop.track_x(&[0]);
+        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward);
+
+        let mut simplified_prop = PauliProp::new();
+        simplified_prop.track_x(&[0]);
+        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward);
+
+        assert_eq!(
+            pauli_signature(&rotated_prop, &[0, 1]),
+            pauli_signature(&simplified_prop, &[0, 1])
+        );
+    }
 }

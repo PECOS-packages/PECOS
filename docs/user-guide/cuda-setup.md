@@ -402,34 +402,37 @@ from pecos_rslib_cuda import is_cuquantum_available
 
 print(f"cuQuantum available: {is_cuquantum_available()}")
 
-# State vector simulator (up to ~30 qubits)
-from pecos.simulators import CudaStateVec
+if is_cuquantum_available():
+    # State vector simulator (up to ~30 qubits)
+    from pecos.simulators import CudaStateVec
 
-sim = CudaStateVec(10)
-sim.run_gate("H", [0])
-sim.run_gate("CX", [(0, 1)])
-results = sim.run_gate("Measure", [0, 1])
+    sim = CudaStateVec(10)
+    sim.run_gate("H", [0])
+    sim.run_gate("CX", [(0, 1)])
+    results = sim.run_gate("Measure", [0, 1])
 
-# Stabilizer simulator (Clifford-only, scales to 1000s of qubits)
-from pecos.simulators import CudaStabilizer
+    # Stabilizer simulator (Clifford-only, scales to 1000s of qubits)
+    from pecos.simulators import CudaStabilizer
 
-sim = CudaStabilizer(1000)
-sim.run_gate("H", [0])
-for i in range(100):
-    sim.run_gate("CX", [(i, i + 1)])
-results = sim.run_gate("Measure", list(range(100)))
+    sim = CudaStabilizer(1000)
+    sim.run_gate("H", [0])
+    for i in range(100):
+        sim.run_gate("CX", [(i, i + 1)])
+    results = sim.run_gate("Measure", list(range(100)))
 
-# Using with QuantumSimulator
-from pecos.simulators.quantum_simulator import QuantumSimulator
+    # Using with QuantumSimulator
+    from pecos.simulators.quantum_simulator import QuantumSimulator
 
-qsim = QuantumSimulator(backend="CudaStateVec")
-qsim.init(4)
+    qsim = QuantumSimulator(backend="CudaStateVec")
+    qsim.init(4)
 
-# Direct access to cuQuantum components
-from pecos_rslib_cuda import CuTensorNet, CuDensityMat
+    # Direct access to cuQuantum components
+    from pecos_rslib_cuda import CuTensorNet, CuDensityMat
 
-print(f"cuTensorNet version: {CuTensorNet.version()}")
-print(f"cuDensityMat version: {CuDensityMat.version()}")
+    print(f"cuTensorNet version: {CuTensorNet.version()}")
+    print(f"cuDensityMat version: {CuDensityMat.version()}")
+else:
+    print("Rust cuQuantum bindings are not available on this machine.")
 ```
 
 ### Choosing Between Python and Rust Bindings
@@ -493,10 +496,13 @@ To use GPU simulators in PECOS:
 
    print(f"cuQuantum available: {is_cuquantum_available()}")
 
-   from pecos.simulators import CudaStateVec, CudaStabilizer
+   if is_cuquantum_available():
+       from pecos.simulators import CudaStateVec, CudaStabilizer
 
-   sim = CudaStateVec(4)  # State vector (~30 qubits max)
-   sim = CudaStabilizer(1000)  # Stabilizer (1000s of qubits, Clifford only)
+       sim = CudaStateVec(4)  # State vector (~30 qubits max)
+       sim = CudaStabilizer(1000)  # Stabilizer (1000s of qubits, Clifford only)
+   else:
+       print("Rust cuQuantum bindings are not available on this machine.")
    ```
 
 ### Choosing an Approach

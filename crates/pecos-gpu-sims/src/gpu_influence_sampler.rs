@@ -3,6 +3,7 @@
 //! Each thread handles ONE shot and ALL locations.
 //! This eliminates atomic contention since each shot has its own output region.
 
+use crate::gpu_probe::gpu_context;
 use bytemuck::{Pod, Zeroable};
 use pecos_random::{PecosRng, time_seed};
 use wgpu::util::DeviceExt;
@@ -177,22 +178,9 @@ impl GpuInfluenceSampler {
     }
 
     fn create_internal(map: &GpuInfluenceMapData, seed: u64) -> Result<Self, String> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| "No GPU adapter found")?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("InfluenceSampler Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: adapter.limits(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("Failed to create device: {e}"))?;
+        let ctx = gpu_context().map_err(|e| e.to_string())?;
+        let device = ctx.device;
+        let queue = ctx.queue;
 
         // Helper to create buffer from data
         let create_buffer = |data: &[u32], label: &str| -> wgpu::Buffer {
@@ -658,8 +646,6 @@ impl GpuInfluenceSampler {
         raw
     }
 }
-
-crate::impl_gpu_drop!(GpuInfluenceSampler);
 
 /// Result from GPU sampling.
 pub struct GpuSamplingResult {

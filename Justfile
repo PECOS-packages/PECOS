@@ -156,7 +156,7 @@ pytest *args:
     else
         uv run pytest python/pecos-rslib/tests -m "not performance"
         uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-        uv run pytest python/quantum-pecos/tests -m "not optional_dependency"
+        uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run pytest python/selene-plugins
     fi
 
@@ -481,6 +481,11 @@ pytest-dep:
     uv run pytest python/pecos-rslib/tests -m "optional_dependency"
     uv run pytest python/quantum-pecos/tests -m "optional_dependency"
 
+# Run the slower integration lane (excluded from the default fast lane)
+[group('test')]
+pytest-slow:
+    uv run pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
+
 
 
 
@@ -497,20 +502,28 @@ setup-quiet:
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: if quantum-pecos is importable, deps are likely fine
-    if uv run --frozen python -c "import pecos" 2>/dev/null; then
+    # Quick check: ensure the packages used by the default dev/test lane are importable.
+    # This catches newly added workspace members that an older .venv may be missing.
+    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_clifford_rz', 'pecos_selene_stabilizer', 'pecos_selene_statevec'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
         exit 0
     fi
-    echo "Python deps not installed, running uv sync..."
+    echo "Python deps incomplete, running uv sync..."
     uv sync --project . --all-packages
 
 [private]
 build-selene:
     #!/usr/bin/env bash
     set -euo pipefail
+    PLUGIN_DIRS=()
+    for DIR in python/selene-plugins/pecos-selene-*/; do
+        [ -d "$DIR" ] || continue
+        [ -f "$DIR/Cargo.toml" ] || continue
+        [ -f "$DIR/pyproject.toml" ] || continue
+        PLUGIN_DIRS+=("$DIR")
+    done
     # Check if any selene source changed since last install
     NEEDS_BUILD=false
-    for DIR in python/selene-plugins/pecos-selene-*/; do
+    for DIR in "${PLUGIN_DIRS[@]}"; do
         PKG=$(basename "$DIR")
         DEST="$DIR/python/${PKG//-/_}/_dist/lib/"
         SO=$(find "$DEST" -name "*.so" 2>/dev/null | head -1 || true)
@@ -531,7 +544,7 @@ build-selene:
     fi
     echo "Building Selene plugins..."
     CARGO_ARGS=""
-    for DIR in python/selene-plugins/pecos-selene-*/; do
+    for DIR in "${PLUGIN_DIRS[@]}"; do
         CARGO_ARGS="$CARGO_ARGS -p $(basename "$DIR")"
     done
     if [ -n "$CARGO_ARGS" ]; then

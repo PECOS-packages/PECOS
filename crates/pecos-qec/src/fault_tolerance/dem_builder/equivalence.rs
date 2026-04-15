@@ -64,7 +64,7 @@ use super::types::combine_probabilities;
 // Parsed DEM Types
 // ============================================================================
 
-/// A single error mechanism parsed from DEM format.
+/// A single fault mechanism parsed from DEM format.
 ///
 /// Can represent both simple mechanisms (D0 D1) and decomposed ones (D0 ^ D1).
 #[derive(Debug, Clone)]

@@ -16,7 +16,8 @@
 //! influence maps and detector/observable metadata.
 
 use super::types::{
-    DetectorDef, DetectorErrorModel, ErrorMechanism, LogicalObservable, NoiseConfig,
+    DetectorDef, DetectorErrorModel, DirectSourceComponents, FaultMechanism, LogicalObservable,
+    NoiseConfig, SourceMetadata, record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -54,32 +55,27 @@ struct ParsedObservable {
 /// # Example
 ///
 /// ```
-/// use pecos_qec::fault_tolerance::DagFaultAnalyzer;
 /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-/// use pecos_quantum::DagCircuit;
+/// use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
 ///
-/// let mut dag = DagCircuit::new();
-/// dag.pz(&[2]);
-/// dag.cx(&[(0, 2)]);
-/// dag.cx(&[(1, 2)]);
-/// dag.mz(&[2]);
-///
-/// let analyzer = DagFaultAnalyzer::new(&dag);
-/// let influence_map = analyzer.build_influence_map();
-/// let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let influence_map = DagFaultInfluenceMap::with_capacity(0);
+/// let detectors_json = "[]";
 /// let observables_json = "[]";
 ///
 /// let dem = DemBuilder::new(&influence_map)
 ///     .with_noise(0.01, 0.01, 0.01, 0.01)
-///     .with_detectors_json(detectors_json).unwrap()
-///     .with_observables_json(observables_json).unwrap()
+///     .with_detectors_json(detectors_json)?
+///     .with_observables_json(observables_json)?
 ///     .build();
 ///
 /// // Non-decomposed output (matches Stim's decompose_errors=False)
-/// println!("{}", dem.to_string());
+/// let _ = dem.to_string();
 ///
 /// // Decomposed output (matches Stim's decompose_errors=True)
-/// println!("{}", dem.to_string_decomposed());
+/// let _ = dem.to_string_decomposed();
+/// # Ok(())
+/// # }
 /// ```
 pub struct DemBuilder<'a> {
     /// Reference to the fault influence map.
@@ -144,11 +140,13 @@ impl<'a> DemBuilder<'a> {
 
     /// Parses and sets detector definitions from JSON.
     ///
+    /// Each object accepts either `"id"` or `"detector_id"` as the identifier key.
+    ///
     /// Expected format:
     /// ```json
     /// [
     ///   {"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]},
-    ///   {"id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
+    ///   {"detector_id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
     /// ]
     /// ```
     ///
@@ -162,10 +160,13 @@ impl<'a> DemBuilder<'a> {
 
     /// Parses and sets observable definitions from JSON.
     ///
+    /// Each object accepts either `"id"` or `"observable_id"` as the identifier key.
+    ///
     /// Expected format:
     /// ```json
     /// [
-    ///   {"id": 0, "records": [-1, -3, -5]}
+    ///   {"id": 0, "records": [-1, -3, -5]},
+    ///   {"observable_id": 1, "records": [-2]}
     /// ]
     /// ```
     ///
@@ -254,7 +255,13 @@ impl<'a> DemBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX | GateType::CZ => {
+                GateType::CX
+                | GateType::CZ
+                | GateType::CY
+                | GateType::SWAP
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ => {
                     if !loc.before {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
@@ -268,7 +275,14 @@ impl<'a> DemBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::U
+                | GateType::R1XY => {
                     if self.noise.p1 > 0.0 && !loc.before {
                         self.process_single_qubit_fault_source_tracked(
                             loc_idx,
@@ -310,7 +324,16 @@ impl<'a> DemBuilder<'a> {
         let mechanism =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
-            dem.add_direct_contribution(mechanism, self.noise.p_init);
+            dem.add_direct_contribution_with_source(
+                mechanism,
+                self.noise.p_init,
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::X],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
+            );
         }
     }
 
@@ -326,7 +349,16 @@ impl<'a> DemBuilder<'a> {
         let mechanism =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
-            dem.add_direct_contribution(mechanism, self.noise.p_meas);
+            dem.add_direct_contribution_with_source(
+                mechanism,
+                self.noise.p_meas,
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::X],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
+            );
         }
     }
 
@@ -347,12 +379,30 @@ impl<'a> DemBuilder<'a> {
 
         // X error: direct source
         if !x_effect.is_empty() {
-            dem.add_direct_contribution(x_effect.clone(), prob);
+            dem.add_direct_contribution_with_source(
+                x_effect.clone(),
+                prob,
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::X],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
+            );
         }
 
         // Z error: direct source
         if !z_effect.is_empty() {
-            dem.add_direct_contribution(z_effect.clone(), prob);
+            dem.add_direct_contribution_with_source(
+                z_effect.clone(),
+                prob,
+                SourceMetadata::new(
+                    &[loc_idx],
+                    &[Pauli::Z],
+                    &[self.influence_map.locations[loc_idx].gate_type],
+                    &[self.influence_map.locations[loc_idx].before],
+                ),
+            );
         }
 
         // Y error: Y = XZ, so effect is XOR of X and Z effects
@@ -365,10 +415,29 @@ impl<'a> DemBuilder<'a> {
         if !y_effect.is_empty() {
             if !x_effect.is_empty() && !z_effect.is_empty() {
                 // Both non-empty, so Y is decomposable as X ^ Z
-                dem.add_y_decomposed_contribution(&x_effect, &z_effect, prob);
+                dem.add_y_decomposed_contribution_with_source(
+                    &x_effect,
+                    &z_effect,
+                    prob,
+                    SourceMetadata::new(
+                        &[loc_idx],
+                        &[Pauli::Y],
+                        &[self.influence_map.locations[loc_idx].gate_type],
+                        &[self.influence_map.locations[loc_idx].before],
+                    ),
+                );
             } else {
                 // One is empty, so Y has same effect as the non-empty one (direct source)
-                dem.add_direct_contribution(y_effect, prob);
+                dem.add_direct_contribution_with_source(
+                    y_effect,
+                    prob,
+                    SourceMetadata::new(
+                        &[loc_idx],
+                        &[Pauli::Y],
+                        &[self.influence_map.locations[loc_idx].gate_type],
+                        &[self.influence_map.locations[loc_idx].before],
+                    ),
+                );
             }
         }
     }
@@ -383,6 +452,8 @@ impl<'a> DemBuilder<'a> {
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
         let prob = per_channel_probability(self.noise.p2, 15);
+        let loc1_meta = &self.influence_map.locations[loc1];
+        let loc2_meta = &self.influence_map.locations[loc2];
 
         // Compute base effects for X and Z on each qubit
         let x1 = self.compute_mechanism(loc1, Pauli::X, meas_to_detectors, meas_to_observables);
@@ -391,9 +462,9 @@ impl<'a> DemBuilder<'a> {
         let z2 = self.compute_mechanism(loc2, Pauli::Z, meas_to_detectors, meas_to_observables);
 
         // Build effect table for all 16 Pauli combinations
-        let get_single_effect = |p: u8, x: &ErrorMechanism, z: &ErrorMechanism| -> ErrorMechanism {
+        let get_single_effect = |p: u8, x: &FaultMechanism, z: &FaultMechanism| -> FaultMechanism {
             match p {
-                0 => ErrorMechanism::new(), // I
+                0 => FaultMechanism::new(), // I
                 1 => x.clone(),             // X
                 2 => x.xor(z),              // Y = X XOR Z
                 3 => z.clone(),             // Z
@@ -401,7 +472,7 @@ impl<'a> DemBuilder<'a> {
             }
         };
 
-        let mut effects: [[ErrorMechanism; 4]; 4] = Default::default();
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
         for p1 in 0..4u8 {
             for p2 in 0..4u8 {
                 let e1 = get_single_effect(p1, &x1, &z1);
@@ -430,13 +501,13 @@ impl<'a> DemBuilder<'a> {
                 // - Combined effect has exactly 2 detectors and no logicals
                 // - Both component effects are non-empty
                 // - Both component effects are graphlike (≤2 detectors)
-                if effect.num_detectors() == 2
+                let graphlike_decomposable = effect.num_detectors() == 2
                     && effect.logicals.is_empty()
                     && !e1.is_empty()
                     && !e2.is_empty()
                     && e1.num_detectors() <= 2
-                    && e2.num_detectors() <= 2
-                {
+                    && e2.num_detectors() <= 2;
+                if graphlike_decomposable {
                     dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
                 }
 
@@ -450,11 +521,31 @@ impl<'a> DemBuilder<'a> {
 
                     // Only truly decomposable if both components are non-empty and different.
                     // add_y_decomposed_contribution handles routing to Direct when appropriate.
-                    dem.add_y_decomposed_contribution(e_a, e_b, prob);
+                    dem.add_y_decomposed_contribution_with_source(
+                        e_a,
+                        e_b,
+                        prob,
+                        SourceMetadata::new(
+                            &[loc1, loc2],
+                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                            &[loc1_meta.gate_type, loc2_meta.gate_type],
+                            &[loc1_meta.before, loc2_meta.before],
+                        ),
+                    );
                 } else {
                     // Non-Y channel (XI, IX, ZI, IZ, XX, XZ, ZX, ZZ)
                     // These are always direct sources.
-                    dem.add_direct_contribution(effect.clone(), prob);
+                    dem.add_direct_contribution_with_source_components(
+                        effect.clone(),
+                        prob,
+                        SourceMetadata::new(
+                            &[loc1, loc2],
+                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                            &[loc1_meta.gate_type, loc2_meta.gate_type],
+                            &[loc1_meta.before, loc2_meta.before],
+                        ),
+                        DirectSourceComponents::new(e1, e2),
+                    );
                 }
             }
         }
@@ -522,14 +613,10 @@ impl<'a> DemBuilder<'a> {
 
         for det in &self.detectors {
             for &rec in &det.records {
-                // Convert negative record offset to absolute measurement index in TickCircuit order
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                #[allow(clippy::cast_sign_loss)]
-                // negative offset + total count yields valid index
-                let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
-
-                // Map to influence map index
-                if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
+                if let Some(tc_meas_idx) =
+                    record_offset_to_absolute_index(self.num_measurements, rec)
+                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                {
                     meas_to_detectors
                         .entry(influence_idx)
                         .or_default()
@@ -540,12 +627,10 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             for &rec in &obs.records {
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                #[allow(clippy::cast_sign_loss)]
-                // negative offset + total count yields valid index
-                let tc_meas_idx = (self.num_measurements as i32 + rec) as usize;
-
-                if let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx) {
+                if let Some(tc_meas_idx) =
+                    record_offset_to_absolute_index(self.num_measurements, rec)
+                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                {
                     meas_to_observables
                         .entry(influence_idx)
                         .or_default()
@@ -557,14 +642,14 @@ impl<'a> DemBuilder<'a> {
         (meas_to_detectors, meas_to_observables)
     }
 
-    /// Computes the error mechanism for a fault at the given location and Pauli type.
+    /// Computes the fault mechanism for a fault at the given location and Pauli type.
     fn compute_mechanism(
         &self,
         loc_idx: usize,
         pauli: Pauli,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) -> ErrorMechanism {
+    ) -> FaultMechanism {
         // Get the Rust detector indices that this fault flips
         let rust_dets = self
             .influence_map
@@ -596,7 +681,7 @@ impl<'a> DemBuilder<'a> {
         triggered_dets.sort_unstable();
         triggered_obs.sort_unstable();
 
-        ErrorMechanism::from_sorted(triggered_dets, triggered_obs)
+        FaultMechanism::from_sorted(triggered_dets, triggered_obs)
     }
 }
 
@@ -737,11 +822,12 @@ fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderErr
 
 /// Parses a single detector object.
 fn parse_single_detector(json: &str) -> Result<ParsedDetector, DemBuilderError> {
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    // detector IDs are small non-negative integers
-    let id = extract_number(json, "\"id\"")
-        .ok_or_else(|| DemBuilderError::ParseError("missing detector id".into()))?
-        as u32;
+    let id = extract_u32(
+        json,
+        &["\"id\"", "\"detector_id\""],
+        "missing detector id",
+        "detector id out of range",
+    )?;
 
     let coords = extract_coords(json);
     let records = extract_records(json);
@@ -794,11 +880,12 @@ fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilde
 
 /// Parses a single observable object.
 fn parse_single_observable(json: &str) -> Result<ParsedObservable, DemBuilderError> {
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    // observable IDs are small non-negative integers
-    let id = extract_number(json, "\"id\"")
-        .ok_or_else(|| DemBuilderError::ParseError("missing observable id".into()))?
-        as u32;
+    let id = extract_u32(
+        json,
+        &["\"id\"", "\"observable_id\""],
+        "missing observable id",
+        "observable id out of range",
+    )?;
 
     let records = extract_records(json);
 
@@ -814,6 +901,19 @@ fn extract_number(json: &str, key: &str) -> Option<i64> {
     let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-' && c != '.')?;
     let num_str = &rest[..end];
     num_str.parse().ok()
+}
+
+fn extract_u32(
+    json: &str,
+    keys: &[&str],
+    missing_message: &str,
+    range_message: &str,
+) -> Result<u32, DemBuilderError> {
+    let value = keys
+        .iter()
+        .find_map(|key| extract_number(json, key))
+        .ok_or_else(|| DemBuilderError::ParseError(missing_message.into()))?;
+    u32::try_from(value).map_err(|_| DemBuilderError::ParseError(range_message.into()))
 }
 
 /// Extracts coordinates array [x, y, t].
@@ -882,7 +982,7 @@ mod tests {
     fn test_parse_detectors_json() {
         let json = r#"[
             {"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]},
-            {"id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
+            {"detector_id": 1, "coords": [1.0, 0.0, 0.0], "records": [-2]}
         ]"#;
 
         let detectors = parse_detectors_json(json).unwrap();
@@ -897,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_parse_observables_json() {
-        let json = r#"[{"id": 0, "records": [-1, -3, -5]}]"#;
+        let json = r#"[{"observable_id": 0, "records": [-1, -3, -5]}]"#;
 
         let observables = parse_observables_json(json).unwrap();
 

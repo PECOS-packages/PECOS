@@ -48,6 +48,13 @@ unsafe impl Send for SendPtr {}
 #[cfg(feature = "parallel")]
 unsafe impl Sync for SendPtr {}
 
+#[cfg(feature = "parallel")]
+#[derive(Clone, Copy)]
+enum RxxRyyKind {
+    Rxx,
+    Ryy,
+}
+
 // =============================================================================
 // Gate Fusion Support
 // =============================================================================
@@ -579,8 +586,12 @@ where
 
     /// Minimum number of qubits for parallel execution to be beneficial.
     /// Below this threshold, parallelism overhead exceeds benefits.
+    /// Empirical: at N=14-18 (state fits in L2/L3), rayon dispatch cost dominates
+    /// per-gate work and fu+par was 1.3-4.6x slower than fused alone. Parallel
+    /// only nets positive at N>=21 where state size (>=32MB) overflows cache and
+    /// memory bandwidth becomes the bottleneck (RTX 4090 host, 2026-04-11).
     #[cfg(feature = "parallel")]
-    const PARALLEL_THRESHOLD_QUBITS: usize = 14;
+    const PARALLEL_THRESHOLD_QUBITS: usize = 21;
 
     /// Set the number of threads for parallel execution.
     ///
@@ -1093,6 +1104,303 @@ where
             pool.install(work);
         } else {
             // Use rayon's global thread pool (all available threads)
+            work();
+        }
+    }
+
+    /// Parallel RXX/RYY over outer blocks. Sign table differs by kind.
+    #[cfg(feature = "parallel")]
+    fn rxx_ryy_parallel(
+        &mut self,
+        step_lo: usize,
+        step_hi: usize,
+        cos: f64,
+        sin: f64,
+        kind: RxxRyyKind,
+    ) {
+        let n = self.real.len();
+        let outer_stride = step_hi * 2;
+        let num_blocks = n / outer_stride;
+
+        // RXX: |00⟩<->|11⟩ coupling has sign -i (s_00_11 = +1 via "+sin*m11")
+        // RYY: |00⟩<->|11⟩ coupling has sign +i (s_00_11 = -1 via "-sin*m11")
+        let s_0011 = match kind {
+            RxxRyyKind::Rxx => 1.0,
+            RxxRyyKind::Ryy => -1.0,
+        };
+
+        let real_ptr = SendPtr(self.real.as_mut_ptr());
+        let imag_ptr = SendPtr(self.imag.as_mut_ptr());
+
+        let work = || {
+            (0..num_blocks).into_par_iter().for_each(|block_idx| {
+                let outer = block_idx * outer_stride;
+                let rp = real_ptr.ptr();
+                let ip = imag_ptr.ptr();
+
+                for mid in (0..step_hi).step_by(step_lo * 2) {
+                    for inner_idx in 0..step_lo {
+                        let base = outer + mid + inner_idx;
+                        let i00 = base;
+                        let i01 = base + step_lo;
+                        let i10 = base + step_hi;
+                        let i11 = base + step_hi + step_lo;
+
+                        // SAFETY: all four indices lie within [outer, outer+outer_stride),
+                        // which is a disjoint block per block_idx.
+                        unsafe {
+                            let r00 = *rp.add(i00);
+                            let m00 = *ip.add(i00);
+                            let r01 = *rp.add(i01);
+                            let m01 = *ip.add(i01);
+                            let r10 = *rp.add(i10);
+                            let m10 = *ip.add(i10);
+                            let r11 = *rp.add(i11);
+                            let m11 = *ip.add(i11);
+
+                            *rp.add(i00) = cos * r00 + s_0011 * sin * m11;
+                            *ip.add(i00) = cos * m00 - s_0011 * sin * r11;
+                            *rp.add(i01) = cos * r01 + sin * m10;
+                            *ip.add(i01) = cos * m01 - sin * r10;
+                            *rp.add(i10) = sin * m01 + cos * r10;
+                            *ip.add(i10) = -sin * r01 + cos * m10;
+                            *rp.add(i11) = s_0011 * sin * m00 + cos * r11;
+                            *ip.add(i11) = -s_0011 * sin * r00 + cos * m11;
+                        }
+                    }
+                }
+            });
+        };
+
+        if let Some(num_threads) = self.num_threads {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build thread pool");
+            pool.install(work);
+        } else {
+            work();
+        }
+    }
+
+    /// Parallel SIMD RZZ: phase-rotate every 4-amp chunk independently.
+    /// Precondition: `q_lo` >= 2 (so 4-amp chunks share the same (`bit_q1`, `bit_q2`)).
+    #[cfg(feature = "parallel")]
+    fn rzz_parallel(
+        &mut self,
+        q1: usize,
+        q2: usize,
+        cos_pos: f64,
+        sin_pos: f64,
+        cos_neg: f64,
+        sin_neg: f64,
+    ) {
+        let n = self.real.len();
+        let num_chunks = n / 4;
+
+        let real_ptr = SendPtr(self.real.as_mut_ptr());
+        let imag_ptr = SendPtr(self.imag.as_mut_ptr());
+
+        let work = || {
+            (0..num_chunks).into_par_iter().for_each(|chunk| {
+                let i = chunk * 4;
+                let bit1 = (i >> q1) & 1;
+                let bit2 = (i >> q2) & 1;
+                let (cos, sin) = if bit1 == bit2 {
+                    (cos_neg, sin_neg)
+                } else {
+                    (cos_pos, sin_pos)
+                };
+                let cos_v = f64x4::splat(cos);
+                let sin_v = f64x4::splat(sin);
+                let rp = real_ptr.ptr();
+                let ip = imag_ptr.ptr();
+
+                // SAFETY: chunks are non-overlapping 4-amp ranges.
+                unsafe {
+                    let re = f64x4::from(std::slice::from_raw_parts(rp.add(i), 4));
+                    let im = f64x4::from(std::slice::from_raw_parts(ip.add(i), 4));
+                    let new_re: [f64; 4] = (cos_v * re - sin_v * im).into();
+                    let new_im: [f64; 4] = (sin_v * re + cos_v * im).into();
+                    std::ptr::copy_nonoverlapping(new_re.as_ptr(), rp.add(i), 4);
+                    std::ptr::copy_nonoverlapping(new_im.as_ptr(), ip.add(i), 4);
+                }
+            });
+        };
+
+        if let Some(num_threads) = self.num_threads {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build thread pool");
+            pool.install(work);
+        } else {
+            work();
+        }
+    }
+
+    /// Parallel SIMD CZ: negate amplitudes at `mask_11` across outer blocks.
+    #[cfg(feature = "parallel")]
+    fn cz_parallel(&mut self, mask_11: usize, step_lo: usize, step_hi: usize) {
+        let n = self.real.len();
+        let outer_stride = step_hi * 2;
+        let num_blocks = n / outer_stride;
+
+        let real_ptr = SendPtr(self.real.as_mut_ptr());
+        let imag_ptr = SendPtr(self.imag.as_mut_ptr());
+
+        let work = || {
+            (0..num_blocks).into_par_iter().for_each(|block_idx| {
+                let i_hi = block_idx * outer_stride;
+                let rp = real_ptr.ptr();
+                let ip = imag_ptr.ptr();
+
+                for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
+                    let mut offset = 0;
+                    while offset + 4 <= step_lo {
+                        let idx = (i_lo + offset) | mask_11;
+                        // SAFETY: blocks are disjoint; idx lies in this block.
+                        unsafe {
+                            let re = f64x4::from(std::slice::from_raw_parts(rp.add(idx), 4));
+                            let im = f64x4::from(std::slice::from_raw_parts(ip.add(idx), 4));
+                            let neg_re: [f64; 4] = (-re).into();
+                            let neg_im: [f64; 4] = (-im).into();
+                            std::ptr::copy_nonoverlapping(neg_re.as_ptr(), rp.add(idx), 4);
+                            std::ptr::copy_nonoverlapping(neg_im.as_ptr(), ip.add(idx), 4);
+                        }
+                        offset += 4;
+                    }
+                }
+            });
+        };
+
+        if let Some(num_threads) = self.num_threads {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build thread pool");
+            pool.install(work);
+        } else {
+            work();
+        }
+    }
+
+    /// Parallel scalar CX for small `step_lo` (< 4). Same outer-block disjoint
+    /// access pattern, scalar swap inside. Handles CX(0,1), CX(1,2) at large N.
+    #[cfg(feature = "parallel")]
+    fn cx_parallel_scalar(
+        &mut self,
+        control_mask: usize,
+        target_mask: usize,
+        step_lo: usize,
+        step_hi: usize,
+    ) {
+        let n = self.real.len();
+        let outer_stride = step_hi * 2;
+        let num_blocks = n / outer_stride;
+
+        let real_ptr = SendPtr(self.real.as_mut_ptr());
+        let imag_ptr = SendPtr(self.imag.as_mut_ptr());
+
+        let work = || {
+            (0..num_blocks).into_par_iter().for_each(|block_idx| {
+                let i_hi = block_idx * outer_stride;
+                let rp = real_ptr.ptr();
+                let ip = imag_ptr.ptr();
+
+                for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
+                    for offset in 0..step_lo {
+                        let base = i_lo + offset;
+                        let a = base | control_mask;
+                        let b = a | target_mask;
+                        // SAFETY: both a and b lie within [i_hi, i_hi+outer_stride).
+                        unsafe {
+                            let ra = *rp.add(a);
+                            let rb = *rp.add(b);
+                            *rp.add(a) = rb;
+                            *rp.add(b) = ra;
+                            let ia = *ip.add(a);
+                            let ib = *ip.add(b);
+                            *ip.add(a) = ib;
+                            *ip.add(b) = ia;
+                        }
+                    }
+                }
+            });
+        };
+
+        if let Some(num_threads) = self.num_threads {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build thread pool");
+            pool.install(work);
+        } else {
+            work();
+        }
+    }
+
+    /// Parallel SIMD CX: swap amplitudes where control=1, across outer blocks of
+    /// size `step_hi * 2`. Each block is written disjointly, so blocks run independently.
+    #[cfg(feature = "parallel")]
+    fn cx_parallel(
+        &mut self,
+        control_mask: usize,
+        target_mask: usize,
+        step_lo: usize,
+        step_hi: usize,
+    ) {
+        let n = self.real.len();
+        let outer_stride = step_hi * 2;
+        let num_blocks = n / outer_stride;
+
+        let real_ptr = SendPtr(self.real.as_mut_ptr());
+        let imag_ptr = SendPtr(self.imag.as_mut_ptr());
+
+        let work = || {
+            (0..num_blocks).into_par_iter().for_each(|block_idx| {
+                let i_hi = block_idx * outer_stride;
+                let rp = real_ptr.ptr();
+                let ip = imag_ptr.ptr();
+
+                for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
+                    let mut offset = 0;
+                    while offset + 4 <= step_lo {
+                        let base = i_lo + offset;
+                        let idx0 = base | control_mask;
+                        let idx1 = idx0 | target_mask;
+
+                        // SAFETY: block_idx * outer_stride .. (block_idx+1) * outer_stride
+                        // is disjoint across blocks; idx0/idx1 lie within this block.
+                        unsafe {
+                            let re0 = f64x4::from(std::slice::from_raw_parts(rp.add(idx0), 4));
+                            let im0 = f64x4::from(std::slice::from_raw_parts(ip.add(idx0), 4));
+                            let re1 = f64x4::from(std::slice::from_raw_parts(rp.add(idx1), 4));
+                            let im1 = f64x4::from(std::slice::from_raw_parts(ip.add(idx1), 4));
+
+                            let arr_re0: [f64; 4] = re1.into();
+                            let arr_im0: [f64; 4] = im1.into();
+                            let arr_re1: [f64; 4] = re0.into();
+                            let arr_im1: [f64; 4] = im0.into();
+
+                            std::ptr::copy_nonoverlapping(arr_re0.as_ptr(), rp.add(idx0), 4);
+                            std::ptr::copy_nonoverlapping(arr_im0.as_ptr(), ip.add(idx0), 4);
+                            std::ptr::copy_nonoverlapping(arr_re1.as_ptr(), rp.add(idx1), 4);
+                            std::ptr::copy_nonoverlapping(arr_im1.as_ptr(), ip.add(idx1), 4);
+                        }
+                        offset += 4;
+                    }
+                }
+            });
+        };
+
+        if let Some(num_threads) = self.num_threads {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build thread pool");
+            pool.install(work);
+        } else {
             work();
         }
     }
@@ -2869,6 +3177,19 @@ where
             let target_mask = 1 << target;
 
             // When q_lo >= 2, indices are contiguous and we can use SIMD
+            #[cfg(feature = "parallel")]
+            if self.parallel_enabled
+                && self.num_qubits >= Self::PARALLEL_THRESHOLD_QUBITS
+                && n / (step_hi * 2) >= 4
+            {
+                if step_lo >= 4 {
+                    self.cx_parallel(control_mask, target_mask, step_lo, step_hi);
+                } else {
+                    self.cx_parallel_scalar(control_mask, target_mask, step_lo, step_hi);
+                }
+                continue;
+            }
+
             if step_lo >= 4 {
                 for i_hi in (0..n).step_by(step_hi * 2) {
                     for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
@@ -2932,6 +3253,16 @@ where
             let step_lo = 1 << q_lo;
             let step_hi = 1 << q_hi;
             let mask_11 = (1 << q1) | (1 << q2);
+
+            #[cfg(feature = "parallel")]
+            if self.parallel_enabled
+                && self.num_qubits >= Self::PARALLEL_THRESHOLD_QUBITS
+                && step_lo >= 4
+                && n / (step_hi * 2) >= 4
+            {
+                self.cz_parallel(mask_11, step_lo, step_hi);
+                continue;
+            }
 
             // When q_lo >= 2, indices are contiguous and we can use SIMD
             if step_lo >= 4 {
@@ -4307,6 +4638,15 @@ where
 
             let q_lo = q1.min(q2);
 
+            #[cfg(feature = "parallel")]
+            if self.parallel_enabled
+                && self.num_qubits >= Self::PARALLEL_THRESHOLD_QUBITS
+                && q_lo >= 2
+            {
+                self.rzz_parallel(q1, q2, cos_pos, sin_pos, cos_neg, sin_neg);
+                continue;
+            }
+
             // When both qubits >= 2, consecutive indices share the same phase
             if q_lo >= 2 {
                 let n = self.real.len();
@@ -4366,6 +4706,15 @@ where
             let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
             let step_lo = 1 << lo;
             let step_hi = 1 << hi;
+
+            #[cfg(feature = "parallel")]
+            if self.parallel_enabled
+                && self.num_qubits >= Self::PARALLEL_THRESHOLD_QUBITS
+                && self.real.len() / (step_hi * 2) >= 4
+            {
+                self.rxx_ryy_parallel(step_lo, step_hi, cos, sin, RxxRyyKind::Rxx);
+                continue;
+            }
 
             // RXX matrix (in computational basis):
             // |00⟩ -> cos|00⟩ - i*sin|11⟩
@@ -4427,6 +4776,15 @@ where
             let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
             let step_lo = 1 << lo;
             let step_hi = 1 << hi;
+
+            #[cfg(feature = "parallel")]
+            if self.parallel_enabled
+                && self.num_qubits >= Self::PARALLEL_THRESHOLD_QUBITS
+                && self.real.len() / (step_hi * 2) >= 4
+            {
+                self.rxx_ryy_parallel(step_lo, step_hi, cos, sin, RxxRyyKind::Ryy);
+                continue;
+            }
 
             // RYY matrix (in computational basis):
             // |00⟩ -> cos|00⟩ + i*sin|11⟩

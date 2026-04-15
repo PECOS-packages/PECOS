@@ -12,12 +12,10 @@
 
 //! Native state vector comparison benchmarks.
 //!
-//! Calls `QuEST` and Qulacs FFI directly (bypassing the PECOS wrapper layer's qubit index
-//! remapping, bounds checks, and `QubitId`/`Angle64` conversions) to give an apples-to-apples
-//! comparison of raw gate computation performance against the pure-Rust PECOS simulators.
-//!
-//! GPU simulators (`GpuStateVec` via wgpu, `CuStateVec` via cuQuantum) are included when their
-//! respective features (`gpu-sims`, `cuquantum`) are enabled.
+//! Compares raw gate computation performance across PECOS's internal state vector simulators
+//! (`StateVecSoA`, `StateVecSoA32`, `StateVecAoS`) at the trait layer, plus GPU simulators
+//! (`GpuStateVec32` via wgpu, `CuStateVec` via cuQuantum) when their respective features
+//! (`gpu-sims`, `cuquantum`) are enabled.
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use pecos_core::{Angle64, QubitId};
@@ -27,14 +25,8 @@ use pecos_simulators::{
 };
 use std::hint::black_box;
 
-#[cfg(feature = "quest")]
-use pecos_quest::bridge::ffi as quest_ffi;
-
-#[cfg(feature = "qulacs")]
-use pecos_qulacs::bridge::ffi as qulacs_ffi;
-
 #[cfg(feature = "gpu-sims")]
-use pecos_gpu_sims::{GpuStateVec, gates as gpu_gates};
+use pecos_gpu_sims::{GpuStateVec32, gates as gpu_gates};
 
 #[cfg(feature = "cuquantum")]
 use pecos_cuquantum::CuStateVec;
@@ -60,80 +52,11 @@ fn pecos_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
 }
 
 // ---------------------------------------------------------------------------
-// QuEST direct FFI helpers
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "quest")]
-struct QuestState {
-    env_ptr: *mut u8,
-    qureg_ptr: *mut u8,
-}
-
-#[cfg(feature = "quest")]
-impl QuestState {
-    fn new(num_qubits: usize) -> Self {
-        let env_ptr = quest_ffi::quest_create_env();
-        assert!(!env_ptr.is_null(), "Failed to create QuEST environment");
-        let qureg_ptr = unsafe { quest_ffi::quest_create_qureg(env_ptr, num_qubits as i32) };
-        assert!(!qureg_ptr.is_null(), "Failed to create QuEST qureg");
-        unsafe { quest_ffi::quest_init_zero_state(qureg_ptr) };
-        Self { env_ptr, qureg_ptr }
-    }
-}
-
-#[cfg(feature = "quest")]
-impl Drop for QuestState {
-    fn drop(&mut self) {
-        unsafe {
-            quest_ffi::quest_destroy_qureg(self.qureg_ptr);
-            quest_ffi::quest_destroy_env(self.env_ptr);
-        }
-    }
-}
-
-#[cfg(feature = "quest")]
-fn quest_circuit(qs: &QuestState, num_qubits: usize, num_layers: usize) {
-    let qureg = qs.qureg_ptr;
-    unsafe {
-        for _layer in 0..num_layers {
-            for q in 0..num_qubits {
-                quest_ffi::quest_apply_hadamard(qureg, q as i32);
-                quest_ffi::quest_apply_rotation_z(qureg, q as i32, 0.1);
-            }
-            for q in 0..num_qubits - 1 {
-                quest_ffi::quest_apply_cnot(qureg, q as i32, (q + 1) as i32);
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Qulacs direct FFI helpers
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "qulacs")]
-fn qulacs_circuit(
-    state: &mut cxx::UniquePtr<qulacs_ffi::QulacsState>,
-    num_qubits: usize,
-    num_layers: usize,
-) {
-    for _layer in 0..num_layers {
-        for q in 0..num_qubits {
-            qulacs_ffi::csim_h(state.pin_mut(), q);
-            qulacs_ffi::csim_rz(state.pin_mut(), q, 0.1);
-        }
-        for q in 0..num_qubits - 1 {
-            qulacs_ffi::csim_cnot(state.pin_mut(), q, q + 1);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GpuStateVec direct helpers (bypasses trait layer, calls wgpu dispatch directly)
+// GpuStateVec32 direct helpers (bypasses trait layer, calls wgpu dispatch directly)
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "gpu-sims")]
-fn gpu_circuit(sim: &mut GpuStateVec, num_qubits: usize, num_layers: usize) {
+fn gpu_circuit(sim: &mut GpuStateVec32, num_qubits: usize, num_layers: usize) {
     let rz_matrix = gpu_gates::rz(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
@@ -290,46 +213,11 @@ fn bench_native_statevec_comparison<M: Measurement>(c: &mut Criterion<M>) {
             },
         );
 
-        // -- QuEST direct FFI --
-        #[cfg(feature = "quest")]
-        {
-            let quest_name = "QuEST_direct";
-            let qs = QuestState::new(num_qubits);
-            group.bench_with_input(
-                BenchmarkId::new(quest_name, &label),
-                &(num_qubits, num_layers),
-                |b, &(nq, nl)| {
-                    b.iter(|| {
-                        unsafe { quest_ffi::quest_init_zero_state(qs.qureg_ptr) };
-                        quest_circuit(&qs, nq, nl);
-                        black_box(());
-                    });
-                },
-            );
-        }
-
-        // -- Qulacs direct FFI --
-        #[cfg(feature = "qulacs")]
-        {
-            let mut state = qulacs_ffi::create_quantum_state(num_qubits);
-            group.bench_with_input(
-                BenchmarkId::new("Qulacs_direct", &label),
-                &(num_qubits, num_layers),
-                |b, &(nq, nl)| {
-                    b.iter(|| {
-                        qulacs_ffi::reset(state.pin_mut());
-                        qulacs_circuit(&mut state, nq, nl);
-                        black_box(());
-                    });
-                },
-            );
-        }
-
-        // -- GpuStateVec direct (wgpu) --
+        // -- GpuStateVec32 direct (wgpu) --
         #[cfg(feature = "gpu-sims")]
-        if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
+        if let Ok(mut sim) = GpuStateVec32::new(num_qubits as u32) {
             group.bench_with_input(
-                BenchmarkId::new("GpuStateVec_direct", &label),
+                BenchmarkId::new("GpuStateVec32_direct", &label),
                 &(num_qubits, num_layers),
                 |b, &(nq, nl)| {
                     b.iter(|| {
@@ -441,38 +329,9 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    #[cfg(feature = "quest")]
-    {
-        let quest_h_name = "H/QuEST_direct";
-        group.bench_function(quest_h_name, |b| {
-            let qs = QuestState::new(num_qubits);
-            b.iter(|| {
-                for _ in 0..iters {
-                    for q in 0..num_qubits {
-                        unsafe { quest_ffi::quest_apply_hadamard(qs.qureg_ptr, q as i32) };
-                    }
-                }
-                black_box(());
-            });
-        });
-    }
-
-    #[cfg(feature = "qulacs")]
-    group.bench_function("H/Qulacs_direct", |b| {
-        let mut state = qulacs_ffi::create_quantum_state(num_qubits);
-        b.iter(|| {
-            for _ in 0..iters {
-                for q in 0..num_qubits {
-                    qulacs_ffi::csim_h(state.pin_mut(), q);
-                }
-            }
-            black_box(());
-        });
-    });
-
     #[cfg(feature = "gpu-sims")]
-    if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
-        group.bench_function("H/GpuStateVec_direct", |b| {
+    if let Ok(mut sim) = GpuStateVec32::new(num_qubits as u32) {
+        group.bench_function("H/GpuStateVec32_direct", |b| {
             b.iter(|| {
                 for _ in 0..iters {
                     for q in 0..num_qubits {
@@ -564,38 +423,9 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    #[cfg(feature = "quest")]
-    {
-        let quest_x_name = "X/QuEST_direct";
-        group.bench_function(quest_x_name, |b| {
-            let qs = QuestState::new(num_qubits);
-            b.iter(|| {
-                for _ in 0..iters {
-                    for q in 0..num_qubits {
-                        unsafe { quest_ffi::quest_apply_pauli_x(qs.qureg_ptr, q as i32) };
-                    }
-                }
-                black_box(());
-            });
-        });
-    }
-
-    #[cfg(feature = "qulacs")]
-    group.bench_function("X/Qulacs_direct", |b| {
-        let mut state = qulacs_ffi::create_quantum_state(num_qubits);
-        b.iter(|| {
-            for _ in 0..iters {
-                for q in 0..num_qubits {
-                    qulacs_ffi::csim_x(state.pin_mut(), q);
-                }
-            }
-            black_box(());
-        });
-    });
-
     #[cfg(feature = "gpu-sims")]
-    if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
-        group.bench_function("X/GpuStateVec_direct", |b| {
+    if let Ok(mut sim) = GpuStateVec32::new(num_qubits as u32) {
+        group.bench_function("X/GpuStateVec32_direct", |b| {
             b.iter(|| {
                 for _ in 0..iters {
                     for q in 0..num_qubits {
@@ -687,40 +517,9 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    #[cfg(feature = "quest")]
-    {
-        let quest_cx_name = "CX/QuEST_direct";
-        group.bench_function(quest_cx_name, |b| {
-            let qs = QuestState::new(num_qubits);
-            b.iter(|| {
-                for _ in 0..iters {
-                    for q in 0..num_qubits - 1 {
-                        unsafe {
-                            quest_ffi::quest_apply_cnot(qs.qureg_ptr, q as i32, (q + 1) as i32);
-                        }
-                    }
-                }
-                black_box(());
-            });
-        });
-    }
-
-    #[cfg(feature = "qulacs")]
-    group.bench_function("CX/Qulacs_direct", |b| {
-        let mut state = qulacs_ffi::create_quantum_state(num_qubits);
-        b.iter(|| {
-            for _ in 0..iters {
-                for q in 0..num_qubits - 1 {
-                    qulacs_ffi::csim_cnot(state.pin_mut(), q, q + 1);
-                }
-            }
-            black_box(());
-        });
-    });
-
     #[cfg(feature = "gpu-sims")]
-    if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
-        group.bench_function("CX/GpuStateVec_direct", |b| {
+    if let Ok(mut sim) = GpuStateVec32::new(num_qubits as u32) {
+        group.bench_function("CX/GpuStateVec32_direct", |b| {
             b.iter(|| {
                 for _ in 0..iters {
                     for q in 0..num_qubits - 1 {
@@ -812,39 +611,10 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    #[cfg(feature = "quest")]
-    {
-        let quest_rz_name = "RZ/QuEST_direct";
-        group.bench_function(quest_rz_name, |b| {
-            let qs = QuestState::new(num_qubits);
-            b.iter(|| {
-                for _ in 0..iters {
-                    for q in 0..num_qubits {
-                        unsafe { quest_ffi::quest_apply_rotation_z(qs.qureg_ptr, q as i32, 0.1) };
-                    }
-                }
-                black_box(());
-            });
-        });
-    }
-
-    #[cfg(feature = "qulacs")]
-    group.bench_function("RZ/Qulacs_direct", |b| {
-        let mut state = qulacs_ffi::create_quantum_state(num_qubits);
-        b.iter(|| {
-            for _ in 0..iters {
-                for q in 0..num_qubits {
-                    qulacs_ffi::csim_rz(state.pin_mut(), q, 0.1);
-                }
-            }
-            black_box(());
-        });
-    });
-
     #[cfg(feature = "gpu-sims")]
-    if let Ok(mut sim) = GpuStateVec::new(num_qubits as u32) {
+    if let Ok(mut sim) = GpuStateVec32::new(num_qubits as u32) {
         let rz_matrix = gpu_gates::rz(0.1);
-        group.bench_function("RZ/GpuStateVec_direct", |b| {
+        group.bench_function("RZ/GpuStateVec32_direct", |b| {
             b.iter(|| {
                 for _ in 0..iters {
                     for q in 0..num_qubits {

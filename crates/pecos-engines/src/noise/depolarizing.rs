@@ -72,6 +72,10 @@ pub struct DepolarizingNoiseModel {
     p2_threshold: u64,
     /// Random number generator
     rng: NoiseRng<PecosRng>,
+    /// Scratch builder reused across batches to avoid repeated allocations.
+    scratch_builder: ByteMessageBuilder,
+    /// Scratch gate storage reused across batches to avoid repeated allocations.
+    scratch_gates: Vec<Gate>,
 }
 
 impl ProbabilityValidator for DepolarizingNoiseModel {}
@@ -111,6 +115,8 @@ impl DepolarizingNoiseModel {
             p1_threshold: Self::compute_threshold(p1),
             p2_threshold: Self::compute_threshold(p2),
             rng: NoiseRng::default(),
+            scratch_builder: NoiseUtils::create_quantum_builder(),
+            scratch_gates: Vec::new(),
         }
     }
 
@@ -156,114 +162,120 @@ impl DepolarizingNoiseModel {
         (self.p_prep, self.p_meas, self.p1, self.p2)
     }
 
-    /// Apply noise to a list of quantum gates
-    fn apply_noise_to_gates(&mut self, gates: &[Gate]) -> ByteMessage {
-        let mut builder = NoiseUtils::create_quantum_builder();
-
-        for gate in gates {
-            match gate.gate_type {
-                GateType::X
-                | GateType::Z
-                | GateType::Y
-                | GateType::SX
-                | GateType::SXdg
-                | GateType::SY
-                | GateType::SYdg
-                | GateType::SZ
-                | GateType::SZdg
-                | GateType::H
-                | GateType::F
-                | GateType::Fdg
-                | GateType::RX
-                | GateType::RY
-                | GateType::RZ
-                | GateType::T
-                | GateType::Tdg
-                | GateType::U
-                | GateType::R1XY => {
-                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
-                    trace!("Applying single-qubit gate with possible fault");
-                    self.apply_sq_faults(&mut builder, gate);
-                }
-                GateType::CX
-                | GateType::CY
-                | GateType::CZ
-                | GateType::CH
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SWAP
-                | GateType::CRZ
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
-                | GateType::RXXRYYRZZ
-                | GateType::U2q => {
-                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
-                    trace!("Applying two-qubit gate with possible fault");
-                    self.apply_tq_faults(&mut builder, gate);
-                }
-                GateType::CCX => {
-                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
-                    trace!("Applying three-qubit gate with possible fault");
-                    // Apply fault to each qubit pair
-                    self.apply_tq_faults(&mut builder, gate);
-                }
-                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                    trace!("Applying measurement with possible fault");
-                    self.apply_meas_faults(&mut builder, gate);
-                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
-                }
-                GateType::PZ | GateType::QAlloc => {
-                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
-                    trace!("Applying preparation with possible fault");
-                    self.apply_prep_faults(&mut builder, gate);
-                }
-                GateType::I
-                | GateType::Idle
-                | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload
-                | GateType::QFree
-                | GateType::Custom => {
-                    // Just pass through with no added noise
-                    // QFree has no physical operation to apply noise to
-                }
+    fn apply_noise_to_gate(
+        rng: &mut NoiseRng<PecosRng>,
+        p_prep_threshold: u64,
+        p_meas_threshold: u64,
+        p1_threshold: u64,
+        p2_threshold: u64,
+        builder: &mut ByteMessageBuilder,
+        gate: &Gate,
+    ) {
+        match gate.gate_type {
+            GateType::X
+            | GateType::Z
+            | GateType::Y
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::SZ
+            | GateType::SZdg
+            | GateType::H
+            | GateType::F
+            | GateType::Fdg
+            | GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::T
+            | GateType::Tdg
+            | GateType::U
+            | GateType::R1XY => {
+                NoiseUtils::add_gate_to_builder(builder, gate);
+                trace!("Applying single-qubit gate with possible fault");
+                Self::apply_sq_faults(rng, p1_threshold, builder, gate);
+            }
+            GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::CH
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SWAP
+            | GateType::CRZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::RXXRYYRZZ
+            | GateType::U2q => {
+                NoiseUtils::add_gate_to_builder(builder, gate);
+                trace!("Applying two-qubit gate with possible fault");
+                Self::apply_tq_faults(rng, p2_threshold, builder, gate);
+            }
+            GateType::CCX => {
+                NoiseUtils::add_gate_to_builder(builder, gate);
+                trace!("Applying three-qubit gate with possible fault");
+                Self::apply_tq_faults(rng, p2_threshold, builder, gate);
+            }
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
+                trace!("Applying measurement with possible fault");
+                Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
+                NoiseUtils::add_gate_to_builder(builder, gate);
+            }
+            GateType::PZ | GateType::QAlloc => {
+                NoiseUtils::add_gate_to_builder(builder, gate);
+                trace!("Applying preparation with possible fault");
+                Self::apply_prep_faults(rng, p_prep_threshold, builder, gate);
+            }
+            GateType::I
+            | GateType::Idle
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::QFree
+            | GateType::Custom => {
+                // Just pass through with no added noise.
             }
         }
-
-        builder.build()
     }
 
-    fn apply_prep_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
+    fn apply_prep_faults(
+        rng: &mut NoiseRng<PecosRng>,
+        p_prep_threshold: u64,
+        builder: &mut ByteMessageBuilder,
+        gate: &Gate,
+    ) {
         // Use precomputed threshold for fast probability check
-        if self
-            .rng
-            .inner_mut()
-            .check_probability(self.p_prep_threshold)
-        {
+        if rng.inner_mut().check_probability(p_prep_threshold) {
             trace!("Applying prep fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, *gate.qubits[0]);
         }
     }
 
-    fn apply_meas_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
+    fn apply_meas_faults(
+        rng: &mut NoiseRng<PecosRng>,
+        p_meas_threshold: u64,
+        builder: &mut ByteMessageBuilder,
+        gate: &Gate,
+    ) {
         // Use precomputed threshold for fast probability check
-        if self
-            .rng
-            .inner_mut()
-            .check_probability(self.p_meas_threshold)
-        {
+        if rng.inner_mut().check_probability(p_meas_threshold) {
             trace!("Applying meas fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, *gate.qubits[0]);
         }
     }
 
-    fn apply_sq_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
+    fn apply_sq_faults(
+        rng: &mut NoiseRng<PecosRng>,
+        p1_threshold: u64,
+        builder: &mut ByteMessageBuilder,
+        gate: &Gate,
+    ) {
         // Use fused noise sampling: probability check + Pauli selection in one call
-        if let Some(fault_type) = self.rng.inner_mut().noise_sample_1q(self.p1_threshold) {
+        if let Some(fault_type) = rng.inner_mut().noise_sample_1q(p1_threshold) {
             let qubit = gate.qubits[0];
 
             match fault_type {
@@ -283,9 +295,14 @@ impl DepolarizingNoiseModel {
         }
     }
 
-    fn apply_tq_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
+    fn apply_tq_faults(
+        rng: &mut NoiseRng<PecosRng>,
+        p2_threshold: u64,
+        builder: &mut ByteMessageBuilder,
+        gate: &Gate,
+    ) {
         // Use fused noise sampling: probability check + Pauli selection in one call
-        if let Some(fault_type) = self.rng.inner_mut().noise_sample_2q(self.p2_threshold) {
+        if let Some(fault_type) = rng.inner_mut().noise_sample_2q(p2_threshold) {
             let qubit0 = gate.qubits[0];
             let qubit1 = gate.qubits[1];
 
@@ -546,13 +563,42 @@ impl ControlEngine for DepolarizingNoiseModel {
         // For quantum operations, apply gate noise
         trace!("DepolarizingNoise::start - applying noise to quantum operations");
 
-        // Parse the input as quantum operations
-        let gates: Vec<crate::Gate> = input
-            .quantum_ops()
+        if self.p_prep_threshold == 0
+            && self.p_meas_threshold == 0
+            && self.p1_threshold == 0
+            && self.p2_threshold == 0
+        {
+            return Ok(EngineStage::NeedsProcessing(input));
+        }
+
+        self.scratch_gates.clear();
+        input
+            .quantum_ops_into(&mut self.scratch_gates)
             .map_err(|e| PecosError::Input(format!("Failed to parse quantum operations: {e}")))?;
 
-        // Apply noise to the gates
-        let noisy_gates = self.apply_noise_to_gates(&gates);
+        self.scratch_builder.reset();
+        let _ = self.scratch_builder.for_quantum_operations();
+
+        let p_prep_threshold = self.p_prep_threshold;
+        let p_meas_threshold = self.p_meas_threshold;
+        let p1_threshold = self.p1_threshold;
+        let p2_threshold = self.p2_threshold;
+        let rng = &mut self.rng;
+        let builder = &mut self.scratch_builder;
+
+        for gate in &self.scratch_gates {
+            Self::apply_noise_to_gate(
+                rng,
+                p_prep_threshold,
+                p_meas_threshold,
+                p1_threshold,
+                p2_threshold,
+                builder,
+                gate,
+            );
+        }
+
+        let noisy_gates = self.scratch_builder.build();
 
         // Return the noisy operations
         Ok(EngineStage::NeedsProcessing(noisy_gates))

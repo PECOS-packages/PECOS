@@ -27,6 +27,8 @@ from pecos.qec.surface.circuit_builder import (
     StimRenderer,
     TickCircuitRenderer,
     build_surface_code_circuit,
+    classify_stabilizer_boundary,
+    describe_surface_memory_experiment,
     generate_dag_circuit_from_patch,
     generate_dem_from_tick_circuit,
     generate_dem_from_tick_circuit_via_autodetection,
@@ -35,6 +37,13 @@ from pecos.qec.surface.circuit_builder import (
     generate_guppy_from_patch,
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
+    get_detector_descriptors_from_tick_circuit,
+    get_measurement_order_from_tick_circuit,
+    get_observable_descriptors_from_tick_circuit,
+    get_stabilizer_region,
+    get_stabilizer_schedule_entries,
+    get_stabilizer_schedule_metadata,
+    get_stabilizer_touch_label,
     tick_circuit_to_stim,
 )
 from pecos.qec.surface.circuit_builder import (
@@ -72,12 +81,16 @@ from pecos.qec.surface.parity import (
     parity_matrix_z,
 )
 from pecos.qec.surface.patch import (
+    LogicalDescriptor,
     LogicalOperator,
     PatchGeometry,
     PatchOrientation,
     Stabilizer,
+    StabilizerDescriptor,
+    StabilizerScheduleEntry,
     SurfacePatch,
     SurfacePatchBuilder,
+    SurfacePatchDescriptor,
 )
 from pecos.qec.surface.plot import plot_patch, plot_surface_code
 from pecos.qec.surface.schedule import (
@@ -105,9 +118,13 @@ __all__ = [
     "parity_matrix_z",
     # Patch classes
     "LogicalOperator",
+    "LogicalDescriptor",
     "PatchGeometry",
     "PatchOrientation",
     "Stabilizer",
+    "StabilizerDescriptor",
+    "StabilizerScheduleEntry",
+    "SurfacePatchDescriptor",
     "SurfacePatch",
     "SurfacePatchBuilder",
     # Decoding
@@ -137,6 +154,8 @@ __all__ = [
     "StimRenderer",
     "TickCircuitRenderer",
     "build_surface_code_circuit",
+    "classify_stabilizer_boundary",
+    "describe_surface_memory_experiment",
     "generate_dag_circuit_from_patch",
     "generate_dem_from_tick_circuit",
     "generate_dem_from_tick_circuit_via_autodetection",
@@ -145,5 +164,12 @@ __all__ = [
     "generate_guppy_from_patch",
     "generate_stim_from_patch",
     "generate_tick_circuit_from_patch",
+    "get_detector_descriptors_from_tick_circuit",
+    "get_measurement_order_from_tick_circuit",
+    "get_observable_descriptors_from_tick_circuit",
+    "get_stabilizer_region",
+    "get_stabilizer_schedule_entries",
+    "get_stabilizer_schedule_metadata",
+    "get_stabilizer_touch_label",
     "tick_circuit_to_stim",
 ]

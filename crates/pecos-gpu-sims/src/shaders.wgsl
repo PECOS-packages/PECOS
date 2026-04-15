@@ -47,6 +47,27 @@ fn cadd(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return a + b;
 }
 
+// Apply diagonal single-qubit gate: [[a, 0], [0, d]]
+// Each thread handles ONE amplitude (not a pair), applying the appropriate
+// diagonal element based on the qubit bit. Fully coalesced memory access.
+@compute @workgroup_size(256)
+fn apply_diagonal_gate(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
+    let num_amplitudes = 1u << params.num_qubits;
+
+    if (idx >= num_amplitudes) {
+        return;
+    }
+
+    let bit = (idx >> params.target_qubit) & 1u;
+    let phase = select(params.matrix_row0.xy, params.matrix_row1.zw, bit == 1u);
+
+    state[idx] = cmul(phase, state[idx]);
+}
+
 // Apply arbitrary single-qubit gate
 // Each thread handles one pair of amplitudes that differ in the target qubit bit
 @compute @workgroup_size(256)
@@ -143,6 +164,150 @@ fn apply_cz(
     // Apply -1 phase when both qubits are |1>
     if ((idx & control_mask) != 0u && (idx & target_mask) != 0u) {
         state[idx] = -state[idx];
+    }
+}
+
+// Apply CY gate: controlled-Y
+@compute @workgroup_size(256)
+fn apply_cy(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
+    let num_amplitudes = 1u << params.num_qubits;
+
+    if (idx >= num_amplitudes) {
+        return;
+    }
+
+    let control_mask = 1u << params.control_qubit;
+    let target_mask = 1u << params.target_qubit;
+
+    let control_set = (idx & control_mask) != 0u;
+    let target_set = (idx & target_mask) != 0u;
+
+    if (control_set && !target_set) {
+        let partner_idx = idx | target_mask;
+        let amp0 = state[idx];
+        let amp1 = state[partner_idx];
+
+        state[idx] = vec2<f32>(amp1.y, -amp1.x);
+        state[partner_idx] = vec2<f32>(-amp0.y, amp0.x);
+    }
+}
+
+// Apply SWAP gate
+@compute @workgroup_size(256)
+fn apply_swap(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
+    let num_amplitudes = 1u << params.num_qubits;
+
+    if (idx >= num_amplitudes) {
+        return;
+    }
+
+    let mask_a = 1u << params.control_qubit;
+    let mask_b = 1u << params.target_qubit;
+
+    let bit_a = (idx & mask_a) != 0u;
+    let bit_b = (idx & mask_b) != 0u;
+
+    if (!bit_a && bit_b) {
+        let partner = (idx & ~mask_b) | mask_a;
+        let amp0 = state[idx];
+        let amp1 = state[partner];
+        state[idx] = amp1;
+        state[partner] = amp0;
+    }
+}
+
+// Apply RXX(theta) gate: exp(-i * theta/2 * X⊗X)
+// Pairs amplitudes that differ in BOTH qubit bits.
+// Each pair transforms as [[cos(t/2), -i*sin(t/2)], [-i*sin(t/2), cos(t/2)]]
+// Angle theta is passed in matrix_row0.x
+@compute @workgroup_size(256)
+fn apply_rxx(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
+    let num_amplitudes = 1u << params.num_qubits;
+
+    if (idx >= num_amplitudes) {
+        return;
+    }
+
+    let mask_a = 1u << params.control_qubit;
+    let mask_b = 1u << params.target_qubit;
+
+    // RXX couples every (idx, partner) pair with -i*sin. One thread per pair
+    // (idx < partner) covers every pair exactly once and avoids racing writes
+    // to state[idx] / state[partner].
+    let partner = idx ^ mask_a ^ mask_b;
+    if (idx < partner) {
+        let theta = params.matrix_row0.x;
+        let c = cos(theta / 2.0);
+        let s = sin(theta / 2.0);
+
+        let amp0 = state[idx];
+        let amp1 = state[partner];
+
+        state[idx] = vec2<f32>(
+            amp0.x * c + amp1.y * s,
+            amp0.y * c - amp1.x * s
+        );
+        state[partner] = vec2<f32>(
+            amp1.x * c + amp0.y * s,
+            amp1.y * c - amp0.x * s
+        );
+    }
+}
+
+// Apply RYY(theta) gate: exp(-i * theta/2 * Y⊗Y)
+// Same pairing as RXX (flip both bits), different rotation matrix.
+// Each pair: [[cos(t/2), i*sin(t/2)], [i*sin(t/2), cos(t/2)]] for same-parity,
+//            [[cos(t/2), -i*sin(t/2)], [-i*sin(t/2), cos(t/2)]] for diff-parity.
+// Angle theta is passed in matrix_row0.x
+@compute @workgroup_size(256)
+fn apply_ryy(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let idx = get_linear_idx(global_id, num_workgroups);
+    let num_amplitudes = 1u << params.num_qubits;
+
+    if (idx >= num_amplitudes) {
+        return;
+    }
+
+    let mask_a = 1u << params.control_qubit;
+    let mask_b = 1u << params.target_qubit;
+
+    // RYY couples every pair with +i*sin on same-parity (|00>,|11>) and
+    // -i*sin on diff-parity (|01>,|10>). One thread per pair (idx < partner).
+    let bit_a = (idx & mask_a) != 0u;
+    let bit_b = (idx & mask_b) != 0u;
+    let partner = idx ^ mask_a ^ mask_b;
+    if (idx < partner) {
+        let theta = params.matrix_row0.x;
+        let c = cos(theta / 2.0);
+        let s_abs = sin(theta / 2.0);
+        let s = select(s_abs, -s_abs, bit_a == bit_b);
+
+        let amp0 = state[idx];
+        let amp1 = state[partner];
+
+        state[idx] = vec2<f32>(
+            amp0.x * c + amp1.y * s,
+            amp0.y * c - amp1.x * s
+        );
+        state[partner] = vec2<f32>(
+            amp1.x * c + amp0.y * s,
+            amp1.y * c - amp0.x * s
+        );
     }
 }
 

@@ -23,6 +23,7 @@ rand.workspace = true
 rand_core.workspace = true
 log.workspace = true
 serde_json.workspace = true
+num-complex.workspace = true
 
 # PECOS integration
 pecos-core.workspace = true

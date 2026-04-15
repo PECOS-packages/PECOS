@@ -16,9 +16,38 @@ from pecos.qec.surface import (
     NoiseModel,
     SurfaceDecoder,
     SurfacePatch,
+    generate_dem_from_tick_circuit,
     generate_surface_code_dem,
+    generate_tick_circuit_from_patch,
     syndromes_to_detection_events,
 )
+
+
+def _require_selene_runtime() -> None:
+    """Eagerly instantiate the Selene engine to fail fast if it is unavailable.
+
+    The PECOS test environment is expected to have the Selene runtime installed
+    (see ``pecos setup``). A failure here means the environment is broken, not
+    that the test should be skipped.
+    """
+    import pecos
+
+    pecos.selene_engine()
+
+
+def _count_singleton_error_parts(dem: str) -> int:
+    """Count decomposed error parts that touch exactly one detector."""
+    count = 0
+    for line in dem.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("error("):
+            continue
+        payload = stripped.split(")", 1)[1]
+        for part in payload.split("^"):
+            detectors = [token for token in part.split() if token.startswith("D")]
+            if len(detectors) == 1:
+                count += 1
+    return count
 
 
 class TestNoiseModel:
@@ -178,6 +207,35 @@ class TestSurfaceDecoder:
         assert "error" in pheno_dem
         assert "detector" in pheno_dem
 
+    def test_get_dem_caches_circuit_level_dem(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Repeated circuit-level DEM requests should reuse the decoder-local cache."""
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            circuit_level_dem_mode="native_decomposed",
+        )
+
+        real_generate = decode_module.generate_circuit_level_dem_from_builder
+        calls = 0
+
+        def wrapped_generate(*args: object, **kwargs: object) -> str:
+            nonlocal calls
+            calls += 1
+            return real_generate(*args, **kwargs)
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+
+        dem_1 = decoder.get_dem("Z", circuit_level=True)
+        dem_2 = decoder.get_dem("Z", circuit_level=True)
+
+        assert dem_1 == dem_2
+        assert calls == 1
+
     def test_decode_trivial_syndrome_z(self) -> None:
         """Decode trivial Z syndrome (no errors)."""
         patch = SurfacePatch.create(distance=3)
@@ -241,6 +299,302 @@ class TestDemGeneration:
         assert isinstance(dem, str)
         assert "error" in dem
 
+    def test_generate_dem_from_patch_can_skip_stim_decomposition(self) -> None:
+        """Stim patch DEM helper should support raw vs decomposed DEM output."""
+        from pecos.qec.surface.decode import generate_dem_from_patch
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+
+        full_dem = generate_dem_from_patch(patch, num_rounds=4, noise=noise, basis="X", decompose_errors=False)
+        decomposed_dem = generate_dem_from_patch(patch, num_rounds=4, noise=noise, basis="X", decompose_errors=True)
+
+        assert "^" not in full_dem
+        assert "^" in decomposed_dem
+
+    def test_generate_dem_from_tick_circuit_supports_raw_and_decomposed_output(self) -> None:
+        """Native TickCircuit DEM helper should preserve both public output forms."""
+        patch = SurfacePatch.create(distance=3)
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=4, basis="X")
+        params = {"p1": 0.001, "p2": 0.01, "p_meas": 0.01, "p_init": 0.001}
+
+        raw_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
+        decomposed_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=True)
+
+        assert raw_dem != decomposed_dem
+        assert "^" not in raw_dem
+        assert "^" in decomposed_dem
+
+    def test_native_circuit_level_dem_threads_ancilla_budget(self) -> None:
+        """Native DEM helpers should use the requested ancilla-budgeted circuit family."""
+        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+        params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_init": noise.p_init}
+
+        full_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        batched_tc = generate_tick_circuit_from_patch(
+            patch,
+            num_rounds=2,
+            basis="X",
+            ancilla_budget=2,
+        )
+
+        full_dem = generate_circuit_level_dem_from_builder(patch, num_rounds=2, noise=noise, basis="X")
+        batched_dem = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="X",
+            ancilla_budget=2,
+        )
+
+        assert full_dem == generate_dem_from_tick_circuit(full_tc, **params, decompose_errors=False)
+        assert batched_dem == generate_dem_from_tick_circuit(batched_tc, **params, decompose_errors=False)
+        assert batched_dem != full_dem
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            ancilla_budget=2,
+            circuit_level_dem_mode="native_full",
+        )
+        assert decoder.get_dem("X", circuit_level=True) == batched_dem
+
+    def test_native_circuit_level_dem_cache_respects_patch_geometry(self) -> None:
+        """Shared native DEM caching should preserve asymmetric patch geometry."""
+        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch
+        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
+
+        patch = SurfacePatch.create(dx=3, dz=5)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+        params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_init": noise.p_init}
+
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        expected_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
+        cached_dem = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="X",
+        )
+
+        assert cached_dem == expected_dem
+
+    def test_traced_qis_native_dem_and_sampler_build(self) -> None:
+        """The traced-QIS circuit source should build DEMs and samplers end-to-end."""
+        from pecos.qec.surface import build_native_sampler
+        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
+
+        _require_selene_runtime()
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.001, p_meas=0.001, p_init=0.001)
+
+        dem = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            decompose_errors=True,
+            circuit_source="traced_qis",
+        )
+        assert "error(" in dem
+
+        sampler = build_native_sampler(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            circuit_source="traced_qis",
+        )
+        det_events, obs_flips = sampler.sample(4, seed=7)
+        assert det_events.shape == (4, sampler.num_detectors)
+        assert obs_flips.shape == (4, sampler.num_observables)
+        assert sampler.sampling_model == "dem"
+
+        mnm_sampler = build_native_sampler(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            circuit_source="traced_qis",
+            sampling_model="mnm",
+        )
+        mnm_det_events, mnm_obs_flips = mnm_sampler.sample(4, seed=7)
+        assert mnm_det_events.shape == (4, mnm_sampler.num_detectors)
+        assert mnm_obs_flips.shape == (4, mnm_sampler.num_observables)
+        assert mnm_sampler.sampling_model == "mnm"
+
+        influence_sampler = build_native_sampler(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            circuit_source="traced_qis",
+            sampling_model="influence_dem",
+        )
+        influence_det_events, influence_obs_flips = influence_sampler.sample(4, seed=7)
+        assert influence_det_events.shape == (4, influence_sampler.num_detectors)
+        assert influence_obs_flips.shape == (4, influence_sampler.num_observables)
+        assert influence_sampler.sampling_model == "influence_dem"
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            circuit_level_dem_mode="native_decomposed",
+            circuit_level_dem_source="traced_qis",
+        )
+        decoder_dem = decoder.get_dem("Z", circuit_level=True)
+        assert "error(" in decoder_dem
+        assert decoder_dem.count("detector(") == dem.count("detector(")
+        assert decoder_dem.count("logical_observable") == dem.count("logical_observable")
+
+    def test_traced_qis_native_dem_matches_stim_dem(self) -> None:
+        """The traced-QIS PECOS DEM should exactly match the traced-QIS Stim DEM."""
+        import re
+
+        stim = pytest.importorskip("stim")
+
+        from pecos.qec.surface.circuit_builder import (
+            generate_dem_from_tick_circuit,
+            tick_circuit_to_stim,
+        )
+        from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+        _require_selene_runtime()
+
+        def extract_errors(dem_str: str) -> dict[str, float]:
+            errors: dict[str, float] = {}
+            for line in dem_str.strip().splitlines():
+                match = re.match(r"error\(([^)]+)\)\s*(.*)", line.strip())
+                if match:
+                    errors[match.group(2).strip()] = float(match.group(1))
+            return errors
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.003, p2=0.003, p_meas=0.003, p_init=0.003)
+
+        for basis in ("X", "Z"):
+            tc = _build_surface_tick_circuit_for_native_model(
+                patch,
+                num_rounds=6,
+                basis=basis,
+                circuit_source="traced_qis",
+            )
+            pecos_dem = generate_dem_from_tick_circuit(
+                tc,
+                p1=noise.p1,
+                p2=noise.p2,
+                p_meas=noise.p_meas,
+                p_init=noise.p_init,
+                decompose_errors=False,
+            )
+            stim_dem = str(
+                stim.Circuit(
+                    tick_circuit_to_stim(
+                        tc,
+                        p1=noise.p1,
+                        p2=noise.p2,
+                        p_meas=noise.p_meas,
+                        p_init=noise.p_init,
+                    ),
+                ).detector_error_model(decompose_errors=False),
+            )
+
+            pecos_errors = extract_errors(pecos_dem)
+            stim_errors = extract_errors(stim_dem)
+            assert set(pecos_errors) == set(stim_errors)
+            for target in pecos_errors:
+                rel_diff = abs(pecos_errors[target] - stim_errors[target]) / max(
+                    pecos_errors[target],
+                    stim_errors[target],
+                    1e-12,
+                )
+                assert rel_diff < 0.005, (
+                    f"{basis} traced-QIS DEM mismatch for {target}: "
+                    f"PECOS={pecos_errors[target]:.8f}, Stim={stim_errors[target]:.8f}"
+                )
+
+    def test_traced_qis_native_topology_cache_is_shared_across_public_apis(self) -> None:
+        """Public traced-QIS DEM and sampler helpers should reuse the shared topology cache."""
+        from pecos.qec.surface import build_native_sampler
+        from pecos.qec.surface.decode import (
+            _cached_surface_native_dem_string,
+            _cached_surface_native_topology,
+            generate_circuit_level_dem_from_builder,
+        )
+
+        _require_selene_runtime()
+
+        patch = SurfacePatch.create(distance=3)
+        noise_a = NoiseModel(p1=0.001, p2=0.001, p_meas=0.001, p_init=0.001)
+        noise_b = NoiseModel(p1=0.002, p2=0.002, p_meas=0.002, p_init=0.002)
+
+        _cached_surface_native_topology.cache_clear()
+        _cached_surface_native_dem_string.cache_clear()
+
+        generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise_a,
+            basis="Z",
+            decompose_errors=True,
+            circuit_source="traced_qis",
+        )
+        after_dem = _cached_surface_native_topology.cache_info()
+        after_dem_str = _cached_surface_native_dem_string.cache_info()
+        assert after_dem.misses == 1
+        assert after_dem_str.misses == 1
+
+        sampler = build_native_sampler(
+            patch,
+            num_rounds=2,
+            noise=noise_a,
+            basis="Z",
+            circuit_source="traced_qis",
+        )
+        det_events, obs_flips = sampler.sample(2, seed=11)
+        assert det_events.shape == (2, sampler.num_detectors)
+        assert obs_flips.shape == (2, sampler.num_observables)
+
+        after_sampler = _cached_surface_native_topology.cache_info()
+        after_sampler_dem_str = _cached_surface_native_dem_string.cache_info()
+        assert after_sampler.misses == after_dem.misses
+        assert after_sampler.hits >= after_dem.hits + 1
+        assert after_sampler_dem_str.misses == after_dem_str.misses
+        assert after_sampler_dem_str.hits >= after_dem_str.hits + 1
+
+        build_native_sampler(
+            patch,
+            num_rounds=2,
+            noise=noise_b,
+            basis="Z",
+            circuit_source="traced_qis",
+        )
+        after_second_noise = _cached_surface_native_dem_string.cache_info()
+        assert after_second_noise.misses == after_sampler_dem_str.misses + 1
+
+    def test_generate_dem_from_tick_circuit_maximal_decomposition_prefers_singletons(self) -> None:
+        """Maximal decomposition should no longer be a no-op."""
+        patch = SurfacePatch.create(distance=3)
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=20, basis="X")
+        params = {"p1": 0.0, "p2": 0.00235, "p_meas": 0.01972626855445279, "p_init": 0.0010045162906914633}
+
+        decomposed_dem = generate_dem_from_tick_circuit(tc, **params, decompose_errors=True)
+        maximal_dem = generate_dem_from_tick_circuit(
+            tc,
+            **params,
+            decompose_errors=False,
+            maximal_decomposition=True,
+        )
+
+        assert maximal_dem != decomposed_dem
+        assert _count_singleton_error_parts(maximal_dem) > _count_singleton_error_parts(decomposed_dem)
+
     def test_dem_detector_count(self) -> None:
         """DEM should have correct number of detectors."""
         patch = SurfacePatch.create(distance=3)
@@ -273,25 +627,15 @@ class TestDemGeneration:
 
 
 class TestNoisySimulation:
-    """Integration tests for noisy simulation (requires selene_sim)."""
+    """Integration tests for noisy simulation.
 
-    @pytest.fixture
-    def check_selene(self) -> bool | None:
-        """Check if selene_sim is available."""
-        try:
-            import selene_sim
+    The Selene runtime and the ``selene_sim`` Python package are expected to be
+    installed in every environment that runs this test tree. A missing runtime
+    now raises rather than being silently skipped (see ``_require_selene_runtime``).
+    """
 
-            return True
-        except ImportError:
-            pytest.skip("selene_sim not available")
-            return False
-
-    def test_run_noisy_memory_experiment_import(
-        self,
-        check_selene: bool,
-    ) -> None:
+    def test_run_noisy_memory_experiment_import(self) -> None:
         """Test that run_noisy_memory_experiment can be imported."""
-        _ = check_selene  # Fixture triggers skip if unavailable
         from pecos.qec.surface import run_noisy_memory_experiment
 
         assert callable(run_noisy_memory_experiment)
@@ -317,9 +661,8 @@ class TestNoisySimulation:
         assert result.num_shots == 100
         assert result.logical_error_rate == 0.05
 
-    def test_noiseless_simulation(self, check_selene: bool) -> None:
+    def test_noiseless_simulation(self) -> None:
         """Noiseless simulation should have zero logical error rate."""
-        _ = check_selene  # Fixture triggers skip if unavailable
         from pecos.compilation_pipeline import compile_guppy_to_hugr
         from pecos.guppy.surface import get_num_qubits, make_surface_code
         from pecos.qec.surface import SurfacePatch

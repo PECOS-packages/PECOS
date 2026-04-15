@@ -18,7 +18,7 @@ import pickle
 import numpy as np
 import pytest
 
-from pecos_rslib import CoinToss, PauliProp, Qulacs, SparseStab, StateVec
+from pecos_rslib import CoinToss, PauliProp, SparseStab, StateVec
 
 
 def _state_vec_to_numpy(sim):
@@ -123,38 +123,6 @@ class TestStateVecProbabilities:
         sim = StateVec(2)
         with pytest.raises(IndexError):
             sim.probability(4)
-
-
-class TestQulacsProbabilities:
-    """Test the probabilities property on Qulacs."""
-
-    def test_default_state(self) -> None:
-        """All probability should be on |00...0>."""
-        sim = Qulacs(3, seed=42)
-        probs = sim.probabilities
-        assert len(probs) == 8
-        assert probs[0] == pytest.approx(1.0)
-        assert sum(probs) == pytest.approx(1.0)
-
-    def test_bell_state(self) -> None:
-        """Bell state should have 50/50 on |00> and |11>."""
-        sim = Qulacs(2, seed=42)
-        sim.run_1q_gate("H", 0)
-        sim.run_2q_gate("CX", (0, 1), None)
-        probs = sim.probabilities
-        assert probs[0] == pytest.approx(0.5)
-        assert probs[3] == pytest.approx(0.5)
-        assert probs[1] == pytest.approx(0.0, abs=1e-15)
-        assert probs[2] == pytest.approx(0.0, abs=1e-15)
-
-    def test_matches_probability_method(self) -> None:
-        """probabilities[i] should match probability(i)."""
-        sim = Qulacs(2, seed=42)
-        sim.run_1q_gate("H", 0)
-        sim.run_2q_gate("CX", (0, 1), None)
-        probs = sim.probabilities
-        for i in range(4):
-            assert sim.probability(i) == pytest.approx(probs[i])
 
 
 class TestSparseSimPickle:

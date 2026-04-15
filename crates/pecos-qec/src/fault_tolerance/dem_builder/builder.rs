@@ -16,7 +16,7 @@
 //! influence maps and detector/observable metadata.
 
 use super::types::{
-    DetectorDef, DetectorErrorModel, DirectSourceComponents, ErrorMechanism, LogicalObservable,
+    DetectorDef, DetectorErrorModel, DirectSourceComponents, FaultMechanism, LogicalObservable,
     NoiseConfig, SourceMetadata, record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
@@ -462,9 +462,9 @@ impl<'a> DemBuilder<'a> {
         let z2 = self.compute_mechanism(loc2, Pauli::Z, meas_to_detectors, meas_to_observables);
 
         // Build effect table for all 16 Pauli combinations
-        let get_single_effect = |p: u8, x: &ErrorMechanism, z: &ErrorMechanism| -> ErrorMechanism {
+        let get_single_effect = |p: u8, x: &FaultMechanism, z: &FaultMechanism| -> FaultMechanism {
             match p {
-                0 => ErrorMechanism::new(), // I
+                0 => FaultMechanism::new(), // I
                 1 => x.clone(),             // X
                 2 => x.xor(z),              // Y = X XOR Z
                 3 => z.clone(),             // Z
@@ -472,7 +472,7 @@ impl<'a> DemBuilder<'a> {
             }
         };
 
-        let mut effects: [[ErrorMechanism; 4]; 4] = Default::default();
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
         for p1 in 0..4u8 {
             for p2 in 0..4u8 {
                 let e1 = get_single_effect(p1, &x1, &z1);
@@ -642,14 +642,14 @@ impl<'a> DemBuilder<'a> {
         (meas_to_detectors, meas_to_observables)
     }
 
-    /// Computes the error mechanism for a fault at the given location and Pauli type.
+    /// Computes the fault mechanism for a fault at the given location and Pauli type.
     fn compute_mechanism(
         &self,
         loc_idx: usize,
         pauli: Pauli,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) -> ErrorMechanism {
+    ) -> FaultMechanism {
         // Get the Rust detector indices that this fault flips
         let rust_dets = self
             .influence_map
@@ -681,7 +681,7 @@ impl<'a> DemBuilder<'a> {
         triggered_dets.sort_unstable();
         triggered_obs.sort_unstable();
 
-        ErrorMechanism::from_sorted(triggered_dets, triggered_obs)
+        FaultMechanism::from_sorted(triggered_dets, triggered_obs)
     }
 }
 

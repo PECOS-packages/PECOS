@@ -76,7 +76,7 @@ pub use distance::{
     calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
 };
 pub use fault_tolerance::dem_builder::{
-    DecomposedError, DemBuilder, DemBuilderError, DetectorDef, DetectorErrorModel, ErrorMechanism,
+    DecomposedFault, DemBuilder, DemBuilderError, DetectorDef, DetectorErrorModel, FaultMechanism,
     LogicalObservable, NoiseConfig, combine_probabilities,
 };
 pub use fault_tolerance::{

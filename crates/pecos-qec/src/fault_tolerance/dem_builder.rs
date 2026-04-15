@@ -66,7 +66,7 @@
 //! - **XOR effect combining**: Correlated errors are properly combined
 //!   by XOR-ing detector/observable effects.
 //!
-//! - **Independent probability combination**: When the same error mechanism
+//! - **Independent probability combination**: When the same fault mechanism
 //!   is triggered by multiple error sources, probabilities are combined
 //!   using p1*(1-p2) + p2*(1-p1).
 //!
@@ -114,8 +114,8 @@ pub use equivalence::{
 pub use mem_builder::MemBuilder;
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
-    ContributionRenderSummary, DecomposedError, DetectorDef, DetectorErrorModel,
-    DirectSourceFamily, ErrorContribution, ErrorMechanism, ErrorSourceType, LogicalObservable,
+    ContributionRenderSummary, DecomposedFault, DetectorDef, DetectorErrorModel,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, LogicalObservable,
     MeasurementMechanism, MeasurementNoiseModel, NoiseConfig, TwoDetectorDirectRenderPolicy,
     combine_probabilities, record_offset_to_absolute_index,
 };

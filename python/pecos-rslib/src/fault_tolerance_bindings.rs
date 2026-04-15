@@ -49,8 +49,8 @@ use pecos_qec::fault_tolerance::dem_builder::{
     ContributionRenderStrategy as RustContributionRenderStrategy,
     ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
-    EquivalenceResult as RustEquivalenceResult, ErrorContribution as RustErrorContribution,
-    ErrorSourceType as RustErrorSourceType, MeasurementNoiseModel as RustMeasurementNoiseModel,
+    EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
+    FaultSourceType as RustFaultSourceType, MeasurementNoiseModel as RustMeasurementNoiseModel,
     MemBuilder as RustMemBuilder, ParsedDem as RustParsedDem,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
@@ -695,7 +695,7 @@ fn parse_two_detector_direct_render_policy(
 
 fn contribution_record_to_pydict(
     py: Python<'_>,
-    contribution: RustErrorContribution,
+    contribution: RustFaultContribution,
 ) -> PyResult<Py<pyo3::types::PyDict>> {
     fn pauli_label(pauli: Pauli) -> &'static str {
         match pauli {
@@ -741,7 +741,7 @@ fn contribution_record_to_pydict(
     }
 
     match contribution.source_type {
-        RustErrorSourceType::Direct => {
+        RustFaultSourceType::Direct => {
             dict.set_item("source_type", "Direct")?;
             if let Some((first, second)) = contribution.direct_component_effects {
                 dict.set_item("component_1_detectors", first.detectors.to_vec())?;
@@ -750,7 +750,7 @@ fn contribution_record_to_pydict(
                 dict.set_item("component_2_logicals", second.logicals.to_vec())?;
             }
         }
-        RustErrorSourceType::DirectOneSidedComponent => {
+        RustFaultSourceType::DirectOneSidedComponent => {
             dict.set_item("source_type", "DirectOneSidedComponent")?;
             if let Some((first, second)) = contribution.direct_component_effects {
                 dict.set_item("component_1_detectors", first.detectors.to_vec())?;
@@ -759,7 +759,7 @@ fn contribution_record_to_pydict(
                 dict.set_item("component_2_logicals", second.logicals.to_vec())?;
             }
         }
-        RustErrorSourceType::YDecomposed {
+        RustFaultSourceType::YDecomposed {
             x_detectors,
             x_logicals,
             z_detectors,

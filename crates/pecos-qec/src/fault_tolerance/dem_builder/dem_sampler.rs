@@ -71,7 +71,7 @@ use super::types::combine_probabilities;
 // DEM Mechanism (used during building)
 // ============================================================================
 
-/// A single error mechanism with its detector/observable effects.
+/// A single fault mechanism with its detector/observable effects.
 /// Used during building, then converted to `SoA` layout.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct DemMechanism {

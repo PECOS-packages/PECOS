@@ -237,6 +237,38 @@ impl DemSampler {
         self.num_observables
     }
 
+    /// Reconstruct a [`DetectorErrorModel`] from the aggregated SoA
+    /// mechanism state for text output (e.g. Stim-format via
+    /// [`DetectorErrorModel::to_string`]).
+    ///
+    /// Each stored mechanism becomes a `direct` contribution with its
+    /// approximate probability (recovered from the `u64` threshold).
+    /// Detector / observable declarations are NOT emitted -- those
+    /// require the original `DetectorDef` / `LogicalObservable`
+    /// definitions held by higher-level wrappers such as
+    /// [`crate::dem_stab::DemStabSim`]. Callers who need full metadata
+    /// should populate those on the returned DEM.
+    #[must_use]
+    pub fn to_detector_error_model(&self) -> super::types::DetectorErrorModel {
+        use super::types::{DetectorErrorModel, FaultMechanism};
+        let mut dem =
+            DetectorErrorModel::with_capacity(self.num_detectors, self.num_observables);
+        let inv_max = 1.0_f64 / u64::MAX as f64;
+        for i in 0..self.thresholds.len() {
+            let prob = self.thresholds[i] as f64 * inv_max;
+            let det_start = self.detector_offsets[i] as usize;
+            let det_end = self.detector_offsets[i + 1] as usize;
+            let obs_start = self.observable_offsets[i] as usize;
+            let obs_end = self.observable_offsets[i + 1] as usize;
+            let mechanism = FaultMechanism::from_unsorted(
+                self.detector_data[det_start..det_end].iter().copied(),
+                self.observable_data[obs_start..obs_end].iter().copied(),
+            );
+            dem.add_direct_contribution(mechanism, prob);
+        }
+        dem
+    }
+
     /// Create a [`DemSampler`] from raw mechanism data.
     ///
     /// This constructor is used when building from a parsed DEM string rather than

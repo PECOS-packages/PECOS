@@ -51,7 +51,8 @@
 //! ```
 
 use crate::fault_tolerance::dem_builder::{
-    DemSampler, DemSamplerBuilder, DetectorDef, LogicalObservable, NoiseConfig, PerGateTypeNoise,
+    DemSampler, DemSamplerBuilder, DetectorDef, DetectorErrorModel, LogicalObservable, NoiseConfig,
+    PerGateTypeNoise,
 };
 use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
@@ -87,6 +88,10 @@ pub struct DemStabShotBatch {
 #[derive(Debug, Clone)]
 pub struct DemStabSim {
     sampler: DemSampler,
+    /// Detector definitions preserved from the builder, used to produce
+    /// a text-serializable [`DetectorErrorModel`] with full metadata.
+    detectors: Vec<DetectorDef>,
+    observables: Vec<LogicalObservable>,
 }
 
 impl DemStabSim {
@@ -118,6 +123,25 @@ impl DemStabSim {
     #[must_use]
     pub fn sampler(&self) -> &DemSampler {
         &self.sampler
+    }
+
+    /// Produce a [`DetectorErrorModel`] reflecting the compiled mechanism
+    /// set and the detector / observable definitions the builder was
+    /// given. Use [`DetectorErrorModel::to_string`] for Stim-compatible
+    /// text output.
+    ///
+    /// Note: the probabilities are recovered from the sampler's stored
+    /// `u64` thresholds, which round-trips to ~machine precision.
+    #[must_use]
+    pub fn detector_error_model(&self) -> DetectorErrorModel {
+        let mut dem = self.sampler.to_detector_error_model();
+        for det in &self.detectors {
+            dem.add_detector(det.clone());
+        }
+        for obs in &self.observables {
+            dem.add_observable(obs.clone());
+        }
+        dem
     }
 
     /// Sample `num_shots` independent shots from the compiled DEM.
@@ -228,8 +252,13 @@ impl DemStabSimBuilder {
             builder = builder.with_measurement_order(order);
         }
 
+        let detectors = self.detectors.clone();
+        let observables = self.observables.clone();
+
         Ok(DemStabSim {
             sampler: builder.build(),
+            detectors,
+            observables,
         })
     }
 }

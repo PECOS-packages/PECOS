@@ -1521,7 +1521,7 @@ impl<'a> DemSamplerBuilder<'a> {
                 | GateType::Z => {
                     // Single-qubit gate errors: only "after" locations.
                     if !loc.before {
-                        let rates = self.rates_1q(loc.gate_type);
+                        let rates = self.rates_1q(loc.gate_type, &loc.qubits);
                         if rates.iter().any(|r| *r > 0.0) {
                             self.process_depolarizing_fault_rates(
                                 loc_idx,
@@ -1542,10 +1542,19 @@ impl<'a> DemSamplerBuilder<'a> {
         if has_any_2q_noise {
             for (node, loc_indices) in &cx_groups {
                 if loc_indices.len() == 2 {
-                    // Use the gate_type of the first location (both locations of
-                    // a 2Q gate share the same gate_type).
-                    let gate_type = self.influence_map.locations[loc_indices[0]].gate_type;
-                    let rates = self.rates_2q(gate_type);
+                    // For 2Q gates, each fault location covers exactly one
+                    // qubit; combine the two locations' qubits into an
+                    // ordered (control, target) pair.
+                    let loc0 = &self.influence_map.locations[loc_indices[0]];
+                    let loc1 = &self.influence_map.locations[loc_indices[1]];
+                    let gate_type = loc0.gate_type;
+                    let pair_qubits: Vec<_> = loc0
+                        .qubits
+                        .iter()
+                        .chain(loc1.qubits.iter())
+                        .copied()
+                        .collect();
+                    let rates = self.rates_2q(gate_type, &pair_qubits);
                     if rates.iter().any(|r| *r > 0.0) {
                         self.process_two_qubit_fault_rates(
                             loc_indices[0],
@@ -1666,20 +1675,35 @@ impl<'a> DemSamplerBuilder<'a> {
         }
     }
 
-    /// Resolve per-Pauli rates for a 1Q gate. Uses `per_gate` if set,
-    /// otherwise splits uniform `p1` evenly across `X, Y, Z`.
-    fn rates_1q(&self, gate: GateType) -> [f64; 3] {
+    /// Resolve per-Pauli rates for a 1Q gate on a specific qubit. Uses
+    /// `per_gate`'s per-qubit map if set, falling back to per-gate-type,
+    /// then uniform `p1 / 3`.
+    fn rates_1q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 3] {
         if let Some(pg) = &self.per_gate {
-            [pg.rate_1q(gate, 0), pg.rate_1q(gate, 1), pg.rate_1q(gate, 2)]
+            if let Some(q) = qubits.first() {
+                [
+                    pg.rate_1q_on(gate, *q, 0),
+                    pg.rate_1q_on(gate, *q, 1),
+                    pg.rate_1q_on(gate, *q, 2),
+                ]
+            } else {
+                [pg.rate_1q(gate, 0), pg.rate_1q(gate, 1), pg.rate_1q(gate, 2)]
+            }
         } else {
             [self.p1 / 3.0; 3]
         }
     }
 
-    /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs).
-    fn rates_2q(&self, gate: GateType) -> [f64; 15] {
+    /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a
+    /// specific ordered qubit pair.
+    fn rates_2q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 15] {
         if let Some(pg) = &self.per_gate {
-            std::array::from_fn(|i| pg.rate_2q(gate, i))
+            if qubits.len() >= 2 {
+                let (qc, qt) = (qubits[0], qubits[1]);
+                std::array::from_fn(|i| pg.rate_2q_on(gate, qc, qt, i))
+            } else {
+                std::array::from_fn(|i| pg.rate_2q(gate, i))
+            }
         } else {
             [self.p2 / 15.0; 15]
         }

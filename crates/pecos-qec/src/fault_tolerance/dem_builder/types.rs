@@ -745,6 +745,7 @@ impl NoiseConfig {
 // Per-gate-type noise configuration
 // ============================================================================
 
+use pecos_core::QubitId;
 use pecos_quantum::GateType;
 
 /// Ordered indices for the 3 non-identity 1Q Paulis: `[X, Y, Z]`.
@@ -758,33 +759,42 @@ pub const PAULI_2Q_ORDER: [&str; 15] = [
     "IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZI", "ZX", "ZY", "ZZ",
 ];
 
-/// Per-gate-type noise specification. Replaces the uniform scalar
-/// `NoiseConfig` with per-`GateType` per-Pauli rates — e.g. an `H` gate
-/// on qubit A can have different `X/Y/Z` rates from an `H` on qubit B
-/// (via different `GateType` tags, if you choose to differentiate).
+/// Per-gate-type, optionally per-qubit noise specification. Replaces the
+/// uniform scalar `NoiseConfig` with per-`GateType` per-Pauli rates, with
+/// an optional per-qubit override layer for devices where `T_1`/`T_2`
+/// varies qubit-to-qubit.
 ///
-/// # Layout
+/// # Layered lookup
 ///
-/// - `rates_1q`: `GateType -> [rate_X, rate_Y, rate_Z]`. For any 1Q gate
-///   type in the map, these rates replace `p1/3` in the uniform model.
-/// - `rates_2q`: `GateType -> [rate_IX, rate_IY, ..., rate_ZZ]`. Index
-///   follows [`PAULI_2Q_ORDER`]. Replaces `p2/15` for gates in the map.
-/// - `fallback`: uniform scalars used for any `GateType` not covered in
-///   `rates_1q` / `rates_2q` AND for measurement / preparation faults.
+/// Rate resolution tries the most specific entry first and falls back:
+///
+/// ```text
+/// 1. rates_1q_per_qubit[(gate, qubit)]         // most specific
+/// 2. rates_1q[gate]                            // per-gate-type default
+/// 3. fallback.p1 / 3.0                         // uniform fallback
+/// ```
+///
+/// (And analogously for 2Q with `(gate, (q_control, q_target))`.)
+///
+/// This lets users specify "H on qubit 0 has these rates (high T_1), H on
+/// qubit 1 has these (low T_1), every other H uses the per-gate default".
 ///
 /// # Integration with `pecos-lindblad`
 ///
 /// The intended workflow is:
-///   1. Synthesize a `PauliLindbladModel` for each gate type via
-///      `pecos_lindblad::synthesize_superop(...)` (or any other path).
-///   2. Convert to `[f64; 3]` / `[f64; 15]` arrays via adapter helpers
-///      in `pecos-lindblad` (G3).
-///   3. Bundle into a `PerGateTypeNoise`.
-///   4. Pass to `DemSamplerBuilder::with_per_gate_noise(...)` (G2).
+///   1. Synthesize a `PauliLindbladModel` for each gate type *and* per
+///      qubit if needed via `pecos_lindblad::synthesize_superop(...)`.
+///   2. Convert to `[f64; 3]` / `[f64; 15]` arrays.
+///   3. Register with [`Self::with_1q_rates_for_qubit`] /
+///      [`Self::with_2q_rates_for_qubits`] for heterogeneous devices, or
+///      [`Self::with_1q_rates`] / [`Self::with_2q_rates`] for homogeneous
+///      models.
 #[derive(Debug, Clone, Default)]
 pub struct PerGateTypeNoise {
     pub rates_1q: HashMap<GateType, [f64; 3]>,
     pub rates_2q: HashMap<GateType, [f64; 15]>,
+    pub rates_1q_per_qubit: HashMap<(GateType, QubitId), [f64; 3]>,
+    pub rates_2q_per_qubits: HashMap<(GateType, QubitId, QubitId), [f64; 15]>,
     pub p_meas: f64,
     pub p_init: f64,
     pub fallback: NoiseConfig,
@@ -797,23 +807,49 @@ impl PerGateTypeNoise {
         Self {
             rates_1q: HashMap::new(),
             rates_2q: HashMap::new(),
+            rates_1q_per_qubit: HashMap::new(),
+            rates_2q_per_qubits: HashMap::new(),
             p_meas: fallback.p_meas,
             p_init: fallback.p_init,
             fallback,
         }
     }
 
-    /// Attach rates for a 1Q gate type.
+    /// Attach rates for a 1Q gate type applied to any qubit.
     #[must_use]
     pub fn with_1q_rates(mut self, g: GateType, rates: [f64; 3]) -> Self {
         self.rates_1q.insert(g, rates);
         self
     }
 
-    /// Attach rates for a 2Q gate type.
+    /// Attach rates for a 2Q gate type applied to any qubit pair.
     #[must_use]
     pub fn with_2q_rates(mut self, g: GateType, rates: [f64; 15]) -> Self {
         self.rates_2q.insert(g, rates);
+        self
+    }
+
+    /// Attach rates for a 1Q gate on a specific qubit. Takes precedence
+    /// over [`Self::with_1q_rates`] for that `(gate, qubit)` combination.
+    #[must_use]
+    pub fn with_1q_rates_for_qubit(mut self, g: GateType, q: QubitId, rates: [f64; 3]) -> Self {
+        self.rates_1q_per_qubit.insert((g, q), rates);
+        self
+    }
+
+    /// Attach rates for a 2Q gate on a specific ordered qubit pair.
+    /// Takes precedence over [`Self::with_2q_rates`] for that
+    /// `(gate, q_control, q_target)` combination.
+    #[must_use]
+    pub fn with_2q_rates_for_qubits(
+        mut self,
+        g: GateType,
+        q_control: QubitId,
+        q_target: QubitId,
+        rates: [f64; 15],
+    ) -> Self {
+        self.rates_2q_per_qubits
+            .insert((g, q_control, q_target), rates);
         self
     }
 
@@ -827,6 +863,17 @@ impl PerGateTypeNoise {
             .unwrap_or(self.fallback.p1 / 3.0)
     }
 
+    /// Lookup 1Q Pauli rate for a gate on a specific qubit. Tries the
+    /// per-qubit map first, falls back to per-gate-type, then to
+    /// `fallback.p1 / 3.0`. `pauli_idx` is 0=X, 1=Y, 2=Z.
+    #[must_use]
+    pub fn rate_1q_on(&self, gate: GateType, qubit: QubitId, pauli_idx: usize) -> f64 {
+        if let Some(rates) = self.rates_1q_per_qubit.get(&(gate, qubit)) {
+            return rates[pauli_idx];
+        }
+        self.rate_1q(gate, pauli_idx)
+    }
+
     /// Lookup 2Q Pauli pair rate for a gate. Returns `fallback.p2 / 15.0`
     /// if the gate type is not in the map. `pair_idx` follows [`PAULI_2Q_ORDER`].
     #[must_use]
@@ -835,6 +882,23 @@ impl PerGateTypeNoise {
             .get(&gate)
             .map(|r| r[pair_idx])
             .unwrap_or(self.fallback.p2 / 15.0)
+    }
+
+    /// Lookup 2Q Pauli pair rate for a gate on a specific ordered
+    /// qubit pair. Tries `(gate, q_control, q_target)` in the per-qubits
+    /// map first, falls back to per-gate-type, then to `fallback.p2/15.0`.
+    #[must_use]
+    pub fn rate_2q_on(
+        &self,
+        gate: GateType,
+        q_control: QubitId,
+        q_target: QubitId,
+        pair_idx: usize,
+    ) -> f64 {
+        if let Some(rates) = self.rates_2q_per_qubits.get(&(gate, q_control, q_target)) {
+            return rates[pair_idx];
+        }
+        self.rate_2q(gate, pair_idx)
     }
 }
 

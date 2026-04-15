@@ -815,24 +815,27 @@ fn find_hyperedge_decomposition(
 
 struct GraphlikeDecompositionIndex {
     graphlike_set: BTreeSet<ErrorMechanism>,
-    candidates_by_detector: BTreeMap<u32, Vec<ErrorMechanism>>,
+    /// Indexed by detector ID; see `SingletonDecompositionIndex` for the same
+    /// pattern and rationale. Detector IDs are dense `0..num_detectors`.
+    candidates_by_detector: Vec<Vec<ErrorMechanism>>,
 }
 
 impl GraphlikeDecompositionIndex {
     fn new(graphlike_set: &BTreeSet<ErrorMechanism>) -> Self {
-        let mut candidates_by_detector: BTreeMap<u32, Vec<ErrorMechanism>> = BTreeMap::new();
+        let max_det = graphlike_set
+            .iter()
+            .flat_map(|c| c.detectors.iter().copied())
+            .max();
+
+        let mut candidates_by_detector: Vec<Vec<ErrorMechanism>> =
+            max_det.map_or_else(Vec::new, |m| vec![Vec::new(); m as usize + 1]);
+
         for candidate in graphlike_set {
-            if candidate.detectors.is_empty() {
-                continue;
-            }
-            for det in &candidate.detectors {
-                candidates_by_detector
-                    .entry(*det)
-                    .or_default()
-                    .push(candidate.clone());
+            for &det in &candidate.detectors {
+                candidates_by_detector[det as usize].push(candidate.clone());
             }
         }
-        for values in candidates_by_detector.values_mut() {
+        for values in &mut candidates_by_detector {
             values.sort_by(|a, b| {
                 b.detectors
                     .len()
@@ -892,7 +895,7 @@ impl GraphlikeDecompositionIndex {
         }
 
         if let Some(&pivot) = remaining.detectors.first()
-            && let Some(candidates) = self.candidates_by_detector.get(&pivot)
+            && let Some(candidates) = self.candidates_by_detector.get(pivot as usize)
         {
             for candidate in candidates {
                 if !candidate

@@ -31,7 +31,7 @@ classifiers = [
 ]
 
 [build-system]
-requires = ["maturin>=1.2,<2.0"]
+requires = ["maturin>=1.13.1,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
@@ -40,7 +40,7 @@ module-name = "pecos_rslib_cuda"
 [dependency-groups]
 dev = []
 test = [
-    "pytest>=7.0",
+    "pytest>=9.0",
 ]
 
 [tool.uv.sources]

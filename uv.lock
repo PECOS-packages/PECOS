@@ -2781,7 +2781,7 @@ numpy-compat = [
     { name = "numpy", specifier = ">=1.20" },
     { name = "scipy", specifier = ">=1.7" },
 ]
-test = [{ name = "pytest", specifier = ">=7.0" }]
+test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-rslib-cuda"
@@ -2797,7 +2797,7 @@ test = [
 
 [package.metadata.requires-dev]
 dev = []
-test = [{ name = "pytest", specifier = ">=7.0" }]
+test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-rslib-llvm"
@@ -2813,7 +2813,7 @@ test = [
 
 [package.metadata.requires-dev]
 dev = []
-test = [{ name = "pytest", specifier = ">=7.0" }]
+test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-selene-clifford-rz"
@@ -2833,7 +2833,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
 ]
@@ -2857,7 +2857,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
 ]
@@ -2881,7 +2881,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
 ]

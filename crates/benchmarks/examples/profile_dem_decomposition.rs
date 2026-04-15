@@ -17,6 +17,7 @@
 use pecos_qec::fault_tolerance::dem_builder::{DemBuilder, DetectorErrorModel};
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
+use std::fmt::Write;
 use std::hint::black_box;
 
 fn build_surface_code_dem(distance: usize, rounds: usize) -> DetectorErrorModel {
@@ -61,9 +62,8 @@ fn build_surface_code_dem(distance: usize, rounds: usize) -> DetectorErrorModel 
             if !first {
                 detectors.push(',');
             }
-            detectors.push_str(&format!(
-                r#"{{"id":{det_id},"records":[{curr},{prev}]}}"#,
-            ));
+            write!(detectors, r#"{{"id":{det_id},"records":[{curr},{prev}]}}"#)
+                .expect("writing to String cannot fail");
             det_id += 1;
             first = false;
         }

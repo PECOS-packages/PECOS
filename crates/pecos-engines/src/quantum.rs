@@ -193,21 +193,15 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                         GateType::RZ => sim.try_rz(angle, &cmd.qubits).map(|_| ()),
                         GateType::RX => sim.try_rx(angle, &cmd.qubits).map(|_| ()),
                         GateType::RY => sim.try_ry(angle, &cmd.qubits).map(|_| ()),
-                        GateType::RZZ => with_flat_pairs(
-                            &cmd.qubits,
-                            &mut pair_scratch,
-                            |pairs| sim.try_rzz(angle, pairs).map(|_| ()),
-                        ),
-                        GateType::RXX => with_flat_pairs(
-                            &cmd.qubits,
-                            &mut pair_scratch,
-                            |pairs| sim.try_rxx(angle, pairs).map(|_| ()),
-                        ),
-                        GateType::RYY => with_flat_pairs(
-                            &cmd.qubits,
-                            &mut pair_scratch,
-                            |pairs| sim.try_ryy(angle, pairs).map(|_| ()),
-                        ),
+                        GateType::RZZ => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                            sim.try_rzz(angle, pairs).map(|_| ())
+                        }),
+                        GateType::RXX => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                            sim.try_rxx(angle, pairs).map(|_| ())
+                        }),
+                        GateType::RYY => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                            sim.try_ryy(angle, pairs).map(|_| ())
+                        }),
                         _ => unreachable!(),
                     };
                     result.map_err(PecosError::Processing)?;

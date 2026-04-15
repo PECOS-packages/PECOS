@@ -54,8 +54,8 @@ use pecos_qec::fault_tolerance::dem_builder::{
     MemBuilder as RustMemBuilder, ParsedDem as RustParsedDem,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
-    compare_dems_statistical as rust_compare_dems_statistical,
-    record_offset_to_absolute_index, verify_dem_equivalence as rust_verify_dem_equivalence,
+    compare_dems_statistical as rust_compare_dems_statistical, record_offset_to_absolute_index,
+    verify_dem_equivalence as rust_verify_dem_equivalence,
 };
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos_qec::fault_tolerance::propagator::{

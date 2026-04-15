@@ -37,13 +37,13 @@ dev = [
   "mkdocstrings[python]",                   # Code documentation extraction
   "markdown-exec[ansi]",                    # Executable markdown blocks
 ]
-test = [ # pinning testing environment
+test = [ # exact pins so workspace tests run against a reproducible environment
   "pytest==9.0.3",
   "pytest-cov==7.1.0",
-  "pytest-timeout>=2.3.1",
+  "pytest-timeout==2.4.0",
   "hypothesis==6.152.1",
-  "stim>=1.15.0",      # Stim-comparison and decomposition-invariant tests
-  "wasmtime>=43.0.0",  # WebAssembly runtime exercised by integration tests
+  "stim==1.15.0",     # Stim-comparison and decomposition-invariant tests
+  "wasmtime==43.0.0", # WebAssembly runtime exercised by integration tests
 ]
 examples = [ # extras used by the examples/ tree and notebook walkthroughs
   "jupyter>=1.1.1",

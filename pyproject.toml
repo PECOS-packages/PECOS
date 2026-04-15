@@ -48,7 +48,7 @@ test = [ # pinning testing environment
   "pytest==9.0.3",
   "pytest-cov==6.0.0",
   "pytest-timeout>=2.3.1",
-  "hypothesis==6.122.3",
+  "hypothesis==6.152.1",
 ]
 numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack
   "numpy>=1.15.0",

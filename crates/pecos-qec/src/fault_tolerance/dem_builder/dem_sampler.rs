@@ -1479,28 +1479,34 @@ impl<'a> DemSamplerBuilder<'a> {
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc => {
                     // Prep errors: only "after" locations (X error for Z-basis prep)
-                    if self.p_init > 0.0 && !loc.before {
-                        self.process_single_pauli_fault(
-                            loc_idx,
-                            Pauli::X,
-                            self.p_init,
-                            im_to_tc.as_deref(),
-                            num_tc_measurements,
-                            &mut aggregated,
-                        );
+                    if !loc.before {
+                        let p = self.init_rate_for_location(loc);
+                        if p > 0.0 {
+                            self.process_single_pauli_fault(
+                                loc_idx,
+                                Pauli::X,
+                                p,
+                                im_to_tc.as_deref(),
+                                num_tc_measurements,
+                                &mut aggregated,
+                            );
+                        }
                     }
                 }
                 GateType::MZ | GateType::MeasureFree => {
                     // Measurement errors: only "before" locations (X error = bit flip)
-                    if self.p_meas > 0.0 && loc.before {
-                        self.process_single_pauli_fault(
-                            loc_idx,
-                            Pauli::X,
-                            self.p_meas,
-                            im_to_tc.as_deref(),
-                            num_tc_measurements,
-                            &mut aggregated,
-                        );
+                    if loc.before {
+                        let p = self.measurement_rate_for_location(loc);
+                        if p > 0.0 {
+                            self.process_single_pauli_fault(
+                                loc_idx,
+                                Pauli::X,
+                                p,
+                                im_to_tc.as_deref(),
+                                num_tc_measurements,
+                                &mut aggregated,
+                            );
+                        }
                     }
                 }
                 GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP => {
@@ -1673,6 +1679,35 @@ impl<'a> DemSamplerBuilder<'a> {
             let entry = aggregated.entry(mechanism).or_insert(0.0);
             *entry = combine_probabilities(*entry, prob);
         }
+    }
+
+    /// Resolve the X-error rate for a prep location. Uses `per_gate`'s
+    /// per-qubit `init_rates` if set, otherwise the scalar `self.p_init`.
+    fn init_rate_for_location(
+        &self,
+        loc: &super::super::propagator::dag::DagSpacetimeLocation,
+    ) -> f64 {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return pg.init_rate_on(*q);
+            }
+        }
+        self.p_init
+    }
+
+    /// Resolve the X-flip rate for a measurement location. Uses
+    /// `per_gate`'s per-qubit `measurement_rates` if set, otherwise the
+    /// scalar `self.p_meas`.
+    fn measurement_rate_for_location(
+        &self,
+        loc: &super::super::propagator::dag::DagSpacetimeLocation,
+    ) -> f64 {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return pg.measurement_rate_on(*q);
+            }
+        }
+        self.p_meas
     }
 
     /// Resolve per-Pauli rates for a 1Q gate on a specific qubit. Uses

@@ -795,6 +795,12 @@ pub struct PerGateTypeNoise {
     pub rates_2q: HashMap<GateType, [f64; 15]>,
     pub rates_1q_per_qubit: HashMap<(GateType, QubitId), [f64; 3]>,
     pub rates_2q_per_qubits: HashMap<(GateType, QubitId, QubitId), [f64; 15]>,
+    /// Per-qubit readout (MZ) X-flip probabilities. Lookup falls back to
+    /// [`Self::p_meas`] for qubits not in the map.
+    pub measurement_rates: HashMap<QubitId, f64>,
+    /// Per-qubit preparation (PZ) X-error probabilities. Lookup falls
+    /// back to [`Self::p_init`] for qubits not in the map.
+    pub init_rates: HashMap<QubitId, f64>,
     pub p_meas: f64,
     pub p_init: f64,
     pub fallback: NoiseConfig,
@@ -809,10 +815,44 @@ impl PerGateTypeNoise {
             rates_2q: HashMap::new(),
             rates_1q_per_qubit: HashMap::new(),
             rates_2q_per_qubits: HashMap::new(),
+            measurement_rates: HashMap::new(),
+            init_rates: HashMap::new(),
             p_meas: fallback.p_meas,
             p_init: fallback.p_init,
             fallback,
         }
+    }
+
+    /// Attach measurement X-flip probability for a specific qubit.
+    /// Overrides [`Self::p_meas`] when set. Use for devices with
+    /// heterogeneous readout fidelity.
+    #[must_use]
+    pub fn with_measurement_rate(mut self, q: QubitId, p: f64) -> Self {
+        self.measurement_rates.insert(q, p);
+        self
+    }
+
+    /// Attach preparation X-error probability for a specific qubit.
+    /// Overrides [`Self::p_init`] when set.
+    #[must_use]
+    pub fn with_init_rate(mut self, q: QubitId, p: f64) -> Self {
+        self.init_rates.insert(q, p);
+        self
+    }
+
+    /// Lookup measurement X-flip rate for a qubit. Falls back to
+    /// [`Self::p_meas`] (which is itself seeded from the fallback
+    /// `NoiseConfig::p_meas`).
+    #[must_use]
+    pub fn measurement_rate_on(&self, q: QubitId) -> f64 {
+        *self.measurement_rates.get(&q).unwrap_or(&self.p_meas)
+    }
+
+    /// Lookup preparation X-error rate for a qubit. Falls back to
+    /// [`Self::p_init`].
+    #[must_use]
+    pub fn init_rate_on(&self, q: QubitId) -> f64 {
+        *self.init_rates.get(&q).unwrap_or(&self.p_init)
     }
 
     /// Attach rates for a 1Q gate type applied to any qubit.

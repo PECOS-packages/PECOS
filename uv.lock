@@ -2891,9 +2891,6 @@ provides-extras = ["test"]
 name = "pecos-workspace"
 version = "0.8.0.dev5"
 source = { virtual = "." }
-dependencies = [
-    { name = "stim" },
-]
 
 [package.optional-dependencies]
 cuda = [
@@ -2906,22 +2903,19 @@ cuda = [
 ]
 dev = [
     { name = "black" },
-    { name = "jupyter" },
     { name = "markdown-exec", extra = ["ansi"] },
-    { name = "matplotlib" },
     { name = "maturin" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "patchelf", marker = "sys_platform != 'win32'" },
-    { name = "phir" },
-    { name = "polars" },
     { name = "pre-commit" },
     { name = "ruff" },
     { name = "setuptools" },
-    { name = "wasmtime" },
+]
+examples = [
+    { name = "jupyter" },
+    { name = "polars" },
 ]
 numpy-compat = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2934,34 +2928,31 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
+    { name = "stim" },
+    { name = "wasmtime" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "quantum-pecos", extras = ["cuda"], marker = "extra == 'cuda'", editable = "python/quantum-pecos" },
-    { name = "stim", specifier = ">=1.15.0" },
-]
+requires-dist = [{ name = "quantum-pecos", extras = ["cuda"], marker = "extra == 'cuda'", editable = "python/quantum-pecos" }]
 provides-extras = ["cuda"]
 
 [package.metadata.requires-dev]
 cuda = [{ name = "quantum-pecos", extras = ["cuda"], editable = "python/quantum-pecos" }]
 dev = [
     { name = "black" },
-    { name = "jupyter", specifier = ">=1.1.1" },
     { name = "markdown-exec", extras = ["ansi"] },
-    { name = "matplotlib", specifier = ">=2.2.0" },
     { name = "maturin", specifier = ">=1.13.1,<2.0" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extras = ["python"] },
-    { name = "networkx", specifier = ">=2.1.0" },
     { name = "patchelf", marker = "sys_platform != 'win32'" },
-    { name = "phir", specifier = ">=0.3.3" },
-    { name = "polars", specifier = ">=1.0.0" },
     { name = "pre-commit" },
     { name = "ruff" },
     { name = "setuptools", specifier = ">=82.0.1" },
-    { name = "wasmtime", specifier = ">=43.0.0" },
+]
+examples = [
+    { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "polars", specifier = ">=1.0.0" },
 ]
 numpy-compat = [
     { name = "numpy", specifier = ">=1.15.0" },
@@ -2972,6 +2963,8 @@ test = [
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "stim", specifier = ">=1.15.0" },
+    { name = "wasmtime", specifier = ">=43.0.0" },
 ]
 
 [[package]]
@@ -3957,7 +3950,7 @@ requires-dist = [
     { name = "quantum-pecos", extras = ["stim"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
     { name = "quantum-pecos", extras = ["visualization"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
     { name = "selene-sim", specifier = "~=0.2.0" },
-    { name = "stim", marker = "extra == 'stim'", specifier = ">=1.12.0" },
+    { name = "stim", marker = "extra == 'stim'", specifier = ">=1.15.0" },
     { name = "tket", specifier = "<0.12.16" },
 ]
 provides-extras = ["stim", "visualization", "all", "cuda"]

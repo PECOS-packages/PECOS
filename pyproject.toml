@@ -1,10 +1,9 @@
 [project]
 name = "pecos-workspace"
 version = "0.8.0.dev5"
-# Development dependencies that are optional in quantum-pecos but needed for full dev/test
-dependencies = [
-  "stim>=1.15.0", # Optional in quantum-pecos, but needed for stim-related tests
-]
+# Meta-package; runtime deps live in the member packages. Test/example/dev
+# tooling is declared in [dependency-groups] below.
+dependencies = []
 
 [project.optional-dependencies]
 cuda = ["quantum-pecos[cuda]"]
@@ -24,10 +23,12 @@ members = [
 quantum-pecos = { workspace = true }
 
 [dependency-groups]
+# Build, lint, and docs tooling. Runtime deps used by member packages
+# (networkx, matplotlib, phir, ...) come in transitively via quantum-pecos.
 dev = [
-  "maturin>=1.13.1,<2.0",                      # For building (should match build requirements)
+  "maturin>=1.13.1,<2.0",                   # For building (matches sub-package build-system requirements)
   "patchelf; platform_system != 'Windows'", # For setting rpath in shared libraries (Linux/macOS only)
-  "setuptools>=82.0.1",                       # Build system
+  "setuptools>=82.0.1",                     # Build system
   "pre-commit",                             # Git hooks
   "black",                                  # Code formatting
   "ruff",                                   # Fast Python linting
@@ -35,20 +36,18 @@ dev = [
   "mkdocs-material",                        # Material theme for MkDocs
   "mkdocstrings[python]",                   # Code documentation extraction
   "markdown-exec[ansi]",                    # Executable markdown blocks
-  # Runtime dependencies for development (non-test)
-  "networkx>=2.1.0",
-  "matplotlib>=2.2.0",
-  "phir>=0.3.3",
-  "polars>=1.0.0",     # DataFrame library for examples/benchmarks
-  # WebAssembly runtimes for testing
-  "wasmtime>=43.0.0",
-  "jupyter>=1.1.1",
 ]
 test = [ # pinning testing environment
   "pytest==9.0.3",
   "pytest-cov==7.1.0",
   "pytest-timeout>=2.3.1",
   "hypothesis==6.152.1",
+  "stim>=1.15.0",      # Stim-comparison and decomposition-invariant tests
+  "wasmtime>=43.0.0",  # WebAssembly runtime exercised by integration tests
+]
+examples = [ # extras used by the examples/ tree and notebook walkthroughs
+  "jupyter>=1.1.1",
+  "polars>=1.0.0",
 ]
 numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack
   "numpy>=1.15.0",

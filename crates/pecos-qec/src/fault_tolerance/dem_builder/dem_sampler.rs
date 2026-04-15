@@ -1524,8 +1524,12 @@ impl<'a> DemSamplerBuilder<'a> {
                 | GateType::SYdg
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::Idle => {
                     // Single-qubit gate errors: only "after" locations.
+                    // Idle locations use the per-qubit lookup so users can
+                    // say "qubit 3's idle noise is different from qubit 5's"
+                    // via `.with_1q_rates_for_qubit(GateType::Idle, q, rates)`.
                     if !loc.before {
                         let rates = self.rates_1q(loc.gate_type, &loc.qubits);
                         if rates.iter().any(|r| *r > 0.0) {

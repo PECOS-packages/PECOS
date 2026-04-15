@@ -2385,11 +2385,20 @@ impl fmt::Debug for MeasurementMechanism {
 ///
 /// # Example
 ///
-/// ```ignore
-/// let mnm = MeasurementNoiseModel::from_influence_map(&influence_map, &noise);
+/// Build an MNM from a fault influence map and sample measurement outcomes.
+/// In practice you will use [`MemBuilder`] to populate mechanisms; here we
+/// use an empty MNM to keep the doctest self-contained.
 ///
-/// // Sample measurement outcomes
+/// ```
+/// use pecos_qec::fault_tolerance::dem_builder::MeasurementNoiseModel;
+/// use rand::SeedableRng;
+/// use rand::rngs::StdRng;
+///
+/// let num_measurements = 4;
+/// let mnm = MeasurementNoiseModel::new(num_measurements);
+///
 /// let mut outcomes = vec![false; num_measurements];
+/// let mut rng = StdRng::seed_from_u64(0);
 /// mnm.sample_into(&mut outcomes, &mut rng);
 /// ```
 #[derive(Debug, Clone, Default)]

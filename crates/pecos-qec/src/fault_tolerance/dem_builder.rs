@@ -24,22 +24,25 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, DemBuilder};
+//! ```
+//! use pecos_qec::DemBuilder;
+//! use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
 //!
-//! // Build influence map from circuit
-//! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Normally `influence_map` comes from `DagFaultAnalyzer::build_influence_map()`;
+//! // here we use an empty map to keep the doctest self-contained.
+//! let influence_map = DagFaultInfluenceMap::with_capacity(0);
 //!
-//! // Build DEM with noise model
 //! let dem = DemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .with_detectors_json(detectors_json)?
-//!     .with_observables_json(observables_json)?
+//!     .with_detectors_json("[]")?
+//!     .with_observables_json("[]")?
 //!     .build();
 //!
-//! // Output in Stim format
-//! println!("{}", dem.to_stim_format());
+//! // Output in Stim format (non-decomposed).
+//! let _ = dem.to_string();
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Error Decomposition
@@ -73,19 +76,22 @@
 //! for fast approximate sampling. Unlike the DEM which maps to detectors, the
 //! MNM maps directly to raw measurement effects.
 //!
-//! ```ignore
-//! use pecos_qec::fault_tolerance::{DagFaultAnalyzer, MemBuilder};
+//! ```
+//! use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
+//! use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
+//! use rand::SeedableRng;
+//! use rand::rngs::StdRng;
 //!
-//! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
+//! // Normally `influence_map` comes from `DagFaultAnalyzer::build_influence_map()`;
+//! // here we use an empty map to keep the doctest self-contained.
+//! let influence_map = DagFaultInfluenceMap::with_capacity(0);
 //!
-//! // Build MNM for fast sampling
 //! let mnm = MemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
 //!     .build();
 //!
-//! // Sample measurement outcomes
-//! let outcomes = mnm.sample(&mut rng);
+//! let mut rng = StdRng::seed_from_u64(0);
+//! let _outcomes = mnm.sample(&mut rng);
 //! ```
 //!
 //! The MNM aggregates fault locations by their measurement effects (which

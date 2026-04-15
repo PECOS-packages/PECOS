@@ -36,3 +36,5 @@ def pytest_configure(config: pytest.Config) -> None:
             "excluded from the default fast Python test lane"
         ),
     )
+
+

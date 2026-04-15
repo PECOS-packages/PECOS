@@ -748,9 +748,9 @@ pub fn qis_engine() -> PyQisEngineBuilder {
     }
 }
 
-/// Create Selene runtime for QIS Control Engine
+/// Create a Selene-backed QIS Control Engine builder.
 #[pyfunction]
-pub fn selene_runtime() -> PyResult<PyQisEngineBuilder> {
+pub fn selene_engine() -> PyResult<PyQisEngineBuilder> {
     let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "Failed to load Selene runtime: {e}"
@@ -759,12 +759,6 @@ pub fn selene_runtime() -> PyResult<PyQisEngineBuilder> {
     Ok(PyQisEngineBuilder {
         inner: pecos_qis::qis_engine().runtime(runtime),
     })
-}
-
-/// Backward-compatible alias for `selene_runtime`.
-#[pyfunction]
-pub fn selene_engine() -> PyResult<PyQisEngineBuilder> {
-    selene_runtime()
 }
 
 /// Create a PHIR JSON engine builder
@@ -1401,12 +1395,6 @@ pub fn sparse_stab() -> PySparseStabEngineBuilder {
     PySparseStabEngineBuilder::new()
 }
 
-/// Backward-compatible alias for `sparse_stab`.
-#[pyfunction]
-pub fn sparse_stabilizer() -> PySparseStabEngineBuilder {
-    sparse_stab()
-}
-
 /// Python wrapper for `StabilizerEngineBuilder` (recommended stabilizer backend).
 #[pyclass(name = "StabilizerEngineBuilder", from_py_object)]
 #[derive(Clone)]
@@ -1636,7 +1624,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Engine functions
     m.add_function(wrap_pyfunction!(self::qasm_engine, m)?)?;
     m.add_function(wrap_pyfunction!(self::qis_engine, m)?)?;
-    m.add_function(wrap_pyfunction!(self::selene_runtime, m)?)?;
+    m.add_function(wrap_pyfunction!(self::selene_engine, m)?)?;
     m.add_function(wrap_pyfunction!(self::phir_json_engine, m)?)?;
     m.add_function(wrap_pyfunction!(self::hugr_engine, m)?)?;
 

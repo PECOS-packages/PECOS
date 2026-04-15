@@ -24,14 +24,15 @@ from pecos.qec.surface import (
 
 
 def _require_selene_runtime() -> None:
+    """Eagerly instantiate the Selene engine to fail fast if it is unavailable.
+
+    The PECOS test environment is expected to have the Selene runtime installed
+    (see ``pecos setup``). A failure here means the environment is broken, not
+    that the test should be skipped.
+    """
     import pecos
 
-    try:
-        pecos.selene_engine()
-    except RuntimeError as exc:
-        if "Failed to load Selene runtime" in str(exc):
-            pytest.skip("Selene runtime not available in this test environment")
-        raise
+    pecos.selene_engine()
 
 
 def _count_singleton_error_parts(dem: str) -> int:
@@ -628,23 +629,8 @@ class TestDemGeneration:
 class TestNoisySimulation:
     """Integration tests for noisy simulation (requires selene_sim)."""
 
-    @pytest.fixture
-    def check_selene(self) -> bool | None:
-        """Check if selene_sim is available."""
-        try:
-            import selene_sim
-
-            return True
-        except ImportError:
-            pytest.skip("selene_sim not available")
-            return False
-
-    def test_run_noisy_memory_experiment_import(
-        self,
-        check_selene: bool,
-    ) -> None:
+    def test_run_noisy_memory_experiment_import(self) -> None:
         """Test that run_noisy_memory_experiment can be imported."""
-        _ = check_selene  # Fixture triggers skip if unavailable
         from pecos.qec.surface import run_noisy_memory_experiment
 
         assert callable(run_noisy_memory_experiment)
@@ -670,9 +656,8 @@ class TestNoisySimulation:
         assert result.num_shots == 100
         assert result.logical_error_rate == 0.05
 
-    def test_noiseless_simulation(self, check_selene: bool) -> None:
+    def test_noiseless_simulation(self) -> None:
         """Noiseless simulation should have zero logical error rate."""
-        _ = check_selene  # Fixture triggers skip if unavailable
         from pecos.compilation_pipeline import compile_guppy_to_hugr
         from pecos.guppy.surface import get_num_qubits, make_surface_code
         from pecos.qec.surface import SurfacePatch

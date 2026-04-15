@@ -17,7 +17,7 @@
 
 use super::types::{
     DetectorDef, DetectorErrorModel, DirectSourceComponents, ErrorMechanism, LogicalObservable,
-    NoiseConfig, SourceMetadata,
+    NoiseConfig, SourceMetadata, record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -54,8 +54,14 @@ struct ParsedObservable {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+/// use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let influence_map = DagFaultInfluenceMap::with_capacity(0);
+/// let detectors_json = "[]";
+/// let observables_json = "[]";
 ///
 /// let dem = DemBuilder::new(&influence_map)
 ///     .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -64,10 +70,12 @@ struct ParsedObservable {
 ///     .build();
 ///
 /// // Non-decomposed output (matches Stim's decompose_errors=False)
-/// println!("{}", dem.to_string());
+/// let _ = dem.to_string();
 ///
 /// // Decomposed output (matches Stim's decompose_errors=True)
-/// println!("{}", dem.to_string_decomposed());
+/// let _ = dem.to_string_decomposed();
+/// # Ok(())
+/// # }
 /// ```
 pub struct DemBuilder<'a> {
     /// Reference to the fault influence map.
@@ -132,6 +140,8 @@ impl<'a> DemBuilder<'a> {
 
     /// Parses and sets detector definitions from JSON.
     ///
+    /// Each object accepts either `"id"` or `"detector_id"` as the identifier key.
+    ///
     /// Expected format:
     /// ```json
     /// [
@@ -150,10 +160,12 @@ impl<'a> DemBuilder<'a> {
 
     /// Parses and sets observable definitions from JSON.
     ///
+    /// Each object accepts either `"id"` or `"observable_id"` as the identifier key.
+    ///
     /// Expected format:
     /// ```json
     /// [
-    ///   {"id": 0, "records": [-1, -3, -5]}
+    ///   {"id": 0, "records": [-1, -3, -5]},
     ///   {"observable_id": 1, "records": [-2]}
     /// ]
     /// ```
@@ -670,14 +682,6 @@ impl<'a> DemBuilder<'a> {
         triggered_obs.sort_unstable();
 
         ErrorMechanism::from_sorted(triggered_dets, triggered_obs)
-    }
-}
-
-fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
-    if offset < 0 {
-        num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
-    } else {
-        usize::try_from(offset).ok()
     }
 }
 

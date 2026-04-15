@@ -481,6 +481,11 @@ pytest-dep:
     uv run pytest python/pecos-rslib/tests -m "optional_dependency"
     uv run pytest python/quantum-pecos/tests -m "optional_dependency"
 
+# Run the slower integration lane (excluded from the default fast lane)
+[group('test')]
+pytest-slow:
+    uv run pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
+
 
 
 

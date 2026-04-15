@@ -111,5 +111,5 @@ pub use types::{
     ContributionRenderSummary, DecomposedError, DetectorDef, DetectorErrorModel,
     DirectSourceFamily, ErrorContribution, ErrorMechanism, ErrorSourceType, LogicalObservable,
     MeasurementMechanism, MeasurementNoiseModel, NoiseConfig, TwoDetectorDirectRenderPolicy,
-    combine_probabilities,
+    combine_probabilities, record_offset_to_absolute_index,
 };

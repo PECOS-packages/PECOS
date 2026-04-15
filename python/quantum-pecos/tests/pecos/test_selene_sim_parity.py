@@ -113,14 +113,15 @@ def alloc_reuse_probe() -> None:
 
 
 def _require_selene_runtime() -> object:
+    """Eagerly instantiate the Selene engine to fail fast if it is unavailable.
+
+    The PECOS test environment is expected to have the Selene runtime
+    installed (see ``pecos setup``). A failure here means the environment is
+    broken, not that the test should be skipped.
+    """
     import pecos
 
-    try:
-        return pecos.selene_engine()
-    except RuntimeError as exc:
-        if "Failed to load Selene runtime" in str(exc):
-            pytest.skip("Selene runtime not available in this test environment")
-        raise
+    return pecos.selene_engine()
 
 
 def _configure_selene_caches() -> None:
@@ -323,8 +324,6 @@ def _run_surface_memory_via_selene_sim(
     p: float,
     seed: int,
 ) -> dict[str, list[int] | list[list[int]]]:
-    pytest.importorskip("selene_sim")
-
     from pecos.compilation_pipeline import compile_guppy_to_hugr
     from pecos.guppy import get_num_qubits, make_surface_code
     from selene_sim import build

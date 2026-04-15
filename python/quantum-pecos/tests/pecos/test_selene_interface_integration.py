@@ -128,22 +128,13 @@ def test_selene_engine_python_exports() -> None:
     import pecos_rslib
 
     assert hasattr(pecos_rslib, "selene_engine")
-    assert hasattr(pecos_rslib, "selene_runtime")
     assert hasattr(pecos, "selene_engine")
 
-    try:
-        builder = pecos.selene_engine()
-    except RuntimeError as exc:
-        assert "Failed to load Selene runtime" in str(exc)
-    else:
-        assert isinstance(builder, pecos.QisEngineBuilder)
+    builder = pecos.selene_engine()
+    assert isinstance(builder, pecos.QisEngineBuilder)
 
-    try:
-        named_builder = pecos.qis_engine().selene_runtime("selene_simple_runtime")
-    except RuntimeError as exc:
-        assert "Failed to load Selene runtime" in str(exc)
-    else:
-        assert isinstance(named_builder, pecos.QisEngineBuilder)
+    named_builder = pecos.qis_engine().selene_runtime("selene_simple_runtime")
+    assert isinstance(named_builder, pecos.QisEngineBuilder)
 
 
 def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
@@ -152,12 +143,7 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
 
-    try:
-        selene = pecos.selene_engine()
-    except RuntimeError as exc:
-        if "Failed to load Selene runtime" in str(exc):
-            pytest.skip("Selene runtime not available in this test environment")
-        raise
+    selene = pecos.selene_engine()
 
     @guppy
     def coin() -> bool:
@@ -175,12 +161,7 @@ def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
     from guppylang import guppy
     from guppylang.std.quantum import measure, qubit, x
 
-    try:
-        selene = pecos.selene_engine()
-    except RuntimeError as exc:
-        if "Failed to load Selene runtime" in str(exc):
-            pytest.skip("Selene runtime not available in this test environment")
-        raise
+    selene = pecos.selene_engine()
 
     @guppy
     def allocate_measure_allocate_again() -> tuple[bool, bool]:

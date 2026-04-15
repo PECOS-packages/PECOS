@@ -21,25 +21,30 @@ fn quantum_error<S: Into<String>>(msg: S) -> PecosError {
     PecosError::Processing(msg.into())
 }
 
-/// Apply a closure to a flat qubit slice `[c0, t0, c1, t1, ...]`.
+/// Apply a closure to a flat qubit slice `[c0, t0, c1, t1, ...]` and return its result.
 ///
 /// Most commands contain a single pair, so avoid heap allocation in that case
-/// and reuse a scratch buffer for the rarer batched-pair path.
-fn with_flat_pairs<F>(qubits: &[QubitId], pair_scratch: &mut Vec<(QubitId, QubitId)>, mut f: F)
+/// and reuse a scratch buffer for the rarer batched-pair path. The closure's
+/// return value is forwarded so fallible gates (e.g. `try_rzz`) can bubble up
+/// a `Result` without a separate borrow-and-stash dance at the call site.
+fn with_flat_pairs<F, R>(
+    qubits: &[QubitId],
+    pair_scratch: &mut Vec<(QubitId, QubitId)>,
+    mut f: F,
+) -> R
 where
-    F: FnMut(&[(QubitId, QubitId)]),
+    F: FnMut(&[(QubitId, QubitId)]) -> R,
 {
     debug_assert_eq!(qubits.len() % 2, 0);
 
     if qubits.len() == 2 {
         let pair = [(qubits[0], qubits[1])];
-        f(&pair);
-        return;
+        return f(&pair);
     }
 
     pair_scratch.clear();
     pair_scratch.extend(qubits.chunks_exact(2).map(|pair| (pair[0], pair[1])));
-    f(pair_scratch);
+    f(pair_scratch)
 }
 
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
@@ -188,27 +193,21 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                         GateType::RZ => sim.try_rz(angle, &cmd.qubits).map(|_| ()),
                         GateType::RX => sim.try_rx(angle, &cmd.qubits).map(|_| ()),
                         GateType::RY => sim.try_ry(angle, &cmd.qubits).map(|_| ()),
-                        GateType::RZZ => {
-                            let mut result: Result<(), String> = Ok(());
-                            with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                                result = sim.try_rzz(angle, pairs).map(|_| ());
-                            });
-                            result
-                        }
-                        GateType::RXX => {
-                            let mut result: Result<(), String> = Ok(());
-                            with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                                result = sim.try_rxx(angle, pairs).map(|_| ());
-                            });
-                            result
-                        }
-                        GateType::RYY => {
-                            let mut result: Result<(), String> = Ok(());
-                            with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                                result = sim.try_ryy(angle, pairs).map(|_| ());
-                            });
-                            result
-                        }
+                        GateType::RZZ => with_flat_pairs(
+                            &cmd.qubits,
+                            &mut pair_scratch,
+                            |pairs| sim.try_rzz(angle, pairs).map(|_| ()),
+                        ),
+                        GateType::RXX => with_flat_pairs(
+                            &cmd.qubits,
+                            &mut pair_scratch,
+                            |pairs| sim.try_rxx(angle, pairs).map(|_| ()),
+                        ),
+                        GateType::RYY => with_flat_pairs(
+                            &cmd.qubits,
+                            &mut pair_scratch,
+                            |pairs| sim.try_ryy(angle, pairs).map(|_| ()),
+                        ),
                         _ => unreachable!(),
                     };
                     result.map_err(PecosError::Processing)?;
@@ -222,11 +221,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             }
             GateType::CRZ => {
                 if !cmd.angles.is_empty() {
-                    let mut result: Result<(), String> = Ok(());
                     with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        result = sim.try_crz(cmd.angles[0], pairs).map(|_| ());
-                    });
-                    result.map_err(PecosError::Processing)?;
+                        sim.try_crz(cmd.angles[0], pairs).map(|_| ())
+                    })
+                    .map_err(PecosError::Processing)?;
                 }
             }
             GateType::U => {
@@ -237,13 +235,11 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             }
             GateType::RXXRYYRZZ => {
                 if cmd.angles.len() >= 3 {
-                    let mut result: Result<(), String> = Ok(());
                     with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        result = sim
-                            .try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs)
-                            .map(|_| ());
-                    });
-                    result.map_err(PecosError::Processing)?;
+                        sim.try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs)
+                            .map(|_| ())
+                    })
+                    .map_err(PecosError::Processing)?;
                 }
             }
             GateType::U2q => {
@@ -257,11 +253,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                         [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
                         [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
                     ];
-                    let mut result: Result<(), String> = Ok(());
                     with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        result = sim.try_u2q(before, interaction, after, pairs).map(|_| ());
-                    });
-                    result.map_err(PecosError::Processing)?;
+                        sim.try_u2q(before, interaction, after, pairs).map(|_| ())
+                    })
+                    .map_err(PecosError::Processing)?;
                 }
             }
 

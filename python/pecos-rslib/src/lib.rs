@@ -319,7 +319,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register engine builder functions
     m.add_function(wrap_pyfunction!(engine_builders::qasm_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::qis_engine, m)?)?;
-    m.add_function(wrap_pyfunction!(engine_builders::selene_runtime, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::selene_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::phir_json_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::phir_engine, m)?)?;
@@ -332,7 +331,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(engine_builders::state_vector, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::sparse_stab, m)?)?;
-    m.add_function(wrap_pyfunction!(engine_builders::sparse_stabilizer, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::stabilizer, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::clifford_rz, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::density_matrix, m)?)?;

@@ -946,7 +946,7 @@ fn find_singleton_decomposition(
         return Some(vec![effect.clone()]);
     }
 
-    let mut candidates_by_detector: HashMap<u32, Vec<ErrorMechanism>> = HashMap::new();
+    let mut candidates_by_detector: BTreeMap<u32, Vec<ErrorMechanism>> = BTreeMap::new();
     for candidate in singleton_set {
         if candidate.detectors.len() != 1 {
             continue;
@@ -973,7 +973,7 @@ fn find_singleton_decomposition(
 
 fn search_singleton_decomposition(
     remaining: &ErrorMechanism,
-    candidates_by_detector: &HashMap<u32, Vec<ErrorMechanism>>,
+    candidates_by_detector: &BTreeMap<u32, Vec<ErrorMechanism>>,
     memo: &mut HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>>,
 ) -> Option<Vec<ErrorMechanism>> {
     if let Some(cached) = memo.get(remaining) {
@@ -1036,7 +1036,13 @@ fn convert_location_indices(location_indices: &[usize]) -> SmallVec<[u32; 2]> {
         .collect()
 }
 
-fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
+/// Converts a measurement record offset (Stim-style) to an absolute measurement index.
+///
+/// Negative offsets count backward from the end of the measurement record
+/// (`-1` is the last measurement). Positive offsets are treated as absolute
+/// indices. Returns `None` if the resulting index is out of range.
+#[must_use]
+pub fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
     if offset < 0 {
         num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
     } else {
@@ -1224,7 +1230,7 @@ pub struct DetectorErrorModel {
     /// Key is (d0, d1) with d0 < d1. A source is "graphlike decomposable" if both
     /// component effects are non-empty and graphlike (≤2 detectors).
     /// Used to determine output format: ≥2 → 3 forms, 1 → 2 forms, 0 → 1 form.
-    graphlike_decomposable_counts: HashMap<(u32, u32), u32>,
+    graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
 }
 
 impl DetectorErrorModel {
@@ -1235,7 +1241,7 @@ impl DetectorErrorModel {
             detectors: Vec::new(),
             observables: Vec::new(),
             contributions: Vec::new(),
-            graphlike_decomposable_counts: HashMap::new(),
+            graphlike_decomposable_counts: BTreeMap::new(),
         }
     }
 
@@ -1246,7 +1252,7 @@ impl DetectorErrorModel {
             detectors: Vec::with_capacity(num_detectors),
             observables: Vec::with_capacity(num_observables),
             contributions: Vec::new(),
-            graphlike_decomposable_counts: HashMap::new(),
+            graphlike_decomposable_counts: BTreeMap::new(),
         }
     }
 

@@ -375,42 +375,6 @@ def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
             target_tc.set_meta(key, value)
 
 
-def _load_qis_trace_chunks(trace_dir: str) -> list[dict[str, Any]]:
-    """Load one traced shot of QIS operation chunks from JSON files."""
-    import json
-    from pathlib import Path
-
-    trace_path = Path(trace_dir)
-    chunks: list[tuple[int, int, dict[str, Any]]] = []
-
-    for chunk_path in sorted(trace_path.glob("*.json")):
-        payload = json.loads(chunk_path.read_text())
-        if payload.get("format") != "pecos_qis_operation_trace_v1":
-            msg = f"Unsupported QIS trace format in {chunk_path}: {payload.get('format')!r}"
-            raise ValueError(msg)
-        chunks.append((int(payload.get("shot_index", 0)), int(payload.get("chunk_index", 0)), payload))
-
-    if not chunks:
-        msg = f"No QIS operation trace chunks were written to {trace_path}"
-        raise ValueError(msg)
-
-    first_shot = min(shot_index for shot_index, _, _ in chunks)
-    selected_chunks: list[dict[str, Any]] = []
-    for shot_index, _, payload in sorted(chunks):
-        if shot_index != first_shot:
-            continue
-        selected_chunks.append(payload)
-    return selected_chunks
-
-
-def _load_qis_trace_operations(trace_dir: str) -> list[dict[str, Any]]:
-    """Load one traced shot of raw QIS operations from JSON chunk files."""
-    operations: list[dict[str, Any]] = []
-    for payload in _load_qis_trace_chunks(trace_dir):
-        operations.extend(list(payload.get("operations", [])))
-    return operations
-
-
 def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any:
     """Replay traced QIS operations into a PECOS TickCircuit."""
     import heapq
@@ -654,14 +618,7 @@ def _generate_traced_surface_tick_circuit(
         .qubits(get_num_qubits(patch.distance))
         .seed(0)
     )
-    try:
-        chunks = list(sim_builder.capture_operation_trace())
-    except AttributeError:
-        import tempfile
-
-        with tempfile.TemporaryDirectory(prefix="pecos_surface_qis_trace_") as trace_dir:
-            sim_builder.trace_operations(trace_dir).run(1)
-            chunks = _load_qis_trace_chunks(trace_dir)
+    chunks = list(sim_builder.capture_operation_trace())
 
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
         return _replay_lowered_qis_trace_into_tick_circuit(chunks)

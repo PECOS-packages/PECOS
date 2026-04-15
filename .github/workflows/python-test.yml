@@ -218,5 +218,13 @@ jobs:
     - name: Run Python tests
       run: just pytest
 
+    - name: Run slow Python tests
+      # Only run on the primary Linux/newest-Python cell to keep the full
+      # matrix fast. Dropping this entirely would let the `slow` lane
+      # silently atrophy, which is exactly what the `slow` marker is
+      # supposed to prevent.
+      if: runner.os == 'Linux' && matrix.python-version == '3.14'
+      run: just pytest-slow
+
     - name: Run linting
       run: just lint check

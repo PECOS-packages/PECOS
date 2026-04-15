@@ -153,6 +153,10 @@ def _batched_stabilizers(
     geom = patch.geometry
     stabilizers = [("X", stab.index) for stab in geom.x_stabilizers]
     stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
+    # Sort key is load-bearing: it mirrors Guppy's stabilizer ordering (ascending
+    # index, X before Z on ties). Batched DEMs are compared against Guppy output
+    # shot-for-shot in the Selene parity tests, so any change here will diverge
+    # from the low-ancilla reference family.
     stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
 
     return [stabilizers[start : start + ancilla_budget] for start in range(0, len(stabilizers), ancilla_budget)]

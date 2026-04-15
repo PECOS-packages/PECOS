@@ -55,7 +55,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
-    verify_dem_equivalence as rust_verify_dem_equivalence,
+    record_offset_to_absolute_index, verify_dem_equivalence as rust_verify_dem_equivalence,
 };
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos_qec::fault_tolerance::propagator::{
@@ -77,14 +77,6 @@ fn json_record_offset(value: &serde_json::Value) -> PyResult<i32> {
     i32::try_from(raw).map_err(|_| {
         pyo3::exceptions::PyValueError::new_err("Record offset must fit into signed 32-bit range")
     })
-}
-
-fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
-    if offset < 0 {
-        num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
-    } else {
-        usize::try_from(offset).ok()
-    }
 }
 
 // =============================================================================

@@ -188,8 +188,14 @@ pub struct QisEngine {
     /// Current operations collected from the interface
     current_operations: Option<OperationList>,
 
-    /// Number of qubits in the program
-    num_qubits: usize,
+    /// High-water mark of physical simulator slots allocated across the current shot.
+    ///
+    /// Equals `max(slot_index) + 1` over every slot ever activated by
+    /// `allocate_qubit_slot`. Because `allocate_qubit_slot` refills freed slots
+    /// before extending the range, this is also the minimum number of simulator
+    /// slots that must exist to execute the program. Not the count of program
+    /// qubit handles — use `active_qubit_slots.len()` for that.
+    num_physical_slots: usize,
 
     /// Mapping from program-level qubit handles to physical simulator slots.
     active_qubit_slots: BTreeMap<usize, usize>,
@@ -313,7 +319,7 @@ impl QisEngine {
             interface: Some(interface),
             runtime,
             current_operations: None,
-            num_qubits: 0,
+            num_physical_slots: 0,
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
@@ -405,7 +411,7 @@ impl QisEngine {
             interface: None,
             runtime,
             current_operations: None,
-            num_qubits: 0,
+            num_physical_slots: 0,
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
@@ -478,7 +484,7 @@ impl QisEngine {
         self.active_qubit_slots.clear();
         self.free_qubit_slots.clear();
         self.seen_program_qubits.clear();
-        self.num_qubits = 0;
+        self.num_physical_slots = 0;
     }
 
     fn allocate_qubit_slot(&mut self, program_id: usize) -> usize {
@@ -489,9 +495,9 @@ impl QisEngine {
         let slot = if let Some(slot) = self.free_qubit_slots.pop_first() {
             slot
         } else {
-            self.num_qubits
+            self.num_physical_slots
         };
-        self.num_qubits = self.num_qubits.max(slot + 1);
+        self.num_physical_slots = self.num_physical_slots.max(slot + 1);
         self.active_qubit_slots.insert(program_id, slot);
         self.seen_program_qubits.insert(program_id);
         slot
@@ -753,7 +759,7 @@ impl Clone for QisEngine {
             interface,
             runtime: dyn_clone::clone_box(&*self.runtime),
             current_operations: self.current_operations.clone(),
-            num_qubits: self.num_qubits,
+            num_physical_slots: self.num_physical_slots,
             active_qubit_slots: self.active_qubit_slots.clone(),
             free_qubit_slots: self.free_qubit_slots.clone(),
             seen_program_qubits: self.seen_program_qubits.clone(),
@@ -786,7 +792,10 @@ impl Clone for QisEngine {
 // Helper methods for dynamic execution
 impl QisEngine {
     fn begin_trace_shot(&mut self) {
-        self.trace_shot_index = self.trace_shot_index.saturating_add(1);
+        self.trace_shot_index = self
+            .trace_shot_index
+            .checked_add(1)
+            .expect("trace_shot_index overflow: too many shots for a single trace engine");
         self.trace_chunk_index = 0;
     }
 
@@ -835,7 +844,10 @@ impl QisEngine {
             self.trace_engine_id, self.trace_shot_index, self.trace_chunk_index, stage
         );
         let chunk_index = self.trace_chunk_index;
-        self.trace_chunk_index = self.trace_chunk_index.saturating_add(1);
+        self.trace_chunk_index = self
+            .trace_chunk_index
+            .checked_add(1)
+            .expect("trace_chunk_index overflow: too many chunks for a single trace shot");
         let chunk = OperationTraceChunk {
             format: "pecos_qis_operation_trace_v1",
             engine_trace_id: self.trace_engine_id,
@@ -1102,7 +1114,7 @@ impl Engine for QisEngine {
 
 impl ClassicalEngine for QisEngine {
     fn num_qubits(&self) -> usize {
-        let num_qubits = self.runtime.num_qubits().max(self.num_qubits);
+        let num_qubits = self.runtime.num_qubits().max(self.num_physical_slots);
         debug!("QisEngine: num_qubits() returning {num_qubits}");
         num_qubits
     }

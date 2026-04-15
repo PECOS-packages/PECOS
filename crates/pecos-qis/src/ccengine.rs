@@ -1114,6 +1114,12 @@ impl Engine for QisEngine {
 
 impl ClassicalEngine for QisEngine {
     fn num_qubits(&self) -> usize {
+        // The trait contract asks for the number of simulator slots required,
+        // not the count of live program handles: freed handles shrink
+        // `active_qubit_slots.len()` but never shrink the simulator, so we
+        // return the physical-slot high-water mark instead. The runtime can
+        // report its own baseline (e.g. from `allocated_qubits` metadata) and
+        // we take the larger of the two.
         let num_qubits = self.runtime.num_qubits().max(self.num_physical_slots);
         debug!("QisEngine: num_qubits() returning {num_qubits}");
         num_qubits

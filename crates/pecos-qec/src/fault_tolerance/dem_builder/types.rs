@@ -967,6 +967,9 @@ fn find_singleton_decomposition(
         });
     }
 
+    // Lookup-only cache: we never iterate `memo`, so HashMap's non-deterministic
+    // iteration order cannot leak into the DEM output. If a future change ever
+    // iterates this map, switch to BTreeMap to keep the output deterministic.
     let mut memo: HashMap<ErrorMechanism, Option<Vec<ErrorMechanism>>> = HashMap::new();
     search_singleton_decomposition(effect, &candidates_by_detector, &mut memo)
 }
@@ -1040,7 +1043,13 @@ fn convert_location_indices(location_indices: &[usize]) -> SmallVec<[u32; 2]> {
 ///
 /// Negative offsets count backward from the end of the measurement record
 /// (`-1` is the last measurement). Positive offsets are treated as absolute
-/// indices. Returns `None` if the resulting index is out of range.
+/// indices.
+///
+/// Returns `None` whenever the resulting index would land outside
+/// `0..num_measurements`. Callers should treat a `None` as a malformed input
+/// (parser/user-supplied offset was too large or too negative); it is never
+/// produced by internally-generated offsets, so silently dropping such a
+/// contribution rather than panicking is the intended behavior.
 #[must_use]
 pub fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
     if offset < 0 {

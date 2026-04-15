@@ -223,6 +223,10 @@ jobs:
       # matrix fast. Dropping this entirely would let the `slow` lane
       # silently atrophy, which is exactly what the `slow` marker is
       # supposed to prevent.
+      #
+      # The `3.14` literal below must track the newest entry of the
+      # `python-version` matrix at the top of this file (line ~34). Bump
+      # both together.
       if: runner.os == 'Linux' && matrix.python-version == '3.14'
       run: just pytest-slow
 

@@ -627,7 +627,12 @@ class TestDemGeneration:
 
 
 class TestNoisySimulation:
-    """Integration tests for noisy simulation (requires selene_sim)."""
+    """Integration tests for noisy simulation.
+
+    The Selene runtime and the ``selene_sim`` Python package are expected to be
+    installed in every environment that runs this test tree. A missing runtime
+    now raises rather than being silently skipped (see ``_require_selene_runtime``).
+    """
 
     def test_run_noisy_memory_experiment_import(self) -> None:
         """Test that run_noisy_memory_experiment can be imported."""

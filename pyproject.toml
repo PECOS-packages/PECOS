@@ -38,6 +38,12 @@ dev = [
   "markdown-exec[ansi]",                    # Executable markdown blocks
 ]
 test = [ # exact pins so workspace tests run against a reproducible environment
+  # Note: sub-package test extras (pecos-rslib, selene plugins) intentionally
+  # use `pytest>=9.0` lower bounds instead of these exact pins -- those
+  # packages ship to PyPI and must stay installable against newer pytest
+  # releases that downstream users may already have. Reproducibility for
+  # in-repo dev comes from uv.lock, not from over-constraining the sub-package
+  # requires-dist.
   "pytest==9.0.3",
   "pytest-cov==7.1.0",
   "pytest-timeout==2.4.0",

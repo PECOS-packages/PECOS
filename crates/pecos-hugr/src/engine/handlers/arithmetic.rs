@@ -163,7 +163,7 @@ impl HugrEngine {
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint());
                 au.zip(bu)
-                    .map(|(x, y)| if y != 0 { (x / y) as i64 } else { 0 })
+                    .map(|(x, y)| x.checked_div(y).map_or(0, |q| q as i64))
             }
             "imod_s" | "imod" => a.zip(b).map(|(x, y)| if y != 0 { x % y } else { 0 }),
             #[allow(clippy::cast_possible_wrap)]

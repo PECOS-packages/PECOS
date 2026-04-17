@@ -505,8 +505,8 @@ impl PhirProcessor {
                 self.process_binary_int_op(
                     instruction,
                     "div",
-                    |a, b| if b == 0 { 0 } else { a / b },
-                    |a, b| if b == 0 { 0 } else { a / b },
+                    |a, b| a.checked_div(b).unwrap_or(0),
+                    |a, b| a.checked_div(b).unwrap_or(0),
                 );
                 Ok(())
             }

@@ -211,7 +211,7 @@ impl GateEventHandlers {
     fn insert(vec: &mut Vec<PrioritizedHandler>, handler: ErasedGateHandler, priority: i32) {
         vec.push(PrioritizedHandler { handler, priority });
         // Stable sort so same-priority handlers keep registration order
-        vec.sort_by(|a, b| b.priority.cmp(&a.priority));
+        vec.sort_by_key(|h| std::cmp::Reverse(h.priority));
     }
 
     /// Dispatch all handlers in a Vec and combine their responses.
@@ -789,7 +789,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         fn merge_vec(dst: &mut Vec<PrioritizedHandler>, src: Vec<PrioritizedHandler>) {
             if !src.is_empty() {
                 dst.extend(src);
-                dst.sort_by(|a, b| b.priority.cmp(&a.priority));
+                dst.sort_by_key(|h| std::cmp::Reverse(h.priority));
             }
         }
         merge_vec(

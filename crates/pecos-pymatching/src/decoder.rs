@@ -1553,11 +1553,7 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
         // The result from FFI is already in the requested format
         // We just need to reshape it by shots
         let num_shots = result.weights.len();
-        let bytes_per_shot = if num_shots > 0 {
-            result.predictions.len() / num_shots
-        } else {
-            0
-        };
+        let bytes_per_shot = result.predictions.len().checked_div(num_shots).unwrap_or(0);
 
         let predictions = if bytes_per_shot > 0 {
             result

@@ -582,10 +582,7 @@ impl CircuitPass for MergeAdjacentRotations {
     fn apply_dag(&self, circuit: &mut DagCircuit) {
         let topo = circuit.topological_order();
         for node in topo {
-            loop {
-                let Some(gate) = circuit.gate(node) else {
-                    break;
-                };
+            while let Some(gate) = circuit.gate(node) {
                 if !is_rotation(gate.gate_type) || gate.angles.len() != 1 {
                     break;
                 }

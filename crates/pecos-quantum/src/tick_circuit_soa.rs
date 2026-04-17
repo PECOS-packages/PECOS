@@ -143,11 +143,10 @@ impl GateBatch {
     #[must_use]
     pub fn gate_count(&self) -> usize {
         let arity = self.gate_type.quantum_arity();
-        if arity == 0 {
-            self.qubits.len()
-        } else {
-            self.qubits.len() / arity
-        }
+        self.qubits
+            .len()
+            .checked_div(arity)
+            .unwrap_or(self.qubits.len())
     }
 
     /// Returns true if the batch is empty.

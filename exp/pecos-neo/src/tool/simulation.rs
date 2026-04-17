@@ -849,8 +849,7 @@ impl Orchestrator {
     #[must_use]
     pub fn monte_carlo_auto() -> Self {
         let workers = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(1);
+            .map_or(1, std::num::NonZero::get);
         Self::MonteCarlo { workers }
     }
 }

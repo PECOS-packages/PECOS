@@ -1593,8 +1593,7 @@ impl ControlEngine for QASMEngine {
 
         let measurement_count = measurements
             .outcomes()
-            .map(|outcomes| outcomes.len())
-            .unwrap_or(0);
+            .map_or(0, |outcomes| outcomes.len());
         debug!("Received {measurement_count} measurements");
 
         debug!("Processing measurement results");

@@ -994,7 +994,7 @@ mod tests {
             worker_barrier.wait();
 
             // Wait for the result (with timeout)
-            let timeout = Duration::from_millis(1000);
+            let timeout = Duration::from_secs(1);
             let mut state = context.sync_state.lock().unwrap();
             while !state.result_ready {
                 let result = context.sync_condvar.wait_timeout(state, timeout).unwrap();

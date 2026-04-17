@@ -90,11 +90,10 @@ fn test_integer_constant_folding() {
                 if value == "1" {
                     // Condition is true, operation should be X
                     match &**operation {
-                        pecos_qasm::ast::Operation::Gate { name, .. } => {
-                            if name == "x" {
+                        pecos_qasm::ast::Operation::Gate { name, .. }
+                            if name == "x" => {
                                 x_count += 1;
                             }
-                        }
                         pecos_qasm::ast::Operation::NativeGate(gate) => {
                             if matches!(gate.gate_type, pecos_engines::GateType::X) {
                                 x_count += 1;
@@ -104,11 +103,10 @@ fn test_integer_constant_folding() {
                     }
                 }
             }
-            pecos_qasm::ast::Operation::Gate { name, .. } => {
-                if name == "y" {
+            pecos_qasm::ast::Operation::Gate { name, .. }
+                if name == "y" => {
                     y_count += 1;
                 }
-            }
             _ => {}
         }
     }
@@ -182,13 +180,12 @@ fn test_complex_expression_folding() {
             }
             pecos_qasm::ast::Operation::Gate {
                 name, parameters, ..
-            } => {
-                if name == "rz" {
+            }
+                if name == "rz" => {
                     assert_eq!(parameters.len(), 1);
                     // (pi/2 + pi/2) * sin(pi/2) = pi * 1 = pi
                     assert!((parameters[0] - std::f64::consts::PI).abs() < 1e-10);
                 }
-            }
             _ => {}
         }
     }

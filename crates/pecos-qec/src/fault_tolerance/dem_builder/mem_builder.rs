@@ -171,30 +171,27 @@ impl<'a> MemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PZ | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc
                     // Prep errors: only "after" locations
-                    if self.noise.p_init > 0.0 && !loc.before {
+                    if self.noise.p_init > 0.0 && !loc.before => {
                         self.process_prep_fault(loc_idx, &mut mem);
                     }
-                }
-                GateType::MZ | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree
                     // Measurement errors: only "before" locations
-                    if self.noise.p_meas > 0.0 && loc.before {
+                    if self.noise.p_meas > 0.0 && loc.before => {
                         self.process_meas_fault(loc_idx, &mut mem);
                     }
-                }
                 GateType::CX
                 | GateType::CZ
                 | GateType::CY
                 | GateType::SWAP
                 | GateType::RXX
                 | GateType::RYY
-                | GateType::RZZ => {
+                | GateType::RZZ
                     // Two-qubit gate errors: only "after" locations
-                    if !loc.before {
+                    if !loc.before => {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
-                }
                 GateType::H
                 | GateType::SZ
                 | GateType::SZdg
@@ -211,12 +208,11 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY => {
+                | GateType::R1XY
                     // Single-qubit gate errors: only "after" locations
-                    if self.noise.p1 > 0.0 && !loc.before {
+                    if self.noise.p1 > 0.0 && !loc.before => {
                         self.process_single_qubit_fault(loc_idx, &mut mem);
                     }
-                }
                 _ => {}
             }
         }

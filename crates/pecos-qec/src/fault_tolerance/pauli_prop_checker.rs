@@ -1073,21 +1073,18 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
         for gate in tick.gates() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
             match gate.gate_type {
-                GateType::CX => {
-                    if qubits.len() >= 2 {
+                GateType::CX
+                    if qubits.len() >= 2 => {
                         prop.cx(&[(qubits[0], qubits[1])]);
                     }
-                }
-                GateType::CZ => {
-                    if qubits.len() >= 2 {
+                GateType::CZ
+                    if qubits.len() >= 2 => {
                         prop.cz(&[(qubits[0], qubits[1])]);
                     }
-                }
-                GateType::CY => {
-                    if qubits.len() >= 2 {
+                GateType::CY
+                    if qubits.len() >= 2 => {
                         prop.cy(&[(qubits[0], qubits[1])]);
                     }
-                }
                 GateType::H => {
                     for q in &qubits {
                         prop.h(&[*q]);
@@ -1108,11 +1105,10 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
                         prop.sy(&[*q]);
                     }
                 }
-                GateType::SWAP => {
-                    if qubits.len() >= 2 {
+                GateType::SWAP
+                    if qubits.len() >= 2 => {
                         prop.swap(&[(qubits[0], qubits[1])]);
                     }
-                }
                 _ => {}
             }
         }

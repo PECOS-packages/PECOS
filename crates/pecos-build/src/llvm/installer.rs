@@ -191,7 +191,7 @@ fn download_and_verify_with_retry(url: &str, dest: &PathBuf, archive_name: &str)
         }
 
         // Check for empty downloads (CDN/rate limit issues)
-        let file_size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+        let file_size = fs::metadata(dest).map_or(0, |m| m.len());
         if file_size == 0 {
             if attempt < MAX_RETRIES {
                 eprintln!("Download returned empty file (possible CDN issue)");

@@ -2248,8 +2248,8 @@ where
                 }
             }
             // CRZ decomposition: RZ(theta/2), CX, RZ(-theta/2), CX
-            GateType::CRZ => {
-                if qubits.len() >= 2 {
+            GateType::CRZ
+                if qubits.len() >= 2 => {
                     let control = qubits[0];
                     let target = qubits[1];
                     let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
@@ -2259,13 +2259,10 @@ where
                     sim.rz(-half_angle, &[target]);
                     sim.cx(&[(control, target)]);
                     true
-                } else {
-                    false
                 }
-            }
             // CCX (Toffoli) decomposition
-            GateType::CCX => {
-                if qubits.len() >= 3 {
+            GateType::CCX
+                if qubits.len() >= 3 => {
                     let c1 = qubits[0];
                     let c2 = qubits[1];
                     let target = qubits[2];
@@ -2285,10 +2282,7 @@ where
                     sim.tdg(&[c2]);
                     sim.cx(&[(c1, c2)]);
                     true
-                } else {
-                    false
                 }
-            }
             _ => false,
         }
     }

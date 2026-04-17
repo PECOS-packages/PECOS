@@ -377,7 +377,7 @@ fn run_list() -> Result<()> {
         let installed_lib = dist_dir.join(&lib_filename);
 
         if installed_lib.exists() {
-            let size = installed_lib.metadata().map(|m| m.len()).unwrap_or(0);
+            let size = installed_lib.metadata().map_or(0, |m| m.len());
             println!(" (installed, {size} bytes)");
         } else {
             println!(" (not installed)");

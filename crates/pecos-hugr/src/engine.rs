@@ -2351,7 +2351,7 @@ mod tests {
             .expect("Failed to generate commands");
         // Empty circuits should produce empty or minimal messages
         let is_empty = msg.is_empty().unwrap_or(true);
-        let has_no_ops = msg.quantum_ops().map(|ops| ops.is_empty()).unwrap_or(true);
+        let has_no_ops = msg.quantum_ops().map_or(true, |ops| ops.is_empty());
         assert!(is_empty || has_no_ops);
     }
 

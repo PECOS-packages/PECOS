@@ -117,7 +117,7 @@ fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
     let results_left = msg1.outcomes().unwrap_or_default();
     let results_right = msg2.outcomes().unwrap_or_default();
     if quantum_ops_left != quantum_ops_right {
-        eprintln!("Quantum operations differ: {quantum_ops_left:?} vs {quantum_ops_right:?}",);
+        eprintln!("Quantum operations differ: {quantum_ops_left:?} vs {quantum_ops_right:?}");
         return false;
     }
     if results_left != results_right {

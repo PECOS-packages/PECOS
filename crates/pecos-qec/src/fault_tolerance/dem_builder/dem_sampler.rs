@@ -1456,9 +1456,9 @@ impl<'a> DemSamplerBuilder<'a> {
         // Process each fault location
         for (loc_idx, loc) in self.influence_map.locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PZ | GateType::QAlloc => {
+                GateType::PZ | GateType::QAlloc
                     // Prep errors: only "after" locations (X error for Z-basis prep)
-                    if self.p_init > 0.0 && !loc.before {
+                    if self.p_init > 0.0 && !loc.before => {
                         self.process_single_pauli_fault(
                             loc_idx,
                             Pauli::X,
@@ -1468,10 +1468,9 @@ impl<'a> DemSamplerBuilder<'a> {
                             &mut aggregated,
                         );
                     }
-                }
-                GateType::MZ | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree
                     // Measurement errors: only "before" locations (X error = bit flip)
-                    if self.p_meas > 0.0 && loc.before {
+                    if self.p_meas > 0.0 && loc.before => {
                         self.process_single_pauli_fault(
                             loc_idx,
                             Pauli::X,
@@ -1481,19 +1480,17 @@ impl<'a> DemSamplerBuilder<'a> {
                             &mut aggregated,
                         );
                     }
-                }
                 GateType::CX
                 | GateType::CZ
                 | GateType::CY
                 | GateType::SWAP
                 | GateType::RXX
                 | GateType::RYY
-                | GateType::RZZ => {
+                | GateType::RZZ
                     // Two-qubit gate errors: only "after" locations, process as pairs
-                    if !loc.before {
+                    if !loc.before => {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
-                }
                 GateType::H
                 | GateType::SZ
                 | GateType::SZdg
@@ -1510,9 +1507,9 @@ impl<'a> DemSamplerBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY => {
+                | GateType::R1XY
                     // Single-qubit gate errors: only "after" locations, depolarizing
-                    if self.p1 > 0.0 && !loc.before {
+                    if self.p1 > 0.0 && !loc.before => {
                         self.process_depolarizing_fault(
                             loc_idx,
                             self.p1,
@@ -1521,7 +1518,6 @@ impl<'a> DemSamplerBuilder<'a> {
                             &mut aggregated,
                         );
                     }
-                }
                 _ => {}
             }
         }

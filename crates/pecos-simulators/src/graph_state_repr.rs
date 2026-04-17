@@ -1375,7 +1375,7 @@ impl GraphStateRenderer<'_> {
                     let bracketed = format!("{open}{name}{close}");
                     if color {
                         let ansi = VOP_ANSI[idx];
-                        write!(out, " {ansi}{bracketed:<max_vop_width$}\x1b[0m",).unwrap();
+                        write!(out, " {ansi}{bracketed:<max_vop_width$}\x1b[0m").unwrap();
                     } else {
                         write!(out, " {bracketed:<max_vop_width$}").unwrap();
                     }

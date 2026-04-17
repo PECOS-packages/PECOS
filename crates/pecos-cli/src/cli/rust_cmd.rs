@@ -168,8 +168,7 @@ fn is_tool_available(tool: &str) -> bool {
     Command::new(tool)
         .args(["--version"])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Run a cargo command and return success status

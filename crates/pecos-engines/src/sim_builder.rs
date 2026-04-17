@@ -197,8 +197,7 @@ impl SimBuilder {
     #[must_use]
     pub fn auto_workers(mut self) -> Self {
         self.config.workers = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(4);
+            .map_or(4, std::num::NonZero::get);
         self
     }
 

@@ -74,15 +74,14 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
                 }
             }
         }
-        GateType::R1XY => {
-            if gate.angles.len() >= 2 {
+        GateType::R1XY
+            if gate.angles.len() >= 2 => {
                 let theta = gate.angles[0];
                 let phi = gate.angles[1];
                 if let Some(clifford) = try_simplify_r1xy(theta, phi) {
                     let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
                 }
             }
-        }
         _ => {}
     }
 }

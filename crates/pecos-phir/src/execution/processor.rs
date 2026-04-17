@@ -1209,8 +1209,8 @@ impl PhirProcessor {
         instruction: &crate::phir::Instruction,
     ) {
         match mem_op {
-            MemoryOp::Alloc(alloc_type) => {
-                if !instruction.results.is_empty() {
+            MemoryOp::Alloc(alloc_type)
+                if !instruction.results.is_empty() => {
                     let ptr_id = instruction.results[0].id;
                     let default = match alloc_type {
                         #[allow(clippy::match_same_arms)]
@@ -1235,25 +1235,22 @@ impl PhirProcessor {
                     };
                     self.memory.insert(ptr_id, default);
                 }
-            }
-            MemoryOp::Load => {
-                if !instruction.operands.is_empty() && !instruction.results.is_empty() {
+            MemoryOp::Load
+                if !instruction.operands.is_empty() && !instruction.results.is_empty() => {
                     let ptr_id = instruction.operands[0].id;
                     let res_id = instruction.results[0].id;
                     if let Some(val) = self.memory.get(&ptr_id) {
                         self.ssa_values.insert(res_id, val.clone());
                     }
                 }
-            }
-            MemoryOp::Store => {
-                if instruction.operands.len() >= 2 {
+            MemoryOp::Store
+                if instruction.operands.len() >= 2 => {
                     let val_id = instruction.operands[0].id;
                     let ptr_id = instruction.operands[1].id;
                     if let Some(val) = self.ssa_values.get(&val_id) {
                         self.memory.insert(ptr_id, val.clone());
                     }
                 }
-            }
             _ => {} // Skip other memory ops
         }
     }

@@ -347,8 +347,8 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         let qubits = storage.qubits_unchecked(idx);
 
         match gate_type {
-            GateType::CX => {
-                if qubits.len() >= 2 {
+            GateType::CX
+                if qubits.len() >= 2 => {
                     let control = qubits[0].index();
                     let target = qubits[1].index();
 
@@ -366,10 +366,9 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     Self::update_active_qubit(control, prop, buffers);
                     Self::update_active_qubit(target, prop, buffers);
                 }
-            }
 
-            GateType::CZ => {
-                if qubits.len() >= 2 {
+            GateType::CZ
+                if qubits.len() >= 2 => {
                     let q0 = qubits[0].index();
                     let q1 = qubits[1].index();
 
@@ -386,7 +385,6 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     Self::update_active_qubit(q0, prop, buffers);
                     Self::update_active_qubit(q1, prop, buffers);
                 }
-            }
 
             GateType::H => {
                 if let Some(qid) = qubits.first() {

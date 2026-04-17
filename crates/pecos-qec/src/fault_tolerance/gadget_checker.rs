@@ -976,14 +976,12 @@ impl<'a> GadgetChecker<'a> {
                     pecos_core::gate_type::GateType::SZdg => {
                         prop.szdg(&qubits);
                     }
-                    pecos_core::gate_type::GateType::CX
-                        if qubits.len() >= 2 => {
-                            prop.cx(&[(qubits[0], qubits[1])]);
-                        }
-                    pecos_core::gate_type::GateType::CZ
-                        if qubits.len() >= 2 => {
-                            prop.cz(&[(qubits[0], qubits[1])]);
-                        }
+                    pecos_core::gate_type::GateType::CX if qubits.len() >= 2 => {
+                        prop.cx(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::CZ if qubits.len() >= 2 => {
+                        prop.cz(&[(qubits[0], qubits[1])]);
+                    }
                     pecos_core::gate_type::GateType::X => {
                         prop.x(&qubits);
                     }
@@ -1713,14 +1711,12 @@ impl<'a> GadgetChecker<'a> {
                     pecos_core::gate_type::GateType::SZdg => {
                         prop.szdg(&qubits);
                     }
-                    pecos_core::gate_type::GateType::CX
-                        if qubits.len() >= 2 => {
-                            prop.cx(&[(qubits[0], qubits[1])]);
-                        }
-                    pecos_core::gate_type::GateType::CZ
-                        if qubits.len() >= 2 => {
-                            prop.cz(&[(qubits[0], qubits[1])]);
-                        }
+                    pecos_core::gate_type::GateType::CX if qubits.len() >= 2 => {
+                        prop.cx(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::CZ if qubits.len() >= 2 => {
+                        prop.cz(&[(qubits[0], qubits[1])]);
+                    }
                     pecos_core::gate_type::GateType::X => {
                         prop.x(&qubits);
                     }

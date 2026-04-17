@@ -1366,10 +1366,10 @@ mod tests {
                 NoiseResponse::Multiple(ref rs)
                     if rs
                         .iter()
-                        .any(|r| matches!(r, NoiseResponse::InjectGates(_)))
-                    => {
-                        pauli_count += 1;
-                    }
+                        .any(|r| matches!(r, NoiseResponse::InjectGates(_))) =>
+                {
+                    pauli_count += 1;
+                }
                 _ => {}
             }
         }
@@ -1906,10 +1906,10 @@ mod tests {
                     CompositeResponse::Multiple(ref parts)
                         if parts
                             .iter()
-                            .any(|p| matches!(p, CompositeResponse::InjectGates(_)))
-                        => {
-                            _partner_depolarize_count += 1;
-                        }
+                            .any(|p| matches!(p, CompositeResponse::InjectGates(_))) =>
+                    {
+                        _partner_depolarize_count += 1;
+                    }
                     _ => {}
                 }
             }
@@ -2108,10 +2108,10 @@ mod tests {
                 NoiseResponse::Multiple(ref rs)
                     if rs
                         .iter()
-                        .any(|r| matches!(r, NoiseResponse::InjectGates(_)))
-                    => {
-                        z_count += 1;
-                    }
+                        .any(|r| matches!(r, NoiseResponse::InjectGates(_))) =>
+                {
+                    z_count += 1;
+                }
                 _ => {}
             }
         }

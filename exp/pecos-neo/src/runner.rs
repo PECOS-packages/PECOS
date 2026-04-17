@@ -2248,41 +2248,39 @@ where
                 }
             }
             // CRZ decomposition: RZ(theta/2), CX, RZ(-theta/2), CX
-            GateType::CRZ
-                if qubits.len() >= 2 => {
-                    let control = qubits[0];
-                    let target = qubits[1];
-                    let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
-                    let half_angle = angle / 2u64;
-                    sim.rz(half_angle, &[target]);
-                    sim.cx(&[(control, target)]);
-                    sim.rz(-half_angle, &[target]);
-                    sim.cx(&[(control, target)]);
-                    true
-                }
+            GateType::CRZ if qubits.len() >= 2 => {
+                let control = qubits[0];
+                let target = qubits[1];
+                let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
+                let half_angle = angle / 2u64;
+                sim.rz(half_angle, &[target]);
+                sim.cx(&[(control, target)]);
+                sim.rz(-half_angle, &[target]);
+                sim.cx(&[(control, target)]);
+                true
+            }
             // CCX (Toffoli) decomposition
-            GateType::CCX
-                if qubits.len() >= 3 => {
-                    let c1 = qubits[0];
-                    let c2 = qubits[1];
-                    let target = qubits[2];
-                    sim.h(&[target]);
-                    sim.cx(&[(c2, target)]);
-                    sim.tdg(&[target]);
-                    sim.cx(&[(c1, target)]);
-                    sim.t(&[target]);
-                    sim.cx(&[(c2, target)]);
-                    sim.tdg(&[target]);
-                    sim.cx(&[(c1, target)]);
-                    sim.t(&[c2]);
-                    sim.t(&[target]);
-                    sim.h(&[target]);
-                    sim.cx(&[(c1, c2)]);
-                    sim.t(&[c1]);
-                    sim.tdg(&[c2]);
-                    sim.cx(&[(c1, c2)]);
-                    true
-                }
+            GateType::CCX if qubits.len() >= 3 => {
+                let c1 = qubits[0];
+                let c2 = qubits[1];
+                let target = qubits[2];
+                sim.h(&[target]);
+                sim.cx(&[(c2, target)]);
+                sim.tdg(&[target]);
+                sim.cx(&[(c1, target)]);
+                sim.t(&[target]);
+                sim.cx(&[(c2, target)]);
+                sim.tdg(&[target]);
+                sim.cx(&[(c1, target)]);
+                sim.t(&[c2]);
+                sim.t(&[target]);
+                sim.h(&[target]);
+                sim.cx(&[(c1, c2)]);
+                sim.t(&[c1]);
+                sim.tdg(&[c2]);
+                sim.cx(&[(c1, c2)]);
+                true
+            }
             _ => false,
         }
     }

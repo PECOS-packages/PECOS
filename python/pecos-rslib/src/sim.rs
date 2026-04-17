@@ -397,8 +397,7 @@ impl PySimBuilder {
 
     /// Use automatic worker count based on available CPUs
     fn auto_workers(&mut self) -> PyResult<Self> {
-        let workers = std::thread::available_parallelism()
-            .map_or(4, std::num::NonZero::get);
+        let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         self.workers(workers)
     }
 

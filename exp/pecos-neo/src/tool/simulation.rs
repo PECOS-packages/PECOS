@@ -848,8 +848,7 @@ impl Orchestrator {
     /// Create a Monte Carlo orchestrator with auto-detected worker count.
     #[must_use]
     pub fn monte_carlo_auto() -> Self {
-        let workers = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZero::get);
+        let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         Self::MonteCarlo { workers }
     }
 }

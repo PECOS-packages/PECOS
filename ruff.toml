@@ -348,6 +348,7 @@ ignore = [
 "python/quantum-pecos/src/pecos/simulators/mps_pytket/state.py" = ["SLF001"]  # MPS internal APIs
 "python/quantum-pecos/tests/guppy/test_helpers.py" = ["SLF001"]  # Test metadata marking
 "python/quantum-pecos/tests/guppy/test_selene_library_integration.py" = ["SLF001"]  # Testing internal builder methods
+"python/quantum-pecos/tests/pecos/unit/test_surface_sweep_math.py" = ["SLF001"]  # Testing internal fit helpers in sweep example script
 
 # Try-except patterns (TRY300) - Complex error handling in integration code
 "python/pecos-rslib/src/pecos_rslib/sim_wrapper.py" = ["TRY300"]  # Wrapper patterns

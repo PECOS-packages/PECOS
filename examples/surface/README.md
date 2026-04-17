@@ -69,6 +69,80 @@ python examples/surface/surface_sweep_report.py \
   --open
 ```
 
+## Re-render Plots From Saved JSON
+
+The JSON results file is the canonical source of truth -- the plots are
+derived. If you want to regenerate plots later (for example to revisit
+the data with different formats, or after the SVGs were deleted), pass
+`--render-plots`:
+
+```bash
+python examples/surface/surface_sweep_report.py \
+  --input-dir /tmp/pecos_surface_highshot_sweep \
+  --render-plots --formats svg pdf --open
+```
+
+This reads `*_results.json`, reconstructs the in-memory data, and rewrites
+every plot file before building the dashboard. Use this when you want to
+keep only the JSON file long-term (it is small and fully replayable).
+
+## Merge Multiple Sweep Shards
+
+Run the same sweep multiple times (same distances, bases, error rates, rounds)
+and merge the resulting JSON files for tighter confidence intervals. Each
+shard stays on disk -- the merge is read-only.
+
+```bash
+# Run once overnight, seed 12345.
+python examples/surface/native_dem_threshold_sweep.py \
+  --distances 3 5 7 9 --error-rates 0.004 0.006 0.008 0.01 \
+  --bases X Z --shots 5000 --sample-backend native_sampler \
+  --seed 12345 --save-json --output-dir /tmp/sweep_mon
+
+# Run again the next night, same config but fresh seed.
+python examples/surface/native_dem_threshold_sweep.py \
+  --distances 3 5 7 9 --error-rates 0.004 0.006 0.008 0.01 \
+  --bases X Z --shots 5000 --sample-backend native_sampler \
+  --seed 99999 --save-json --output-dir /tmp/sweep_tue
+
+# Merge both shards: shots accumulate per SweepPoint key, fit summaries
+# are re-derived from the combined points, and a fresh dashboard + PDF
+# report get written to the chosen output directory.
+mkdir -p /tmp/sweep_combined
+python examples/surface/surface_sweep_report.py \
+  --input-dir /tmp/sweep_combined \
+  --json-files /tmp/sweep_mon/surface_threshold_sweep_results.json \
+               /tmp/sweep_tue/surface_threshold_sweep_results.json \
+  --render-plots --report-pdf --open
+```
+
+Passing multiple `--json-files` always triggers merge mode -- the script
+re-renders every plot from the merged data (the existing SVGs in
+``--input-dir`` are ignored and overwritten). The merged config in the
+dashboard and PDF appendix records the contributing shard paths in
+``source_shards`` for provenance.
+
+## Generate A Single PDF Report
+
+For archival or sharing, write a single multi-page PDF (cover page with
+configuration + timing, then one plot per page):
+
+```bash
+# From a live sweep:
+python examples/surface/native_dem_threshold_sweep.py \
+  --distances 3 5 7 9 --error-rates 0.004 0.006 0.008 0.01 \
+  --bases X Z --shots 5000 --sample-backend native_sampler \
+  --save-json --save-report-pdf \
+  --output-dir /tmp/sweep_out
+
+# From existing artifacts (requires *_results.json in input-dir):
+python examples/surface/surface_sweep_report.py \
+  --input-dir /tmp/sweep_out --report-pdf
+```
+
+The PDF report is fully rebuildable from the JSON file alone, so you can
+archive JSON + PDF and regenerate either from the other.
+
 ## Small Smoke Run
 
 For a quick sanity check before launching a heavier sweep:

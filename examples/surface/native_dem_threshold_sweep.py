@@ -63,7 +63,14 @@ import time
 from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+    from matplotlib.patches import Rectangle
 
 
 @dataclass(frozen=True)
@@ -145,6 +152,40 @@ class PerDistancePowerLawFitSummary:
     fitted_exponent: float
     expected_distance_scaling_exponent: float
     fit_root_mean_square_log_error: float
+    fitted_exponent_std_error: float = 0.0
+
+
+@dataclass(frozen=True)
+class FSSThresholdFitSummary:
+    """Polynomial finite-size-scaling threshold fit using the Wang-Harrington-Preskill form.
+
+    Reference: Wang, Harrington, Preskill, *Confinement-Higgs transition in a disordered
+    gauge theory and the accuracy threshold for quantum memory* (arXiv:quant-ph/0207088).
+    Fit model: ``p_L = a + b*x + c*x**2`` with ``x = (p - p_th) * d**(1 / nu)``. Data
+    should bracket the threshold; the Watson-Barrett constraint ``p > 1/(4d)``
+    (arXiv:1312.5213) also applies to the domain of validity.
+
+    Delegates to ``pecos.analysis.threshold_curve.threshold_fit`` + ``func`` so
+    every surface-code performance report uses the same canonical fit routine
+    as the rest of PECOS.
+    """
+
+    backend: str
+    basis: str
+    p_th: float
+    p_th_std_error: float
+    nu: float
+    nu_std_error: float
+    coeff_a: float
+    coeff_a_std_error: float
+    coeff_b: float
+    coeff_b_std_error: float
+    coeff_c: float
+    coeff_c_std_error: float
+    num_points: int
+    fit_window_low: float
+    fit_window_high: float
+    reference: str = "Wang-Harrington-Preskill (arXiv:quant-ph/0207088)"
 
 
 @dataclass(frozen=True)
@@ -1116,6 +1157,25 @@ def _fit_summary_from_points(points: list[SweepPoint]) -> FitSummary:
     )
 
 
+def _fit_rms_warning_text(summary: FitSummary) -> str:
+    """Return a warning string when the fit residual dwarfs the fitted quantity.
+
+    When ``fit_root_mean_square_error`` is at least the fitted per-round rate
+    itself, the fit is dominated by statistical noise and the reported
+    ``fit_epsilon`` should not be trusted. Empty string means "no warning".
+    Skips the degenerate cases where every observed rate is 0 or >= 0.5.
+    """
+    epsilon = summary.fitted_logical_error_rate_per_round
+    if epsilon <= 0.0 or epsilon >= 0.5:
+        return ""
+    if summary.fit_root_mean_square_error < epsilon:
+        return ""
+    return (
+        f"WARNING: fit_rms ({summary.fit_root_mean_square_error:.3e}) "
+        f">= fit_epsilon ({epsilon:.3e}); fit is noise-dominated, increase --shots"
+    )
+
+
 def _linear_regression(xs: list[float], ys: list[float]) -> tuple[float, float]:
     """Return ``(slope, intercept)`` for a least-squares line fit."""
     if len(xs) != len(ys):
@@ -1138,12 +1198,17 @@ def _linear_regression(xs: list[float], ys: list[float]) -> tuple[float, float]:
 
 
 def _fit_distance_scaling_at_fixed_p(summaries: list[FitSummary]) -> DistanceScalingFitSummary | None:
-    """Fit the standard below-threshold ansatz across distance at one fixed ``p``."""
+    """Fit the standard below-threshold ansatz across distance at one fixed ``p``.
+
+    Requires at least three distinct distances -- fitting a line through two
+    points is a tautology (``log_rmse == 0`` always) and the reported threshold
+    has no meaning.
+    """
     usable = sorted(
         [summary for summary in summaries if summary.fitted_logical_error_rate_per_round > 0.0],
         key=lambda summary: summary.distance,
     )
-    if len(usable) < 2:
+    if len({summary.distance for summary in usable}) < 3:
         return None
 
     xs = [0.5 * (summary.distance + 1) for summary in usable]
@@ -1167,9 +1232,13 @@ def _fit_distance_scaling_at_fixed_p(summaries: list[FitSummary]) -> DistanceSca
 
 
 def _fit_global_scaling_law(summaries: list[FitSummary]) -> GlobalScalingFitSummary | None:
-    """Fit ``epsilon ~= A * (p / p_th) ** ((d + 1) / 2)`` across all ``(d, p)`` points."""
+    """Fit ``epsilon ~= A * (p / p_th) ** ((d + 1) / 2)`` across all ``(d, p)`` points.
+
+    Requires at least three ``(d, p)`` points -- two points fit two parameters
+    perfectly (``log_rmse == 0`` always) so the reported threshold is tautological.
+    """
     usable = [summary for summary in summaries if summary.fitted_logical_error_rate_per_round > 0.0]
-    if len(usable) < 2:
+    if len(usable) < 3:
         return None
 
     xs = [0.5 * (summary.distance + 1) for summary in usable]
@@ -1196,15 +1265,31 @@ def _fit_global_scaling_law(summaries: list[FitSummary]) -> GlobalScalingFitSumm
     )
 
 
-def _fit_per_distance_power_law(summaries: list[FitSummary]) -> list[PerDistancePowerLawFitSummary]:
-    """Fit ``epsilon(p) ~= C_d * p ** beta_d`` independently for each distance."""
+def _fit_per_distance_power_law(
+    summaries: list[FitSummary],
+    *,
+    max_physical_error_rate: float | None = None,
+) -> list[PerDistancePowerLawFitSummary]:
+    """Fit ``epsilon_d(p) ~= C_d * p ** beta_d`` independently for each distance.
+
+    The power law only holds below threshold -- including p values near or
+    above threshold systematically pulls the fitted exponent down from its
+    true below-threshold value. Callers that have an estimated threshold
+    should pass ``max_physical_error_rate=p_th`` (or a fraction of it) so
+    only the sub-threshold regime is fit.
+
+    Also returns the OLS standard error of the slope so callers can display
+    uncertainty alongside the exponent.
+    """
     fits: list[PerDistancePowerLawFitSummary] = []
     for distance in sorted({summary.distance for summary in summaries}):
         rows = sorted(
             [
                 summary
                 for summary in summaries
-                if summary.distance == distance and summary.fitted_logical_error_rate_per_round > 0.0
+                if summary.distance == distance
+                and summary.fitted_logical_error_rate_per_round > 0.0
+                and (max_physical_error_rate is None or summary.physical_error_rate <= max_physical_error_rate)
             ],
             key=lambda summary: summary.physical_error_rate,
         )
@@ -1215,6 +1300,16 @@ def _fit_per_distance_power_law(summaries: list[FitSummary]) -> list[PerDistance
         slope, intercept = _linear_regression(xs, ys)
         residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys, strict=False)]
         rmse = math.sqrt(sum(residual * residual for residual in residuals) / len(residuals))
+        # Standard error of the OLS slope: sqrt(residual_var / sum((x - x_mean)^2)),
+        # where residual_var has Bessel correction (n - 2) for the two fitted parameters.
+        n_points = len(rows)
+        x_mean = sum(xs) / n_points
+        ss_xx = sum((x - x_mean) ** 2 for x in xs)
+        if n_points > 2 and ss_xx > 0.0:
+            residual_variance = sum(r * r for r in residuals) / (n_points - 2)
+            slope_std_error = math.sqrt(residual_variance / ss_xx)
+        else:
+            slope_std_error = 0.0
         fits.append(
             PerDistancePowerLawFitSummary(
                 backend=rows[0].backend,
@@ -1225,13 +1320,104 @@ def _fit_per_distance_power_law(summaries: list[FitSummary]) -> list[PerDistance
                 fitted_exponent=slope,
                 expected_distance_scaling_exponent=0.5 * (distance + 1),
                 fit_root_mean_square_log_error=rmse,
+                fitted_exponent_std_error=slope_std_error,
             ),
         )
     return fits
 
 
-def _estimate_threshold(summaries: list[FitSummary]) -> float | None:
-    """Estimate a crossing between the smallest and largest distance curves."""
+def _fit_fss_threshold(
+    summaries: list[FitSummary],
+    *,
+    seed_threshold: float | None = None,
+    seed_nu: float = 1.0,
+    window_factor_low: float = 0.55,
+    window_factor_high: float = 1.5,
+) -> FSSThresholdFitSummary | None:
+    """Fit the Wang-Harrington-Preskill polynomial FSS form to ``summaries``.
+
+    Uses ``pecos.analysis.threshold_curve.threshold_fit`` with the default
+    ``func`` (``p_L = a + b*x + c*x**2`` with ``x = (p - p_th) * d**(1/nu)``).
+    The polynomial expansion is only accurate near threshold, so points are
+    filtered to the window ``[window_factor_low, window_factor_high] * seed_threshold``
+    before fitting. ``seed_threshold`` defaults to the per-round-rate crossing
+    estimate from ``_estimate_threshold``. Returns ``None`` when the estimator
+    cannot seed, too few points remain in the window, or ``curve_fit`` raises.
+    """
+    if not summaries:
+        return None
+
+    if seed_threshold is None:
+        seed_threshold = _estimate_threshold(summaries)
+    if seed_threshold is None or seed_threshold <= 0.0:
+        return None
+
+    low = seed_threshold * window_factor_low
+    high = seed_threshold * window_factor_high
+    windowed = [
+        summary
+        for summary in summaries
+        if low <= summary.physical_error_rate <= high and summary.fitted_logical_error_rate_per_round > 0.0
+    ]
+    if len({summary.distance for summary in windowed}) < 2 or len(windowed) < 5:
+        return None
+
+    plist = [summary.physical_error_rate for summary in windowed]
+    dlist = [summary.distance for summary in windowed]
+    plog = [summary.fitted_logical_error_rate_per_round for summary in windowed]
+    mean_plog = sum(plog) / len(plog)
+    initial = [seed_threshold, seed_nu, mean_plog, 1.0, 1.0]
+
+    try:
+        from pecos.analysis.threshold_curve import func as _fss_func
+        from pecos.analysis.threshold_curve import threshold_fit as _fss_threshold_fit
+    except ImportError:
+        return None
+
+    try:
+        popt, stdev = _fss_threshold_fit(plist, dlist, plog, _fss_func, initial)
+    except Exception:  # pragma: no cover - scipy fit can fail many ways on bad data
+        return None
+
+    p_th, nu, a, b, c = (float(popt[i]) for i in range(5))
+    p_th_se, nu_se, a_se, b_se, c_se = (float(stdev[i]) for i in range(5))
+    if p_th <= 0.0 or nu <= 0.0:
+        # Non-physical fit result -- treat as failure so callers can fall back.
+        return None
+
+    first = windowed[0]
+    return FSSThresholdFitSummary(
+        backend=first.backend,
+        basis=first.basis,
+        p_th=p_th,
+        p_th_std_error=p_th_se,
+        nu=nu,
+        nu_std_error=nu_se,
+        coeff_a=a,
+        coeff_a_std_error=a_se,
+        coeff_b=b,
+        coeff_b_std_error=b_se,
+        coeff_c=c,
+        coeff_c_std_error=c_se,
+        num_points=len(windowed),
+        fit_window_low=low,
+        fit_window_high=high,
+    )
+
+
+def _estimate_threshold(
+    summaries: list[FitSummary],
+    *,
+    metric: str = "fitted_logical_error_rate_per_round",
+) -> float | None:
+    """Estimate the ``p`` where the smallest- and largest-distance curves cross.
+
+    Defaults to the canonical threshold definition -- crossing of
+    ``fitted_logical_error_rate_per_round``, independent of code distance at
+    threshold. Pass ``metric="fitted_projected_logical_error_rate_over_d_rounds"``
+    to instead find the crossing on the ``d``-scaled metric, which lies at a
+    different (lower) ``p`` because that metric itself scales with ``d``.
+    """
     if not summaries:
         return None
 
@@ -1250,13 +1436,7 @@ def _estimate_threshold(summaries: list[FitSummary]) -> float | None:
         large = by_key.get((d_large, p))
         if small is None or large is None:
             continue
-        diffs.append(
-            (
-                p,
-                large.fitted_projected_logical_error_rate_over_d_rounds
-                - small.fitted_projected_logical_error_rate_over_d_rounds,
-            ),
-        )
+        diffs.append((p, getattr(large, metric) - getattr(small, metric)))
 
     for (p0, diff0), (p1, diff1) in itertools.pairwise(diffs):
         if diff0 == 0.0:
@@ -1522,75 +1702,41 @@ def _write_json_results(
     output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def _value_ticks(min_value: float, max_value: float, *, count: int = 5) -> list[float]:
-    """Produce simple linear ticks between two values."""
-    if max_value <= min_value:
-        return [min_value]
-    if count <= 1:
-        return [min_value, max_value]
-    return [min_value + (max_value - min_value) * i / (count - 1) for i in range(count)]
+def _require_matplotlib_pyplot() -> ModuleType:
+    """Return ``matplotlib.pyplot``, raising a clear error if it is not installed."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:  # pragma: no cover
+        msg = "matplotlib is required to render plot output (install matplotlib)"
+        raise RuntimeError(msg) from exc
+    return plt
 
 
-def _log_ticks(min_value: float, max_value: float) -> list[float]:
-    """Produce base-10-ish ticks for a positive log-scaled axis."""
-    if min_value <= 0.0 or max_value <= 0.0:
-        msg = "log ticks require strictly positive bounds"
-        raise ValueError(msg)
-    if max_value < min_value:
-        min_value, max_value = max_value, min_value
-
-    ticks: list[float] = []
-    exp_min = math.floor(math.log10(min_value))
-    exp_max = math.ceil(math.log10(max_value))
-    for exponent in range(exp_min, exp_max + 1):
-        for mantissa in (1.0, 2.0, 5.0):
-            tick = mantissa * (10.0**exponent)
-            if min_value <= tick <= max_value:
-                ticks.append(tick)
-    if not ticks:
-        ticks = [min_value, max_value] if min_value != max_value else [min_value]
-    return sorted(set(ticks))
+# Shared palette used by every plot writer so colors are consistent across the
+# duration overlay, per-round overlay, and per-basis curves. Indexed by distance.
+_DISTANCE_COLOR_PALETTE: list[str] = [
+    "#2563eb",  # blue
+    "#dc2626",  # red
+    "#059669",  # green
+    "#9333ea",  # purple
+    "#ea580c",  # orange
+    "#0f766e",  # teal
+]
 
 
-def _x_pos(value: float, x_min: float, x_max: float, plot_left: float, plot_width: float) -> float:
-    """Map an x value into SVG coordinates."""
-    if x_max <= x_min:
-        return plot_left + plot_width / 2.0
-    return plot_left + (value - x_min) / (x_max - x_min) * plot_width
+def _color_for_distance(distance_index: int) -> str:
+    """Return the palette color for the ``distance_index``-th distance (wraps if needed)."""
+    return _DISTANCE_COLOR_PALETTE[distance_index % len(_DISTANCE_COLOR_PALETTE)]
 
 
-def _x_pos_log(value: float, x_min: float, x_max: float, plot_left: float, plot_width: float) -> float:
-    """Map a positive x value into SVG coordinates using log scaling."""
-    if value <= 0.0 or x_min <= 0.0 or x_max <= 0.0:
-        msg = "log-scaled x coordinates require strictly positive values"
-        raise ValueError(msg)
-    if x_max <= x_min:
-        return plot_left + plot_width / 2.0
-    log_min = math.log10(x_min)
-    log_max = math.log10(x_max)
-    log_value = math.log10(value)
-    return plot_left + (log_value - log_min) / (log_max - log_min) * plot_width
-
-
-def _y_pos(value: float, y_min: float, y_max: float, plot_top: float, plot_height: float) -> float:
-    """Map a positive y value into SVG coordinates using log scaling."""
-    value = max(value, y_min)
-    if y_max <= y_min:
-        return plot_top + plot_height / 2.0
-    log_min = math.log10(y_min)
-    log_max = math.log10(y_max)
-    log_value = math.log10(value)
-    return plot_top + (log_max - log_value) / (log_max - log_min) * plot_height
+def _color_by_distance(distances: list[int]) -> dict[int, str]:
+    """Return a mapping from each distance to its palette color."""
+    return {distance: _color_for_distance(index) for index, distance in enumerate(distances)}
 
 
 def _format_rate_for_filename(value: float) -> str:
     """Render a rate in a filename-friendly compact form."""
     return f"{value:.6g}".replace(".", "p")
-
-
-def _basis_dasharray(basis: str) -> str | None:
-    """Return the SVG dash pattern for one basis."""
-    return None if basis.upper() == "X" else "10 6"
 
 
 def _basis_linestyle(basis: str) -> str:
@@ -1625,207 +1771,21 @@ def _duration_fit_curve_points(
     ]
 
 
-def _append_svg_error_bar(
-    parts: list[str],
-    *,
-    x: float,
-    low_value: float,
-    high_value: float,
-    y_min: float,
-    y_max: float,
-    plot_top: float,
-    plot_height: float,
-    color: str,
-    cap_width: float = 8.0,
-) -> None:
-    """Append a vertical SVG error bar to ``parts``."""
-    lower = max(low_value, y_min)
-    upper = max(high_value, y_min)
-    if upper < lower:
-        lower, upper = upper, lower
-    y_low = _y_pos(lower, y_min, y_max, plot_top, plot_height)
-    y_high = _y_pos(upper, y_min, y_max, plot_top, plot_height)
-    parts.append(
-        f'<line x1="{x:.1f}" y1="{y_high:.1f}" x2="{x:.1f}" y2="{y_low:.1f}" '
-        f'stroke="{color}" stroke-width="1.75" opacity="0.85"/>',
-    )
-    parts.append(
-        f'<line x1="{x - cap_width / 2.0:.1f}" y1="{y_high:.1f}" '
-        f'x2="{x + cap_width / 2.0:.1f}" y2="{y_high:.1f}" '
-        f'stroke="{color}" stroke-width="1.75" opacity="0.85"/>',
-    )
-    parts.append(
-        f'<line x1="{x - cap_width / 2.0:.1f}" y1="{y_low:.1f}" '
-        f'x2="{x + cap_width / 2.0:.1f}" y2="{y_low:.1f}" '
-        f'stroke="{color}" stroke-width="1.75" opacity="0.85"/>',
-    )
-
-
-def _write_svg_duration_overlay_plot(
-    output_path: Path,
+def _build_duration_overlay_figure(
     *,
     points: list[SweepPoint],
     summaries: list[FitSummary],
     backend: str,
     physical_error_rate: float,
-) -> None:
-    """Write one fixed-``p`` logical-error-vs-duration overlay with X/Z styles."""
-    if not points:
-        return
-
+    figsize: tuple[float, float] = (9.5, 6.5),
+) -> Figure:
+    """Build the fixed-``p`` logical-error-vs-duration overlay figure (caller closes it)."""
+    plt = _require_matplotlib_pyplot()
     distances = sorted({point.distance for point in points})
     bases = sorted({point.basis for point in points})
-    x_values = sorted({point.total_rounds / point.distance for point in points})
-    y_values = []
-    for point in points:
-        _, upper = _wilson_interval(point.num_logical_errors, point.num_shots)
-        if upper > 0.0:
-            y_values.append(upper)
-    for summary in summaries:
-        for _, fitted_rate in _duration_fit_curve_points(summary):
-            if fitted_rate > 0.0:
-                y_values.append(fitted_rate)
-    y_min = max(min(y_values) * 0.8, 1e-12) if y_values else 1e-12
-    y_max = max(max(y_values) * 1.2, y_min * 10.0) if y_values else 1e-6
+    color_by_distance = _color_by_distance(distances)
 
-    width = 1040.0
-    height = 700.0
-    plot_left = 120.0
-    plot_right = 48.0
-    plot_top = 78.0
-    plot_bottom = 96.0
-    plot_width = width - plot_left - plot_right
-    plot_height = height - plot_top - plot_bottom
-    colors = ["#2563eb", "#dc2626", "#059669", "#9333ea", "#ea580c", "#0f766e"]
-    color_by_distance = {distance: colors[index % len(colors)] for index, distance in enumerate(distances)}
-
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{int(width)}" height="{int(height)}" '
-        f'viewBox="0 0 {int(width)} {int(height)}">',
-        '<rect width="100%" height="100%" fill="white"/>',
-        f'<text x="{width / 2:.1f}" y="34" text-anchor="middle" font-size="24" fill="#0f172a">'
-        f"Logical Memory Error vs Duration ({html.escape(backend)}, p={physical_error_rate:.4g})</text>",
-        f'<text x="{width / 2:.1f}" y="58" text-anchor="middle" font-size="14" fill="#475569">'
-        "Points show observed logical error rates with 95% Wilson intervals; lines show fitted duration curves.</text>",
-        f'<text x="{width / 2:.1f}" y="{height - 20:.1f}" text-anchor="middle" font-size="18" fill="#334155">'
-        "Memory duration (rounds / d)</text>",
-        f'<text x="28" y="{height / 2:.1f}" text-anchor="middle" font-size="18" fill="#334155" '
-        'transform="rotate(-90 28 '
-        f'{height / 2:.1f})">Observed logical error rate</text>',
-    ]
-
-    for tick in _log_ticks(y_min, y_max):
-        y = _y_pos(tick, y_min, y_max, plot_top, plot_height)
-        parts.append(
-            f'<line x1="{plot_left:.1f}" y1="{y:.1f}" x2="{plot_left + plot_width:.1f}" y2="{y:.1f}" '
-            'stroke="#e2e8f0" stroke-width="1"/>',
-        )
-        parts.append(
-            f'<text x="{plot_left - 10:.1f}" y="{y + 4:.1f}" text-anchor="end" font-size="12" fill="#475569">'
-            f"{tick:.2e}</text>",
-        )
-
-    x_min = min(x_values)
-    x_max = max(x_values)
-    for value in x_values:
-        x = _x_pos(value, x_min, x_max, plot_left, plot_width)
-        parts.append(
-            f'<line x1="{x:.1f}" y1="{plot_top:.1f}" x2="{x:.1f}" y2="{plot_top + plot_height:.1f}" '
-            'stroke="#f1f5f9" stroke-width="1"/>',
-        )
-        parts.append(
-            f'<text x="{x:.1f}" y="{plot_top + plot_height + 22:.1f}" '
-            'text-anchor="middle" font-size="12" fill="#475569">'
-            f"{value:.3g}</text>",
-        )
-
-    parts.append(
-        f'<rect x="{plot_left:.1f}" y="{plot_top:.1f}" width="{plot_width:.1f}" height="{plot_height:.1f}" '
-        'fill="none" stroke="#0f172a" stroke-width="1.5"/>',
-    )
-
-    legend_x = plot_left + 14.0
-    legend_y = plot_top + 20.0
-    legend_index = 0
-    summary_by_series = {(summary.basis, summary.distance): summary for summary in summaries}
-    for basis in bases:
-        for distance in distances:
-            series = sorted(
-                [point for point in points if point.basis == basis and point.distance == distance],
-                key=lambda point: point.total_rounds,
-            )
-            if not series:
-                continue
-            color = color_by_distance[distance]
-            dasharray = _basis_dasharray(basis)
-            style = "" if dasharray is None else f' stroke-dasharray="{dasharray}"'
-            summary = summary_by_series.get((basis, distance))
-            if summary is not None:
-                curve_points = []
-                for curve_x, curve_y in _duration_fit_curve_points(summary):
-                    x = _x_pos(curve_x, x_min, x_max, plot_left, plot_width)
-                    y = _y_pos(max(curve_y, y_min), y_min, y_max, plot_top, plot_height)
-                    curve_points.append(f"{x:.1f},{y:.1f}")
-                curve_points_attr = " ".join(curve_points)
-                parts.append(
-                    f'<polyline fill="none" stroke="{color}" stroke-width="3.25" '
-                    f'points="{curve_points_attr}"{style}/>',
-                )
-            for point in series:
-                x = _x_pos(point.total_rounds / point.distance, x_min, x_max, plot_left, plot_width)
-                low, high = _wilson_interval(point.num_logical_errors, point.num_shots)
-                _append_svg_error_bar(
-                    parts,
-                    x=x,
-                    low_value=low,
-                    high_value=high,
-                    y_min=y_min,
-                    y_max=y_max,
-                    plot_top=plot_top,
-                    plot_height=plot_height,
-                    color=color,
-                )
-                y = _y_pos(max(point.logical_error_rate, y_min), y_min, y_max, plot_top, plot_height)
-                parts.append(
-                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="white" stroke="{color}" stroke-width="2"/>',
-                )
-
-            legend_row_y = legend_y + legend_index * 24.0
-            legend_index += 1
-            parts.append(
-                f'<line x1="{legend_x:.1f}" y1="{legend_row_y:.1f}" x2="{legend_x + 22:.1f}" y2="{legend_row_y:.1f}" '
-                f'stroke="{color}" stroke-width="3"{style}/>',
-            )
-            parts.append(
-                f'<text x="{legend_x + 30:.1f}" y="{legend_row_y + 4:.1f}" font-size="14" fill="#0f172a">'
-                f"{basis} d={distance}</text>",
-            )
-
-    parts.append("</svg>")
-    output_path.write_text("\n".join(parts) + "\n")
-
-
-def _write_pdf_duration_overlay_plot(
-    output_path: Path,
-    *,
-    points: list[SweepPoint],
-    summaries: list[FitSummary],
-    backend: str,
-    physical_error_rate: float,
-) -> None:
-    """Write the fixed-``p`` duration overlay as a PDF via matplotlib."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:  # pragma: no cover
-        msg = "matplotlib is required for --save-pdf"
-        raise RuntimeError(msg) from exc
-
-    distances = sorted({point.distance for point in points})
-    bases = sorted({point.basis for point in points})
-    colors = ["#2563eb", "#dc2626", "#059669", "#9333ea", "#ea580c", "#0f766e"]
-    color_by_distance = {distance: colors[index % len(colors)] for index, distance in enumerate(distances)}
-
-    fig, ax = plt.subplots(figsize=(9.5, 6.5))
+    fig, ax = plt.subplots(figsize=figsize)
     summary_by_series = {(summary.basis, summary.distance): summary for summary in summaries}
     for basis in bases:
         for distance in distances:
@@ -1881,170 +1841,180 @@ def _write_pdf_duration_overlay_plot(
     ax.grid(visible=True, which="both", alpha=0.25)
     ax.legend(ncol=2)
     fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
+    return fig
 
 
-def _write_svg_per_round_overlay_plot(
-    output_path: Path,
+def _write_duration_overlay_plot(
+    output_dir: Path,
+    stem: str,
     *,
+    points: list[SweepPoint],
     summaries: list[FitSummary],
     backend: str,
+    physical_error_rate: float,
+    formats: list[str],
+) -> list[Path]:
+    """Write one fixed-``p`` logical-error-vs-duration overlay to each requested format."""
+    if not points or not formats:
+        return []
+    plt = _require_matplotlib_pyplot()
+    fig = _build_duration_overlay_figure(
+        points=points,
+        summaries=summaries,
+        backend=backend,
+        physical_error_rate=physical_error_rate,
+    )
+    output_paths = [output_dir / f"{stem}.{fmt}" for fmt in formats]
+    for path in output_paths:
+        fig.savefig(path)
+    plt.close(fig)
+    return output_paths
+
+
+def _draw_power_law_exponents(
+    ax: Axes,
+    summaries: list[FitSummary],
 ) -> None:
-    """Write the combined X/Z per-round-epsilon-vs-``p`` overlay."""
-    if not summaries:
+    """Annotate per-distance below-threshold power-law exponents on the plot.
+
+    The power law ``epsilon_d(p) ~= A_d * p ** c_d`` only holds below threshold
+    -- including p values near or above threshold compresses the fitted
+    exponent toward the noise-dominated value. For each basis, this helper
+    estimates ``p_th`` from the per-round rate crossing, then fits only the
+    points with ``p <= p_th`` so the reported ``c_d`` reflects the true
+    below-threshold scaling (close to the theoretical ``(d + 1) / 2``).
+
+    The annotation shows ``c_d ± se`` where ``se`` is the OLS standard error
+    of the slope, and notes how many points fed each fit.
+    """
+    bases_in_data = sorted({summary.basis for summary in summaries})
+    blocks: list[str] = []
+    for basis in bases_in_data:
+        basis_summaries = [summary for summary in summaries if summary.basis == basis]
+        threshold = _estimate_threshold(basis_summaries)
+        fits = _fit_per_distance_power_law(basis_summaries, max_physical_error_rate=threshold)
+        if not fits:
+            # Fall back to fitting all points if threshold estimation fails --
+            # better to show a compressed exponent than nothing.
+            fits = _fit_per_distance_power_law(basis_summaries)
+        if not fits:
+            continue
+        n_points_used = len(fits[0].physical_error_rates) if fits else 0
+        pieces = []
+        for fit in fits:
+            if fit.fitted_exponent_std_error > 0.0:
+                pieces.append(f"c_{fit.distance}={fit.fitted_exponent:.2f}±{fit.fitted_exponent_std_error:.2f}")
+            else:
+                pieces.append(f"c_{fit.distance}={fit.fitted_exponent:.2f}")
+        basis_tag = f"{basis}: " if len(bases_in_data) > 1 else ""
+        line = basis_tag + ", ".join(pieces)
+        if threshold is not None:
+            line += f"  (fit p≤{threshold:.3g}, n={n_points_used})"
+        blocks.append(line)
+
+    if not blocks:
         return
 
-    distances = sorted({summary.distance for summary in summaries})
-    bases = sorted({summary.basis for summary in summaries})
-    error_rates = sorted({summary.physical_error_rate for summary in summaries})
-    y_values = []
-    for summary in summaries:
-        _, _, upper = _fit_summary_metric_interval(summary, "fitted_logical_error_rate_per_round")
-        if upper > 0.0:
-            y_values.append(upper)
-    y_min = max(min(y_values) * 0.8, 1e-12) if y_values else 1e-12
-    y_max = max(max(y_values) * 1.2, y_min * 10.0) if y_values else 1e-6
-
-    width = 1040.0
-    height = 700.0
-    plot_left = 120.0
-    plot_right = 48.0
-    plot_top = 78.0
-    plot_bottom = 96.0
-    plot_width = width - plot_left - plot_right
-    plot_height = height - plot_top - plot_bottom
-    colors = ["#2563eb", "#dc2626", "#059669", "#9333ea", "#ea580c", "#0f766e"]
-    color_by_distance = {distance: colors[index % len(colors)] for index, distance in enumerate(distances)}
-
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{int(width)}" height="{int(height)}" '
-        f'viewBox="0 0 {int(width)} {int(height)}">',
-        '<rect width="100%" height="100%" fill="white"/>',
-        f'<text x="{width / 2:.1f}" y="34" text-anchor="middle" font-size="24" fill="#0f172a">'
-        f"Per-round logical error rate vs p ({html.escape(backend)})</text>",
-        f'<text x="{width / 2:.1f}" y="{height - 20:.1f}" text-anchor="middle" font-size="18" fill="#334155">'
-        "Physical error rate p</text>",
-        f'<text x="28" y="{height / 2:.1f}" text-anchor="middle" font-size="18" fill="#334155" '
-        'transform="rotate(-90 28 '
-        f'{height / 2:.1f})">Fitted logical error rate per round</text>',
-    ]
-
-    for tick in _log_ticks(y_min, y_max):
-        y = _y_pos(tick, y_min, y_max, plot_top, plot_height)
-        parts.append(
-            f'<line x1="{plot_left:.1f}" y1="{y:.1f}" x2="{plot_left + plot_width:.1f}" y2="{y:.1f}" '
-            'stroke="#e2e8f0" stroke-width="1"/>',
-        )
-        parts.append(
-            f'<text x="{plot_left - 10:.1f}" y="{y + 4:.1f}" text-anchor="end" font-size="12" fill="#475569">'
-            f"{tick:.2e}</text>",
-        )
-
-    x_min = min(error_rates)
-    x_max = max(error_rates)
-    for physical_error_rate in error_rates:
-        x = _x_pos_log(physical_error_rate, x_min, x_max, plot_left, plot_width)
-        parts.append(
-            f'<line x1="{x:.1f}" y1="{plot_top:.1f}" x2="{x:.1f}" y2="{plot_top + plot_height:.1f}" '
-            'stroke="#f1f5f9" stroke-width="1"/>',
-        )
-        parts.append(
-            f'<text x="{x:.1f}" y="{plot_top + plot_height + 22:.1f}" '
-            'text-anchor="middle" font-size="12" fill="#475569">'
-            f"{physical_error_rate:.4g}</text>",
-        )
-
-    parts.append(
-        f'<rect x="{plot_left:.1f}" y="{plot_top:.1f}" width="{plot_width:.1f}" height="{plot_height:.1f}" '
-        'fill="none" stroke="#0f172a" stroke-width="1.5"/>',
+    header = "Power-law fit eps_d(p) ≈ A_d · p^c_d   [theory c_d=(d+1)/2]:"
+    text = header + "\n" + "\n".join(blocks)
+    ax.text(
+        0.02,
+        0.02,
+        text,
+        transform=ax.transAxes,
+        va="bottom",
+        ha="left",
+        fontsize=8.5,
+        color="#0f172a",
+        family="monospace",
+        bbox={"facecolor": "white", "alpha": 0.88, "edgecolor": "#cbd5e1", "boxstyle": "round,pad=0.35"},
     )
 
-    legend_x = plot_left + 14.0
-    legend_y = plot_top + 20.0
-    legend_index = 0
-    for basis in bases:
-        for distance in distances:
-            series = sorted(
-                [summary for summary in summaries if summary.basis == basis and summary.distance == distance],
-                key=lambda summary: summary.physical_error_rate,
-            )
-            if not series:
-                continue
-            color = color_by_distance[distance]
-            dasharray = _basis_dasharray(basis)
-            curve_points = []
-            for summary in series:
-                x = _x_pos_log(summary.physical_error_rate, x_min, x_max, plot_left, plot_width)
-                y = _y_pos(
-                    max(summary.fitted_logical_error_rate_per_round, y_min),
-                    y_min,
-                    y_max,
-                    plot_top,
-                    plot_height,
-                )
-                curve_points.append(f"{x:.1f},{y:.1f}")
-            style = "" if dasharray is None else f' stroke-dasharray="{dasharray}"'
-            parts.append(
-                f'<polyline fill="none" stroke="{color}" stroke-width="3" points="{" ".join(curve_points)}"{style}/>',
-            )
-            for summary in series:
-                x = _x_pos_log(summary.physical_error_rate, x_min, x_max, plot_left, plot_width)
-                value, low, high = _fit_summary_metric_interval(summary, "fitted_logical_error_rate_per_round")
-                _append_svg_error_bar(
-                    parts,
-                    x=x,
-                    low_value=low,
-                    high_value=high,
-                    y_min=y_min,
-                    y_max=y_max,
-                    plot_top=plot_top,
-                    plot_height=plot_height,
-                    color=color,
-                )
-                y = _y_pos(
-                    max(value, y_min),
-                    y_min,
-                    y_max,
-                    plot_top,
-                    plot_height,
-                )
-                parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}"/>')
 
-            legend_row_y = legend_y + legend_index * 24.0
-            legend_index += 1
-            parts.append(
-                f'<line x1="{legend_x:.1f}" y1="{legend_row_y:.1f}" x2="{legend_x + 22:.1f}" y2="{legend_row_y:.1f}" '
-                f'stroke="{color}" stroke-width="3"{style}/>',
+def _draw_threshold_markers(
+    ax: Axes,
+    summaries: list[FitSummary],
+    *,
+    metric: str = "fitted_logical_error_rate_per_round",
+    label_prefix: str = "p_th",
+) -> None:
+    """Draw a dotted grey vertical line where this metric's curves cross, per basis.
+
+    The crossing point is computed with ``_estimate_threshold(summaries, metric=metric)``
+    so the marker matches *this plot's* visual intersection rather than the canonical
+    per-round threshold. Callers override ``label_prefix`` (e.g. ``"p_cross"``) when
+    the metric is not the canonical per-round rate, to avoid implying these crossings
+    are all the threshold. Skipped when the estimator returns ``None``.
+    """
+    bases_in_data = sorted({summary.basis for summary in summaries})
+    # Prefer the Wang-Harrington-Preskill FSS fit (``p_th ± sigma``) for the
+    # canonical per-round metric. Fall back to the simpler per-curve crossing
+    # estimator when the FSS fit cannot converge (too few near-threshold
+    # points) or when the caller is plotting a non-canonical metric.
+    use_fss = metric == "fitted_logical_error_rate_per_round"
+    # Stack per-basis labels vertically so they do not overlap when two
+    # thresholds land near the same ``p``. Top-down in sorted basis order.
+    for label_row, basis in enumerate(bases_in_data):
+        basis_summaries = [summary for summary in summaries if summary.basis == basis]
+        threshold: float | None
+        uncertainty: float | None
+        fss = _fit_fss_threshold(basis_summaries) if use_fss else None
+        if fss is not None:
+            threshold = fss.p_th
+            uncertainty = fss.p_th_std_error
+        else:
+            threshold = _estimate_threshold(basis_summaries, metric=metric)
+            uncertainty = None
+        if threshold is None or threshold <= 0.0:
+            continue
+        ax.axvline(
+            threshold,
+            color="#334155",
+            linestyle=":",
+            linewidth=1.8,
+            alpha=0.7,
+            zorder=0,
+        )
+        if uncertainty is not None and uncertainty > 0.0:
+            # Shade a +/- one-sigma band so readers can see fit uncertainty directly.
+            ax.axvspan(
+                max(threshold - uncertainty, 1e-12),
+                threshold + uncertainty,
+                color="#334155",
+                alpha=0.09,
+                zorder=0,
             )
-            parts.append(
-                f'<text x="{legend_x + 30:.1f}" y="{legend_row_y + 4:.1f}" font-size="14" fill="#0f172a">'
-                f"{basis} d={distance}</text>",
-            )
+        basis_tag = f"({basis})" if len(bases_in_data) > 1 else ""
+        if uncertainty is not None and uncertainty > 0.0:
+            label = f" {label_prefix}{basis_tag}≈{threshold:.3g}±{uncertainty:.1g}"
+        else:
+            label = f" {label_prefix}{basis_tag}≈{threshold:.3g}"
+        ax.text(
+            threshold,
+            0.98 - 0.045 * label_row,
+            label,
+            transform=ax.get_xaxis_transform(),
+            color="#334155",
+            alpha=0.9,
+            fontsize=8,
+            ha="left",
+            va="top",
+        )
 
-    parts.append("</svg>")
-    output_path.write_text("\n".join(parts) + "\n")
 
-
-def _write_pdf_per_round_overlay_plot(
-    output_path: Path,
+def _build_per_round_overlay_figure(
     *,
     summaries: list[FitSummary],
     backend: str,
-) -> None:
-    """Write the combined X/Z per-round-epsilon-vs-``p`` overlay as a PDF."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:  # pragma: no cover
-        msg = "matplotlib is required for --save-pdf"
-        raise RuntimeError(msg) from exc
-
+    figsize: tuple[float, float] = (9.5, 6.5),
+) -> Figure:
+    """Build the combined X/Z per-round-epsilon-vs-``p`` overlay figure (caller closes it)."""
+    plt = _require_matplotlib_pyplot()
     distances = sorted({summary.distance for summary in summaries})
     bases = sorted({summary.basis for summary in summaries})
-    colors = ["#2563eb", "#dc2626", "#059669", "#9333ea", "#ea580c", "#0f766e"]
-    color_by_distance = {distance: colors[index % len(colors)] for index, distance in enumerate(distances)}
+    color_by_distance = _color_by_distance(distances)
 
-    fig, ax = plt.subplots(figsize=(9.5, 6.5))
+    fig, ax = plt.subplots(figsize=figsize)
     for basis in bases:
         for distance in distances:
             series = sorted(
@@ -2079,158 +2049,48 @@ def _write_pdf_per_round_overlay_plot(
     ax.set_yscale("log")
     ax.grid(visible=True, which="both", alpha=0.25)
     ax.legend(ncol=2)
+    _draw_threshold_markers(ax, summaries)
+    _draw_power_law_exponents(ax, summaries)
     fig.tight_layout()
-    fig.savefig(output_path)
+    return fig
+
+
+def _write_per_round_overlay_plot(
+    output_dir: Path,
+    stem: str,
+    *,
+    summaries: list[FitSummary],
+    backend: str,
+    formats: list[str],
+) -> list[Path]:
+    """Write the combined X/Z per-round-epsilon-vs-``p`` overlay to each requested format."""
+    if not summaries or not formats:
+        return []
+    plt = _require_matplotlib_pyplot()
+    fig = _build_per_round_overlay_figure(summaries=summaries, backend=backend)
+    output_paths = [output_dir / f"{stem}.{fmt}" for fmt in formats]
+    for path in output_paths:
+        fig.savefig(path)
     plt.close(fig)
+    return output_paths
 
 
-def _write_svg_plot(
-    output_path: Path,
+def _build_plot_figure(
     *,
     summaries: list[FitSummary],
     metric: str,
     title: str,
     y_label: str,
-) -> None:
-    """Write a simple standalone SVG curve plot."""
+    figsize: tuple[float, float] = (9, 6),
+) -> Figure:
+    """Build a per-basis epsilon-vs-``p`` curve figure (caller closes it)."""
+    plt = _require_matplotlib_pyplot()
     distances = sorted({summary.distance for summary in summaries})
     error_rates = sorted({summary.physical_error_rate for summary in summaries})
     by_key = {(summary.distance, summary.physical_error_rate): summary for summary in summaries}
+    color_by_distance = _color_by_distance(distances)
 
-    values = []
-    for summary in summaries:
-        _, _, upper = _fit_summary_metric_interval(summary, metric)
-        if upper > 0.0:
-            values.append(upper)
-    if values:
-        y_min = max(min(values) * 0.8, 1e-12)
-        y_max = max(max(values) * 1.2, y_min * 10.0)
-    else:
-        y_min = 1e-12
-        y_max = 1e-6
-
-    x_min = min(error_rates)
-    x_max = max(error_rates)
-
-    width = 980.0
-    height = 640.0
-    plot_left = 110.0
-    plot_right = 40.0
-    plot_top = 70.0
-    plot_bottom = 90.0
-    plot_width = width - plot_left - plot_right
-    plot_height = height - plot_top - plot_bottom
-    colors = ["#2563eb", "#dc2626", "#059669", "#9333ea", "#ea580c", "#0f766e"]
-
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{int(width)}" height="{int(height)}" '
-        f'viewBox="0 0 {int(width)} {int(height)}">',
-        '<rect width="100%" height="100%" fill="white"/>',
-        f'<text x="{width / 2:.1f}" y="34" text-anchor="middle" font-size="24" fill="#0f172a">'
-        f"{html.escape(title)}</text>",
-        f'<text x="{width / 2:.1f}" y="{height - 20:.1f}" text-anchor="middle" font-size="18" fill="#334155">'
-        "Physical error rate p</text>",
-        f'<text x="28" y="{height / 2:.1f}" text-anchor="middle" font-size="18" fill="#334155" '
-        'transform="rotate(-90 28 '
-        f'{height / 2:.1f})">{html.escape(y_label)}</text>',
-    ]
-
-    for tick in _value_ticks(y_min, y_max):
-        y = _y_pos(tick, y_min, y_max, plot_top, plot_height)
-        parts.append(
-            f'<line x1="{plot_left:.1f}" y1="{y:.1f}" x2="{plot_left + plot_width:.1f}" y2="{y:.1f}" '
-            'stroke="#e2e8f0" stroke-width="1"/>',
-        )
-        parts.append(
-            f'<text x="{plot_left - 10:.1f}" y="{y + 4:.1f}" text-anchor="end" font-size="12" fill="#475569">'
-            f"{tick:.2e}</text>",
-        )
-
-    for p in error_rates:
-        x = _x_pos(p, x_min, x_max, plot_left, plot_width)
-        parts.append(
-            f'<line x1="{x:.1f}" y1="{plot_top:.1f}" x2="{x:.1f}" y2="{plot_top + plot_height:.1f}" '
-            'stroke="#f1f5f9" stroke-width="1"/>',
-        )
-        parts.append(
-            f'<text x="{x:.1f}" y="{plot_top + plot_height + 22:.1f}" '
-            'text-anchor="middle" font-size="12" fill="#475569">'
-            f"{p:.4g}</text>",
-        )
-
-    parts.append(
-        f'<rect x="{plot_left:.1f}" y="{plot_top:.1f}" width="{plot_width:.1f}" height="{plot_height:.1f}" '
-        'fill="none" stroke="#0f172a" stroke-width="1.5"/>',
-    )
-
-    legend_x = plot_left + 14.0
-    legend_y = plot_top + 20.0
-
-    for index, distance in enumerate(distances):
-        color = colors[index % len(colors)]
-        curve_points = []
-        for p in error_rates:
-            summary = by_key[(distance, p)]
-            value = max(getattr(summary, metric), y_min)
-            curve_points.append(
-                f"{_x_pos(p, x_min, x_max, plot_left, plot_width):.1f},"
-                f"{_y_pos(value, y_min, y_max, plot_top, plot_height):.1f}",
-            )
-        parts.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="3" points="{" ".join(curve_points)}"/>',
-        )
-        for p in error_rates:
-            summary = by_key[(distance, p)]
-            value, low, high = _fit_summary_metric_interval(summary, metric)
-            x = _x_pos(p, x_min, x_max, plot_left, plot_width)
-            _append_svg_error_bar(
-                parts,
-                x=x,
-                low_value=low,
-                high_value=high,
-                y_min=y_min,
-                y_max=y_max,
-                plot_top=plot_top,
-                plot_height=plot_height,
-                color=color,
-            )
-            y = _y_pos(max(value, y_min), y_min, y_max, plot_top, plot_height)
-            parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}"/>')
-
-        legend_row_y = legend_y + index * 24.0
-        parts.append(
-            f'<line x1="{legend_x:.1f}" y1="{legend_row_y:.1f}" x2="{legend_x + 22:.1f}" y2="{legend_row_y:.1f}" '
-            f'stroke="{color}" stroke-width="3"/>',
-        )
-        parts.append(
-            f'<text x="{legend_x + 30:.1f}" y="{legend_row_y + 4:.1f}" font-size="14" fill="#0f172a">'
-            f"d={distance}</text>",
-        )
-
-    parts.append("</svg>")
-    output_path.write_text("\n".join(parts) + "\n")
-
-
-def _write_pdf_plot(
-    output_path: Path,
-    *,
-    summaries: list[FitSummary],
-    metric: str,
-    title: str,
-    y_label: str,
-) -> None:
-    """Write a PDF plot using matplotlib if it is installed."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:  # pragma: no cover
-        msg = "matplotlib is required for --save-pdf"
-        raise RuntimeError(msg) from exc
-
-    distances = sorted({summary.distance for summary in summaries})
-    error_rates = sorted({summary.physical_error_rate for summary in summaries})
-    by_key = {(summary.distance, summary.physical_error_rate): summary for summary in summaries}
-
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=figsize)
     for distance in distances:
         intervals = [_fit_summary_metric_interval(by_key[(distance, p)], metric) for p in error_rates]
         ys = [max(value, 1e-12) for value, _, _ in intervals]
@@ -2242,6 +2102,7 @@ def _write_pdf_plot(
             yerr=[yerr_lower, yerr_upper],
             marker="o",
             linewidth=2,
+            color=color_by_distance[distance],
             label=f"d={distance}",
             capsize=3,
         )
@@ -2249,12 +2110,52 @@ def _write_pdf_plot(
     ax.set_title(title)
     ax.set_xlabel("Physical error rate p")
     ax.set_ylabel(y_label)
+    # LER-vs-p plots read most naturally on log-log: the below-threshold
+    # power law eps_d(p) ~ A_d * p^c_d becomes a straight line with slope c_d,
+    # which matches the annotated exponents and makes crossings easy to eyeball.
+    ax.set_xscale("log")
     ax.set_yscale("log")
     ax.grid(visible=True, which="both", alpha=0.25)
     ax.legend()
+    # Per-round rate is the canonical threshold metric -- call that crossing ``p_th``.
+    # The projected-over-d-rounds curves cross at a different ``p`` because the metric
+    # itself scales with ``d``, so we mark it but label it ``p_cross`` to be honest
+    # about what the line represents.
+    is_per_round = metric == "fitted_logical_error_rate_per_round"
+    _draw_threshold_markers(
+        ax,
+        summaries,
+        metric=metric,
+        label_prefix="p_th" if is_per_round else "p_cross",
+    )
+    # Power-law fit eps_d ~= A_d * p^c_d is defined against the per-round rate,
+    # so annotate it only on the per-round per-basis plot.
+    if is_per_round:
+        _draw_power_law_exponents(ax, summaries)
     fig.tight_layout()
-    fig.savefig(output_path)
+    return fig
+
+
+def _write_plot(
+    output_dir: Path,
+    stem: str,
+    *,
+    summaries: list[FitSummary],
+    metric: str,
+    title: str,
+    y_label: str,
+    formats: list[str],
+) -> list[Path]:
+    """Write a per-basis epsilon-vs-``p`` curve plot to each requested format."""
+    if not summaries or not formats:
+        return []
+    plt = _require_matplotlib_pyplot()
+    fig = _build_plot_figure(summaries=summaries, metric=metric, title=title, y_label=y_label)
+    output_paths = [output_dir / f"{stem}.{fmt}" for fmt in formats]
+    for path in output_paths:
+        fig.savefig(path)
     plt.close(fig)
+    return output_paths
 
 
 def _write_html_dashboard(
@@ -2390,10 +2291,13 @@ def _write_html_dashboard(
     if not multipliers_text:
         multipliers_text = ", ".join(f"{value:g}" for value in sorted(set(args.duration_multipliers)))
     rounds_by_distance = getattr(args, "duration_rounds_by_distance", {})
-    rounds_text = "; ".join(
+    rounds_lines = [
         f"d={distance}: [{', '.join(str(value) for value in rounds)}]"
         for distance, rounds in sorted(rounds_by_distance.items())
-    )
+    ]
+    # Render one distance per line; html-escape each line individually since we
+    # join with literal <br> markup that must not itself be escaped.
+    rounds_html = "<br>".join(html.escape(line) for line in rounds_lines)
     error_rates_text = ", ".join(f"{value:.4g}" for value in sorted(set(args.error_rates)))
 
     parts = [
@@ -2430,7 +2334,7 @@ def _write_html_dashboard(
             "Overall Throughput",
             html.escape(f"{timing_summary['overall_shots_per_second']:.3f} shots/s"),
         ),
-        meta_card("Effective Rounds", html.escape(rounds_text)) if rounds_text else "",
+        meta_card("Effective Rounds", rounds_html) if rounds_html else "",
         "    </div>",
     ]
     if json_filename is not None:
@@ -2470,51 +2374,232 @@ def _maybe_open_html_dashboard(output_path: Path) -> None:
         raise RuntimeError(msg)
 
 
-def _write_artifacts(
+def load_sweep_data_from_json(
+    json_path: Path,
+) -> tuple[list[SweepPoint], list[FitSummary], dict[str, Any]]:
+    """Reconstruct ``(points, fit_summaries, payload)`` from a saved JSON results file.
+
+    Used by ``surface_sweep_report.py --render-plots`` to rebuild plots from the
+    canonical JSON data without rerunning the simulation. ``points`` and
+    ``fit_summaries`` are returned as the original frozen dataclasses, with
+    ``FitSummary``'s tuple fields recovered from JSON-array form.
+    """
+    payload = json.loads(json_path.read_text())
+    points = [SweepPoint(**row) for row in payload.get("points", [])]
+    tuple_fields = {
+        "round_values",
+        "observed_logical_error_rates",
+        "observed_raw_error_rates",
+        "observed_logical_error_counts",
+        "observed_logical_error_rate_lower_bounds",
+        "observed_logical_error_rate_upper_bounds",
+    }
+    summaries: list[FitSummary] = []
+    for row in payload.get("fit_summaries", []):
+        kwargs = {key: (tuple(value) if key in tuple_fields else value) for key, value in row.items()}
+        summaries.append(FitSummary(**kwargs))
+    return points, summaries, payload
+
+
+def _merge_sweep_point_group(points: list[SweepPoint]) -> SweepPoint:
+    """Merge same-key SweepPoints by summing counts and recomputing rates.
+
+    All points in the input must share the same
+    ``(backend, distance, basis, physical_error_rate, total_rounds)`` key.
+    """
+    if not points:
+        msg = "Cannot merge an empty point group"
+        raise ValueError(msg)
+
+    first = points[0]
+    total_shots = sum(point.num_shots for point in points)
+    total_logical_errors = sum(point.num_logical_errors for point in points)
+    raw_values = [point.num_raw_errors for point in points]
+    if all(value is not None for value in raw_values):
+        total_raw_errors: int | None = sum(raw_values)
+        raw_rate: float | None = total_raw_errors / total_shots if total_shots > 0 else 0.0
+    else:
+        total_raw_errors = None
+        raw_rate = None
+    logical_rate = total_logical_errors / total_shots if total_shots > 0 else 0.0
+    return SweepPoint(
+        backend=first.backend,
+        distance=first.distance,
+        basis=first.basis,
+        physical_error_rate=first.physical_error_rate,
+        total_rounds=first.total_rounds,
+        num_shots=total_shots,
+        num_logical_errors=total_logical_errors,
+        num_raw_errors=total_raw_errors,
+        logical_error_rate=logical_rate,
+        raw_error_rate=raw_rate,
+    )
+
+
+def _merge_sweep_configs(configs: list[dict[str, Any]], source_paths: list[str]) -> dict[str, Any]:
+    """Merge shard configs: union list fields, keep per-shard shot detail in ``shots_per_shard``."""
+    if not configs:
+        return {"source_shards": list(source_paths)}
+
+    merged: dict[str, Any] = dict(configs[0])
+
+    for field in ("distances", "error_rates", "bases", "executed_backends"):
+        union: set[Any] = set()
+        for config in configs:
+            for value in config.get(field, []) or []:
+                union.add(value)
+        if union:
+            merged[field] = sorted(union)
+
+    rounds_by_distance: dict[str, set[int]] = {}
+    for config in configs:
+        for distance_key, rounds in (config.get("duration_rounds_by_distance") or {}).items():
+            rounds_by_distance.setdefault(str(distance_key), set()).update(int(r) for r in rounds)
+    if rounds_by_distance:
+        merged["duration_rounds_by_distance"] = {
+            distance_key: sorted(rounds) for distance_key, rounds in rounds_by_distance.items()
+        }
+
+    shot_values = [config.get("shots") for config in configs if config.get("shots") is not None]
+    if len(set(shot_values)) == 1:
+        merged["shots"] = shot_values[0]
+    else:
+        # When shards used different per-point targets, reporting a single
+        # scalar would mislead readers. Record the distinct values instead.
+        merged["shots"] = ", ".join(str(value) for value in sorted(set(shot_values)))
+
+    # Provenance: one row per shard with path + shots + description.
+    shards_metadata = []
+    for path, config in zip(source_paths, configs, strict=False):
+        shards_metadata.append(
+            {
+                "path": path,
+                "shots": config.get("shots"),
+                "duration_schedule_description": config.get("duration_schedule_description"),
+                "executed_backends": config.get("executed_backends", []),
+            },
+        )
+    merged["source_shards"] = shards_metadata
+
+    return merged
+
+
+def _merge_sweep_timings(timings: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sum scalar timing totals across shards; recompute throughput from totals."""
+    total_wall = sum(timing.get("total_wall_clock_seconds", 0.0) for timing in timings)
+    total_point = sum(timing.get("total_point_seconds", 0.0) for timing in timings)
+    total_shots = sum(timing.get("total_shots", 0) or 0 for timing in timings)
+    total_points = sum(timing.get("total_points", 0) or 0 for timing in timings)
+    return {
+        "total_wall_clock_seconds": total_wall,
+        "total_point_seconds": total_point,
+        "total_shots": total_shots,
+        "total_points": total_points,
+        "overall_shots_per_second": (total_shots / total_wall) if total_wall > 0 else 0.0,
+    }
+
+
+def merge_sweep_shards(
+    paths: list[Path],
+) -> tuple[list[SweepPoint], list[FitSummary], dict[str, Any], dict[str, Any]]:
+    """Load ``paths`` as sweep shards, merge points by key, re-fit, return merged data.
+
+    Two ``SweepPoint`` entries with the same
+    ``(backend, distance, basis, physical_error_rate, total_rounds)`` key are
+    merged by summing ``num_shots`` and ``num_logical_errors`` and recomputing
+    the rate. ``FitSummary`` entries are re-derived from the merged points --
+    not carried over from the shards -- because fit statistics depend on the
+    merged shot counts.
+
+    Returns ``(merged_points, merged_summaries, merged_config, merged_timing_summary)``.
+    """
+    if not paths:
+        msg = "At least one shard path is required"
+        raise ValueError(msg)
+
+    all_shard_points: list[SweepPoint] = []
+    shard_configs: list[dict[str, Any]] = []
+    shard_timings: list[dict[str, Any]] = []
+    for path in paths:
+        points, _summaries, payload = load_sweep_data_from_json(path)
+        all_shard_points.extend(points)
+        shard_configs.append(dict(payload.get("config", {})))
+        shard_timings.append(dict(payload.get("timing_summary", {})))
+
+    # Group by merge key and merge each group.
+    point_groups: dict[tuple[str, int, str, float, int], list[SweepPoint]] = {}
+    for point in all_shard_points:
+        key = (point.backend, point.distance, point.basis, point.physical_error_rate, point.total_rounds)
+        point_groups.setdefault(key, []).append(point)
+    merged_points = [_merge_sweep_point_group(group) for group in point_groups.values()]
+    merged_points.sort(
+        key=lambda point: (point.backend, point.distance, point.basis, point.physical_error_rate, point.total_rounds),
+    )
+
+    # Re-fit: group merged points by (backend, basis, distance, p) and fit each group.
+    fit_groups: dict[tuple[str, str, int, float], list[SweepPoint]] = {}
+    for point in merged_points:
+        fit_groups.setdefault((point.backend, point.basis, point.distance, point.physical_error_rate), []).append(
+            point,
+        )
+    merged_summaries = [
+        _fit_summary_from_points(sorted(group, key=lambda point: point.total_rounds)) for group in fit_groups.values()
+    ]
+    merged_summaries.sort(
+        key=lambda summary: (summary.backend, summary.basis, summary.distance, summary.physical_error_rate),
+    )
+
+    merged_config = _merge_sweep_configs(shard_configs, [str(path) for path in paths])
+    merged_timing = _merge_sweep_timings(shard_timings)
+
+    return merged_points, merged_summaries, merged_config, merged_timing
+
+
+def render_plot_artifacts(
     output_dir: Path,
     *,
-    args: argparse.Namespace,
+    prefix: str,
     points: list[SweepPoint],
     summaries: list[FitSummary],
-    point_timings: list[dict[str, Any]],
-    timing_summary: dict[str, Any],
-) -> None:
-    """Write any optional JSON or plot artifacts requested by the user."""
-    prefix = args.output_prefix
-    backends = sorted({summary.backend for summary in summaries})
+    formats: list[str],
+) -> list[DashboardPlot]:
+    """Render every plot type from in-memory data and return the dashboard plot list.
+
+    Used both by the live sweep (which feeds in just-collected data) and by
+    ``surface_sweep_report.py --render-plots`` (which feeds in data
+    reconstructed from a saved JSON results file). Only SVG paths get a
+    ``DashboardPlot`` entry, since the dashboard embeds SVG only.
+    """
     dashboard_plots: list[DashboardPlot] = []
-    json_filename: str | None = None
-    if args.save_json:
-        json_path = output_dir / f"{prefix}_results.json"
-        _write_json_results(
-            json_path,
-            args=args,
-            points=points,
-            summaries=summaries,
-            point_timings=point_timings,
-            timing_summary=timing_summary,
-        )
-        print(f"Wrote JSON results to {json_path}")
-        json_filename = json_path.name
+    backends = sorted({summary.backend for summary in summaries})
+
+    def _report_written(paths: list[Path]) -> None:
+        for path in paths:
+            print(f"Wrote {path.suffix.lstrip('.').upper()} plot to {path}")
+
+    def _svg_path_for(paths: list[Path]) -> Path | None:
+        return next((path for path in paths if path.suffix == ".svg"), None)
 
     for backend in backends:
         backend_summaries = [summary for summary in summaries if summary.backend == backend]
-        if args.save_svg:
-            overlay_svg_path = output_dir / f"{prefix}_{backend}_per_round_overlay.svg"
-            _write_svg_per_round_overlay_plot(overlay_svg_path, summaries=backend_summaries, backend=backend)
-            print(f"Wrote SVG plot to {overlay_svg_path}")
+        overlay_paths = _write_per_round_overlay_plot(
+            output_dir,
+            f"{prefix}_{backend}_per_round_overlay",
+            summaries=backend_summaries,
+            backend=backend,
+            formats=formats,
+        )
+        _report_written(overlay_paths)
+        overlay_svg = _svg_path_for(overlay_paths)
+        if overlay_svg is not None:
             dashboard_plots.append(
                 DashboardPlot(
                     section="combined",
                     title=f"Per-round logical error rate vs p ({backend})",
-                    filename=overlay_svg_path.name,
+                    filename=overlay_svg.name,
                     backend=backend,
                 ),
             )
-        if args.save_pdf:
-            overlay_pdf_path = output_dir / f"{prefix}_{backend}_per_round_overlay.pdf"
-            _write_pdf_per_round_overlay_plot(overlay_pdf_path, summaries=backend_summaries, backend=backend)
-            print(f"Wrote PDF plot to {overlay_pdf_path}")
 
         for physical_error_rate in sorted({point.physical_error_rate for point in points if point.backend == backend}):
             rate_points = [
@@ -2526,35 +2611,27 @@ def _write_artifacts(
                 summary for summary in backend_summaries if summary.physical_error_rate == physical_error_rate
             ]
             stem = f"{prefix}_{backend}_p_{_format_rate_for_filename(physical_error_rate)}_duration_overlay"
-            if args.save_svg:
-                duration_svg_path = output_dir / f"{stem}.svg"
-                _write_svg_duration_overlay_plot(
-                    duration_svg_path,
-                    points=rate_points,
-                    summaries=rate_summaries,
-                    backend=backend,
-                    physical_error_rate=physical_error_rate,
-                )
-                print(f"Wrote SVG plot to {duration_svg_path}")
+            duration_paths = _write_duration_overlay_plot(
+                output_dir,
+                stem,
+                points=rate_points,
+                summaries=rate_summaries,
+                backend=backend,
+                physical_error_rate=physical_error_rate,
+                formats=formats,
+            )
+            _report_written(duration_paths)
+            duration_svg = _svg_path_for(duration_paths)
+            if duration_svg is not None:
                 dashboard_plots.append(
                     DashboardPlot(
                         section="duration",
                         title=f"Logical memory error vs duration ({backend}, p={physical_error_rate:.4g})",
-                        filename=duration_svg_path.name,
+                        filename=duration_svg.name,
                         backend=backend,
                         physical_error_rate=physical_error_rate,
                     ),
                 )
-            if args.save_pdf:
-                duration_pdf_path = output_dir / f"{stem}.pdf"
-                _write_pdf_duration_overlay_plot(
-                    duration_pdf_path,
-                    points=rate_points,
-                    summaries=rate_summaries,
-                    backend=backend,
-                    physical_error_rate=physical_error_rate,
-                )
-                print(f"Wrote PDF plot to {duration_pdf_path}")
 
     for backend in backends:
         for basis in sorted({summary.basis for summary in summaries if summary.backend == backend}):
@@ -2576,23 +2653,564 @@ def _write_artifacts(
                 ),
             ]
             for metric, stem, title, y_label in plot_specs:
-                if args.save_svg:
-                    svg_path = output_dir / f"{stem}.svg"
-                    _write_svg_plot(svg_path, summaries=basis_summaries, metric=metric, title=title, y_label=y_label)
-                    print(f"Wrote SVG plot to {svg_path}")
+                plot_paths = _write_plot(
+                    output_dir,
+                    stem,
+                    summaries=basis_summaries,
+                    metric=metric,
+                    title=title,
+                    y_label=y_label,
+                    formats=formats,
+                )
+                _report_written(plot_paths)
+                plot_svg = _svg_path_for(plot_paths)
+                if plot_svg is not None:
                     dashboard_plots.append(
                         DashboardPlot(
                             section="basis",
                             title=title,
-                            filename=svg_path.name,
+                            filename=plot_svg.name,
                             backend=backend,
                             basis=basis,
                         ),
                     )
-                if args.save_pdf:
-                    pdf_path = output_dir / f"{stem}.pdf"
-                    _write_pdf_plot(pdf_path, summaries=basis_summaries, metric=metric, title=title, y_label=y_label)
-                    print(f"Wrote PDF plot to {pdf_path}")
+
+    return dashboard_plots
+
+
+# Letter-landscape page size for every PDF report page -- matches the 11x8.5
+# aspect ratio used by cover, section dividers, and each plot page so the
+# reader does not see page-size jitter when flipping through the report.
+_REPORT_PAGE_SIZE: tuple[float, float] = (11.0, 8.5)
+
+
+def _draw_meta_card(
+    page: Axes,
+    *,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    label: str,
+    value_lines: list[str],
+) -> None:
+    """Draw a single HTML-like meta-card (label + value block) onto the page axes.
+
+    Long values are wrapped to fit the card width so nothing runs past the
+    card border. The wrap width is a conservative character-count heuristic
+    based on ``width`` (in figure coordinates) and the 11" report page width.
+    """
+    import textwrap
+
+    from matplotlib.patches import FancyBboxPatch
+
+    card = FancyBboxPatch(
+        (x + 0.002, y + 0.002),
+        width - 0.004,
+        height - 0.004,
+        boxstyle="round,pad=0.002,rounding_size=0.012",
+        linewidth=1.2,
+        facecolor="#ffffff",
+        edgecolor="#dbeafe",
+        transform=page.transAxes,
+    )
+    page.add_patch(card)
+    page.text(
+        x + 0.018,
+        y + height - 0.028,
+        label.upper(),
+        fontsize=8.5,
+        color="#475569",
+        weight="bold",
+        transform=page.transAxes,
+    )
+
+    # Wrap values that would otherwise overflow the card width.
+    page_width_inches = _REPORT_PAGE_SIZE[0]
+    padding_inches = 0.036 * page_width_inches  # 0.018 fig-coord padding each side
+    # DejaVu Sans at 10.5pt averages ~0.09in per character; overestimate slightly
+    # so we wrap sooner rather than clip.
+    char_width_inches = 0.09
+    usable_inches = max(0.5, width * page_width_inches - padding_inches)
+    max_chars = max(10, int(usable_inches / char_width_inches))
+    wrapped: list[str] = []
+    for line in value_lines:
+        if len(line) <= max_chars:
+            wrapped.append(line)
+            continue
+        pieces = textwrap.wrap(line, width=max_chars, break_long_words=False) or [line]
+        wrapped.extend(pieces)
+
+    for offset, line in enumerate(wrapped):
+        page.text(
+            x + 0.018,
+            y + height - 0.06 - offset * 0.024,
+            line,
+            fontsize=10.5,
+            color="#0f172a",
+            transform=page.transAxes,
+        )
+
+
+def _build_report_cover_figure(
+    *,
+    config: dict[str, Any] | None,
+    summaries: list[FitSummary],
+    title: str = "PECOS Surface Sweep Report",
+) -> Figure:
+    """Build a styled cover page: hero band + meta-card grid + footer timing line."""
+    from matplotlib.colors import LinearSegmentedColormap
+
+    plt = _require_matplotlib_pyplot()
+    fig = plt.figure(figsize=_REPORT_PAGE_SIZE, facecolor="#f8fafc")
+
+    # Full-page axes used to position meta cards and footer text in normalized coords.
+    page = fig.add_axes((0.0, 0.0, 1.0, 1.0))
+    page.set_xlim(0, 1)
+    page.set_ylim(0, 1)
+    page.axis("off")
+    page.patch.set_facecolor("#f8fafc")
+
+    # --- Hero band with gradient + title + subtitle ---
+    hero = fig.add_axes((0.04, 0.74, 0.92, 0.22))
+    hero.set_xticks([])
+    hero.set_yticks([])
+    for spine in hero.spines.values():
+        spine.set_edgecolor("#cbd5e1")
+        spine.set_linewidth(1.0)
+    hero_gradient = [[column / 255.0 for column in range(256)]]
+    hero_cmap = LinearSegmentedColormap.from_list("pecos-hero", ["#e0f2fe", "#f8fafc", "#dcfce7"])
+    hero.imshow(hero_gradient, aspect="auto", cmap=hero_cmap, extent=(0.0, 1.0, 0.0, 1.0))
+    hero.text(
+        0.5,
+        0.62,
+        title,
+        transform=hero.transAxes,
+        ha="center",
+        va="center",
+        fontsize=26,
+        weight="bold",
+        color="#0f172a",
+    )
+    hero.text(
+        0.5,
+        0.30,
+        "Rotated surface code memory experiments",
+        transform=hero.transAxes,
+        ha="center",
+        va="center",
+        fontsize=13,
+        color="#475569",
+    )
+
+    # --- Meta-card grid: only the scientific headline parameters. Run-level
+    # details (shots, timing, DEM mode, schedule, effective rounds) live in the
+    # appendix so this cover stays focused on what was studied.
+    backends_in_data = sorted({summary.backend for summary in summaries}) or ["(none)"]
+    bases_in_data = sorted({summary.basis for summary in summaries}) or ["(none)"]
+    config = config or {}
+
+    cards: list[tuple[str, list[str], int]] = [
+        ("Backends", [", ".join(backends_in_data)], 1),
+        ("Bases", [", ".join(bases_in_data)], 1),
+        ("Distances", [", ".join(str(d) for d in config.get("distances", [])) or "(none)"], 1),
+        ("Error Rates", [", ".join(f"{p:.4g}" for p in config.get("error_rates", [])) or "(none)"], 1),
+        (
+            "Noise Model",
+            ["uniform depolarizing", "p1 = p2 = p_meas = p_init = p"],
+            2,
+        ),
+    ]
+
+    cols = 3
+    gap = 0.015
+    grid_left = 0.04
+    grid_right = 0.96
+    unit_width = (grid_right - grid_left - (cols - 1) * gap) / cols
+    card_height = 0.18
+    row_y_positions = [0.50, 0.28]
+    col_cursor = 0
+    row_cursor = 0
+    for label, value_lines, span in cards:
+        if col_cursor + span > cols:
+            row_cursor += 1
+            col_cursor = 0
+        if row_cursor >= len(row_y_positions):
+            break
+        card_x = grid_left + col_cursor * (unit_width + gap)
+        card_w = unit_width * span + gap * (span - 1)
+        _draw_meta_card(
+            page,
+            x=card_x,
+            y=row_y_positions[row_cursor],
+            width=card_w,
+            height=card_height,
+            label=label,
+            value_lines=value_lines,
+        )
+        col_cursor += span
+
+    # --- Footer hint pointing readers at the appendix for methods/timing ---
+    fig.text(
+        0.5,
+        0.12,
+        "See the Appendix at the end of this report for methods, shot counts, and timing details.",
+        ha="center",
+        va="center",
+        fontsize=10,
+        color="#475569",
+        style="italic",
+    )
+
+    return fig
+
+
+def _build_appendix_figure(
+    *,
+    config: dict[str, Any] | None,
+    timing_summary: dict[str, Any] | None,
+    summaries: list[FitSummary] | None = None,
+) -> Figure:
+    """Build the "Methods and Timing" appendix page (two columns of key/value rows).
+
+    When ``summaries`` are provided and cover enough near-threshold data, a
+    third section lists the Wang-Harrington-Preskill FSS fit per (backend,
+    basis) with fitted ``p_th`` and ``nu`` plus their standard errors.
+    """
+    plt = _require_matplotlib_pyplot()
+    fig = plt.figure(figsize=_REPORT_PAGE_SIZE, facecolor="#f8fafc")
+    page = fig.add_axes((0.0, 0.0, 1.0, 1.0))
+    page.set_xlim(0, 1)
+    page.set_ylim(0, 1)
+    page.axis("off")
+    page.patch.set_facecolor("#f8fafc")
+
+    fig.text(0.5, 0.92, "Appendix: Methods and Timing", ha="center", fontsize=24, weight="bold", color="#0f172a")
+    fig.text(
+        0.5,
+        0.87,
+        "Run-level parameters and timing for reproducibility",
+        ha="center",
+        fontsize=12,
+        color="#475569",
+    )
+
+    config = config or {}
+    timing_summary = timing_summary or {}
+
+    rounds_by_distance = {
+        int(distance): tuple(values) for distance, values in config.get("duration_rounds_by_distance", {}).items()
+    }
+    rounds_lines = [f"d={distance}: {list(rounds)}" for distance, rounds in sorted(rounds_by_distance.items())] or [
+        "(no schedule recorded)",
+    ]
+
+    method_rows: list[tuple[str, list[str]]] = [
+        ("Shots / Point", [str(config.get("shots", "?"))]),
+        ("Sample Backend Mode", [str(config.get("sample_backend_mode", "(unspecified)"))]),
+        ("Executed Backends", [", ".join(config.get("executed_backends", [])) or "(unspecified)"]),
+        ("DEM Mode", [str(config.get("dem_mode", "(unspecified)"))]),
+        ("Native Circuit Source", [str(config.get("native_circuit_source", "(unspecified)"))]),
+        ("RNG Seed", [str(config.get("seed", "(unspecified)"))]),
+        ("Round Schedule", [str(config.get("duration_schedule_description", "(unspecified)"))]),
+        ("Effective Rounds", rounds_lines),
+    ]
+
+    timing_rows: list[tuple[str, list[str]]] = [
+        (
+            "Total Wall Clock",
+            [f"{timing_summary.get('total_wall_clock_seconds', 0.0):.2f} s"],
+        ),
+        ("Total Shots", [str(timing_summary.get("total_shots", "?"))]),
+        (
+            "Overall Throughput",
+            [f"{timing_summary.get('overall_shots_per_second', 0.0):.1f} shots/s"],
+        ),
+        (
+            "Total Point Time",
+            [f"{timing_summary.get('total_point_seconds', 0.0):.2f} s"],
+        ),
+        ("Total Points", [str(timing_summary.get("total_points", "?"))]),
+    ]
+
+    def _render_column(x: float, heading: str, rows: list[tuple[str, list[str]]]) -> None:
+        fig.text(x, 0.80, heading, fontsize=14, weight="bold", color="#0f172a")
+        page.add_patch(
+            _section_accent(x_left=x, x_right=x + 0.42, y=0.785),
+        )
+        cursor = 0.75
+        for label, values in rows:
+            fig.text(x, cursor, f"{label}:", fontsize=10.5, color="#475569", weight="bold")
+            for value in values:
+                cursor -= 0.028
+                fig.text(x + 0.015, cursor, value, fontsize=10.5, color="#0f172a")
+            cursor -= 0.018
+
+    _render_column(0.08, "Methods", method_rows)
+    _render_column(0.54, "Timing", timing_rows)
+
+    # --- Optional third section: FSS threshold fits per (backend, basis) ---
+    fss_rows = _collect_fss_fit_rows(summaries or [])
+    if fss_rows:
+        fig.text(
+            0.08,
+            0.36,
+            "Threshold Fit (Wang-Harrington-Preskill)",
+            fontsize=14,
+            weight="bold",
+            color="#0f172a",
+        )
+        page.add_patch(_section_accent(x_left=0.08, x_right=0.62, y=0.345))
+        fig.text(
+            0.08,
+            0.325,
+            "p_L = a + b*x + c*x^2,  x = (p - p_th)*d^(1/nu)    [arXiv:quant-ph/0207088]",
+            fontsize=9,
+            color="#475569",
+            family="monospace",
+        )
+        # Column headers + one row per fit in a simple fixed-grid layout.
+        header_y = 0.29
+        fig.text(0.08, header_y, "Backend", fontsize=9.5, weight="bold", color="#475569")
+        fig.text(0.26, header_y, "Basis", fontsize=9.5, weight="bold", color="#475569")
+        fig.text(0.33, header_y, "p_th", fontsize=9.5, weight="bold", color="#475569")
+        fig.text(0.48, header_y, "nu", fontsize=9.5, weight="bold", color="#475569")
+        fig.text(0.60, header_y, "n", fontsize=9.5, weight="bold", color="#475569")
+        fig.text(0.66, header_y, "fit window (p)", fontsize=9.5, weight="bold", color="#475569")
+        row_y = header_y - 0.025
+        for backend, basis, fss in fss_rows:
+            fig.text(0.08, row_y, backend, fontsize=10, color="#0f172a")
+            fig.text(0.26, row_y, basis, fontsize=10, color="#0f172a")
+            fig.text(
+                0.33,
+                row_y,
+                f"{fss.p_th:.5g} ± {fss.p_th_std_error:.2g}",
+                fontsize=10,
+                color="#0f172a",
+                family="monospace",
+            )
+            fig.text(
+                0.48,
+                row_y,
+                f"{fss.nu:.3g} ± {fss.nu_std_error:.2g}",
+                fontsize=10,
+                color="#0f172a",
+                family="monospace",
+            )
+            fig.text(0.60, row_y, str(fss.num_points), fontsize=10, color="#0f172a", family="monospace")
+            fig.text(
+                0.66,
+                row_y,
+                f"[{fss.fit_window_low:.4g}, {fss.fit_window_high:.4g}]",
+                fontsize=10,
+                color="#0f172a",
+                family="monospace",
+            )
+            row_y -= 0.025
+
+    return fig
+
+
+def _collect_fss_fit_rows(
+    summaries: list[FitSummary],
+) -> list[tuple[str, str, FSSThresholdFitSummary]]:
+    """Return one ``(backend, basis, fit)`` triple per (backend, basis) that has an FSS fit."""
+    rows: list[tuple[str, str, FSSThresholdFitSummary]] = []
+    for backend in sorted({summary.backend for summary in summaries}):
+        for basis in sorted({summary.basis for summary in summaries if summary.backend == backend}):
+            basis_summaries = [
+                summary for summary in summaries if summary.backend == backend and summary.basis == basis
+            ]
+            fit = _fit_fss_threshold(basis_summaries)
+            if fit is not None:
+                rows.append((backend, basis, fit))
+    return rows
+
+
+def _section_accent(*, x_left: float, x_right: float, y: float) -> Rectangle:
+    """Return the small blue accent bar drawn under an appendix column heading."""
+    from matplotlib.patches import Rectangle as _Rectangle
+
+    return _Rectangle((x_left, y), x_right - x_left, 0.003, facecolor="#2563eb", edgecolor="none")
+
+
+def _build_section_divider_figure(
+    title: str,
+    subtitle: str | None = None,
+) -> Figure:
+    """Build a minimal section-title page -- centered title + optional subtitle + accent bar."""
+    from matplotlib.patches import Rectangle
+
+    plt = _require_matplotlib_pyplot()
+    fig = plt.figure(figsize=_REPORT_PAGE_SIZE, facecolor="#f8fafc")
+    page = fig.add_axes((0.0, 0.0, 1.0, 1.0))
+    page.set_xlim(0, 1)
+    page.set_ylim(0, 1)
+    page.axis("off")
+    page.patch.set_facecolor("#f8fafc")
+
+    page.add_patch(
+        Rectangle(
+            (0.25, 0.555),
+            0.5,
+            0.004,
+            facecolor="#2563eb",
+            edgecolor="none",
+            transform=page.transAxes,
+        ),
+    )
+    fig.text(0.5, 0.60, title, ha="center", va="center", fontsize=34, weight="bold", color="#0f172a")
+    if subtitle:
+        fig.text(0.5, 0.50, subtitle, ha="center", va="center", fontsize=14, color="#475569")
+    return fig
+
+
+def write_pdf_report(
+    output_path: Path,
+    *,
+    points: list[SweepPoint],
+    summaries: list[FitSummary],
+    timing_summary: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
+    title: str = "PECOS Surface Sweep Report",
+) -> Path:
+    """Write a multi-page PDF report (cover + every plot) to ``output_path``.
+
+    The cover page lists configuration and timing; subsequent pages contain
+    the same plots the dashboard embeds, in the same order. Returns the
+    output path on success.
+    """
+    plt = _require_matplotlib_pyplot()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    backends = sorted({summary.backend for summary in summaries})
+
+    def _save_and_close(fig: Figure) -> None:
+        pdf.savefig(fig)
+        plt.close(fig)
+
+    def _write_divider(section_title: str, subtitle: str | None = None) -> None:
+        _save_and_close(_build_section_divider_figure(section_title, subtitle))
+
+    with PdfPages(output_path) as pdf:
+        _save_and_close(
+            _build_report_cover_figure(
+                config=config,
+                summaries=summaries,
+                title=title,
+            ),
+        )
+
+        _write_divider("Combined Overlays", "Per-round logical error rate versus physical error rate")
+        for backend in backends:
+            backend_summaries = [summary for summary in summaries if summary.backend == backend]
+            _save_and_close(
+                _build_per_round_overlay_figure(
+                    summaries=backend_summaries,
+                    backend=backend,
+                    figsize=_REPORT_PAGE_SIZE,
+                ),
+            )
+
+        _write_divider("Fixed-p Duration Overlays", "Logical memory error versus memory duration")
+        for backend in backends:
+            backend_summaries = [summary for summary in summaries if summary.backend == backend]
+            for physical_error_rate in sorted(
+                {point.physical_error_rate for point in points if point.backend == backend},
+            ):
+                rate_points = [
+                    point
+                    for point in points
+                    if point.backend == backend and point.physical_error_rate == physical_error_rate
+                ]
+                rate_summaries = [
+                    summary for summary in backend_summaries if summary.physical_error_rate == physical_error_rate
+                ]
+                _save_and_close(
+                    _build_duration_overlay_figure(
+                        points=rate_points,
+                        summaries=rate_summaries,
+                        backend=backend,
+                        physical_error_rate=physical_error_rate,
+                        figsize=_REPORT_PAGE_SIZE,
+                    ),
+                )
+
+        _write_divider("Per-basis Curves", "Fitted logical error versus physical error rate")
+        for backend in backends:
+            for basis in sorted({summary.basis for summary in summaries if summary.backend == backend}):
+                basis_summaries = [
+                    summary for summary in summaries if summary.backend == backend and summary.basis == basis
+                ]
+                plot_specs = [
+                    (
+                        "fitted_projected_logical_error_rate_over_d_rounds",
+                        f"{basis}-Basis Fitted Logical Error Rate Over d Rounds ({backend})",
+                        "Fitted logical error rate over d rounds",
+                    ),
+                    (
+                        "fitted_logical_error_rate_per_round",
+                        f"{basis}-Basis Fitted Logical Error Rate Per Round ({backend})",
+                        "Fitted logical error rate per round",
+                    ),
+                ]
+                for metric, plot_title, y_label in plot_specs:
+                    _save_and_close(
+                        _build_plot_figure(
+                            summaries=basis_summaries,
+                            metric=metric,
+                            title=plot_title,
+                            y_label=y_label,
+                            figsize=_REPORT_PAGE_SIZE,
+                        ),
+                    )
+
+        _write_divider("Appendix", "Methods and timing details")
+        _save_and_close(
+            _build_appendix_figure(config=config, timing_summary=timing_summary, summaries=summaries),
+        )
+
+    return output_path
+
+
+def _write_artifacts(
+    output_dir: Path,
+    *,
+    args: argparse.Namespace,
+    points: list[SweepPoint],
+    summaries: list[FitSummary],
+    point_timings: list[dict[str, Any]],
+    timing_summary: dict[str, Any],
+) -> None:
+    """Write any optional JSON or plot artifacts requested by the user."""
+    prefix = args.output_prefix
+    json_filename: str | None = None
+    if args.save_json:
+        json_path = output_dir / f"{prefix}_results.json"
+        _write_json_results(
+            json_path,
+            args=args,
+            points=points,
+            summaries=summaries,
+            point_timings=point_timings,
+            timing_summary=timing_summary,
+        )
+        print(f"Wrote JSON results to {json_path}")
+        json_filename = json_path.name
+
+    formats: list[str] = []
+    if args.save_svg:
+        formats.append("svg")
+    if args.save_pdf:
+        formats.append("pdf")
+
+    dashboard_plots = render_plot_artifacts(
+        output_dir,
+        prefix=prefix,
+        points=points,
+        summaries=summaries,
+        formats=formats,
+    )
 
     if args.save_html:
         html_path = output_dir / f"{prefix}_dashboard.html"
@@ -2608,6 +3226,34 @@ def _write_artifacts(
         if args.open_html:
             _maybe_open_html_dashboard(html_path)
             print(f"Opened HTML dashboard at {html_path}")
+
+    if args.save_report_pdf:
+        report_path = output_dir / f"{prefix}_report.pdf"
+        write_pdf_report(
+            report_path,
+            points=points,
+            summaries=summaries,
+            timing_summary=timing_summary,
+            config=_config_for_report(args),
+        )
+        print(f"Wrote PDF report to {report_path}")
+
+
+def _config_for_report(args: argparse.Namespace) -> dict[str, Any]:
+    """Build the ``config`` dict the PDF report cover + appendix pages expect from CLI args."""
+    return {
+        "distances": sorted(set(args.distances)),
+        "error_rates": sorted(set(args.error_rates)),
+        "shots": args.shots,
+        "dem_mode": getattr(args, "dem_mode", None),
+        "duration_schedule_description": getattr(args, "duration_schedule_description", None),
+        "duration_rounds_by_distance": dict(getattr(args, "duration_rounds_by_distance", {})),
+        # Match the key name that ``_write_json_results`` serializes so the
+        # appendix page can read the same field from either source.
+        "sample_backend_mode": getattr(args, "sample_backend", None),
+        "native_circuit_source": getattr(args, "native_circuit_source", None),
+        "seed": getattr(args, "seed", None),
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -2717,6 +3363,14 @@ def _parse_args() -> argparse.Namespace:
         help="Write PDF plots for each basis and fitted metric. Requires matplotlib.",
     )
     parser.add_argument(
+        "--save-report-pdf",
+        action="store_true",
+        help=(
+            "Write a single multi-page PDF report (cover page with config + timing, "
+            "then one plot per page). Requires matplotlib."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=str,
         default=None,
@@ -2743,62 +3397,61 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    """Run the threshold sweep CLI and optionally write summary artifacts."""
-    args = _parse_args()
-    if args.open_html:
-        args.save_html = True
-    if args.save_html:
-        args.save_svg = True
+_BACKEND_MODE_EXPANSIONS: dict[str, list[str]] = {
+    "compare": ["sim", "native_sampler"],
+    "compare_gate_backends": ["selene_sim", "selene_stabilizer_plugin", "sim"],
+    "compare_all": ["selene_sim", "selene_stabilizer_plugin", "sim", "native_sampler"],
+    "profile_gate_backends": ["selene_sim", "selene_stabilizer_plugin", "sim"],
+}
 
-    wants_outputs = args.save_json or args.save_svg or args.save_pdf or args.save_html
-    output_dir = _resolve_output_dir(args.output_dir, wants_outputs=wants_outputs)
-    sweep_start = time.perf_counter()
 
-    distances = sorted(set(args.distances))
-    bases = [basis.upper() for basis in args.bases]
-    if args.sample_backend == "compare":
-        backends = ["sim", "native_sampler"]
-    elif args.sample_backend == "compare_gate_backends":
-        backends = ["selene_sim", "selene_stabilizer_plugin", "sim"]
-    elif args.sample_backend == "compare_all":
-        backends = ["selene_sim", "selene_stabilizer_plugin", "sim", "native_sampler"]
-    elif args.sample_backend == "profile_gate_backends":
-        backends = ["selene_sim", "selene_stabilizer_plugin", "sim"]
-    else:
-        backends = [args.sample_backend]
-    explicit_duration_multipliers = (
-        None if args.duration_multipliers is None else sorted(set(args.duration_multipliers))
-    )
-    if explicit_duration_multipliers is not None:
-        duration_multipliers = explicit_duration_multipliers
-        duration_schedule_description = (
+def _resolve_backends(sample_backend: str) -> list[str]:
+    """Resolve ``--sample-backend`` to the concrete list of backends to run."""
+    return _BACKEND_MODE_EXPANSIONS.get(sample_backend, [sample_backend])
+
+
+def _resolve_duration_schedule(
+    args: argparse.Namespace,
+    distances: list[int],
+) -> tuple[list[float], dict[int, tuple[int, ...]], str]:
+    """Return (multipliers, rounds-by-distance, human-readable description)."""
+    explicit_multipliers = None if args.duration_multipliers is None else sorted(set(args.duration_multipliers))
+    if explicit_multipliers is not None:
+        multipliers = explicit_multipliers
+        description = (
             "explicit multipliers: "
-            + ", ".join(f"{value:g}" for value in duration_multipliers)
+            + ", ".join(f"{value:g}" for value in multipliers)
             + " (meaning r = multiplier * distance)"
         )
     else:
-        duration_multipliers = _evenly_spaced_values(
+        multipliers = _evenly_spaced_values(
             args.duration_min_multiplier,
             args.duration_max_multiplier,
             args.duration_num_points,
         )
-        duration_schedule_description = (
+        description = (
             f"about {args.duration_num_points} evenly spaced round counts over "
             f"[{args.duration_min_multiplier:g}d, {args.duration_max_multiplier:g}d]"
         )
-    duration_rounds_by_distance = {
+    rounds_by_distance = {
         distance: _duration_rounds_for_distance(
             distance,
-            explicit_multipliers=explicit_duration_multipliers,
+            explicit_multipliers=explicit_multipliers,
             duration_min_multiplier=args.duration_min_multiplier,
             duration_max_multiplier=args.duration_max_multiplier,
             duration_num_points=args.duration_num_points,
         )
         for distance in distances
     }
-    error_rates = sorted(set(args.error_rates))
+    return multipliers, rounds_by_distance, description
 
+
+def _validate_sweep_inputs(
+    distances: list[int],
+    duration_multipliers: list[float],
+    args: argparse.Namespace,
+) -> None:
+    """Raise ``ValueError`` on any invalid sweep configuration input."""
     if any(distance <= 0 or distance % 2 == 0 for distance in distances):
         msg = "Distances must be positive odd integers"
         raise ValueError(msg)
@@ -2815,10 +3468,19 @@ def main() -> int:
         msg = "duration-num-points must be positive"
         raise ValueError(msg)
 
-    args.duration_multipliers = duration_multipliers
-    args.duration_rounds_by_distance = duration_rounds_by_distance
-    args.duration_schedule_description = duration_schedule_description
 
+def _print_config_banner(
+    args: argparse.Namespace,
+    *,
+    backends: list[str],
+    distances: list[int],
+    bases: list[str],
+    error_rates: list[float],
+    output_dir: Path | None,
+    duration_schedule_description: str,
+    duration_rounds_by_distance: dict[int, tuple[int, ...]],
+) -> None:
+    """Print the sweep configuration summary at the top of a run."""
     print("Native PECOS Surface Threshold Sweep")
     print("=" * 40)
     print(f"distances        : {distances}")
@@ -2844,20 +3506,136 @@ def main() -> int:
     if output_dir is not None:
         print(f"artifact dir     : {output_dir}")
 
-    if args.sample_backend == "profile_gate_backends":
-        _profile_gate_backends(
-            backends=backends,
-            distances=distances,
-            bases=bases,
-            error_rates=error_rates,
-            duration_rounds_by_distance=duration_rounds_by_distance,
-            shots=args.shots,
-            seed=args.seed,
-            warmup_repetitions=args.benchmark_warmup,
-            benchmark_repetitions=args.benchmark_repetitions,
-        )
-        return 0
 
+def _run_one_memory_point(
+    args: argparse.Namespace,
+    *,
+    backend: str,
+    basis: str,
+    distance: int,
+    physical_error_rate: float,
+    total_rounds: int,
+    seed: int,
+) -> tuple[SweepPoint, dict[str, Any]]:
+    """Run one sampling point, print the per-point line, return the point + its timing row."""
+    point_start = time.perf_counter()
+    point = _run_memory_point(
+        sample_backend=backend,
+        distance=distance,
+        basis=basis,
+        physical_error_rate=physical_error_rate,
+        total_rounds=total_rounds,
+        num_shots=args.shots,
+        dem_mode=args.dem_mode,
+        native_circuit_source=args.native_circuit_source,
+        seed=seed,
+    )
+    elapsed_seconds = time.perf_counter() - point_start
+    naive_per_round = ler_per_round_exp(point.logical_error_rate, point.total_rounds)
+    print(
+        "    "
+        f"LER={point.logical_error_rate:.6e} "
+        f"raw={_format_rate(point.raw_error_rate)} "
+        f"naive_per_round={naive_per_round:.6e} "
+        f"elapsed={elapsed_seconds:.3f}s",
+    )
+    timing_row = {
+        "backend": backend,
+        "basis": basis,
+        "distance": distance,
+        "physical_error_rate": physical_error_rate,
+        "total_rounds": total_rounds,
+        "num_shots": args.shots,
+        "elapsed_seconds": elapsed_seconds,
+    }
+    return point, timing_row
+
+
+def _fit_and_print_group(
+    group_points: list[SweepPoint],
+    backend: str,
+) -> FitSummary:
+    """Fit one ``(backend, basis, d, p)`` group and print the fit line + any warning."""
+    fit_summary = _fit_summary_from_points(group_points)
+    observed = ", ".join(
+        f"r={round_value}:{logical_rate:.3e}"
+        for round_value, logical_rate in zip(
+            fit_summary.round_values,
+            fit_summary.observed_logical_error_rates,
+            strict=False,
+        )
+    )
+    epsilon_interval = _format_interval(
+        fit_summary.fitted_logical_error_rate_per_round_ci_low,
+        fit_summary.fitted_logical_error_rate_per_round_ci_high,
+        fit_summary.fitted_logical_error_rate_per_round,
+    )
+    proj_interval = _format_interval(
+        fit_summary.fitted_projected_logical_error_rate_over_d_rounds_ci_low,
+        fit_summary.fitted_projected_logical_error_rate_over_d_rounds_ci_high,
+        fit_summary.fitted_projected_logical_error_rate_over_d_rounds,
+    )
+    print(
+        "    "
+        f"[{backend}] "
+        f"fit_epsilon={fit_summary.fitted_logical_error_rate_per_round:.6e} {epsilon_interval} "
+        f"fit_proj_d={fit_summary.fitted_projected_logical_error_rate_over_d_rounds:.6e} {proj_interval} "
+        f"fit_rms={fit_summary.fit_root_mean_square_error:.3e} "
+        f"[{observed}]",
+    )
+    warning_text = _fit_rms_warning_text(fit_summary)
+    if warning_text:
+        print(f"    [{backend}] {warning_text}")
+    return fit_summary
+
+
+def _print_cross_backend_deltas(
+    group_fit_summaries: dict[str, FitSummary],
+    backends: list[str],
+) -> None:
+    """Print delta lines across backends in one ``(basis, d, p)`` group."""
+    if "selene_sim" in group_fit_summaries:
+        ref_summary = group_fit_summaries["selene_sim"]
+        for backend in backends:
+            if backend == "selene_sim":
+                continue
+            summary = group_fit_summaries[backend]
+            delta_epsilon = (
+                summary.fitted_logical_error_rate_per_round - ref_summary.fitted_logical_error_rate_per_round
+            )
+            delta_proj_d = (
+                summary.fitted_projected_logical_error_rate_over_d_rounds
+                - ref_summary.fitted_projected_logical_error_rate_over_d_rounds
+            )
+            print(
+                "    "
+                f"compare_vs_selene_sim[{backend}] "
+                f"delta_epsilon={delta_epsilon:+.3e} "
+                f"delta_proj_d={delta_proj_d:+.3e}",
+            )
+    elif len(backends) == 2 and "sim" in group_fit_summaries and "native_sampler" in group_fit_summaries:
+        sim_summary = group_fit_summaries["sim"]
+        sampler_summary = group_fit_summaries["native_sampler"]
+        delta_epsilon = (
+            sampler_summary.fitted_logical_error_rate_per_round - sim_summary.fitted_logical_error_rate_per_round
+        )
+        delta_proj_d = (
+            sampler_summary.fitted_projected_logical_error_rate_over_d_rounds
+            - sim_summary.fitted_projected_logical_error_rate_over_d_rounds
+        )
+        print(f"    compare delta_epsilon={delta_epsilon:+.3e} delta_proj_d={delta_proj_d:+.3e}")
+
+
+def _run_sweep_and_fit(
+    args: argparse.Namespace,
+    *,
+    backends: list[str],
+    distances: list[int],
+    bases: list[str],
+    error_rates: list[float],
+    duration_rounds_by_distance: dict[int, tuple[int, ...]],
+) -> tuple[list[SweepPoint], list[FitSummary], list[dict[str, Any]]]:
+    """Run the full sweep, fit each ``(basis, d, p)`` group, return (points, fits, timings)."""
     all_points: list[SweepPoint] = []
     fit_summaries: list[FitSummary] = []
     point_timings: list[dict[str, Any]] = []
@@ -2876,45 +3654,22 @@ def main() -> int:
                 for total_rounds in duration_rounds_by_distance[distance]:
                     for backend in backends:
                         point_idx += 1
-                        point_seed = args.seed + point_idx
                         print(
                             f"[{point_idx:>3}/{total_points}] "
                             f"backend={backend} basis={basis} d={distance} "
                             f"p={physical_error_rate:.5g} r={total_rounds} ...",
                         )
-                        point_start = time.perf_counter()
-                        point = _run_memory_point(
-                            sample_backend=backend,
-                            distance=distance,
+                        point, timing_row = _run_one_memory_point(
+                            args,
+                            backend=backend,
                             basis=basis,
+                            distance=distance,
                             physical_error_rate=physical_error_rate,
                             total_rounds=total_rounds,
-                            num_shots=args.shots,
-                            dem_mode=args.dem_mode,
-                            native_circuit_source=args.native_circuit_source,
-                            seed=point_seed,
+                            seed=args.seed + point_idx,
                         )
-                        elapsed_seconds = time.perf_counter() - point_start
                         all_points.append(point)
-                        point_timings.append(
-                            {
-                                "backend": backend,
-                                "basis": basis,
-                                "distance": distance,
-                                "physical_error_rate": physical_error_rate,
-                                "total_rounds": total_rounds,
-                                "num_shots": args.shots,
-                                "elapsed_seconds": elapsed_seconds,
-                            },
-                        )
-                        naive_per_round = ler_per_round_exp(point.logical_error_rate, point.total_rounds)
-                        print(
-                            "    "
-                            f"LER={point.logical_error_rate:.6e} "
-                            f"raw={_format_rate(point.raw_error_rate)} "
-                            f"naive_per_round={naive_per_round:.6e} "
-                            f"elapsed={elapsed_seconds:.3f}s",
-                        )
+                        point_timings.append(timing_row)
 
                 group_fit_summaries: dict[str, FitSummary] = {}
                 for backend in backends:
@@ -2926,71 +3681,23 @@ def main() -> int:
                         and point.distance == distance
                         and point.physical_error_rate == physical_error_rate
                     ]
-                    fit_summary = _fit_summary_from_points(group_points)
+                    fit_summary = _fit_and_print_group(group_points, backend)
                     fit_summaries.append(fit_summary)
                     group_fit_summaries[backend] = fit_summary
-                    observed = ", ".join(
-                        f"r={round_value}:{logical_rate:.3e}"
-                        for round_value, logical_rate in zip(
-                            fit_summary.round_values,
-                            fit_summary.observed_logical_error_rates,
-                            strict=False,
-                        )
-                    )
-                    print(
-                        "    "
-                        f"[{backend}] "
-                        f"fit_epsilon={fit_summary.fitted_logical_error_rate_per_round:.6e} "
-                        f"{_format_interval(
-                            fit_summary.fitted_logical_error_rate_per_round_ci_low,
-                            fit_summary.fitted_logical_error_rate_per_round_ci_high,
-                            fit_summary.fitted_logical_error_rate_per_round,
-                        )} "
-                        f"fit_proj_d={fit_summary.fitted_projected_logical_error_rate_over_d_rounds:.6e} "
-                        f"{_format_interval(
-                            fit_summary.fitted_projected_logical_error_rate_over_d_rounds_ci_low,
-                            fit_summary.fitted_projected_logical_error_rate_over_d_rounds_ci_high,
-                            fit_summary.fitted_projected_logical_error_rate_over_d_rounds,
-                        )} "
-                        f"fit_rms={fit_summary.fit_root_mean_square_error:.3e} "
-                        f"[{observed}]",
-                    )
 
-                if "selene_sim" in group_fit_summaries:
-                    ref_summary = group_fit_summaries["selene_sim"]
-                    for backend in backends:
-                        if backend == "selene_sim":
-                            continue
-                        summary = group_fit_summaries[backend]
-                        delta_epsilon = (
-                            summary.fitted_logical_error_rate_per_round
-                            - ref_summary.fitted_logical_error_rate_per_round
-                        )
-                        delta_proj_d = (
-                            summary.fitted_projected_logical_error_rate_over_d_rounds
-                            - ref_summary.fitted_projected_logical_error_rate_over_d_rounds
-                        )
-                        print(
-                            "    "
-                            f"compare_vs_selene_sim[{backend}] "
-                            f"delta_epsilon={delta_epsilon:+.3e} "
-                            f"delta_proj_d={delta_proj_d:+.3e}",
-                        )
-                elif len(backends) == 2 and "sim" in group_fit_summaries and "native_sampler" in group_fit_summaries:
-                    sim_summary = group_fit_summaries["sim"]
-                    sampler_summary = group_fit_summaries["native_sampler"]
-                    delta_epsilon = (
-                        sampler_summary.fitted_logical_error_rate_per_round
-                        - sim_summary.fitted_logical_error_rate_per_round
-                    )
-                    delta_proj_d = (
-                        sampler_summary.fitted_projected_logical_error_rate_over_d_rounds
-                        - sim_summary.fitted_projected_logical_error_rate_over_d_rounds
-                    )
-                    print(
-                        f"    compare delta_epsilon={delta_epsilon:+.3e} delta_proj_d={delta_proj_d:+.3e}",
-                    )
+                _print_cross_backend_deltas(group_fit_summaries, backends)
 
+    return all_points, fit_summaries, point_timings
+
+
+def _print_post_sweep_analysis(
+    *,
+    backends: list[str],
+    bases: list[str],
+    distances: list[int],
+    fit_summaries: list[FitSummary],
+) -> None:
+    """Print all per-basis tables, scaling fits, and threshold summaries."""
     for backend in backends:
         for basis in bases:
             basis_summaries = [
@@ -3007,16 +3714,32 @@ def main() -> int:
                 title=f"{basis}-Basis Fitted Logical Error Rate Per Round ({backend})",
             )
 
-            power_law_fits = _fit_per_distance_power_law(basis_summaries)
+            # Restrict to points at p <= estimated threshold so the power-law
+            # fit reflects the below-threshold regime where ``eps ~ A * p^c``
+            # actually holds. Above threshold, curves bend and the fitted
+            # exponent falls away from the theoretical ``(d + 1) / 2``.
+            below_threshold_cut = _estimate_threshold(basis_summaries)
+            power_law_fits = _fit_per_distance_power_law(
+                basis_summaries,
+                max_physical_error_rate=below_threshold_cut,
+            ) or _fit_per_distance_power_law(basis_summaries)
             if power_law_fits:
                 print()
-                print(f"{basis} basis [{backend}] primary epsilon_d(p) ~= A_d * p^c_d fits:")
+                cut_note = (
+                    f" (fit restricted to p<={below_threshold_cut:.4g})" if below_threshold_cut is not None else ""
+                )
+                print(
+                    f"{basis} basis [{backend}] primary epsilon_d(p) ~= A_d * p^c_d fits{cut_note}:",
+                )
                 for fit in power_law_fits:
+                    se_text = f" ±{fit.fitted_exponent_std_error:.3f}" if fit.fitted_exponent_std_error > 0.0 else ""
                     print(
                         "  "
                         f"d={fit.distance}: A_d={fit.fitted_prefactor:.4g} "
-                        f"c_d={fit.fitted_exponent:.3f} "
-                        f"log_rmse={fit.fit_root_mean_square_log_error:.3e}",
+                        f"c_d={fit.fitted_exponent:.3f}{se_text} "
+                        f"theory=(d+1)/2={fit.expected_distance_scaling_exponent:.1f} "
+                        f"log_rmse={fit.fit_root_mean_square_log_error:.3e} "
+                        f"n={len(fit.physical_error_rates)}",
                     )
 
             lambda_ratios = _pairwise_lambda_ratios(basis_summaries)
@@ -3049,12 +3772,11 @@ def main() -> int:
 
             crossing = _estimate_threshold(basis_summaries)
             global_scaling_fit = _fit_global_scaling_law(basis_summaries)
-            if crossing is not None or global_scaling_fit is not None:
+            fss_fit = _fit_fss_threshold(basis_summaries, seed_threshold=crossing)
+            if crossing is not None or global_scaling_fit is not None or fss_fit is not None:
                 print(f"{basis} basis [{backend}] background threshold-style summary:")
                 if crossing is None:
-                    print(
-                        f"  no d={min(distances)} vs d={max(distances)} crossing was detected on this sweep.",
-                    )
+                    print(f"  no d={min(distances)} vs d={max(distances)} crossing was detected on this sweep.")
                 else:
                     print(f"  approximate threshold crossing from fitted d-round curves: p ~= {crossing:.6g}")
                 if global_scaling_fit is not None:
@@ -3065,6 +3787,88 @@ def main() -> int:
                         f"p_th={global_scaling_fit.fitted_threshold:.4g} "
                         f"log_rmse={global_scaling_fit.fit_root_mean_square_log_error:.3e}",
                     )
+                if fss_fit is not None:
+                    print(
+                        "  "
+                        f"FSS fit p_L = a + b*x + c*x^2, x = (p - p_th) * d^(1/nu) "
+                        f"[Wang-Harrington-Preskill, arXiv:quant-ph/0207088; "
+                        f"window {fss_fit.fit_window_low:.4g} <= p <= {fss_fit.fit_window_high:.4g}, "
+                        f"n={fss_fit.num_points}]:",
+                    )
+                    print(
+                        "    "
+                        f"p_th = {fss_fit.p_th:.5g} ± {fss_fit.p_th_std_error:.3g}    "
+                        f"nu = {fss_fit.nu:.4g} ± {fss_fit.nu_std_error:.3g}",
+                    )
+
+
+def main() -> int:
+    """Run the threshold sweep CLI and optionally write summary artifacts."""
+    args = _parse_args()
+    if args.open_html:
+        args.save_html = True
+    if args.save_html:
+        args.save_svg = True
+
+    wants_outputs = args.save_json or args.save_svg or args.save_pdf or args.save_html or args.save_report_pdf
+    output_dir = _resolve_output_dir(args.output_dir, wants_outputs=wants_outputs)
+    sweep_start = time.perf_counter()
+
+    distances = sorted(set(args.distances))
+    bases = [basis.upper() for basis in args.bases]
+    backends = _resolve_backends(args.sample_backend)
+    duration_multipliers, duration_rounds_by_distance, duration_schedule_description = _resolve_duration_schedule(
+        args,
+        distances,
+    )
+    error_rates = sorted(set(args.error_rates))
+
+    _validate_sweep_inputs(distances, duration_multipliers, args)
+
+    args.duration_multipliers = duration_multipliers
+    args.duration_rounds_by_distance = duration_rounds_by_distance
+    args.duration_schedule_description = duration_schedule_description
+
+    _print_config_banner(
+        args,
+        backends=backends,
+        distances=distances,
+        bases=bases,
+        error_rates=error_rates,
+        output_dir=output_dir,
+        duration_schedule_description=duration_schedule_description,
+        duration_rounds_by_distance=duration_rounds_by_distance,
+    )
+
+    if args.sample_backend == "profile_gate_backends":
+        _profile_gate_backends(
+            backends=backends,
+            distances=distances,
+            bases=bases,
+            error_rates=error_rates,
+            duration_rounds_by_distance=duration_rounds_by_distance,
+            shots=args.shots,
+            seed=args.seed,
+            warmup_repetitions=args.benchmark_warmup,
+            benchmark_repetitions=args.benchmark_repetitions,
+        )
+        return 0
+
+    all_points, fit_summaries, point_timings = _run_sweep_and_fit(
+        args,
+        backends=backends,
+        distances=distances,
+        bases=bases,
+        error_rates=error_rates,
+        duration_rounds_by_distance=duration_rounds_by_distance,
+    )
+
+    _print_post_sweep_analysis(
+        backends=backends,
+        bases=bases,
+        distances=distances,
+        fit_summaries=fit_summaries,
+    )
 
     timing_summary = _timing_summary(
         point_timings,

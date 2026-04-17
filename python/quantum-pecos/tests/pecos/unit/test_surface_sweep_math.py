@@ -580,6 +580,80 @@ def test_merge_sweep_shards_sums_shots_and_refits(sweep: ModuleType, tmp_path: P
     assert {entry["shots"] for entry in config["source_shards"]} == {2000, 3000}
 
 
+def test_merge_heterogeneous_shards_no_keyerror(sweep: ModuleType, tmp_path: Path) -> None:
+    """Merging shards with different distances/error_rates must not KeyError on grid holes."""
+    import dataclasses
+
+    true_rate = 2.0e-3
+
+    def _make_shard_points(distance: int, p: float, num_shots: int) -> list[object]:
+        return [
+            sweep.SweepPoint(
+                backend="test",
+                distance=distance,
+                basis="X",
+                physical_error_rate=p,
+                total_rounds=r,
+                num_shots=num_shots,
+                num_logical_errors=round(sweep.ler_over_rounds(true_rate, r) * num_shots),
+                num_raw_errors=None,
+                logical_error_rate=sweep.ler_over_rounds(true_rate, r),
+                raw_error_rate=None,
+            )
+            for r in (10, 12, 14)
+        ]
+
+    def _write_shard(name: str, distance: int, p: float, num_shots: int) -> Path:
+        points = _make_shard_points(distance, p, num_shots)
+        payload = {
+            "config": {
+                "distances": [distance],
+                "bases": ["X"],
+                "error_rates": [p],
+                "shots": num_shots,
+                "executed_backends": ["test"],
+                "duration_rounds_by_distance": {str(distance): [10, 12, 14]},
+            },
+            "points": [dataclasses.asdict(pt) for pt in points],
+            "fit_summaries": [],
+            "timing_summary": {
+                "total_wall_clock_seconds": 5.0,
+                "total_shots": num_shots * len(points),
+                "total_points": len(points),
+            },
+        }
+        path = tmp_path / name
+        path.write_text(json.dumps(payload))
+        return path
+
+    # Shard A has d=3, p=0.005; shard B has d=5, p=0.006.
+    # The merged grid has holes: (d=3, p=0.006) and (d=5, p=0.005) are absent.
+    shard_a = _write_shard("a_results.json", distance=3, p=0.005, num_shots=1000)
+    shard_b = _write_shard("b_results.json", distance=5, p=0.006, num_shots=1000)
+
+    # This must not raise KeyError despite the sparse grid.
+    points, summaries, config, _timing = sweep.merge_sweep_shards([shard_a, shard_b])
+
+    assert len(points) == 6  # 3 rounds x 2 (d, p) combos
+    assert len(summaries) == 2  # one fit per (d, basis, p)
+    # Config should union distances and error_rates.
+    assert sorted(config["distances"]) == [3, 5]
+    assert sorted(config["error_rates"]) == [0.005, 0.006]
+
+    # Verify that suppression_summary, print_basis_table, and build_plot_figure
+    # all tolerate the sparse grid without raising KeyError.
+    suppression = sweep._suppression_summary(summaries)
+    # With one distance per error rate, no suppression rows are produced (need >= 2 distances).
+    assert isinstance(suppression, list)
+
+    # _print_basis_table should print without error (prints to stdout).
+    sweep._print_basis_table(
+        summaries,
+        metric="fitted_logical_error_rate_per_round",
+        title="Test heterogeneous table",
+    )
+
+
 def test_write_pdf_report_produces_multipage_pdf(sweep: ModuleType, tmp_path: Path) -> None:
     """``write_pdf_report`` should produce a non-trivial PDF (cover + plot pages)."""
     points = [

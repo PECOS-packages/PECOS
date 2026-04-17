@@ -427,7 +427,7 @@ def _fit_summary_confidence_intervals(points: list[SweepPoint]) -> tuple[float, 
     bootstrap_projected: list[float] = []
     for sample_counts in bootstrap_counts:
         sample_points: list[SweepPoint] = []
-        for point, sample_count in zip(ordered, sample_counts, strict=False):
+        for point, sample_count in zip(ordered, sample_counts, strict=True):
             count = int(sample_count)
             sample_points.append(
                 SweepPoint(
@@ -1095,7 +1095,7 @@ def _fit_per_round_rate(points: list[SweepPoint]) -> float:
         )
 
     left = 0.0
-    right = 0.499999999999
+    right = 0.5 - 1e-12  # exclusive upper bound: per-round rate must be strictly below 0.5
     phi = (1.0 + math.sqrt(5.0)) / 2.0
     inv_phi = 1.0 / phi
     c = right - (right - left) * inv_phi
@@ -1191,7 +1191,7 @@ def _linear_regression(xs: list[float], ys: list[float]) -> tuple[float, float]:
     if ss_xx <= 0.0:
         msg = "Linear regression requires at least two distinct x values"
         raise ValueError(msg)
-    ss_xy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=False))
+    ss_xy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=True))
     slope = ss_xy / ss_xx
     intercept = y_mean - slope * x_mean
     return slope, intercept
@@ -1214,7 +1214,7 @@ def _fit_distance_scaling_at_fixed_p(summaries: list[FitSummary]) -> DistanceSca
     xs = [0.5 * (summary.distance + 1) for summary in usable]
     ys = [math.log(summary.fitted_logical_error_rate_per_round) for summary in usable]
     slope, intercept = _linear_regression(xs, ys)
-    residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys, strict=False)]
+    residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys, strict=True)]
     rmse = math.sqrt(sum(residual * residual for residual in residuals) / len(residuals))
     physical_error_rate = usable[0].physical_error_rate
     suppression_factor = math.exp(-slope)
@@ -1244,7 +1244,7 @@ def _fit_global_scaling_law(summaries: list[FitSummary]) -> GlobalScalingFitSumm
     xs = [0.5 * (summary.distance + 1) for summary in usable]
     zs = [
         math.log(summary.fitted_logical_error_rate_per_round) - x * math.log(summary.physical_error_rate)
-        for summary, x in zip(usable, xs, strict=False)
+        for summary, x in zip(usable, xs, strict=True)
     ]
     slope, intercept = _linear_regression(xs, zs)
     threshold = math.exp(-slope)
@@ -1298,7 +1298,7 @@ def _fit_per_distance_power_law(
         xs = [math.log(summary.physical_error_rate) for summary in rows]
         ys = [math.log(summary.fitted_logical_error_rate_per_round) for summary in rows]
         slope, intercept = _linear_regression(xs, ys)
-        residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys, strict=False)]
+        residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys, strict=True)]
         rmse = math.sqrt(sum(residual * residual for residual in residuals) / len(residuals))
         # Standard error of the OLS slope: sqrt(residual_var / sum((x - x_mean)^2)),
         # where residual_var has Bessel correction (n - 2) for the two fitted parameters.
@@ -1455,7 +1455,10 @@ def _suppression_summary(summaries: list[FitSummary]) -> list[tuple[float, bool]
 
     rows: list[tuple[float, bool]] = []
     for p in error_rates:
-        ordered = [by_key[(distance, p)].fitted_projected_logical_error_rate_over_d_rounds for distance in distances]
+        available = [by_key[(d, p)] for d in distances if (d, p) in by_key]
+        if len(available) < 2:
+            continue
+        ordered = [s.fitted_projected_logical_error_rate_over_d_rounds for s in available]
         rows.append((p, all(next_value < value for value, next_value in itertools.pairwise(ordered))))
     return rows
 
@@ -1517,8 +1520,11 @@ def _print_basis_table(summaries: list[FitSummary], *, metric: str, title: str) 
     for p in error_rates:
         row = [f"{p:<10.5g}"]
         for distance in distances:
-            summary = by_key[(distance, p)]
-            row.append(f"{getattr(summary, metric):>14.6e}")
+            summary = by_key.get((distance, p))
+            if summary is None:
+                row.append(f"{'--':>14}")
+            else:
+                row.append(f"{getattr(summary, metric):>14.6e}")
         print("".join(row))
 
 
@@ -1813,8 +1819,8 @@ def _build_duration_overlay_figure(
             ys = [max(point.logical_error_rate, 1e-12) for point in series]
             lower_bounds = [_wilson_interval(point.num_logical_errors, point.num_shots)[0] for point in series]
             upper_bounds = [_wilson_interval(point.num_logical_errors, point.num_shots)[1] for point in series]
-            yerr_lower = [max(y - low, 0.0) for y, low in zip(ys, lower_bounds, strict=False)]
-            yerr_upper = [max(high - y, 0.0) for y, high in zip(ys, upper_bounds, strict=False)]
+            yerr_lower = [max(y - low, 0.0) for y, low in zip(ys, lower_bounds, strict=True)]
+            yerr_upper = [max(high - y, 0.0) for y, high in zip(ys, upper_bounds, strict=True)]
             ax.errorbar(
                 xs,
                 ys,
@@ -2092,12 +2098,15 @@ def _build_plot_figure(
 
     fig, ax = plt.subplots(figsize=figsize)
     for distance in distances:
-        intervals = [_fit_summary_metric_interval(by_key[(distance, p)], metric) for p in error_rates]
+        available_ps = [p for p in error_rates if (distance, p) in by_key]
+        if not available_ps:
+            continue
+        intervals = [_fit_summary_metric_interval(by_key[(distance, p)], metric) for p in available_ps]
         ys = [max(value, 1e-12) for value, _, _ in intervals]
         yerr_lower = [max(value - low, 0.0) for value, low, _ in intervals]
         yerr_upper = [max(high - value, 0.0) for value, _, high in intervals]
         ax.errorbar(
-            error_rates,
+            available_ps,
             ys,
             yerr=[yerr_lower, yerr_upper],
             marker="o",
@@ -2416,7 +2425,7 @@ def _merge_sweep_point_group(points: list[SweepPoint]) -> SweepPoint:
     total_logical_errors = sum(point.num_logical_errors for point in points)
     raw_values = [point.num_raw_errors for point in points]
     if all(value is not None for value in raw_values):
-        total_raw_errors: int | None = sum(raw_values)
+        total_raw_errors: int | None = sum(v for v in raw_values if v is not None)
         raw_rate: float | None = total_raw_errors / total_shots if total_shots > 0 else 0.0
     else:
         total_raw_errors = None
@@ -2470,7 +2479,7 @@ def _merge_sweep_configs(configs: list[dict[str, Any]], source_paths: list[str])
 
     # Provenance: one row per shard with path + shots + description.
     shards_metadata = []
-    for path, config in zip(source_paths, configs, strict=False):
+    for path, config in zip(source_paths, configs, strict=True):
         shards_metadata.append(
             {
                 "path": path,
@@ -2485,7 +2494,12 @@ def _merge_sweep_configs(configs: list[dict[str, Any]], source_paths: list[str])
 
 
 def _merge_sweep_timings(timings: list[dict[str, Any]]) -> dict[str, Any]:
-    """Sum scalar timing totals across shards; recompute throughput from totals."""
+    """Sum scalar timing totals across shards; recompute throughput from totals.
+
+    Note: ``total_wall_clock_seconds`` is the sum of each shard's wall-clock
+    time. When shards ran in parallel this overstates the actual elapsed time
+    and should be interpreted as total CPU time across shards.
+    """
     total_wall = sum(timing.get("total_wall_clock_seconds", 0.0) for timing in timings)
     total_point = sum(timing.get("total_point_seconds", 0.0) for timing in timings)
     total_shots = sum(timing.get("total_shots", 0) or 0 for timing in timings)
@@ -3562,7 +3576,7 @@ def _fit_and_print_group(
         for round_value, logical_rate in zip(
             fit_summary.round_values,
             fit_summary.observed_logical_error_rates,
-            strict=False,
+            strict=True,
         )
     )
     epsilon_interval = _format_interval(

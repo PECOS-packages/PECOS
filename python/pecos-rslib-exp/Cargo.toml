@@ -1,0 +1,27 @@
+[package]
+name = "pecos-rslib-exp"
+version = "0.2.0-dev.0"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Python bindings for experimental PECOS simulators (pecos-stab-tn)."
+publish = false
+
+[lib]
+name = "pecos_rslib_exp"
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+pecos-core.workspace = true
+pecos-simulators.workspace = true
+pecos-stab-tn = { path = "../../exp/pecos-stab-tn" }
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
+num-complex.workspace = true
+
+[lints]
+workspace = true

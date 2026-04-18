@@ -10,8 +10,8 @@ use pecos_core::errors::PecosError;
 use pecos_random::{PecosRng, SeedableRng};
 use pecos_simulators::clifford_rotation::CliffordRotation;
 use pecos_simulators::{
-    ArbitraryRotationGateable, CliffordGateable, CliffordRz, CoinToss, DensityMatrix,
-    QuantumSimulator, SparseStab, Stabilizer, StateVec, StateVecAoS, StateVecSoA,
+    ArbitraryRotationGateable, CliffordGateable, CoinToss, DensityMatrix, QuantumSimulator,
+    SparseStab, StabVec, Stabilizer, StateVec, StateVecAoS, StateVecSoA,
 };
 use std::any::Any;
 use std::fmt::Debug;
@@ -271,7 +271,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 
 /// Process a `ByteMessage` against any simulator supporting full gate set.
 ///
-/// Shared gate dispatch for `CliffordRzEngine`, `DensityMatrixEngine`, etc.
+/// Shared gate dispatch for `StabVecEngine`, `DensityMatrixEngine`, etc.
 /// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX, CRZ),
 /// preparations, and measurements with MZ batching.
 fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator>(
@@ -601,9 +601,6 @@ pub trait StateVectorSimulator:
 where
     <Self as RngManageable>::Rng: Clone,
 {
-    /// Returns the number of qubits in the simulator.
-    fn num_qubits(&self) -> usize;
-
     /// Create a new simulator with the specified number of qubits.
     fn create(num_qubits: usize) -> Self;
 
@@ -615,10 +612,6 @@ where
 }
 
 impl StateVectorSimulator for StateVec {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits()
-    }
-
     fn create(num_qubits: usize) -> Self {
         StateVec::new(num_qubits)
     }
@@ -633,10 +626,6 @@ impl StateVectorSimulator for StateVec {
 }
 
 impl StateVectorSimulator for StateVecAoS {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits()
-    }
-
     fn create(num_qubits: usize) -> Self {
         StateVecAoS::new(num_qubits)
     }
@@ -651,10 +640,6 @@ impl StateVectorSimulator for StateVecAoS {
 }
 
 impl StateVectorSimulator for StateVecSoA {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits()
-    }
-
     fn create(num_qubits: usize) -> Self {
         StateVecSoA::new(num_qubits)
     }
@@ -1434,25 +1419,25 @@ impl QuantumEngine for StabilizerEngine {
 }
 
 // ============================================================================
-// Clifford+RZ Engine
+// StabVec Engine
 // ============================================================================
 
-/// A quantum engine that uses the Clifford+RZ simulator.
+/// A quantum engine that uses the `StabVec` simulator.
 ///
 /// Supports all Clifford gates plus arbitrary rotation gates (RZ, RX, RY, RZZ, etc.)
 /// via sum-over-Cliffords decomposition. More efficient than state vector for
 /// circuits with many qubits and few non-Clifford gates.
 #[derive(Debug, Clone)]
-pub struct CliffordRzEngine {
-    simulator: CliffordRz,
+pub struct StabVecEngine {
+    simulator: StabVec,
 }
 
-impl CliffordRzEngine {
-    /// Create a new Clifford+RZ engine with the specified number of qubits.
+impl StabVecEngine {
+    /// Create a new `StabVec` engine with the specified number of qubits.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self {
-            simulator: CliffordRz::new(num_qubits),
+            simulator: StabVec::new(num_qubits),
         }
     }
 
@@ -1460,12 +1445,12 @@ impl CliffordRzEngine {
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
-            simulator: CliffordRz::new_with_seed(num_qubits, seed),
+            simulator: StabVec::new_with_seed(num_qubits, seed),
         }
     }
 }
 
-impl Engine for CliffordRzEngine {
+impl Engine for StabVecEngine {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
@@ -1479,7 +1464,7 @@ impl Engine for CliffordRzEngine {
     }
 }
 
-impl RngManageable for CliffordRzEngine {
+impl RngManageable for StabVecEngine {
     type Rng = PecosRng;
 
     fn set_rng(&mut self, rng: Self::Rng) {
@@ -1495,7 +1480,7 @@ impl RngManageable for CliffordRzEngine {
     }
 }
 
-impl QuantumEngine for CliffordRzEngine {
+impl QuantumEngine for StabVecEngine {
     fn set_seed(&mut self, seed: u64) {
         let rng = PecosRng::seed_from_u64(seed);
         self.simulator.set_rng(rng);

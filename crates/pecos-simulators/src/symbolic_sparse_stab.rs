@@ -790,6 +790,10 @@ impl SymbolicSparseStabVecSet {
 }
 
 impl QuantumSimulator for SymbolicSparseStabVecSet {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)

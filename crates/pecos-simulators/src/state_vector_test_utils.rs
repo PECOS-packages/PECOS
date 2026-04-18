@@ -57,9 +57,6 @@ pub trait StateVectorSimulator: CliffordGateable + QuantumSimulator + Sized {
     /// For sparse implementations, returns `Complex64::new(0.0, 0.0)` for
     /// basis states not present in the state vector.
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64;
-
-    /// Get the number of qubits in the simulator.
-    fn num_qubits(&self) -> usize;
 }
 
 /// Generates a Clifford-only test suite for a state vector simulator.
@@ -2656,10 +2653,6 @@ impl StateVectorSimulator for StateVecAoS {
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         self.state()[basis_state]
     }
-
-    fn num_qubits(&self) -> usize {
-        StateVecAoS::num_qubits(self)
-    }
 }
 
 impl StateVectorSimulator for StateVecSoA {
@@ -2672,10 +2665,6 @@ impl StateVectorSimulator for StateVecSoA {
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         StateVecSoA::get_amplitude(self, basis_state)
     }
-
-    fn num_qubits(&self) -> usize {
-        StateVecSoA::num_qubits(self)
-    }
 }
 
 impl StateVectorSimulator for SparseStateVecAoS {
@@ -2686,10 +2675,6 @@ impl StateVectorSimulator for SparseStateVecAoS {
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         SparseStateVecAoS::get_amplitude(self, basis_state)
     }
-
-    fn num_qubits(&self) -> usize {
-        SparseStateVecAoS::num_qubits(self)
-    }
 }
 
 impl StateVectorSimulator for SparseStateVecSoA {
@@ -2699,10 +2684,6 @@ impl StateVectorSimulator for SparseStateVecSoA {
 
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         SparseStateVecSoA::get_amplitude(self, basis_state)
-    }
-
-    fn num_qubits(&self) -> usize {
-        SparseStateVecSoA::num_qubits(self)
     }
 }
 

@@ -17,12 +17,12 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 mod modules {
     pub mod allocation_overhead;
-    pub mod clifford_rz;
     pub mod cpu_stabilizer_comparison;
     pub mod dem_builder;
     pub mod dem_sampler;
     pub mod dod_statevec;
     pub mod quizx_eval;
+    pub mod stab_vec;
     // TODO: pub mod hadamard_ops;
     #[cfg(feature = "cuquantum")]
     pub mod cuquantum;
@@ -34,6 +34,8 @@ mod modules {
     #[cfg(feature = "cppsparsestab")]
     pub mod sparse_stab_vs_cpp;
     pub mod sparse_stab_w_vs_y;
+    #[cfg(feature = "stab-tn")]
+    pub mod stab_mps_vs_stab_vec;
     // TODO: pub mod pauli_ops;
     pub mod pecos_neo_comparison;
     pub mod rng;
@@ -51,16 +53,18 @@ use modules::cuquantum;
 use modules::gpu_influence_sampler;
 #[cfg(feature = "cppsparsestab")]
 use modules::sparse_stab_vs_cpp;
+#[cfg(feature = "stab-tn")]
+use modules::stab_mps_vs_stab_vec;
 use modules::{
-    allocation_overhead, clifford_rz, cpu_stabilizer_comparison, dem_builder, dem_sampler,
-    dod_statevec, measurement_sampling, native_statevec_comparison, noise_models,
-    pecos_neo_comparison, quizx_eval, rng, set_ops, sparse_stab_w_vs_y, sparse_state_vec,
-    stabilizer_sims, state_vec_sims, surface_code, trig,
+    allocation_overhead, cpu_stabilizer_comparison, dem_builder, dem_sampler, dod_statevec,
+    measurement_sampling, native_statevec_comparison, noise_models, pecos_neo_comparison,
+    quizx_eval, rng, set_ops, sparse_stab_w_vs_y, sparse_state_vec, stab_vec, stabilizer_sims,
+    state_vec_sims, surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
     allocation_overhead::benchmarks(c);
-    clifford_rz::benchmarks(c);
+    stab_vec::benchmarks(c);
     cpu_stabilizer_comparison::benchmarks(c);
     quizx_eval::benchmarks(c);
     #[cfg(feature = "cuquantum")]
@@ -83,6 +87,8 @@ fn all_benchmarks(c: &mut Criterion) {
     sparse_stab_vs_cpp::benchmarks(c);
     sparse_stab_w_vs_y::benchmarks(c);
     surface_code::benchmarks(c);
+    #[cfg(feature = "stab-tn")]
+    stab_mps_vs_stab_vec::benchmarks(c);
     trig::benchmarks(c);
     // TODO: pauli_ops::benchmarks(c);
     // TODO: hadamard_ops::benchmarks(c);

@@ -2814,6 +2814,10 @@ impl<R> QuantumSimulator for StateVecSoA<R>
 where
     R: Rng,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         // Clear pending gates (state is being reset anyway)
         for pg in &mut self.pending_gates {

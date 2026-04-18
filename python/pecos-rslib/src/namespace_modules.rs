@@ -52,7 +52,7 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     quantum.add("state_vector", parent.getattr("state_vector")?)?;
     quantum.add("sparse_stab", parent.getattr("sparse_stab")?)?;
     quantum.add("stabilizer", parent.getattr("stabilizer")?)?;
-    quantum.add("clifford_rz", parent.getattr("clifford_rz")?)?;
+    quantum.add("stab_vec", parent.getattr("stab_vec")?)?;
     quantum.add("density_matrix", parent.getattr("density_matrix")?)?;
     quantum.add("coin_toss", parent.getattr("coin_toss")?)?;
 
@@ -70,8 +70,8 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         parent.getattr("StabilizerEngineBuilder")?,
     )?;
     quantum.add(
-        "CliffordRzEngineBuilder",
-        parent.getattr("CliffordRzEngineBuilder")?,
+        "StabVecEngineBuilder",
+        parent.getattr("StabVecEngineBuilder")?,
     )?;
     quantum.add(
         "DensityMatrixEngineBuilder",

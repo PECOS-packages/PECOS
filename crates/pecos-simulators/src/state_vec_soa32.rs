@@ -938,6 +938,10 @@ impl<R> QuantumSimulator for StateVecSoA32<R>
 where
     R: Rng,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.real.fill(0.0);
         self.imag.fill(0.0);

@@ -43,6 +43,10 @@ pub struct SparseStabYGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug
     pub(crate) stabs: GensGeneric<S>,
     pub(crate) destabs: GensGeneric<S>,
     pub(crate) rng: R,
+    /// When true, maintain destabilizer signs through Clifford gates.
+    /// Off by default (not needed for standard stabilizer simulation).
+    /// Required for STN-style decomposition that uses destabilizer phases.
+    track_destab_signs: bool,
 }
 
 /// Default Y-convention sparse stabilizer simulator using `BitSet`.
@@ -123,9 +127,25 @@ where
             stabs: GensGeneric::<S>::new(num_qubits),
             destabs: GensGeneric::<S>::new(num_qubits),
             rng,
+            track_destab_signs: false,
         };
         stab.reset();
         stab
+    }
+
+    /// Enable tracking of destabilizer signs through Clifford gates.
+    /// Required for STN-style decomposition that uses destabilizer phases.
+    #[inline]
+    #[must_use]
+    pub fn with_destab_sign_tracking(mut self) -> Self {
+        self.track_destab_signs = true;
+        self
+    }
+
+    /// Whether destabilizer sign tracking is enabled.
+    #[inline]
+    pub fn tracks_destab_signs(&self) -> bool {
+        self.track_destab_signs
     }
 
     #[inline]
@@ -463,6 +483,10 @@ where
     S: IndexSet,
     R: SeedableRng + Rng + Debug,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)
@@ -481,6 +505,9 @@ where
         for &q in qubits {
             let qu = q.index();
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+            }
         }
         self
     }
@@ -493,6 +520,12 @@ where
             let qu = q.index();
             self.stabs.col_x[qu]
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+            }
         }
         self
     }
@@ -505,6 +538,11 @@ where
             self.stabs
                 .signs_minus
                 .xor_assign(&self.stabs.col_x[q.index()]);
+            if self.track_destab_signs {
+                self.destabs
+                    .signs_minus
+                    .xor_assign(&self.destabs.col_x[q.index()]);
+            }
         }
         self
     }
@@ -525,6 +563,10 @@ where
             // (both X and Z bits set). Y -> -X means the sign flips.
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data update: same as W-convention (X bit implies Z bit gets toggled)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -547,6 +589,10 @@ where
 
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 for i in g.col_x[qu].iter() {
@@ -578,6 +624,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
                 for i in g.col_x[qu].iter() {
@@ -597,6 +648,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
                 for i in g.col_z[qu].iter() {
@@ -615,6 +671,10 @@ where
             let qu = q.index();
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
                 for i in g.col_z[qu].iter() {
@@ -634,6 +694,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 for i in g.col_x[qu].iter() {
                     if !g.col_z[qu].contains(i) {
@@ -662,6 +727,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 for i in g.col_x[qu].iter() {
                     if !g.col_z[qu].contains(i) {
@@ -1054,7 +1124,7 @@ where
             let q2 = target.index();
             debug_assert_ne!(q1, q2, "CX requires distinct qubits");
 
-            // Y-convention sign update (only on stabs, not destabs)
+            // Y-convention sign update
             // Toggle signs_minus where: col_x[q1] AND col_z[q2] AND NOT(col_z[q1] XOR col_x[q2])
             // = col_x[q1] AND col_z[q2] AND ((col_z[q1] AND col_x[q2]) OR (NOT col_z[q1] AND NOT col_x[q2]))
             // = (col_x[q1] AND col_z[q2] AND col_z[q1] AND col_x[q2]) OR (col_x[q1] AND col_z[q2] AND NOT col_z[q1] AND NOT col_x[q2])
@@ -1068,8 +1138,19 @@ where
                 let has_z1 = self.stabs.col_z[q1].contains(g);
                 let has_x2 = self.stabs.col_x[q2].contains(g);
                 if has_z1 == has_x2 {
-                    // NOT(z1 XOR x2) is true
                     self.stabs.signs_minus.toggle(g);
+                }
+            }
+            if self.track_destab_signs {
+                for g in self.destabs.col_x[q1].iter() {
+                    if !self.destabs.col_z[q2].contains(g) {
+                        continue;
+                    }
+                    let has_z1 = self.destabs.col_z[q1].contains(g);
+                    let has_x2 = self.destabs.col_x[q2].contains(g);
+                    if has_z1 == has_x2 {
+                        self.destabs.signs_minus.toggle(g);
+                    }
                 }
             }
 
@@ -1109,7 +1190,7 @@ where
             let q2 = qb.index();
             debug_assert_ne!(q1, q2, "SXX requires distinct qubits");
 
-            // Sign update (stabs only): Q -> i*Q*XX. Per-qubit phase from
+            // Sign update: Q -> i*Q*XX. Per-qubit phase from
             // right-multiplying by X: Z*X=iY (c=+i), Y*X=-iZ (c=-i).
             // For odd-Z generators (z=1 at one qubit), total = i*c_q:
             //   z=1 qubit is Z (x=0): i*(+i) = -1 -> toggle signs_minus
@@ -1122,6 +1203,18 @@ where
             for g in self.stabs.col_z[q2].iter() {
                 if !self.stabs.col_z[q1].contains(g) && !self.stabs.col_x[q2].contains(g) {
                     self.stabs.signs_minus.toggle(g);
+                }
+            }
+            if self.track_destab_signs {
+                for g in self.destabs.col_z[q1].iter() {
+                    if !self.destabs.col_z[q2].contains(g) && !self.destabs.col_x[q1].contains(g) {
+                        self.destabs.signs_minus.toggle(g);
+                    }
+                }
+                for g in self.destabs.col_z[q2].iter() {
+                    if !self.destabs.col_z[q1].contains(g) && !self.destabs.col_x[q2].contains(g) {
+                        self.destabs.signs_minus.toggle(g);
+                    }
                 }
             }
 
@@ -1285,12 +1378,33 @@ where
             for g in self.stabs.col_x[q2].iter() {
                 if self.stabs.col_z[q2].contains(g) {
                     continue;
-                } // skip Y, need X (x=1,z=0)
+                }
                 let x1 = self.stabs.col_x[q1].contains(g);
                 let z1 = self.stabs.col_z[q1].contains(g);
                 if x1 == z1 {
-                    // q1 commutes with Y -> toggle
                     self.stabs.signs_minus.toggle(g);
+                }
+            }
+            if self.track_destab_signs {
+                for g in self.destabs.col_x[q1].iter() {
+                    if self.destabs.col_z[q1].contains(g) {
+                        continue;
+                    }
+                    let x2 = self.destabs.col_x[q2].contains(g);
+                    let z2 = self.destabs.col_z[q2].contains(g);
+                    if x2 == z2 {
+                        self.destabs.signs_minus.toggle(g);
+                    }
+                }
+                for g in self.destabs.col_x[q2].iter() {
+                    if self.destabs.col_z[q2].contains(g) {
+                        continue;
+                    }
+                    let x1 = self.destabs.col_x[q1].contains(g);
+                    let z1 = self.destabs.col_z[q1].contains(g);
+                    if x1 == z1 {
+                        self.destabs.signs_minus.toggle(g);
+                    }
                 }
             }
 
@@ -1428,10 +1542,6 @@ where
 
     fn destab_tableau(&self) -> String {
         Self::tableau_string(self.num_qubits, &self.destabs)
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

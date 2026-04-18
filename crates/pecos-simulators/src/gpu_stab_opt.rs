@@ -745,6 +745,10 @@ impl GpuStabOpt {
 // ========== Trait implementations ==========
 
 impl QuantumSimulator for GpuStabOpt {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.init_tableau();
         self
@@ -865,10 +869,6 @@ impl StabilizerTableauSimulator for GpuStabOpt {
             &self.destab_signs_minus,
             &self.destab_signs_i,
         )
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

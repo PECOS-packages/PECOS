@@ -659,6 +659,10 @@ impl GpuStabParallel {
 // ========== Trait implementations ==========
 
 impl QuantumSimulator for GpuStabParallel {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.init_tableau();
         self
@@ -779,10 +783,6 @@ impl StabilizerTableauSimulator for GpuStabParallel {
             &self.destab_signs_minus,
             &self.destab_signs_i,
         )
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

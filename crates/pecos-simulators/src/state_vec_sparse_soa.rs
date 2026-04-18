@@ -1915,6 +1915,10 @@ impl<R: Rng> SparseStateVecSoA<R> {
 // --- QuantumSimulator trait implementation ---
 
 impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         // Reset to |0⟩ state in buffer A
         self.indices_a.clear();

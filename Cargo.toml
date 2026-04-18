@@ -2,9 +2,12 @@
 resolver = "2"
 members = [
   "python/pecos-rslib",
+  "python/pecos-rslib-exp",
   "python/pecos-rslib-cuda",
   "python/pecos-rslib-llvm",
-  "python/selene-plugins/pecos-selene-clifford-rz",
+  "python/selene-plugins/pecos-selene-mast",
+  "python/selene-plugins/pecos-selene-stab-mps",
+  "python/selene-plugins/pecos-selene-stab-vec",
   "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
   "julia/pecos-julia-ffi",

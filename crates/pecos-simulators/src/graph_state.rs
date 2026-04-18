@@ -473,6 +473,10 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
 // ============================================================================
 
 impl<R: SeedableRng + Rng + Debug> QuantumSimulator for GraphStateSim<R> {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         // |0>^n = H^n |+>^n = H^n |G_empty>
         // So all VOPs are H, and the graph has no edges.
@@ -651,10 +655,6 @@ impl<R: SeedableRng + Rng + Debug> crate::StabilizerTableauSimulator for GraphSt
             pauli_string_to_tableau_line(&ps, n, &mut result);
         }
         result
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

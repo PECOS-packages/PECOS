@@ -1294,7 +1294,7 @@ fn test_validation_error_display() {
 
 #[test]
 fn test_standard_adaptor_can_adapt() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     assert!(adaptor.can_adapt(gates::T));
     assert!(adaptor.can_adapt(gates::Tdg));
@@ -1312,7 +1312,7 @@ fn test_standard_adaptor_can_adapt() {
 
 #[test]
 fn test_standard_adaptor_t_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::T, &[QubitId(0)], &[]);
 
@@ -1325,7 +1325,7 @@ fn test_standard_adaptor_t_gate() {
 
 #[test]
 fn test_standard_adaptor_tdg_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::Tdg, &[QubitId(0)], &[]);
 
@@ -1338,7 +1338,7 @@ fn test_standard_adaptor_tdg_gate() {
 
 #[test]
 fn test_standard_adaptor_rx_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let theta = Angle64::QUARTER_TURN;
     let result = adaptor.adapt(gates::RX, &[QubitId(0)], &[theta]);
@@ -1353,7 +1353,7 @@ fn test_standard_adaptor_rx_gate() {
 
 #[test]
 fn test_standard_adaptor_swap_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::SWAP, &[QubitId(0), QubitId(1)], &[]);
 
@@ -1364,7 +1364,7 @@ fn test_standard_adaptor_swap_gate() {
 
 #[test]
 fn test_standard_adaptor_rzz_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let theta = Angle64::QUARTER_TURN;
     let result = adaptor.adapt(gates::RZZ, &[QubitId(0), QubitId(1)], &[theta]);
@@ -1379,7 +1379,7 @@ fn test_standard_adaptor_rzz_gate() {
 
 #[test]
 fn test_standard_adaptor_ccx_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::CCX, &[QubitId(0), QubitId(1), QubitId(2)], &[]);
 
@@ -1394,7 +1394,7 @@ fn test_standard_adaptor_ccx_gate() {
 
 #[test]
 fn test_composite_adaptor() {
-    let adaptor = CompositeAdaptor::new().with(StandardAdaptor::clifford_rz());
+    let adaptor = CompositeAdaptor::new().with(StandardAdaptor::stab_vec());
 
     assert!(adaptor.can_adapt(gates::T));
     assert!(adaptor.can_adapt(gates::SWAP));
@@ -1432,7 +1432,7 @@ fn test_custom_adaptor() {
 
 #[test]
 fn test_adaptor_adaptable_gates() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
     let adaptable = adaptor.adaptable_gates();
 
     assert!(adaptable.contains(gates::T));

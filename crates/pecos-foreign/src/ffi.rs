@@ -183,9 +183,10 @@ pub unsafe extern "C" fn pecos_foreign_decoder_free(decoder: *mut ForeignDecoder
 pub unsafe extern "C" fn pecos_foreign_simulator_create(
     handle: *mut (),
     vtable: *const ForeignSimulatorVTable,
+    num_qubits: usize,
 ) -> *mut ForeignSimulator {
     let vtable_copy = unsafe { *vtable };
-    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
+    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy, num_qubits) }) else {
         return std::ptr::null_mut();
     };
     Box::into_raw(Box::new(sim))

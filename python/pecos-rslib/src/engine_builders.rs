@@ -16,7 +16,7 @@ type RustPhirJsonEngineBuilder = pecos_phir_json::PhirJsonEngineBuilder;
 type RustHugrEngineBuilder = pecos_hugr::HugrEngineBuilder;
 type RustPhirEngineBuilder = pecos_phir::PhirEngineBuilder;
 type RustCoinTossEngineBuilder = CoinTossEngineBuilder;
-type RustCliffordRzEngineBuilder = CliffordRzEngineBuilder;
+type RustStabVecEngineBuilder = StabVecEngineBuilder;
 type RustDensityMatrixEngineBuilder = DensityMatrixEngineBuilder;
 type RustStabilizerEngineBuilder = StabilizerEngineBuilder;
 type RustSparseStabEngineBuilder = SparseStabEngineBuilder;
@@ -1432,19 +1432,19 @@ pub fn stabilizer() -> PyStabilizerEngineBuilder {
     PyStabilizerEngineBuilder::new()
 }
 
-/// Python wrapper for `CliffordRzEngineBuilder`
-#[pyclass(name = "CliffordRzEngineBuilder", from_py_object)]
+/// Python wrapper for `StabVecEngineBuilder`
+#[pyclass(name = "StabVecEngineBuilder", from_py_object)]
 #[derive(Clone)]
-pub struct PyCliffordRzEngineBuilder {
-    pub(crate) inner: Option<RustCliffordRzEngineBuilder>,
+pub struct PyStabVecEngineBuilder {
+    pub(crate) inner: Option<RustStabVecEngineBuilder>,
 }
 
 #[pymethods]
-impl PyCliffordRzEngineBuilder {
+impl PyStabVecEngineBuilder {
     #[new]
     fn new() -> Self {
         Self {
-            inner: Some(pecos_engines::clifford_rz()),
+            inner: Some(pecos_engines::stab_vec()),
         }
     }
 
@@ -1465,8 +1465,8 @@ impl PyCliffordRzEngineBuilder {
 
 /// Create a Clifford+RZ quantum engine builder
 #[pyfunction]
-pub fn clifford_rz() -> PyCliffordRzEngineBuilder {
-    PyCliffordRzEngineBuilder::new()
+pub fn stab_vec() -> PyStabVecEngineBuilder {
+    PyStabVecEngineBuilder::new()
 }
 
 /// Python wrapper for `DensityMatrixEngineBuilder`
@@ -1613,7 +1613,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Quantum engine builders
     m.add_class::<PyStateVectorEngineBuilder>()?;
     m.add_class::<PySparseStabEngineBuilder>()?;
-    m.add_class::<PyCliffordRzEngineBuilder>()?;
+    m.add_class::<PyStabVecEngineBuilder>()?;
     m.add_class::<PyDensityMatrixEngineBuilder>()?;
     m.add_class::<PyStabilizerEngineBuilder>()?;
     m.add_class::<PyCoinTossEngineBuilder>()?;
@@ -1644,7 +1644,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::state_vector, m)?)?;
     m.add_function(wrap_pyfunction!(self::sparse_stab, m)?)?;
     m.add_function(wrap_pyfunction!(self::stabilizer, m)?)?;
-    m.add_function(wrap_pyfunction!(self::clifford_rz, m)?)?;
+    m.add_function(wrap_pyfunction!(self::stab_vec, m)?)?;
     m.add_function(wrap_pyfunction!(self::density_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(self::coin_toss, m)?)?;
 

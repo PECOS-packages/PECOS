@@ -11,6 +11,7 @@ on:
       - 'python/selene-plugins/**'
       - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
+      - 'exp/pecos-stab-tn/**'
       - '.github/workflows/selene-plugins.yml'
   pull_request:
     branches: [master, development, dev]
@@ -18,6 +19,7 @@ on:
       - 'python/selene-plugins/**'
       - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
+      - 'exp/pecos-stab-tn/**'
       - '.github/workflows/selene-plugins.yml'
   workflow_dispatch:
 
@@ -120,8 +122,12 @@ jobs:
             package: pecos_selene_stabilizer
           - name: pecos-selene-statevec
             package: pecos_selene_statevec
-          - name: pecos-selene-clifford-rz
-            package: pecos_selene_clifford_rz
+          - name: pecos-selene-stab-vec
+            package: pecos_selene_stab_vec
+          - name: pecos-selene-stab-mps
+            package: pecos_selene_stab_mps
+          - name: pecos-selene-mast
+            package: pecos_selene_mast
 
     steps:
       - uses: actions/checkout@v6

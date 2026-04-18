@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
 | **Stabilizer** | Stabilizer | Dense Clifford circuits | None |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
-| **CliffordRz** | Clifford + Rz | Clifford circuits with Z rotations | None |
+| **StabVec** | Clifford + Rz | Clifford circuits with Z rotations | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU) | Large circuits with GPU | CUDA, cuQuantum |
 | **MPS** | Tensor network | Low-entanglement circuits | CUDA, cuQuantum |
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  │      │           │
                  │      ▼           ▼
                  │   StateVec    CuStateVec
-                 │  CliffordRz      MPS
+                 │  StabVec      MPS
                  │      │
                  │      ▼
                  └── Need mixed states? ──→ density_matrix
@@ -231,14 +231,14 @@ Pure Rust state vector implementation.
 - Supports arbitrary gates (including T, rotation gates)
 - Good baseline performance
 
-### CliffordRz
+### StabVec
 
 Rust backend specialized for Clifford circuits plus Z-axis rotations.
 
 ```python
-from pecos.simulators import CliffordRz
+from pecos.simulators import StabVec
 
-results = sim(Qasm(circuit)).quantum(CliffordRz).run(100)
+results = sim(Qasm(circuit)).quantum(StabVec).run(100)
 ```
 
 **Strengths:**
@@ -393,7 +393,7 @@ Approximate performance characteristics (relative, not absolute):
 | SparseStab | ★★★★★ | N/A | Low | 1000+ |
 | Stabilizer | ★★★★ | N/A | Medium | 1000+ |
 | StateVec | ★★★ | ★★★ | 2^n | ~25-30 |
-| CliffordRz | ★★★★ | Limited to Clifford + Rz | Low | 1000+ |
+| StabVec | ★★★★ | Limited to Clifford + Rz | Low | 1000+ |
 | CuStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
 | MPS | ★★★ | ★★★ | ~n × chi² | Varies |
 | density_matrix | ★★ | ★★ | 4^n | ~15 |

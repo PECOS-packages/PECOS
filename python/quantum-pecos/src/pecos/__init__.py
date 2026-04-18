@@ -283,7 +283,7 @@ general_noise = pecos_rslib.general_noise
 state_vector = pecos_rslib.state_vector
 sparse_stab = pecos_rslib.sparse_stab
 stabilizer = pecos_rslib.stabilizer
-clifford_rz = pecos_rslib.clifford_rz
+stab_vec = pecos_rslib.stab_vec
 density_matrix = pecos_rslib.density_matrix
 hugr_engine = pecos_rslib.hugr_engine
 
@@ -300,33 +300,27 @@ __all__ = [
     "SIGNED_INTEGER_TYPES",
     "UNSIGNED_INTEGER_TYPES",
     "AngleSource",
-    # Core types
     "Array",
-    # Deprecated
     "BiasedDepolarizingNoiseModelBuilder",
-    "BinArray",  # Deprecated - use BitInt instead
+    "BinArray",
     "BitInt",
     "BitUInt",
-    # Type categories
     "Complex",
     "DepolarizingNoiseModelBuilder",
     "Float",
     "GateRegistry",
     "GateSignatureMismatchError",
     "GeneralNoiseModelBuilder",
-    # Program wrapper classes for sim() - also available via pecos.programs
     "Guppy",
     "Hugr",
-    # Legacy
     "HybridEngine",
     "Inexact",
     "Integer",
-    "Nanoseconds",  # Time unit type
+    "Nanoseconds",
     "Numeric",
     "Pauli",
     "PauliString",
     "PhirJson",
-    # Engine builder classes
     "PhirJsonEngineBuilder",
     "Poly1d",
     "ProgramWrapper",
@@ -338,26 +332,21 @@ __all__ = [
     "ShotMap",
     "ShotVec",
     "SignedInteger",
-    "TimeUnits",  # Time unit type
+    "TimeUnits",
     "UnsignedInteger",
     "Wasm",
     "WasmError",
     "WasmForeignObject",
     "Wat",
-    # Version
     "__version__",
-    # Mathematical functions
     "abs",
     "acos",
     "acosh",
     "all",
     "allclose",
-    # Subpackages
-    "analysis",  # QEC analysis (threshold, fault tolerance, stabilizers)
-    # Angle type
+    "analysis",
     "angle64",
     "any",
-    # Polynomial and optimization
     "arange",
     "array",
     "array_equal",
@@ -366,18 +355,13 @@ __all__ = [
     "atan",
     "atan2",
     "atanh",
-    "benchmarks",  # Performance benchmarking
-    # Noise model builders
+    "benchmarks",
     "biased_depolarizing_noise",
     "brentq",
     "ceil",
-    # Subpackages - Utilities
     "circuit_converters",
     "circuit_runners",
-    # Subpackages - Core
     "circuits",
-    "clifford_rz",
-    # Numeric submodules (like numpy.linalg, numpy.random)
     "compare",
     "complex64",
     "complex128",
@@ -389,10 +373,9 @@ __all__ = [
     "density_matrix",
     "depolarizing_noise",
     "diag",
-    # Data types
     "dtypes",
     "engines",
-    "exceptions",  # Exception classes
+    "exceptions",
     "exp",
     "f32",
     "f64",
@@ -400,7 +383,7 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
-    "guppy",  # Direct Guppy code generation
+    "guppy",
     "hugr_engine",
     "i8",
     "i16",
@@ -424,7 +407,6 @@ __all__ = [
     "num",
     "ones",
     "optimize",
-    # Engine builder functions
     "phir_json_engine",
     "polyfit",
     "polynomial",
@@ -432,21 +414,20 @@ __all__ = [
     "programs",
     "protocols",
     "qasm_engine",
-    "qec",  # Pure QEC geometry (no SLR dependencies)
+    "qec",
     "qeccs",
     "qis_engine",
     "quantum",
     "random",
     "round",
     "selene_engine",
-    # Simulation entry point
     "sim",
     "simulators",
     "sin",
     "sinh",
-    # Quantum simulators
     "sparse_stab",
     "sqrt",
+    "stab_vec",
     "stabilizer",
     "state_vector",
     "stats",
@@ -454,8 +435,8 @@ __all__ = [
     "sum",
     "tan",
     "tanh",
-    "testing",  # Testing utilities (like numpy.testing)
-    "tools",  # Kept for backwards compatibility
+    "testing",
+    "tools",
     "typing",
     "u8",
     "u16",

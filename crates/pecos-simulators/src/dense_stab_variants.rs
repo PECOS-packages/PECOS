@@ -706,6 +706,10 @@ impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabColOnly<R> {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.init_state();
         self
@@ -1236,6 +1240,10 @@ impl<R: SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabRowOnly<R> {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.init_state();
         self
@@ -1680,6 +1688,10 @@ impl SparseColOnly {
 }
 
 impl QuantumSimulator for SparseColOnly {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         let n = self.num_qubits;
         for q in 0..n {
@@ -2129,6 +2141,10 @@ impl SparseRowOnly {
 }
 
 impl QuantumSimulator for SparseRowOnly {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         let n = self.num_qubits;
         for g in 0..n {
@@ -2293,10 +2309,6 @@ impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseS
             &self.destab_signs_i,
         )
     }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
-    }
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseStabRowOnly<R> {
@@ -2321,10 +2333,6 @@ impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseS
             &self.destab_signs_i,
         )
     }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
-    }
 }
 
 impl StabilizerTableauSimulator for SparseColOnly {
@@ -2346,10 +2354,6 @@ impl StabilizerTableauSimulator for SparseColOnly {
             &self.destab_signs_minus,
             &self.destab_signs_i,
         )
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 
@@ -2446,10 +2450,6 @@ impl StabilizerTableauSimulator for SparseRowOnly {
             &self.destab_signs_minus,
             &self.destab_signs_i,
         )
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

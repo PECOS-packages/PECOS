@@ -276,7 +276,7 @@ Foreign code can create and run PECOS quantum engines via the C ABI:
 | State vector | `"state_vec"` | Full state vector simulation |
 | Sparse stabilizer | `"sparse_stab"` | Clifford-only, sparse tableau |
 | Stabilizer | `"stabilizer"` | Clifford-only, standard tableau |
-| Clifford+RZ | `"clifford_rz"` | Sum-over-Cliffords for T/RZ gates |
+| StabVec | `"stab_vec"` | Sum-over-Cliffords for T/RZ gates |
 | Density matrix | `"density_matrix"` | Mixed state simulation |
 | Coin toss | `"coin_toss"` | Random outcomes (testing) |
 

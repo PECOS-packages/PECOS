@@ -89,10 +89,4 @@ pub trait StabilizerTableauSimulator: QuantumSimulator {
             self.stab_tableau()
         )
     }
-
-    /// Returns the number of qubits in the simulator.
-    ///
-    /// This method should be implemented by each simulator type to return
-    /// the number of qubits being simulated.
-    fn num_qubits(&self) -> usize;
 }

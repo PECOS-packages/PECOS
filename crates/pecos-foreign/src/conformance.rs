@@ -200,12 +200,12 @@ fn test_batch_h(sim: &mut ForeignSimulator, report: &mut ConformanceReport) {
 pub unsafe extern "C" fn pecos_run_conformance_tests(
     handle: *mut (),
     vtable: *const ForeignSimulatorVTable,
-    _num_qubits: usize,
+    num_qubits: usize,
     report_out: *mut ConformanceReport,
 ) -> i32 {
     let vtable_copy = unsafe { *vtable };
 
-    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy) }) else {
+    let Some(sim) = (unsafe { ForeignSimulator::new(handle, vtable_copy, num_qubits) }) else {
         // Version mismatch
         unsafe { *report_out = ConformanceReport::new() };
         return 0;

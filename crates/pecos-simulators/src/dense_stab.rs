@@ -1030,6 +1030,10 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStab<R> {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.init_state();
         self
@@ -1340,10 +1344,6 @@ impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseS
             &self.destab_signs_minus,
             &self.destab_signs_i,
         )
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

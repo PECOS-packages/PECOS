@@ -112,7 +112,7 @@ fn make_real_sim(n: usize) -> ForeignSimulator {
         destroy: real_destroy,
     };
 
-    unsafe { ForeignSimulator::new(handle, vtable) }.expect("vtable version should match")
+    unsafe { ForeignSimulator::new(handle, vtable, n) }.expect("vtable version should match")
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn make_broken_sim(n: usize) -> ForeignSimulator {
         destroy: real_destroy,
     };
 
-    unsafe { ForeignSimulator::new(handle, vtable) }.expect("vtable version should match")
+    unsafe { ForeignSimulator::new(handle, vtable, n) }.expect("vtable version should match")
 }
 
 #[test]

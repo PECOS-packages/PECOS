@@ -76,7 +76,7 @@ fn test_engine_create_all_types() {
         "state_vec",
         "sparse_stab",
         "stabilizer",
-        "clifford_rz",
+        "stab_vec",
         "density_matrix",
         "coin_toss",
     ] {

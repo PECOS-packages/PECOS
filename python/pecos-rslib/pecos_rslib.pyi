@@ -833,8 +833,8 @@ class Stabilizer:
     @property
     def num_qubits(self) -> int: ...
 
-class CliffordRz:
-    """Rust Clifford+RZ simulator."""
+class StabVec:
+    """Rust Clifford+RZ simulator (stabilizer sum / StabVec)."""
 
     def __init__(
         self,
@@ -939,8 +939,8 @@ class StabilizerEngineBuilder:
 
     ...
 
-class CliffordRzEngineBuilder:
-    """Builder for Clifford+RZ engines."""
+class StabVecEngineBuilder:
+    """Builder for StabVec (Clifford+RZ) engines."""
 
     ...
 
@@ -1237,13 +1237,13 @@ class quantum:
     state_vector: Callable[..., StateVectorEngineBuilder]
     sparse_stab: Callable[..., SparseStabEngineBuilder]
     stabilizer: Callable[..., StabilizerEngineBuilder]
-    clifford_rz: Callable[..., CliffordRzEngineBuilder]
+    stab_vec: Callable[..., StabVecEngineBuilder]
     density_matrix: Callable[..., DensityMatrixEngineBuilder]
     coin_toss: Callable[..., CoinTossEngineBuilder]
     StateVectorEngineBuilder: type[StateVectorEngineBuilder]
     SparseStabEngineBuilder: type[SparseStabEngineBuilder]
     StabilizerEngineBuilder: type[StabilizerEngineBuilder]
-    CliffordRzEngineBuilder: type[CliffordRzEngineBuilder]
+    StabVecEngineBuilder: type[StabVecEngineBuilder]
     DensityMatrixEngineBuilder: type[DensityMatrixEngineBuilder]
     CoinTossEngineBuilder: type[CoinTossEngineBuilder]
 
@@ -1292,8 +1292,8 @@ def stabilizer(**kwargs: object) -> StabilizerEngineBuilder:
     """Create a stabilizer engine builder."""
     ...
 
-def clifford_rz(**kwargs: object) -> CliffordRzEngineBuilder:
-    """Create a Clifford+RZ engine builder."""
+def stab_vec(**kwargs: object) -> StabVecEngineBuilder:
+    """Create a StabVec (Clifford+RZ) engine builder."""
     ...
 
 def density_matrix(**kwargs: object) -> DensityMatrixEngineBuilder:

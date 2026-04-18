@@ -69,7 +69,7 @@ nav:
   - CUDA Setup: user-guide/cuda-setup.md
 - Concepts:
   - concepts/index.md
-  - Clifford+RZ Simulator: concepts/clifford-rz-simulator.md
+  - StabVec Simulator: concepts/clifford-rz-simulator.md
 - API:
   - api/api-reference.md
 - Development:

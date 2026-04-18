@@ -18,6 +18,7 @@ parallel = ["pecos-simulators/parallel"]
 gpu-sims = ["dep:pecos-gpu-sims"]
 cuquantum = ["dep:pecos-cuquantum"]
 cppsparsestab = ["dep:pecos-cppsparsestab"]
+stab-tn = ["dep:pecos-stab-tn"]
 all-sims = ["gpu-sims", "cuquantum", "cppsparsestab"]
 
 [dependencies]
@@ -27,6 +28,9 @@ pecos-cuquantum = { workspace = true, optional = true }
 pecos-cppsparsestab = { workspace = true, optional = true }
 pecos-core.workspace = true
 pecos-simulators.workspace = true
+pecos-stab-tn = { path = "../../exp/pecos-stab-tn", optional = true }
+nalgebra.workspace = true
+num-complex.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

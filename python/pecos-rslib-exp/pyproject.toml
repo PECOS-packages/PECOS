@@ -1,0 +1,20 @@
+[project]
+name = "pecos-rslib-exp"
+version = "0.8.0.dev8"
+description = "Python bindings for experimental PECOS simulators (StabMps, Mast)."
+authors = [
+    {name = "The PECOS Developers"},
+]
+maintainers =[
+    {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
+]
+dependencies = []
+requires-python = ">= 3.10"
+license = "Apache-2.0"
+
+[build-system]
+requires = ["maturin>=1.13.1,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "pecos_rslib_exp"

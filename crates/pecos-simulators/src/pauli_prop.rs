@@ -111,6 +111,10 @@ impl PauliProp {
 }
 
 impl QuantumSimulator for PauliProp {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits.unwrap_or(0)
+    }
+
     /// Resets the state by clearing all Pauli all tracked X and Z operators.
     ///
     /// # Returns

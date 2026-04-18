@@ -503,6 +503,10 @@ impl SymbolicSparseStab {
 }
 
 impl QuantumSimulator for SymbolicSparseStab {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)

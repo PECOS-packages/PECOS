@@ -738,7 +738,7 @@ fn test_program_serialization_roundtrip() {
 ```rust
 #[test]
 fn test_standard_adaptor_decomposes_t() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     assert!(adaptor.can_adapt(gates::T));
 
@@ -752,7 +752,7 @@ fn test_standard_adaptor_decomposes_t() {
 
 #[test]
 fn test_standard_adaptor_decomposes_swap() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let decomposed = adaptor.adapt(gates::SWAP, &[QubitId(0), QubitId(1)], &[], &[]);
 
@@ -763,7 +763,7 @@ fn test_standard_adaptor_decomposes_swap() {
 
 #[test]
 fn test_adaptor_bitset_lookup() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     // Fast bit test
     assert!(adaptor.can_adapt(gates::T));

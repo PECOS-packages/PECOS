@@ -1552,6 +1552,10 @@ impl QuantumSimulator for GpuStateVec32 {
             .write_buffer(&self.state_buffer, 0, bytemuck::cast_slice(&initial_state));
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits as usize
+    }
 }
 
 // Trait implementations queue gates for batched dispatch.

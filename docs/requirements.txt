@@ -3,4 +3,4 @@ mkdocs-material>=9.4.7
 mkdocstrings>=0.24.0
 mkdocstrings-python>=1.7.4
 markdown-exec>=1.10.3
-pymdown-extensions>=10.4
+pymdown-extensions>=10.21.2

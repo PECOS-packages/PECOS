@@ -122,12 +122,14 @@ impl<'a> InfluenceBuilder<'a> {
         self
     }
 
-    /// Extract tracked operator annotations from the circuit.
+    /// Extract observable and tracked-operator annotations from the circuit.
+    ///
+    /// Observable annotations define logical observables via measurement records.
+    /// For backward propagation, each observable is converted to a Z-type Pauli
+    /// on the measured qubits, starting from the latest measurement node.
     ///
     /// Operator annotations have a corresponding `PauliOperatorMeta` node
-    /// that marks their time position. Observable annotations are
-    /// measurement-record outputs and are handled by DEM/sampler builders,
-    /// not by backward tracked-operator propagation.
+    /// that marks their time position.
     ///
     /// Detector annotations are NOT handled here -- they are processed
     /// by `DemSamplerBuilder::with_circuit_annotations` which maps them
@@ -145,6 +147,28 @@ impl<'a> InfluenceBuilder<'a> {
         let mut operator_idx = 0;
         for ann in circuit.annotations() {
             match &ann.kind {
+                pecos_quantum::AnnotationKind::Observable { measurement_nodes } => {
+                    // Convert measurement-based observable to Z-Pauli on measured qubits.
+                    // Backward propagation starts from the latest measurement node.
+                    let mut qubits = Vec::new();
+                    let mut latest_node = None;
+                    for &meas_node in measurement_nodes {
+                        if let Some(gate) = circuit.gate(meas_node) {
+                            for q in &gate.qubits {
+                                qubits.push(q.index());
+                            }
+                        }
+                        latest_node = Some(
+                            latest_node.map_or(meas_node, |prev: usize| prev.max(meas_node)),
+                        );
+                    }
+                    let pauli = PauliString::zs(&qubits);
+                    self.pauli_operators.push((
+                        DemOutputMetadata::observable(pauli)
+                            .with_optional_label(ann.label.clone()),
+                        latest_node,
+                    ));
+                }
                 pecos_quantum::AnnotationKind::Operator => {
                     let meta_node = meta_nodes.get(operator_idx).copied();
                     operator_idx += 1;
@@ -154,7 +178,6 @@ impl<'a> InfluenceBuilder<'a> {
                         meta_node,
                     ));
                 }
-                pecos_quantum::AnnotationKind::Observable { .. } => {}
                 pecos_quantum::AnnotationKind::Detector { .. } => {
                     // Detectors handled separately by DemSamplerBuilder
                 }
@@ -996,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circuit_annotation_dem_output_metadata_tracks_only_operator_annotations() {
+    fn test_circuit_annotation_dem_output_metadata_tracks_observables_and_operators() {
         use pecos_core::pauli::constructors::X;
 
         let mut dag = DagCircuit::new();
@@ -1010,14 +1033,24 @@ mod tests {
             .with_circuit_annotations(&dag)
             .build();
 
-        assert_eq!(map.num_dem_outputs(), 0);
-        assert_eq!(map.num_tracked_ops(), 1);
-        assert_eq!(map.dem_output_metadata.len(), 1);
+        // 1 observable (record_obs) + 1 tracked operator (track_x) = 2 DEM outputs
+        assert_eq!(map.num_dem_outputs(), 1, "1 observable");
+        assert_eq!(map.num_tracked_ops(), 1, "1 tracked operator");
+        assert_eq!(map.dem_output_metadata.len(), 2);
+
+        // Observable comes first (annotations are processed in order)
         assert_eq!(
             map.dem_output_metadata[0].kind,
+            DemOutputKind::Observable
+        );
+        assert_eq!(map.dem_output_metadata[0].label.as_deref(), Some("record_obs"));
+
+        // Tracked operator second
+        assert_eq!(
+            map.dem_output_metadata[1].kind,
             DemOutputKind::TrackedOperator
         );
-        assert_eq!(map.dem_output_metadata[0].label.as_deref(), Some("track_x"));
-        assert_eq!(map.dem_output_metadata[0].pauli.to_sparse_str(), "+X0");
+        assert_eq!(map.dem_output_metadata[1].label.as_deref(), Some("track_x"));
+        assert_eq!(map.dem_output_metadata[1].pauli.to_sparse_str(), "+X0");
     }
 }

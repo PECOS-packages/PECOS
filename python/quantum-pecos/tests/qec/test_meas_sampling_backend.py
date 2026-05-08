@@ -12,7 +12,7 @@ import pytest
 
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
-from pecos_rslib_exp import dem_sampling, meas_sampling, depolarizing, sim_neo, stabilizer
+from pecos_rslib_exp import meas_sampling, depolarizing, sim_neo, stabilizer
 
 
 @pytest.fixture
@@ -184,77 +184,3 @@ class TestMethodDispatch:
             sim_neo(d3_tc).quantum(meas_sampling()).shots(10).seed(42).run()
 
 
-class TestDemSamplingApi:
-    def test_dem_sampling_builder_is_exported(self):
-        assert type(dem_sampling()).__name__ == "DemSamplingBuilder"
-
-    def test_dem_sampling_runs(self, d3_tc, depol):
-        r = (
-            sim_neo(d3_tc)
-            .quantum(dem_sampling())
-            .noise(depol)
-            .shots(10)
-            .seed(42)
-            .run()
-        )
-        assert len(r) == 10
-        assert len(r[0]) == 57
-
-    def test_dem_sampling_matches_meas_sampling_stochastic_same_seed(self, d3_tc, depol):
-        dem_r = (
-            sim_neo(d3_tc)
-            .quantum(dem_sampling("stochastic"))
-            .noise(depol)
-            .shots(25)
-            .seed(123)
-            .run()
-        )
-        meas_r = (
-            sim_neo(d3_tc)
-            .quantum(meas_sampling("stochastic"))
-            .noise(depol)
-            .shots(25)
-            .seed(123)
-            .run()
-        )
-
-        assert [dem_r[i] for i in range(len(dem_r))] == [
-            meas_r[i] for i in range(len(meas_r))
-        ]
-
-    def test_dem_sampling_auto_with_idle_rz(self, d3_tc, coherent):
-        r = (
-            sim_neo(d3_tc)
-            .quantum(dem_sampling("auto"))
-            .noise(coherent)
-            .shots(10)
-            .seed(42)
-            .run()
-        )
-        assert len(r[0]) == 57
-
-    def test_dem_sampling_stochastic_rejects_idle_rz(self, d3_tc, coherent):
-        with pytest.raises(Exception, match="idle_rz"):
-            (
-                sim_neo(d3_tc)
-                .quantum(dem_sampling("stochastic"))
-                .noise(coherent)
-                .shots(10)
-                .seed(42)
-                .run()
-            )
-
-    def test_dem_sampling_invalid_method(self, d3_tc, depol):
-        with pytest.raises(Exception, match="Unknown"):
-            (
-                sim_neo(d3_tc)
-                .quantum(dem_sampling("bogus"))
-                .noise(depol)
-                .shots(10)
-                .seed(42)
-                .run()
-            )
-
-    def test_dem_sampling_no_noise_errors(self, d3_tc):
-        with pytest.raises(Exception, match="noise"):
-            sim_neo(d3_tc).quantum(dem_sampling()).shots(10).seed(42).run()

@@ -77,10 +77,8 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sim_neo_bindings::statevec, m)?)?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::stabilizer, m)?)?;
     m.add_class::<sim_neo_bindings::PyMeasSamplingBuilder>()?;
-    m.add_class::<sim_neo_bindings::PyDemSamplingBuilder>()?;
     m.add_class::<sim_neo_bindings::PyRawMeasurementResult>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::meas_sampling, m)?)?;
-    m.add_function(wrap_pyfunction!(sim_neo_bindings::dem_sampling, m)?)?;
     m.add_class::<sim_neo_bindings::PyFaultCatalog>()?;
     m.add_class::<sim_neo_bindings::PyFaultLocation>()?;
     m.add_class::<sim_neo_bindings::PyFaultAlternative>()?;

@@ -20,18 +20,6 @@ def d3_circuit_and_noise():
 
 
 class TestEmpiricalCorrelationTable:
-    def test_dem_sampling_returns_nonempty(self, d3_circuit_and_noise):
-        tc, noise = d3_circuit_and_noise
-        table = empirical_correlation_table(
-            tc,
-            noise,
-            shots=5000,
-            max_order=1,
-            backend="dem_sampling",
-            seed=42,
-        )
-        assert len(table) > 0, "Should return at least one rate entry"
-
     def test_meas_sampling_returns_nonempty(self, d3_circuit_and_noise):
         tc, noise = d3_circuit_and_noise
         table = empirical_correlation_table(
@@ -88,14 +76,6 @@ class TestEmpiricalCorrelationTable:
 
 
 class TestFitDemFromSimulation:
-    def test_dem_sampling_returns_dem_string(self, d3_circuit_and_noise):
-        tc, noise = d3_circuit_and_noise
-        dem_str = fit_dem_from_simulation(
-            tc, noise, shots=10000, backend="dem_sampling", seed=42
-        )
-        assert isinstance(dem_str, str)
-        assert "error(" in dem_str, "DEM string should contain error(...) lines"
-
     def test_meas_sampling_returns_dem_string(self, d3_circuit_and_noise):
         tc, noise = d3_circuit_and_noise
         dem_str = fit_dem_from_simulation(

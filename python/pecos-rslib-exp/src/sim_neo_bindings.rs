@@ -460,43 +460,6 @@ pub fn meas_sampling(method: &str) -> PyMeasSamplingBuilder {
     PyMeasSamplingBuilder::new(method)
 }
 
-/// DEM sampling backend builder.
-#[pyclass(
-    name = "DemSamplingBuilder",
-    skip_from_py_object,
-    module = "pecos_rslib_exp"
-)]
-#[derive(Clone)]
-pub struct PyDemSamplingBuilder {
-    method: String,
-}
-
-#[pymethods]
-impl PyDemSamplingBuilder {
-    #[new]
-    #[pyo3(signature = (method="auto"))]
-    fn new(method: &str) -> Self {
-        Self {
-            method: method.to_string(),
-        }
-    }
-}
-
-/// Create a DEM sampling backend builder.
-///
-/// Samples raw measurement rows from a detector-error-model measurement
-/// model. This is the canonical name for the DEM-backed measurement sampler;
-/// `meas_sampling()` remains available as a compatibility alias.
-///
-/// Methods:
-///   - "auto": uses coherent_dem if idle_rz > 0, else stochastic (default)
-///   - "stochastic": DEM from backward Pauli propagation
-///   - "coherent": DEM from EEG backward Heisenberg walk
-#[pyfunction]
-#[pyo3(signature = (method="auto"))]
-pub fn dem_sampling(method: &str) -> PyDemSamplingBuilder {
-    PyDemSamplingBuilder::new(method)
-}
 
 /// Builder for sim_neo simulations. Mirrors the Rust-side `SimNeoBuilder`.
 #[pyclass(
@@ -533,12 +496,7 @@ impl PySimNeoBuilder {
     ///     sim_neo(tc).quantum(stab_mps().lazy_measure()).noise(...).run()
     fn quantum(&self, builder: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut c = self.clone();
-        if builder.is_instance_of::<PyDemSamplingBuilder>() {
-            let b: PyRef<'_, PyDemSamplingBuilder> = builder.extract()?;
-            c.backend = "dem_sampling".to_string();
-            c.dem_sampling_method = Some(b.method.clone());
-            c.stabmps_config = None;
-        } else if builder.is_instance_of::<PyMeasSamplingBuilder>() {
+        if builder.is_instance_of::<PyMeasSamplingBuilder>() {
             let b: PyRef<'_, PyMeasSamplingBuilder> = builder.extract()?;
             c.backend = "meas_sampling".to_string();
             c.dem_sampling_method = Some(b.method.clone());
@@ -558,7 +516,7 @@ impl PySimNeoBuilder {
             c.dem_sampling_method = None;
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
-                "quantum() expects statevec(), stabilizer(), stab_mps(), dem_sampling(), or meas_sampling()",
+                "quantum() expects statevec(), stabilizer(), stab_mps(), or meas_sampling()",
             ));
         }
         Ok(c)
@@ -590,8 +548,8 @@ impl PySimNeoBuilder {
     /// All backends return `RawMeasurementResult` which supports:
     /// `result[shot]`, `result.get(shot, meas)`, `len(result)`, iteration.
     fn run(&self) -> PyResult<PyRawMeasurementResult> {
-        if self.backend == "dem_sampling" || self.backend == "meas_sampling" {
-            return self.run_dem_sampling();
+        if self.backend == "meas_sampling" {
+            return self.run_meas_sampling();
         }
 
         let noise = self
@@ -641,7 +599,7 @@ impl PySimNeoBuilder {
 
 impl PySimNeoBuilder {
     /// DEM sampling backend: dispatches to stochastic or coherent path based on method.
-    fn run_dem_sampling(&self) -> PyResult<PyRawMeasurementResult> {
+    fn run_meas_sampling(&self) -> PyResult<PyRawMeasurementResult> {
         let noise_config = self.noise_config.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("DEM sampling requires .noise() to be set")
         })?;

@@ -580,9 +580,9 @@ def empirical_correlation_table(
         shots: Number of simulation shots.
         max_order: Maximum correlation order (1 = marginals, 2 = pairwise, etc.).
         backend: Simulator backend — ``"stabilizer"``, ``"statevec"``,
-            ``"dem_sampling"``, or ``"meas_sampling"``. The DEM sampling
-            backend uses the fast whole-circuit DEM-based sampler
-            (geometric/O(fired)) instead of gate-by-gate simulation.
+            or ``"meas_sampling"``. The meas_sampling backend uses the fast
+            whole-circuit DEM-based sampler (geometric/O(fired)) instead of
+            gate-by-gate simulation.
         seed: RNG seed.
 
     Returns:
@@ -603,18 +603,16 @@ def empirical_correlation_table(
     import json
 
     from pecos_rslib_exp import (
-        dem_sampling,
         meas_sampling,
         sim_neo,
         stabilizer,
         statevec,
     )
 
-    if backend in ("dem_sampling", "meas_sampling"):
-        sampling_backend = dem_sampling() if backend == "dem_sampling" else meas_sampling()
+    if backend == "meas_sampling":
         results = (
             sim_neo(tick_circuit)
-            .quantum(sampling_backend)
+            .quantum(meas_sampling())
             .noise(noise_builder)
             .shots(shots)
             .seed(seed)
@@ -631,7 +629,7 @@ def empirical_correlation_table(
             .run()
         )
     else:
-        supported = "'stabilizer', 'statevec', 'dem_sampling', 'meas_sampling'"
+        supported = "'stabilizer', 'statevec', 'meas_sampling'"
         raise ValueError(
             f"Unknown backend {backend!r}. Supported: {supported}."
         )
@@ -720,9 +718,8 @@ def fit_dem_from_simulation(
         noise_builder: A noise builder (e.g., ``depolarizing().p1(0.001)``).
         shots: Number of simulation shots.
         backend: Simulator backend — ``"stabilizer"``, ``"statevec"``,
-            ``"dem_sampling"``, or ``"meas_sampling"``. The DEM sampling
-            backend uses the fast whole-circuit DEM-based sampler instead of
-            gate-by-gate simulation.
+            or ``"meas_sampling"``. The meas_sampling backend uses the fast
+            whole-circuit DEM-based sampler instead of gate-by-gate simulation.
         seed: RNG seed.
         max_correlation_order: Max order for empirical rates (1 or 2).
 
@@ -739,7 +736,6 @@ def fit_dem_from_simulation(
         mechanisms_to_dem_string,
     )
     from pecos_rslib_exp import (
-        dem_sampling,
         meas_sampling,
         sim_neo,
         stabilizer,
@@ -777,11 +773,10 @@ def fit_dem_from_simulation(
     num_meas = int(tick_circuit.get_meta("num_measurements"))
     num_dets = len(det_json)
 
-    if backend in ("dem_sampling", "meas_sampling"):
-        sampling_backend = dem_sampling() if backend == "dem_sampling" else meas_sampling()
+    if backend == "meas_sampling":
         results = (
             sim_neo(tick_circuit)
-            .quantum(sampling_backend)
+            .quantum(meas_sampling())
             .noise(noise_builder)
             .shots(shots)
             .seed(seed)
@@ -798,7 +793,7 @@ def fit_dem_from_simulation(
             .run()
         )
     else:
-        supported = "'stabilizer', 'statevec', 'dem_sampling', 'meas_sampling'"
+        supported = "'stabilizer', 'statevec', 'meas_sampling'"
         raise ValueError(f"Unknown backend {backend!r}. Supported: {supported}.")
 
     inv_shots = 1.0 / shots

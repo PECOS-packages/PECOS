@@ -289,13 +289,14 @@ fn repetition_code_labels() {
         .with_circuit_annotations(&dag)
         .build();
 
-    // Check DEM-output labels are populated
+    // Check DEM-output labels are populated (observables + tracked ops)
     println!("DEM output labels: {:?}", map.dem_output_labels);
+    // 1 observable (logical_Z) + 1 tracked operator (logical_X) = 2 labels
     assert_eq!(map.dem_output_labels.len(), 2);
-    assert_eq!(map.dem_output_labels[0].as_deref(), Some("logical_Z"));
-    assert_eq!(map.dem_output_labels[1].as_deref(), Some("logical_X"));
+    assert_eq!(map.num_dem_outputs(), 1, "1 observable");
+    assert_eq!(map.num_tracked_ops(), 1, "1 tracked operator");
 
-    // Labels accessible via index
+    // Labels accessible via internal index
     assert_eq!(map.dem_output_label(0), Some("logical_Z"));
     assert_eq!(map.dem_output_label(1), Some("logical_X"));
     assert_eq!(map.dem_output_label(99), None);

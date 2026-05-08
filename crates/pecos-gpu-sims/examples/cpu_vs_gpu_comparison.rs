@@ -4,7 +4,7 @@
 
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
-use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
+use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_quantum::DagCircuit;
 use std::time::Instant;
 
@@ -91,8 +91,8 @@ fn main() {
         let num_data = distance * distance;
 
         // Build influence map
-        let logical_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_logical_z(logical_qubits);
+        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
+        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_op_qubits);
         let influence_map = builder.build();
 
         let num_locations = influence_map.locations.len();
@@ -101,32 +101,46 @@ fn main() {
         let (
             num_loc,
             num_det,
-            num_log,
+            num_dem_outputs,
             det_off_x,
             det_data_x,
             det_off_y,
             det_data_y,
             det_off_z,
             det_data_z,
-            log_off_x,
-            log_data_x,
-            log_off_y,
-            log_data_y,
-            log_off_z,
-            log_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         ) = influence_map.export_csr();
 
         let gpu_map = GpuInfluenceMapData::from_csr(
-            num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
-            det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc,
+            num_det,
+            num_dem_outputs,
+            det_off_x,
+            det_data_x,
+            det_off_y,
+            det_data_y,
+            det_off_z,
+            det_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         );
 
         // CPU benchmark
-        let noise = UniformNoiseModel::depolarizing(p_error);
-        let mut cpu_sampler = NoisySampler::new(&influence_map, noise, seed);
+        let num_loc = influence_map.locations.len();
+        let probs = vec![p_error; num_loc];
+        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs);
 
         let cpu_start = Instant::now();
-        let _ = cpu_sampler.sample(num_shots as usize);
+        let _ = cpu_sampler.sample_statistics(num_shots as usize, seed);
         let cpu_time = cpu_start.elapsed();
 
         // GPU benchmark (with warmup)
@@ -165,38 +179,51 @@ fn main() {
         let circuit = build_surface_code_grid(distance, num_rounds);
         let num_data = distance * distance;
 
-        let logical_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_logical_z(logical_qubits);
+        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
+        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_op_qubits);
         let influence_map = builder.build();
 
         let (
             num_loc,
             num_det,
-            num_log,
+            num_dem_outputs,
             det_off_x,
             det_data_x,
             det_off_y,
             det_data_y,
             det_off_z,
             det_data_z,
-            log_off_x,
-            log_data_x,
-            log_off_y,
-            log_data_y,
-            log_off_z,
-            log_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         ) = influence_map.export_csr();
 
         let gpu_map = GpuInfluenceMapData::from_csr(
-            num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
-            det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc,
+            num_det,
+            num_dem_outputs,
+            det_off_x,
+            det_data_x,
+            det_off_y,
+            det_data_y,
+            det_off_z,
+            det_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         );
 
         // CPU
-        let noise = UniformNoiseModel::depolarizing(p_error);
-        let mut cpu_sampler = NoisySampler::new(&influence_map, noise, seed);
+        let probs2 = vec![p_error; influence_map.locations.len()];
+        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs2);
         let cpu_start = Instant::now();
-        let _ = cpu_sampler.sample(num_shots as usize);
+        let _ = cpu_sampler.sample_statistics(num_shots as usize, seed);
         let cpu_time = cpu_start.elapsed();
 
         // GPU

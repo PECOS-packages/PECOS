@@ -1073,7 +1073,6 @@ These operations measure and then prepare the qubit in a specific eigenstate reg
 |-----------|---------------|-------------------|-------|
 | **SparseStab** | All | None | Default, fastest for QEC |
 | **StateVec** | All | All | Pure Rust state vector |
-| **Qulacs** | All | All | High-performance C++ backend |
 | **CuStateVec** | All | All | GPU-accelerated (requires CUDA) |
 | **MPS** | All | All | Tensor network (requires CUDA) |
 | **PauliProp** | All | None | Error propagation tracking |

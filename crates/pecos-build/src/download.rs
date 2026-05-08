@@ -50,7 +50,7 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
     log::info!("Downloading {} (will be cached)", info.name);
 
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_mins(5))
         .connect_timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| Error::Http(e.to_string()))?;

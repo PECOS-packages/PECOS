@@ -62,7 +62,7 @@ class SimpleDepolarizingErrorModel:
                 - p1: Single-qubit gate error probability
                 - p2: Two-qubit gate error probability
                 - p_meas: Measurement error probability
-                - p_init: Initialization error probability
+                - p_prep: Initialization error probability
         """
         self.error_params = dict(error_params)
         self.machine = None
@@ -127,7 +127,7 @@ class SimpleDepolarizingErrorModel:
                 # Use fused operation to check and get error indices in one pass
                 error_indices = pc.random.compare_indices(
                     len(op.args),
-                    self._eparams["p_init"],
+                    self._eparams["p_prep"],
                 )
 
                 for idx in error_indices:

@@ -5,9 +5,7 @@
 use bytemuck::{Pod, Zeroable};
 use pecos_gpu_sims::GpuInfluenceMapData;
 use pecos_qec::fault_tolerance::InfluenceBuilder;
-use pecos_qec::fault_tolerance::noisy_sampler::{
-    FastNoisySampler, NoisySampler, UniformNoiseModel,
-};
+use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_quantum::DagCircuit;
 use pecos_random::PecosRng;
 use std::time::Instant;
@@ -74,19 +72,18 @@ fn build_surface_code_grid(distance: usize, num_rounds: usize) -> DagCircuit {
     dag
 }
 
-/// Profile the CPU sampler with detailed timing
+/// Profile the CPU `DemSampler` with detailed timing
 fn profile_cpu_sampler(
     influence_map: &pecos_qec::fault_tolerance::DagFaultInfluenceMap,
     p_error: f64,
     seed: u64,
     num_shots: usize,
 ) -> CpuProfile {
-    let noise = UniformNoiseModel::depolarizing(p_error);
-    let mut sampler = NoisySampler::new(influence_map, noise, seed);
+    let probs = vec![p_error; influence_map.locations.len()];
+    let sampler = DemSampler::from_influence_map(influence_map, &probs);
 
-    // Time the actual sampling
     let start = Instant::now();
-    let _results = sampler.sample(num_shots);
+    let _stats = sampler.sample_statistics(num_shots, seed);
     let total_time = start.elapsed();
 
     CpuProfile {
@@ -103,27 +100,6 @@ struct CpuProfile {
     locations: usize,
 }
 
-/// Profile the optimized `FastNoisySampler`
-fn profile_fast_cpu_sampler(
-    influence_map: &pecos_qec::fault_tolerance::DagFaultInfluenceMap,
-    p_error: f64,
-    seed: u64,
-    num_shots: usize,
-) -> CpuProfile {
-    let mut sampler = FastNoisySampler::new(influence_map, p_error, seed);
-
-    // Time the actual sampling
-    let start = Instant::now();
-    let _results = sampler.sample(num_shots);
-    let total_time = start.elapsed();
-
-    CpuProfile {
-        total_ms: total_time.as_secs_f64() * 1000.0,
-        shots: num_shots,
-        locations: influence_map.locations.len(),
-    }
-}
-
 /// Parameters for the sampling shader
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -131,10 +107,10 @@ struct SamplerParams {
     num_locations: u32,
     num_shots: u32,
     num_detectors: u32,
-    num_logicals: u32,
+    num_dem_outputs: u32,
     p_error_threshold: u32,
     detector_words: u32,
-    logical_words: u32,
+    dem_output_words: u32,
     _padding: u32,
 }
 
@@ -188,12 +164,12 @@ fn profile_gpu_sampler(
     let detector_data_y_buffer = create_buffer(&gpu_map.detector_data_y, "DetDataY");
     let detector_offsets_z_buffer = create_buffer(&gpu_map.detector_offsets_z, "DetOffZ");
     let detector_data_z_buffer = create_buffer(&gpu_map.detector_data_z, "DetDataZ");
-    let logical_offsets_x_buffer = create_buffer(&gpu_map.logical_offsets_x, "LogOffX");
-    let logical_data_x_buffer = create_buffer(&gpu_map.logical_data_x, "LogDataX");
-    let logical_offsets_y_buffer = create_buffer(&gpu_map.logical_offsets_y, "LogOffY");
-    let logical_data_y_buffer = create_buffer(&gpu_map.logical_data_y, "LogDataY");
-    let logical_offsets_z_buffer = create_buffer(&gpu_map.logical_offsets_z, "LogOffZ");
-    let logical_data_z_buffer = create_buffer(&gpu_map.logical_data_z, "LogDataZ");
+    let dem_output_offsets_x_buffer = create_buffer(&gpu_map.dem_output_offsets_x, "DemOutOffX");
+    let dem_output_data_x_buffer = create_buffer(&gpu_map.dem_output_data_x, "DemOutDataX");
+    let dem_output_offsets_y_buffer = create_buffer(&gpu_map.dem_output_offsets_y, "DemOutOffY");
+    let dem_output_data_y_buffer = create_buffer(&gpu_map.dem_output_data_y, "DemOutDataY");
+    let dem_output_offsets_z_buffer = create_buffer(&gpu_map.dem_output_offsets_z, "DemOutOffZ");
+    let dem_output_data_z_buffer = create_buffer(&gpu_map.dem_output_data_z, "DemOutDataZ");
     let upload_map_time = upload_map_start.elapsed();
 
     // Phase 3: Create shader and pipeline (done once)
@@ -245,7 +221,7 @@ fn profile_gpu_sampler(
     // Phase 4: Create params buffer
     let params_start = Instant::now();
     let detector_words = gpu_map.num_detectors.div_ceil(32).max(1);
-    let logical_words = gpu_map.num_logicals.div_ceil(32).max(1);
+    let dem_output_words = gpu_map.num_dem_outputs.div_ceil(32).max(1);
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
     // probability in [0,1] maps to [0, u32::MAX]
     let p_threshold = (p_error * f64::from(u32::MAX)) as u32;
@@ -253,10 +229,10 @@ fn profile_gpu_sampler(
         num_locations: gpu_map.num_locations,
         num_shots,
         num_detectors: gpu_map.num_detectors,
-        num_logicals: gpu_map.num_logicals,
+        num_dem_outputs: gpu_map.num_dem_outputs,
         p_error_threshold: p_threshold,
         detector_words,
-        logical_words,
+        dem_output_words,
         _padding: 0,
     };
     let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -282,7 +258,7 @@ fn profile_gpu_sampler(
     // Phase 6: Create output buffers
     let output_start = Instant::now();
     let detector_output_size = (num_shots as usize * detector_words as usize * 4) as u64;
-    let logical_output_size = (num_shots as usize * logical_words as usize * 4) as u64;
+    let dem_output_size = (num_shots as usize * dem_output_words as usize * 4) as u64;
 
     let detector_output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Detector Output"),
@@ -291,9 +267,9 @@ fn profile_gpu_sampler(
         mapped_at_creation: false,
     });
 
-    let logical_output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Logical Output"),
-        size: logical_output_size.max(4),
+    let dem_output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("DEM Output"),
+        size: dem_output_size.max(4),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -335,27 +311,27 @@ fn profile_gpu_sampler(
             },
             wgpu::BindGroupEntry {
                 binding: 7,
-                resource: logical_offsets_x_buffer.as_entire_binding(),
+                resource: dem_output_offsets_x_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 8,
-                resource: logical_data_x_buffer.as_entire_binding(),
+                resource: dem_output_data_x_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 9,
-                resource: logical_offsets_y_buffer.as_entire_binding(),
+                resource: dem_output_offsets_y_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 10,
-                resource: logical_data_y_buffer.as_entire_binding(),
+                resource: dem_output_data_y_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 11,
-                resource: logical_offsets_z_buffer.as_entire_binding(),
+                resource: dem_output_offsets_z_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 12,
-                resource: logical_data_z_buffer.as_entire_binding(),
+                resource: dem_output_data_z_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 13,
@@ -367,7 +343,7 @@ fn profile_gpu_sampler(
             },
             wgpu::BindGroupEntry {
                 binding: 15,
-                resource: logical_output_buffer.as_entire_binding(),
+                resource: dem_output_buffer.as_entire_binding(),
             },
         ],
     });
@@ -404,9 +380,9 @@ fn profile_gpu_sampler(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let logical_staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Logical Staging"),
-        size: logical_output_size.max(4),
+    let dem_output_staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("DEM Output Staging"),
+        size: dem_output_size.max(4),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -420,11 +396,11 @@ fn profile_gpu_sampler(
         detector_output_size.max(4),
     );
     encoder.copy_buffer_to_buffer(
-        &logical_output_buffer,
+        &dem_output_buffer,
         0,
-        &logical_staging,
+        &dem_output_staging,
         0,
-        logical_output_size.max(4),
+        dem_output_size.max(4),
     );
     queue.submit(std::iter::once(encoder.finish()));
 
@@ -435,9 +411,9 @@ fn profile_gpu_sampler(
         tx1.send(result).unwrap();
     });
 
-    let log_slice = logical_staging.slice(..);
+    let dem_output_slice = dem_output_staging.slice(..);
     let (tx2, rx2) = std::sync::mpsc::channel();
-    log_slice.map_async(wgpu::MapMode::Read, move |result| {
+    dem_output_slice.map_async(wgpu::MapMode::Read, move |result| {
         tx2.send(result).unwrap();
     });
 
@@ -450,9 +426,9 @@ fn profile_gpu_sampler(
     let _det_results: Vec<u32> = bytemuck::cast_slice(&det_data).to_vec();
     drop(det_data);
 
-    let log_data = log_slice.get_mapped_range();
-    let _log_results: Vec<u32> = bytemuck::cast_slice(&log_data).to_vec();
-    drop(log_data);
+    let dem_output_data = dem_output_slice.get_mapped_range();
+    let _dem_output_results: Vec<u32> = bytemuck::cast_slice(&dem_output_data).to_vec();
+    drop(dem_output_data);
 
     let read_time = read_start.elapsed();
 
@@ -471,7 +447,7 @@ fn profile_gpu_sampler(
         #[allow(clippy::cast_possible_truncation)] // 64-bit target
         detector_output_bytes: detector_output_size as usize,
         #[allow(clippy::cast_possible_truncation)] // 64-bit target
-        logical_output_bytes: logical_output_size as usize,
+        dem_output_bytes: dem_output_size as usize,
     }
 }
 
@@ -489,7 +465,7 @@ struct GpuProfile {
     #[allow(dead_code)]
     shots: usize,
     detector_output_bytes: usize,
-    logical_output_bytes: usize,
+    dem_output_bytes: usize,
 }
 
 impl GpuProfile {
@@ -536,8 +512,8 @@ fn main() {
         let num_data = distance * distance;
 
         // Build influence map
-        let logical_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_logical_z(logical_qubits);
+        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
+        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_op_qubits);
         let influence_map = builder.build();
         let num_locations = influence_map.locations.len();
 
@@ -545,24 +521,37 @@ fn main() {
         let (
             num_loc,
             num_det,
-            num_log,
+            num_dem_outputs,
             det_off_x,
             det_data_x,
             det_off_y,
             det_data_y,
             det_off_z,
             det_data_z,
-            log_off_x,
-            log_data_x,
-            log_off_y,
-            log_data_y,
-            log_off_z,
-            log_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         ) = influence_map.export_csr();
 
         let gpu_map = GpuInfluenceMapData::from_csr(
-            num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
-            det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+            num_loc,
+            num_det,
+            num_dem_outputs,
+            det_off_x,
+            det_data_x,
+            det_off_y,
+            det_data_y,
+            det_off_z,
+            det_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         );
 
         println!(
@@ -570,9 +559,9 @@ fn main() {
         );
         println!("{:-<70}", "");
 
-        // CPU profile (original)
+        // CPU profile (DemSampler)
         let cpu = profile_cpu_sampler(&influence_map, p_error, seed, num_shots as usize);
-        println!("\nCPU Pipeline (Original NoisySampler):");
+        println!("\nCPU Pipeline (DemSampler):");
         println!("  Total time:            {:>10.2} ms", cpu.total_ms);
         println!(
             "  Per-shot:              {:>10.2} us",
@@ -582,21 +571,6 @@ fn main() {
             "  Throughput:            {:>10.3} M shots/sec",
             cpu.shots as f64 / cpu.total_ms / 1000.0
         );
-
-        // CPU profile (fast/optimized)
-        let cpu_fast = profile_fast_cpu_sampler(&influence_map, p_error, seed, num_shots as usize);
-        println!("\nCPU Pipeline (FastNoisySampler - PecosRng + Sparse):");
-        println!("  Total time:            {:>10.2} ms", cpu_fast.total_ms);
-        println!(
-            "  Per-shot:              {:>10.2} us",
-            cpu_fast.total_ms * 1000.0 / cpu_fast.shots as f64
-        );
-        println!(
-            "  Throughput:            {:>10.3} M shots/sec",
-            cpu_fast.shots as f64 / cpu_fast.total_ms / 1000.0
-        );
-        let cpu_speedup = cpu.total_ms / cpu_fast.total_ms;
-        println!("  Speedup vs original:   {cpu_speedup:>10.2}x");
 
         // GPU profile
         let gpu = profile_gpu_sampler(&gpu_map, p_error, seed, num_shots);
@@ -617,22 +591,17 @@ fn main() {
         println!("    Subtotal (per-call): {:>10.2} ms", gpu.per_sample_ms());
         println!("  Total:                 {:>10.2} ms", gpu.total_ms());
         println!(
-            "  Output size:           {:>10.2} KB (det) + {:.2} KB (log)",
+            "  Output size:           {:>10.2} KB (det) + {:.2} KB (DEM out)",
             gpu.detector_output_bytes as f64 / 1024.0,
-            gpu.logical_output_bytes as f64 / 1024.0
+            gpu.dem_output_bytes as f64 / 1024.0
         );
 
         println!("\nComparison:");
-        println!("  CPU (original):        {:>10.2} ms", cpu.total_ms);
-        println!("  CPU (fast):            {:>10.2} ms", cpu_fast.total_ms);
+        println!("  CPU (DemSampler):      {:>10.2} ms", cpu.total_ms);
         println!("  GPU total (with init): {:>10.2} ms", gpu.total_ms());
         println!("  GPU per-call only:     {:>10.2} ms", gpu.per_sample_ms());
-        let speedup_fast_vs_orig = cpu.total_ms / cpu_fast.total_ms;
-        let speedup_gpu_vs_orig = cpu.total_ms / gpu.per_sample_ms();
-        let speedup_gpu_vs_fast = cpu_fast.total_ms / gpu.per_sample_ms();
-        println!("  Fast CPU vs Original:  {speedup_fast_vs_orig:>10.1}x");
-        println!("  GPU vs Original CPU:   {speedup_gpu_vs_orig:>10.1}x");
-        println!("  GPU vs Fast CPU:       {speedup_gpu_vs_fast:>10.1}x");
+        let speedup_gpu_vs_cpu = cpu.total_ms / gpu.per_sample_ms();
+        println!("  GPU vs CPU:            {speedup_gpu_vs_cpu:>10.1}x");
 
         println!("\n");
     }

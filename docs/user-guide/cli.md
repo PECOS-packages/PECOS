@@ -108,8 +108,6 @@ Compiled Features:
   [x] selene   - Selene QIS runtime
   [x] wasm     - WebAssembly foreign objects
   [ ] llvm     - LLVM/QIS compilation
-  [ ] quest    - QuEST simulator backend
-  [ ] qulacs   - Qulacs simulator backend
 
 Simulators:
   statevector  - Full quantum state simulation (default)

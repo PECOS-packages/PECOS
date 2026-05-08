@@ -149,12 +149,21 @@ impl From<DetectorIdx> for usize {
     }
 }
 
-/// A logical observable index.
+/// A standard DEM observable `L<n>` output index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct LogicalIdx(pub u32);
+pub struct DemOutputIdx(pub u32);
 
-impl LogicalIdx {
+/// A PECOS tracked-operator metadata index.
+///
+/// This is intentionally separate from [`DemOutputIdx`]: tracked operators are
+/// not standard DEM `L<n>` targets and should not be handed to decoders as
+/// logical observables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct TrackedOpIdx(pub u32);
+
+impl DemOutputIdx {
     #[inline]
     #[must_use]
     pub const fn new(index: u32) -> Self {
@@ -169,22 +178,57 @@ impl LogicalIdx {
 
     #[inline]
     #[must_use]
-    #[allow(clippy::cast_possible_truncation)] // logical index fits in u32
+    #[allow(clippy::cast_possible_truncation)] // DEM output index fits in u32
     pub const fn from_usize(index: usize) -> Self {
         Self(index as u32)
     }
 }
 
-impl From<usize> for LogicalIdx {
+impl From<usize> for DemOutputIdx {
     #[inline]
     fn from(index: usize) -> Self {
         Self::from_usize(index)
     }
 }
 
-impl From<LogicalIdx> for usize {
+impl From<DemOutputIdx> for usize {
     #[inline]
-    fn from(id: LogicalIdx) -> Self {
+    fn from(id: DemOutputIdx) -> Self {
+        id.index()
+    }
+}
+
+impl TrackedOpIdx {
+    #[inline]
+    #[must_use]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    #[inline]
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // tracked-op index fits in u32
+    pub const fn from_usize(index: usize) -> Self {
+        Self(index as u32)
+    }
+}
+
+impl From<usize> for TrackedOpIdx {
+    #[inline]
+    fn from(index: usize) -> Self {
+        Self::from_usize(index)
+    }
+}
+
+impl From<TrackedOpIdx> for usize {
+    #[inline]
+    fn from(id: TrackedOpIdx) -> Self {
         id.index()
     }
 }
@@ -287,13 +331,13 @@ impl DetectorId {
     }
 }
 
-/// Unique identifier for a logical observable.
+/// Unique identifier for a tracked Pauli operator in the older tick influence map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LogicalId {
-    /// Index of the logical qubit.
-    pub logical_qubit: usize,
-    /// Which observable: 0 = Z, 1 = X.
-    pub observable: u8,
+pub struct TrackedOpId {
+    /// Index of the tracked operator.
+    pub op_index: usize,
+    /// Optional Pauli component marker for callers that split X/Z components.
+    pub component: u8,
 }
 
 /// What a single fault location influences.
@@ -305,8 +349,8 @@ pub struct FaultInfluence {
     /// Index 0 is unused (identity fault has no effect).
     pub detector_flips: [Vec<DetectorId>; 4],
 
-    /// Which logical observables this fault flips, indexed by Pauli type.
-    pub logical_flips: [Vec<LogicalId>; 4],
+    /// Which tracked Pauli operators this fault flips, indexed by Pauli type.
+    pub tracked_op_flips: [Vec<TrackedOpId>; 4],
 
     /// Which raw measurements this fault flips, indexed by Pauli type.
     pub measurement_flips: [Vec<MeasurementId>; 4],
@@ -321,7 +365,7 @@ impl FaultInfluence {
     #[must_use]
     pub fn is_trivial(&self) -> bool {
         self.detector_flips.iter().all(std::vec::Vec::is_empty)
-            && self.logical_flips.iter().all(std::vec::Vec::is_empty)
+            && self.tracked_op_flips.iter().all(std::vec::Vec::is_empty)
             && self.measurement_flips.iter().all(std::vec::Vec::is_empty)
     }
 
@@ -334,11 +378,11 @@ impl FaultInfluence {
             .map_or(&[], |v| v.as_slice())
     }
 
-    /// Returns all logicals flipped by a specific Pauli type.
+    /// Returns all tracked Pauli operators flipped by a specific Pauli type.
     #[inline]
     #[must_use]
-    pub fn logicals_for_pauli(&self, pauli: u8) -> &[LogicalId] {
-        self.logical_flips
+    pub fn tracked_ops_for_pauli(&self, pauli: u8) -> &[TrackedOpId] {
+        self.tracked_op_flips
             .get(pauli as usize)
             .map_or(&[], |v| v.as_slice())
     }
@@ -356,8 +400,8 @@ pub struct FaultInfluenceMap {
     /// All detectors in the circuit.
     pub detectors: Vec<DetectorId>,
 
-    /// All logical observables being tracked.
-    pub logicals: Vec<LogicalId>,
+    /// All tracked Pauli operators.
+    pub tracked_ops: Vec<TrackedOpId>,
 
     /// All measurements in the circuit.
     pub measurements: Vec<MeasurementId>,
@@ -365,8 +409,8 @@ pub struct FaultInfluenceMap {
     /// Reverse map: for each detector, which fault locations flip it.
     pub detector_to_faults: BTreeMap<DetectorId, Vec<(SpacetimeLocation, u8)>>,
 
-    /// Reverse map: for each logical, which fault locations flip it.
-    pub logical_to_faults: BTreeMap<LogicalId, Vec<(SpacetimeLocation, u8)>>,
+    /// Reverse map: for each tracked Pauli operator, which fault locations flip it.
+    pub tracked_op_to_faults: BTreeMap<TrackedOpId, Vec<(SpacetimeLocation, u8)>>,
 }
 
 impl FaultInfluenceMap {
@@ -376,10 +420,10 @@ impl FaultInfluenceMap {
         Self {
             influences: BTreeMap::new(),
             detectors: Vec::new(),
-            logicals: Vec::new(),
+            tracked_ops: Vec::new(),
             measurements: Vec::new(),
             detector_to_faults: BTreeMap::new(),
-            logical_to_faults: BTreeMap::new(),
+            tracked_op_to_faults: BTreeMap::new(),
         }
     }
 
@@ -391,14 +435,14 @@ impl FaultInfluenceMap {
 
     /// Quickly classifies a single-qubit fault based on pre-computed influences.
     ///
-    /// Returns (`has_syndrome`, `has_logical_error`) for the given Pauli type.
+    /// Returns (`has_syndrome`, `flips_tracked_op`) for the given Pauli type.
     /// For multi-qubit locations, use `classify_multi_qubit_fault` instead.
     #[must_use]
     pub fn classify_fault(&self, location: &SpacetimeLocation, pauli: u8) -> (bool, bool) {
         if let Some(influence) = self.influences.get(location) {
             let has_syndrome = !influence.detectors_for_pauli(pauli).is_empty();
-            let has_logical = !influence.logicals_for_pauli(pauli).is_empty();
-            (has_syndrome, has_logical)
+            let flips_tracked_op = !influence.tracked_ops_for_pauli(pauli).is_empty();
+            (has_syndrome, flips_tracked_op)
         } else {
             (false, false)
         }
@@ -413,7 +457,7 @@ impl FaultInfluenceMap {
     /// For Y faults, we decompose Y = XZ and combine the X and Z contributions,
     /// since Y anticommutes with both X and Z components of the observable.
     ///
-    /// Returns (`has_syndrome`, `has_logical_error`).
+    /// Returns (`has_syndrome`, `flips_tracked_op`).
     #[must_use]
     pub fn classify_multi_qubit_fault(
         &self,
@@ -458,11 +502,11 @@ impl FaultInfluenceMap {
             // Syndrome = odd number of flips for any detector
             let has_syndrome = detector_flip_counts.values().any(|&count| count % 2 == 1);
 
-            // For logicals, use the same approach
-            // (simplified: just check if any qubit flips logical, proper handling TBD)
-            let has_logical = !influence.logicals_for_pauli(pauli).is_empty();
+            // For tracked operators, use the same approach
+            // (simplified: just check if any component flips, proper handling TBD)
+            let flips_tracked_op = !influence.tracked_ops_for_pauli(pauli).is_empty();
 
-            (has_syndrome, has_logical)
+            (has_syndrome, flips_tracked_op)
         } else {
             (false, false)
         }

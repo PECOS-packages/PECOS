@@ -37,6 +37,8 @@ pub enum GateType {
 
     // Single-qubit Cliffords
     H,
+    F,
+    Fdg,
     SX,
     SXdg,
     SY,
@@ -59,6 +61,10 @@ pub enum GateType {
     CZ,
     SZZ,
     SZZdg,
+    SXX,
+    SXXdg,
+    SYY,
+    SYYdg,
     SWAP,
     CRZ,
     RXX,
@@ -90,6 +96,8 @@ impl GateType {
             | Self::Y
             | Self::Z
             | Self::H
+            | Self::F
+            | Self::Fdg
             | Self::SX
             | Self::SXdg
             | Self::SY
@@ -116,6 +124,10 @@ impl GateType {
             | Self::CZ
             | Self::SZZ
             | Self::SZZdg
+            | Self::SXX
+            | Self::SXXdg
+            | Self::SYY
+            | Self::SYYdg
             | Self::SWAP
             | Self::CRZ
             | Self::RXX
@@ -159,6 +171,31 @@ impl GateType {
     #[must_use]
     pub const fn is_preparation(self) -> bool {
         matches!(self, Self::PZ | Self::QAlloc)
+    }
+
+    /// Returns true if this is an idle operation.
+    #[must_use]
+    pub const fn is_idle(self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    /// Returns true if this is a resource management operation.
+    #[must_use]
+    pub const fn is_resource_management(self) -> bool {
+        matches!(self, Self::QAlloc | Self::QFree)
+    }
+
+    /// Returns true if this is a unitary gate (not preparation, measurement,
+    /// idle, or resource management).
+    ///
+    /// These are the gates that should receive gate depolarizing noise
+    /// (p1 for single-qubit, p2 for two-qubit).
+    #[must_use]
+    pub const fn is_unitary_gate(self) -> bool {
+        !self.is_measurement()
+            && !self.is_preparation()
+            && !self.is_idle()
+            && !self.is_resource_management()
     }
 }
 

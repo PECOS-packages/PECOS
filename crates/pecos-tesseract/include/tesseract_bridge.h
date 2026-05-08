@@ -30,7 +30,6 @@ public:
     uint16_t get_det_beam() const;
     bool get_beam_climbing() const;
     bool get_no_revisit_dets() const;
-    bool get_at_most_two_errors_per_detector() const;
     bool get_verbose() const;
     size_t get_pqlimit() const;
     double get_det_penalty() const;
@@ -74,7 +73,6 @@ size_t get_num_observables(const TesseractDecoderWrapper& decoder);
 uint16_t get_det_beam(const TesseractDecoderWrapper& decoder);
 bool get_beam_climbing(const TesseractDecoderWrapper& decoder);
 bool get_no_revisit_dets(const TesseractDecoderWrapper& decoder);
-bool get_at_most_two_errors_per_detector(const TesseractDecoderWrapper& decoder);
 bool get_verbose(const TesseractDecoderWrapper& decoder);
 size_t get_pqlimit(const TesseractDecoderWrapper& decoder);
 double get_det_penalty(const TesseractDecoderWrapper& decoder);

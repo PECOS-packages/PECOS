@@ -630,6 +630,12 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             GateType::H => {
                 self.simulator.h(&qubits);
             }
+            GateType::F => {
+                self.simulator.f(&qubits);
+            }
+            GateType::Fdg => {
+                self.simulator.fdg(&qubits);
+            }
             GateType::SX => {
                 self.simulator.sx(&qubits);
             }
@@ -674,6 +680,26 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
                 let pairs: Vec<(QubitId, QubitId)> =
                     qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
                 self.simulator.szzdg(&pairs);
+            }
+            GateType::SXX => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.sxx(&pairs);
+            }
+            GateType::SXXdg => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.sxxdg(&pairs);
+            }
+            GateType::SYY => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.syy(&pairs);
+            }
+            GateType::SYYdg => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.syydg(&pairs);
             }
             GateType::SWAP => {
                 let pairs: Vec<(QubitId, QubitId)> =
@@ -890,6 +916,25 @@ mod tests {
         assert_eq!(result.outcomes.len(), 1);
         // Weight should differ from 1 due to importance sampling
         // (unless by chance the proposal probability matched the decision)
+    }
+
+    #[test]
+    fn test_importance_runner_handles_face_inverse_deterministically() {
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .f(&[0])
+            .fdg(&[0])
+            .mz(&[0])
+            .build();
+
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let result = runner.run_shot(&commands);
+
+        assert_eq!(result.outcomes.len(), 1);
+        let outcome = result.outcomes.get(QubitId(0)).unwrap();
+        assert!(!outcome.outcome);
+        assert!(outcome.is_deterministic);
+        assert!((result.weight.weight() - 1.0).abs() < 1e-10);
     }
 
     #[test]

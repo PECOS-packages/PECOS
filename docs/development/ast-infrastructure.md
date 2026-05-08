@@ -25,6 +25,8 @@ Converts compiled Guppy programs (HUGR format) to SLR-AST for analysis and code 
 
 **Key functions:**
 ```python
+from guppylang import guppy
+from guppylang.std.quantum import h, measure, qubit
 from pecos.circuit_converters.hugr_to_ast import guppy_to_ast, hugr_to_ast
 
 
@@ -145,9 +147,21 @@ print(qasm)
 ### Serialization Round-trip
 
 ```python
+from guppylang import guppy
+from guppylang.std.quantum import h, measure, qubit
+from pecos.circuit_converters.hugr_to_ast import guppy_to_ast
 from pecos.slr.ast.serialize import ast_to_json, json_to_ast
 from pecos.slr.ast.compare import ast_equal
 
+
+@guppy
+def my_circuit() -> bool:
+    q = qubit()
+    h(q)
+    return measure(q)
+
+
+ast = guppy_to_ast(my_circuit)
 json_str = ast_to_json(ast)
 restored = json_to_ast(json_str)
 assert ast_equal(ast, restored)

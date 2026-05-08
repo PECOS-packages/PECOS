@@ -166,7 +166,7 @@ error(0.1) D2 D3
     // Test fast configuration
     let fast_config = TesseractConfig::fast();
     let mut fast_decoder = TesseractDecoder::new(dem, fast_config).unwrap();
-    assert_eq!(fast_decoder.det_beam(), 100);
+    assert_eq!(fast_decoder.det_beam(), 5);
     assert!(fast_decoder.beam_climbing());
 
     // Test accurate configuration
@@ -250,10 +250,9 @@ fn test_configuration_getters() {
     let dem = "error(0.1) D0";
 
     let custom_config = TesseractConfig {
-        det_beam: 50,
+        det_beam: 5,
         beam_climbing: true,
         no_revisit_dets: false,
-        at_most_two_errors_per_detector: true,
         verbose: false,
         pqlimit: 5000,
         det_penalty: 0.05,
@@ -262,10 +261,9 @@ fn test_configuration_getters() {
     let decoder = TesseractDecoder::new(dem, custom_config).unwrap();
 
     // Verify all configuration values
-    assert_eq!(decoder.det_beam(), 50);
+    assert_eq!(decoder.det_beam(), 5);
     assert!(decoder.beam_climbing());
     assert!(!decoder.no_revisit_dets());
-    assert!(decoder.at_most_two_errors_per_detector());
     assert!(!decoder.verbose());
     assert_eq!(decoder.pqlimit(), 5000);
     assert!((decoder.det_penalty() - 0.05).abs() < 0.001);

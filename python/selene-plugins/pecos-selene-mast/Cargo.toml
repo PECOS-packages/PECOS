@@ -1,0 +1,24 @@
+[package]
+name = "pecos-selene-mast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "PECOS Mast (magic state injection) simulator plugin for the Selene quantum emulator"
+
+[lib]
+name = "pecos_selene_mast"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+pecos-core = { workspace = true }
+pecos-simulators = { workspace = true }
+pecos-stab-tn = { path = "../../../exp/pecos-stab-tn" }
+selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "1794e8d1dba26120a18e904940c014f4e034bed6" }
+
+[lints]
+workspace = true

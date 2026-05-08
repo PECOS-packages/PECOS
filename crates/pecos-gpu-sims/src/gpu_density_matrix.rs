@@ -539,6 +539,10 @@ impl<SV: GpuStateVecBackend> QuantumSimulator for GpuDensityMatrix<SV> {
         self.state_vector.reset();
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        self.num_physical_qubits
+    }
 }
 
 impl<SV: GpuStateVecBackend> RngManageable for GpuDensityMatrix<SV> {

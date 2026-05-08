@@ -60,6 +60,10 @@ def test_dem_sampler_sampling() -> None:
     builder.with_observables_json('[{"id": 0, "records": [-1]}]')
     sampler = builder.build()
 
+    assert sampler.num_dem_outputs == 1
+    assert sampler.num_observables == 1
+    assert sampler.num_tracked_ops == 0
+
     # Single sample
     det_events, obs_flips = sampler.sample(seed=42)
     assert isinstance(det_events, list)
@@ -129,10 +133,184 @@ def test_dem_sampler_statistics() -> None:
     assert "logical_error_rate" in stats
     assert "syndrome_rate" in stats
     assert "undetectable_rate" in stats
+    assert "per_dem_output" in stats
+    assert "dem_output_rates" in stats
+    assert stats["per_dem_output"] == stats["per_observable"]
+    assert stats["dem_output_rates"] == stats["logical_rates"]
 
     assert stats["total_shots"] == 10000
     assert 0.0 <= stats["logical_error_rate"] <= 1.0
     assert 0.0 <= stats["syndrome_rate"] <= 1.0
+
+
+def test_dem_sampler_tracked_op_labels() -> None:
+    """Test sampler labels expose PECOS tracked-op terminology."""
+    from pecos_rslib import DagCircuit, PauliString
+    from pecos_rslib.qec import DemSampler
+
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.h([0])
+    dag.pauli_operator(PauliString.from_str("X"), label="x_check")
+
+    sampler = DemSampler.from_circuit(dag, p1=0.03, p2=0.0, p_meas=0.0, p_prep=0.0)
+
+    labels = sampler.labels()
+
+    assert sampler.num_tracked_ops == 1
+    assert sampler.num_dem_outputs == 0
+    assert sampler.num_observables == 0
+    assert "dem_outputs" in labels
+    assert "tracked_ops" in labels
+    assert labels["dem_outputs"] == []
+    assert labels["tracked_ops"] == ["x_check"]
+
+    stats = sampler.sample_statistics(2000, seed=7)
+    assert stats["logical_error_count"] == 0
+    assert stats["per_observable"] == []
+    assert stats["per_tracked_op"] == []
+    assert stats["per_dem_output"] == []
+
+
+def test_dem_events_split_observables_and_tracked_ops() -> None:
+    """DEM summaries report detector, observable, and tracked-operator effects separately."""
+    from pecos_rslib import DagCircuit, PauliString
+    from pecos_rslib.qec import DetectorErrorModel
+
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.h([0])
+    dag.pauli_operator(PauliString.from_str("X"), label="x_check")
+    dag.mz([0])
+    dag.set_attr("num_measurements", "1")
+    dag.set_attr("observables", '[{"id": 0, "records": [-1]}]')
+
+    dem = DetectorErrorModel.from_circuit(
+        dag, p1=0.03, p2=0.0, p_meas=0.02, p_prep=0.0
+    )
+    sampler = dem.to_sampler()
+
+    assert dem.num_dem_outputs == 1
+    assert dem.num_observables == 1
+    assert dem.num_tracked_ops == 1
+    assert sampler.num_dem_outputs == 1
+    assert sampler.num_observables == 1
+    assert sampler.num_tracked_ops == 1
+    assert sampler.labels()["tracked_ops"] == ["x_check"]
+
+    summaries = dem.contribution_effect_summaries()
+    assert summaries
+    assert all("dem_outputs" in row for row in summaries)
+    assert all("observables" in row for row in summaries)
+    assert all("tracked_ops" in row for row in summaries)
+
+    observable_hits = {idx for row in summaries for idx in row["observables"]}
+    tracked_hits = {idx for row in summaries for idx in row["tracked_ops"]}
+    assert 0 in observable_hits
+    assert tracked_hits == set()
+
+
+def test_sample_decode_count_ignores_tracked_ops() -> None:
+    """Decoder error counting uses observables, not tracked operators."""
+    from pecos_rslib import DagCircuit, PauliString
+    from pecos_rslib.qec import DemSampler, DetectorErrorModel
+
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.pz([1])
+    dag.h([1])
+    dag.pauli_operator(PauliString.from_str("IZ"), label="tracked_z")
+    dag.mz([0])
+    dag.set_attr("num_measurements", "1")
+    dag.set_attr("detectors", '[{"id": 0, "records": [-1]}]')
+    dag.set_attr("observables", '[{"id": 0, "records": [-1]}]')
+
+    sampler = DemSampler.from_circuit(
+        dag, p1=0.4, p2=0.0, p_meas=0.15, p_prep=0.0
+    )
+    dem = DetectorErrorModel.from_circuit(
+        dag, p1=0.4, p2=0.0, p_meas=0.15, p_prep=0.0
+    )
+
+    assert sampler.num_dem_outputs == 1
+    assert sampler.num_observables == 1
+    assert sampler.num_tracked_ops == 1
+    assert "logical_observable L0" in dem.to_string()
+    assert "logical_observable L1" not in dem.to_string()
+
+    errors = sampler.sample_decode_count(dem.to_string(), 2000, seed=17)
+    assert errors == 0
+
+
+def test_influence_map_tracks_dem_outputs_and_tracked_ops_separately() -> None:
+    """Test influence maps expose DEM outputs and filtered tracked operators."""
+    from pecos_rslib import DagCircuit
+    from pecos_rslib.qec import InfluenceBuilder
+
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.h([0])
+
+    builder = InfluenceBuilder(dag)
+    builder.with_pauli_operator([(0, "X")])
+    influence_map = builder.build()
+
+    assert influence_map.num_tracked_ops > 0
+    assert influence_map.num_observables == 0
+    assert influence_map.num_dem_outputs == 0
+
+    csr = influence_map.export_csr()
+    assert csr["num_dem_outputs"] == influence_map.num_dem_outputs
+    assert csr["num_internal_dem_outputs"] == influence_map.num_tracked_ops
+    assert csr["num_observables"] == 0
+    assert csr["num_tracked_ops"] == influence_map.num_tracked_ops
+    assert "dem_output_offsets_x" in csr
+    assert "dem_output_data_x" in csr
+
+    for loc_idx in range(influence_map.num_locations):
+        tracked = influence_map.get_tracked_op_indices(loc_idx, 1)
+        dem_outputs = influence_map.get_dem_output_indices(loc_idx, 1)
+        internal_dem_outputs = influence_map.get_internal_dem_output_indices(loc_idx, 1)
+        assert dem_outputs == []
+        assert tracked == internal_dem_outputs
+        assert not influence_map.has_dem_output_flips(loc_idx, 1)
+        assert influence_map.has_tracked_op_flips(loc_idx, 1) == bool(tracked)
+
+
+def test_influence_builder_does_not_add_empty_tracked_ops() -> None:
+    """An unconfigured Python InfluenceBuilder should not create identity tracked ops."""
+    from pecos_rslib import DagCircuit
+    from pecos_rslib.qec import InfluenceBuilder
+
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.h([0])
+    dag.mz([0])
+
+    influence_map = InfluenceBuilder(dag).build()
+
+    assert influence_map.num_dem_outputs == 0
+    assert influence_map.num_observables == 0
+    assert influence_map.num_tracked_ops == 0
+
+
+def test_influence_builder_tracked_x_z_are_dem_outputs() -> None:
+    """Tracked X/Z helpers create tracked operators, not observables."""
+    from pecos_rslib import DagCircuit
+    from pecos_rslib.qec import InfluenceBuilder
+
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.h([0])
+
+    builder = InfluenceBuilder(dag)
+    builder.with_tracked_x([0])
+    builder.with_tracked_z([0])
+    influence_map = builder.build()
+
+    assert influence_map.num_dem_outputs == 0
+    assert influence_map.num_observables == 0
+    assert influence_map.num_tracked_ops == 2
 
 
 def test_dem_sampler_zero_noise() -> None:
@@ -181,7 +359,8 @@ def test_dem_sampler_repr() -> None:
     repr_str = repr(sampler)
     assert "DemSampler" in repr_str
     assert "mechanisms" in repr_str
-    assert "detectors" in repr_str
+    assert "dem_outputs" in repr_str
+    assert "tracked_ops" in repr_str
 
 
 if __name__ == "__main__":

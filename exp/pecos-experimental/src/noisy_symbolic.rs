@@ -233,9 +233,9 @@ impl NoisyMeasurementKind {
                     random_deps,
                     fault_deps,
                     flip,
-                } => {
+                }
                     // Check if this is effectively a copy/flipped-copy
-                    if fault_deps.is_empty() && random_deps.len() == 1 {
+                    if fault_deps.is_empty() && random_deps.len() == 1 => {
                         let r_idx = random_deps[0];
                         if let Some(&src_meas) = random_column_sources.get(&r_idx) {
                             if *flip {
@@ -245,7 +245,6 @@ impl NoisyMeasurementKind {
                             }
                         }
                     }
-                }
                 _ => {}
             }
         }
@@ -699,142 +698,127 @@ impl NoisyMeasurementHistoryBuilder {
             | GateType::Z
             | GateType::H
             | GateType::SZ
-            | GateType::SZdg => {
-                if self.noise_model.p1 > 0.0 {
-                    let q = location.qubits[0];
-                    let p_each = self.noise_model.p1 / 3.0;
+            | GateType::SZdg
+                if self.noise_model.p1 > 0.0 =>
+            {
+                let q = location.qubits[0];
+                let p_each = self.noise_model.p1 / 3.0;
 
-                    for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
-                        let affected = Self::propagate_fault(
-                            pauli,
-                            q,
-                            loc_idx + 1, // Fault occurs AFTER the gate
-                            all_gates,
-                            measurement_positions,
-                        );
-
-                        if !affected.is_empty() {
-                            history.add_fault(
-                                p_each,
-                                &affected,
-                                format!("{pauli} after {:?} on q{q}", location.gate_type),
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Two-qubit Clifford gates: depolarizing noise applies one of 15 Pauli pairs
-            GateType::CX | GateType::CY | GateType::CZ => {
-                if self.noise_model.p2 > 0.0 {
-                    let q1 = location.qubits[0];
-                    let q2 = location.qubits[1];
-                    let p_each = self.noise_model.p2 / 15.0;
-
-                    // All 15 non-identity Pauli pairs
-                    let paulis = [Pauli::X, Pauli::Y, Pauli::Z];
-                    for &p1 in &paulis {
-                        for &p2 in &paulis {
-                            // Both qubits get a Pauli (IX, IY, IZ already covered, skip II)
-                            let affected = Self::propagate_two_qubit_fault(
-                                p1,
-                                q1,
-                                p2,
-                                q2,
-                                loc_idx + 1,
-                                all_gates,
-                                measurement_positions,
-                            );
-
-                            if !affected.is_empty() {
-                                history.add_fault(
-                                    p_each,
-                                    &affected,
-                                    format!(
-                                        "{p1}{p2} after {:?} on q{q1},q{q2}",
-                                        location.gate_type
-                                    ),
-                                );
-                            }
-                        }
-                    }
-
-                    // Also handle single-qubit Paulis on each qubit (XI, YI, ZI, IX, IY, IZ)
-                    // These are the remaining 6 of the 15 non-identity pairs
-                    for &p in &paulis {
-                        // Pauli on q1 only
-                        let affected = Self::propagate_fault(
-                            p,
-                            q1,
-                            loc_idx + 1,
-                            all_gates,
-                            measurement_positions,
-                        );
-                        if !affected.is_empty() {
-                            history.add_fault(
-                                p_each,
-                                &affected,
-                                format!("{p}I after {:?} on q{q1},q{q2}", location.gate_type),
-                            );
-                        }
-
-                        // Pauli on q2 only
-                        let affected = Self::propagate_fault(
-                            p,
-                            q2,
-                            loc_idx + 1,
-                            all_gates,
-                            measurement_positions,
-                        );
-                        if !affected.is_empty() {
-                            history.add_fault(
-                                p_each,
-                                &affected,
-                                format!("I{p} after {:?} on q{q1},q{q2}", location.gate_type),
-                            );
-                        }
-                    }
-                }
-            }
-
-            // State preparation: X error with probability p_prep
-            GateType::PZ | GateType::QAlloc => {
-                if self.noise_model.p_prep > 0.0 && !location.qubits.is_empty() {
-                    let q = location.qubits[0];
-
-                    // X error flips the prepared |0⟩ to |1⟩
+                for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
                     let affected = Self::propagate_fault(
-                        Pauli::X,
+                        pauli,
                         q,
-                        loc_idx + 1,
+                        loc_idx + 1, // Fault occurs AFTER the gate
                         all_gates,
                         measurement_positions,
                     );
 
                     if !affected.is_empty() {
                         history.add_fault(
-                            self.noise_model.p_prep,
+                            p_each,
                             &affected,
-                            format!("X prep error on q{q}"),
+                            format!("{pauli} after {:?} on q{q}", location.gate_type),
                         );
                     }
                 }
             }
 
-            // Measurement: flip the measurement outcome with probability p_meas
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                if self.noise_model.p_meas > 0.0 {
-                    // Measurement fault directly flips this measurement
-                    if let Some(&meas_idx) = measurement_positions.get(&loc_idx) {
-                        let mut affected = BTreeSet::new();
-                        affected.insert(meas_idx);
+            // Two-qubit Clifford gates: depolarizing noise applies one of 15 Pauli pairs
+            GateType::CX | GateType::CY | GateType::CZ if self.noise_model.p2 > 0.0 => {
+                let q1 = location.qubits[0];
+                let q2 = location.qubits[1];
+                let p_each = self.noise_model.p2 / 15.0;
 
+                // All 15 non-identity Pauli pairs
+                let paulis = [Pauli::X, Pauli::Y, Pauli::Z];
+                for &p1 in &paulis {
+                    for &p2 in &paulis {
+                        // Both qubits get a Pauli (IX, IY, IZ already covered, skip II)
+                        let affected = Self::propagate_two_qubit_fault(
+                            p1,
+                            q1,
+                            p2,
+                            q2,
+                            loc_idx + 1,
+                            all_gates,
+                            measurement_positions,
+                        );
+
+                        if !affected.is_empty() {
+                            history.add_fault(
+                                p_each,
+                                &affected,
+                                format!("{p1}{p2} after {:?} on q{q1},q{q2}", location.gate_type),
+                            );
+                        }
+                    }
+                }
+
+                // Also handle single-qubit Paulis on each qubit (XI, YI, ZI, IX, IY, IZ)
+                // These are the remaining 6 of the 15 non-identity pairs
+                for &p in &paulis {
+                    // Pauli on q1 only
+                    let affected =
+                        Self::propagate_fault(p, q1, loc_idx + 1, all_gates, measurement_positions);
+                    if !affected.is_empty() {
                         history.add_fault(
-                            self.noise_model.p_meas,
+                            p_each,
                             &affected,
-                            format!("Meas fault on m{meas_idx}"),
+                            format!("{p}I after {:?} on q{q1},q{q2}", location.gate_type),
                         );
                     }
+
+                    // Pauli on q2 only
+                    let affected =
+                        Self::propagate_fault(p, q2, loc_idx + 1, all_gates, measurement_positions);
+                    if !affected.is_empty() {
+                        history.add_fault(
+                            p_each,
+                            &affected,
+                            format!("I{p} after {:?} on q{q1},q{q2}", location.gate_type),
+                        );
+                    }
+                }
+            }
+
+            // State preparation: X error with probability p_prep
+            GateType::PZ | GateType::QAlloc
+                if self.noise_model.p_prep > 0.0 && !location.qubits.is_empty() =>
+            {
+                let q = location.qubits[0];
+
+                // X error flips the prepared |0⟩ to |1⟩
+                let affected = Self::propagate_fault(
+                    Pauli::X,
+                    q,
+                    loc_idx + 1,
+                    all_gates,
+                    measurement_positions,
+                );
+
+                if !affected.is_empty() {
+                    history.add_fault(
+                        self.noise_model.p_prep,
+                        &affected,
+                        format!("X prep error on q{q}"),
+                    );
+                }
+            }
+
+            // Measurement: flip the measurement outcome with probability p_meas
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                if self.noise_model.p_meas > 0.0 =>
+            {
+                // Measurement fault directly flips this measurement
+                if let Some(&meas_idx) = measurement_positions.get(&loc_idx) {
+                    let mut affected = BTreeSet::new();
+                    affected.insert(meas_idx);
+
+                    history.add_fault(
+                        self.noise_model.p_meas,
+                        &affected,
+                        format!("Meas fault on m{meas_idx}"),
+                    );
                 }
             }
 
@@ -870,56 +854,44 @@ impl NoisyMeasurementHistoryBuilder {
                 // Single-qubit Clifford gates
                 // Note: X, Y, Z gates don't change the X/Z basis of Paulis for propagation purposes
                 // (sign changes don't affect measurement flips), so they fall through to _ => {}
-                GateType::H => {
-                    if !location.qubits.is_empty() {
-                        prop.h(&[QubitId(location.qubits[0])]);
-                    }
+                GateType::H if !location.qubits.is_empty() => {
+                    prop.h(&[QubitId(location.qubits[0])]);
                 }
-                GateType::SZ => {
-                    if !location.qubits.is_empty() {
-                        prop.sz(&[QubitId(location.qubits[0])]);
-                    }
+                GateType::SZ if !location.qubits.is_empty() => {
+                    prop.sz(&[QubitId(location.qubits[0])]);
                 }
-                GateType::SZdg => {
-                    if !location.qubits.is_empty() {
-                        // S† = S³
-                        let q = QubitId(location.qubits[0]);
-                        prop.sz(&[q]).sz(&[q]).sz(&[q]);
-                    }
+                GateType::SZdg if !location.qubits.is_empty() => {
+                    // S† = S³
+                    let q = QubitId(location.qubits[0]);
+                    prop.sz(&[q]).sz(&[q]).sz(&[q]);
                 }
 
                 // Two-qubit Clifford gates
-                GateType::CX => {
-                    if location.qubits.len() >= 2 {
-                        prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
-                    }
+                GateType::CX if location.qubits.len() >= 2 => {
+                    prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
                 }
-                GateType::CY => {
-                    if location.qubits.len() >= 2 {
-                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                        // CY = (I ⊗ S†) CX (I ⊗ S)
-                        prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
-                    }
+                GateType::CY if location.qubits.len() >= 2 => {
+                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
+                    // CY = (I ⊗ S†) CX (I ⊗ S)
+                    prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
                 }
-                GateType::CZ => {
-                    if location.qubits.len() >= 2 {
-                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                        // CZ = (I ⊗ H) CX (I ⊗ H)
-                        prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
-                    }
+                GateType::CZ if location.qubits.len() >= 2 => {
+                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
+                    // CZ = (I ⊗ H) CX (I ⊗ H)
+                    prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
                 }
 
                 // Measurements
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                    if !location.qubits.is_empty() {
-                        let q = location.qubits[0];
-                        // Check if this fault would flip the measurement
-                        // A Z-basis measurement is flipped iff there's an X component
-                        if prop.contains_x(q)
-                            && let Some(&meas_idx) = measurement_positions.get(&loc_idx)
-                        {
-                            affected_measurements.insert(meas_idx);
-                        }
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                    if !location.qubits.is_empty() =>
+                {
+                    let q = location.qubits[0];
+                    // Check if this fault would flip the measurement
+                    // A Z-basis measurement is flipped iff there's an X component
+                    if prop.contains_x(q)
+                        && let Some(&meas_idx) = measurement_positions.get(&loc_idx)
+                    {
+                        affected_measurements.insert(meas_idx);
                     }
                 }
 
@@ -960,47 +932,35 @@ impl NoisyMeasurementHistoryBuilder {
         // Propagate through subsequent gates (same logic as single-qubit)
         for (loc_idx, location) in all_gates.iter().enumerate().skip(start_loc) {
             match location.gate_type {
-                GateType::H => {
-                    if !location.qubits.is_empty() {
-                        prop.h(&[QubitId(location.qubits[0])]);
-                    }
+                GateType::H if !location.qubits.is_empty() => {
+                    prop.h(&[QubitId(location.qubits[0])]);
                 }
-                GateType::SZ => {
-                    if !location.qubits.is_empty() {
-                        prop.sz(&[QubitId(location.qubits[0])]);
-                    }
+                GateType::SZ if !location.qubits.is_empty() => {
+                    prop.sz(&[QubitId(location.qubits[0])]);
                 }
-                GateType::SZdg => {
-                    if !location.qubits.is_empty() {
-                        let q = QubitId(location.qubits[0]);
-                        prop.sz(&[q]).sz(&[q]).sz(&[q]);
-                    }
+                GateType::SZdg if !location.qubits.is_empty() => {
+                    let q = QubitId(location.qubits[0]);
+                    prop.sz(&[q]).sz(&[q]).sz(&[q]);
                 }
-                GateType::CX => {
-                    if location.qubits.len() >= 2 {
-                        prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
-                    }
+                GateType::CX if location.qubits.len() >= 2 => {
+                    prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
                 }
-                GateType::CY => {
-                    if location.qubits.len() >= 2 {
-                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                        prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
-                    }
+                GateType::CY if location.qubits.len() >= 2 => {
+                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
+                    prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
                 }
-                GateType::CZ => {
-                    if location.qubits.len() >= 2 {
-                        let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                        prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
-                    }
+                GateType::CZ if location.qubits.len() >= 2 => {
+                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
+                    prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
                 }
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                    if !location.qubits.is_empty() {
-                        let q = location.qubits[0];
-                        if prop.contains_x(q)
-                            && let Some(&meas_idx) = measurement_positions.get(&loc_idx)
-                        {
-                            affected_measurements.insert(meas_idx);
-                        }
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                    if !location.qubits.is_empty() =>
+                {
+                    let q = location.qubits[0];
+                    if prop.contains_x(q)
+                        && let Some(&meas_idx) = measurement_positions.get(&loc_idx)
+                    {
+                        affected_measurements.insert(meas_idx);
                     }
                 }
                 _ => {}

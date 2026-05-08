@@ -507,7 +507,7 @@ impl PyBitUInt {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("BitUInt({}, 0b{})", self.inner.size(), self.inner,)
+        format!("BitUInt({}, 0b{})", self.inner.size(), self.inner)
     }
 
     #[pyo3(signature = (reverse_bits=false, separator=None))]

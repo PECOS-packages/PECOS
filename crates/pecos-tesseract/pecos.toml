@@ -4,13 +4,19 @@
 version = 1
 
 [dependencies.stim]
-version = "bd60b73525fd5a9b30839020eb7554ad369e4337"
-url = "https://github.com/quantumlib/Stim/archive/bd60b73525fd5a9b30839020eb7554ad369e4337.tar.gz"
-sha256 = "2a4be24295ce3018d79e08369b31e401a2d33cd8b3a75675d57dac3afd9de37d"
+version = "213275795e49027772bea7c610b6aac3a80583e1"
+url = "https://github.com/quantumlib/Stim/archive/213275795e49027772bea7c610b6aac3a80583e1.tar.gz"
+sha256 = "b63c4ae94494a8819d440757776cf80a829ec1e30454fa7c9b0f670e981938ab"
 description = "Stabilizer simulator for QEC"
 
+[dependencies.boost]
+version = "1.83.0"
+url = "https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.bz2"
+sha256 = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e"
+description = "C++ Boost libraries"
+
 [dependencies.tesseract]
-version = "1d81f0b385b6a9de49ae361d08bd6b5dbcec1773"
-url = "https://github.com/quantumlib/tesseract-decoder/archive/1d81f0b385b6a9de49ae361d08bd6b5dbcec1773.tar.gz"
-sha256 = "0b5d8bfa63bab68ab4882510a96d7e238d598d2ba0e669a8903af142ce276892"
+version = "56dd8d5fee3834ef85ca9475a10e708f7d245bea"
+url = "https://github.com/quantumlib/tesseract-decoder/archive/56dd8d5fee3834ef85ca9475a10e708f7d245bea.tar.gz"
+sha256 = "8736ec264fb9a6310957470ac3c63a6d1ce2a26002821caeb64ad91148893e9e"
 description = "Tesseract decoder"

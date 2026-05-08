@@ -12,8 +12,15 @@
 
 //! Types for Detector Error Model (DEM) generation.
 //!
-//! This module provides data structures for representing error mechanisms,
-//! detectors, and logical observables in DEM format.
+//! This module provides data structures for representing fault mechanisms,
+//! detectors, observables, and PECOS tracked operators.
+//!
+//! # Terminology
+//!
+//! Stim DEM syntax calls `L<n>` entries logical observables. PECOS keeps that
+//! namespace reserved for measurement-record observables only. Tracked Pauli
+//! operators are PECOS metadata with their own ID space so decoders can ignore
+//! them while PECOS tools can still inspect them.
 //!
 //! # Output Formats
 //!
@@ -37,12 +44,15 @@
 //! This indicates an error decomposed into two parts whose XOR equals the
 //! original mechanism.
 
-use rand::RngExt;
+use pecos_core::PauliString;
+use pecos_core::gate_type::GateType;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+
+use crate::fault_tolerance::propagator::{DemOutputKind, DemOutputMetadata, Pauli};
 
 // ============================================================================
 // Error Source Tracking
@@ -53,25 +63,61 @@ use std::hash::{Hash, Hasher};
 /// This tracks how an error contribution was generated, which determines
 /// how it should be output in the decomposed DEM format:
 /// - Direct errors (X, Z channels) -> output as direct form
+/// - Direct one-sided component errors -> output as direct form for now, but
+///   keep their source family distinct for later decomposition policy work
 /// - Y-decomposed errors -> output as decomposed form (X ^ Z)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ErrorSourceType {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FaultSourceType {
     /// Direct X or Z error channel - outputs as direct form only.
     /// These represent single Pauli errors that cannot be further decomposed.
     Direct,
+
+    /// Direct two-location source where exactly one per-location component equals
+    /// the full effect and the other component is empty.
+    ///
+    /// These rows currently render the same as `Direct`, but the subtype is kept
+    /// so decomposition policy can distinguish them later without reconstructing
+    /// the family from builder-time component metadata.
+    DirectOneSidedComponent,
 
     /// Y error decomposed as X^Z - outputs as decomposed form.
     /// The X and Z component effects are stored for decomposition output.
     YDecomposed {
         /// Detector effect of the X component (sorted detector IDs).
         x_detectors: SmallVec<[u32; 4]>,
-        /// Logical effect of the X component (sorted logical IDs).
-        x_logicals: SmallVec<[u32; 2]>,
+        /// DEM-output effect of the X component (sorted `L<n>` IDs).
+        x_dem_outputs: SmallVec<[u32; 2]>,
         /// Detector effect of the Z component (sorted detector IDs).
         z_detectors: SmallVec<[u32; 4]>,
-        /// Logical effect of the Z component (sorted logical IDs).
-        z_logicals: SmallVec<[u32; 2]>,
+        /// DEM-output effect of the Z component (sorted `L<n>` IDs).
+        z_dem_outputs: SmallVec<[u32; 2]>,
     },
+}
+
+/// Coarse source-family classification for direct contributions.
+///
+/// This is intentionally descriptive instead of prescriptive: it keeps the main
+/// direct source families separate for downstream analysis without changing
+/// rendered DEM behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DirectSourceFamily {
+    /// Single-location direct source without a Y Pauli label.
+    SingleLocation,
+
+    /// Single-location direct source with a Y Pauli label.
+    SingleLocationY,
+
+    /// Two-location direct source routed from a Y-containing channel.
+    TwoLocationPlainY,
+
+    /// Two-location direct source with recorded per-location components.
+    TwoLocationComponent,
+
+    /// Two-location direct source where exactly one component is non-empty.
+    TwoLocationOneSidedComponent,
+
+    /// Fallback for other direct-source shapes.
+    Other,
 }
 
 /// An error contribution with source tracking.
@@ -81,25 +127,186 @@ pub enum ErrorSourceType {
 /// with the same effect are grouped at output time, with their source types
 /// determining how they are output (direct vs decomposed forms).
 #[derive(Debug, Clone)]
-pub struct ErrorContribution {
-    /// The detector/logical effect of this error.
-    pub effect: ErrorMechanism,
+pub struct FaultContribution {
+    /// The detector/DEM-output effect of this error.
+    pub effect: FaultMechanism,
 
     /// Probability of this error.
     pub probability: f64,
 
     /// Source classification for decomposition decisions.
-    pub source_type: ErrorSourceType,
+    pub source_type: FaultSourceType,
+
+    /// Fault location indices in the influence map that produced this contribution.
+    pub location_indices: SmallVec<[u32; 2]>,
+
+    /// Original Pauli channel at each tracked location.
+    pub paulis: SmallVec<[Pauli; 2]>,
+
+    /// Gate type at each tracked source location.
+    pub source_gate_types: SmallVec<[GateType; 2]>,
+
+    /// Whether each tracked source location is before (`true`) or after (`false`) its gate.
+    pub source_before_flags: SmallVec<[bool; 2]>,
+
+    /// Coarse direct-source family for read-only analysis.
+    pub direct_source_family: Option<DirectSourceFamily>,
+
+    /// Optional per-location component effects for direct multi-location sources.
+    ///
+    /// These are builder-time component effects whose XOR equals `effect`. They are
+    /// currently recorded for direct two-qubit channel sources to aid decomposition
+    /// analysis without changing emitted DEM behavior.
+    pub direct_component_effects: Option<(FaultMechanism, FaultMechanism)>,
 }
 
-impl ErrorContribution {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SourceMetadata<'a, Index> {
+    location_indices: &'a [Index],
+    paulis: &'a [Pauli],
+    gate_types: &'a [GateType],
+    before_flags: &'a [bool],
+}
+
+impl<'a, Index> SourceMetadata<'a, Index> {
+    pub(crate) const fn new(
+        location_indices: &'a [Index],
+        paulis: &'a [Pauli],
+        gate_types: &'a [GateType],
+        before_flags: &'a [bool],
+    ) -> Self {
+        Self {
+            location_indices,
+            paulis,
+            gate_types,
+            before_flags,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DirectSourceComponents<'a> {
+    first: &'a FaultMechanism,
+    second: &'a FaultMechanism,
+}
+
+impl<'a> DirectSourceComponents<'a> {
+    pub(crate) const fn new(first: &'a FaultMechanism, second: &'a FaultMechanism) -> Self {
+        Self { first, second }
+    }
+}
+
+impl FaultContribution {
+    fn classify_direct_source_family(
+        location_indices: &[u32],
+        paulis: &[Pauli],
+        direct_component_effects: Option<(&FaultMechanism, &FaultMechanism)>,
+    ) -> Option<DirectSourceFamily> {
+        if location_indices.is_empty() {
+            return None;
+        }
+
+        let has_y = paulis.contains(&Pauli::Y);
+
+        match location_indices.len() {
+            1 => Some(if has_y {
+                DirectSourceFamily::SingleLocationY
+            } else {
+                DirectSourceFamily::SingleLocation
+            }),
+            2 => {
+                if let Some((first, second)) = direct_component_effects {
+                    if first.is_empty() ^ second.is_empty() {
+                        Some(DirectSourceFamily::TwoLocationOneSidedComponent)
+                    } else {
+                        Some(DirectSourceFamily::TwoLocationComponent)
+                    }
+                } else if has_y {
+                    Some(DirectSourceFamily::TwoLocationPlainY)
+                } else {
+                    Some(DirectSourceFamily::Other)
+                }
+            }
+            _ => Some(DirectSourceFamily::Other),
+        }
+    }
+
     /// Creates a new direct error contribution (X or Z channel).
     #[must_use]
-    pub fn direct(effect: ErrorMechanism, probability: f64) -> Self {
+    pub fn direct(effect: FaultMechanism, probability: f64) -> Self {
         Self {
             effect,
             probability,
-            source_type: ErrorSourceType::Direct,
+            source_type: FaultSourceType::Direct,
+            location_indices: SmallVec::new(),
+            paulis: SmallVec::new(),
+            source_gate_types: SmallVec::new(),
+            source_before_flags: SmallVec::new(),
+            direct_source_family: None,
+            direct_component_effects: None,
+        }
+    }
+
+    /// Creates a new direct error contribution with source metadata.
+    #[must_use]
+    fn direct_with_source(
+        effect: FaultMechanism,
+        probability: f64,
+        source: SourceMetadata<'_, u32>,
+    ) -> Self {
+        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
+        debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
+        Self {
+            effect,
+            probability,
+            source_type: FaultSourceType::Direct,
+            location_indices: source.location_indices.iter().copied().collect(),
+            paulis: source.paulis.iter().copied().collect(),
+            source_gate_types: source.gate_types.iter().copied().collect(),
+            source_before_flags: source.before_flags.iter().copied().collect(),
+            direct_source_family: Self::classify_direct_source_family(
+                source.location_indices,
+                source.paulis,
+                None,
+            ),
+            direct_component_effects: None,
+        }
+    }
+
+    /// Creates a new direct error contribution with source metadata and
+    /// per-location component effects.
+    #[must_use]
+    fn direct_with_source_components(
+        effect: FaultMechanism,
+        probability: f64,
+        source: SourceMetadata<'_, u32>,
+        components: DirectSourceComponents<'_>,
+    ) -> Self {
+        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
+        debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
+        let source_type = if (components.first == &effect && components.second.is_empty())
+            || (components.second == &effect && components.first.is_empty())
+        {
+            FaultSourceType::DirectOneSidedComponent
+        } else {
+            FaultSourceType::Direct
+        };
+        Self {
+            effect,
+            probability,
+            source_type,
+            location_indices: source.location_indices.iter().copied().collect(),
+            paulis: source.paulis.iter().copied().collect(),
+            source_gate_types: source.gate_types.iter().copied().collect(),
+            source_before_flags: source.before_flags.iter().copied().collect(),
+            direct_source_family: Self::classify_direct_source_family(
+                source.location_indices,
+                source.paulis,
+                Some((components.first, components.second)),
+            ),
+            direct_component_effects: Some((components.first.clone(), components.second.clone())),
         }
     }
 
@@ -109,103 +316,244 @@ impl ErrorContribution {
     /// allowing the decomposed form (X ^ Z) to be output.
     #[must_use]
     pub fn y_decomposed(
-        combined_effect: ErrorMechanism,
-        x_effect: &ErrorMechanism,
-        z_effect: &ErrorMechanism,
+        combined_effect: FaultMechanism,
+        x_effect: &FaultMechanism,
+        z_effect: &FaultMechanism,
         probability: f64,
     ) -> Self {
         Self {
             effect: combined_effect,
             probability,
-            source_type: ErrorSourceType::YDecomposed {
+            source_type: FaultSourceType::YDecomposed {
                 x_detectors: x_effect.detectors.clone(),
-                x_logicals: x_effect.logicals.clone(),
+                x_dem_outputs: x_effect.dem_outputs.clone(),
                 z_detectors: z_effect.detectors.clone(),
-                z_logicals: z_effect.logicals.clone(),
+                z_dem_outputs: z_effect.dem_outputs.clone(),
             },
+            location_indices: SmallVec::new(),
+            paulis: SmallVec::new(),
+            source_gate_types: SmallVec::new(),
+            source_before_flags: SmallVec::new(),
+            direct_source_family: None,
+            direct_component_effects: None,
+        }
+    }
+
+    /// Creates a new Y-decomposed error contribution with source metadata.
+    #[must_use]
+    fn y_decomposed_with_source(
+        combined_effect: FaultMechanism,
+        x_effect: &FaultMechanism,
+        z_effect: &FaultMechanism,
+        probability: f64,
+        source: SourceMetadata<'_, u32>,
+    ) -> Self {
+        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
+        debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
+        Self {
+            effect: combined_effect,
+            probability,
+            source_type: FaultSourceType::YDecomposed {
+                x_detectors: x_effect.detectors.clone(),
+                x_dem_outputs: x_effect.dem_outputs.clone(),
+                z_detectors: z_effect.detectors.clone(),
+                z_dem_outputs: z_effect.dem_outputs.clone(),
+            },
+            location_indices: source.location_indices.iter().copied().collect(),
+            paulis: source.paulis.iter().copied().collect(),
+            source_gate_types: source.gate_types.iter().copied().collect(),
+            source_before_flags: source.before_flags.iter().copied().collect(),
+            direct_source_family: None,
+            direct_component_effects: None,
         }
     }
 
     /// Returns true if this is a direct (non-decomposable) source.
     #[must_use]
     pub fn is_direct(&self) -> bool {
-        matches!(self.source_type, ErrorSourceType::Direct)
+        matches!(
+            self.source_type,
+            FaultSourceType::Direct | FaultSourceType::DirectOneSidedComponent
+        )
     }
 
     /// Returns the X and Z components if this is a Y-decomposed source.
     #[must_use]
-    pub fn decomposition_components(&self) -> Option<(ErrorMechanism, ErrorMechanism)> {
+    pub fn decomposition_components(&self) -> Option<(FaultMechanism, FaultMechanism)> {
         match &self.source_type {
-            ErrorSourceType::YDecomposed {
+            FaultSourceType::YDecomposed {
                 x_detectors,
-                x_logicals,
+                x_dem_outputs,
                 z_detectors,
-                z_logicals,
+                z_dem_outputs,
             } => {
-                let x = ErrorMechanism::from_sorted(x_detectors.clone(), x_logicals.clone());
-                let z = ErrorMechanism::from_sorted(z_detectors.clone(), z_logicals.clone());
+                let x = FaultMechanism::from_sorted(x_detectors.clone(), x_dem_outputs.clone());
+                let z = FaultMechanism::from_sorted(z_detectors.clone(), z_dem_outputs.clone());
                 Some((x, z))
             }
-            ErrorSourceType::Direct => None,
+            FaultSourceType::Direct | FaultSourceType::DirectOneSidedComponent => None,
         }
     }
+
+    /// Returns the per-location component effects for a direct multi-location source.
+    #[must_use]
+    pub fn direct_component_effects(&self) -> Option<(FaultMechanism, FaultMechanism)> {
+        self.direct_component_effects.clone()
+    }
+}
+
+/// Aggregated source-tracked information for one unique effect.
+#[derive(Debug, Clone)]
+pub struct ContributionEffectSummary {
+    /// The detector/DEM-output effect being summarized.
+    pub effect: FaultMechanism,
+    /// Total number of contributing sources for this effect.
+    pub num_contributions: usize,
+    /// Total probability summed over contributing sources.
+    pub total_probability: f64,
+    /// Number of direct contributions.
+    pub direct_count: usize,
+    /// Total probability from direct contributions.
+    pub direct_probability: f64,
+    /// Number of Y-decomposed contributions.
+    pub y_decomposed_count: usize,
+    /// Total probability from Y-decomposed contributions.
+    pub y_decomposed_probability: f64,
+    /// Number of builder-marked graphlike-decomposable two-qubit sources for this effect.
+    ///
+    /// This is only non-zero for 2-detector, 0-DEM-output effects. It reflects the
+    /// dormant representation-diversity bookkeeping recorded by the DEM builder.
+    pub graphlike_decomposable_count: u32,
+}
+
+/// Structured summary of how tracked contributions render before final regrouping.
+#[derive(Debug, Clone)]
+pub struct ContributionRenderSummary {
+    /// Original full detector/DEM-output effect before rendering.
+    pub effect: FaultMechanism,
+    /// Rendered targets string that this contribution group maps to.
+    pub rendered_targets: String,
+    /// Number of tracked contributions in this pre-regroup bucket.
+    pub num_contributions: usize,
+    /// Total probability in this pre-regroup bucket.
+    pub total_probability: f64,
+    /// Probability after combining same-target contributions within this bucket.
+    pub combined_probability: f64,
+    /// Counts of source types in this bucket.
+    pub source_type_counts: BTreeMap<String, usize>,
+    /// Probability totals of source types in this bucket.
+    pub source_type_probabilities: BTreeMap<String, f64>,
+    /// Counts of direct source families in this bucket.
+    pub direct_source_family_counts: BTreeMap<String, usize>,
+    /// Probability totals of direct source families in this bucket.
+    pub direct_source_family_probabilities: BTreeMap<String, f64>,
+}
+
+/// Per-contribution render record before final regrouping.
+///
+/// This keeps the exact rendered target string attached to one tracked
+/// contribution, without aggregating inside the pre-regroup bucket. It is a
+/// lower-level view than [`ContributionRenderSummary`] and is useful for
+/// inspecting within-effect render policies.
+#[derive(Debug, Clone)]
+pub struct ContributionRenderRecord {
+    /// Rendered targets string that this contribution maps to.
+    pub rendered_targets: String,
+    /// Coarse render strategy used for this contribution.
+    pub render_strategy: ContributionRenderStrategy,
+    /// Optional targets implied by recorded direct component effects.
+    ///
+    /// This is descriptive only: it does not imply the current render pass uses
+    /// these targets.
+    pub recorded_component_targets: Option<String>,
+    /// Original tracked contribution before regrouping.
+    pub contribution: FaultContribution,
+}
+
+/// Coarse render strategy used for one contribution in the decomposed DEM pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ContributionRenderStrategy {
+    /// Used source-specific decomposition components.
+    SourceComponents,
+    /// Used recorded direct-source component targets instead of the direct edge.
+    RecordedComponents,
+    /// Kept a 2-detector, 0-DEM-output effect graphlike as-is.
+    TwoDetectorDirect,
+    /// Decomposed a hyperedge using graphlike effect decomposition.
+    HyperedgeGraphlike,
+    /// Rendered directly from the full effect.
+    EffectDirect,
+}
+
+/// Policy for rendering direct 2-detector effects in decomposed DEM output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TwoDetectorDirectRenderPolicy {
+    /// Preserve the current direct-edge rendering.
+    KeepDirect,
+    /// Prefer recorded builder-time component targets when they differ from the
+    /// direct edge. This is intended for source-aware render experiments.
+    PreferRecordedComponents,
 }
 
 // ============================================================================
 // Error Mechanism
 // ============================================================================
 
-/// An error mechanism: a set of detectors and logical observables that flip together.
+/// A fault mechanism: a set of detectors and `L<n>` targets that flip together.
 ///
 /// When an error occurs, it flips a specific set of detectors and may flip
-/// logical observables. Mechanisms with the same effect are aggregated together.
+/// `L<n>` targets. Mechanisms with the same effect are aggregated together.
 ///
-/// The detectors and logicals are stored in sorted order for canonical representation.
+/// Detector and `L<n>` target indices are stored in sorted order for canonical representation.
 #[derive(Clone, Default)]
-pub struct ErrorMechanism {
+pub struct FaultMechanism {
     /// Detector indices that flip together (sorted).
     pub detectors: SmallVec<[u32; 4]>,
-    /// Logical observable indices that flip together (sorted).
-    pub logicals: SmallVec<[u32; 2]>,
+    /// DEM `L<n>` target indices that flip together (sorted).
+    ///
+    /// The field name follows Stim's DEM-output terminology.
+    /// New code should treat these as `L<n>` target output channels.
+    pub dem_outputs: SmallVec<[u32; 2]>,
 }
 
-impl ErrorMechanism {
-    /// Creates a new empty error mechanism.
+impl FaultMechanism {
+    /// Creates a new empty fault mechanism.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates a mechanism from unsorted detector and logical indices.
+    /// Creates a mechanism from unsorted detector and DEM-output indices.
     #[must_use]
     pub fn from_unsorted(
         detectors: impl IntoIterator<Item = u32>,
-        logicals: impl IntoIterator<Item = u32>,
+        dem_outputs: impl IntoIterator<Item = u32>,
     ) -> Self {
         let mut dets: SmallVec<[u32; 4]> = detectors.into_iter().collect();
-        let mut logs: SmallVec<[u32; 2]> = logicals.into_iter().collect();
+        let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
         dets.sort_unstable();
-        logs.sort_unstable();
+        dem_outputs.sort_unstable();
         Self {
             detectors: dets,
-            logicals: logs,
+            dem_outputs,
         }
     }
 
-    /// Creates a mechanism from pre-sorted detector and logical indices.
+    /// Creates a mechanism from pre-sorted detector and DEM-output indices.
     #[must_use]
-    pub fn from_sorted(detectors: SmallVec<[u32; 4]>, logicals: SmallVec<[u32; 2]>) -> Self {
+    pub fn from_sorted(detectors: SmallVec<[u32; 4]>, dem_outputs: SmallVec<[u32; 2]>) -> Self {
         debug_assert!(
             detectors.windows(2).all(|w| w[0] <= w[1]),
             "detectors must be sorted"
         );
         debug_assert!(
-            logicals.windows(2).all(|w| w[0] <= w[1]),
-            "logicals must be sorted"
+            dem_outputs.windows(2).all(|w| w[0] <= w[1]),
+            "dem_outputs must be sorted"
         );
         Self {
             detectors,
-            logicals,
+            dem_outputs,
         }
     }
 
@@ -213,7 +561,7 @@ impl ErrorMechanism {
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.detectors.is_empty() && self.logicals.is_empty()
+        self.detectors.is_empty() && self.dem_outputs.is_empty()
     }
 
     /// Returns the number of detectors in this mechanism.
@@ -223,11 +571,11 @@ impl ErrorMechanism {
         self.detectors.len()
     }
 
-    /// Returns the number of logicals in this mechanism.
+    /// Returns the number of outputs in the DEM `L<n>` namespace.
     #[inline]
     #[must_use]
-    pub fn num_logicals(&self) -> usize {
-        self.logicals.len()
+    pub fn num_dem_outputs(&self) -> usize {
+        self.dem_outputs.len()
     }
 
     /// XOR this mechanism with another, returning the combined effect.
@@ -237,28 +585,29 @@ impl ErrorMechanism {
     pub fn xor(&self, other: &Self) -> Self {
         Self {
             detectors: symmetric_difference_4(&self.detectors, &other.detectors),
-            logicals: symmetric_difference_2(&self.logicals, &other.logicals),
+            dem_outputs: symmetric_difference_2(&self.dem_outputs, &other.dem_outputs),
         }
     }
 
     /// Returns true if this mechanism is graphlike.
     ///
-    /// A graphlike mechanism has at most 2 detectors and at most 1 logical observable.
-    /// MWPM decoders can only handle graphlike errors directly.
+    /// A graphlike mechanism has at most 2 detectors.
+    /// DEM outputs do not affect graph-likeness; MWPM decoders attach them as
+    /// frame-change masks on graph edges.
     #[inline]
     #[must_use]
     pub fn is_graphlike(&self) -> bool {
-        self.detectors.len() <= 2 && self.logicals.len() <= 1
+        self.detectors.len() <= 2
     }
 
     /// Returns true if this mechanism is a hyperedge (not graphlike).
     ///
-    /// Hyperedge mechanisms have 3+ detectors or 2+ logicals and need to be
-    /// decomposed into graphlike components for MWPM decoders.
+    /// Hyperedge mechanisms have 3+ detectors and need to be decomposed into
+    /// graphlike components for MWPM decoders.
     #[inline]
     #[must_use]
     pub fn is_hyperedge(&self) -> bool {
-        self.detectors.len() > 2 || self.logicals.len() > 1
+        self.detectors.len() > 2
     }
 }
 
@@ -320,42 +669,42 @@ fn symmetric_difference_2(a: &SmallVec<[u32; 2]>, b: &SmallVec<[u32; 2]>) -> Sma
     result
 }
 
-impl PartialEq for ErrorMechanism {
+impl PartialEq for FaultMechanism {
     fn eq(&self, other: &Self) -> bool {
-        self.detectors == other.detectors && self.logicals == other.logicals
+        self.detectors == other.detectors && self.dem_outputs == other.dem_outputs
     }
 }
 
-impl Eq for ErrorMechanism {}
+impl Eq for FaultMechanism {}
 
-impl Hash for ErrorMechanism {
+impl Hash for FaultMechanism {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.detectors.hash(state);
-        self.logicals.hash(state);
+        self.dem_outputs.hash(state);
     }
 }
 
-impl PartialOrd for ErrorMechanism {
+impl PartialOrd for FaultMechanism {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for ErrorMechanism {
+impl Ord for FaultMechanism {
     fn cmp(&self, other: &Self) -> Ordering {
         self.detectors
             .cmp(&other.detectors)
-            .then_with(|| self.logicals.cmp(&other.logicals))
+            .then_with(|| self.dem_outputs.cmp(&other.dem_outputs))
     }
 }
 
-impl fmt::Debug for ErrorMechanism {
+impl fmt::Debug for FaultMechanism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "ErrorMechanism(dets={:?}, logs={:?})",
+            "FaultMechanism(dets={:?}, dem_outputs={:?})",
             self.detectors.as_slice(),
-            self.logicals.as_slice()
+            self.dem_outputs.as_slice()
         )
     }
 }
@@ -364,23 +713,23 @@ impl fmt::Debug for ErrorMechanism {
 // Decomposed Error
 // ============================================================================
 
-/// A decomposed error mechanism with optional decomposition into graphlike parts.
+/// A decomposed fault mechanism with optional decomposition into graphlike parts.
 ///
 /// When an error affects 3+ detectors (a hyperedge), it can be decomposed into
 /// a combination of graphlike errors (affecting 1-2 detectors each) connected
 /// by `^` separators indicating XOR composition.
 #[derive(Clone, Debug)]
-pub struct DecomposedError {
-    /// The component error mechanisms (separated by `^` in DEM format).
+pub struct DecomposedFault {
+    /// The component fault mechanisms (separated by `^` in DEM format).
     /// For graphlike errors, this has a single element.
     /// For decomposed hyperedges, this has multiple elements.
-    pub components: SmallVec<[ErrorMechanism; 2]>,
+    pub components: SmallVec<[FaultMechanism; 2]>,
 }
 
-impl DecomposedError {
+impl DecomposedFault {
     /// Creates a new decomposed error from a single mechanism.
     #[must_use]
-    pub fn single(mechanism: ErrorMechanism) -> Self {
+    pub fn single(mechanism: FaultMechanism) -> Self {
         let mut components = SmallVec::new();
         components.push(mechanism);
         Self { components }
@@ -388,7 +737,7 @@ impl DecomposedError {
 
     /// Creates a decomposed error from multiple components.
     #[must_use]
-    pub fn decomposed(components: impl IntoIterator<Item = ErrorMechanism>) -> Self {
+    pub fn decomposed(components: impl IntoIterator<Item = FaultMechanism>) -> Self {
         Self {
             components: components.into_iter().collect(),
         }
@@ -396,8 +745,8 @@ impl DecomposedError {
 
     /// Returns the full effect of this error (XOR of all components).
     #[must_use]
-    pub fn full_effect(&self) -> ErrorMechanism {
-        let mut result = ErrorMechanism::new();
+    pub fn full_effect(&self) -> FaultMechanism {
+        let mut result = FaultMechanism::new();
         for component in &self.components {
             result = result.xor(component);
         }
@@ -420,8 +769,8 @@ impl DecomposedError {
                 for &det in &comp.detectors {
                     targets.push(format!("D{det}"));
                 }
-                for &log in &comp.logicals {
-                    targets.push(format!("L{log}"));
+                for &dem_output in &comp.dem_outputs {
+                    targets.push(format!("L{dem_output}"));
                 }
                 targets.join(" ")
             })
@@ -436,7 +785,7 @@ impl DecomposedError {
 
 /// Finds all valid graphlike decompositions of a hyperedge mechanism.
 ///
-/// A hyperedge is an error mechanism with 3+ detectors or 2+ logicals.
+/// A hyperedge is an fault mechanism with 3+ detectors.
 /// For MWPM decoders, hyperedges must be decomposed into XOR combinations
 /// of graphlike components (≤2 detectors, ≤1 logical each).
 ///
@@ -447,163 +796,317 @@ impl DecomposedError {
 ///
 /// # Returns
 ///
-/// A vector of decompositions, where each decomposition is a vector of
-/// graphlike mechanisms whose XOR equals the original hyperedge.
-/// Returns an empty vector if no valid decomposition exists.
+/// A graphlike decomposition whose XOR equals the original hyperedge.
+/// Returns `None` if no valid decomposition exists.
 ///
 /// # Algorithm
 ///
-/// Uses a type-aware search that distinguishes between:
-/// - 2-part decompositions (hyperedge = A XOR B)
-/// - 3-part decompositions (hyperedge = A XOR B XOR C)
+/// Uses a detector-driven recursive search over graphlike components whose
+/// detector sets are subsets of the hyperedge. This is closer to Stim's
+/// decomposition strategy than the older fixed-width 2-part/3-part search,
+/// and it allows decompositions into 4+ graphlike pieces when needed.
 ///
-/// This matches Stim's behavior of outputting:
-/// - 1 form if only one decomposition size exists
-/// - 2 forms if both 2-part and 3-part decompositions exist
+/// Decompositions are filtered to only include components whose detectors are
+/// subsets of the original hyperedge's detectors, matching Stim's behavior of
+/// not introducing extra detector symptoms.
 ///
-/// Additionally, decompositions are filtered to only include those where
-/// all component detectors are subsets of the original hyperedge's detectors.
-/// This matches Stim's behavior of not introducing extra detectors.
+/// # Selection
 ///
-/// # Steps
-/// 1. Find decompositions, preferring those with smaller components
-/// 2. Return one 2-part and one 3-part if both exist
-pub fn find_hyperedge_decompositions(
-    hyperedge: &ErrorMechanism,
-    graphlike_set: &HashSet<ErrorMechanism>,
-) -> Vec<Vec<ErrorMechanism>> {
-    // If already graphlike, no decomposition needed
-    if hyperedge.is_graphlike() {
-        return vec![vec![hyperedge.clone()]];
-    }
+/// The search returns the first valid decomposition found using a deterministic
+/// ordering that prefers detector pairs before singlets, similar to Stim's
+/// decompose pass over known graphlike symptoms.
+#[cfg(test)]
+fn find_hyperedge_decomposition(
+    hyperedge: &FaultMechanism,
+    graphlike_set: &BTreeSet<FaultMechanism>,
+) -> Option<Vec<FaultMechanism>> {
+    GraphlikeDecompositionIndex::new(graphlike_set).find_hyperedge_decomposition(hyperedge)
+}
 
-    // Collect the set of detectors in the hyperedge
-    let hyperedge_dets: HashSet<u32> = hyperedge.detectors.iter().copied().collect();
+struct GraphlikeDecompositionIndex {
+    graphlike_set: BTreeSet<FaultMechanism>,
+    /// Indexed by detector ID; see `SingletonDecompositionIndex` for the same
+    /// pattern and rationale. Detector IDs are dense `0..num_detectors`.
+    candidates_by_detector: Vec<Vec<FaultMechanism>>,
+}
 
-    // Helper to check if all detectors in a decomposition are in the hyperedge
-    let decomp_dets_valid = |decomp: &[ErrorMechanism]| -> bool {
-        decomp
+impl GraphlikeDecompositionIndex {
+    fn new(graphlike_set: &BTreeSet<FaultMechanism>) -> Self {
+        let max_det = graphlike_set
             .iter()
-            .flat_map(|m| m.detectors.iter())
-            .all(|d| hyperedge_dets.contains(d))
-    };
+            .flat_map(|c| c.detectors.iter().copied())
+            .max();
 
-    // Helper to compute the maximum component size (prefer smaller)
-    let max_component_size = |decomp: &[ErrorMechanism]| -> usize {
-        decomp.iter().map(|m| m.detectors.len()).max().unwrap_or(0)
-    };
+        let mut candidates_by_detector: Vec<Vec<FaultMechanism>> =
+            max_det.map_or_else(Vec::new, |m| vec![Vec::new(); m as usize + 1]);
 
-    // Find best 2-part and best 3-part decomposition (prefer smaller components)
-    let mut two_part_decomp: Option<Vec<ErrorMechanism>> = None;
-    let mut two_part_max_size: usize = usize::MAX;
-    let mut three_part_decomp: Option<Vec<ErrorMechanism>> = None;
-    let mut three_part_max_size: usize = usize::MAX;
-
-    // Try 2-part decompositions
-    for g1 in graphlike_set {
-        // g1 must share at least one element with the hyperedge
-        if !shares_element(g1, hyperedge) {
-            continue;
+        for candidate in graphlike_set {
+            for &det in &candidate.detectors {
+                candidates_by_detector[det as usize].push(candidate.clone());
+            }
         }
-
-        let remainder = hyperedge.xor(g1);
-
-        // If remainder is graphlike and in the set, we found a 2-part decomposition
-        if remainder.is_graphlike() && graphlike_set.contains(&remainder) {
-            // Verify: g1 XOR remainder should equal hyperedge
-            let check = g1.xor(&remainder);
-            if check != *hyperedge {
-                continue;
-            }
-
-            // Canonicalize ordering
-            let decomp = if g1 < &remainder {
-                vec![g1.clone(), remainder]
-            } else {
-                vec![remainder, g1.clone()]
-            };
-
-            // Check that all detectors in components are in the hyperedge
-            if decomp_dets_valid(&decomp) {
-                let size = max_component_size(&decomp);
-                if size < two_part_max_size {
-                    two_part_max_size = size;
-                    two_part_decomp = Some(decomp);
-                }
-            }
+        for values in &mut candidates_by_detector {
+            values.sort_by(|a, b| {
+                b.detectors
+                    .len()
+                    .cmp(&a.detectors.len())
+                    .then_with(|| a.cmp(b))
+            });
+        }
+        Self {
+            graphlike_set: graphlike_set.clone(),
+            candidates_by_detector,
         }
     }
 
-    // Try 3-part decompositions
-    for g1 in graphlike_set {
-        if !shares_element(g1, hyperedge) {
-            continue;
+    fn find_hyperedge_decomposition(
+        &self,
+        hyperedge: &FaultMechanism,
+    ) -> Option<Vec<FaultMechanism>> {
+        // If already graphlike, no decomposition needed
+        if hyperedge.is_graphlike() {
+            return Some(vec![hyperedge.clone()]);
         }
 
-        let after_g1 = hyperedge.xor(g1);
-        if after_g1.is_graphlike() {
-            continue; // Would be a 2-part decomposition
+        // Collect the set of detectors in the hyperedge
+        let hyperedge_dets: BTreeSet<u32> = hyperedge.detectors.iter().copied().collect();
+
+        let decomp_dets_valid = |decomp: &[FaultMechanism]| -> bool {
+            decomp
+                .iter()
+                .flat_map(|m| m.detectors.iter())
+                .all(|d| hyperedge_dets.contains(d))
+        };
+
+        let mut memo = BTreeMap::new();
+        let result = self.search_decomposition(hyperedge, &mut memo);
+        result.filter(|decomp| decomp_dets_valid(decomp))
+    }
+
+    fn search_decomposition(
+        &self,
+        remaining: &FaultMechanism,
+        memo: &mut BTreeMap<FaultMechanism, Option<Vec<FaultMechanism>>>,
+    ) -> Option<Vec<FaultMechanism>> {
+        if let Some(cached) = memo.get(remaining) {
+            return cached.clone();
         }
 
-        for g2 in graphlike_set {
-            if g2 <= g1 {
-                continue; // Avoid duplicates
-            }
-            if !shares_element(g2, &after_g1) {
-                continue;
-            }
+        if remaining.is_empty() {
+            let result = Some(Vec::new());
+            memo.insert(remaining.clone(), result.clone());
+            return result;
+        }
 
-            let after_g2 = after_g1.xor(g2);
+        if remaining.is_graphlike() && self.graphlike_set.contains(remaining) {
+            let result = Some(vec![remaining.clone()]);
+            memo.insert(remaining.clone(), result.clone());
+            return result;
+        }
 
-            // If remainder is graphlike and in the set, we found a 3-part decomposition
-            if after_g2.is_graphlike() && graphlike_set.contains(&after_g2) {
-                // Verify: g1 XOR g2 XOR after_g2 should equal hyperedge
-                let check = g1.xor(g2).xor(&after_g2);
-                if check != *hyperedge {
+        if let Some(&pivot) = remaining.detectors.first()
+            && let Some(candidates) = self.candidates_by_detector.get(pivot as usize)
+        {
+            for candidate in candidates {
+                if !candidate
+                    .detectors
+                    .iter()
+                    .all(|d| remaining.detectors.contains(d))
+                {
+                    continue;
+                }
+                if !shares_element(candidate, remaining) {
                     continue;
                 }
 
-                let mut parts = vec![g1.clone(), g2.clone(), after_g2];
-                parts.sort();
+                let next = remaining.xor(candidate);
 
-                // Check that all detectors in components are in the hyperedge
-                if decomp_dets_valid(&parts) {
-                    let size = max_component_size(&parts);
-                    if size < three_part_max_size {
-                        three_part_max_size = size;
-                        three_part_decomp = Some(parts);
-                    }
+                // Require strict detector-count progress to prevent cycles.
+                if next.detectors.len() >= remaining.detectors.len() {
+                    continue;
+                }
+
+                if let Some(suffix) = self.search_decomposition(&next, memo) {
+                    let mut combined = Vec::with_capacity(suffix.len() + 1);
+                    combined.push(candidate.clone());
+                    combined.extend(suffix);
+                    combined.sort();
+                    let result = Some(combined);
+                    memo.insert(remaining.clone(), result.clone());
+                    return result;
                 }
             }
         }
+
+        memo.insert(remaining.clone(), None);
+        None
+    }
+}
+
+/// Finds a decomposition of a graphlike effect into singleton detector components.
+///
+/// This is used for "maximal" decomposition modes that prefer singleton
+/// detector symptoms whenever the required singleton effects already exist as
+/// standalone mechanisms in the DEM.
+fn find_singleton_decomposition(
+    effect: &FaultMechanism,
+    index: &SingletonDecompositionIndex,
+) -> Option<Vec<FaultMechanism>> {
+    if effect.is_empty() {
+        return Some(Vec::new());
+    }
+    if effect.num_detectors() <= 1 {
+        return Some(vec![effect.clone()]);
+    }
+    if index.is_empty() {
+        return None;
     }
 
-    // Combine results: output both types if available
-    let mut result = Vec::new();
-    if let Some(decomp) = two_part_decomp {
-        result.push(decomp);
+    let mut memo: BTreeMap<FaultMechanism, Option<Vec<FaultMechanism>>> = BTreeMap::new();
+    search_singleton_decomposition(effect, &index.candidates_by_detector, &mut memo)
+}
+
+/// Pre-computed bucket of singleton (1-detector) mechanisms indexed by detector ID.
+///
+/// Built once per render pass; detector IDs are dense `0..num_detectors`, so a
+/// `Vec<Vec<_>>` indexed by detector ID beats a `BTreeMap<u32, Vec<_>>` both on
+/// lookup (O(1) vs O(log n)) and on per-call rebuild cost. Profiling flagged the
+/// rebuild-per-call pattern as ~28% of `to_string_decomposed_maximally` time
+/// before this was lifted out.
+struct SingletonDecompositionIndex {
+    /// `candidates_by_detector[det]` lists every singleton mechanism whose sole
+    /// detector is `det`, sorted by `(dem_outputs.len, dem_outputs, detectors)` so the
+    /// decomposition search prefers simpler candidates deterministically.
+    candidates_by_detector: Vec<Vec<FaultMechanism>>,
+}
+
+impl SingletonDecompositionIndex {
+    fn new() -> Self {
+        Self {
+            candidates_by_detector: Vec::new(),
+        }
     }
-    if let Some(decomp) = three_part_decomp {
-        result.push(decomp);
+
+    fn from_contributions(contributions: &[FaultContribution]) -> Self {
+        let mut singletons: BTreeSet<FaultMechanism> = BTreeSet::new();
+        for contrib in contributions {
+            if contrib.effect.num_detectors() == 1 {
+                singletons.insert(contrib.effect.clone());
+            }
+        }
+
+        let Some(max_det) = singletons.iter().map(|c| c.detectors[0]).max() else {
+            return Self::new();
+        };
+
+        let mut candidates_by_detector: Vec<Vec<FaultMechanism>> =
+            vec![Vec::new(); max_det as usize + 1];
+        for candidate in singletons {
+            let det = candidate.detectors[0] as usize;
+            candidates_by_detector[det].push(candidate);
+        }
+        for candidates in &mut candidates_by_detector {
+            candidates.sort_by(|a, b| {
+                a.dem_outputs
+                    .len()
+                    .cmp(&b.dem_outputs.len())
+                    .then_with(|| a.dem_outputs.cmp(&b.dem_outputs))
+                    .then_with(|| a.detectors.cmp(&b.detectors))
+            });
+        }
+        Self {
+            candidates_by_detector,
+        }
     }
+
+    fn is_empty(&self) -> bool {
+        self.candidates_by_detector.is_empty()
+    }
+}
+
+fn search_singleton_decomposition(
+    remaining: &FaultMechanism,
+    candidates_by_detector: &[Vec<FaultMechanism>],
+    memo: &mut BTreeMap<FaultMechanism, Option<Vec<FaultMechanism>>>,
+) -> Option<Vec<FaultMechanism>> {
+    if let Some(cached) = memo.get(remaining) {
+        return cached.clone();
+    }
+    if remaining.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let Some(&first_det) = remaining.detectors.first() else {
+        memo.insert(remaining.clone(), None);
+        return None;
+    };
+
+    let result = candidates_by_detector
+        .get(first_det as usize)
+        .and_then(|candidates| {
+            for candidate in candidates {
+                let next = remaining.xor(candidate);
+                if next.num_detectors() >= remaining.num_detectors() {
+                    continue;
+                }
+                if let Some(mut tail) =
+                    search_singleton_decomposition(&next, candidates_by_detector, memo)
+                {
+                    let mut parts = Vec::with_capacity(tail.len() + 1);
+                    parts.push(candidate.clone());
+                    parts.append(&mut tail);
+                    return Some(parts);
+                }
+            }
+            None
+        });
+
+    memo.insert(remaining.clone(), result.clone());
     result
 }
 
 /// Checks if two mechanisms share at least one detector or logical.
-fn shares_element(a: &ErrorMechanism, b: &ErrorMechanism) -> bool {
+fn shares_element(a: &FaultMechanism, b: &FaultMechanism) -> bool {
     // Check detectors
     for d in &a.detectors {
         if b.detectors.contains(d) {
             return true;
         }
     }
-    // Check logicals
-    for l in &a.logicals {
-        if b.logicals.contains(l) {
+    // Check dem_outputs
+    for l in &a.dem_outputs {
+        if b.dem_outputs.contains(l) {
             return true;
         }
     }
     false
+}
+
+fn convert_location_indices(location_indices: &[usize]) -> SmallVec<[u32; 2]> {
+    location_indices
+        .iter()
+        .map(|&idx| u32::try_from(idx).expect("fault location index must fit into u32"))
+        .collect()
+}
+
+/// Converts a measurement record offset (Stim-style) to an absolute measurement index.
+///
+/// Negative offsets count backward from the end of the measurement record
+/// (`-1` is the last measurement). Positive offsets are treated as absolute
+/// indices.
+///
+/// Returns `None` whenever the resulting index would land outside
+/// `0..num_measurements`. Callers should treat a `None` as a malformed input
+/// (parser/user-supplied offset was too large or too negative); it is never
+/// produced by internally-generated offsets, so silently dropping such a
+/// contribution rather than panicking is the intended behavior.
+#[must_use]
+pub fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
+    if offset < 0 {
+        num_measurements.checked_add_signed(isize::try_from(offset).ok()?)
+    } else {
+        usize::try_from(offset).ok()
+    }
 }
 
 // ============================================================================
@@ -656,28 +1159,52 @@ impl DetectorDef {
 }
 
 // ============================================================================
-// Logical Observable
+// DEM Outputs
 // ============================================================================
 
-/// A logical observable definition.
+/// Metadata for a PECOS non-detector output.
 ///
-/// Logical observables track the parity of certain measurement outcomes
-/// to detect logical errors.
+/// Observables are rendered as standard Stim `L<n>` targets. Tracked operators
+/// use the same metadata shape but live in a separate PECOS-only ID space and
+/// are never rendered as `L<n>`.
 #[derive(Debug, Clone)]
-pub struct LogicalObservable {
-    /// Unique observable ID.
+pub struct DemOutput {
+    /// Unique ID within this output's ID space.
     pub id: u32,
-    /// Measurement record offsets (negative indices from end of record).
+    /// Measurement record offsets (negative indices from end of record), when
+    /// this output is tied to measurement records.
     pub records: SmallVec<[i32; 4]>,
+    /// PECOS DEM output kind, when known.
+    pub kind: Option<DemOutputKind>,
+    /// Pauli string whose flip is tracked, when this came from a Pauli
+    /// annotation or logical operator builder.
+    pub pauli: Option<PauliString>,
+    /// Optional user label.
+    pub label: Option<String>,
 }
 
-impl LogicalObservable {
-    /// Creates a new logical observable.
+impl DemOutput {
+    /// Creates a new unclassified DEM output.
     #[must_use]
     pub fn new(id: u32) -> Self {
         Self {
             id,
             records: SmallVec::new(),
+            kind: None,
+            pauli: None,
+            label: None,
+        }
+    }
+
+    /// Creates a DEM output from PECOS propagation metadata.
+    #[must_use]
+    pub fn from_metadata(id: u32, metadata: &DemOutputMetadata) -> Self {
+        Self {
+            id,
+            records: SmallVec::new(),
+            kind: Some(metadata.kind),
+            pauli: Some(metadata.pauli.clone()),
+            label: metadata.label.clone(),
         }
     }
 
@@ -685,25 +1212,286 @@ impl LogicalObservable {
     #[must_use]
     pub fn with_records(mut self, records: impl IntoIterator<Item = i32>) -> Self {
         self.records = records.into_iter().collect();
+        self.kind.get_or_insert(DemOutputKind::Observable);
         self
     }
+
+    /// Sets the DEM output kind.
+    #[must_use]
+    pub fn with_kind(mut self, kind: DemOutputKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
+    /// Sets the tracked Pauli string.
+    #[must_use]
+    pub fn with_pauli(mut self, mut pauli: PauliString) -> Self {
+        // A DEM output flip is an anticommutation property; global phase
+        // has no meaning for DEM/sampler output.
+        pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+        self.pauli = Some(pauli);
+        self
+    }
+
+    /// Sets a user-facing label.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Returns true when this DEM output is an observable.
+    #[must_use]
+    pub fn is_observable(&self) -> bool {
+        match self.kind {
+            Some(DemOutputKind::Observable) => true,
+            Some(DemOutputKind::TrackedOperator) => false,
+            None => !self.records.is_empty(),
+        }
+    }
+
+    /// Returns true when this DEM output is a tracked Pauli operator.
+    #[must_use]
+    pub fn is_tracked_operator(&self) -> bool {
+        match self.kind {
+            Some(DemOutputKind::TrackedOperator) => true,
+            Some(DemOutputKind::Observable) => false,
+            None => self.pauli.is_some() && self.records.is_empty(),
+        }
+    }
 }
+
+/// Error returned when parsing or applying PECOS DEM metadata JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PecosDemMetadataError {
+    message: String,
+}
+
+impl PecosDemMetadataError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    /// Human-readable parse/apply error.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for PecosDemMetadataError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for PecosDemMetadataError {}
 
 // ============================================================================
 // Noise Configuration
 // ============================================================================
 
-/// Noise model configuration for DEM generation.
-#[derive(Debug, Clone, Copy)]
+/// Per-Pauli fault probability weights.
+///
+/// Maps `PauliString` to relative probability. Entries must sum to ~1.0.
+/// Used to customize the fault distribution for single-qubit or two-qubit gates.
+///
+/// # Examples
+///
+/// ```ignore
+/// use pecos_core::pauli::constructors::{X, Y, Z};
+///
+/// // Single-qubit: biased toward dephasing
+/// let w = PauliWeights::from([(Z(0), 0.8), (X(0), 0.1), (Y(0), 0.1)]);
+///
+/// // Two-qubit: uniform (convenience)
+/// let w = PauliWeights::uniform_2q();
+/// ```
+#[derive(Debug, Clone)]
+pub struct PauliWeights {
+    /// (`PauliString`, weight) pairs. Weights must sum to ~1.0.
+    entries: Vec<(pecos_core::PauliString, f64)>,
+}
+
+impl PauliWeights {
+    /// Create from an iterator of `(PauliString, weight)` pairs.
+    ///
+    /// Validates that weights sum to approximately 1.0 (within 1e-6).
+    ///
+    /// # Panics
+    ///
+    /// Panics if weights don't sum to ~1.0 or if any weight is negative.
+    pub fn new(entries: impl IntoIterator<Item = (pecos_core::PauliString, f64)>) -> Self {
+        let entries: Vec<_> = entries.into_iter().collect();
+        let sum: f64 = entries.iter().map(|(_, w)| w).sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "PauliWeights must sum to 1.0, got {sum}"
+        );
+        for (ps, w) in &entries {
+            assert!(*w >= 0.0, "Weight for {ps} must be non-negative, got {w}");
+        }
+        Self { entries }
+    }
+
+    /// Uniform weights for single-qubit gates: X, Y, Z each with 1/3.
+    #[must_use]
+    pub fn uniform_1q() -> Self {
+        use pecos_core::pauli::constructors::{X, Y, Z};
+        Self {
+            entries: vec![(X(0), 1.0 / 3.0), (Y(0), 1.0 / 3.0), (Z(0), 1.0 / 3.0)],
+        }
+    }
+
+    /// Uniform weights for two-qubit gates: all 15 non-identity Paulis at 1/15.
+    #[must_use]
+    pub fn uniform_2q() -> Self {
+        use pecos_core::pauli::constructors::{X, Y, Z};
+        let w = 1.0 / 15.0;
+        Self {
+            entries: vec![
+                (X(1), w),
+                (Y(1), w),
+                (Z(1), w),
+                (X(0), w),
+                (X(0) & X(1), w),
+                (X(0) & Y(1), w),
+                (X(0) & Z(1), w),
+                (Y(0), w),
+                (Y(0) & X(1), w),
+                (Y(0) & Y(1), w),
+                (Y(0) & Z(1), w),
+                (Z(0), w),
+                (Z(0) & X(1), w),
+                (Z(0) & Y(1), w),
+                (Z(0) & Z(1), w),
+            ],
+        }
+    }
+
+    /// Look up the weight for a specific `PauliString`.
+    ///
+    /// Matches by Pauli type pattern only, ignoring qubit IDs.
+    /// E.g., `X(3) & Z(7)` matches a weight entry `X(0) & Z(1)` because
+    /// both have the pattern [X, Z] (sorted by qubit position).
+    #[must_use]
+    pub fn weight_for(&self, pauli: &pecos_core::PauliString) -> f64 {
+        let query_pattern = pauli_pattern(pauli);
+        self.entries
+            .iter()
+            .find(|(ps, _)| pauli_pattern(ps) == query_pattern)
+            .map_or(0.0, |(_, w)| *w)
+    }
+
+    /// Get all entries as `(PauliString, weight)` pairs.
+    #[must_use]
+    pub fn entries(&self) -> &[(pecos_core::PauliString, f64)] {
+        &self.entries
+    }
+}
+
+impl<const N: usize> From<[(pecos_core::PauliString, f64); N]> for PauliWeights {
+    fn from(entries: [(pecos_core::PauliString, f64); N]) -> Self {
+        Self::new(entries)
+    }
+}
+
+/// Noise model configuration for circuit-level fault analysis.
+#[derive(Debug, Clone)]
 pub struct NoiseConfig {
-    /// Single-qubit depolarizing error rate.
+    /// Single-qubit gate error rate.
     pub p1: f64,
-    /// Two-qubit depolarizing error rate.
+    /// Two-qubit gate error rate.
     pub p2: f64,
     /// Measurement error rate.
     pub p_meas: f64,
     /// Initialization (prep) error rate.
-    pub p_init: f64,
+    pub p_prep: f64,
+    /// Idle gate error rate per time unit.
+    ///
+    /// The actual error probability for an idle gate is `p_idle * duration`
+    /// (clamped to [0, 1]), where `duration` is the gate's `TimeUnits` value.
+    /// Default is 0.0 (no idle noise).
+    pub p_idle: f64,
+    /// Optional T1 relaxation time (in the same time units as idle duration).
+    ///
+    /// When set (along with T2), idle noise uses the Pauli-twirled
+    /// amplitude damping + dephasing model instead of uniform depolarizing.
+    /// This gives biased noise: P(Z) > P(X) = P(Y).
+    pub t1: Option<f64>,
+    /// Optional T2 dephasing time (must satisfy T2 <= 2*T1).
+    pub t2: Option<f64>,
+    /// Optional per-Pauli weights for single-qubit gates.
+    ///
+    /// Maps each Pauli fault to its relative probability. Must sum to ~1.0.
+    /// Default (None) = uniform depolarizing.
+    pub p1_weights: Option<PauliWeights>,
+    /// Optional per-Pauli weights for two-qubit gates.
+    ///
+    /// Maps each two-qubit Pauli fault to its relative probability. Must sum to ~1.0.
+    /// Default (None) = uniform depolarizing.
+    pub p2_weights: Option<PauliWeights>,
+    /// Coherent idle RZ rotation angle per time unit.
+    ///
+    /// When set (> 0), idle gates contribute a coherent Z rotation in addition
+    /// to any stochastic idle noise. Idle fault locations with the same
+    /// detector set have their angles accumulated coherently (angles add),
+    /// giving probability sin²(total_angle/2) instead of independent combination.
+    ///
+    /// This is the EEG H-type noise model for idle gates. Default is 0.0.
+    pub idle_rz: f64,
+}
+
+/// Per-Pauli error probabilities for a single qubit.
+#[derive(Debug, Clone, Copy)]
+pub struct PauliProbs {
+    /// Probability of X error.
+    pub px: f64,
+    /// Probability of Y error.
+    pub py: f64,
+    /// Probability of Z error.
+    pub pz: f64,
+}
+
+impl PauliProbs {
+    /// Total error probability (px + py + pz).
+    #[must_use]
+    pub fn total(&self) -> f64 {
+        self.px + self.py + self.pz
+    }
+
+    /// Uniform depolarizing: each Pauli with probability p/3.
+    #[must_use]
+    pub fn depolarizing(p: f64) -> Self {
+        Self {
+            px: p / 3.0,
+            py: p / 3.0,
+            pz: p / 3.0,
+        }
+    }
+
+    /// Pauli-twirled T1/T2 noise for idle duration t.
+    ///
+    /// Approximates the combined amplitude damping (T1) and pure
+    /// dephasing (T2) channel as a Pauli channel via Pauli twirling:
+    ///
+    ///   P(X) = P(Y) = (1 - e^{-t/T1}) / 4
+    ///   P(Z) = (1 - e^{-t/T2}) / 2 - (1 - e^{-t/T1}) / 4
+    ///
+    /// Requires T2 <= 2*T1 (physical constraint).
+    #[must_use]
+    pub fn from_t1_t2(t: f64, t1: f64, t2: f64) -> Self {
+        let gamma = 1.0 - (-t / t1).exp(); // amplitude damping parameter
+        let lambda_t2 = 1.0 - (-t / t2).exp(); // total dephasing parameter
+
+        let px = gamma / 4.0;
+        let py = gamma / 4.0;
+        let pz = (lambda_t2 / 2.0 - gamma / 4.0).max(0.0);
+
+        Self { px, py, pz }
+    }
 }
 
 impl Default for NoiseConfig {
@@ -712,33 +1500,396 @@ impl Default for NoiseConfig {
             p1: 0.01,
             p2: 0.01,
             p_meas: 0.01,
-            p_init: 0.01,
+            p_prep: 0.01,
+            p_idle: 0.0,
+            t1: None,
+            t2: None,
+            p1_weights: None,
+            p2_weights: None,
+            idle_rz: 0.0,
         }
     }
 }
 
 impl NoiseConfig {
-    /// Creates a new noise configuration.
+    /// Creates a new noise configuration (idle defaults to `None`).
     #[must_use]
-    pub fn new(p1: f64, p2: f64, p_meas: f64, p_init: f64) -> Self {
+    pub fn new(p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         Self {
             p1,
             p2,
             p_meas,
-            p_init,
+            p_prep,
+            p_idle: 0.0,
+            t1: None,
+            t2: None,
+            p1_weights: None,
+            p2_weights: None,
+            idle_rz: 0.0,
         }
     }
 
-    /// Creates a uniform noise configuration.
+    /// Creates a new noise configuration with uniform depolarizing idle noise.
+    #[must_use]
+    pub fn with_idle(p1: f64, p2: f64, p_meas: f64, p_prep: f64, p_idle: f64) -> Self {
+        Self {
+            p1,
+            p2,
+            p_meas,
+            p_prep,
+            p_idle,
+            t1: None,
+            t2: None,
+            p1_weights: None,
+            p2_weights: None,
+            idle_rz: 0.0,
+        }
+    }
+
+    /// Creates a uniform noise configuration (including depolarizing idle).
     #[must_use]
     pub fn uniform(p: f64) -> Self {
         Self {
             p1: p,
             p2: p,
             p_meas: p,
-            p_init: p,
+            p_prep: p,
+            p_idle: p,
+            t1: None,
+            t2: None,
+            p1_weights: None,
+            p2_weights: None,
+            idle_rz: 0.0,
         }
     }
+
+    /// Sets the idle noise rate on an existing config (uniform depolarizing).
+    #[must_use]
+    pub fn set_idle(mut self, p_idle: f64) -> Self {
+        self.p_idle = p_idle;
+        self
+    }
+
+    /// Sets T1/T2 relaxation times for idle noise.
+    ///
+    /// When set, idle gates use the Pauli-twirled T1/T2 model instead of
+    /// uniform depolarizing. This produces biased noise where Z errors
+    /// (dephasing) are more likely than X/Y errors (relaxation).
+    ///
+    /// T1 and T2 are in the same time units as idle gate durations.
+    /// Must satisfy T2 <= 2*T1 (physical constraint).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `t2 > 2 * t1`, which violates the physical constraint
+    /// that the dephasing time cannot exceed twice the relaxation time.
+    #[must_use]
+    pub fn set_t1_t2(mut self, t1: f64, t2: f64) -> Self {
+        assert!(
+            t2 <= 2.0 * t1,
+            "T2 ({t2}) must be <= 2*T1 ({}) (physical constraint)",
+            2.0 * t1
+        );
+        self.t1 = Some(t1);
+        self.t2 = Some(t2);
+        self
+    }
+
+    /// Sets custom per-Pauli weights for single-qubit gates.
+    ///
+    /// ```ignore
+    /// use pecos_core::pauli::constructors::{X, Y, Z};
+    /// noise.set_p1_weights(PauliWeights::from([
+    ///     (X(0), 0.1), (Y(0), 0.1), (Z(0), 0.8),
+    /// ]));
+    /// ```
+    #[must_use]
+    pub fn set_p1_weights(mut self, weights: PauliWeights) -> Self {
+        self.p1_weights = Some(weights);
+        self
+    }
+
+    /// Sets custom per-Pauli weights for two-qubit gates.
+    #[must_use]
+    pub fn set_p2_weights(mut self, weights: PauliWeights) -> Self {
+        self.p2_weights = Some(weights);
+        self
+    }
+
+    /// Sets idle noise from a coherent RZ rotation angle per time unit.
+    ///
+    /// Converts `idle_rz` (the angle theta of an RZ(theta) rotation applied
+    /// per idle time unit) to an equivalent stochastic Z-biased noise:
+    ///
+    ///   P(Z) = sin^2(theta/2)   per idle time unit
+    ///   P(X) = P(Y) = 0
+    ///
+    /// This is the exact Pauli twirling of a pure dephasing channel and
+    /// gives the non-EEG DEM builder correct idle noise behavior including
+    /// proper correlations through the fault influence map.
+    #[must_use]
+    pub fn set_idle_rz(mut self, idle_rz: f64) -> Self {
+        self.idle_rz = idle_rz;
+        let pz = (idle_rz / 2.0).sin().powi(2);
+        // Use T1/T2 model: T1=infinity (no amplitude damping), T2 chosen to match pz.
+        // From the T1/T2 model: pz = (1 - exp(-t/T2))/2 for T1=inf, t=1.
+        // Solve: T2 = -1/ln(1 - 2*pz)
+        // This provides the stochastic fallback for non-coherent code paths.
+        if pz > 0.0 && pz < 0.5 {
+            let t2 = -1.0 / (1.0 - 2.0 * pz).ln();
+            let t1 = 1e15; // effectively infinity
+            self.t1 = Some(t1);
+            self.t2 = Some(t2);
+        }
+        self.p_idle = 0.0;
+        self
+    }
+
+    /// Compute per-Pauli idle noise probabilities for a given duration.
+    ///
+    /// If T1/T2 are set, uses the Pauli-twirled model (biased noise).
+    /// Otherwise, uses uniform depolarizing with `p_idle * duration`.
+    #[must_use]
+    pub fn idle_pauli_probs(&self, duration: f64) -> PauliProbs {
+        if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
+            PauliProbs::from_t1_t2(duration, t1, t2)
+        } else {
+            PauliProbs::depolarizing((self.p_idle * duration).min(1.0))
+        }
+    }
+}
+
+/// Extract the Pauli type pattern from a `PauliString`, ignoring qubit IDs.
+///
+/// Returns the sequence of Pauli types sorted by qubit position.
+/// E.g., X(3) & Z(7) -> [X, Z], same as X(0) & Z(1) -> [X, Z].
+fn pauli_pattern(ps: &pecos_core::PauliString) -> Vec<pecos_core::Pauli> {
+    ps.paulis().iter().map(|&(p, _)| p).collect()
+}
+
+fn pecos_metadata_dem_output_value(target: &DemOutput) -> serde_json::Value {
+    serde_json::json!({
+        "id": target.id,
+        "kind": target.kind.map_or("dem_output", DemOutputKind::as_str),
+        "label": target.label,
+        "pauli": target.pauli.as_ref().map(PauliString::to_sparse_str),
+        "records": target.records.iter().copied().collect::<Vec<_>>(),
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+struct ParsedPecosDemMetadata {
+    observables: Vec<DemOutput>,
+    tracked_ops: Vec<DemOutput>,
+}
+
+pub(crate) fn parse_pecos_dem_metadata_line(
+    line: &str,
+) -> Result<DemOutput, PecosDemMetadataError> {
+    let line = line.trim();
+    let (prefix, payload, forced_kind) =
+        if let Some(payload) = line.strip_prefix("pecos_tracked_op") {
+            (
+                "pecos_tracked_op",
+                payload.trim(),
+                Some(DemOutputKind::TrackedOperator),
+            )
+        } else if let Some(payload) = line.strip_prefix("pecos_observable") {
+            (
+                "pecos_observable",
+                payload.trim(),
+                Some(DemOutputKind::Observable),
+            )
+    } else {
+        return Err(PecosDemMetadataError::new(
+            "missing PECOS DEM metadata prefix",
+        ));
+    };
+    if payload.is_empty() {
+        return Err(PecosDemMetadataError::new(format!(
+            "{prefix} is missing its JSON payload"
+        )));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(payload).map_err(|err| {
+        PecosDemMetadataError::new(format!("invalid {prefix} JSON payload: {err}"))
+    })?;
+    let mut output = parse_pecos_metadata_dem_output(0, &value)?;
+    if let Some(kind) = forced_kind {
+        output.kind = Some(kind);
+    }
+    if output.is_tracked_operator() && !output.records.is_empty() {
+        return Err(PecosDemMetadataError::new(
+            "tracked operator metadata cannot have measurement records",
+        ));
+    }
+    Ok(output)
+}
+
+fn parse_pecos_metadata_json(json: &str) -> Result<ParsedPecosDemMetadata, PecosDemMetadataError> {
+    let root: serde_json::Value = serde_json::from_str(json).map_err(|err| {
+        PecosDemMetadataError::new(format!("invalid PECOS DEM metadata JSON: {err}"))
+    })?;
+
+    let format = root
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| PecosDemMetadataError::new("missing metadata format"))?;
+    if format != "pecos.dem.metadata" {
+        return Err(PecosDemMetadataError::new(format!(
+            "unsupported metadata format: {format}"
+        )));
+    }
+
+    let version = root
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| PecosDemMetadataError::new("missing metadata version"))?;
+    if version != 1 {
+        return Err(PecosDemMetadataError::new(format!(
+            "unsupported PECOS DEM metadata version: {version}"
+        )));
+    }
+
+    let parse_array = |name: &str,
+                       kind: DemOutputKind|
+     -> Result<Vec<DemOutput>, PecosDemMetadataError> {
+        let Some(values) = root.get(name) else {
+            return Ok(Vec::new());
+        };
+        let values = values.as_array().ok_or_else(|| {
+            PecosDemMetadataError::new(format!("{name} metadata is not an array"))
+        })?;
+        values
+            .iter()
+            .enumerate()
+            .map(|(idx, value)| {
+                let mut output = parse_pecos_metadata_dem_output(idx, value)?;
+                output.kind = Some(kind);
+                if kind == DemOutputKind::TrackedOperator && !output.records.is_empty() {
+                    return Err(PecosDemMetadataError::new(format!(
+                        "tracked operator metadata {idx} cannot have measurement records"
+                    )));
+                }
+                Ok(output)
+            })
+            .collect()
+    };
+
+    let parsed = ParsedPecosDemMetadata {
+        observables: parse_array("observables", DemOutputKind::Observable)?,
+        tracked_ops: parse_array("tracked_ops", DemOutputKind::TrackedOperator)?,
+    };
+
+    if root.get("observables").is_none() && root.get("tracked_ops").is_none() {
+        return Err(PecosDemMetadataError::new(
+            "missing observables or tracked_ops metadata arrays",
+        ));
+    }
+
+    Ok(parsed)
+}
+
+fn parse_pecos_metadata_dem_output(
+    idx: usize,
+    target: &serde_json::Value,
+) -> Result<DemOutput, PecosDemMetadataError> {
+    let object = target
+        .as_object()
+        .ok_or_else(|| PecosDemMetadataError::new(format!("DEM output {idx} is not an object")))?;
+
+    let id = object
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| PecosDemMetadataError::new(format!("DEM output {idx} is missing id")))?;
+    let id = u32::try_from(id).map_err(|_| {
+        PecosDemMetadataError::new(format!("DEM output {idx} id does not fit in u32"))
+    })?;
+
+    let mut dem_output = DemOutput::new(id);
+    let mut explicit_kind = None;
+
+    if let Some(kind_value) = object.get("kind") {
+        let kind = kind_value.as_str().ok_or_else(|| {
+            PecosDemMetadataError::new(format!("DEM output {idx} kind is not a string"))
+        })?;
+        if kind != "dem_output" {
+            let parsed_kind = DemOutputKind::from_metadata_str(kind).ok_or_else(|| {
+                PecosDemMetadataError::new(format!("DEM output {idx} has unknown kind: {kind}"))
+            })?;
+            explicit_kind = Some(parsed_kind);
+            dem_output = dem_output.with_kind(parsed_kind);
+        }
+    }
+
+    if let Some(label_value) = object.get("label") {
+        if !label_value.is_null() {
+            let label = label_value.as_str().ok_or_else(|| {
+                PecosDemMetadataError::new(format!(
+                    "DEM output {idx} label is not a string or null"
+                ))
+            })?;
+            dem_output = dem_output.with_label(label);
+        }
+    }
+
+    if let Some(pauli_value) = object.get("pauli") {
+        if !pauli_value.is_null() {
+            let pauli = pauli_value.as_str().ok_or_else(|| {
+                PecosDemMetadataError::new(format!(
+                    "DEM output {idx} pauli is not a string or null"
+                ))
+            })?;
+            let pauli = pauli.parse::<PauliString>().map_err(|err| {
+                PecosDemMetadataError::new(format!(
+                    "DEM output {idx} has invalid PauliString: {err}"
+                ))
+            })?;
+            dem_output = dem_output.with_pauli(pauli);
+        }
+    }
+
+    let records = if let Some(records_value) = object.get("records") {
+        if records_value.is_null() {
+            Vec::new()
+        } else {
+            let records = records_value.as_array().ok_or_else(|| {
+                PecosDemMetadataError::new(format!(
+                    "DEM output {idx} records is not an array or null"
+                ))
+            })?;
+            records
+                .iter()
+                .enumerate()
+                .map(|(record_idx, record)| {
+                    let record = record.as_i64().ok_or_else(|| {
+                        PecosDemMetadataError::new(format!(
+                            "DEM output {idx} record {record_idx} is not an integer"
+                        ))
+                    })?;
+                    i32::try_from(record).map_err(|_| {
+                        PecosDemMetadataError::new(format!(
+                            "DEM output {idx} record {record_idx} does not fit in i32"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    } else {
+        Vec::new()
+    };
+
+    if explicit_kind == Some(DemOutputKind::TrackedOperator) && !records.is_empty() {
+        return Err(PecosDemMetadataError::new(format!(
+            "tracked operator DEM output {idx} cannot have measurement records"
+        )));
+    }
+
+    if !records.is_empty() || explicit_kind == Some(DemOutputKind::Observable) {
+        dem_output = dem_output.with_records(records);
+    }
+
+    Ok(dem_output)
 }
 
 // ============================================================================
@@ -748,7 +1899,7 @@ impl NoiseConfig {
 /// A complete Detector Error Model (DEM).
 ///
 /// This represents the noise model of a quantum circuit. It maps mechanisms
-/// (detector/logical effects) to their probabilities.
+/// (detector/DEM-output effects) to their probabilities.
 ///
 /// # Aggregation Modes
 ///
@@ -777,16 +1928,20 @@ impl NoiseConfig {
 pub struct DetectorErrorModel {
     /// Detector definitions.
     pub detectors: Vec<DetectorDef>,
-    /// Logical observable definitions.
-    pub observables: Vec<LogicalObservable>,
+    /// Measurement-record observables rendered as standard Stim `L<n>` outputs.
+    pub observables: Vec<DemOutput>,
+    /// PECOS tracked Pauli operators.
+    ///
+    /// These have their own ID space and are emitted only as PECOS metadata.
+    pub tracked_ops: Vec<DemOutput>,
     /// Error contributions with source tracking.
     /// Each contribution tracks whether it came from a direct (X, Z) or decomposable (Y) source.
-    contributions: Vec<ErrorContribution>,
+    contributions: Vec<FaultContribution>,
     /// Count of graphlike decomposable sources per 2-detector mechanism.
     /// Key is (d0, d1) with d0 < d1. A source is "graphlike decomposable" if both
     /// component effects are non-empty and graphlike (≤2 detectors).
     /// Used to determine output format: ≥2 → 3 forms, 1 → 2 forms, 0 → 1 form.
-    graphlike_decomposable_counts: HashMap<(u32, u32), u32>,
+    graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
 }
 
 impl DetectorErrorModel {
@@ -796,19 +1951,21 @@ impl DetectorErrorModel {
         Self {
             detectors: Vec::new(),
             observables: Vec::new(),
+            tracked_ops: Vec::new(),
             contributions: Vec::new(),
-            graphlike_decomposable_counts: HashMap::new(),
+            graphlike_decomposable_counts: BTreeMap::new(),
         }
     }
 
     /// Creates a DEM with pre-allocated capacity.
     #[must_use]
-    pub fn with_capacity(num_detectors: usize, num_observables: usize) -> Self {
+    pub fn with_capacity(num_detectors: usize, num_dem_outputs: usize) -> Self {
         Self {
             detectors: Vec::with_capacity(num_detectors),
-            observables: Vec::with_capacity(num_observables),
+            observables: Vec::with_capacity(num_dem_outputs),
+            tracked_ops: Vec::new(),
             contributions: Vec::new(),
-            graphlike_decomposable_counts: HashMap::new(),
+            graphlike_decomposable_counts: BTreeMap::new(),
         }
     }
 
@@ -823,7 +1980,60 @@ impl DetectorErrorModel {
     #[inline]
     #[must_use]
     pub fn num_observables(&self) -> usize {
-        self.observables.len()
+        self.observables
+            .iter()
+            .map(|op| op.id as usize + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Returns the number of standard DEM `L<n>` outputs.
+    #[inline]
+    #[must_use]
+    pub fn num_dem_outputs(&self) -> usize {
+        self.num_observables()
+    }
+
+    /// Returns the number of tracked operators.
+    #[inline]
+    #[must_use]
+    pub fn num_tracked_ops(&self) -> usize {
+        self.tracked_ops
+            .iter()
+            .map(|op| op.id as usize + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Returns standard DEM output definitions (`L<n>` observables).
+    #[inline]
+    #[must_use]
+    pub fn dem_outputs(&self) -> &[DemOutput] {
+        &self.observables
+    }
+
+    /// Returns mutable standard DEM output definitions (`L<n>` observables).
+    #[inline]
+    #[must_use]
+    pub fn dem_outputs_mut(&mut self) -> &mut [DemOutput] {
+        &mut self.observables
+    }
+
+    /// Iterates over observables.
+    pub fn observables(&self) -> impl Iterator<Item = &DemOutput> {
+        self.observables.iter()
+    }
+
+    /// Returns all tracked operator definitions.
+    #[inline]
+    #[must_use]
+    pub fn tracked_ops(&self) -> &[DemOutput] {
+        &self.tracked_ops
+    }
+
+    /// Iterates over tracked operators.
+    pub fn tracked_operators(&self) -> impl Iterator<Item = &DemOutput> {
+        self.tracked_ops.iter()
     }
 
     /// Returns the number of tracked contributions.
@@ -831,6 +2041,186 @@ impl DetectorErrorModel {
     #[must_use]
     pub fn num_contributions(&self) -> usize {
         self.contributions.len()
+    }
+
+    /// Exports PECOS-only metadata that is not representable in standard Stim
+    /// DEM syntax.
+    ///
+    /// The standard DEM string remains decoder-compatible and uses ordinary
+    /// `logical_observable L<n>` declarations. This JSON form preserves the
+    /// richer PECOS DEM-output information, including tracked Pauli operators.
+    #[must_use]
+    pub fn to_pecos_metadata_json(&self) -> String {
+        let observables: Vec<serde_json::Value> = self
+            .observables
+            .iter()
+            .map(pecos_metadata_dem_output_value)
+            .collect();
+        let tracked_ops: Vec<serde_json::Value> = self
+            .tracked_ops
+            .iter()
+            .map(pecos_metadata_dem_output_value)
+            .collect();
+
+        serde_json::to_string_pretty(&serde_json::json!({
+            "format": "pecos.dem.metadata",
+            "version": 1,
+            "observables": observables,
+            "tracked_ops": tracked_ops,
+        }))
+        .expect("serializing PECOS DEM metadata should not fail")
+    }
+
+    /// Applies PECOS DEM metadata JSON to this model.
+    ///
+    /// This is the inverse of [`Self::to_pecos_metadata_json`] for DEM output
+    /// definitions. It updates existing outputs by `id` and adds any that
+    /// are present in the metadata but missing from the DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the JSON is malformed, uses an unsupported metadata
+    /// version, has an unknown op kind, or contains invalid Pauli/record
+    /// fields.
+    pub fn apply_pecos_metadata_json(&mut self, json: &str) -> Result<(), PecosDemMetadataError> {
+        let metadata = parse_pecos_metadata_json(json)?;
+        for observable in metadata.observables {
+            self.apply_observable_metadata(observable);
+        }
+        for tracked_op in metadata.tracked_ops {
+            self.apply_tracked_op_metadata(tracked_op);
+        }
+        Ok(())
+    }
+
+    /// Returns a copy of this model with PECOS DEM metadata JSON applied.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::apply_pecos_metadata_json`].
+    pub fn with_pecos_metadata_json(mut self, json: &str) -> Result<Self, PecosDemMetadataError> {
+        self.apply_pecos_metadata_json(json)?;
+        Ok(self)
+    }
+
+    /// Converts the DEM to PECOS's strict superset of Stim DEM text.
+    ///
+    /// The beginning of the output is exactly the standard Stim-compatible DEM
+    /// from [`Self::to_string`]. PECOS-only metadata follows as
+    /// `pecos_observable {json}` and `pecos_tracked_op {json}` statements. This makes PECOS DEM text a
+    /// strict superset: every Stim DEM remains valid PECOS DEM text, and PECOS
+    /// adds statements for data Stim cannot represent.
+    #[must_use]
+    pub fn to_pecos_string(&self) -> String {
+        let mut text = self.to_string();
+        let observable_lines = self
+            .observables
+            .iter()
+            .map(|observable| {
+                let value = pecos_metadata_dem_output_value(observable);
+                let payload = serde_json::to_string(&value)
+                    .expect("serializing PECOS observable metadata should not fail");
+                format!("pecos_observable {payload}")
+            });
+        let tracked_op_lines = self
+            .tracked_ops
+            .iter()
+            .map(|tracked_op| {
+                let value = pecos_metadata_dem_output_value(tracked_op);
+                let payload = serde_json::to_string(&value)
+                    .expect("serializing PECOS tracked-op metadata should not fail");
+                format!("pecos_tracked_op {payload}")
+            });
+        let metadata_lines: Vec<String> = observable_lines
+            .chain(tracked_op_lines)
+            .collect();
+
+        if metadata_lines.is_empty() {
+            return text;
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&metadata_lines.join("\n"));
+        text
+    }
+
+    /// Applies PECOS metadata embedded in extended DEM text.
+    ///
+    /// Stim-compatible lines are ignored by this method. PECOS extension lines
+    /// are parsed and merged into the observable/tracked-op definitions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a PECOS metadata line is malformed.
+    pub fn apply_pecos_dem_metadata(
+        &mut self,
+        dem_text: &str,
+    ) -> Result<(), PecosDemMetadataError> {
+        for line in dem_text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with("pecos_observable")
+                || line.starts_with("pecos_tracked_op")
+            {
+                self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(line)?);
+            } else if line.starts_with("pecos_") {
+                return Err(PecosDemMetadataError::new(format!(
+                    "unsupported PECOS DEM extension line: {line}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns a copy of this model with PECOS metadata from extended DEM text
+    /// applied.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::apply_pecos_dem_metadata`].
+    pub fn with_pecos_dem_metadata(
+        mut self,
+        dem_text: &str,
+    ) -> Result<Self, PecosDemMetadataError> {
+        self.apply_pecos_dem_metadata(dem_text)?;
+        Ok(self)
+    }
+
+    fn apply_dem_output_metadata(&mut self, target: DemOutput) {
+        if target.is_tracked_operator() {
+            self.apply_tracked_op_metadata(target);
+        } else {
+            self.apply_observable_metadata(target);
+        }
+    }
+
+    fn apply_observable_metadata(&mut self, mut target: DemOutput) {
+        target.kind.get_or_insert(DemOutputKind::Observable);
+        if let Some(existing) = self
+            .observables
+            .iter_mut()
+            .find(|existing| existing.id == target.id)
+        {
+            *existing = target;
+        } else {
+            self.add_observable(target);
+        }
+    }
+
+    fn apply_tracked_op_metadata(&mut self, mut target: DemOutput) {
+        target.kind = Some(DemOutputKind::TrackedOperator);
+        if let Some(existing) = self
+            .tracked_ops
+            .iter_mut()
+            .find(|existing| existing.id == target.id)
+        {
+            *existing = target;
+        } else {
+            self.add_tracked_operator(target);
+        }
     }
 
     /// Returns debug info about contributions for a specific mechanism.
@@ -842,32 +2232,37 @@ impl DetectorErrorModel {
         let mut lines = Vec::new();
 
         for contrib in &self.contributions {
-            if contrib.effect.detectors == target_dets && contrib.effect.logicals.is_empty() {
+            if contrib.effect.detectors == target_dets && contrib.effect.dem_outputs.is_empty() {
                 let source_type = match &contrib.source_type {
-                    ErrorSourceType::Direct => "Direct".to_string(),
-                    ErrorSourceType::YDecomposed {
+                    FaultSourceType::Direct => "Direct".to_string(),
+                    FaultSourceType::DirectOneSidedComponent => {
+                        "DirectOneSidedComponent".to_string()
+                    }
+                    FaultSourceType::YDecomposed {
                         x_detectors,
-                        x_logicals,
+                        x_dem_outputs,
                         z_detectors,
-                        z_logicals,
+                        z_dem_outputs,
                     } => {
                         let x_dets: Vec<_> = x_detectors.iter().map(|d| format!("D{d}")).collect();
                         let z_dets: Vec<_> = z_detectors.iter().map(|d| format!("D{d}")).collect();
-                        let x_logs: Vec<_> = x_logicals.iter().map(|l| format!("L{l}")).collect();
-                        let z_logs: Vec<_> = z_logicals.iter().map(|l| format!("L{l}")).collect();
+                        let x_outputs: Vec<_> =
+                            x_dem_outputs.iter().map(|l| format!("L{l}")).collect();
+                        let z_outputs: Vec<_> =
+                            z_dem_outputs.iter().map(|l| format!("L{l}")).collect();
                         format!(
                             "YDecomposed(X=[{}{}], Z=[{}{}])",
                             x_dets.join(" "),
-                            if x_logs.is_empty() {
+                            if x_outputs.is_empty() {
                                 String::new()
                             } else {
-                                format!(" {}", x_logs.join(" "))
+                                format!(" {}", x_outputs.join(" "))
                             },
                             z_dets.join(" "),
-                            if z_logs.is_empty() {
+                            if z_outputs.is_empty() {
                                 String::new()
                             } else {
-                                format!(" {}", z_logs.join(" "))
+                                format!(" {}", z_outputs.join(" "))
                             }
                         )
                     }
@@ -891,6 +2286,22 @@ impl DetectorErrorModel {
         }
     }
 
+    /// Returns all contributions matching a full detector/DEM-output effect.
+    #[must_use]
+    pub fn contributions_for_effect(
+        &self,
+        detectors: &[u32],
+        dem_outputs: &[u32],
+    ) -> Vec<FaultContribution> {
+        let target =
+            FaultMechanism::from_unsorted(detectors.iter().copied(), dem_outputs.iter().copied());
+        self.contributions
+            .iter()
+            .filter(|contrib| contrib.effect == target)
+            .cloned()
+            .collect()
+    }
+
     /// Returns debug info about all unique contribution effects.
     #[must_use]
     pub fn all_contribution_effects(&self) -> String {
@@ -907,7 +2318,7 @@ impl DetectorErrorModel {
                 .collect();
             let log_str: Vec<_> = contrib
                 .effect
-                .logicals
+                .dem_outputs
                 .iter()
                 .map(|l| format!("L{l}"))
                 .collect();
@@ -945,18 +2356,275 @@ impl DetectorErrorModel {
         )
     }
 
+    /// Returns structured summaries for all unique contribution effects.
+    #[must_use]
+    pub fn contribution_effect_summaries(&self) -> Vec<ContributionEffectSummary> {
+        let mut by_effect: BTreeMap<FaultMechanism, ContributionEffectSummary> = BTreeMap::new();
+
+        for contrib in &self.contributions {
+            let summary = by_effect.entry(contrib.effect.clone()).or_insert_with(|| {
+                ContributionEffectSummary {
+                    effect: contrib.effect.clone(),
+                    num_contributions: 0,
+                    total_probability: 0.0,
+                    direct_count: 0,
+                    direct_probability: 0.0,
+                    y_decomposed_count: 0,
+                    y_decomposed_probability: 0.0,
+                    graphlike_decomposable_count: 0,
+                }
+            });
+
+            summary.num_contributions += 1;
+            summary.total_probability += contrib.probability;
+            match contrib.source_type {
+                FaultSourceType::Direct | FaultSourceType::DirectOneSidedComponent => {
+                    summary.direct_count += 1;
+                    summary.direct_probability += contrib.probability;
+                }
+                FaultSourceType::YDecomposed { .. } => {
+                    summary.y_decomposed_count += 1;
+                    summary.y_decomposed_probability += contrib.probability;
+                }
+            }
+        }
+
+        for summary in by_effect.values_mut() {
+            if summary.effect.dem_outputs.is_empty() && summary.effect.detectors.len() == 2 {
+                summary.graphlike_decomposable_count = self.graphlike_decomposable_count(
+                    summary.effect.detectors[0],
+                    summary.effect.detectors[1],
+                );
+            }
+        }
+
+        by_effect.into_values().collect()
+    }
+
+    /// Returns structured summaries of contribution render buckets before regrouping.
+    ///
+    /// This mirrors the per-contribution render pass used by
+    /// `to_string_decomposed()`, but keeps the original effect attached so callers
+    /// can see which source families collapse onto the same rendered targets.
+    #[must_use]
+    pub fn contribution_render_summaries(&self) -> Vec<ContributionRenderSummary> {
+        self.contribution_render_summaries_with_two_detector_direct_policy(
+            TwoDetectorDirectRenderPolicy::KeepDirect,
+        )
+    }
+
+    /// Returns structured summaries of contribution render buckets before
+    /// regrouping, using an explicit policy for direct 2-detector rendering.
+    #[must_use]
+    pub fn contribution_render_summaries_with_two_detector_direct_policy(
+        &self,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+    ) -> Vec<ContributionRenderSummary> {
+        #[derive(Default)]
+        struct Accumulator {
+            num_contributions: usize,
+            total_probability: f64,
+            combined_probability: f64,
+            source_type_counts: BTreeMap<String, usize>,
+            source_type_probabilities: BTreeMap<String, f64>,
+            direct_source_family_counts: BTreeMap<String, usize>,
+            direct_source_family_probabilities: BTreeMap<String, f64>,
+        }
+
+        fn source_type_label(source_type: &FaultSourceType) -> &'static str {
+            match source_type {
+                FaultSourceType::Direct => "Direct",
+                FaultSourceType::DirectOneSidedComponent => "DirectOneSidedComponent",
+                FaultSourceType::YDecomposed { .. } => "YDecomposed",
+            }
+        }
+
+        fn direct_source_family_label(family: DirectSourceFamily) -> &'static str {
+            match family {
+                DirectSourceFamily::SingleLocation => "SingleLocation",
+                DirectSourceFamily::SingleLocationY => "SingleLocationY",
+                DirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
+                DirectSourceFamily::TwoLocationComponent => "TwoLocationComponent",
+                DirectSourceFamily::TwoLocationOneSidedComponent => "TwoLocationOneSidedComponent",
+                DirectSourceFamily::Other => "Other",
+            }
+        }
+
+        let graphlike_set = self.collect_graphlike_mechanisms();
+        let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
+        let mut rendered_targets_cache: BTreeMap<(FaultMechanism, FaultSourceType), String> =
+            BTreeMap::new();
+        let mut by_render: BTreeMap<(FaultMechanism, String), Accumulator> = BTreeMap::new();
+
+        for contrib in &self.contributions {
+            if contrib.effect.is_empty() || contrib.probability <= 0.0 {
+                continue;
+            }
+
+            let rendered_targets = Self::contribution_targets(
+                contrib,
+                &graphlike_index,
+                None,
+                two_detector_direct_policy,
+                &mut rendered_targets_cache,
+            );
+            let acc = by_render
+                .entry((contrib.effect.clone(), rendered_targets))
+                .or_default();
+            acc.num_contributions += 1;
+            acc.total_probability += contrib.probability;
+            acc.combined_probability =
+                combine_independent_probs(acc.combined_probability, contrib.probability);
+
+            let source_label = source_type_label(&contrib.source_type).to_string();
+            *acc.source_type_counts
+                .entry(source_label.clone())
+                .or_insert(0) += 1;
+            *acc.source_type_probabilities
+                .entry(source_label)
+                .or_insert(0.0) += contrib.probability;
+
+            if let Some(family) = contrib.direct_source_family {
+                let family_label = direct_source_family_label(family).to_string();
+                *acc.direct_source_family_counts
+                    .entry(family_label.clone())
+                    .or_insert(0) += 1;
+                *acc.direct_source_family_probabilities
+                    .entry(family_label)
+                    .or_insert(0.0) += contrib.probability;
+            }
+        }
+
+        by_render
+            .into_iter()
+            .map(
+                |((effect, rendered_targets), acc)| ContributionRenderSummary {
+                    effect,
+                    rendered_targets,
+                    num_contributions: acc.num_contributions,
+                    total_probability: acc.total_probability,
+                    combined_probability: acc.combined_probability,
+                    source_type_counts: acc.source_type_counts,
+                    source_type_probabilities: acc.source_type_probabilities,
+                    direct_source_family_counts: acc.direct_source_family_counts,
+                    direct_source_family_probabilities: acc.direct_source_family_probabilities,
+                },
+            )
+            .collect()
+    }
+
+    /// Returns per-contribution render records before final regrouping.
+    ///
+    /// This mirrors the same contribution render pass used by
+    /// `to_string_decomposed()`, but keeps one output row per tracked
+    /// contribution instead of aggregating by `(effect, rendered_targets)`.
+    #[must_use]
+    pub fn contribution_render_records(&self) -> Vec<ContributionRenderRecord> {
+        self.contribution_render_records_with_two_detector_direct_policy(
+            TwoDetectorDirectRenderPolicy::KeepDirect,
+        )
+    }
+
+    /// Returns per-contribution render records before final regrouping, using
+    /// an explicit policy for direct 2-detector rendering.
+    #[must_use]
+    pub fn contribution_render_records_with_two_detector_direct_policy(
+        &self,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+    ) -> Vec<ContributionRenderRecord> {
+        let graphlike_set = self.collect_graphlike_mechanisms();
+        let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
+        let mut rendered_targets_cache: BTreeMap<(FaultMechanism, FaultSourceType), String> =
+            BTreeMap::new();
+        let mut records = Vec::new();
+
+        for contrib in &self.contributions {
+            if contrib.effect.is_empty() || contrib.probability <= 0.0 {
+                continue;
+            }
+
+            let (rendered_targets, render_strategy, recorded_component_targets) =
+                Self::contribution_render_details(
+                    contrib,
+                    &graphlike_index,
+                    None,
+                    two_detector_direct_policy,
+                    &mut rendered_targets_cache,
+                );
+            records.push(ContributionRenderRecord {
+                rendered_targets,
+                render_strategy,
+                recorded_component_targets,
+                contribution: contrib.clone(),
+            });
+        }
+
+        records
+    }
+
     /// Adds a direct error contribution (X or Z channel).
     ///
     /// Direct contributions are output as direct forms (e.g., "D0 D1") rather than
     /// decomposed forms. Use this for X and Z error channels.
     ///
     /// Requires source tracking to be enabled.
-    pub fn add_direct_contribution(&mut self, effect: ErrorMechanism, probability: f64) {
+    pub fn add_direct_contribution(&mut self, effect: FaultMechanism, probability: f64) {
         if effect.is_empty() || probability <= 0.0 {
             return;
         }
         self.contributions
-            .push(ErrorContribution::direct(effect, probability));
+            .push(FaultContribution::direct(effect, probability));
+    }
+
+    /// Adds a direct error contribution with source metadata.
+    pub(crate) fn add_direct_contribution_with_source(
+        &mut self,
+        effect: FaultMechanism,
+        probability: f64,
+        source: SourceMetadata<'_, usize>,
+    ) {
+        if effect.is_empty() || probability <= 0.0 {
+            return;
+        }
+        let location_indices = convert_location_indices(source.location_indices);
+        self.contributions
+            .push(FaultContribution::direct_with_source(
+                effect,
+                probability,
+                SourceMetadata::new(
+                    &location_indices,
+                    source.paulis,
+                    source.gate_types,
+                    source.before_flags,
+                ),
+            ));
+    }
+
+    /// Adds a direct error contribution with source metadata and per-location
+    /// component effects.
+    pub(crate) fn add_direct_contribution_with_source_components(
+        &mut self,
+        effect: FaultMechanism,
+        probability: f64,
+        source: SourceMetadata<'_, usize>,
+        components: DirectSourceComponents<'_>,
+    ) {
+        if effect.is_empty() || probability <= 0.0 {
+            return;
+        }
+        let location_indices = convert_location_indices(source.location_indices);
+        self.contributions
+            .push(FaultContribution::direct_with_source_components(
+                effect,
+                probability,
+                SourceMetadata::new(
+                    &location_indices,
+                    source.paulis,
+                    source.gate_types,
+                    source.before_flags,
+                ),
+                components,
+            ));
     }
 
     /// Adds a Y-decomposed error contribution.
@@ -968,8 +2636,8 @@ impl DetectorErrorModel {
     /// Requires source tracking to be enabled.
     pub fn add_y_decomposed_contribution(
         &mut self,
-        x_effect: &ErrorMechanism,
-        z_effect: &ErrorMechanism,
+        x_effect: &FaultMechanism,
+        z_effect: &FaultMechanism,
         probability: f64,
     ) {
         if probability <= 0.0 {
@@ -988,14 +2656,59 @@ impl DetectorErrorModel {
             return;
         }
 
-        // Always record as YDecomposed since the source is a Y-containing channel.
-        // The distinction between Direct and YDecomposed affects output form selection.
-        self.contributions.push(ErrorContribution::y_decomposed(
+        // If one branch is empty, the Y-containing source has the same net effect as
+        // the non-empty branch and should be tracked as a direct source.
+        if x_effect.is_empty() || z_effect.is_empty() {
+            self.add_direct_contribution(combined, probability);
+            return;
+        }
+
+        // Otherwise record as YDecomposed. The distinction between Direct and
+        // YDecomposed affects output form selection.
+        self.contributions.push(FaultContribution::y_decomposed(
             combined,
             x_effect,
             z_effect,
             probability,
         ));
+    }
+
+    /// Adds a Y-decomposed error contribution with source metadata.
+    pub(crate) fn add_y_decomposed_contribution_with_source(
+        &mut self,
+        x_effect: &FaultMechanism,
+        z_effect: &FaultMechanism,
+        probability: f64,
+        source: SourceMetadata<'_, usize>,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+
+        let combined = x_effect.xor(z_effect);
+        if combined.is_empty() {
+            return;
+        }
+
+        if x_effect.is_empty() || z_effect.is_empty() {
+            self.add_direct_contribution_with_source(combined, probability, source);
+            return;
+        }
+
+        let location_indices = convert_location_indices(source.location_indices);
+        self.contributions
+            .push(FaultContribution::y_decomposed_with_source(
+                combined,
+                x_effect,
+                z_effect,
+                probability,
+                SourceMetadata::new(
+                    &location_indices,
+                    source.paulis,
+                    source.gate_types,
+                    source.before_flags,
+                ),
+            ));
     }
 
     /// Marks a 2-detector mechanism as having a graphlike decomposable source.
@@ -1009,9 +2722,49 @@ impl DetectorErrorModel {
     ///
     /// This should be called from the builder when processing 2-qubit gate channels
     /// where both component effects are graphlike.
+    /// Returns grouped mechanisms as (probability, `detector_ids`, `observable_ids`) tuples.
+    ///
+    /// Combines contributions with the same effect using the XOR probability formula.
+    /// Also returns detector coordinate map. This is the structured equivalent of
+    /// `to_string()` — same data, no string intermediary.
+    #[must_use]
+    pub fn to_mechanisms(&self) -> (Vec<(f64, Vec<u32>, Vec<u32>)>, Vec<(u32, Vec<f64>)>) {
+        // Group contributions by effect
+        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
+        for contrib in &self.contributions {
+            by_effect
+                .entry(contrib.effect.clone())
+                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
+                .or_insert(contrib.probability);
+        }
+
+        let mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)> = by_effect
+            .into_iter()
+            .filter(|(effect, prob)| !effect.is_empty() && *prob > 0.0)
+            .map(|(effect, prob)| (prob, effect.detectors.to_vec(), effect.dem_outputs.to_vec()))
+            .collect();
+
+        let coords: Vec<(u32, Vec<f64>)> = self
+            .detectors
+            .iter()
+            .filter_map(|det| det.coords.map(|[x, y, z]| (det.id, vec![x, y, z])))
+            .collect();
+
+        (mechanisms, coords)
+    }
+
     pub fn mark_graphlike_decomposable(&mut self, d0: u32, d1: u32) {
         let key = if d0 < d1 { (d0, d1) } else { (d1, d0) };
         *self.graphlike_decomposable_counts.entry(key).or_insert(0) += 1;
+    }
+
+    /// Merge contributions and graphlike counts from another DEM.
+    /// Used for parallelized DEM construction.
+    pub fn merge_contributions_from(&mut self, other: Self) {
+        self.contributions.extend(other.contributions);
+        for (key, count) in other.graphlike_decomposable_counts {
+            *self.graphlike_decomposable_counts.entry(key).or_insert(0) += count;
+        }
     }
 
     /// Returns the number of graphlike decomposable sources for a 2-detector mechanism.
@@ -1029,14 +2782,33 @@ impl DetectorErrorModel {
         self.detectors.push(detector);
     }
 
-    /// Adds a logical observable definition.
-    pub fn add_observable(&mut self, observable: LogicalObservable) {
+    /// Adds a non-detector DEM output definition.
+    ///
+    /// Observables are stored in the standard `L<n>` namespace. Tracked
+    /// operators are stored in PECOS metadata with a separate ID space.
+    pub fn add_dem_output(&mut self, output: DemOutput) {
+        if output.is_tracked_operator() {
+            self.add_tracked_operator(output);
+        } else {
+            self.add_observable(output);
+        }
+    }
+
+    /// Adds a standard Stim observable (`L<n>`) definition.
+    pub fn add_observable(&mut self, mut observable: DemOutput) {
+        observable.kind.get_or_insert(DemOutputKind::Observable);
         self.observables.push(observable);
+    }
+
+    /// Adds a PECOS tracked operator definition.
+    pub fn add_tracked_operator(&mut self, mut tracked_op: DemOutput) {
+        tracked_op.kind = Some(DemOutputKind::TrackedOperator);
+        self.tracked_ops.push(tracked_op);
     }
 
     /// Converts the DEM to a string in standard DEM format.
     ///
-    /// Each error mechanism is output with its total probability, with no
+    /// Each fault mechanism is output with its total probability, with no
     /// splitting into decomposed forms. This matches Stim's
     /// `detector_error_model(decompose_errors=False)` output.
     ///
@@ -1056,14 +2828,14 @@ impl DetectorErrorModel {
             }
         }
 
-        // Add logical observable annotations
+        // Add standard observable annotations
         for obs in &self.observables {
             lines.push(format!("logical_observable L{}", obs.id));
         }
 
         // Group contributions by effect, combining probabilities using XOR formula
         // (errors toggle detector bits, so two errors on same detector cancel)
-        let mut by_effect: BTreeMap<ErrorMechanism, f64> = BTreeMap::new();
+        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
         for contrib in &self.contributions {
             by_effect
                 .entry(contrib.effect.clone())
@@ -1090,10 +2862,272 @@ impl DetectorErrorModel {
         lines.join("\n")
     }
 
+    fn collect_singleton_index(&self) -> SingletonDecompositionIndex {
+        SingletonDecompositionIndex::from_contributions(&self.contributions)
+    }
+
+    fn maximally_decompose_graphlike_effect(
+        effect: &FaultMechanism,
+        singleton_set: &SingletonDecompositionIndex,
+    ) -> Vec<FaultMechanism> {
+        find_singleton_decomposition(effect, singleton_set)
+            .filter(|parts| !parts.is_empty())
+            .unwrap_or_else(|| vec![effect.clone()])
+    }
+
+    fn maybe_maximally_decompose_parts(
+        parts: Vec<FaultMechanism>,
+        singleton_set: Option<&SingletonDecompositionIndex>,
+    ) -> Vec<FaultMechanism> {
+        let Some(singleton_set) = singleton_set else {
+            return parts;
+        };
+
+        let mut out = Vec::new();
+        for part in parts {
+            if part.is_graphlike() {
+                out.extend(Self::maximally_decompose_graphlike_effect(
+                    &part,
+                    singleton_set,
+                ));
+            } else {
+                out.push(part);
+            }
+        }
+        out
+    }
+
+    fn recorded_component_targets(
+        contrib: &FaultContribution,
+        singleton_set: Option<&SingletonDecompositionIndex>,
+    ) -> Option<String> {
+        let (first, second) = contrib.direct_component_effects()?;
+        let targets = Self::maybe_maximally_decompose_parts(
+            [first, second]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect(),
+            singleton_set,
+        )
+        .iter()
+        .map(format_mechanism_targets)
+        .filter(|targets| !targets.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ^ ");
+        if targets.is_empty() {
+            None
+        } else {
+            Some(targets)
+        }
+    }
+
+    fn two_detector_direct_targets(
+        effect: &FaultMechanism,
+        singleton_set: Option<&SingletonDecompositionIndex>,
+    ) -> String {
+        Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
+            .iter()
+            .map(format_mechanism_targets)
+            .collect::<Vec<_>>()
+            .join(" ^ ")
+    }
+
+    fn contribution_render_details(
+        contrib: &FaultContribution,
+        graphlike_index: &GraphlikeDecompositionIndex,
+        singleton_set: Option<&SingletonDecompositionIndex>,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+        cache: &mut BTreeMap<(FaultMechanism, FaultSourceType), String>,
+    ) -> (String, ContributionRenderStrategy, Option<String>) {
+        let recorded_component_targets = Self::recorded_component_targets(contrib, singleton_set);
+        let key = (contrib.effect.clone(), contrib.source_type.clone());
+        if let Some(cached) = cache.get(&key) {
+            let strategy = if contrib.decomposition_components().is_some() {
+                ContributionRenderStrategy::SourceComponents
+            } else if contrib.effect.num_detectors() == 2 && contrib.effect.dem_outputs.is_empty() {
+                let direct_targets =
+                    Self::two_detector_direct_targets(&contrib.effect, singleton_set);
+                if matches!(
+                    two_detector_direct_policy,
+                    TwoDetectorDirectRenderPolicy::PreferRecordedComponents
+                ) && recorded_component_targets.as_deref() == Some(cached.as_str())
+                    && cached != &direct_targets
+                {
+                    ContributionRenderStrategy::RecordedComponents
+                } else {
+                    ContributionRenderStrategy::TwoDetectorDirect
+                }
+            } else if contrib.effect.is_hyperedge() {
+                ContributionRenderStrategy::HyperedgeGraphlike
+            } else {
+                ContributionRenderStrategy::EffectDirect
+            };
+            return (cached.clone(), strategy, recorded_component_targets);
+        }
+
+        let effect = &contrib.effect;
+        let (targets, strategy) = if let Some((x_effect, z_effect)) =
+            contrib.decomposition_components()
+        {
+            let x_graphlike = x_effect.is_empty() || x_effect.is_graphlike();
+            let z_graphlike = z_effect.is_empty() || z_effect.is_graphlike();
+
+            if !x_effect.is_empty() && !z_effect.is_empty() && x_graphlike && z_graphlike {
+                let x_parts =
+                    Self::maybe_maximally_decompose_parts(vec![x_effect.clone()], singleton_set);
+                let z_parts =
+                    Self::maybe_maximally_decompose_parts(vec![z_effect.clone()], singleton_set);
+                let targets = x_parts
+                    .iter()
+                    .chain(z_parts.iter())
+                    .map(format_mechanism_targets)
+                    .filter(|targets| !targets.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ^ ");
+                let targets = if targets.is_empty() {
+                    String::new()
+                } else {
+                    targets
+                };
+                (targets, ContributionRenderStrategy::SourceComponents)
+            } else if effect.num_detectors() == 2 && effect.dem_outputs.is_empty() {
+                let direct_targets = Self::two_detector_direct_targets(effect, singleton_set);
+                if matches!(
+                    two_detector_direct_policy,
+                    TwoDetectorDirectRenderPolicy::PreferRecordedComponents
+                ) {
+                    if let Some(component_targets) = recorded_component_targets.as_ref() {
+                        if component_targets == &direct_targets {
+                            (
+                                direct_targets,
+                                ContributionRenderStrategy::TwoDetectorDirect,
+                            )
+                        } else {
+                            (
+                                component_targets.clone(),
+                                ContributionRenderStrategy::RecordedComponents,
+                            )
+                        }
+                    } else {
+                        (
+                            direct_targets,
+                            ContributionRenderStrategy::TwoDetectorDirect,
+                        )
+                    }
+                } else {
+                    (
+                        direct_targets,
+                        ContributionRenderStrategy::TwoDetectorDirect,
+                    )
+                }
+            } else if effect.is_hyperedge() {
+                if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(effect) {
+                    (
+                        Self::maybe_maximally_decompose_parts(decomp, singleton_set)
+                            .iter()
+                            .map(format_mechanism_targets)
+                            .collect::<Vec<_>>()
+                            .join(" ^ "),
+                        ContributionRenderStrategy::HyperedgeGraphlike,
+                    )
+                } else {
+                    (
+                        format_mechanism_targets(effect),
+                        ContributionRenderStrategy::EffectDirect,
+                    )
+                }
+            } else {
+                (
+                    Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
+                        .iter()
+                        .map(format_mechanism_targets)
+                        .collect::<Vec<_>>()
+                        .join(" ^ "),
+                    ContributionRenderStrategy::EffectDirect,
+                )
+            }
+        } else if effect.num_detectors() == 2 && effect.dem_outputs.is_empty() {
+            let direct_targets = Self::two_detector_direct_targets(effect, singleton_set);
+            if matches!(
+                two_detector_direct_policy,
+                TwoDetectorDirectRenderPolicy::PreferRecordedComponents
+            ) {
+                if let Some(component_targets) = recorded_component_targets.as_ref() {
+                    if component_targets == &direct_targets {
+                        (
+                            direct_targets,
+                            ContributionRenderStrategy::TwoDetectorDirect,
+                        )
+                    } else {
+                        (
+                            component_targets.clone(),
+                            ContributionRenderStrategy::RecordedComponents,
+                        )
+                    }
+                } else {
+                    (
+                        direct_targets,
+                        ContributionRenderStrategy::TwoDetectorDirect,
+                    )
+                }
+            } else {
+                (
+                    direct_targets,
+                    ContributionRenderStrategy::TwoDetectorDirect,
+                )
+            }
+        } else if effect.is_hyperedge() {
+            if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(effect) {
+                (
+                    Self::maybe_maximally_decompose_parts(decomp, singleton_set)
+                        .iter()
+                        .map(format_mechanism_targets)
+                        .collect::<Vec<_>>()
+                        .join(" ^ "),
+                    ContributionRenderStrategy::HyperedgeGraphlike,
+                )
+            } else {
+                (
+                    format_mechanism_targets(effect),
+                    ContributionRenderStrategy::EffectDirect,
+                )
+            }
+        } else {
+            (
+                Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set)
+                    .iter()
+                    .map(format_mechanism_targets)
+                    .collect::<Vec<_>>()
+                    .join(" ^ "),
+                ContributionRenderStrategy::EffectDirect,
+            )
+        };
+
+        cache.insert(key, targets.clone());
+        (targets, strategy, recorded_component_targets)
+    }
+
+    fn contribution_targets(
+        contrib: &FaultContribution,
+        graphlike_index: &GraphlikeDecompositionIndex,
+        singleton_set: Option<&SingletonDecompositionIndex>,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+        cache: &mut BTreeMap<(FaultMechanism, FaultSourceType), String>,
+    ) -> String {
+        Self::contribution_render_details(
+            contrib,
+            graphlike_index,
+            singleton_set,
+            two_detector_direct_policy,
+            cache,
+        )
+        .0
+    }
+
     /// Converts the DEM to Stim format using source tracking (decomposed format).
     ///
     /// This matches Stim's `detector_error_model(decompose_errors=True)` output.
-    /// Error mechanisms are split into direct and decomposed forms based on
+    /// Fault mechanisms are split into direct and decomposed forms based on
     /// their source types (X/Z vs Y errors).
     ///
     /// For each unique detector effect:
@@ -1105,15 +3139,20 @@ impl DetectorErrorModel {
     /// Requires source tracking to be enabled and contributions to be populated.
     ///
     /// For 2-detector mechanisms Di Dj:
-    /// - If both Di L0 and Dj L0 exist as mechanisms, outputs both direct form
-    ///   and L0 cancellation form (Di L0 ^ Dj L0), with probability split based
-    ///   on relative mechanism probabilities.
-    /// - Otherwise, outputs decomposed forms (Di ^ Dj, Dj ^ Di) with probability split.
+    /// - Output the direct graphlike form `Di Dj`.
+    /// - Avoid introducing synthetic `Di L0 ^ Dj L0` cancellation variants,
+    ///   because the edge is already graphlike and extra L0 terms can change
+    ///   decoder behavior without adding new information.
     ///
-    /// This provides representation diversity for decoders, similar to Stim's
-    /// `decompose_errors=True` behavior.
+    /// Hyperedges (3+ detectors) are decomposed into graphlike forms when
+    /// possible. Mechanisms with up to 2 detectors are already graphlike even
+    /// when they carry multiple DEM outputs.
     #[must_use]
-    pub fn to_string_decomposed(&self) -> String {
+    fn to_string_decomposed_inner(
+        &self,
+        maximal_decomposition: bool,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+    ) -> String {
         let mut lines = Vec::new();
 
         // Add detector coordinate annotations
@@ -1125,233 +3164,104 @@ impl DetectorErrorModel {
             }
         }
 
-        // Add logical observable annotations
+        // Add standard observable annotations
         for obs in &self.observables {
             lines.push(format!("logical_observable L{}", obs.id));
         }
 
-        // Find standalone detectors from contributions
-        let mut standalone_detectors: std::collections::HashSet<u32> =
-            std::collections::HashSet::new();
-        for contrib in &self.contributions {
-            if contrib.effect.num_detectors() == 1 && contrib.effect.logicals.is_empty() {
-                standalone_detectors.insert(contrib.effect.detectors[0]);
+        let graphlike_set = self.collect_graphlike_mechanisms();
+        let graphlike_index = GraphlikeDecompositionIndex::new(&graphlike_set);
+        let singleton_set = maximal_decomposition.then(|| self.collect_singleton_index());
+        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
+        let mut rendered_targets_cache: BTreeMap<(FaultMechanism, FaultSourceType), String> =
+            BTreeMap::new();
+
+        let mut add_targets = |targets: String, probability: f64| {
+            if targets.is_empty() || probability <= 0.0 {
+                return;
             }
-        }
+            by_targets
+                .entry(targets)
+                .and_modify(|p| *p = combine_independent_probs(*p, probability))
+                .or_insert(probability);
+        };
 
-        // Find single-detector + L0 mechanisms (Di L0) and their probabilities
-        // These can be used for L0 cancellation decomposition
-        let mut det_l0_probs: HashMap<u32, f64> = HashMap::new();
+        // Process each tracked contribution individually, then regroup identical
+        // decomposed outputs. This is closer to Stim's decomposition pass, which
+        // rewrites each error class before merging identical rewritten targets.
         for contrib in &self.contributions {
-            if contrib.effect.num_detectors() == 1
-                && contrib.effect.logicals.len() == 1
-                && contrib.effect.logicals[0] == 0
-            {
-                let det_id = contrib.effect.detectors[0];
-                det_l0_probs
-                    .entry(det_id)
-                    .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                    .or_insert(contrib.probability);
-            }
-        }
-
-        // Group contributions by effect, combining probabilities using independent error formula
-        // p_combined = p1 + p2 - p1*p2 = 1 - (1-p1)*(1-p2)
-        let mut by_effect: BTreeMap<ErrorMechanism, f64> = BTreeMap::new();
-        for contrib in &self.contributions {
-            by_effect
-                .entry(contrib.effect.clone())
-                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                .or_insert(contrib.probability);
-        }
-
-        // Process each unique effect
-        for (effect, total_prob) in &by_effect {
-            if effect.is_empty() || *total_prob <= 0.0 {
+            if contrib.effect.is_empty() || contrib.probability <= 0.0 {
                 continue;
             }
+            let targets = Self::contribution_targets(
+                contrib,
+                &graphlike_index,
+                singleton_set.as_ref(),
+                two_detector_direct_policy,
+                &mut rendered_targets_cache,
+            );
+            add_targets(targets, contrib.probability);
+        }
 
-            // Check if this is a 2-detector mechanism with no logicals
-            let is_2det_no_logical = effect.num_detectors() == 2 && effect.logicals.is_empty();
-
-            if is_2det_no_logical {
-                let d0 = effect.detectors[0];
-                let d1 = effect.detectors[1];
-
-                // Check if L0 cancellation decomposition is possible
-                // (both Di L0 and Dj L0 exist as mechanisms)
-                let has_d0_l0 = det_l0_probs.contains_key(&d0);
-                let has_d1_l0 = det_l0_probs.contains_key(&d1);
-
-                if has_d0_l0 && has_d1_l0 {
-                    // L0 cancellation is possible: Di Dj can be represented as Di L0 ^ Dj L0
-                    // Split probability between direct form and L0 cancellation form
-                    //
-                    // Heuristic: Use approximately 25% for L0 cancellation form, which
-                    // matches the average ratio observed in Stim's decomposed output.
-                    // The exact split varies in Stim (10-50%), but 25% is a reasonable
-                    // approximation for decoder compatibility.
-                    let l0_fraction = 0.25;
-                    let direct_fraction = 1.0 - l0_fraction;
-
-                    let direct_prob = total_prob * direct_fraction;
-                    let l0_prob = total_prob * l0_fraction;
-
-                    // Direct form
-                    if direct_prob > 0.0 {
-                        lines.push(format!(
-                            "error({}) D{} D{}",
-                            format_probability(direct_prob),
-                            d0,
-                            d1
-                        ));
-                    }
-
-                    // L0 cancellation form
-                    if l0_prob > 0.0 {
-                        lines.push(format!(
-                            "error({}) D{} L0 ^ D{} L0",
-                            format_probability(l0_prob),
-                            d0,
-                            d1
-                        ));
-                    }
-                } else if standalone_detectors.contains(&d0) && standalone_detectors.contains(&d1) {
-                    // Both detectors have standalone mechanisms - use compact decomposition
-                    // (matching Stim's approach of minimal entries)
-                    let graphlike_count = self.graphlike_decomposable_count(d0, d1);
-
-                    if graphlike_count >= 2 {
-                        // Direct form only - both detectors flip together
-                        lines.push(format!(
-                            "error({}) D{} D{}",
-                            format_probability(*total_prob),
-                            d0,
-                            d1
-                        ));
-                    } else {
-                        // Decomposed form - one ordering only
-                        lines.push(format!(
-                            "error({}) D{} ^ D{}",
-                            format_probability(*total_prob),
-                            d0,
-                            d1
-                        ));
-                    }
-                } else {
-                    // Neither L0 cancellation nor standalone decomposition possible
-                    // Output as direct form
-                    lines.push(format!(
-                        "error({}) D{} D{}",
-                        format_probability(*total_prob),
-                        d0,
-                        d1
-                    ));
-                }
-            } else if effect.is_hyperedge() {
-                // Hyperedge (3+ detectors or 2+ logicals): try to decompose
-                let graphlike_set = self.collect_graphlike_mechanisms();
-                let decompositions = find_hyperedge_decompositions(effect, &graphlike_set);
-
-                if decompositions.is_empty() {
-                    // No valid decomposition found - output as direct form
-                    let targets = format_mechanism_targets(effect);
-                    if !targets.is_empty() {
-                        lines.push(format!(
-                            "error({}) {}",
-                            format_probability(*total_prob),
-                            targets
-                        ));
-                    }
-                } else {
-                    // Split probability across decompositions
-                    #[allow(clippy::cast_precision_loss)]
-                    let split_prob = *total_prob / decompositions.len() as f64;
-                    for decomp in decompositions {
-                        let targets = decomp
-                            .iter()
-                            .map(format_mechanism_targets)
-                            .collect::<Vec<_>>()
-                            .join(" ^ ");
-                        lines.push(format!(
-                            "error({}) {}",
-                            format_probability(split_prob),
-                            targets
-                        ));
-                    }
-                }
-            } else if effect.num_detectors() == 2 && effect.num_logicals() == 1 {
-                // 2-detector + 1-logical mechanism: try to decompose as D_i ^ D_j L_k
-                // This matches Stim's behavior of decomposing these into components
-                let graphlike_set = self.collect_graphlike_mechanisms();
-
-                let d0 = effect.detectors[0];
-                let d1 = effect.detectors[1];
-                let l0 = effect.logicals[0];
-
-                // Try decomposition: D0 ^ (D1 L0) or D1 ^ (D0 L0)
-                let comp_d0 = ErrorMechanism::from_unsorted([d0], std::iter::empty());
-                let comp_d1_l0 = ErrorMechanism::from_unsorted([d1], [l0]);
-                let comp_d1 = ErrorMechanism::from_unsorted([d1], std::iter::empty());
-                let comp_d0_l0 = ErrorMechanism::from_unsorted([d0], [l0]);
-
-                let can_decompose_1 =
-                    graphlike_set.contains(&comp_d0) && graphlike_set.contains(&comp_d1_l0);
-                let can_decompose_2 =
-                    graphlike_set.contains(&comp_d1) && graphlike_set.contains(&comp_d0_l0);
-
-                if can_decompose_1 || can_decompose_2 {
-                    // Output decomposed form
-                    if can_decompose_1 {
-                        lines.push(format!(
-                            "error({}) D{} ^ D{} L{}",
-                            format_probability(*total_prob),
-                            d0,
-                            d1,
-                            l0
-                        ));
-                    } else {
-                        lines.push(format!(
-                            "error({}) D{} ^ D{} L{}",
-                            format_probability(*total_prob),
-                            d1,
-                            d0,
-                            l0
-                        ));
-                    }
-                } else {
-                    // Can't decompose - output as direct form
-                    let targets = format_mechanism_targets(effect);
-                    if !targets.is_empty() {
-                        lines.push(format!(
-                            "error({}) {}",
-                            format_probability(*total_prob),
-                            targets
-                        ));
-                    }
-                }
-            } else {
-                // Other graphlike mechanism - output as direct form
-                let targets = format_mechanism_targets(effect);
-                if !targets.is_empty() {
-                    lines.push(format!(
-                        "error({}) {}",
-                        format_probability(*total_prob),
-                        targets
-                    ));
-                }
+        for (targets, total_prob) in by_targets {
+            if !targets.is_empty() && total_prob > 0.0 {
+                lines.push(format!(
+                    "error({}) {}",
+                    format_probability(total_prob),
+                    targets
+                ));
             }
         }
 
         lines.join("\n")
     }
 
+    #[must_use]
+    pub fn to_string_decomposed(&self) -> String {
+        self.to_string_decomposed_inner(false, TwoDetectorDirectRenderPolicy::KeepDirect)
+    }
+
+    /// Converts the DEM to decomposed format with an explicit direct-2det
+    /// rendering policy.
+    #[must_use]
+    pub fn to_string_decomposed_with_two_detector_direct_policy(
+        &self,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+    ) -> String {
+        self.to_string_decomposed_inner(false, two_detector_direct_policy)
+    }
+
+    /// Converts the DEM to a maximally decomposed graphlike form when possible.
+    ///
+    /// This further rewrites graphlike 2-detector effects into XORs of
+    /// standalone singleton detector effects whenever those singleton effects
+    /// already exist in the DEM.
+    ///
+    /// This is mainly useful for representation inspection or compatibility
+    /// experiments. It is not generally the preferred MWPM input because
+    /// replacing pair edges with singleton-heavy structure can degrade the
+    /// resulting matching graph.
+    #[must_use]
+    pub fn to_string_decomposed_maximally(&self) -> String {
+        self.to_string_decomposed_inner(true, TwoDetectorDirectRenderPolicy::KeepDirect)
+    }
+
+    /// Converts the DEM to a maximally decomposed graphlike form with an
+    /// explicit direct-2det rendering policy.
+    #[must_use]
+    pub fn to_string_decomposed_maximally_with_two_detector_direct_policy(
+        &self,
+        two_detector_direct_policy: TwoDetectorDirectRenderPolicy,
+    ) -> String {
+        self.to_string_decomposed_inner(true, two_detector_direct_policy)
+    }
+
     /// Collects all graphlike mechanisms from contributions.
     ///
-    /// Returns a set of mechanisms with ≤2 detectors and ≤1 logical,
+    /// Returns a set of mechanisms with ≤2 detectors,
     /// which can be used as components for hyperedge decomposition.
-    fn collect_graphlike_mechanisms(&self) -> HashSet<ErrorMechanism> {
-        let mut graphlike = HashSet::new();
+    fn collect_graphlike_mechanisms(&self) -> BTreeSet<FaultMechanism> {
+        let mut graphlike = BTreeSet::new();
         for contrib in &self.contributions {
             if contrib.effect.is_graphlike() {
                 graphlike.insert(contrib.effect.clone());
@@ -1368,424 +3278,6 @@ impl Default for DetectorErrorModel {
 }
 
 // ============================================================================
-// Measurement Noise Model (MNM)
-// ============================================================================
-
-/// A measurement error mechanism: a set of measurements that flip together.
-///
-/// Unlike [`ErrorMechanism`] which operates on detectors, this operates directly
-/// on raw measurement indices. This is useful for sampling measurement outcomes
-/// without needing detector definitions.
-///
-/// Measurements are stored in sorted order for canonical representation.
-#[derive(Clone, Default)]
-pub struct MeasurementMechanism {
-    /// Measurement indices that flip together (sorted).
-    pub measurements: SmallVec<[u32; 4]>,
-}
-
-impl MeasurementMechanism {
-    /// Creates a new empty measurement mechanism.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a mechanism from unsorted measurement indices.
-    #[must_use]
-    pub fn from_unsorted(measurements: impl IntoIterator<Item = u32>) -> Self {
-        let mut meas: SmallVec<[u32; 4]> = measurements.into_iter().collect();
-        meas.sort_unstable();
-        Self { measurements: meas }
-    }
-
-    /// Creates a mechanism from pre-sorted measurement indices.
-    #[must_use]
-    pub fn from_sorted(measurements: SmallVec<[u32; 4]>) -> Self {
-        debug_assert!(
-            measurements.windows(2).all(|w| w[0] <= w[1]),
-            "measurements must be sorted"
-        );
-        Self { measurements }
-    }
-
-    /// Returns true if this mechanism has no effect (empty).
-    #[inline]
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.measurements.is_empty()
-    }
-
-    /// Returns the number of measurements in this mechanism.
-    #[inline]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.measurements.len()
-    }
-}
-
-impl PartialEq for MeasurementMechanism {
-    fn eq(&self, other: &Self) -> bool {
-        self.measurements == other.measurements
-    }
-}
-
-impl Eq for MeasurementMechanism {}
-
-impl Hash for MeasurementMechanism {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.measurements.hash(state);
-    }
-}
-
-impl PartialOrd for MeasurementMechanism {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for MeasurementMechanism {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.measurements.cmp(&other.measurements)
-    }
-}
-
-impl fmt::Debug for MeasurementMechanism {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "MeasurementMechanism({:?})",
-            self.measurements.as_slice()
-        )
-    }
-}
-
-/// A Measurement Noise Model (MNM) for fast approximate sampling.
-///
-/// Unlike a DEM which maps error mechanisms to detector effects, the MNM maps
-/// directly to measurement effects. This allows sampling raw measurement outcomes
-/// without needing detector definitions.
-///
-/// # Sampling Modes
-///
-/// - **Per-fault-location** (accurate): Sample each (location, Pauli) independently
-/// - **Per-mechanism** (fast, approximate): Sample each unique measurement effect once
-///
-/// The MNM enables the fast per-mechanism mode while still producing raw measurement
-/// outcomes that can be converted to detection events using any detector definition.
-///
-/// # Example
-///
-/// ```
-/// use pecos_qec::fault_tolerance::DagFaultAnalyzer;
-/// use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
-/// use pecos_quantum::DagCircuit;
-/// use rand::SeedableRng;
-/// use rand::rngs::SmallRng;
-///
-/// let mut dag = DagCircuit::new();
-/// dag.pz(&[2]);
-/// dag.cx(&[(0, 2)]);
-/// dag.mz(&[2]);
-///
-/// let analyzer = DagFaultAnalyzer::new(&dag);
-/// let influence_map = analyzer.build_influence_map();
-///
-/// let mnm = MemBuilder::new(&influence_map)
-///     .with_noise(0.01, 0.01, 0.01, 0.01)
-///     .build();
-///
-/// // Sample measurement outcomes
-/// let mut rng = SmallRng::seed_from_u64(42);
-/// let mut outcomes = vec![false; mnm.num_measurements];
-/// mnm.sample_into(&mut outcomes, &mut rng);
-/// ```
-#[derive(Debug, Clone, Default)]
-pub struct MeasurementNoiseModel {
-    /// Error mechanisms mapped to their probabilities.
-    /// Uses `BTreeMap` for deterministic iteration order.
-    pub mechanisms: BTreeMap<MeasurementMechanism, f64>,
-    /// Total number of measurements in the circuit.
-    pub num_measurements: usize,
-    /// Optional mapping from influence map index to `TickCircuit` index.
-    /// If set, outcomes are reordered before detection event conversion.
-    /// `im_to_tc`[`im_idx`] = `tc_idx`
-    pub im_to_tc_order: Option<Vec<usize>>,
-}
-
-impl MeasurementNoiseModel {
-    /// Creates a new empty MNM.
-    #[must_use]
-    pub fn new(num_measurements: usize) -> Self {
-        Self {
-            mechanisms: BTreeMap::new(),
-            num_measurements,
-            im_to_tc_order: None,
-        }
-    }
-
-    /// Sets the measurement order mapping from influence map to `TickCircuit` order.
-    ///
-    /// This is needed when detector definitions use `TickCircuit` measurement indices
-    /// but the influence map uses a different ordering.
-    ///
-    /// # Arguments
-    ///
-    /// * `im_to_tc` - Mapping where `im_to_tc[im_idx] = tc_idx`
-    #[must_use]
-    pub fn with_measurement_order(mut self, im_to_tc: Vec<usize>) -> Self {
-        self.im_to_tc_order = Some(im_to_tc);
-        self
-    }
-
-    /// Sets the measurement order mapping (mutable version).
-    pub fn set_measurement_order(&mut self, im_to_tc: Vec<usize>) {
-        self.im_to_tc_order = Some(im_to_tc);
-    }
-
-    /// Returns the number of distinct mechanisms.
-    #[inline]
-    #[must_use]
-    pub fn num_mechanisms(&self) -> usize {
-        self.mechanisms.len()
-    }
-
-    /// Adds an error mechanism with the given probability.
-    ///
-    /// If the mechanism already exists, probabilities are combined
-    /// using the independent error formula: p1*(1-p2) + p2*(1-p1).
-    pub fn add_mechanism(&mut self, mechanism: MeasurementMechanism, probability: f64) {
-        if mechanism.is_empty() || probability <= 0.0 {
-            return;
-        }
-
-        self.mechanisms
-            .entry(mechanism)
-            .and_modify(|p| *p = combine_probabilities(*p, probability))
-            .or_insert(probability);
-    }
-
-    /// Samples measurement outcomes into the provided buffer.
-    ///
-    /// Each mechanism is sampled once according to its probability.
-    /// When a mechanism fires, its measurements are XOR'd into the outcomes.
-    ///
-    /// # Arguments
-    ///
-    /// * `outcomes` - Buffer to store measurement outcomes (must be pre-sized)
-    /// * `rng` - Random number generator
-    pub fn sample_into<R: rand::Rng>(&self, outcomes: &mut [bool], rng: &mut R) {
-        // Clear outcomes
-        outcomes.fill(false);
-
-        for (mechanism, &prob) in &self.mechanisms {
-            if rng.random::<f64>() < prob {
-                for &meas_idx in &mechanism.measurements {
-                    if (meas_idx as usize) < outcomes.len() {
-                        outcomes[meas_idx as usize] ^= true;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Samples and returns measurement outcomes as a vector.
-    #[must_use]
-    pub fn sample<R: rand::Rng>(&self, rng: &mut R) -> Vec<bool> {
-        let mut outcomes = vec![false; self.num_measurements];
-        self.sample_into(&mut outcomes, rng);
-        outcomes
-    }
-
-    /// Iterates over all mechanisms and their probabilities.
-    pub fn iter(&self) -> impl Iterator<Item = (&MeasurementMechanism, &f64)> {
-        self.mechanisms.iter()
-    }
-
-    /// Converts measurement outcomes to detection events.
-    ///
-    /// Given raw measurement outcomes and detector definitions (as measurement indices),
-    /// computes which detectors fire by XOR'ing the specified measurements for each detector.
-    ///
-    /// If `im_to_tc_order` is set, outcomes are first reordered from influence map
-    /// order to `TickCircuit` order before applying detector records.
-    ///
-    /// # Arguments
-    ///
-    /// * `outcomes` - Raw measurement outcomes in influence map order (from `sample()`)
-    /// * `detector_records` - For each detector, the list of measurement indices to XOR.
-    ///   Indices can be negative (offset from end) or positive (absolute).
-    ///   These indices refer to `TickCircuit` measurement order.
-    ///
-    /// # Returns
-    ///
-    /// Vector of detection events (true = detector fired)
-    #[must_use]
-    pub fn compute_detection_events(
-        &self,
-        outcomes: &[bool],
-        detector_records: &[Vec<i32>],
-    ) -> Vec<bool> {
-        // Reorder outcomes from IM order to TC order if mapping is set
-        let tc_outcomes: Vec<bool> = if let Some(ref im_to_tc) = self.im_to_tc_order {
-            let mut reordered = vec![false; outcomes.len()];
-            for (im_idx, &tc_idx) in im_to_tc.iter().enumerate() {
-                if im_idx < outcomes.len() && tc_idx < reordered.len() {
-                    reordered[tc_idx] = outcomes[im_idx];
-                }
-            }
-            reordered
-        } else {
-            outcomes.to_vec()
-        };
-
-        Self::to_detection_events_internal(&tc_outcomes, detector_records)
-    }
-
-    /// Internal static helper for detection event conversion.
-    fn to_detection_events_internal(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {
-        let num_measurements = outcomes.len();
-        let mut detection_events = Vec::with_capacity(detector_records.len());
-
-        for records in detector_records {
-            let mut fired = false;
-            for &offset in records {
-                // Convert negative offset to absolute index
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
-                #[allow(clippy::cast_sign_loss)]
-                // negative offset + total count, or non-negative offset
-                let abs_idx = if offset < 0 {
-                    (num_measurements as i32 + offset) as usize
-                } else {
-                    offset as usize
-                };
-
-                if abs_idx < num_measurements && outcomes[abs_idx] {
-                    fired = !fired; // XOR
-                }
-            }
-            detection_events.push(fired);
-        }
-
-        detection_events
-    }
-
-    /// Static version without reordering (for backwards compatibility).
-    #[must_use]
-    pub fn to_detection_events(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {
-        Self::to_detection_events_internal(outcomes, detector_records)
-    }
-
-    /// Samples and converts to detection events in one step.
-    ///
-    /// # Arguments
-    ///
-    /// * `detector_records` - For each detector, the measurement indices to XOR
-    /// * `rng` - Random number generator
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (`measurement_outcomes_in_im_order`, `detection_events`)
-    pub fn sample_with_detectors<R: rand::Rng>(
-        &self,
-        detector_records: &[Vec<i32>],
-        rng: &mut R,
-    ) -> (Vec<bool>, Vec<bool>) {
-        let outcomes = self.sample(rng);
-        let detection_events = self.compute_detection_events(&outcomes, detector_records);
-        (outcomes, detection_events)
-    }
-
-    /// Computes observable flips from measurement outcomes.
-    ///
-    /// This works identically to `compute_detection_events` - `XORing` measurement
-    /// outcomes at the specified record positions. The difference is semantic:
-    /// - Detection events indicate which detectors fired (syndrome)
-    /// - Observable flips indicate which logical observables were flipped
-    ///
-    /// # Arguments
-    ///
-    /// * `outcomes` - Raw measurement outcomes in influence map order (from `sample()`)
-    /// * `observable_records` - For each observable, the list of measurement indices to XOR.
-    ///   Indices can be negative (offset from end) or positive (absolute).
-    ///   These indices refer to `TickCircuit` measurement order.
-    ///
-    /// # Returns
-    ///
-    /// Vector of observable flips (true = observable was flipped by errors)
-    #[must_use]
-    pub fn compute_observable_flips(
-        &self,
-        outcomes: &[bool],
-        observable_records: &[Vec<i32>],
-    ) -> Vec<bool> {
-        // Same logic as detection events - just different semantic meaning
-        self.compute_detection_events(outcomes, observable_records)
-    }
-
-    /// Samples with full threshold estimation output.
-    ///
-    /// Returns detection events AND observable flips in one step, matching
-    /// Stim's DEM sampler output format.
-    ///
-    /// # Arguments
-    ///
-    /// * `detector_records` - For each detector, the measurement indices to XOR
-    /// * `observable_records` - For each observable, the measurement indices to XOR
-    /// * `rng` - Random number generator
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (`detection_events`, `observable_flips`)
-    pub fn sample_for_decoding<R: rand::Rng>(
-        &self,
-        detector_records: &[Vec<i32>],
-        observable_records: &[Vec<i32>],
-        rng: &mut R,
-    ) -> (Vec<bool>, Vec<bool>) {
-        let outcomes = self.sample(rng);
-        let detection_events = self.compute_detection_events(&outcomes, detector_records);
-        let observable_flips = self.compute_detection_events(&outcomes, observable_records);
-        (detection_events, observable_flips)
-    }
-
-    /// Batch sampling for threshold estimation.
-    ///
-    /// Efficiently samples multiple shots and returns detection events and observable
-    /// flips for each shot.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_shots` - Number of shots to sample
-    /// * `detector_records` - For each detector, the measurement indices to XOR
-    /// * `observable_records` - For each observable, the measurement indices to XOR
-    /// * `rng` - Random number generator
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (`detection_events_per_shot`, `observable_flips_per_shot`)
-    pub fn sample_batch_for_decoding<R: rand::Rng>(
-        &self,
-        num_shots: usize,
-        detector_records: &[Vec<i32>],
-        observable_records: &[Vec<i32>],
-        rng: &mut R,
-    ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
-        let mut all_detection_events = Vec::with_capacity(num_shots);
-        let mut all_observable_flips = Vec::with_capacity(num_shots);
-
-        for _ in 0..num_shots {
-            let (det_events, obs_flips) =
-                self.sample_for_decoding(detector_records, observable_records, rng);
-            all_detection_events.push(det_events);
-            all_observable_flips.push(obs_flips);
-        }
-
-        (all_detection_events, all_observable_flips)
-    }
-}
-
-// ============================================================================
 // Probability Combination
 // ============================================================================
 
@@ -1795,21 +3287,21 @@ impl MeasurementNoiseModel {
 /// that exactly one error occurs is: p1*(1-p2) + p2*(1-p1).
 ///
 /// This is the correct formula for combining probabilities when the same
-/// error mechanism can be triggered by multiple independent error sources.
+/// fault mechanism can be triggered by multiple independent error sources.
 #[inline]
 #[must_use]
 pub fn combine_probabilities(p1: f64, p2: f64) -> f64 {
     p1 * (1.0 - p2) + p2 * (1.0 - p1)
 }
 
-/// Formats an error mechanism's targets as a string (e.g., "D0 D1 L0").
-fn format_mechanism_targets(mechanism: &ErrorMechanism) -> String {
+/// Formats an fault mechanism's targets as a string (e.g., "D0 D1 L0").
+fn format_mechanism_targets(mechanism: &FaultMechanism) -> String {
     let mut targets = Vec::new();
     for &det in &mechanism.detectors {
         targets.push(format!("D{det}"));
     }
-    for &log in &mechanism.logicals {
-        targets.push(format!("L{log}"));
+    for &dem_output in &mechanism.dem_outputs {
+        targets.push(format!("L{dem_output}"));
     }
     targets.join(" ")
 }
@@ -1870,25 +3362,25 @@ mod tests {
 
     #[test]
     fn test_error_mechanism_xor() {
-        let m1 = ErrorMechanism::from_unsorted([0, 1, 2], [0]);
-        let m2 = ErrorMechanism::from_unsorted([1, 2, 3], [0, 1]);
+        let m1 = FaultMechanism::from_unsorted([0, 1, 2], [0]);
+        let m2 = FaultMechanism::from_unsorted([1, 2, 3], [0, 1]);
 
         let result = m1.xor(&m2);
 
         // Detectors: {0, 1, 2} XOR {1, 2, 3} = {0, 3}
         assert_eq!(result.detectors.as_slice(), &[0, 3]);
-        // Logicals: {0} XOR {0, 1} = {1}
-        assert_eq!(result.logicals.as_slice(), &[1]);
+        // DEM outputs: {0} XOR {0, 1} = {1}
+        assert_eq!(result.dem_outputs.as_slice(), &[1]);
     }
 
     #[test]
     fn test_error_mechanism_equality() {
-        let m1 = ErrorMechanism::from_unsorted([2, 0, 1], [1, 0]);
-        let m2 = ErrorMechanism::from_unsorted([0, 1, 2], [0, 1]);
+        let m1 = FaultMechanism::from_unsorted([2, 0, 1], [1, 0]);
+        let m2 = FaultMechanism::from_unsorted([0, 1, 2], [0, 1]);
 
         assert_eq!(m1, m2);
         assert_eq!(m1.detectors.as_slice(), &[0, 1, 2]);
-        assert_eq!(m1.logicals.as_slice(), &[0, 1]);
+        assert_eq!(m1.dem_outputs.as_slice(), &[0, 1]);
     }
 
     #[test]
@@ -1907,9 +3399,360 @@ mod tests {
     }
 
     #[test]
+    fn test_pecos_metadata_json_preserves_pauli_operator_ops() {
+        use pecos_core::pauli::constructors::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_dem_output(
+            DemOutput::new(0)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(X(0) & Z(2))
+                .with_label("track_check"),
+        );
+        dem.add_dem_output(DemOutput::new(1).with_records([-1, -3]));
+
+        let metadata: serde_json::Value =
+            serde_json::from_str(&dem.to_pecos_metadata_json()).unwrap();
+        let observables = metadata["observables"].as_array().unwrap();
+        let tracked_ops = metadata["tracked_ops"].as_array().unwrap();
+
+        assert_eq!(metadata["format"], "pecos.dem.metadata");
+        assert_eq!(metadata["version"], 1);
+        assert_eq!(tracked_ops[0]["id"], 0);
+        assert_eq!(tracked_ops[0]["kind"], "tracked_operator");
+        assert_eq!(tracked_ops[0]["label"], "track_check");
+        assert_eq!(tracked_ops[0]["pauli"], "+X0 Z2");
+        assert_eq!(observables[0]["id"], 1);
+        assert_eq!(observables[0]["kind"], "observable");
+        assert_eq!(observables[0]["records"], serde_json::json!([-1, -3]));
+    }
+
+    #[test]
+    fn test_dem_counts_keep_detectors_observables_and_tracked_operators_distinct() {
+        use pecos_core::pauli::constructors::X;
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_records([-1]));
+        dem.add_dem_output(DemOutput::new(0).with_records([-1, -3]));
+        dem.add_dem_output(
+            DemOutput::new(0)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(X(0)),
+        );
+
+        assert_eq!(dem.num_detectors(), 1);
+        assert_eq!(dem.num_dem_outputs(), 1);
+        assert_eq!(dem.num_observables(), 1);
+        assert_eq!(dem.num_tracked_ops(), 1);
+        assert_eq!(dem.observables().map(|op| op.id).collect::<Vec<_>>(), [0]);
+        assert_eq!(
+            dem.tracked_operators().map(|op| op.id).collect::<Vec<_>>(),
+            [0]
+        );
+    }
+
+    #[test]
+    fn test_dem_output_kind_predicates_are_mutually_exclusive() {
+        use pecos_core::pauli::constructors::X;
+
+        let observable = DemOutput::new(0)
+            .with_kind(DemOutputKind::Observable)
+            .with_pauli(X(0));
+        assert!(observable.is_observable());
+        assert!(!observable.is_tracked_operator());
+
+        let tracked = DemOutput::new(0)
+            .with_kind(DemOutputKind::TrackedOperator)
+            .with_records([-1]);
+        assert!(!tracked.is_observable());
+        assert!(tracked.is_tracked_operator());
+
+        let inferred_observable = DemOutput::new(1).with_records([-1]);
+        assert!(inferred_observable.is_observable());
+        assert!(!inferred_observable.is_tracked_operator());
+
+        let inferred_tracked = DemOutput::new(1).with_pauli(X(1));
+        assert!(!inferred_tracked.is_observable());
+        assert!(inferred_tracked.is_tracked_operator());
+    }
+
+    #[test]
+    fn test_generic_dem_output_metadata_uses_consistent_kind_name() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_dem_output(DemOutput::new(0));
+
+        let metadata: serde_json::Value =
+            serde_json::from_str(&dem.to_pecos_metadata_json()).unwrap();
+        let ops = metadata["observables"].as_array().unwrap();
+
+        assert_eq!(ops[0]["kind"], "observable");
+
+        let recovered = DetectorErrorModel::new()
+            .with_pecos_metadata_json(&dem.to_pecos_metadata_json())
+            .unwrap();
+        assert_eq!(recovered.num_dem_outputs(), 1);
+        assert_eq!(recovered.num_tracked_ops(), 0);
+        assert_eq!(recovered.dem_outputs()[0].id, 0);
+        assert_eq!(recovered.dem_outputs()[0].kind, Some(DemOutputKind::Observable));
+    }
+
+    #[test]
+    fn test_pecos_metadata_json_round_trips_tracked_operator_metadata() {
+        use pecos_core::pauli::constructors::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_dem_output(DemOutput::new(0));
+        dem.add_dem_output(DemOutput::new(1));
+
+        let mut source = DetectorErrorModel::new();
+        source.add_dem_output(
+            DemOutput::new(0)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(X(0) & Z(2))
+                .with_label("track_check"),
+        );
+        source.add_dem_output(DemOutput::new(1).with_records([-1, -3]));
+
+        dem.apply_pecos_metadata_json(&source.to_pecos_metadata_json())
+            .unwrap();
+
+        assert_eq!(
+            dem.tracked_ops()[0].kind,
+            Some(DemOutputKind::TrackedOperator)
+        );
+        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("track_check"));
+        assert_eq!(
+            dem.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            "+X0 Z2"
+        );
+        assert_eq!(dem.dem_outputs()[1].kind, Some(DemOutputKind::Observable));
+        assert_eq!(dem.dem_outputs()[1].records.as_slice(), &[-1, -3]);
+    }
+
+    #[test]
+    fn test_pecos_metadata_json_parser_requires_output_arrays() {
+        let old_metadata_json = r#"{
+            "format": "pecos.dem.metadata",
+            "version": 1,
+            "old_outputs": [
+                {
+                    "id": 4,
+                    "kind": "old_kind",
+                    "label": "old_name",
+                    "pauli": null,
+                    "records": []
+                }
+            ]
+        }"#;
+
+        let err = DetectorErrorModel::new()
+            .with_pecos_metadata_json(old_metadata_json)
+            .unwrap_err();
+        assert!(
+            err.message()
+                .contains("missing observables or tracked_ops metadata arrays")
+        );
+    }
+
+    #[test]
+    fn test_pecos_metadata_json_parser_rejects_old_generic_kind_names() {
+        let json = r#"{
+            "format": "pecos.dem.metadata",
+            "version": 1,
+            "tracked_ops": [
+                {
+                    "id": 4,
+                    "kind": "old_kind",
+                    "label": "old_name",
+                    "pauli": null,
+                    "records": []
+                }
+            ]
+        }"#;
+
+        let err = DetectorErrorModel::new()
+            .with_pecos_metadata_json(json)
+            .unwrap_err();
+        assert!(
+            err.message()
+                .contains("DEM output 0 has unknown kind: old_kind")
+        );
+
+        let alias_json = r#"{
+            "format": "pecos.dem.metadata",
+            "version": 1,
+            "tracked_ops": [
+                {
+                    "id": 4,
+                    "kind": "pauli_operator",
+                    "label": "old_alias",
+                    "pauli": "+X0",
+                    "records": []
+                }
+            ]
+        }"#;
+        let err = DetectorErrorModel::new()
+            .with_pecos_metadata_json(alias_json)
+            .unwrap_err();
+        assert!(
+            err.message()
+                .contains("DEM output 0 has unknown kind: pauli_operator")
+        );
+    }
+
+    #[test]
+    fn test_pecos_metadata_json_rejects_records_on_tracked_operator() {
+        let json = r#"{
+            "format": "pecos.dem.metadata",
+            "version": 1,
+            "tracked_ops": [
+                {
+                    "id": 0,
+                    "kind": "tracked_operator",
+                    "pauli": "X0",
+                    "records": [-1]
+                }
+            ]
+        }"#;
+
+        let err = DetectorErrorModel::new()
+            .with_pecos_metadata_json(json)
+            .unwrap_err();
+        assert!(
+            err.message()
+                .contains("tracked operator DEM output 0 cannot have measurement records")
+        );
+    }
+
+    #[test]
+    fn test_pecos_dem_text_is_stim_superset_with_dem_output_metadata() {
+        use pecos_core::pauli::constructors::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_dem_output(
+            DemOutput::new(0)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(X(0) & Z(2))
+                .with_label("track_check"),
+        );
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], []), 0.01);
+
+        let stim_text = dem.to_string();
+        assert!(!stim_text.contains("logical_observable L0"));
+        assert!(!stim_text.contains("pecos_"));
+
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.starts_with(&stim_text));
+        assert!(pecos_text.contains("pecos_tracked_op"));
+        assert!(pecos_text.contains(r#""kind":"tracked_operator""#));
+        assert!(pecos_text.contains(r#""pauli":"+X0 Z2""#));
+
+        let recovered = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(&pecos_text)
+            .unwrap();
+        assert_eq!(recovered.num_dem_outputs(), 0);
+        assert_eq!(recovered.num_tracked_ops(), 1);
+        assert_eq!(
+            recovered.tracked_ops()[0].kind,
+            Some(DemOutputKind::TrackedOperator)
+        );
+        assert_eq!(
+            recovered.tracked_ops()[0]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
+            "+X0 Z2"
+        );
+        assert_eq!(
+            recovered.tracked_ops()[0].label.as_deref(),
+            Some("track_check")
+        );
+    }
+
+    #[test]
+    fn test_pecos_dem_text_round_trips_observables_and_tracked_ops() {
+        use pecos_core::pauli::constructors::Z;
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_dem_output(DemOutput::new(0).with_records([-1]));
+        dem.add_dem_output(DemOutput::new(1).with_records([-2]));
+        dem.add_dem_output(
+            DemOutput::new(0)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(Z(3))
+                .with_label("probe_z3"),
+        );
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], [0]), 0.01);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([], [1]), 0.02);
+
+        let stim_text = dem.to_string();
+        assert!(stim_text.contains("logical_observable L0"));
+        assert!(stim_text.contains("logical_observable L1"));
+        assert!(!stim_text.contains("logical_observable L2"));
+        assert!(!stim_text.contains("pecos_tracked_op"));
+
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("pecos_observable"));
+        assert!(pecos_text.contains("pecos_tracked_op"));
+
+        let recovered = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(&pecos_text)
+            .unwrap();
+        assert_eq!(recovered.num_observables(), 2);
+        assert_eq!(recovered.num_dem_outputs(), 2);
+        assert_eq!(recovered.num_tracked_ops(), 1);
+        assert_eq!(
+            recovered.dem_outputs().iter().map(|op| op.id).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            recovered
+                .tracked_ops()
+                .iter()
+                .map(|op| op.id)
+                .collect::<Vec<_>>(),
+            [0]
+        );
+        assert_eq!(
+            recovered.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            "+Z3"
+        );
+        assert_eq!(
+            recovered.tracked_ops()[0].label.as_deref(),
+            Some("probe_z3")
+        );
+    }
+
+    #[test]
+    fn test_pecos_dem_metadata_parser_rejects_malformed_extension_line() {
+        let err = DetectorErrorModel::new()
+            .with_pecos_dem_metadata("error(0.01) D0\npecos_tracked_op not-json")
+            .unwrap_err();
+        assert!(
+            err.message()
+                .contains("invalid pecos_tracked_op JSON payload")
+        );
+    }
+
+    #[test]
+    fn test_pecos_dem_metadata_parser_rejects_unknown_pecos_extension_line() {
+        let err = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(r#"pecos_old_extension {"id":1}"#)
+            .unwrap_err();
+
+        assert!(
+            err.message()
+                .contains("unsupported PECOS DEM extension line")
+        );
+    }
+
+    #[test]
     fn test_decomposed_error_single() {
-        let mechanism = ErrorMechanism::from_unsorted([0, 1], [0]);
-        let decomposed = DecomposedError::single(mechanism.clone());
+        let mechanism = FaultMechanism::from_unsorted([0, 1], [0]);
+        let decomposed = DecomposedFault::single(mechanism.clone());
 
         assert_eq!(decomposed.components.len(), 1);
         assert!(decomposed.is_graphlike());
@@ -1919,9 +3762,9 @@ mod tests {
 
     #[test]
     fn test_decomposed_error_multi() {
-        let m1 = ErrorMechanism::from_unsorted([0, 1], []);
-        let m2 = ErrorMechanism::from_unsorted([2, 3], [0]);
-        let decomposed = DecomposedError::decomposed([m1.clone(), m2.clone()]);
+        let m1 = FaultMechanism::from_unsorted([0, 1], []);
+        let m2 = FaultMechanism::from_unsorted([2, 3], [0]);
+        let decomposed = DecomposedFault::decomposed([m1.clone(), m2.clone()]);
 
         assert_eq!(decomposed.components.len(), 2);
         assert!(decomposed.is_graphlike());
@@ -1935,16 +3778,88 @@ mod tests {
     }
 
     #[test]
+    fn test_dem_to_string_decomposed_keeps_two_detector_graphlike_edges_direct() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
+        dem.add_dem_output(DemOutput::new(0));
+
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1], []), 0.01);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], [0]), 0.02);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([1], [0]), 0.03);
+
+        let stim_str = dem.to_string_decomposed();
+
+        assert!(stim_str.contains("logical_observable L0"));
+        assert!(stim_str.contains("error(0.01) D0 D1"));
+        assert!(!stim_str.contains("D0 L0 ^ D1 L0"));
+    }
+
+    #[test]
+    fn test_dem_to_string_decomposed_maximally_prefers_singletons_when_available() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
+
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1], []), 0.01);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], std::iter::empty()), 0.02);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([1], std::iter::empty()), 0.03);
+
+        let decomposed = dem.to_string_decomposed();
+        let maximal = dem.to_string_decomposed_maximally();
+
+        assert!(decomposed.contains("error(0.01) D0 D1"));
+        assert!(!decomposed.contains("error(0.01) D0 ^ D1"));
+
+        assert!(maximal.contains("error(0.01) D0 ^ D1"));
+        assert!(!maximal.contains("error(0.01) D0 D1"));
+    }
+
+    #[test]
+    fn test_contribution_effect_summaries_include_graphlike_decomposable_count() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted([0, 1], std::iter::empty()),
+            0.01,
+        );
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], std::iter::empty()), 0.02);
+        dem.mark_graphlike_decomposable(0, 1);
+        dem.mark_graphlike_decomposable(1, 0);
+
+        let summaries = dem.contribution_effect_summaries();
+
+        let pair_summary = summaries
+            .iter()
+            .find(|summary| {
+                summary.effect.detectors.as_slice() == [0, 1]
+                    && summary.effect.dem_outputs.is_empty()
+            })
+            .expect("pair summary missing");
+        assert_eq!(pair_summary.graphlike_decomposable_count, 2);
+
+        let singleton_summary = summaries
+            .iter()
+            .find(|summary| {
+                summary.effect.detectors.as_slice() == [0] && summary.effect.dem_outputs.is_empty()
+            })
+            .expect("singleton summary missing");
+        assert_eq!(singleton_summary.graphlike_decomposable_count, 0);
+    }
+
+    #[test]
     fn test_dem_to_string() {
         let mut dem = DetectorErrorModel::new();
 
         dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
         dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
-        dem.add_observable(LogicalObservable::new(0));
+        dem.add_dem_output(DemOutput::new(0));
 
         // Add contributions directly using the source tracking API
-        dem.add_direct_contribution(ErrorMechanism::from_unsorted([0, 1], []), 0.01);
-        dem.add_direct_contribution(ErrorMechanism::from_unsorted([1], [0]), 0.005);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1], []), 0.01);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([1], [0]), 0.005);
 
         let stim_str = dem.to_string();
 
@@ -1953,5 +3868,254 @@ mod tests {
         assert!(stim_str.contains("logical_observable L0"));
         assert!(stim_str.contains("error(0.01) D0 D1"));
         assert!(stim_str.contains("error(0.005) D1 L0"));
+    }
+
+    #[test]
+    fn test_dem_to_string_decomposed_keeps_two_detector_one_dem_output_direct() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
+        dem.add_dem_output(DemOutput::new(0));
+
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1], [0]), 0.01);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], std::iter::empty()), 0.02);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([1], [0]), 0.03);
+
+        let stim_str = dem.to_string_decomposed();
+
+        assert!(stim_str.contains("error(0.01) D0 D1 L0"));
+        assert!(!stim_str.contains("error(0.01) D0 ^ D1 L0"));
+    }
+
+    #[test]
+    fn test_dem_to_string_decomposed_uses_y_components_when_graphlike() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
+        dem.add_dem_output(DemOutput::new(0));
+
+        let x = FaultMechanism::from_unsorted([0], std::iter::empty());
+        let z = FaultMechanism::from_unsorted([1], [0]);
+        dem.add_y_decomposed_contribution(&x, &z, 0.01);
+
+        let stim_str = dem.to_string_decomposed();
+
+        assert!(stim_str.contains("error(0.01) D0 ^ D1 L0"));
+        assert!(!stim_str.contains("error(0.01) D0 D1 L0"));
+    }
+
+    #[test]
+    fn test_error_mechanism_with_two_detectors_and_multiple_dem_outputs_is_graphlike() {
+        let effect = FaultMechanism::from_unsorted([0, 1], [0, 1]);
+
+        assert!(effect.is_graphlike());
+        assert!(!effect.is_hyperedge());
+    }
+
+    #[test]
+    fn test_find_hyperedge_decomposition_returns_graphlike_subset_components() {
+        let hyperedge = FaultMechanism::from_unsorted([0, 1, 2], [0]);
+        let graphlike_set = BTreeSet::from([
+            FaultMechanism::from_unsorted([0], std::iter::empty()),
+            FaultMechanism::from_unsorted([1], std::iter::empty()),
+            FaultMechanism::from_unsorted([2], [0]),
+            FaultMechanism::from_unsorted([0, 1], std::iter::empty()),
+        ]);
+
+        let decomposition = find_hyperedge_decomposition(&hyperedge, &graphlike_set)
+            .expect("expected a valid decomposition");
+        let hyperedge_dets: BTreeSet<u32> = hyperedge.detectors.iter().copied().collect();
+
+        let recomposed = decomposition
+            .iter()
+            .fold(FaultMechanism::new(), |acc, part| acc.xor(part));
+        assert_eq!(recomposed, hyperedge);
+        assert!(
+            decomposition
+                .iter()
+                .all(super::FaultMechanism::is_graphlike)
+        );
+        assert!(
+            decomposition
+                .iter()
+                .flat_map(|part| part.detectors.iter())
+                .all(|det| hyperedge_dets.contains(det))
+        );
+        assert_eq!(decomposition.len(), 2);
+    }
+
+    #[test]
+    fn test_find_hyperedge_decomposition_can_use_four_parts() {
+        let hyperedge = FaultMechanism::from_unsorted([0, 1, 2, 3], [0]);
+        let graphlike_set = BTreeSet::from([
+            FaultMechanism::from_unsorted([0], std::iter::empty()),
+            FaultMechanism::from_unsorted([1], std::iter::empty()),
+            FaultMechanism::from_unsorted([2], std::iter::empty()),
+            FaultMechanism::from_unsorted([3], [0]),
+        ]);
+
+        let decomposition = find_hyperedge_decomposition(&hyperedge, &graphlike_set)
+            .expect("expected a valid decomposition");
+
+        let recomposed = decomposition
+            .iter()
+            .fold(FaultMechanism::new(), |acc, part| acc.xor(part));
+        assert_eq!(recomposed, hyperedge);
+        assert!(
+            decomposition
+                .iter()
+                .all(super::FaultMechanism::is_graphlike)
+        );
+        assert_eq!(decomposition.len(), 4);
+    }
+
+    #[test]
+    fn test_contributions_for_effect_matches_observable_coupled_effects() {
+        let mut dem = DetectorErrorModel::new();
+        let effect = FaultMechanism::from_unsorted([0, 1], [0]);
+
+        dem.add_direct_contribution(effect.clone(), 0.01);
+
+        let matches = dem.contributions_for_effect(&[1, 0], &[0]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].effect, effect);
+        assert!(matches[0].is_direct());
+    }
+
+    #[test]
+    fn test_contribution_effect_summaries_split_direct_and_y_contributions() {
+        let mut dem = DetectorErrorModel::new();
+        let effect = FaultMechanism::from_unsorted([0, 1], [0]);
+
+        dem.add_direct_contribution(effect.clone(), 0.01);
+        let x = FaultMechanism::from_unsorted([0], std::iter::empty());
+        let z = FaultMechanism::from_unsorted([1], [0]);
+        dem.add_y_decomposed_contribution(&x, &z, 0.02);
+
+        let summary = dem
+            .contribution_effect_summaries()
+            .into_iter()
+            .find(|row| row.effect == effect)
+            .expect("expected a summary for the shared effect");
+
+        assert_eq!(summary.num_contributions, 2);
+        assert!((summary.total_probability - 0.03).abs() < 1e-12);
+        assert_eq!(summary.direct_count, 1);
+        assert!((summary.direct_probability - 0.01).abs() < 1e-12);
+        assert_eq!(summary.y_decomposed_count, 1);
+        assert!((summary.y_decomposed_probability - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_add_y_decomposed_contribution_routes_one_empty_branch_to_direct() {
+        let mut dem = DetectorErrorModel::new();
+        let x = FaultMechanism::new();
+        let z = FaultMechanism::from_unsorted([1, 44], std::iter::empty());
+
+        dem.add_y_decomposed_contribution(&x, &z, 0.02);
+
+        let summary = dem
+            .contribution_effect_summaries()
+            .into_iter()
+            .find(|row| row.effect == z)
+            .expect("expected summary for graphlike direct effect");
+
+        assert_eq!(summary.direct_count, 1);
+        assert_eq!(summary.y_decomposed_count, 0);
+        assert!((summary.direct_probability - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_direct_with_source_components_xor_back_to_effect() {
+        let effect = FaultMechanism::from_unsorted([0, 1], std::iter::empty());
+        let first = FaultMechanism::from_unsorted([0], std::iter::empty());
+        let second = FaultMechanism::from_unsorted([1], std::iter::empty());
+
+        let contribution = FaultContribution::direct_with_source_components(
+            effect.clone(),
+            0.01,
+            SourceMetadata::new(
+                &[3, 4],
+                &[Pauli::Z, Pauli::I],
+                &[GateType::CX, GateType::CX],
+                &[false, false],
+            ),
+            DirectSourceComponents::new(&first, &second),
+        );
+
+        assert!(contribution.is_direct());
+        let (left, right) = contribution
+            .direct_component_effects()
+            .expect("expected direct component effects");
+        assert_eq!(left.xor(&right), effect);
+        assert!(matches!(contribution.source_type, FaultSourceType::Direct));
+    }
+
+    #[test]
+    fn test_direct_with_source_components_marks_one_sided_component_sources() {
+        let effect = FaultMechanism::from_unsorted([7, 11], std::iter::empty());
+        let first = effect.clone();
+        let second = FaultMechanism::new();
+
+        let contribution = FaultContribution::direct_with_source_components(
+            effect.clone(),
+            0.01,
+            SourceMetadata::new(
+                &[3, 4],
+                &[Pauli::Z, Pauli::I],
+                &[GateType::CX, GateType::CX],
+                &[false, false],
+            ),
+            DirectSourceComponents::new(&first, &second),
+        );
+
+        assert!(contribution.is_direct());
+        assert!(matches!(
+            contribution.source_type,
+            FaultSourceType::DirectOneSidedComponent
+        ));
+        assert_eq!(
+            contribution.direct_source_family,
+            Some(DirectSourceFamily::TwoLocationOneSidedComponent)
+        );
+        let (left, right) = contribution
+            .direct_component_effects()
+            .expect("expected direct component effects");
+        assert_eq!(left, effect);
+        assert!(right.is_empty());
+        assert_eq!(
+            contribution.source_gate_types.as_slice(),
+            &[GateType::CX, GateType::CX]
+        );
+        assert_eq!(contribution.source_before_flags.as_slice(), &[false, false]);
+    }
+
+    #[test]
+    fn test_add_y_decomposed_contribution_with_source_routes_metadata_to_direct() {
+        let mut dem = DetectorErrorModel::new();
+        let x = FaultMechanism::new();
+        let z = FaultMechanism::from_unsorted([1, 44], std::iter::empty());
+
+        dem.add_y_decomposed_contribution_with_source(
+            &x,
+            &z,
+            0.02,
+            SourceMetadata::new(&[7], &[Pauli::Y], &[GateType::H], &[false]),
+        );
+
+        let contributions = dem.contributions_for_effect(&[1, 44], &[]);
+        assert_eq!(contributions.len(), 1);
+        let contribution = &contributions[0];
+        assert!(matches!(contribution.source_type, FaultSourceType::Direct));
+        assert_eq!(contribution.location_indices.as_slice(), &[7]);
+        assert_eq!(contribution.paulis.as_slice(), &[Pauli::Y]);
+        assert_eq!(contribution.source_gate_types.as_slice(), &[GateType::H]);
+        assert_eq!(contribution.source_before_flags.as_slice(), &[false]);
+        assert_eq!(
+            contribution.direct_source_family,
+            Some(DirectSourceFamily::SingleLocationY)
+        );
     }
 }

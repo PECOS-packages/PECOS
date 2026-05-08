@@ -21,13 +21,13 @@ pub use crate::{
 
 // Quantum engines and builders
 pub use crate::quantum::{
-    CliffordRzEngine, CoinTossEngine, DensityMatrixEngine, QuantumEngine, SparseStabEngine,
+    CoinTossEngine, DensityMatrixEngine, QuantumEngine, SparseStabEngine, StabVecEngine,
     StabilizerEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
 };
 pub use crate::quantum_engine_builder::{
-    CliffordRzEngineBuilder, CoinTossEngineBuilder, DensityMatrixEngineBuilder,
-    IntoQuantumEngineBuilder, SparseStabEngineBuilder, StabilizerEngineBuilder,
-    StateVectorEngineBuilder, clifford_rz, coin_toss, density_matrix, sparse_stab, stabilizer,
+    CoinTossEngineBuilder, DensityMatrixEngineBuilder, IntoQuantumEngineBuilder,
+    SparseStabEngineBuilder, StabVecEngineBuilder, StabilizerEngineBuilder,
+    StateVectorEngineBuilder, coin_toss, density_matrix, sparse_stab, stab_vec, stabilizer,
     state_vector,
 };
 

@@ -73,14 +73,14 @@ pub struct StandardAdaptor {
 
 impl Default for StandardAdaptor {
     fn default() -> Self {
-        Self::clifford_rz()
+        Self::stab_vec()
     }
 }
 
 impl StandardAdaptor {
     /// Create an adaptor targeting Clifford+RZ gate set.
     #[must_use]
-    pub fn clifford_rz() -> Self {
+    pub fn stab_vec() -> Self {
         let mut bits = GateSupportSet::new();
 
         // Gates we can decompose into Clifford+RZ
@@ -469,7 +469,7 @@ impl CompositeExtendedAdaptor {
         use super::stabilizer_adaptor::StabilizerAdaptor;
 
         Self::new()
-            .with_gate_adaptor(StandardAdaptor::clifford_rz())
+            .with_gate_adaptor(StandardAdaptor::stab_vec())
             .with(StabilizerAdaptor::new())
     }
 }
@@ -538,7 +538,7 @@ mod extended_tests {
 
     #[test]
     fn test_lifted_adaptor() {
-        let standard = StandardAdaptor::clifford_rz();
+        let standard = StandardAdaptor::stab_vec();
         let lifted = LiftedAdaptor::new(standard);
 
         assert!(lifted.can_adapt(gates::T));
@@ -583,7 +583,7 @@ mod extended_tests {
 
     #[test]
     fn test_swap_decomposition_via_lifted() {
-        let lifted = LiftedAdaptor::new(StandardAdaptor::clifford_rz());
+        let lifted = LiftedAdaptor::new(StandardAdaptor::stab_vec());
 
         let seq = lifted.adapt(gates::SWAP, &[QubitId(0), QubitId(1)], &[], &[]);
 

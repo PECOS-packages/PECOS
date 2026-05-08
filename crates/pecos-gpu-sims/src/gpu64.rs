@@ -1245,6 +1245,10 @@ impl QuantumSimulator for GpuStateVec64 {
         self.reset();
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits as usize
+    }
 }
 
 #[allow(clippy::cast_possible_truncation)]

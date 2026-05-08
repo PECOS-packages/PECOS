@@ -16,6 +16,9 @@
 //! to Python, allowing quantum error models to use native Pauli representations
 //! instead of string-based arrays.
 
+// pyfunction generates internal modules named after the function (X, Y, Z)
+#![allow(non_snake_case)]
+
 use crate::prelude::{
     Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
 };
@@ -419,11 +422,119 @@ impl PauliString {
     fn anticommutes_with(&self, other: &PauliString) -> bool {
         !self.inner.commutes_with(&other.inner)
     }
+
+    // ---- Single-qubit constructors ----
+
+    /// Create X on a single qubit: `PauliString.X(3)`
+    #[staticmethod]
+    #[allow(non_snake_case)]
+    fn X(qubit: usize) -> Self {
+        PauliString {
+            inner: RustPauliString::x(qubit),
+        }
+    }
+
+    /// Create Y on a single qubit: `PauliString.Y(3)`
+    #[staticmethod]
+    #[allow(non_snake_case)]
+    fn Y(qubit: usize) -> Self {
+        PauliString {
+            inner: RustPauliString::y(qubit),
+        }
+    }
+
+    /// Create Z on a single qubit: `PauliString.Z(3)`
+    #[staticmethod]
+    #[allow(non_snake_case)]
+    fn Z(qubit: usize) -> Self {
+        PauliString {
+            inner: RustPauliString::z(qubit),
+        }
+    }
+
+    /// Create identity: `PauliString.I()`
+    #[staticmethod]
+    #[allow(non_snake_case)]
+    fn I() -> Self {
+        PauliString {
+            inner: RustPauliString::identity(),
+        }
+    }
+
+    // ---- Tensor product operator (&) ----
+
+    /// Tensor product: `PauliString.X(0) & PauliString.Z(1)`
+    fn __and__(&self, other: &PauliString) -> Self {
+        PauliString {
+            inner: self.inner.clone() & other.inner.clone(),
+        }
+    }
+
+    /// Pauli multiplication: `PauliString.X(0) * PauliString.Y(0)`
+    fn __mul__(&self, other: &PauliString) -> Self {
+        PauliString {
+            inner: self.inner.clone() * other.inner.clone(),
+        }
+    }
+
+    /// Negation: `-PauliString.X(0)`
+    fn __neg__(&self) -> Self {
+        PauliString {
+            inner: -self.inner.clone(),
+        }
+    }
+
+    /// Equality check.
+    fn __eq__(&self, other: &PauliString) -> bool {
+        self.inner == other.inner
+    }
+
+    /// Number of non-identity Pauli operators.
+    fn weight(&self) -> usize {
+        self.inner.weight()
+    }
+
+    /// List of qubit indices with non-identity operators.
+    fn qubits(&self) -> Vec<usize> {
+        self.inner.qubits()
+    }
+}
+
+// Module-level constructor functions for `from pecos import X, Y, Z`
+
+/// Create a single-qubit X `PauliString`: `X(3)`
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn X(qubit: usize) -> PauliString {
+    PauliString {
+        inner: RustPauliString::x(qubit),
+    }
+}
+
+/// Create a single-qubit Y `PauliString`: `Y(3)`
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn Y(qubit: usize) -> PauliString {
+    PauliString {
+        inner: RustPauliString::y(qubit),
+    }
+}
+
+/// Create a single-qubit Z `PauliString`: `Z(3)`
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn Z(qubit: usize) -> PauliString {
+    PauliString {
+        inner: RustPauliString::z(qubit),
+    }
 }
 
 /// Register Pauli types with Python module
 pub fn register_pauli_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pauli>()?;
     m.add_class::<PauliString>()?;
+    m.add_function(pyo3::wrap_pyfunction!(X, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(Y, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(Z, m)?)?;
     Ok(())
 }

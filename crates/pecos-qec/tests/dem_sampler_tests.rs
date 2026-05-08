@@ -20,11 +20,10 @@
 //! 3. Consistency with MNM (Measurement Noise Model)
 //! 4. Edge cases and boundary conditions
 
-use pecos_qec::fault_tolerance::dem_builder::{DemSamplerBuilder, MemBuilder};
+use pecos_qec::fault_tolerance::dem_builder::DemSamplerBuilder;
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::DagCircuit;
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
+use pecos_random::PecosRng;
 
 // ============================================================================
 // Test Helpers
@@ -74,12 +73,13 @@ fn test_zero_noise_produces_no_errors() {
         .with_noise(0.0, 0.0, 0.0, 0.0)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Zero noise should produce zero mechanisms
     assert_eq!(sampler.num_mechanisms(), 0);
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(1000, &mut rng);
 
     assert_eq!(stats.logical_error_count, 0);
@@ -102,13 +102,15 @@ fn test_mechanism_count_scales_with_circuit() {
         .with_noise(0.01, 0.01, 0.01, 0.01)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let sampler2 = DemSamplerBuilder::new(&im2)
         .with_noise(0.01, 0.01, 0.01, 0.01)
         .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Larger circuit should have more mechanisms
     assert!(
@@ -129,11 +131,12 @@ fn test_deterministic_sampling_with_seed() {
         .with_noise(0.1, 0.1, 0.1, 0.1)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Same seed should produce same results
-    let mut rng1 = SmallRng::seed_from_u64(12345);
-    let mut rng2 = SmallRng::seed_from_u64(12345);
+    let mut rng1 = PecosRng::seed_from_u64(12345);
+    let mut rng2 = PecosRng::seed_from_u64(12345);
 
     let (det1, obs1) = sampler.sample_batch(100, &mut rng1);
     let (det2, obs2) = sampler.sample_batch(100, &mut rng2);
@@ -154,10 +157,11 @@ fn test_different_seeds_produce_different_results() {
         .with_noise(0.1, 0.1, 0.1, 0.1)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
-    let mut rng1 = SmallRng::seed_from_u64(12345);
-    let mut rng2 = SmallRng::seed_from_u64(54321);
+    let mut rng1 = PecosRng::seed_from_u64(12345);
+    let mut rng2 = PecosRng::seed_from_u64(54321);
 
     let (det1, _) = sampler.sample_batch(100, &mut rng1);
     let (det2, _) = sampler.sample_batch(100, &mut rng2);
@@ -182,15 +186,17 @@ fn test_syndrome_rate_scales_with_noise() {
         .with_noise(0.001, 0.001, 0.001, 0.001)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let sampler_high = DemSamplerBuilder::new(&influence_map)
         .with_noise(0.05, 0.05, 0.05, 0.05)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
 
     let stats_low = sampler_low.sample_statistics_with_rng(10000, &mut rng);
     let stats_high = sampler_high.sample_statistics_with_rng(10000, &mut rng);
@@ -217,9 +223,10 @@ fn test_syndrome_rate_reasonable_magnitude() {
         .with_noise(p, p, p, p)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(100_000, &mut rng);
 
     // With p=0.01, syndrome rate should be in a reasonable range
@@ -253,17 +260,18 @@ fn test_observable_tracking() {
         .unwrap()
         .with_observables_json(observables_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(sampler.num_observables(), 1);
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
 
-    // With observable tracking, we should see some logical errors
+    // With observable tracking, we should see some observable errors
     assert!(
         stats.logical_error_rate() > 0.0,
-        "Expected some logical errors with noise"
+        "Expected some observable errors with noise"
     );
 }
 
@@ -281,11 +289,12 @@ fn test_empty_detector_definitions() {
         .with_noise(0.01, 0.01, 0.01, 0.01)
         .with_detectors_json("[]")
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(sampler.num_detectors(), 0);
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let (det_events, _) = sampler.sample(&mut rng);
 
     assert!(det_events.is_empty());
@@ -305,12 +314,13 @@ fn test_single_qubit_circuit() {
         .with_noise(0.01, 0.01, 0.01, 0.01)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Should have mechanisms from prep, H gate, and measurement
     assert!(sampler.num_mechanisms() > 0);
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(1000, &mut rng);
 
     // Should produce some syndromes
@@ -327,14 +337,15 @@ fn test_only_measurement_noise() {
         .with_noise(0.0, 0.0, 0.1, 0.0) // Only measurement noise
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert!(
         sampler.num_mechanisms() > 0,
         "Should have mechanisms from measurement noise"
     );
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
 
     // Should produce syndromes from measurement errors
@@ -354,14 +365,15 @@ fn test_only_two_qubit_noise() {
         .with_noise(0.0, 0.1, 0.0, 0.0) // Only two-qubit noise
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert!(
         sampler.num_mechanisms() > 0,
         "Should have mechanisms from two-qubit noise"
     );
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
 
     // Should produce syndromes from CX errors
@@ -384,24 +396,26 @@ fn test_dem_sampler_vs_mnm_mechanism_structure() {
     let p1 = 0.01;
     let p2 = 0.01;
     let p_meas = 0.01;
-    let p_init = 0.01;
+    let p_prep = 0.01;
 
-    // Build MNM for comparison
-    let mnm = MemBuilder::new(&influence_map)
-        .with_noise(p1, p2, p_meas, p_init)
-        .build();
+    // DemSampler raw mode (replaces MemBuilder)
+    let raw_sampler = DemSamplerBuilder::new(&influence_map)
+        .with_noise(p1, p2, p_meas, p_prep)
+        .raw_measurements()
+        .build()
+        .unwrap();
 
-    // Build DemSampler
-    let sampler = DemSamplerBuilder::new(&influence_map)
-        .with_noise(p1, p2, p_meas, p_init)
-        .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
-        .unwrap()
-        .build();
+    // DemSampler detector mode (replaces DemSamplerBuilder for this use case)
+    let det_records = vec![vec![-1i32]];
+    let det_sampler = DemSamplerBuilder::new(&influence_map)
+        .with_noise(p1, p2, p_meas, p_prep)
+        .with_detectors(det_records, vec![])
+        .build()
+        .unwrap();
 
-    // MNM mechanisms are at measurement level, DemSampler at detector level
-    // They should both have non-zero counts
-    assert!(mnm.num_mechanisms() > 0);
-    assert!(sampler.num_mechanisms() > 0);
+    // Both should have non-zero mechanism counts
+    assert!(raw_sampler.num_mechanisms() > 0);
+    assert!(det_sampler.num_mechanisms() > 0);
 }
 
 #[test]
@@ -419,11 +433,12 @@ fn test_multi_detector_circuit() {
         .with_noise(0.01, 0.01, 0.01, 0.01)
         .with_detectors_json(detectors_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(sampler.num_detectors(), 2);
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
     let (det_events, _) = sampler.sample_batch(1000, &mut rng);
 
     // Should get events on both detectors
@@ -448,9 +463,10 @@ fn test_batch_sampling_performance() {
         .with_noise(0.01, 0.01, 0.01, 0.01)
         .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
-    let mut rng = SmallRng::seed_from_u64(42);
+    let mut rng = PecosRng::seed_from_u64(42);
 
     // Should be able to sample many shots quickly
     let num_shots = 100_000;
@@ -483,21 +499,22 @@ fn test_statistics_vs_batch_consistency() {
         .unwrap()
         .with_observables_json(observables_json)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let num_shots = 10000;
 
     // Sample with statistics method (uses geometric skip)
-    let mut rng1 = SmallRng::seed_from_u64(42);
+    let mut rng1 = PecosRng::seed_from_u64(42);
     let stats = sampler.sample_statistics_with_rng(num_shots, &mut rng1);
 
     // Sample with batch method (uses per-shot threshold)
-    let mut rng2 = SmallRng::seed_from_u64(123); // Different seed since algorithms differ
+    let mut rng2 = PecosRng::seed_from_u64(123); // Different seed since algorithms differ
     let (det_events, obs_flips) = sampler.sample_batch(num_shots, &mut rng2);
 
     // Count from batch results
     let batch_syndromes = det_events.iter().filter(|d| d.iter().any(|&x| x)).count();
-    let batch_logical = obs_flips.iter().filter(|o| o.iter().any(|&x| x)).count();
+    let batch_observable = obs_flips.iter().filter(|o| o.iter().any(|&x| x)).count();
 
     // Should be statistically similar (within 10% relative difference)
     let stats_rate = stats.syndrome_count as f64 / num_shots as f64;
@@ -509,11 +526,11 @@ fn test_statistics_vs_batch_consistency() {
     );
 
     let stats_logical_rate = stats.logical_error_count as f64 / num_shots as f64;
-    let batch_logical_rate = batch_logical as f64 / num_shots as f64;
-    let logical_rel_diff = (stats_logical_rate - batch_logical_rate).abs()
+    let batch_logical_rate = batch_observable as f64 / num_shots as f64;
+    let observable_rel_diff = (stats_logical_rate - batch_logical_rate).abs()
         / stats_logical_rate.max(batch_logical_rate).max(0.001);
     assert!(
-        logical_rel_diff < 0.1,
-        "Logical error rates should be similar: stats={stats_logical_rate:.4} batch={batch_logical_rate:.4} rel_diff={logical_rel_diff:.2}"
+        observable_rel_diff < 0.1,
+        "Logical error rates should be similar: stats={stats_logical_rate:.4} batch={batch_logical_rate:.4} rel_diff={observable_rel_diff:.2}"
     );
 }

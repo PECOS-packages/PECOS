@@ -970,21 +970,59 @@ impl<'a> GadgetChecker<'a> {
                     pecos_core::gate_type::GateType::H => {
                         prop.h(&qubits);
                     }
+                    pecos_core::gate_type::GateType::F => {
+                        prop.f(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::Fdg => {
+                        prop.fdg(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SX => {
+                        prop.sx(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SXdg => {
+                        prop.sxdg(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SY => {
+                        prop.sy(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SYdg => {
+                        prop.sydg(&qubits);
+                    }
                     pecos_core::gate_type::GateType::SZ => {
                         prop.sz(&qubits);
                     }
                     pecos_core::gate_type::GateType::SZdg => {
                         prop.szdg(&qubits);
                     }
-                    pecos_core::gate_type::GateType::CX => {
-                        if qubits.len() >= 2 {
-                            prop.cx(&[(qubits[0], qubits[1])]);
-                        }
+                    pecos_core::gate_type::GateType::CX if qubits.len() >= 2 => {
+                        prop.cx(&[(qubits[0], qubits[1])]);
                     }
-                    pecos_core::gate_type::GateType::CZ => {
-                        if qubits.len() >= 2 {
-                            prop.cz(&[(qubits[0], qubits[1])]);
-                        }
+                    pecos_core::gate_type::GateType::CY if qubits.len() >= 2 => {
+                        prop.cy(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::CZ if qubits.len() >= 2 => {
+                        prop.cz(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SXX if qubits.len() >= 2 => {
+                        prop.sxx(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SXXdg if qubits.len() >= 2 => {
+                        prop.sxxdg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SYY if qubits.len() >= 2 => {
+                        prop.syy(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SYYdg if qubits.len() >= 2 => {
+                        prop.syydg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SZZ if qubits.len() >= 2 => {
+                        prop.szz(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SZZdg if qubits.len() >= 2 => {
+                        prop.szzdg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SWAP if qubits.len() >= 2 => {
+                        prop.swap(&[(qubits[0], qubits[1])]);
                     }
                     pecos_core::gate_type::GateType::X => {
                         prop.x(&qubits);
@@ -1709,21 +1747,59 @@ impl<'a> GadgetChecker<'a> {
                     pecos_core::gate_type::GateType::H => {
                         prop.h(&qubits);
                     }
+                    pecos_core::gate_type::GateType::F => {
+                        prop.f(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::Fdg => {
+                        prop.fdg(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SX => {
+                        prop.sx(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SXdg => {
+                        prop.sxdg(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SY => {
+                        prop.sy(&qubits);
+                    }
+                    pecos_core::gate_type::GateType::SYdg => {
+                        prop.sydg(&qubits);
+                    }
                     pecos_core::gate_type::GateType::SZ => {
                         prop.sz(&qubits);
                     }
                     pecos_core::gate_type::GateType::SZdg => {
                         prop.szdg(&qubits);
                     }
-                    pecos_core::gate_type::GateType::CX => {
-                        if qubits.len() >= 2 {
-                            prop.cx(&[(qubits[0], qubits[1])]);
-                        }
+                    pecos_core::gate_type::GateType::CX if qubits.len() >= 2 => {
+                        prop.cx(&[(qubits[0], qubits[1])]);
                     }
-                    pecos_core::gate_type::GateType::CZ => {
-                        if qubits.len() >= 2 {
-                            prop.cz(&[(qubits[0], qubits[1])]);
-                        }
+                    pecos_core::gate_type::GateType::CY if qubits.len() >= 2 => {
+                        prop.cy(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::CZ if qubits.len() >= 2 => {
+                        prop.cz(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SXX if qubits.len() >= 2 => {
+                        prop.sxx(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SXXdg if qubits.len() >= 2 => {
+                        prop.sxxdg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SYY if qubits.len() >= 2 => {
+                        prop.syy(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SYYdg if qubits.len() >= 2 => {
+                        prop.syydg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SZZ if qubits.len() >= 2 => {
+                        prop.szz(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SZZdg if qubits.len() >= 2 => {
+                        prop.szzdg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_core::gate_type::GateType::SWAP if qubits.len() >= 2 => {
+                        prop.swap(&[(qubits[0], qubits[1])]);
                     }
                     pecos_core::gate_type::GateType::X => {
                         prop.x(&qubits);

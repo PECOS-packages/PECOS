@@ -1834,7 +1834,8 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         GateType::Idle
         | GateType::MeasCrosstalkGlobalPayload
         | GateType::MeasCrosstalkLocalPayload
-        | GateType::Custom => {
+        | GateType::Custom
+        | GateType::PauliOperatorMeta => {
             panic!("GateType::{gate_type:?} cannot be converted to a unitary matrix")
         }
     }

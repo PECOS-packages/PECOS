@@ -1073,45 +1073,62 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
         for gate in tick.gates() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
             match gate.gate_type {
-                GateType::CX => {
-                    if qubits.len() >= 2 {
-                        prop.cx(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::CX if qubits.len() >= 2 => {
+                    prop.cx(&[(qubits[0], qubits[1])]);
                 }
-                GateType::CZ => {
-                    if qubits.len() >= 2 {
-                        prop.cz(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::CZ if qubits.len() >= 2 => {
+                    prop.cz(&[(qubits[0], qubits[1])]);
                 }
-                GateType::CY => {
-                    if qubits.len() >= 2 {
-                        prop.cy(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::CY if qubits.len() >= 2 => {
+                    prop.cy(&[(qubits[0], qubits[1])]);
                 }
                 GateType::H => {
-                    for q in &qubits {
-                        prop.h(&[*q]);
-                    }
+                    prop.h(&qubits);
                 }
-                GateType::SZ | GateType::SZdg => {
-                    for q in &qubits {
-                        prop.sz(&[*q]);
-                    }
+                GateType::F => {
+                    prop.f(&qubits);
                 }
-                GateType::SX | GateType::SXdg => {
-                    for q in &qubits {
-                        prop.sx(&[*q]);
-                    }
+                GateType::Fdg => {
+                    prop.fdg(&qubits);
                 }
-                GateType::SY | GateType::SYdg => {
-                    for q in &qubits {
-                        prop.sy(&[*q]);
-                    }
+                GateType::SX => {
+                    prop.sx(&qubits);
                 }
-                GateType::SWAP => {
-                    if qubits.len() >= 2 {
-                        prop.swap(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::SXdg => {
+                    prop.sxdg(&qubits);
+                }
+                GateType::SY => {
+                    prop.sy(&qubits);
+                }
+                GateType::SYdg => {
+                    prop.sydg(&qubits);
+                }
+                GateType::SZ => {
+                    prop.sz(&qubits);
+                }
+                GateType::SZdg => {
+                    prop.szdg(&qubits);
+                }
+                GateType::SWAP if qubits.len() >= 2 => {
+                    prop.swap(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SXX if qubits.len() >= 2 => {
+                    prop.sxx(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SXXdg if qubits.len() >= 2 => {
+                    prop.sxxdg(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SYY if qubits.len() >= 2 => {
+                    prop.syy(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SYYdg if qubits.len() >= 2 => {
+                    prop.syydg(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SZZ if qubits.len() >= 2 => {
+                    prop.szz(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SZZdg if qubits.len() >= 2 => {
+                    prop.szzdg(&[(qubits[0], qubits[1])]);
                 }
                 _ => {}
             }

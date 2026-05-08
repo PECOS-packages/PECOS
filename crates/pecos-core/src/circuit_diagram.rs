@@ -1303,13 +1303,13 @@ impl CircuitDiagram {
             let fill_hex = t.fill.strip_prefix('#').unwrap_or(&t.fill);
             let stroke_hex = t.stroke.strip_prefix('#').unwrap_or(&t.stroke);
             let text_hex = t.text.strip_prefix('#').unwrap_or(&t.text);
-            writeln!(out, "  \\definecolor{{{name}Fill}}{{HTML}}{{{fill_hex}}}",).unwrap();
+            writeln!(out, "  \\definecolor{{{name}Fill}}{{HTML}}{{{fill_hex}}}").unwrap();
             writeln!(
                 out,
                 "  \\definecolor{{{name}Stroke}}{{HTML}}{{{stroke_hex}}}",
             )
             .unwrap();
-            writeln!(out, "  \\definecolor{{{name}Text}}{{HTML}}{{{text_hex}}}",).unwrap();
+            writeln!(out, "  \\definecolor{{{name}Text}}{{HTML}}{{{text_hex}}}").unwrap();
         }
 
         // Styles.
@@ -1537,7 +1537,7 @@ impl CircuitDiagram {
 
                 match cell {
                     DiagramCell::Wire => {
-                        writeln!(out, "    {node_id} [label=\"\", shape=point, width=0.01];",)
+                        writeln!(out, "    {node_id} [label=\"\", shape=point, width=0.01];")
                             .unwrap();
                     }
                     DiagramCell::Gate(s, family) => {
@@ -1569,7 +1569,7 @@ impl CircuitDiagram {
                         .unwrap();
                     }
                     DiagramCell::Crossing | DiagramCell::Connector => {
-                        writeln!(out, "    {node_id} [label=\"\", shape=point, width=0.05];",)
+                        writeln!(out, "    {node_id} [label=\"\", shape=point, width=0.05];")
                             .unwrap();
                     }
                     DiagramCell::LabeledConnector(s) => {

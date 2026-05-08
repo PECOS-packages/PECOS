@@ -930,7 +930,7 @@ pub unsafe extern "C" fn pecos_qis_reset_interface() {
     crate::reset_interface();
 }
 
-/// Get a clone of the current `OperationCollector`
+/// Take the current `OperationCollector`, leaving an empty collector behind.
 /// Exported as C function so it can be called via dlsym from the cdylib
 ///
 /// # Safety
@@ -938,7 +938,7 @@ pub unsafe extern "C" fn pecos_qis_reset_interface() {
 /// `pecos_qis_free_operations` to avoid memory leaks.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_qis_get_operations() -> *mut crate::OperationCollector {
-    let operations = with_interface(|interface| interface.clone());
+    let operations = crate::take_interface();
     Box::into_raw(Box::new(operations))
 }
 
@@ -1692,6 +1692,10 @@ mod tests {
 
         // Free
         unsafe { pecos_qis_free_operations(ptr) };
+
+        with_interface(|iface| {
+            assert!(iface.operations.is_empty());
+        });
     }
 
     #[test]

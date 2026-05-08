@@ -220,6 +220,10 @@ impl<R> QuantumSimulator for CoinToss<R>
 where
     R: Rng + SeedableRng + Debug,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         // CoinToss is stateless, so reset is a no-op
         self

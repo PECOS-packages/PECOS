@@ -71,6 +71,13 @@ impl QuantumSimulator for GpuStateVecAuto {
     fn reset(&mut self) -> &mut Self {
         dispatch_mut!(self, reset())
     }
+
+    fn num_qubits(&self) -> usize {
+        match self {
+            Self::F64(s) => QuantumSimulator::num_qubits(s),
+            Self::F32(s) => QuantumSimulator::num_qubits(s),
+        }
+    }
 }
 
 impl CliffordGateable for GpuStateVecAuto {

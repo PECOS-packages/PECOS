@@ -11,12 +11,33 @@
 //! - `matrix` - Common matrix types and check matrix traits
 //! - `dem` - Detector error model traits and utilities
 
+pub mod adaptive;
 pub mod advanced;
+pub mod bp_matching;
+pub mod committed_osd;
 pub mod config;
+pub mod correlated_decoder;
+pub mod correlated_reweighting;
+pub mod correlation_table;
+pub mod decode_budget;
 pub mod dem;
+pub mod ensemble;
+pub mod erasure;
 pub mod errors;
+pub mod ghost_protocol;
+pub mod k_mwpm;
+pub mod logical_algorithm;
 pub mod matrix;
+pub mod multi_decoder;
+pub mod observable_subgraph;
+pub mod pauli_frame;
+pub mod perturbed;
+pub mod preprocessor;
 pub mod results;
+pub mod streaming;
+pub mod telemetry;
+pub mod two_pass_decoder;
+pub mod windowed_osd;
 
 use ndarray::ArrayView1;
 
@@ -28,7 +49,10 @@ pub use advanced::{
 pub use config::{
     BatchConfig, ConfigBuilder, DecoderConfig, DecodingMethod, PerformanceConfig, SolverType,
 };
-pub use dem::{DemConfig, DemConfigBuilder, DemDecoder, DemInfo};
+pub use dem::{
+    CheckMatrixObservableDecoder, DemCheckMatrix, DemConfig, DemConfigBuilder, DemDecoder, DemInfo,
+    DemMatchingGraph, DetectorCoord, MatchingEdge, parse_detector_coords,
+};
 pub use errors::{ConfigError, DecoderError, ErrorConvert, GraphError, MatrixError};
 pub use matrix::{CheckMatrixConfig, CheckMatrixDecoder, SparseCheckMatrix};
 pub use results::{
@@ -121,6 +145,46 @@ pub trait BatchDecoder: Decoder {
     /// - The batch is too large for the decoder to handle
     fn decode_batch(&mut self, inputs: &[ArrayView1<u8>])
     -> Result<Vec<Self::Result>, Self::Error>;
+}
+
+// ============================================================================
+// Observable Decoder Trait (for sample+decode loops)
+// ============================================================================
+
+/// Minimal trait for decoders used in threshold estimation loops.
+///
+/// Takes a detection event syndrome (dense `&[u8]`), returns the predicted
+/// observable flip mask. This is the only interface the sample+decode
+/// orchestrator needs -- it doesn't care about decoder internals, weights,
+/// convergence, or matched edges.
+pub trait ObservableDecoder {
+    /// Decode a dense syndrome and return predicted observable flips as a bitmask.
+    ///
+    /// Bit `i` of the returned value is 1 if observable `i` is predicted to flip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if decoding fails.
+    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError>;
+
+    /// Batch decode: flat buffer of `num_shots × num_detectors` bytes.
+    /// Returns one `u64` observable mask per shot.
+    ///
+    /// Default: loops over shots calling `decode_to_observables`.
+    /// Override for decoders with native batch support (e.g. `PyMatching`).
+    fn decode_batch_to_observables(
+        &mut self,
+        shots: &[u8],
+        num_shots: usize,
+        num_detectors: usize,
+    ) -> Result<Vec<u64>, DecoderError> {
+        let mut results = Vec::with_capacity(num_shots);
+        for i in 0..num_shots {
+            let syn = &shots[i * num_detectors..(i + 1) * num_detectors];
+            results.push(self.decode_to_observables(syn)?);
+        }
+        Ok(results)
+    }
 }
 
 // ============================================================================

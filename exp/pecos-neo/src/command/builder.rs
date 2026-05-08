@@ -136,6 +136,28 @@ impl CommandBuilder {
         self
     }
 
+    /// Add face gates.
+    #[must_use]
+    pub fn f(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue
+                .push(GateCommand::new(GateType::F, smallvec::smallvec![q.into()]));
+        }
+        self
+    }
+
+    /// Add face-dagger gates.
+    #[must_use]
+    pub fn fdg(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::new(
+                GateType::Fdg,
+                smallvec::smallvec![q.into()],
+            ));
+        }
+        self
+    }
+
     /// Add SX (sqrt-X) gates.
     #[must_use]
     pub fn sx(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Self {
@@ -276,6 +298,24 @@ impl CommandBuilder {
         self
     }
 
+    /// Add R1XY rotation gates with two angles (theta, phi).
+    #[must_use]
+    pub fn r1xy(
+        mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+        theta: impl Into<Angle64> + Copy,
+        phi: impl Into<Angle64> + Copy,
+    ) -> Self {
+        for &q in qubits {
+            self.queue.push(GateCommand::with_angles(
+                GateType::R1XY,
+                smallvec::smallvec![q.into()],
+                smallvec::smallvec![theta.into(), phi.into()],
+            ));
+        }
+        self
+    }
+
     // Two-qubit gates
 
     /// Add CNOT (CX) gates.
@@ -315,6 +355,75 @@ impl CommandBuilder {
         for &(q0, q1) in pairs {
             self.queue.push(GateCommand::new(
                 GateType::SZZ,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
+    }
+
+    /// Add SXX gates.
+    #[must_use]
+    pub fn sxx(mut self, pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SXX,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
+    }
+
+    /// Add SXXdg gates.
+    #[must_use]
+    pub fn sxxdg(
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SXXdg,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
+    }
+
+    /// Add SYY gates.
+    #[must_use]
+    pub fn syy(mut self, pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SYY,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
+    }
+
+    /// Add SYYdg gates.
+    #[must_use]
+    pub fn syydg(
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SYYdg,
+                smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
+    }
+
+    /// Add SZZdg gates (inverse of SZZ).
+    #[must_use]
+    pub fn szzdg(
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::new(
+                GateType::SZZdg,
                 smallvec::smallvec![q0.into(), q1.into()],
             ));
         }

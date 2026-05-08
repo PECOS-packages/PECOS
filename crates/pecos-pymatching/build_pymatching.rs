@@ -60,6 +60,16 @@ pub fn build() -> Result<()> {
     let pymatching_dir = ensure_dep_ready("pymatching", &manifest)?;
     let stim_dir = ensure_dep_ready("stim", &manifest)?;
 
+    // Export paths so downstream crates (e.g., pecos-chromobius) can include
+    // PyMatching/Stim headers and link against our compiled objects without
+    // compiling their own copy.
+    let pymatching_src = pymatching_dir.join("src");
+    let stim_src = stim_dir.join("src");
+    println!("cargo:pymatching_include={}", pymatching_src.display());
+    println!("cargo:stim_include={}", stim_src.display());
+    println!("cargo:stim_dir={}", stim_dir.display());
+    println!("cargo:lib_dir={}", out_dir.display());
+
     // Build using cxx
     build_cxx_bridge(&pymatching_dir, &stim_dir)?;
 
@@ -180,7 +190,6 @@ fn collect_pymatching_sources(pymatching_src_dir: &Path) -> Result<Vec<PathBuf>>
     sources.extend([
         driver_dir.join("user_graph.cc"),
         driver_dir.join("mwpm_decoding.cc"),
-        driver_dir.join("io.cc"),
     ]);
 
     // Matcher files

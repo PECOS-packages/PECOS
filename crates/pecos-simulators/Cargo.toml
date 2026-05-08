@@ -18,11 +18,6 @@ default = []
 # Do NOT enable for multi-shot workloads where shots are parallelized at the
 # orchestration level - this causes thread oversubscription and hurts throughput.
 parallel = ["rayon"]
-# Enable AVX-512 SIMD operations using f64x8 (512-bit vectors processing 8 f64 at once).
-# Requires AVX-512 capable CPU (Intel Ice Lake+, AMD Zen 4+).
-# Build with: RUSTFLAGS='-C target-feature=+avx512f' cargo build --release --features avx512
-# Provides ~2x theoretical speedup for SIMD-bound operations on supported hardware.
-avx512 = []
 
 [dependencies]
 pecos-core.workspace = true

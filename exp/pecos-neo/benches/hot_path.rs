@@ -1206,8 +1206,8 @@ fn bench_batch_processor(c: &mut Criterion) {
                 let mut state = BatchState::new(num_qubits);
                 state.mark_all_active();
                 // Mark leaked_pct% as leaked
-                let step = if leaked_pct > 0 {
-                    100 / leaked_pct
+                let step = if let Some(s) = 100usize.checked_div(leaked_pct) {
+                    s
                 } else {
                     num_qubits + 1
                 };

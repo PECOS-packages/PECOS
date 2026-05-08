@@ -11,11 +11,20 @@
 //! - `tesseract` - Tesseract search-based decoder (C++ FFI)
 //! - `chromobius` - Chromobius color code decoder (C++ FFI)
 //! - `relay-bp` - Relay BP decoder for qLDPC codes (pure Rust)
+//! - `uf` - Syndrome-graph Union-Find decoder (pure Rust)
 //! - `all` - Enable all decoders
 
 // Re-export core traits
 pub use pecos_decoder_core::{
-    BatchDecoder, CssDecoder, Decoder, DecoderError, DecodingResultTrait, SoftDecoder,
+    BatchDecoder, CssDecoder, Decoder, DecoderError, DecodingResultTrait, ObservableDecoder,
+    SoftDecoder,
+};
+
+// Re-export observable subgraph decoder (for transversal gates)
+pub use pecos_decoder_core::observable_subgraph::{
+    DetectorGroup, ObservableSubgraph, ObservableSubgraphDecoder,
+    ParallelObservableSubgraphDecoder, QubitStabCoords, StabCoords, StabType,
+    partition_dem_by_observable,
 };
 
 // Re-export LDPC decoders when feature is enabled
@@ -51,13 +60,19 @@ pub use pecos_ldpc_decoders::{
     UnionFindDecoder,
 };
 
+// Re-export MWPF decoder when feature is enabled
+#[cfg(feature = "mwpf")]
+pub use pecos_mwpf::{MwpfConfig, MwpfDecoder, MwpfDecodingResult, MwpfError, MwpfSolverType};
+
 // Re-export Fusion Blossom decoder when feature is enabled
 #[cfg(feature = "fusion-blossom")]
 pub use pecos_fusion_blossom::{
     DecodingOptions as FusionBlossomDecodingOptions, DecodingResult as FusionBlossomDecodingResult,
     FusionBlossomBuilder, FusionBlossomConfig, FusionBlossomDecoder, FusionBlossomError,
-    PerfectMatchingInfo, SolverType, StandardCode, SyndromeData,
+    ParsedCorrelatedDem, PerfectMatchingInfo, SolverType, StandardCode, SyndromeData,
 };
+#[cfg(feature = "fusion-blossom")]
+pub use pecos_fusion_blossom::{PartitionConfig, VertexRange};
 
 // Re-export PyMatching decoder when feature is enabled
 #[cfg(feature = "pymatching")]
@@ -80,6 +95,15 @@ pub use pecos_tesseract::{
 pub use pecos_chromobius::{
     ChromobiusConfig, ChromobiusDecoder, ChromobiusError,
     DecodingResult as ChromobiusDecodingResult,
+};
+
+// Re-export UF decoder when feature is enabled
+#[cfg(feature = "uf")]
+pub use pecos_uf_decoder::{
+    AStarConfig, AStarDecoder, BeamSearchConfig, BeamSearchWindowedDecoder,
+    BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, OverlappingWindowedDecoder,
+    QubitEdgeMapping, SandwichWindowedDecoder, StreamingWindowedDecoder, UfDecoder,
+    UfDecoderConfig, WindowedConfig, WindowedDecoder,
 };
 
 // Re-export Relay BP decoder when feature is enabled

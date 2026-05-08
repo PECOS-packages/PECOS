@@ -42,15 +42,15 @@ fn create_test_influence_map(num_locations: usize, num_detectors: usize) -> GpuI
     GpuInfluenceMapData {
         num_locations: num_locations as u32,
         num_detectors: num_detectors as u32,
-        num_logicals: 2,
+        num_dem_outputs: 2,
         detector_offsets_x,
         detector_data_x,
         detector_offsets_y,
         detector_data_y,
         detector_offsets_z,
         detector_data_z,
-        // Logicals: location 0 X -> log 0, location 1 X -> log 1
-        logical_offsets_x: {
+        // DEM outputs: location 0 X -> L0, location 1 X -> L1
+        dem_output_offsets_x: {
             let mut v = vec![0u32; num_locations + 1];
             if num_locations > 0 {
                 v[1] = 1;
@@ -63,27 +63,27 @@ fn create_test_influence_map(num_locations: usize, num_detectors: usize) -> GpuI
             }
             v
         },
-        logical_data_x: vec![0, 1],
-        logical_offsets_y: vec![0; num_locations + 1],
-        logical_data_y: vec![],
-        logical_offsets_z: vec![0; num_locations + 1],
-        logical_data_z: vec![],
+        dem_output_data_x: vec![0, 1],
+        dem_output_offsets_y: vec![0; num_locations + 1],
+        dem_output_data_y: vec![],
+        dem_output_offsets_z: vec![0; num_locations + 1],
+        dem_output_data_z: vec![],
     }
 }
 
-/// Simple CPU sampler for comparison (mirrors the pecos-qec `NoisySampler` logic)
+/// Simple CPU sampler for comparison (mirrors the pecos-qec `DemSampler` logic)
 struct CpuSampler {
     num_locations: usize,
     num_detectors: usize,
-    num_logicals: usize,
+    num_dem_outputs: usize,
     detector_offsets_x: Vec<u32>,
     detector_data_x: Vec<u32>,
     detector_offsets_y: Vec<u32>,
     detector_data_y: Vec<u32>,
     detector_offsets_z: Vec<u32>,
     detector_data_z: Vec<u32>,
-    logical_offsets_x: Vec<u32>,
-    logical_data_x: Vec<u32>,
+    dem_output_offsets_x: Vec<u32>,
+    dem_output_data_x: Vec<u32>,
     rng_state: u64,
 }
 
@@ -92,15 +92,15 @@ impl CpuSampler {
         Self {
             num_locations: map.num_locations as usize,
             num_detectors: map.num_detectors as usize,
-            num_logicals: map.num_logicals as usize,
+            num_dem_outputs: map.num_dem_outputs as usize,
             detector_offsets_x: map.detector_offsets_x.clone(),
             detector_data_x: map.detector_data_x.clone(),
             detector_offsets_y: map.detector_offsets_y.clone(),
             detector_data_y: map.detector_data_y.clone(),
             detector_offsets_z: map.detector_offsets_z.clone(),
             detector_data_z: map.detector_data_z.clone(),
-            logical_offsets_x: map.logical_offsets_x.clone(),
-            logical_data_x: map.logical_data_x.clone(),
+            dem_output_offsets_x: map.dem_output_offsets_x.clone(),
+            dem_output_data_x: map.dem_output_data_x.clone(),
             rng_state: seed,
         }
     }
@@ -120,11 +120,11 @@ impl CpuSampler {
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         // probability in [0,1] maps to [0, u32::MAX]
         let threshold = (p_error * f64::from(u32::MAX)) as u32;
-        let mut logical_errors = 0;
+        let mut logical_error_count = 0;
 
         for _ in 0..num_shots {
             let mut detector_flips = vec![0u8; self.num_detectors.max(1)];
-            let mut logical_flips = vec![0u8; self.num_logicals.max(1)];
+            let mut dem_output_flips = vec![0u8; self.num_dem_outputs.max(1)];
 
             for loc in 0..self.num_locations {
                 let rand = self.next_u32();
@@ -135,7 +135,7 @@ impl CpuSampler {
                 // Sample Pauli type
                 let pauli = self.next_u32() % 3;
 
-                // Get affected detectors and logicals
+                // Get affected detectors and DEM outputs
                 let (det_start, det_end, det_data) = match pauli {
                     0 => (
                         self.detector_offsets_x[loc] as usize,
@@ -161,25 +161,25 @@ impl CpuSampler {
                     }
                 }
 
-                // Only X affects logicals in our test map
+                // Only X affects DEM outputs in our test map
                 if pauli == 0 {
-                    let log_start = self.logical_offsets_x[loc] as usize;
-                    let log_end = self.logical_offsets_x[loc + 1] as usize;
-                    for i in log_start..log_end {
-                        let log_idx = self.logical_data_x[i] as usize;
-                        if log_idx < logical_flips.len() {
-                            logical_flips[log_idx] ^= 1;
+                    let dem_output_start = self.dem_output_offsets_x[loc] as usize;
+                    let dem_output_end = self.dem_output_offsets_x[loc + 1] as usize;
+                    for i in dem_output_start..dem_output_end {
+                        let dem_output_idx = self.dem_output_data_x[i] as usize;
+                        if dem_output_idx < dem_output_flips.len() {
+                            dem_output_flips[dem_output_idx] ^= 1;
                         }
                     }
                 }
             }
 
-            if logical_flips.contains(&1) {
-                logical_errors += 1;
+            if dem_output_flips.contains(&1) {
+                logical_error_count += 1;
             }
         }
 
-        logical_errors
+        logical_error_count
     }
 }
 
@@ -195,8 +195,8 @@ fn benchmark_gpu(
     let result = sampler.sample_uniform(num_shots, p_error);
     let elapsed = start.elapsed();
 
-    let logical_errors = result.count_logical_errors();
-    (elapsed, logical_errors)
+    let logical_error_count = result.count_logical_errors();
+    (elapsed, logical_error_count)
 }
 
 fn benchmark_cpu(
@@ -208,10 +208,10 @@ fn benchmark_cpu(
     let mut sampler = CpuSampler::new(map, seed);
 
     let start = Instant::now();
-    let logical_errors = sampler.sample(num_shots, p_error);
+    let logical_error_count = sampler.sample(num_shots, p_error);
     let elapsed = start.elapsed();
 
-    (elapsed, logical_errors)
+    (elapsed, logical_error_count)
 }
 
 fn main() {

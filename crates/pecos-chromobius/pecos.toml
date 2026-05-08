@@ -4,19 +4,16 @@
 version = 1
 
 [dependencies.chromobius]
-version = "35e289570fdc1d71e73582e1fd4e0c8e29298ef5"
-url = "https://github.com/quantumlib/chromobius/archive/35e289570fdc1d71e73582e1fd4e0c8e29298ef5.tar.gz"
-sha256 = "da73d819e67572065fd715db45fabb342c2a2a1e961d2609df4f9864b9836054"
+version = "acd09febcd6d4c9001b4d708507c8bfb10e4322e"
+url = "https://github.com/quantumlib/chromobius/archive/acd09febcd6d4c9001b4d708507c8bfb10e4322e.tar.gz"
+sha256 = "4aff65fbf3e5a4ed2974f9a48b772274ffa6129daa4b82bfc4182808cbe6360f"
 description = "Color code decoder"
 
-[dependencies.pymatching]
-version = "2b72b2c558eec678656da20ab6c358aa123fb664"
-url = "https://github.com/oscarhiggott/PyMatching/archive/2b72b2c558eec678656da20ab6c358aa123fb664.tar.gz"
-sha256 = "1470520b66ad7899f85020664aeeadfc6e2967f0b5e19ad205829968b845cd70"
-description = "MWPM decoder"
+# PyMatching is NOT downloaded here -- pecos-pymatching provides the compiled
+# objects and headers via cargo metadata (links = "pymatching-pecos").
 
 [dependencies.stim]
-version = "bd60b73525fd5a9b30839020eb7554ad369e4337"
-url = "https://github.com/quantumlib/Stim/archive/bd60b73525fd5a9b30839020eb7554ad369e4337.tar.gz"
-sha256 = "2a4be24295ce3018d79e08369b31e401a2d33cd8b3a75675d57dac3afd9de37d"
+version = "213275795e49027772bea7c610b6aac3a80583e1"
+url = "https://github.com/quantumlib/Stim/archive/213275795e49027772bea7c610b6aac3a80583e1.tar.gz"
+sha256 = "b63c4ae94494a8819d440757776cf80a829ec1e30454fa7c9b0f670e981938ab"
 description = "Stabilizer simulator for QEC"

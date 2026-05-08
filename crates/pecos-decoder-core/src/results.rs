@@ -61,6 +61,14 @@ pub trait DecodingResultTrait {
     /// Whether the decoding was successful
     fn is_successful(&self) -> bool;
 
+    /// Get the raw correction/decoding vector (one entry per error mechanism).
+    ///
+    /// For check-matrix decoders this is the estimated error pattern.
+    /// For MWPM decoders this may be the observable prediction directly.
+    fn correction(&self) -> &[u8] {
+        &[]
+    }
+
     /// Get the cost of the decoding (if available)
     fn cost(&self) -> Option<f64> {
         None

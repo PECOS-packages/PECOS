@@ -45,6 +45,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -52,7 +53,6 @@ import numpy as np
 if TYPE_CHECKING:
     import stim
     from numpy.typing import NDArray
-    from pecos_rslib.qec import MeasurementNoiseModel
 
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -70,32 +70,47 @@ class DecoderType(str, Enum):
 
 @dataclass
 class NoiseModel:
-    """Depolarizing noise parameters for surface code simulation.
+    """Circuit-level noise parameters for QEC simulation.
 
-    These parameters match the DepolarizingErrorModel in selene_sim.
+    Matches the Rust ``NoiseConfig`` type. All parameters are optional
+    beyond the four base rates.
 
     Attributes:
-        p1: Single-qubit gate error rate
-        p2: Two-qubit gate error rate
-        p_meas: Measurement error rate
-        p_init: Initialization error rate
+        p1: Single-qubit gate error rate.
+        p2: Two-qubit gate error rate.
+        p_meas: Measurement error rate.
+        p_prep: Initialization error rate.
+        p_idle: Idle noise rate per time unit (uniform depolarizing).
+        t1: T1 relaxation time for idle noise (same units as idle duration).
+        t2: T2 dephasing time (must satisfy t2 <= 2*t1).
     """
 
-    p1: float = 0.0  # Single-qubit gate error rate
-    p2: float = 0.0  # Two-qubit gate error rate
-    p_meas: float = 0.0  # Measurement error rate
-    p_init: float = 0.0  # Initialization error rate
+    p1: float = 0.0
+    p2: float = 0.0
+    p_meas: float = 0.0
+    p_prep: float = 0.0
+    p_idle: float | None = None
+    t1: float | None = None
+    t2: float | None = None
 
     @property
     def is_noiseless(self) -> bool:
         """True if all error rates are zero."""
-        return self.p1 == 0.0 and self.p2 == 0.0 and self.p_meas == 0.0 and self.p_init == 0.0
+        return (
+            self.p1 == 0.0
+            and self.p2 == 0.0
+            and self.p_meas == 0.0
+            and self.p_prep == 0.0
+            and (self.p_idle is None or self.p_idle == 0.0)
+        )
 
     @property
     def physical_error_rate(self) -> float:
-        """Approximate combined physical error rate (for DEM weights)."""
-        # Use maximum as a conservative estimate
-        return max(self.p1, self.p2, self.p_meas, self.p_init)
+        """Approximate combined physical error rate."""
+        rates = [self.p1, self.p2, self.p_meas, self.p_prep]
+        if self.p_idle is not None:
+            rates.append(self.p_idle)
+        return max(rates)
 
 
 @dataclass
@@ -107,6 +122,43 @@ class DecodingResult:
     logical_x_flip: bool  # True if logical X was flipped by correction
     logical_z_flip: bool  # True if logical Z was flipped by correction
     decoding_weight: float  # Weight of the matching solution
+
+
+@dataclass(frozen=True)
+class _CachedNativeSurfaceTopology:
+    """Topology-only native model data reused across noise configurations."""
+
+    influence_map: Any
+    detectors_json: str
+    observables_json: str
+    measurement_order: tuple[int, ...]
+    num_measurements: int
+    num_detectors: int
+    num_observables: int
+
+
+def _surface_patch_cache_key(patch: SurfacePatch) -> tuple[int, int, str, bool]:
+    """Create a stable cache key for surface-patch topology."""
+    return (
+        patch.dx,
+        patch.dz,
+        patch.geometry.orientation.name,
+        patch.geometry.rotated,
+    )
+
+
+@cache
+def _cached_surface_patch(patch_key: tuple[int, int, str, bool]) -> SurfacePatch:
+    """Recreate a canonical patch from a geometry cache key."""
+    from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
+
+    dx, dz, orientation_name, rotated = patch_key
+    return SurfacePatch.create(
+        dx=dx,
+        dz=dz,
+        orientation=PatchOrientation[orientation_name],
+        rotated=rotated,
+    )
 
 
 def syndromes_to_detection_events(
@@ -322,11 +374,638 @@ def generate_surface_code_dem(
     return "\n".join(lines)
 
 
+def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
+    """Copy the surface-level metadata needed by the native DEM/sampler builders."""
+    for key in (
+        "basis",
+        "detectors",
+        "observables",
+        "num_measurements",
+        "num_detectors",
+        "detector_descriptors",
+        "observable_descriptors",
+    ):
+        value = source_tc.get_meta(key)
+        if value is not None:
+            target_tc.set_meta(key, value)
+
+
+def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any:
+    """Replay traced QIS operations into a PECOS TickCircuit."""
+    import heapq
+
+    from pecos_rslib.quantum import TickCircuit
+
+    tick_circuit = TickCircuit()
+    active_slots: dict[int, int] = {}
+    free_slots: list[int] = []
+    next_slot = 0
+
+    def allocate_slot(program_id: int) -> int:
+        nonlocal next_slot
+        if program_id in active_slots:
+            return active_slots[program_id]
+        if free_slots:
+            slot = heapq.heappop(free_slots)
+        else:
+            slot = next_slot
+            next_slot += 1
+        active_slots[program_id] = slot
+        return slot
+
+    def release_slot(program_id: int) -> None:
+        slot = active_slots.pop(program_id, None)
+        if slot is not None:
+            heapq.heappush(free_slots, slot)
+
+    def mapped_slot(program_id: int, op_name: str) -> int:
+        if program_id not in active_slots:
+            msg = f"Traced QIS op {op_name!r} referenced unmapped program qubit {program_id}"
+            raise ValueError(msg)
+        return active_slots[program_id]
+
+    def scalar_arg(payload: Any, op_name: str) -> int:
+        if isinstance(payload, list):
+            msg = f"Expected scalar payload for {op_name}, got {payload!r}"
+            raise TypeError(msg)
+        return int(payload)
+
+    def tuple_args(payload: Any, op_name: str, arity: int) -> tuple[Any, ...]:
+        if not isinstance(payload, list) or len(payload) != arity:
+            msg = f"Expected {arity} arguments for {op_name}, got {payload!r}"
+            raise ValueError(msg)
+        return tuple(payload)
+
+    for operation in operations:
+        if "AllocateQubit" in operation:
+            program_id = int(operation["AllocateQubit"]["id"])
+            slot = allocate_slot(program_id)
+            tick_circuit.tick().pz([slot])
+            continue
+
+        if "ReleaseQubit" in operation:
+            release_slot(int(operation["ReleaseQubit"]["id"]))
+            continue
+
+        if "AllocateResult" in operation or "RecordOutput" in operation or "Barrier" in operation:
+            continue
+
+        quantum = operation.get("Quantum")
+        if quantum is None or len(quantum) != 1:
+            msg = f"Unsupported traced operation payload: {operation!r}"
+            raise ValueError(msg)
+
+        op_name, payload = next(iter(quantum.items()))
+        tick = tick_circuit.tick()
+
+        if op_name == "H":
+            tick.h([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "X":
+            tick.x([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "Y":
+            tick.y([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "Z":
+            tick.z([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "S":
+            tick.sz([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "Sdg":
+            tick.szdg([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "T":
+            tick.t([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "Tdg":
+            tick.tdg([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        elif op_name == "RX":
+            theta, program_id = tuple_args(payload, op_name, 2)
+            tick.rx(float(theta), [mapped_slot(int(program_id), op_name)])
+        elif op_name == "RY":
+            theta, program_id = tuple_args(payload, op_name, 2)
+            tick.ry(float(theta), [mapped_slot(int(program_id), op_name)])
+        elif op_name == "RZ":
+            theta, program_id = tuple_args(payload, op_name, 2)
+            tick.rz(float(theta), [mapped_slot(int(program_id), op_name)])
+        elif op_name == "RXY":
+            theta, phi, program_id = tuple_args(payload, op_name, 3)
+            tick.r1xy(float(theta), float(phi), [mapped_slot(int(program_id), op_name)])
+        elif op_name == "CX":
+            control, target = tuple_args(payload, op_name, 2)
+            tick.cx([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
+        elif op_name == "CY":
+            control, target = tuple_args(payload, op_name, 2)
+            tick.cy([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
+        elif op_name == "CZ":
+            control, target = tuple_args(payload, op_name, 2)
+            tick.cz([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
+        elif op_name == "CH":
+            control, target = tuple_args(payload, op_name, 2)
+            tick.ch([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
+        elif op_name == "CRZ":
+            theta, control, target = tuple_args(payload, op_name, 3)
+            tick.crz(
+                float(theta),
+                [(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))],
+            )
+        elif op_name == "CCX":
+            control_a, control_b, target = tuple_args(payload, op_name, 3)
+            tick.ccx(
+                [
+                    (
+                        mapped_slot(int(control_a), op_name),
+                        mapped_slot(int(control_b), op_name),
+                        mapped_slot(int(target), op_name),
+                    ),
+                ],
+            )
+        elif op_name == "ZZ":
+            qubit_a, qubit_b = tuple_args(payload, op_name, 2)
+            tick.szz([(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))])
+        elif op_name == "RZZ":
+            theta, qubit_a, qubit_b = tuple_args(payload, op_name, 3)
+            tick.rzz(
+                float(theta),
+                [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
+            )
+        elif op_name == "Measure":
+            program_id, _result_id = tuple_args(payload, op_name, 2)
+            tick.mz([mapped_slot(int(program_id), op_name)])
+        elif op_name == "Reset":
+            tick.pz([mapped_slot(scalar_arg(payload, op_name), op_name)])
+        else:
+            msg = f"Unsupported traced QIS quantum op {op_name!r}"
+            raise ValueError(msg)
+
+    # Compact: ASAP-schedule gates into minimal ticks
+    tick_circuit.compact_ticks()
+
+    return tick_circuit
+
+
+def _gate_pairs(qubits: list[int], gate_type: str) -> list[tuple[int, int]]:
+    """Convert a flattened qubit list into disjoint qubit pairs."""
+    if len(qubits) % 2 != 0:
+        msg = f"Lowered gate {gate_type!r} expected an even number of qubits, got {qubits!r}"
+        raise ValueError(msg)
+    return list(zip(qubits[::2], qubits[1::2], strict=True))
+
+
+def _gate_triples(qubits: list[int], gate_type: str) -> list[tuple[int, int, int]]:
+    """Convert a flattened qubit list into disjoint qubit triples."""
+    if len(qubits) % 3 != 0:
+        msg = f"Lowered gate {gate_type!r} expected qubits in triples, got {qubits!r}"
+        raise ValueError(msg)
+    return [(qubits[i], qubits[i + 1], qubits[i + 2]) for i in range(0, len(qubits), 3)]
+
+
+def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) -> Any:
+    """Replay lowered post-Selene ByteMessage gate batches into a TickCircuit.
+
+    The lowered trace emits gates one at a time. We replay each into its own
+    tick, then compact (ASAP schedule) so that gates on disjoint qubits share
+    a tick --- matching the parallel structure of the abstract circuit.
+
+    MeasIds flow from Guppy result() objects: AllocateResult IDs from the
+    operations stream are stamped on MZ gates via mz_with_ids().
+    """
+    from pecos_rslib.quantum import TickCircuit
+
+    tick_circuit = TickCircuit()
+
+    for chunk in chunks:
+        # Extract AllocateResult ID → MZ qubit mapping from the operations stream.
+        # Each AllocateResult(id=N) is followed by Quantum.Measure([qubit, slot]).
+        # This gives us the MeasId to stamp on each MZ gate.
+        meas_id_queue: list[tuple[int, int]] = []  # (qubit, meas_id) pairs
+        last_alloc_id: int | None = None
+        for op in chunk.get("operations") or []:
+            op_dict = dict(op)
+            if "AllocateResult" in op_dict:
+                last_alloc_id = int(op_dict["AllocateResult"]["id"])
+            elif "Quantum" in op_dict:
+                q_op = op_dict["Quantum"]
+                if "Measure" in q_op and last_alloc_id is not None:
+                    qubit = int(q_op["Measure"][0])
+                    meas_id_queue.append((qubit, last_alloc_id))
+                    last_alloc_id = None
+
+        meas_id_idx = 0  # next MeasId to assign
+
+        for gate in chunk.get("lowered_quantum_ops") or []:
+            gate_type = str(gate["gate_type"])
+            qubits = [int(q) for q in gate.get("qubits", [])]
+            angles = [float(theta) for theta in gate.get("angles", [])]
+            tick = tick_circuit.tick()
+
+            if gate_type == "H":
+                tick.h(qubits)
+            elif gate_type == "X":
+                tick.x(qubits)
+            elif gate_type == "Y":
+                tick.y(qubits)
+            elif gate_type == "Z":
+                tick.z(qubits)
+            elif gate_type == "SZ":
+                tick.sz(qubits)
+            elif gate_type == "SZdg":
+                tick.szdg(qubits)
+            elif gate_type == "T":
+                tick.t(qubits)
+            elif gate_type == "Tdg":
+                tick.tdg(qubits)
+            elif gate_type == "PZ":
+                tick.pz(qubits)
+            elif gate_type == "MZ":
+                # Stamp MeasIds from the AllocateResult stream
+                meas_ids = []
+                for q in qubits:
+                    if meas_id_idx < len(meas_id_queue):
+                        expected_q, mid = meas_id_queue[meas_id_idx]
+                        if expected_q == q:
+                            meas_ids.append(mid)
+                            meas_id_idx += 1
+                        else:
+                            # Qubit mismatch — fall back to auto-assign
+                            meas_ids = []
+                            break
+                    else:
+                        meas_ids = []
+                        break
+
+                if meas_ids:
+                    tick.mz_with_ids(qubits, meas_ids)
+                else:
+                    tick.mz(qubits)
+            elif gate_type == "RX":
+                tick.rx(angles[0], qubits)
+            elif gate_type == "RY":
+                tick.ry(angles[0], qubits)
+            elif gate_type == "RZ":
+                tick.rz(angles[0], qubits)
+            elif gate_type == "R1XY":
+                tick.r1xy(angles[0], angles[1], qubits)
+            elif gate_type == "CX":
+                tick.cx(_gate_pairs(qubits, gate_type))
+            elif gate_type == "CY":
+                tick.cy(_gate_pairs(qubits, gate_type))
+            elif gate_type == "CZ":
+                tick.cz(_gate_pairs(qubits, gate_type))
+            elif gate_type == "CH":
+                tick.ch(_gate_pairs(qubits, gate_type))
+            elif gate_type == "CRZ":
+                tick.crz(angles[0], _gate_pairs(qubits, gate_type))
+            elif gate_type == "SZZ":
+                tick.szz(_gate_pairs(qubits, gate_type))
+            elif gate_type == "SZZdg":
+                tick.szzdg(_gate_pairs(qubits, gate_type))
+            elif gate_type == "RZZ":
+                tick.rzz(angles[0], _gate_pairs(qubits, gate_type))
+            elif gate_type == "CCX":
+                tick.ccx(_gate_triples(qubits, gate_type))
+            else:
+                msg = f"Unsupported lowered traced gate {gate_type!r}"
+                raise ValueError(msg)
+
+    # Compact: ASAP-schedule gates into minimal ticks
+    tick_circuit.compact_ticks()
+
+    return tick_circuit
+
+
+def _generate_traced_surface_tick_circuit(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str,
+) -> Any:
+    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit."""
+    import pecos
+    from pecos.guppy import get_num_qubits, make_surface_code
+
+    program = make_surface_code(distance=patch.distance, num_rounds=num_rounds, basis=basis)
+    sim_builder = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(get_num_qubits(patch.distance))
+        .seed(0)
+    )
+    chunks = list(sim_builder.capture_operation_trace())
+
+    if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
+        return _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    operations: list[dict[str, Any]] = []
+    for chunk in chunks:
+        operations.extend(list(chunk.get("operations", [])))
+    return _replay_qis_trace_into_tick_circuit(operations)
+
+
+def _build_surface_tick_circuit_for_native_model(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str,
+    *,
+    ancilla_budget: int | None = None,
+    circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+) -> Any:
+    """Build the TickCircuit used by the native DEM and sampler paths."""
+    from pecos.qec.surface.circuit_builder import (
+        _extract_measurement_order,
+        generate_tick_circuit_from_patch,
+    )
+
+    abstract_tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+    )
+
+    if circuit_source == "abstract":
+        return abstract_tc
+
+    if circuit_source != "traced_qis":
+        msg = f"Unknown circuit_source {circuit_source!r}"
+        raise ValueError(msg)
+
+    if ancilla_budget is not None:
+        msg = (
+            "circuit_source='traced_qis' does not currently support ancilla_budget because "
+            "pecos.guppy.surface.make_surface_code does not yet expose ancilla budgeting"
+        )
+        raise ValueError(msg)
+
+    traced_tc = _generate_traced_surface_tick_circuit(patch, num_rounds, basis)
+    traced_measurement_order = _extract_measurement_order(traced_tc)
+    abstract_measurement_order = _extract_measurement_order(abstract_tc)
+    if traced_measurement_order != abstract_measurement_order:
+        msg = (
+            "Lowered traced circuit measurement order does not match the abstract surface "
+            "metadata; refusing to build a mismatched native DEM/sampler"
+        )
+        raise ValueError(msg)
+
+    _copy_surface_tick_circuit_metadata(abstract_tc, traced_tc)
+    traced_tc.set_meta("circuit_source", circuit_source)
+    return traced_tc
+
+
+def _can_use_cached_surface_topology(
+    *,
+    ancilla_budget: int | None,
+) -> bool:
+    """Return True when we can safely use the shared native topology cache."""
+    return ancilla_budget is None
+
+
+@cache
+def _cached_surface_native_topology(
+    patch_key: tuple[int, int, str, bool],
+    num_rounds: int,
+    basis: str,
+    ancilla_budget: int | None,
+    circuit_source: Literal["abstract", "traced_qis"],
+) -> _CachedNativeSurfaceTopology:
+    """Cache topology-only native analysis shared across noise parameters."""
+    import json
+
+    from pecos.qec import DagFaultAnalyzer
+    from pecos.qec.surface.circuit_builder import _extract_measurement_order
+
+    patch = _cached_surface_patch(patch_key)
+    tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        circuit_source=circuit_source,
+    )
+    # Insert idle gates so non-active qubits get noise in the after-only model.
+    # Note: the traced circuit has one gate per tick (fully serialized).
+    # Call tc.compact_ticks() before this to merge parallel gates into
+    # shared ticks if the hardware model supports parallel execution.
+    tc.fill_idle_gates()
+
+    dag = tc.to_dag_circuit()
+    analyzer = DagFaultAnalyzer(dag)
+    influence_map = analyzer.build_influence_map()
+
+    detectors_json = tc.get_meta("detectors") or "[]"
+    observables_json = tc.get_meta("observables") or "[]"
+    measurement_order = tuple(_extract_measurement_order(tc))
+    num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
+
+    return _CachedNativeSurfaceTopology(
+        influence_map=influence_map,
+        detectors_json=detectors_json,
+        observables_json=observables_json,
+        measurement_order=measurement_order,
+        num_measurements=num_measurements,
+        num_detectors=len(json.loads(detectors_json)) if detectors_json else 0,
+        num_observables=len(json.loads(observables_json)) if observables_json else 0,
+    )
+
+
+def _dem_string_from_cached_surface_topology(
+    topology: _CachedNativeSurfaceTopology,
+    noise: NoiseModel,
+    *,
+    decompose_errors: bool,
+) -> str:
+    """Build a DEM string from cached topology and fresh noise parameters."""
+    from pecos.qec import DemBuilder
+
+    dem = (
+        DemBuilder(topology.influence_map)
+        .with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep, p_idle=noise.p_idle, t1=noise.t1, t2=noise.t2)
+        .with_num_measurements(topology.num_measurements)
+        .with_measurement_order(list(topology.measurement_order))
+        .with_detectors_json(topology.detectors_json)
+        .with_observables_json(topology.observables_json)
+        .build_with_source_tracking()
+    )
+    return dem.to_string_decomposed() if decompose_errors else dem.to_string()
+
+
+@cache
+def _cached_surface_native_dem_string(
+    patch_key: tuple[int, int, str, bool],
+    num_rounds: int,
+    basis: str,
+    ancilla_budget: int | None,
+    circuit_source: Literal["abstract", "traced_qis"],
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_prep: float,
+    decompose_errors: bool,
+    p_idle: float | None = None,
+    t1: float | None = None,
+    t2: float | None = None,
+) -> str:
+    """Cache native DEM strings across callers for one topology + noise tuple."""
+    topology = _cached_surface_native_topology(
+        patch_key,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        circuit_source,
+    )
+    return _dem_string_from_cached_surface_topology(
+        topology,
+        NoiseModel(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep, p_idle=p_idle, t1=t1, t2=t2),
+        decompose_errors=decompose_errors,
+    )
+
+
+@cache
+def _cached_parsed_dem(dem_str: str) -> Any:
+    """Cache parsed DEM objects so repeated sampler builds only instantiate the sampler."""
+    from pecos.qec import ParsedDem
+
+    return ParsedDem.from_string(dem_str)
+
+
+def _build_native_sampler_from_cached_surface_topology(
+    topology: _CachedNativeSurfaceTopology,
+    noise: NoiseModel,
+    *,
+    sampling_model: Literal[
+        "dem",
+        "influence_dem",
+        "mnm",
+    ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
+) -> NativeSampler:
+    """Construct a native sampler from cached topology-only analysis."""
+    from pecos.qec import DemSampler, ParsedDem
+
+    if sampling_model == "dem":
+        dem_str = _dem_string_from_cached_surface_topology(
+            topology,
+            noise,
+            decompose_errors=True,
+        )
+        sampler = ParsedDem.from_string(dem_str).to_dem_sampler()
+    elif sampling_model in ("influence_dem", "mnm"):
+        import json
+
+        det_records = [d["records"] for d in json.loads(topology.detectors_json)]
+        obs_records = [o["records"] for o in json.loads(topology.observables_json)] if topology.observables_json else []
+        sampler = DemSampler.with_detectors(
+            topology.influence_map,
+            det_records,
+            obs_records,
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
+        )
+        # Remap sampling_model for NativeSampler dispatch
+        sampling_model = "influence_dem"
+    else:
+        msg = f"Unknown native sampling_model {sampling_model!r}"
+        raise ValueError(msg)
+
+    return NativeSampler(
+        sampler=sampler,
+        detectors_json=topology.detectors_json,
+        observables_json=topology.observables_json,
+        num_detectors=topology.num_detectors,
+        num_observables=topology.num_observables,
+        sampling_model=sampling_model,
+    )
+
+
+def _build_native_sampler_from_tick_circuit(
+    tc: Any,
+    noise: NoiseModel,
+    *,
+    sampling_model: Literal[
+        "dem",
+        "influence_dem",
+        "mnm",
+    ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
+) -> NativeSampler:
+    """Construct a native sampler directly from a TickCircuit."""
+    import json
+
+    from pecos.qec import DagFaultAnalyzer, DemSampler, ParsedDem
+    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
+
+    # Insert idle gates for qubits not active during each tick.
+    # This is critical: without idle gates, qubits sitting idle between
+    # operations get no noise in the after-only fault model.
+    tc.fill_idle_gates()
+
+    dag = tc.to_dag_circuit()
+    analyzer = DagFaultAnalyzer(dag)
+    influence_map = analyzer.build_influence_map()
+
+    detectors_json = tc.get_meta("detectors") or "[]"
+    observables_json = tc.get_meta("observables") or "[]"
+    num_detectors = len(json.loads(detectors_json)) if detectors_json else 0
+    num_observables = len(json.loads(observables_json)) if observables_json else 0
+
+    if sampling_model == "dem":
+        dem_str = generate_dem_from_tick_circuit(
+            tc,
+            p1=noise.p1,
+            p2=noise.p2,
+            p_meas=noise.p_meas,
+            p_prep=noise.p_prep,
+            decompose_errors=True,
+        )
+        sampler = ParsedDem.from_string(dem_str).to_dem_sampler()
+    elif sampling_model in ("influence_dem", "mnm"):
+        det_records = [d["records"] for d in json.loads(detectors_json)]
+        obs_records = [o["records"] for o in json.loads(observables_json)] if observables_json else []
+        sampler = DemSampler.with_detectors(
+            influence_map,
+            det_records,
+            obs_records,
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
+        )
+        sampling_model = "influence_dem"
+    elif sampling_model == "from_circuit":
+        # Direct from_circuit path: uses DagCircuit annotations and
+        # handles idle noise automatically via NoiseConfig.
+        sampler = DemSampler.from_circuit(
+            dag,
+            p1=noise.p1,
+            p2=noise.p2,
+            p_meas=noise.p_meas,
+            p_prep=noise.p_prep,
+            p_idle=noise.p_idle,
+        )
+    else:
+        msg = f"Unknown native sampling_model {sampling_model!r}"
+        raise ValueError(msg)
+
+    return NativeSampler(
+        sampler=sampler,
+        detectors_json=detectors_json,
+        observables_json=observables_json,
+        num_detectors=num_detectors,
+        num_observables=num_observables,
+        sampling_model=sampling_model,
+    )
+
+
 def generate_circuit_level_dem_from_builder(
     patch: SurfacePatch,
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    *,
+    decompose_errors: bool = False,
+    ancilla_budget: int | None = None,
+    circuit_source: Literal["abstract", "traced_qis"] = "abstract",
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -344,6 +1023,17 @@ def generate_circuit_level_dem_from_builder(
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
+        decompose_errors: If True, return PECOS's native decomposed DEM
+            representation, which is more appropriate for graph-based
+            decoders like PyMatching.
+        ancilla_budget: Optional cap on simultaneously live ancillas. When
+            provided below the total stabilizer count, the native DEM is built
+            from the same batched ancilla-reuse circuit family used by Guppy.
+        circuit_source: Which ideal circuit to analyze for the native DEM path.
+            ``"abstract"`` uses the existing high-level surface TickCircuit.
+            ``"traced_qis"`` traces the lowered ideal Selene/QIS gate stream
+            and replays that exact gate list into a TickCircuit before running
+            native PECOS fault analysis.
 
     Returns:
         DEM string in standard format
@@ -355,37 +1045,41 @@ def generate_circuit_level_dem_from_builder(
         >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
         >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
     """
-    from pecos.qec import DagFaultAnalyzer, DemBuilder
-    from pecos.qec.surface.circuit_builder import (
-        _extract_measurement_order,
-        generate_tick_circuit_from_patch,
+    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
+
+    if _can_use_cached_surface_topology(ancilla_budget=ancilla_budget):
+        patch_key = _surface_patch_cache_key(patch)
+        return _cached_surface_native_dem_string(
+            patch_key,
+            num_rounds,
+            basis.upper(),
+            ancilla_budget,
+            circuit_source,
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            decompose_errors=decompose_errors,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
+        )
+
+    tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        circuit_source=circuit_source,
     )
-
-    # Generate TickCircuit (source of truth for circuit structure)
-    tc = generate_tick_circuit_from_patch(patch, num_rounds, basis)
-
-    # Convert to DAG and build influence map via Rust fault propagation
-    dag = tc.to_dag_circuit()
-    analyzer = DagFaultAnalyzer(dag)
-    influence_map = analyzer.build_influence_map()
-
-    # Extract metadata from TickCircuit
-    detectors_json = tc.get_meta("detectors")
-    observables_json = tc.get_meta("observables")
-    num_measurements = int(tc.get_meta("num_measurements") or "0")
-    measurement_order = _extract_measurement_order(tc)
-
-    # Build DEM using native PECOS builder
-    builder = DemBuilder(influence_map)
-    builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_init)
-    builder.with_num_measurements(num_measurements)
-    builder.with_measurement_order(measurement_order)
-    builder.with_detectors_json(detectors_json)
-    if observables_json:
-        builder.with_observables_json(observables_json)
-
-    dem = builder.build()
-    return dem.to_string()
+    return generate_dem_from_tick_circuit(
+        tc,
+        p1=noise.p1,
+        p2=noise.p2,
+        p_meas=noise.p_meas,
+        p_prep=noise.p_prep,
+        decompose_errors=decompose_errors,
+    )
 
 
 def generate_circuit_level_dem(
@@ -435,7 +1129,7 @@ def generate_circuit_level_dem(
         rounds=num_rounds,
         after_clifford_depolarization=noise.p2 if noise.p2 > 0 else 0.0,
         before_measure_flip_probability=noise.p_meas if noise.p_meas > 0 else 0.0,
-        after_reset_flip_probability=noise.p_init if noise.p_init > 0 else 0.0,
+        after_reset_flip_probability=noise.p_prep if noise.p_prep > 0 else 0.0,
     )
 
     # Generate DEM from circuit
@@ -691,6 +1385,8 @@ def generate_dem_from_patch(
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    *,
+    decompose_errors: bool = True,
 ) -> str:
     """Generate a circuit-level DEM from our patch geometry.
 
@@ -704,6 +1400,8 @@ def generate_dem_from_patch(
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
+        decompose_errors: If True, return Stim's decomposed graphlike DEM.
+            If False, return the raw hypergraph DEM.
 
     Returns:
         DEM string in Stim format
@@ -719,7 +1417,7 @@ def generate_dem_from_patch(
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors)
     return str(dem)
 
 
@@ -756,6 +1454,9 @@ class SurfaceDecoder:
         ] = "pymatching",
         *,
         use_circuit_level_dem: bool = True,
+        circuit_level_dem_mode: Literal["native_full", "native_decomposed"] = "native_full",
+        circuit_level_dem_source: Literal["abstract", "traced_qis"] = "abstract",
+        ancilla_budget: int | None = None,
     ) -> None:
         """Initialize decoder from surface code patch.
 
@@ -775,12 +1476,28 @@ class SurfaceDecoder:
                 This provides proper error propagation through gates matching
                 the actual Guppy/Selene circuits. If False, use phenomenological
                 DEMs or check matrices.
+            circuit_level_dem_mode: Which PECOS-native DEM representation to use
+                when circuit-level DEMs are enabled. ``"native_full"`` preserves
+                the current non-decomposed DEM output. ``"native_decomposed"``
+                returns PECOS's graphlike decomposed DEM output, which is often
+                a better fit for graph decoders such as PyMatching.
+            circuit_level_dem_source: Which ideal circuit to analyze when
+                building native circuit-level DEMs. ``"abstract"`` uses the
+                high-level surface TickCircuit, while ``"traced_qis"`` traces
+                the lowered ideal Selene/QIS gate stream and analyzes that.
+            ancilla_budget: Optional cap on simultaneously live ancillas for
+                the native circuit-level DEM path. When provided, the decoder
+                builds its DEM from the corresponding batched ancilla-reuse
+                circuit instead of the default dedicated-ancilla circuit.
         """
         self.patch = patch
         self.num_rounds = num_rounds
         self.noise = noise or NoiseModel(p2=0.01, p_meas=0.01)
         self.decoder_type = DecoderType(decoder_type)
         self.use_circuit_level_dem = use_circuit_level_dem
+        self.circuit_level_dem_mode = circuit_level_dem_mode
+        self.circuit_level_dem_source = circuit_level_dem_source
+        self.ancilla_budget = ancilla_budget
 
         # Lazily create decoders
         self._x_decoder = None
@@ -809,12 +1526,20 @@ class SurfaceDecoder:
         Returns:
             DEM string in Stim format
         """
-        return generate_circuit_level_dem_from_builder(
+        dem = generate_circuit_level_dem_from_builder(
             self.patch,
             self.num_rounds,
             self.noise,
             basis=basis,
+            decompose_errors=self.circuit_level_dem_mode == "native_decomposed",
+            circuit_source=self.circuit_level_dem_source,
+            ancilla_budget=self.ancilla_budget,
         )
+        if basis.upper() == "Z":
+            self._z_dem = dem
+        else:
+            self._x_dem = dem
+        return dem
 
     def _get_z_check_matrix(self) -> NDArray[np.uint8]:
         """Get Z stabilizer parity check matrix."""
@@ -1541,6 +2266,67 @@ class SurfaceDecoder:
 
         return is_logical_error, result
 
+    def _get_css_uf_decoder(self):
+        """Get or create the UIUF CSS UF decoder."""
+        if not hasattr(self, "_css_uf_decoder") or self._css_uf_decoder is None:
+            from pecos_rslib.qec import CssUfDecoder
+
+            x_dem = self.get_dem("X", circuit_level=True)
+            z_dem = self.get_dem("Z", circuit_level=True)
+            # Strip logical_observable lines (not needed for matching graph).
+            x_dem = "\n".join(line for line in x_dem.split("\n") if not line.startswith("logical_observable"))
+            z_dem = "\n".join(line for line in z_dem.split("\n") if not line.startswith("logical_observable"))
+            self._css_uf_decoder = CssUfDecoder(x_dem, z_dem)
+        return self._css_uf_decoder
+
+    def decode_memory_z_uiuf(
+        self,
+        synx_list: list,
+        synz_list: list,
+        final,
+    ) -> tuple[bool, DecodingResult]:
+        """Decode Z-basis memory using UIUF (joint X/Z intersection).
+
+        Like ``decode_memory_z`` but uses both X and Z syndromes jointly
+        to identify Y errors and improve accuracy.
+
+        Args:
+            synx_list: List of X syndrome arrays, one per round
+            synz_list: List of Z syndrome arrays, one per round
+            final: Final data qubit measurements
+
+        Returns:
+            (is_logical_error, decoding_result)
+        """
+        import numpy as np
+
+        geom = self.patch.geometry
+        logical_z_qubits = geom.logical_z.data_qubits if geom.logical_z else ()
+        final_parity = sum(final[q] for q in logical_z_qubits) % 2
+
+        # Compute detection events for both bases.
+        x_events = self._compute_dem_detection_events_x(synx_list, synz_list, final)
+        z_events = self._compute_dem_detection_events_z(synx_list, synz_list, final)
+        x_flat = x_events.ravel().astype(np.uint8)
+        z_flat = z_events.ravel().astype(np.uint8)
+
+        # Joint decode via UIUF.
+        decoder = self._get_css_uf_decoder()
+        x_obs, z_obs = decoder.decode_css(bytes(x_flat), bytes(z_flat))
+
+        # For Z-basis memory, we care about the Z observable (L0).
+        predicted_obs = z_obs & 1
+        corrected_parity = (final_parity + predicted_obs) % 2
+        is_logical_error = corrected_parity != 0
+
+        return is_logical_error, DecodingResult(
+            x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+            z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+            logical_x_flip=bool(x_obs & 1),
+            logical_z_flip=bool(predicted_obs),
+            decoding_weight=0.0,
+        )
+
 
 @dataclass
 class SimulationResult:
@@ -1603,7 +2389,7 @@ def run_noisy_memory_experiment(
 
     Example:
         >>> from pecos.qec.surface import run_noisy_memory_experiment, NoiseModel
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_init=0.001)
+        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         >>> result = run_noisy_memory_experiment(
         ...     distance=3,
         ...     num_rounds=3,
@@ -1633,11 +2419,13 @@ def run_noisy_memory_experiment(
     # Create decoder if needed
     decoder = None
     if decode:
+        # UIUF uses pymatching-type DEMs internally (decoded via CssUfDecoder).
+        dt = "pymatching" if decoder_type == "pecos_uf_uiuf" else decoder_type
         decoder = SurfaceDecoder(
             patch,
             num_rounds=num_rounds,
             noise=noise,
-            decoder_type=decoder_type,
+            decoder_type=dt,
         )
 
     # Build and compile circuit
@@ -1651,7 +2439,7 @@ def run_noisy_memory_experiment(
         p_1q=noise.p1,
         p_2q=noise.p2,
         p_meas=noise.p_meas,
-        p_init=noise.p_init,
+        p_init=noise.p_prep,
     )
 
     # Run shots
@@ -1692,7 +2480,9 @@ def run_noisy_memory_experiment(
             final_arr = np.array(final, dtype=np.uint8)
 
             # Decode based on basis
-            if basis.upper() == "Z":
+            if decoder_type == "pecos_uf_uiuf" and basis.upper() == "Z":
+                is_error, _ = decoder.decode_memory_z_uiuf(synx_list, synz_list, final_arr)
+            elif basis.upper() == "Z":
                 is_error, _ = decoder.decode_memory_z(synx_list, synz_list, final_arr)
             else:
                 is_error, _ = decoder.decode_memory_x(synx_list, synz_list, final_arr)
@@ -1727,30 +2517,32 @@ def run_noisy_memory_experiment(
 class NativeSampler:
     """PECOS native sampler for threshold estimation.
 
-    This provides a pure-PECOS alternative to Stim's DEM sampler,
-    using the MeasurementNoiseModel (MNM) for efficient sampling.
+    This provides a pure-PECOS alternative to Stim's DEM sampler.
 
     The sampler uses explicit detector and observable definitions from
-    TickCircuit metadata, matching Stim's output format closely (~98%
-    per-detector correlation in testing).
+    TickCircuit metadata, matching Stim's output format closely.
 
     Two sampling backends are available:
-    - MNM (default): Samples measurement outcomes, computes events from definitions
-    - NoisySampler: Samples fault locations directly (faster for statistics)
+    - `dem` (default): sample the generated decomposed DEM via `ParsedDem`
+    - `influence_dem`: sample directly from the influence-map via `DemSampler`
 
     Attributes:
-        mnm: The MeasurementNoiseModel for sampling
+        sampler: The underlying Rust sampler object
         detectors_json: JSON string with detector definitions
         observables_json: JSON string with observable definitions
         num_detectors: Number of detectors
         num_observables: Number of observables
+        sampling_model: Which native sampling backend is active
     """
 
-    mnm: MeasurementNoiseModel
+    sampler: Any
     detectors_json: str
     observables_json: str
     num_detectors: int
     num_observables: int
+    sampling_model: Literal["dem", "influence_dem", "mnm"] = (
+        "dem"  # "mnm" accepted for compat, mapped to "influence_dem"
+    )
 
     def sample(
         self,
@@ -1770,12 +2562,7 @@ class NativeSampler:
             - detection_events: shape (num_shots, num_detectors)
             - observable_flips: shape (num_shots, num_observables)
         """
-        det_events, obs_flips = self.mnm.sample_batch_for_decoding(
-            num_shots,
-            self.detectors_json,
-            self.observables_json,
-            seed,
-        )
+        det_events, obs_flips = self.sampler.sample_batch(num_shots, seed)
         return np.array(det_events, dtype=bool), np.array(obs_flips, dtype=bool)
 
 
@@ -1784,6 +2571,13 @@ def build_native_sampler(
     num_rounds: int,
     noise: NoiseModel,
     basis: str = "Z",
+    ancilla_budget: int | None = None,
+    circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    sampling_model: Literal[
+        "dem",
+        "influence_dem",
+        "mnm",
+    ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
 ) -> NativeSampler:
     """Build a PECOS native sampler for threshold estimation.
 
@@ -1792,13 +2586,27 @@ def build_native_sampler(
     Stim's DEM sampler.
 
     The pipeline is:
-    TickCircuit -> DagCircuit -> DagFaultAnalyzer -> InfluenceMap -> MNM -> Sampler
+    - `sampling_model="dem"`:
+      TickCircuit -> DemBuilder -> ParsedDem -> DemSampler
+    - `sampling_model="influence_dem"` (or `"mnm"` for compat):
+      TickCircuit -> DagCircuit -> DagFaultAnalyzer -> InfluenceMap -> DemSampler (with detector defs)
 
     Args:
         patch: Surface code patch with geometry
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
+        ancilla_budget: Optional cap on simultaneously live ancillas
+        circuit_source: Which ideal circuit to analyze for the native sampler
+            path. ``"abstract"`` uses the existing high-level surface
+            TickCircuit. ``"traced_qis"`` traces the lowered ideal Selene/QIS
+            gate stream and replays that exact gate list into a TickCircuit
+            before native PECOS fault analysis.
+        sampling_model: Which native sampling backend to use. ``"dem"``
+            samples the generated decomposed DEM and is the default.
+            ``"influence_dem"`` uses the influence-map-based DemSampler with
+            detector definitions. ``"mnm"`` is accepted for compatibility
+            and maps to ``"influence_dem"``.
 
     Returns:
         NativeSampler that can generate samples for threshold estimation
@@ -1810,41 +2618,56 @@ def build_native_sampler(
         >>> sampler = build_native_sampler(patch, num_rounds=5, noise=noise)
         >>> detection_events, observable_flips = sampler.sample(num_shots=10000)
     """
-    import json
+    if _can_use_cached_surface_topology(ancilla_budget=ancilla_budget):
+        basis = basis.upper()
+        patch_key = _surface_patch_cache_key(patch)
+        topology = _cached_surface_native_topology(
+            patch_key,
+            num_rounds,
+            basis,
+            ancilla_budget,
+            circuit_source,
+        )
+        if sampling_model == "dem":
+            dem_str = _cached_surface_native_dem_string(
+                patch_key,
+                num_rounds,
+                basis,
+                ancilla_budget,
+                circuit_source,
+                noise.p1,
+                noise.p2,
+                noise.p_meas,
+                noise.p_prep,
+                decompose_errors=True,
+                p_idle=noise.p_idle,
+                t1=noise.t1,
+                t2=noise.t2,
+            )
+            sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
+            return NativeSampler(
+                sampler=sampler,
+                detectors_json=topology.detectors_json,
+                observables_json=topology.observables_json,
+                num_detectors=topology.num_detectors,
+                num_observables=topology.num_observables,
+                sampling_model=sampling_model,
+            )
+        return _build_native_sampler_from_cached_surface_topology(
+            topology,
+            noise,
+            sampling_model=sampling_model,
+        )
 
-    from pecos.qec import DagFaultAnalyzer, MemBuilder
-    from pecos.qec.surface.circuit_builder import (
-        _extract_measurement_order,
-        generate_tick_circuit_from_patch,
+    tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        circuit_source=circuit_source,
     )
-
-    # Generate TickCircuit (source of truth for circuit structure)
-    tc = generate_tick_circuit_from_patch(patch, num_rounds, basis)
-
-    # Convert to DAG and build influence map via Rust fault propagation
-    dag = tc.to_dag_circuit()
-    analyzer = DagFaultAnalyzer(dag)
-    influence_map = analyzer.build_influence_map()
-
-    # Extract metadata from TickCircuit
-    detectors_json = tc.get_meta("detectors") or "[]"
-    observables_json = tc.get_meta("observables") or "[]"
-    measurement_order = _extract_measurement_order(tc)
-
-    # Build MNM for sampling
-    builder = MemBuilder(influence_map)
-    builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_init)
-    builder.with_measurement_order(measurement_order)
-    mnm = builder.build()
-
-    # Parse to count detectors/observables
-    num_detectors = len(json.loads(detectors_json)) if detectors_json else 0
-    num_observables = len(json.loads(observables_json)) if observables_json else 0
-
-    return NativeSampler(
-        mnm=mnm,
-        detectors_json=detectors_json,
-        observables_json=observables_json,
-        num_detectors=num_detectors,
-        num_observables=num_observables,
+    return _build_native_sampler_from_tick_circuit(
+        tc,
+        noise,
+        sampling_model=sampling_model,
     )

@@ -33,11 +33,174 @@ impl Decoder for FusionBlossomDecoder {
     }
 }
 
+/// Implement `ObservableDecoder` for `FusionBlossomDecoder`.
+///
+/// Uses the fast decode path with pre-computed observable bitmasks.
+impl pecos_decoder_core::ObservableDecoder for FusionBlossomDecoder {
+    fn decode_to_observables(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+        self.decode_to_obs_mask(syndrome)
+            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))
+    }
+}
+
+/// Implement `ObservableErasureDecoder` for `FusionBlossomDecoder`.
+///
+/// Neutral atom erasure support: erased edges are marked in the syndrome data,
+/// causing the solver to treat them as known errors (zero weight).
+impl pecos_decoder_core::erasure::ObservableErasureDecoder for FusionBlossomDecoder {
+    fn decode_with_erasures(
+        &mut self,
+        syndrome: &[u8],
+        erasure_edges: &[usize],
+    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+        if erasure_edges.is_empty() {
+            return self
+                .decode_to_obs_mask(syndrome)
+                .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()));
+        }
+
+        let defects: Vec<usize> = syndrome
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v != 0 { Some(i) } else { None })
+            .collect();
+
+        if defects.is_empty() && erasure_edges.is_empty() {
+            return Ok(0);
+        }
+
+        let syndrome_data = SyndromeData::with_erasures(defects, erasure_edges.to_vec());
+
+        let result = self
+            .decode_with_options(syndrome_data, DecodingOptions::default())
+            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+
+        let edge_indices: Vec<usize> = result.matched_edges.iter().copied().collect();
+        Ok(self.obs_mask_from_edges(&edge_indices))
+    }
+}
+
+/// Implement `MatchingDecoder` for `FusionBlossomDecoder`.
+///
+/// Enables the two-pass correlated DGR decode by exposing which edges
+/// were matched and accepting per-shot dynamic weight adjustments.
+impl pecos_decoder_core::correlated_decoder::MatchingDecoder for FusionBlossomDecoder {
+    fn decode_with_matching(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<(u64, Vec<usize>), pecos_decoder_core::DecoderError> {
+        // Extract defects
+        let defects: Vec<usize> = syndrome
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v != 0 { Some(i) } else { None })
+            .collect();
+
+        if defects.is_empty() {
+            return Ok((0, Vec::new()));
+        }
+
+        let syndrome_data = SyndromeData::from_defects(defects);
+        let result = self
+            .decode_with_options(syndrome_data, DecodingOptions::default())
+            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+
+        let edge_indices: Vec<usize> = result.matched_edges.iter().copied().collect();
+        let mask = self.obs_mask_from_edges(&edge_indices);
+
+        Ok((mask, edge_indices))
+    }
+
+    fn decode_with_weights(
+        &mut self,
+        syndrome: &[u8],
+        weights: &[f64],
+    ) -> Result<(u64, Vec<usize>), pecos_decoder_core::DecoderError> {
+        let defects: Vec<usize> = syndrome
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v != 0 { Some(i) } else { None })
+            .collect();
+
+        if defects.is_empty() {
+            return Ok((0, Vec::new()));
+        }
+
+        // Convert f64 weights to Fusion Blossom's integer dynamic weights.
+        // FB uses integer weights with 1000x scaling, must be even.
+        // Only include edges whose weight differs from the original to avoid
+        // disrupting the solver with redundant overrides.
+        #[allow(clippy::cast_possible_truncation)]
+        let dynamic_weights: Vec<(usize, i32)> = weights
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &w)| {
+                // Clamp to positive (FB doesn't handle negative weights)
+                let clamped = w.max(0.01);
+                let int_w = ((clamped * 1000.0) as i32 / 2) * 2;
+                // Only include if it's a real weight (not a huge default)
+                if int_w > 0 && int_w < 40_000 {
+                    Some((i, int_w))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut syndrome_data = SyndromeData::from_defects(defects);
+        if !dynamic_weights.is_empty() {
+            syndrome_data.dynamic_weights = Some(dynamic_weights);
+        }
+
+        let result = self
+            .decode_with_options(syndrome_data, DecodingOptions::default())
+            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+
+        let edge_indices: Vec<usize> = result.matched_edges.iter().copied().collect();
+        let mask = self.obs_mask_from_edges(&edge_indices);
+
+        Ok((mask, edge_indices))
+    }
+
+    fn num_edges(&self) -> usize {
+        self.num_edges()
+    }
+}
+
+impl pecos_decoder_core::correlated_decoder::EdgeTrackingDecoder for FusionBlossomDecoder {
+    fn edge_node1(&self, edge_idx: usize) -> u32 {
+        self.edge_endpoints(edge_idx).map_or(0, |(n1, _, _)| n1)
+    }
+
+    fn edge_node2(&self, edge_idx: usize) -> u32 {
+        self.edge_endpoints(edge_idx).map_or(0, |(_, n2, _)| n2)
+    }
+
+    fn edge_weight(&self, edge_idx: usize) -> f64 {
+        self.edge_endpoints(edge_idx).map_or(0.0, |(_, _, w)| w)
+    }
+
+    fn edge_obs_mask(&self, edge_idx: usize) -> u64 {
+        self.edge_obs_mask(edge_idx)
+    }
+
+    fn num_detectors(&self) -> usize {
+        self.num_nodes()
+    }
+}
+
 /// Implement `DecodingResultTrait` for `FusionBlossom`'s `DecodingResult`
 impl DecodingResultTrait for DecodingResult {
     fn is_successful(&self) -> bool {
         // FusionBlossom always returns a result if it doesn't error
         true
+    }
+
+    fn correction(&self) -> &[u8] {
+        &self.observable
     }
 
     fn cost(&self) -> Option<f64> {

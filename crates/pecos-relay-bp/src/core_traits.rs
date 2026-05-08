@@ -21,6 +21,10 @@ impl DecodingResultTrait for DecodingResult {
         self.converged
     }
 
+    fn correction(&self) -> &[u8] {
+        self.decoding.as_slice().unwrap_or(&[])
+    }
+
     fn cost(&self) -> Option<f64> {
         None
     }

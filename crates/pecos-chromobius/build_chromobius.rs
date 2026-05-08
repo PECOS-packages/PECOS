@@ -59,7 +59,24 @@ pub fn build() -> Result<()> {
     let manifest = Manifest::find_and_load_validated()?;
     let chromobius_dir = ensure_dep_ready("chromobius", &manifest)?;
     let stim_dir = ensure_dep_ready("stim", &manifest)?;
-    let pymatching_dir = ensure_dep_ready("pymatching", &manifest)?;
+    // PyMatching headers and compiled objects come from pecos-pymatching via cargo metadata.
+    // This avoids compiling a second copy of PyMatching sources which would cause
+    // duplicate symbol errors at link time.
+    let pymatching_include = env::var("DEP_PYMATCHING_PECOS_PYMATCHING_INCLUDE").map_or_else(|_| {
+            // Fallback: download and use directly (for standalone builds)
+            ensure_dep_ready("pymatching", &manifest)
+                .expect("pymatching dependency")
+                .join("src")
+        }, PathBuf::from);
+    let stim_include = env::var("DEP_PYMATCHING_PECOS_STIM_INCLUDE").map_or_else(|_| {
+            ensure_dep_ready("stim", &manifest)
+                .expect("stim dependency")
+                .join("src")
+        }, PathBuf::from);
+    let stim_dir_for_header = env::var("DEP_PYMATCHING_PECOS_STIM_DIR").map_or_else(|_| ensure_dep_ready("stim", &manifest).expect("stim dependency"), PathBuf::from);
+    let pymatching_lib_dir = env::var("DEP_PYMATCHING_PECOS_LIB_DIR")
+        .ok()
+        .map(PathBuf::from);
 
     // Apply compatibility patches for newer Stim version
     chromobius_patch::patch_chromobius_for_newer_stim(&chromobius_dir)?;
@@ -67,21 +84,34 @@ pub fn build() -> Result<()> {
     // Generate amalgamated stim.h if needed
     build_stim::generate_amalgamated_header(&stim_dir)?;
 
-    // Build using cxx
-    build_cxx_bridge(&chromobius_dir, &stim_dir, &pymatching_dir)?;
+    // Build using cxx -- only chromobius and stim sources, NOT pymatching
+    build_cxx_bridge(
+        &chromobius_dir,
+        &stim_dir,
+        &pymatching_include,
+        &stim_include,
+        &stim_dir_for_header,
+        pymatching_lib_dir.as_deref(),
+    )?;
 
     Ok(())
 }
 
-fn build_cxx_bridge(chromobius_dir: &Path, stim_dir: &Path, pymatching_dir: &Path) -> Result<()> {
+fn build_cxx_bridge(
+    chromobius_dir: &Path,
+    stim_dir: &Path,
+    pymatching_include: &Path,
+    stim_include: &Path,
+    stim_dir_for_header: &Path,
+    pymatching_lib_dir: Option<&Path>,
+) -> Result<()> {
     let chromobius_src_dir = chromobius_dir.join("src");
     let stim_src_dir = stim_dir.join("src");
-    let pymatching_src_dir = pymatching_dir.join("src");
 
-    // Find essential source files
+    // Find essential source files -- only chromobius and stim, NOT pymatching.
+    // PyMatching objects come from pecos-pymatching (linked, not compiled here).
     let chromobius_files = collect_chromobius_sources(&chromobius_src_dir)?;
     let stim_files = build_stim::collect_stim_sources(&stim_src_dir);
-    let pymatching_files = collect_pymatching_sources(&pymatching_src_dir)?;
 
     // Build the cxx bridge first to generate headers
     let mut build = cxx_build::bridge("src/bridge.rs");
@@ -101,18 +131,17 @@ fn build_cxx_bridge(chromobius_dir: &Path, stim_dir: &Path, pymatching_dir: &Pat
         build.file(file);
     }
 
-    // Add PyMatching files
-    for file in pymatching_files {
-        build.file(file);
-    }
+    // PyMatching objects are provided by pecos-pymatching -- NOT compiled here.
+    // We only need headers for compilation, not source files.
 
     // Configure build
     build
         .std("c++20")
         .include(&chromobius_src_dir)
         .include(&stim_src_dir)
-        .include(stim_dir) // For amalgamated stim.h
-        .include(&pymatching_src_dir)
+        .include(stim_dir_for_header) // For amalgamated stim.h
+        .include(pymatching_include) // PyMatching headers (from pecos-pymatching)
+        .include(stim_include) // Stim headers
         .include("include")
         .include("src")
         .define("CHROMOBIUS_BRIDGE_EXPORTS", None);
@@ -173,6 +202,12 @@ fn build_cxx_bridge(chromobius_dir: &Path, stim_dir: &Path, pymatching_dir: &Pat
 
     build.compile("chromobius-bridge");
 
+    // Link against pecos-pymatching's compiled PyMatching objects
+    if let Some(lib_dir) = pymatching_lib_dir {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        println!("cargo:rustc-link-lib=static=pymatching-bridge");
+    }
+
     // On macOS, link against the system C++ library
     if target.contains("darwin") {
         println!("cargo:rustc-link-search=native=/usr/lib");
@@ -190,19 +225,6 @@ fn collect_chromobius_sources(chromobius_src_dir: &Path) -> Result<Vec<PathBuf>>
     collect_cc_files_filtered(chromobius_src_dir, &mut files)?;
 
     info!("Found {} Chromobius source files", files.len());
-    Ok(files)
-}
-
-fn collect_pymatching_sources(pymatching_src_dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-
-    // PyMatching sparse_blossom implementation files
-    let sparse_blossom_dir = pymatching_src_dir.join("pymatching/sparse_blossom");
-    if sparse_blossom_dir.exists() {
-        collect_cc_files_filtered(&sparse_blossom_dir, &mut files)?;
-    }
-
-    info!("Found {} PyMatching source files", files.len());
     Ok(files)
 }
 

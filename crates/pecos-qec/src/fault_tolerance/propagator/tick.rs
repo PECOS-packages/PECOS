@@ -18,8 +18,8 @@
 //! For better performance, consider using [`DagFaultAnalyzer`](super::DagFaultAnalyzer)
 //! with DAG circuits, which provides 5-50x speedup through sparse traversal.
 
-use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
-use super::{SpacetimeLocation, extract_spacetime_locations};
+use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, MeasurementId, TrackedOpId};
+use super::{Direction, SpacetimeLocation, apply_gate, extract_spacetime_locations};
 use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
 use pecos_simulators::PauliProp;
@@ -85,20 +85,20 @@ impl<'a> TickFaultAnalyzer<'a> {
     /// creates a lookup table for fault classification.
     #[must_use]
     pub fn build_influence_map(&self) -> FaultInfluenceMap {
-        self.build_influence_map_with_logicals(&[])
+        self.build_influence_map_with_tracked_ops(&[])
     }
 
-    /// Builds the fault influence map with logical operator tracking.
+    /// Builds the fault influence map with tracked Pauli operator tracking.
     ///
     /// # Arguments
     ///
-    /// * `logicals` - Logical operators as (`x_positions`, `z_positions`) pairs.
+    /// * `tracked_ops` - Tracked Pauli operators as (`x_positions`, `z_positions`) pairs.
     ///   The first element of each pair is the X component positions,
     ///   the second is the Z component positions.
     #[must_use]
-    pub fn build_influence_map_with_logicals(
+    pub fn build_influence_map_with_tracked_ops(
         &self,
-        logicals: &[(&[usize], &[usize])],
+        tracked_ops: &[(&[usize], &[usize])],
     ) -> FaultInfluenceMap {
         let mut map = FaultInfluenceMap::new();
 
@@ -112,11 +112,11 @@ impl<'a> TickFaultAnalyzer<'a> {
             map.detectors.push(DetectorId::single(*m));
         }
 
-        // Create logical IDs
-        for (i, _) in logicals.iter().enumerate() {
-            map.logicals.push(LogicalId {
-                logical_qubit: i,
-                observable: 0, // Z observable
+        // Create tracked-operator IDs
+        for (i, _) in tracked_ops.iter().enumerate() {
+            map.tracked_ops.push(TrackedOpId {
+                op_index: i,
+                component: 0,
             });
         }
 
@@ -131,13 +131,13 @@ impl<'a> TickFaultAnalyzer<'a> {
             self.propagate_from_measurement(measurement, &mut map);
         }
 
-        // Backward propagate from each logical operator
-        for (i, (x_pos, z_pos)) in logicals.iter().enumerate() {
-            let logical_id = LogicalId {
-                logical_qubit: i,
-                observable: 0,
+        // Backward propagate from each tracked Pauli operator
+        for (i, (x_pos, z_pos)) in tracked_ops.iter().enumerate() {
+            let tracked_op_id = TrackedOpId {
+                op_index: i,
+                component: 0,
             };
-            self.propagate_from_logical(x_pos, z_pos, &logical_id, &mut map);
+            self.propagate_from_tracked_op(x_pos, z_pos, &tracked_op_id, &mut map);
         }
 
         // Build reverse maps
@@ -259,37 +259,37 @@ impl<'a> TickFaultAnalyzer<'a> {
         }
     }
 
-    /// Propagates backward from a logical operator.
+    /// Propagates backward from a tracked Pauli operator.
     ///
-    /// We propagate the logical OBSERVABLE backward through the circuit.
-    /// An error P at location L flips the logical if P anticommutes with
-    /// the back-propagated observable at L.
+    /// We propagate the tracked operator backward through the circuit. An error
+    /// P at location L flips it if P anticommutes with the back-propagated
+    /// operator at L.
     ///
     /// This uses sparse traversal: only gates touching qubits with non-trivial
     /// Paulis are processed, providing significant speedup for circuits with
     /// local connectivity.
-    fn propagate_from_logical(
+    fn propagate_from_tracked_op(
         &self,
         x_positions: &[usize],
         z_positions: &[usize],
-        logical_id: &LogicalId,
+        tracked_op_id: &TrackedOpId,
         map: &mut FaultInfluenceMap,
     ) {
-        // Start with the logical observable itself (not swapped)
+        // Start with the tracked operator itself (not swapped)
         // The recording function handles anticommutation checking
         let mut prop = PauliProp::new();
 
         // Track active qubits for sparse traversal
         let mut active_qubits = vec![false; self.max_qubit + 1];
 
-        // X positions in logical -> X in prop
+        // X positions in tracked op -> X in prop
         for &q in x_positions {
             prop.track_x(&[q]);
             if q <= self.max_qubit {
                 active_qubits[q] = true;
             }
         }
-        // Z positions in logical -> Z in prop
+        // Z positions in tracked op -> Z in prop
         for &q in z_positions {
             prop.track_z(&[q]);
             if q <= self.max_qubit {
@@ -312,7 +312,7 @@ impl<'a> TickFaultAnalyzer<'a> {
                 tick_idx,
                 &prop,
                 &dummy_detector,
-                Some(logical_id),
+                Some(tracked_op_id),
                 map,
                 false,
             );
@@ -345,7 +345,7 @@ impl<'a> TickFaultAnalyzer<'a> {
                 tick_idx,
                 &prop,
                 &dummy_detector,
-                Some(logical_id),
+                Some(tracked_op_id),
                 map,
                 true,
             );
@@ -368,7 +368,7 @@ impl<'a> TickFaultAnalyzer<'a> {
         tick_idx: usize,
         prop: &PauliProp,
         detector: &DetectorId,
-        logical: Option<&LogicalId>,
+        tracked_op: Option<&TrackedOpId>,
         map: &mut FaultInfluenceMap,
         only_before: bool,
     ) {
@@ -400,8 +400,8 @@ impl<'a> TickFaultAnalyzer<'a> {
                     // X fault anticommutes with Z or Y observable
                     let x_flips = obs_z; // Z or Y (both have Z component)
                     if x_flips {
-                        if let Some(log) = logical {
-                            influence.logical_flips[1].push(*log);
+                        if let Some(op) = tracked_op {
+                            influence.tracked_op_flips[1].push(*op);
                         } else {
                             influence.detector_flips[1].push(detector.clone());
                             influence.measurement_flips[1]
@@ -419,8 +419,8 @@ impl<'a> TickFaultAnalyzer<'a> {
                     // (Z anticommutes with X, Z anticommutes with Y=iXZ)
                     let z_flips = obs_x; // X or Y (both have X component)
                     if z_flips {
-                        if let Some(log) = logical {
-                            influence.logical_flips[3].push(*log);
+                        if let Some(op) = tracked_op {
+                            influence.tracked_op_flips[3].push(*op);
                         } else {
                             influence.detector_flips[3].push(detector.clone());
                             influence.measurement_flips[3]
@@ -434,12 +434,11 @@ impl<'a> TickFaultAnalyzer<'a> {
                         }
                     }
 
-                    // Y fault = iXZ: Y anticommutes with X, Z, and Y
-                    // Y anticommutes with observable if observable has X or Z component
-                    let y_flips = obs_x || obs_z;
+                    // Y fault: Y anticommutes with X or Z but NOT both (Y commutes with Y)
+                    let y_flips = obs_x ^ obs_z;
                     if y_flips {
-                        if let Some(log) = logical {
-                            influence.logical_flips[2].push(*log);
+                        if let Some(op) = tracked_op {
+                            influence.tracked_op_flips[2].push(*op);
                         } else {
                             influence.detector_flips[2].push(detector.clone());
                             influence.measurement_flips[2]
@@ -465,132 +464,28 @@ impl<'a> TickFaultAnalyzer<'a> {
     /// - SZ (S gate): X → -Y, Y → X, Z → Z (adjoint of forward)
     #[inline]
     fn apply_gate_backward(prop: &mut PauliProp, gate: &pecos_core::Gate) {
-        // Access gate.qubits directly - no allocation needed
         let qubits = &gate.qubits;
 
-        match gate.gate_type {
-            GateType::CX => {
-                // CX is self-adjoint, same propagation as forward
-                // X on control -> X on control AND target
-                // X on target -> X on target
-                // Z on control -> Z on control
-                // Z on target -> Z on control AND target
-                if qubits.len() >= 2 {
-                    let control = qubits[0].index();
-                    let target = qubits[1].index();
-
-                    let ctrl_x = prop.contains_x(control);
-                    let tgt_z = prop.contains_z(target);
-
-                    // X spreads from control to target
-                    if ctrl_x {
-                        prop.track_x(&[target]);
-                    }
-                    // Z spreads from target to control
-                    if tgt_z {
-                        prop.track_z(&[control]);
-                    }
+        if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+            // Preparation resets the qubit - backward propagation stops here
+            // Any Pauli on a prepared qubit doesn't propagate further back
+            // Toggle off both X and Z if present
+            for qid in qubits {
+                let q = qid.index();
+                if prop.contains_x(q) {
+                    prop.track_x(&[q]); // toggles off
+                }
+                if prop.contains_z(q) {
+                    prop.track_z(&[q]); // toggles off
                 }
             }
-
-            GateType::CZ => {
-                // CZ is self-adjoint
-                // X on either qubit -> X on that qubit AND Z on the other
-                if qubits.len() >= 2 {
-                    let q0 = qubits[0].index();
-                    let q1 = qubits[1].index();
-
-                    let x0 = prop.contains_x(q0);
-                    let x1 = prop.contains_x(q1);
-
-                    if x0 {
-                        prop.track_z(&[q1]);
-                    }
-                    if x1 {
-                        prop.track_z(&[q0]);
-                    }
-                }
-            }
-
-            GateType::H => {
-                // H is self-adjoint: X <-> Z
-                if let Some(qid) = qubits.first() {
-                    let q = qid.index();
-                    let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
-
-                    // Swap X and Z using toggle
-                    if has_x && !has_z {
-                        // Remove X by toggling, add Z
-                        prop.track_x(&[q]); // toggles off
-                        prop.track_z(&[q]);
-                    } else if has_z && !has_x {
-                        // Remove Z by toggling, add X
-                        prop.track_z(&[q]); // toggles off
-                        prop.track_x(&[q]);
-                    }
-                    // If both or neither, no change needed
-                }
-            }
-
-            GateType::SZ => {
-                // SZ† (adjoint): X -> -Y (we track as XZ), Y -> X, Z -> Z
-                // Since we track Paulis mod phase, X -> Y means X -> XZ
-                if let Some(qid) = qubits.first() {
-                    let q = qid.index();
-                    let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
-
-                    if has_x && !has_z {
-                        // X -> XZ (Y with phase)
-                        prop.track_z(&[q]);
-                    } else if has_x && has_z {
-                        // Y (XZ) -> X: remove Z by toggling
-                        prop.track_z(&[q]); // toggles off
-                    }
-                    // Z -> Z (no change)
-                }
-            }
-
-            GateType::SZdg => {
-                // SZdg = SZ†, so SZdg† = SZ
-                // Forward SZ: X -> Y, Y -> -X, Z -> Z
-                if let Some(qid) = qubits.first() {
-                    let q = qid.index();
-                    let has_x = prop.contains_x(q);
-                    let has_z = prop.contains_z(q);
-
-                    if has_x && !has_z {
-                        // X -> XZ (Y)
-                        prop.track_z(&[q]);
-                    } else if has_x && has_z {
-                        // Y -> X: remove Z by toggling
-                        prop.track_z(&[q]); // toggles off
-                    }
-                }
-            }
-
-            GateType::PZ | GateType::QAlloc => {
-                // Preparation resets the qubit - backward propagation stops here
-                // Any Pauli on a prepared qubit doesn't propagate further back
-                // Toggle off both X and Z if present
-                for qid in qubits {
-                    let q = qid.index();
-                    if prop.contains_x(q) {
-                        prop.track_x(&[q]); // toggles off
-                    }
-                    if prop.contains_z(q) {
-                        prop.track_z(&[q]); // toggles off
-                    }
-                }
-            }
-
-            // Pauli gates (X,Y,Z), Measure, MeasureFree, and other gates - no Pauli frame change
-            _ => {}
+            return;
         }
+
+        apply_gate(prop, gate, Direction::Backward);
     }
 
-    /// Builds reverse maps (detector -> faults, logical -> faults).
+    /// Builds reverse maps (detector -> faults, tracked operator -> faults).
     fn build_reverse_maps(map: &mut FaultInfluenceMap) {
         for (loc, influence) in &map.influences {
             for (pauli, detectors) in influence.detector_flips.iter().enumerate() {
@@ -604,12 +499,12 @@ impl<'a> TickFaultAnalyzer<'a> {
                 }
             }
 
-            for (pauli, logicals) in influence.logical_flips.iter().enumerate() {
+            for (pauli, tracked_ops) in influence.tracked_op_flips.iter().enumerate() {
                 #[allow(clippy::cast_possible_truncation)] // Pauli index 0..2
                 let pauli_u8 = pauli as u8;
-                for logical in logicals {
-                    map.logical_to_faults
-                        .entry(*logical)
+                for tracked_op in tracked_ops {
+                    map.tracked_op_to_faults
+                        .entry(*tracked_op)
                         .or_default()
                         .push((loc.clone(), pauli_u8));
                 }

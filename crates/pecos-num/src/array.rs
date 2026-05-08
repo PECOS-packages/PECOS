@@ -358,6 +358,46 @@ pub fn linspace(start: f64, stop: f64, num: usize, endpoint: bool) -> Array1<f64
     result
 }
 
+/// Generate geometrically spaced values between `start` and `stop`.
+///
+/// This is a Rust implementation of `numpy.geomspace()`. Values are evenly
+/// spaced on a log scale between `start` and `stop`. Both `start` and `stop`
+/// must be positive.
+///
+/// # Arguments
+///
+/// * `start` - Start value (must be positive)
+/// * `stop` - End value (must be positive)
+/// * `num` - Number of values to generate
+/// * `endpoint` - Whether to include the stop value
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::array::geomspace;
+///
+/// let values = geomspace(1e-4, 1e-2, 5, true);
+/// assert_eq!(values.len(), 5);
+/// assert!((values[0] - 1e-4).abs() < 1e-10);
+/// assert!((values[4] - 1e-2).abs() < 1e-10);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `start` or `stop` is not positive.
+pub fn geomspace(start: f64, stop: f64, num: usize, endpoint: bool) -> Array1<f64> {
+    assert!(
+        start > 0.0,
+        "geomspace: start must be positive, got {start}"
+    );
+    assert!(stop > 0.0, "geomspace: stop must be positive, got {stop}");
+
+    let log_start = start.ln();
+    let log_stop = stop.ln();
+    let log_values = linspace(log_start, log_stop, num, endpoint);
+    log_values.mapv(f64::exp)
+}
+
 // Note: sum() for slices removed - use values.iter().sum() directly (idiomatic Rust)
 // sum_axis() below is kept for multi-dimensional operations
 

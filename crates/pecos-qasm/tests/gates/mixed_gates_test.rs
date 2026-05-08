@@ -172,15 +172,11 @@ fn test_gate_sequence() {
 
     for op in &program.operations {
         match op {
-            Operation::Gate { name, qubits, .. } => {
-                if qubits.contains(&3) {
-                    q3_operations.push(name.clone());
-                }
+            Operation::Gate { name, qubits, .. } if qubits.contains(&3) => {
+                q3_operations.push(name.clone());
             }
-            Operation::NativeGate(gate) => {
-                if gate.qubits.iter().any(|q| q.0 == 3) {
-                    q3_operations.push(format!("{:?}", gate.gate_type));
-                }
+            Operation::NativeGate(gate) if gate.qubits.iter().any(|q| q.0 == 3) => {
+                q3_operations.push(format!("{:?}", gate.gate_type));
             }
             _ => {}
         }
@@ -225,19 +221,15 @@ fn test_two_qubit_gates() {
 
     for op in &program.operations {
         match op {
-            Operation::Gate { name, qubits, .. } => {
-                if qubits.len() == 2 {
-                    two_qubit_gates.push((name.clone(), qubits[0], qubits[1]));
-                }
+            Operation::Gate { name, qubits, .. } if qubits.len() == 2 => {
+                two_qubit_gates.push((name.clone(), qubits[0], qubits[1]));
             }
-            Operation::NativeGate(gate) => {
-                if gate.qubits.len() == 2 {
-                    two_qubit_gates.push((
-                        format!("{:?}", gate.gate_type),
-                        gate.qubits[0].0,
-                        gate.qubits[1].0,
-                    ));
-                }
+            Operation::NativeGate(gate) if gate.qubits.len() == 2 => {
+                two_qubit_gates.push((
+                    format!("{:?}", gate.gate_type),
+                    gate.qubits[0].0,
+                    gate.qubits[1].0,
+                ));
             }
             _ => {}
         }

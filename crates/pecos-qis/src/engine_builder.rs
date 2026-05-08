@@ -1,9 +1,10 @@
 //! Builder for `QisEngine` that integrates with PECOS `sim()` API
 
-use crate::{IntoQisInterface, QisEngine};
+use crate::{IntoQisInterface, OperationTraceStore, QisEngine};
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_qis_ffi_types::OperationCollector;
+use std::path::{Path, PathBuf};
 
 /// Builder for creating `QisEngine` instances
 pub struct QisEngineBuilder {
@@ -11,6 +12,8 @@ pub struct QisEngineBuilder {
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
+    operation_trace_dir: Option<PathBuf>,
+    operation_trace_collector: Option<OperationTraceStore>,
 }
 
 impl Clone for QisEngineBuilder {
@@ -24,6 +27,8 @@ impl Clone for QisEngineBuilder {
                 .as_ref()
                 .map(|b| dyn_clone::clone_box(&**b)),
             program_source: self.program_source.clone(),
+            operation_trace_dir: self.operation_trace_dir.clone(),
+            operation_trace_collector: self.operation_trace_collector.clone(),
         }
     }
 }
@@ -37,7 +42,27 @@ impl QisEngineBuilder {
             interface: None,
             interface_builder: None,
             program_source: None,
+            operation_trace_dir: None,
+            operation_trace_collector: None,
         }
+    }
+
+    /// Dump Helios-collected operation chunks to the given directory as JSON.
+    ///
+    /// This captures the lowered QIS operation stream before it is compressed into
+    /// `ByteMessage` commands for the quantum engine, making it the most faithful
+    /// circuit-aware trace seam currently available in PECOS.
+    #[must_use]
+    pub fn trace_operations_to(mut self, trace_dir: impl AsRef<Path>) -> Self {
+        self.operation_trace_dir = Some(trace_dir.as_ref().to_path_buf());
+        self
+    }
+
+    /// Collect traced QIS batches in memory instead of requiring JSON output.
+    #[must_use]
+    pub fn trace_operations_in_memory_to(mut self, collector: OperationTraceStore) -> Self {
+        self.operation_trace_collector = Some(collector);
+        self
     }
 
     /// Set a pre-built interface (for testing)
@@ -185,6 +210,21 @@ impl QisEngineBuilder {
                         log::warn!("Bitcode programs not yet supported for interface loading");
                     }
                 }
+            } else if let Some(hugr_prog) = any_program.downcast_ref::<pecos_programs::Hugr>() {
+                #[cfg(feature = "hugr")]
+                {
+                    self.program_source = Some(pecos_hugr_qis::compile_hugr_bytes_to_string(
+                        &hugr_prog.hugr,
+                    )?);
+                }
+                #[cfg(not(feature = "hugr"))]
+                {
+                    let _ = hugr_prog;
+                    return Err(PecosError::Processing(
+                        "HUGR programs require the 'hugr' feature to enable HUGR-to-QIS lowering"
+                            .to_string(),
+                    ));
+                }
             }
 
             let interface = if let Some(builder) = &self.interface_builder {
@@ -268,6 +308,12 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             log::debug!("Dynamic interface created successfully");
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
+            if let Some(trace_dir) = self.operation_trace_dir {
+                engine.set_operation_trace_dir(trace_dir);
+            }
+            if let Some(collector) = self.operation_trace_collector {
+                engine.set_operation_trace_collector(collector);
+            }
 
             // Store the builder and program source so clones can recreate their interfaces
             engine.set_dynamic_config(dyn_clone::clone_box(&**builder), program_source);

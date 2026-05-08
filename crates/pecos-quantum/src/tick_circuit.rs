@@ -40,9 +40,11 @@
 //!
 //! assert_eq!(circuit.num_ticks(), 6);
 //!
-//! // Preps and measurements break the chain but allow .meta():
+//! // Preps break the chain but allow .meta():
 //! circuit.tick().pz(&[0]).meta("reason", pecos_quantum::Attribute::String("init".into()));
-//! circuit.tick().mz(&[0]).meta("basis", pecos_quantum::Attribute::String("Z".into()));
+//! // Measurements return refs for annotations:
+//! let ms = circuit.tick().mz(&[0]);
+//! circuit.detector(&ms);
 //!
 //! // Tick-level metadata: call meta() before adding gates
 //! use pecos_quantum::Attribute;
@@ -61,11 +63,13 @@
 //! ```
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, GateQubits, GateSignature, QubitId, TimeUnits};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use pecos_core::{
+    Angle64, Gate, GateMeasIds, GateQubits, GateSignature, MeasId, QubitId, TimeUnits,
+};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Attribute;
-use crate::dag_circuit::DagCircuit;
+use crate::dag_circuit::{AnnotationKind, DagCircuit, PauliAnnotation};
 use std::fmt;
 
 /// Error when trying to add a gate that uses a qubit already in use in this tick.
@@ -425,6 +429,23 @@ impl Tick {
 /// circuit.tick().cx(&[(0, 1), (2, 3)]);      // Multiple CX gates
 /// circuit.tick().mz(&[0, 1, 2, 3]);          // Measure multiple qubits
 /// ```
+/// Measurement reference in a tick circuit: (`tick_index`, `gate_index`, qubit).
+///
+/// Returned by `mz()` for use in `detector()` and `observable()` annotations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TickMeasRef {
+    /// Tick index.
+    pub tick: usize,
+    /// Gate index within the tick.
+    pub gate_idx: usize,
+    /// Qubit that was measured.
+    pub qubit: QubitId,
+    /// Measurement record index (cumulative count of MZ qubits in circuit order).
+    pub record_idx: usize,
+    /// Stable measurement result identity (SSA value).
+    pub meas_id: MeasId,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TickCircuit {
     /// The sequence of ticks.
@@ -434,7 +455,11 @@ pub struct TickCircuit {
     /// Circuit-level metadata.
     circuit_attrs: BTreeMap<String, Attribute>,
     /// Gate signatures for custom gate validation (JIT + AOT).
-    gate_signatures: HashMap<String, GateSignature>,
+    gate_signatures: BTreeMap<String, GateSignature>,
+    /// Unified Pauli annotations (detectors, observables, operators).
+    annotations: Vec<PauliAnnotation>,
+    /// Running count of measurement records (incremented by each MZ qubit).
+    next_meas_record: usize,
 }
 
 /// Handle to a specific tick for adding gates.
@@ -515,7 +540,9 @@ impl TickCircuit {
             ticks: Vec::new(),
             next_tick: 0,
             circuit_attrs: BTreeMap::new(),
-            gate_signatures: HashMap::new(),
+            gate_signatures: BTreeMap::new(),
+            annotations: Vec::new(),
+            next_meas_record: 0,
         }
     }
 
@@ -525,10 +552,29 @@ impl TickCircuit {
         self.ticks.len()
     }
 
+    /// Total number of measurement results produced so far.
+    #[must_use]
+    pub fn num_measurements(&self) -> usize {
+        self.next_meas_record
+    }
+
+    /// Advance the measurement counter by `n` (for external MZ gate construction).
+    pub fn advance_meas_counter(&mut self, n: usize) {
+        self.next_meas_record += n;
+    }
+
     /// Get the total number of gates across all ticks.
     #[must_use]
     pub fn gate_count(&self) -> usize {
         self.ticks.iter().map(Tick::len).sum()
+    }
+
+    /// Convert a per-tick gate index to a global gate index.
+    ///
+    /// Global index = sum of gate counts for all ticks before `tick_idx` + `gate_idx`.
+    #[must_use]
+    pub fn global_gate_index(&self, tick_idx: usize, gate_idx: usize) -> usize {
+        self.ticks[..tick_idx].iter().map(Tick::len).sum::<usize>() + gate_idx
     }
 
     /// Get a tick by index.
@@ -548,8 +594,14 @@ impl TickCircuit {
         &self.ticks
     }
 
-    /// Get mutable access to all ticks.
+    /// Get mutable access to all ticks (slice).
     pub fn ticks_mut(&mut self) -> &mut [Tick] {
+        &mut self.ticks
+    }
+
+    /// Get mutable access to the ticks vector (for structural passes that
+    /// need to insert/remove ticks).
+    pub fn ticks_vec_mut(&mut self) -> &mut Vec<Tick> {
         &mut self.ticks
     }
 
@@ -896,14 +948,14 @@ impl TickCircuit {
     // --- Gate signature validation ---
 
     /// Import gate signatures in bulk (e.g., from a `GateRegistry`).
-    pub fn import_signatures(&mut self, sigs: &HashMap<String, GateSignature>) {
+    pub fn import_signatures(&mut self, sigs: &BTreeMap<String, GateSignature>) {
         self.gate_signatures
             .extend(sigs.iter().map(|(name, sig)| (name.clone(), sig.clone())));
     }
 
     /// Get read access to the gate signatures.
     #[must_use]
-    pub fn gate_signatures(&self) -> &HashMap<String, GateSignature> {
+    pub fn gate_signatures(&self) -> &BTreeMap<String, GateSignature> {
         &self.gate_signatures
     }
 
@@ -1074,6 +1126,221 @@ impl TickCircuit {
             *counts.entry(gate.gate_type).or_insert(0) += 1;
         }
         counts
+    }
+    // ==================== Annotations ====================
+
+    /// Annotate a detector: measurements whose XOR should be deterministic.
+    pub fn detector(&mut self, measurements: &[TickMeasRef]) -> usize {
+        let meas_nodes: Vec<usize> = measurements.iter().map(|m| m.record_idx).collect();
+        let pauli = pecos_core::PauliString::zs(
+            &measurements
+                .iter()
+                .map(|m| m.qubit.index())
+                .collect::<Vec<_>>(),
+        );
+        let idx = self.annotations.len();
+        self.annotations.push(PauliAnnotation {
+            pauli,
+            kind: AnnotationKind::Detector {
+                measurement_nodes: meas_nodes,
+                coords: Vec::new(),
+            },
+            label: None,
+        });
+        idx
+    }
+
+    /// Annotate a labeled detector.
+    pub fn detector_labeled(&mut self, label: &str, measurements: &[TickMeasRef]) -> usize {
+        let idx = self.detector(measurements);
+        self.annotations[idx].label = Some(label.to_string());
+        idx
+    }
+
+    /// Annotate a logical observable.
+    pub fn observable(&mut self, measurements: &[TickMeasRef]) -> usize {
+        let meas_nodes: Vec<usize> = measurements.iter().map(|m| m.record_idx).collect();
+        let pauli = pecos_core::PauliString::zs(
+            &measurements
+                .iter()
+                .map(|m| m.qubit.index())
+                .collect::<Vec<_>>(),
+        );
+        let idx = self.annotations.len();
+        self.annotations.push(PauliAnnotation {
+            pauli,
+            kind: AnnotationKind::Observable {
+                measurement_nodes: meas_nodes,
+            },
+            label: None,
+        });
+        idx
+    }
+
+    /// Annotate a labeled observable.
+    pub fn observable_labeled(&mut self, label: &str, measurements: &[TickMeasRef]) -> usize {
+        let idx = self.observable(measurements);
+        self.annotations[idx].label = Some(label.to_string());
+        idx
+    }
+
+    /// Place a Pauli operator annotation.
+    pub fn pauli_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
+        pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+        let idx = self.annotations.len();
+        self.annotations.push(PauliAnnotation {
+            pauli,
+            kind: AnnotationKind::Operator,
+            label: None,
+        });
+        idx
+    }
+
+    /// Place a labeled Pauli operator annotation.
+    pub fn pauli_operator_labeled(&mut self, label: &str, pauli: pecos_core::PauliString) -> usize {
+        let idx = self.pauli_operator(pauli);
+        self.annotations[idx].label = Some(label.to_string());
+        idx
+    }
+
+    /// Get all annotations.
+    #[must_use]
+    pub fn annotations(&self) -> &[PauliAnnotation] {
+        &self.annotations
+    }
+
+    // ==================== Idle ====================
+
+    /// Insert identity gates for qubits not operated on during each tick.
+    ///
+    /// For each tick, finds qubits that are in the circuit's qubit set but
+    /// not actively operated on, and inserts an identity (I) gate. These
+    /// gates receive `p1` noise from the noise model, matching Stim's
+    /// convention of `DEPOLARIZE1` on idle qubits between ticks.
+    ///
+    /// This is separate from `GateType::Idle` which represents explicit
+    /// wait operations with duration-dependent `p_idle` noise.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]);
+    /// circuit.tick().cx(&[(0, 1)]);
+    /// circuit.tick().mz(&[0, 1]);
+    ///
+    /// circuit.fill_idle_gates();
+    /// ```
+    /// Insert Idle gates after each two-qubit gate on both of its qubits.
+    ///
+    /// Delegates to `InsertIdleAfterTwoQubitGates` pass. See [`crate::pass`].
+    pub fn insert_idle_after_two_qubit_gates(&mut self, duration: f64) {
+        use crate::pass::{CircuitPass, InsertIdleAfterTwoQubitGates};
+        InsertIdleAfterTwoQubitGates(duration).apply_tick(self);
+    }
+
+    pub fn fill_idle_gates(&mut self) {
+        let all_qubits = self.all_qubits();
+        if all_qubits.is_empty() {
+            return;
+        }
+
+        for tick in &mut self.ticks {
+            let active = tick.active_qubits();
+            for &q in &all_qubits {
+                if !active.contains(&q) {
+                    // Duration 1 = one tick of idling
+                    let _ = tick.try_add_gate(Gate::idle(1.0, vec![q]));
+                }
+            }
+        }
+    }
+
+    /// Compact ticks by merging gates into earlier ticks when possible.
+    ///
+    /// ASAP scheduling: walk ticks in order, try to merge each tick's gates
+    /// into the latest tick where all qubits are free. Produces the minimum
+    /// number of ticks for the same gate dependency structure.
+    ///
+    /// This is useful after replaying a serialized trace (e.g., from QIR)
+    /// where each gate gets its own tick even if they could run in parallel.
+    ///
+    /// Gate metadata and tick-level metadata are preserved. Tick-level
+    /// metadata from merged ticks is dropped (the target tick's metadata
+    /// wins).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// // Serialized: each gate in its own tick
+    /// circuit.tick().h(&[0]);
+    /// circuit.tick().h(&[1]);
+    /// circuit.tick().cx(&[(0, 1)]);
+    /// assert_eq!(circuit.num_ticks(), 3);
+    ///
+    /// circuit.compact_ticks();
+    /// // H(0) and H(1) merged into one tick; CX(0,1) stays separate
+    /// assert_eq!(circuit.num_ticks(), 2);
+    /// ```
+    pub fn compact_ticks(&mut self) {
+        if self.ticks.len() <= 1 {
+            return;
+        }
+
+        let old_ticks: Vec<Tick> = self.ticks.drain(..).collect();
+        let mut compacted: Vec<Tick> = Vec::new();
+
+        for tick in old_ticks {
+            let mut placed = false;
+
+            // Try to merge into the latest existing tick where all qubits are free.
+            // Walk backwards to find the latest valid target (ASAP scheduling).
+            for target_idx in (0..compacted.len()).rev() {
+                let can_merge = tick.gates.iter().all(|gate| {
+                    gate.qubits
+                        .iter()
+                        .all(|q| !compacted[target_idx].uses_qubit(*q))
+                });
+
+                if can_merge {
+                    // Check that no tick between target+1..end uses any of these qubits
+                    // (would violate ordering).
+                    let all_clear = (target_idx + 1..compacted.len()).all(|between| {
+                        tick.gates.iter().all(|gate| {
+                            gate.qubits
+                                .iter()
+                                .all(|q| !compacted[between].uses_qubit(*q))
+                        })
+                    });
+
+                    if all_clear {
+                        // Move gates and their per-gate metadata into the target tick.
+                        for (gi, gate) in tick.gates.iter().enumerate() {
+                            let new_idx = compacted[target_idx].add_gate(gate.clone());
+                            if let Some(attrs) = tick.gate_attrs.get(&gi) {
+                                compacted[target_idx]
+                                    .gate_attrs
+                                    .insert(new_idx, attrs.clone());
+                            }
+                        }
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+
+            if !placed {
+                compacted.push(tick);
+            }
+        }
+
+        self.ticks = compacted;
+        self.next_tick = self.ticks.len();
     }
 }
 
@@ -1613,13 +1880,32 @@ impl<'a> TickHandle<'a> {
     /// circuit.tick().mz(&[0]);           // Single qubit
     /// circuit.tick().mz(&[1, 2, 3]);     // Multiple qubits
     /// ```
-    pub fn mz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::mz(qubits));
-        TickMeasureHandle {
-            circuit: self.circuit,
-            tick_idx: self.tick_idx,
-            gate_idx,
-        }
+    pub fn mz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
+        let mut gate = Gate::mz(qubits);
+        let refs: Vec<TickMeasRef> = qubits
+            .iter()
+            .map(|&q| {
+                let record_idx = self.circuit.next_meas_record;
+                let mr = MeasId(record_idx);
+                self.circuit.next_meas_record += 1;
+                gate.meas_ids.push(mr);
+                TickMeasRef {
+                    tick: self.tick_idx,
+                    gate_idx: 0, // placeholder, updated below
+                    qubit: q.into(),
+                    record_idx,
+                    meas_id: mr,
+                }
+            })
+            .collect();
+        let gate_idx = self.add_gate_get_idx(gate);
+        // Fix up gate_idx in refs (needed because we had to build gate before adding)
+        refs.into_iter()
+            .map(|mut r| {
+                r.gate_idx = gate_idx;
+                r
+            })
+            .collect()
     }
 
     /// Measure and free qubit(s) (destructive measurement).
@@ -1634,13 +1920,31 @@ impl<'a> TickHandle<'a> {
     /// let mut circuit = TickCircuit::new();
     /// circuit.tick().mz_free(&[0, 1]);
     /// ```
-    pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickMeasureHandle<'a> {
-        let gate_idx = self.add_gate_get_idx(Gate::mz_free(qubits));
-        TickMeasureHandle {
-            circuit: self.circuit,
-            tick_idx: self.tick_idx,
-            gate_idx,
-        }
+    pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
+        let mut gate = Gate::mz_free(qubits);
+        let refs: Vec<TickMeasRef> = qubits
+            .iter()
+            .map(|&q| {
+                let record_idx = self.circuit.next_meas_record;
+                let mr = MeasId(record_idx);
+                self.circuit.next_meas_record += 1;
+                gate.meas_ids.push(mr);
+                TickMeasRef {
+                    tick: self.tick_idx,
+                    gate_idx: 0,
+                    qubit: q.into(),
+                    record_idx,
+                    meas_id: mr,
+                }
+            })
+            .collect();
+        let gate_idx = self.add_gate_get_idx(gate);
+        refs.into_iter()
+            .map(|mut r| {
+                r.gate_idx = gate_idx;
+                r
+            })
+            .collect()
     }
 
     // --- Resource management ---
@@ -1788,7 +2092,6 @@ impl From<&DagCircuit> for TickCircuit {
         let tick_attr_prefix = "tick[";
         for (key, value) in dag.attrs() {
             if key.starts_with(tick_attr_prefix) {
-                // Parse tick[N].attr_name format
                 if let Some(rest) = key.strip_prefix(tick_attr_prefix)
                     && let Some(bracket_pos) = rest.find(']')
                     && let Ok(tick_idx) = rest[..bracket_pos].parse::<usize>()
@@ -1804,6 +2107,13 @@ impl From<&DagCircuit> for TickCircuit {
                 tc.set_meta(key, value.clone());
             }
         }
+
+        // Transfer annotations (Pauli operators don't need node remapping
+        // since TickCircuit stores them without node references;
+        // Detector/Observable measurement_nodes are DAG node IDs which
+        // become gate_idx values in the TickCircuit -- the mapping is
+        // handled by the gate ordering within ticks)
+        tc.annotations = dag.annotations().to_vec();
 
         tc
     }
@@ -1840,22 +2150,102 @@ impl From<&TickCircuit> for DagCircuit {
         // Track the last node for each qubit to connect wires
         let mut last_node: BTreeMap<QubitId, usize> = BTreeMap::new();
 
+        // Map measurement_record_index -> dag node for annotation transfer
+        let mut meas_record_to_node: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut meas_record_idx = 0usize;
+
         for (tick_idx, tick) in tc.ticks().iter().enumerate() {
             for (gate_idx, gate) in tick.gates().iter().enumerate() {
-                let node = dag.add_gate(gate.clone());
+                // Split batched gates into individual operations.
+                //
+                // TickCircuit batches gates for efficiency:
+                //   - 1q gates: H([0,1,2]) = one gate with 3 qubits
+                //   - 2q gates: CX([0,1, 2,3]) = one gate with 4 qubits (2 pairs)
+                //
+                // DagCircuit needs individual gates for correct fault analysis.
+                // Without splitting, a 4-qubit MZ generates 2^4-1=15 fault combos
+                // instead of 4 independent X faults. A 12-qubit CX generates
+                // 4^12=16M combos instead of 6×15=90.
+                let is_two_qubit = matches!(
+                    gate.gate_type,
+                    GateType::CX
+                        | GateType::CY
+                        | GateType::CZ
+                        | GateType::SWAP
+                        | GateType::RXX
+                        | GateType::RYY
+                        | GateType::RZZ
+                        | GateType::SXX
+                        | GateType::SXXdg
+                        | GateType::SYY
+                        | GateType::SYYdg
+                        | GateType::SZZ
+                        | GateType::SZZdg
+                );
+                let needs_split = if is_two_qubit {
+                    gate.qubits.len() > 2
+                } else {
+                    gate.qubits.len() > 1
+                };
 
-                // Connect wires from previous gates on the same qubits
-                for qubit in &gate.qubits {
-                    if let Some(&prev_node) = last_node.get(qubit) {
-                        // Connect previous node to this one on this qubit
-                        let _ = dag.connect(prev_node, node, *qubit);
+                let split_gates: Vec<Gate> = if needs_split {
+                    let chunk_size = if is_two_qubit { 2 } else { 1 };
+                    gate.qubits
+                        .chunks(chunk_size)
+                        .filter(|chunk| chunk.len() == chunk_size)
+                        .enumerate()
+                        .map(|(chunk_idx, qs)| {
+                            // For measurement gates, distribute MeasId values
+                            // to the split gates (one per qubit).
+                            let mr = if !gate.meas_ids.is_empty() {
+                                let start = chunk_idx * chunk_size;
+                                gate.meas_ids
+                                    .get(start..start + chunk_size)
+                                    .map(|s| GateMeasIds::from_iter(s.iter().copied()))
+                                    .unwrap_or_default()
+                            } else {
+                                GateMeasIds::new()
+                            };
+                            Gate {
+                                gate_type: gate.gate_type,
+                                qubits: GateQubits::from_iter(qs.iter().copied()),
+                                angles: gate.angles.clone(),
+                                params: gate.params.clone(),
+                                meas_ids: mr,
+                            }
+                        })
+                        .collect()
+                } else {
+                    vec![gate.clone()]
+                };
+
+                for split_gate in &split_gates {
+                    let node = dag.add_gate(split_gate.clone());
+
+                    // For MZ gates, map each qubit's record to this node
+                    if split_gate.gate_type == GateType::MZ {
+                        for _q in &split_gate.qubits {
+                            meas_record_to_node.insert(meas_record_idx, node);
+                            meas_record_idx += 1;
+                        }
                     }
-                    last_node.insert(*qubit, node);
+
+                    // Connect wires from previous gates on the same qubits
+                    for qubit in &split_gate.qubits {
+                        if let Some(&prev_node) = last_node.get(qubit) {
+                            let _ = dag.connect(prev_node, node, *qubit);
+                        }
+                        last_node.insert(*qubit, node);
+                    }
                 }
 
-                // Copy gate attributes
+                // Copy gate attributes (applied to last split gate)
                 for (key, value) in tick.gate_attrs(gate_idx) {
-                    dag.set_gate_attr(node, key, value.clone());
+                    if let Some(split_gate) = split_gates.last() {
+                        let last_node_id =
+                            *last_node.get(split_gate.qubits.first().unwrap()).unwrap();
+                        dag.set_gate_attr(last_node_id, key, value.clone());
+                    }
                 }
             }
 
@@ -1869,6 +2259,40 @@ impl From<&TickCircuit> for DagCircuit {
         // Copy circuit-level attributes
         for (key, value) in tc.circuit_attrs() {
             dag.set_attr(key.clone(), value.clone());
+        }
+
+        // Transfer annotations, remapping measurement record indices to DAG node indices
+        for ann in &tc.annotations {
+            let remapped_kind = match &ann.kind {
+                AnnotationKind::Detector {
+                    measurement_nodes,
+                    coords,
+                } => {
+                    let dag_nodes: Vec<usize> = measurement_nodes
+                        .iter()
+                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
+                        .collect();
+                    AnnotationKind::Detector {
+                        measurement_nodes: dag_nodes,
+                        coords: coords.clone(),
+                    }
+                }
+                AnnotationKind::Observable { measurement_nodes } => {
+                    let dag_nodes: Vec<usize> = measurement_nodes
+                        .iter()
+                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
+                        .collect();
+                    AnnotationKind::Observable {
+                        measurement_nodes: dag_nodes,
+                    }
+                }
+                AnnotationKind::Operator => AnnotationKind::Operator,
+            };
+            dag.add_annotation(PauliAnnotation {
+                pauli: ann.pauli.clone(),
+                kind: remapped_kind,
+                label: ann.label.clone(),
+            });
         }
 
         dag
@@ -2009,9 +2433,11 @@ mod tests {
             .pz(&[0])
             .meta("reason", Attribute::String("init".into()));
         tc.tick().h(&[0]);
-        tc.tick()
-            .mz(&[0])
-            .meta("basis", Attribute::String("Z".into()));
+        tc.tick().mz(&[0]);
+        // Attach metadata to the measurement gate directly
+        tc.get_tick_mut(2)
+            .unwrap()
+            .set_gate_attr(0, "basis", Attribute::String("Z".into()));
 
         assert_eq!(tc.num_ticks(), 3);
 
@@ -2062,6 +2488,90 @@ mod tests {
             dag.get_attr("circuit_name"),
             Some(&Attribute::String("test".to_string()))
         );
+    }
+
+    #[test]
+    fn test_tick_to_dag_splits_batched_standard_two_qubit_cliffords_as_pairs() {
+        fn add_gate(tc: &mut TickCircuit, gate_type: GateType, pairs: &[(usize, usize)]) {
+            match gate_type {
+                GateType::CX => {
+                    tc.tick().cx(pairs);
+                }
+                GateType::CY => {
+                    tc.tick().cy(pairs);
+                }
+                GateType::CZ => {
+                    tc.tick().cz(pairs);
+                }
+                GateType::SXX => {
+                    tc.tick().sxx(pairs);
+                }
+                GateType::SXXdg => {
+                    tc.tick().sxxdg(pairs);
+                }
+                GateType::SYY => {
+                    tc.tick().syy(pairs);
+                }
+                GateType::SYYdg => {
+                    tc.tick().syydg(pairs);
+                }
+                GateType::SZZ => {
+                    tc.tick().szz(pairs);
+                }
+                GateType::SZZdg => {
+                    tc.tick().szzdg(pairs);
+                }
+                GateType::SWAP => {
+                    tc.tick().swap(pairs);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let pair_sets = [
+            [(0usize, 1usize), (2usize, 3usize)],
+            [(4usize, 1usize), (9usize, 2usize)],
+        ];
+
+        for gate_type in [
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::SWAP,
+        ] {
+            for pairs in pair_sets {
+                let mut tc = TickCircuit::new();
+                add_gate(&mut tc, gate_type, &pairs);
+
+                let dag = DagCircuit::from(&tc);
+                let gates: Vec<_> = dag.iter_gates().map(|(_, gate)| gate).collect();
+                assert_eq!(gates.len(), 2, "{gate_type:?} {pairs:?}");
+                assert!(
+                    gates.iter().all(|gate| gate.gate_type == gate_type),
+                    "{gate_type:?} {pairs:?}"
+                );
+                assert!(
+                    gates.iter().all(|gate| gate.qubits.len() == 2),
+                    "{gate_type:?} should remain pairwise in the DAG for {pairs:?}"
+                );
+                for (q0, q1) in pairs {
+                    assert!(
+                        gates.iter().any(|gate| gate
+                            .qubits
+                            .iter()
+                            .copied()
+                            .eq([QubitId(q0), QubitId(q1)])),
+                        "{gate_type:?} should preserve pair ({q0}, {q1})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -2753,7 +3263,7 @@ mod tests {
     #[test]
     fn test_import_signatures() {
         let mut tc = TickCircuit::new();
-        let mut sigs = HashMap::new();
+        let mut sigs = BTreeMap::new();
         sigs.insert(
             "AOT_GATE".to_string(),
             GateSignature {
@@ -2785,5 +3295,217 @@ mod tests {
 
         tc.reset();
         assert!(tc.gate_signatures().is_empty());
+    }
+
+    #[test]
+    fn test_tick_circuit_annotations() {
+        use pecos_core::pauli::constructors::X;
+
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1, 2]);
+        tc.tick().cx(&[(0, 2), (1, 2)]);
+        let ms = tc.tick().mz(&[2]);
+
+        assert_eq!(ms.len(), 1);
+        assert_eq!(ms[0].qubit, QubitId::from(2));
+
+        tc.detector_labeled("Z_check", &ms);
+        tc.observable_labeled("logical_Z", &ms);
+        tc.pauli_operator_labeled("logical_X", X(0) & X(1));
+
+        assert_eq!(tc.annotations().len(), 3);
+        assert_eq!(tc.annotations()[0].label.as_deref(), Some("Z_check"));
+        assert_eq!(tc.annotations()[1].label.as_deref(), Some("logical_Z"));
+        assert_eq!(tc.annotations()[2].label.as_deref(), Some("logical_X"));
+    }
+
+    #[test]
+    fn test_tick_to_dag_annotation_transfer() {
+        use pecos_core::pauli::constructors::Z;
+
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1, 2]);
+        tc.tick().cx(&[(0, 2), (1, 2)]);
+        let ms = tc.tick().mz(&[2]);
+        tc.detector_labeled("det0", &ms);
+        tc.observable_labeled("obs0", &ms);
+        tc.pauli_operator_labeled("op0", Z(0) & Z(1));
+
+        let dag = DagCircuit::from(&tc);
+
+        // Annotations should transfer
+        assert_eq!(dag.annotations().len(), 3);
+        assert_eq!(dag.annotations()[0].label.as_deref(), Some("det0"));
+        assert_eq!(dag.annotations()[1].label.as_deref(), Some("obs0"));
+        assert_eq!(dag.annotations()[2].label.as_deref(), Some("op0"));
+
+        // Kinds preserved
+        assert!(matches!(
+            dag.annotations()[0].kind,
+            crate::dag_circuit::AnnotationKind::Detector { .. }
+        ));
+        assert!(matches!(
+            dag.annotations()[1].kind,
+            crate::dag_circuit::AnnotationKind::Observable { .. }
+        ));
+        assert!(matches!(
+            dag.annotations()[2].kind,
+            crate::dag_circuit::AnnotationKind::Operator
+        ));
+    }
+
+    #[test]
+    fn test_dag_to_tick_annotation_transfer() {
+        use pecos_core::pauli::constructors::X;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        dag.cx(&[(0, 1)]);
+        let ms = dag.mz(&[0, 1]);
+        dag.detector_labeled("d0", &[ms[0]]);
+        dag.observable_labeled("o0", &[ms[0], ms[1]]);
+        dag.pauli_operator_labeled("p0", X(0) & X(1));
+
+        let tc = TickCircuit::from(&dag);
+
+        assert_eq!(tc.annotations().len(), 3);
+        assert_eq!(tc.annotations()[0].label.as_deref(), Some("d0"));
+        assert_eq!(tc.annotations()[1].label.as_deref(), Some("o0"));
+        assert_eq!(tc.annotations()[2].label.as_deref(), Some("p0"));
+    }
+
+    #[test]
+    fn test_annotation_round_trip() {
+        use pecos_core::pauli::constructors::X;
+
+        // Build TickCircuit with annotations
+        let mut tc1 = TickCircuit::new();
+        tc1.tick().pz(&[0, 1, 2]);
+        tc1.tick().cx(&[(0, 2)]);
+        tc1.tick().cx(&[(1, 2)]);
+        let ms = tc1.tick().mz(&[2]);
+        tc1.detector_labeled("syndr", &ms);
+        let ms_data = tc1.tick().mz(&[0, 1]);
+        tc1.observable_labeled("log_Z", &ms_data);
+        tc1.pauli_operator_labeled("log_X", X(0) & X(1));
+
+        // TickCircuit -> DagCircuit -> TickCircuit
+        let dag = DagCircuit::from(&tc1);
+        let tc2 = TickCircuit::from(&dag);
+
+        // Annotation count and labels preserved
+        assert_eq!(tc2.annotations().len(), tc1.annotations().len());
+        for (a1, a2) in tc1.annotations().iter().zip(tc2.annotations()) {
+            assert_eq!(a1.label, a2.label);
+            assert_eq!(a1.pauli, a2.pauli);
+        }
+    }
+
+    #[test]
+    fn test_mz_returns_refs() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let ms = tc.tick().mz(&[0, 1]);
+
+        assert_eq!(ms.len(), 2);
+        assert_eq!(ms[0].qubit, QubitId::from(0));
+        assert_eq!(ms[1].qubit, QubitId::from(1));
+        // Both from same tick and gate
+        assert_eq!(ms[0].tick, ms[1].tick);
+        assert_eq!(ms[0].gate_idx, ms[1].gate_idx);
+    }
+
+    #[test]
+    fn test_fill_idle_gates() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]); // qubit 1 idle
+        tc.tick().cx(&[(0, 1)]); // none idle
+
+        let count_before = tc.gate_count();
+        tc.fill_idle_gates();
+        let count_after = tc.gate_count();
+
+        // Tick 0: qubit 1 was idle, should get an idle gate
+        assert!(count_after > count_before, "Should have added idle gates");
+    }
+
+    #[test]
+    fn test_meas_record_idx_single_qubit() {
+        let mut tc = TickCircuit::new();
+        let m0 = tc.tick().mz(&[0]);
+        let m1 = tc.tick().mz(&[1]);
+        assert_eq!(m0[0].record_idx, 0);
+        assert_eq!(m1[0].record_idx, 1);
+    }
+
+    #[test]
+    fn test_meas_record_idx_multi_qubit() {
+        let mut tc = TickCircuit::new();
+        let ms = tc.tick().mz(&[0, 1, 2]);
+        assert_eq!(ms[0].record_idx, 0);
+        assert_eq!(ms[1].record_idx, 1);
+        assert_eq!(ms[2].record_idx, 2);
+        // Next measurement continues the count
+        let m2 = tc.tick().mz(&[3]);
+        assert_eq!(m2[0].record_idx, 3);
+    }
+
+    #[test]
+    fn test_detector_uses_record_idx() {
+        // Two qubits measured in one gate: detector referencing each
+        // should get DIFFERENT record indices (not the same gate index).
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let ms = tc.tick().mz(&[0, 1]);
+
+        // Detector on qubit 0's measurement
+        tc.detector(&[ms[0]]);
+        // Detector on qubit 1's measurement
+        tc.detector(&[ms[1]]);
+
+        let anns = tc.annotations();
+        match &anns[0].kind {
+            AnnotationKind::Detector {
+                measurement_nodes, ..
+            } => {
+                assert_eq!(measurement_nodes, &[0], "D0 should reference record 0 (q0)");
+            }
+            _ => panic!("Expected detector"),
+        }
+        match &anns[1].kind {
+            AnnotationKind::Detector {
+                measurement_nodes, ..
+            } => {
+                assert_eq!(measurement_nodes, &[1], "D1 should reference record 1 (q1)");
+            }
+            _ => panic!("Expected detector"),
+        }
+    }
+
+    #[test]
+    fn test_detector_multi_qubit_mz_no_xor_cancel() {
+        // Bug regression: two refs from same multi-qubit MZ gate
+        // used to have the same gate_idx, causing XOR cancellation.
+        // With record_idx they should be distinct.
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let ms = tc.tick().mz(&[0, 1]);
+
+        // Detector comparing both measurements (XOR of records 0 and 1)
+        tc.detector(&[ms[0], ms[1]]);
+
+        let anns = tc.annotations();
+        match &anns[0].kind {
+            AnnotationKind::Detector {
+                measurement_nodes, ..
+            } => {
+                assert_eq!(measurement_nodes.len(), 2);
+                assert_ne!(
+                    measurement_nodes[0], measurement_nodes[1],
+                    "Two qubits from same MZ must have different record indices"
+                );
+            }
+            _ => panic!("Expected detector"),
+        }
     }
 }

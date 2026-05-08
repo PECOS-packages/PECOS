@@ -80,11 +80,12 @@ pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    Attribute, DagCircuit, DagTraversalIndex, MeasureHandle, PrepHandle, TraversalWorkBuffers,
+    AnnotationKind, Attribute, DagCircuit, DagTraversalIndex, MeasRef, PauliAnnotation,
+    TraversalWorkBuffers,
 };
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit, TickHandle,
-    TickMeasureHandle, TickPrepHandle,
+    TickMeasRef, TickMeasureHandle, TickPrepHandle,
 };
 pub use tick_circuit_soa::{
     CircuitIndexes, GateBatch, GateId, GateStorage, MetadataStorage, TickBatches, TickCircuitSoA,

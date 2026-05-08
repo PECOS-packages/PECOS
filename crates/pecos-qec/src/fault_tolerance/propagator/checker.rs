@@ -35,11 +35,12 @@ impl<'a> InfluenceBasedChecker<'a> {
 
     /// Classifies a fault at the given location with the given Pauli type.
     ///
-    /// For single-qubit locations, returns whether any qubit causes syndrome/logical.
+    /// For single-qubit locations, returns whether any qubit causes syndrome or
+    /// flips a tracked operator.
     /// For multi-qubit locations where the same Pauli is applied to all qubits,
     /// use `classify_uniform` which properly handles cancellation effects.
     ///
-    /// Returns (`has_syndrome`, `causes_logical_error`).
+    /// Returns (`has_syndrome`, `flips_tracked_op`).
     #[must_use]
     pub fn classify(&self, location: &SpacetimeLocation, pauli: u8) -> (bool, bool) {
         self.influence_map.classify_fault(location, pauli)
@@ -53,7 +54,7 @@ impl<'a> InfluenceBasedChecker<'a> {
     /// For Y faults (single or multi-qubit), we decompose Y = XZ and combine the
     /// X and Z contributions with XOR semantics.
     ///
-    /// Returns (`has_syndrome`, `causes_logical_error`).
+    /// Returns (`has_syndrome`, `flips_tracked_op`).
     #[must_use]
     pub fn classify_uniform(&self, location: &SpacetimeLocation, pauli: u8) -> (bool, bool) {
         // Always use multi-qubit logic for Y faults (even single-qubit)
@@ -77,10 +78,10 @@ impl<'a> InfluenceBasedChecker<'a> {
             })
     }
 
-    /// Checks if a fault causes an undetectable logical error.
+    /// Checks if a fault silently flips a tracked operator.
     #[must_use]
-    pub fn is_undetectable_logical_error(&self, location: &SpacetimeLocation, pauli: u8) -> bool {
-        let (has_syndrome, has_logical) = self.classify(location, pauli);
-        !has_syndrome && has_logical
+    pub fn is_silent_tracked_op_flip(&self, location: &SpacetimeLocation, pauli: u8) -> bool {
+        let (has_syndrome, flips_tracked_op) = self.classify(location, pauli);
+        !has_syndrome && flips_tracked_op
     }
 }

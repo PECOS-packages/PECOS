@@ -1363,13 +1363,12 @@ mod tests {
             let response = channel.apply(&event, &mut ctx, &mut rng);
             match response {
                 NoiseResponse::InjectGates(_) => pauli_count += 1,
-                NoiseResponse::Multiple(ref rs) => {
+                NoiseResponse::Multiple(ref rs)
                     if rs
                         .iter()
-                        .any(|r| matches!(r, NoiseResponse::InjectGates(_)))
-                    {
-                        pauli_count += 1;
-                    }
+                        .any(|r| matches!(r, NoiseResponse::InjectGates(_))) =>
+                {
+                    pauli_count += 1;
                 }
                 _ => {}
             }
@@ -1904,13 +1903,12 @@ mod tests {
                     CompositeResponse::InjectGates(_) => {
                         _partner_depolarize_count += 1;
                     }
-                    CompositeResponse::Multiple(ref parts) => {
+                    CompositeResponse::Multiple(ref parts)
                         if parts
                             .iter()
-                            .any(|p| matches!(p, CompositeResponse::InjectGates(_)))
-                        {
-                            _partner_depolarize_count += 1;
-                        }
+                            .any(|p| matches!(p, CompositeResponse::InjectGates(_))) =>
+                    {
+                        _partner_depolarize_count += 1;
                     }
                     _ => {}
                 }
@@ -2107,13 +2105,12 @@ mod tests {
             let response = channel.apply(&layer_event, &mut ctx, &mut rng);
             match response {
                 NoiseResponse::InjectGates(_) => z_count += 1,
-                NoiseResponse::Multiple(ref rs) => {
+                NoiseResponse::Multiple(ref rs)
                     if rs
                         .iter()
-                        .any(|r| matches!(r, NoiseResponse::InjectGates(_)))
-                    {
-                        z_count += 1;
-                    }
+                        .any(|r| matches!(r, NoiseResponse::InjectGates(_))) =>
+                {
+                    z_count += 1;
                 }
                 _ => {}
             }

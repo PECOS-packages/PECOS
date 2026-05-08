@@ -45,8 +45,6 @@ pub struct TesseractConfig {
     pub beam_climbing: bool,
     /// Avoid revisiting detectors during search
     pub no_revisit_dets: bool,
-    /// Limit to at most two errors per detector
-    pub at_most_two_errors_per_detector: bool,
     /// Enable verbose output
     pub verbose: bool,
     /// Priority queue size limit
@@ -60,10 +58,9 @@ impl Default for TesseractConfig {
         Self {
             det_beam: u16::MAX, // Infinite beam by default
             beam_climbing: false,
-            no_revisit_dets: false,
-            at_most_two_errors_per_detector: false,
+            no_revisit_dets: true,
             verbose: false,
-            pqlimit: usize::MAX,
+            pqlimit: 200_000,
             det_penalty: 0.0,
         }
     }
@@ -74,12 +71,11 @@ impl TesseractConfig {
     #[must_use]
     pub fn fast() -> Self {
         Self {
-            det_beam: 100,
+            det_beam: 5,
             beam_climbing: true,
             no_revisit_dets: true,
-            at_most_two_errors_per_detector: true,
             verbose: false,
-            pqlimit: 1_000_000,
+            pqlimit: 200_000,
             det_penalty: 0.1,
         }
     }
@@ -91,9 +87,8 @@ impl TesseractConfig {
             det_beam: u16::MAX,
             beam_climbing: false,
             no_revisit_dets: false,
-            at_most_two_errors_per_detector: false,
             verbose: false,
-            pqlimit: usize::MAX,
+            pqlimit: 1_000_000,
             det_penalty: 0.0,
         }
     }
@@ -105,7 +100,6 @@ impl TesseractConfig {
             det_beam: self.det_beam,
             beam_climbing: self.beam_climbing,
             no_revisit_dets: self.no_revisit_dets,
-            at_most_two_errors_per_detector: self.at_most_two_errors_per_detector,
             verbose: self.verbose,
             pqlimit: self.pqlimit,
             det_penalty: self.det_penalty,
@@ -336,12 +330,6 @@ impl TesseractDecoder {
         ffi::get_no_revisit_dets(&self.inner)
     }
 
-    /// Check if at-most-two-errors-per-detector is enabled
-    #[must_use]
-    pub fn at_most_two_errors_per_detector(&self) -> bool {
-        ffi::get_at_most_two_errors_per_detector(&self.inner)
-    }
-
     /// Check if verbose mode is enabled
     #[must_use]
     pub fn verbose(&self) -> bool {
@@ -358,6 +346,24 @@ impl TesseractDecoder {
     #[must_use]
     pub fn det_penalty(&self) -> f64 {
         ffi::get_det_penalty(&self.inner)
+    }
+}
+
+impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
+    fn decode_to_observables(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+        let detections: Vec<u64> = syndrome
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
+            .collect();
+        let det_arr = Array1::from_vec(detections);
+        let result = self
+            .decode_detections(&det_arr.view())
+            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+        Ok(result.observables_mask)
     }
 }
 
@@ -416,10 +422,9 @@ mod tests {
     #[test]
     fn test_tesseract_config_fast() {
         let config = TesseractConfig::fast();
-        assert_eq!(config.det_beam, 100);
+        assert_eq!(config.det_beam, 5);
         assert!(config.beam_climbing);
         assert!(config.no_revisit_dets);
-        assert!(config.at_most_two_errors_per_detector);
     }
 
     #[test]
@@ -428,6 +433,5 @@ mod tests {
         assert_eq!(config.det_beam, u16::MAX);
         assert!(!config.beam_climbing);
         assert!(!config.no_revisit_dets);
-        assert!(!config.at_most_two_errors_per_detector);
     }
 }

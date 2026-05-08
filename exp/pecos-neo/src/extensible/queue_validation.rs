@@ -149,6 +149,8 @@ pub fn is_clifford_gate_type(gate_type: GateType) -> bool {
             | GateType::Y
             | GateType::Z
             | GateType::H
+            | GateType::F
+            | GateType::Fdg
             | GateType::SX
             | GateType::SXdg
             | GateType::SY
@@ -160,6 +162,10 @@ pub fn is_clifford_gate_type(gate_type: GateType) -> bool {
             | GateType::CZ
             | GateType::SZZ
             | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
             | GateType::SWAP
             | GateType::MZ
             | GateType::MeasureLeaked

@@ -843,6 +843,10 @@ impl<R: Rng> SparseStateVecAoS<R> {
 // =============================================================================
 
 impl<R: Rng + Debug> QuantumSimulator for SparseStateVecAoS<R> {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.amplitudes.clear();
         self.amplitudes.push((0, Complex64::new(1.0, 0.0)));

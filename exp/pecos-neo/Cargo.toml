@@ -28,6 +28,7 @@ num_cpus = "1.16"
 
 # Optional: for adapter to wrap classical engines
 pecos-engines = { workspace = true, optional = true }
+
 # Optional: for program types (Qasm, Program enum, etc.)
 pecos-programs = { workspace = true, optional = true }
 # Optional: for QASM support
@@ -37,6 +38,7 @@ pecos-hugr = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true
+num-complex.workspace = true
 pecos-engines.workspace = true
 pecos-qasm.workspace = true
 pecos-hugr.workspace = true

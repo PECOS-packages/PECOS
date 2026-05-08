@@ -15,8 +15,9 @@ pub mod batched_ops;
 pub mod circuit_executor;
 pub mod clifford_frame;
 pub mod clifford_gateable;
+#[cfg(test)]
+mod clifford_matrix_oracle;
 pub mod clifford_rotation;
-pub mod clifford_rz;
 pub mod clifford_test_utils;
 pub mod coin_toss;
 pub mod dense_stab;
@@ -30,7 +31,9 @@ pub mod gpu_stab_parallel;
 pub mod graph_state;
 pub mod graph_state_repr;
 pub mod measurement_sampler;
+pub mod measurement_stress_test_utils;
 pub mod pauli_prop;
+pub mod stab_vec;
 // pub mod paulis;
 pub mod prelude;
 pub mod quantum_simulator;
@@ -67,10 +70,6 @@ pub type GensData = (
     Vec<Vec<usize>>,
 );
 
-pub use clifford_rz::ch_form::{CHForm, CHFormGeneric};
-pub use clifford_rz::exact_scalar::ExactScalar;
-pub use clifford_rz::sparse_binary_matrix::SparseBinaryMatrix;
-pub use clifford_rz::{CliffordRz, CliffordRzBuilder, CliffordRzGeneric};
 pub use dense_stab::DenseStab;
 pub use dense_stab_variants::{DenseStabColOnly, DenseStabRowOnly, SparseColOnly, SparseRowOnly};
 pub use density_matrix::DensityMatrix;
@@ -80,6 +79,10 @@ pub use gpu_stab_opt::GpuStabOpt;
 pub use gpu_stab_parallel::GpuStabParallel;
 pub use graph_state::GraphStateSim;
 pub use graph_state_repr::{GraphState, GraphStateRenderer};
+pub use stab_vec::ch_form::{CHForm, CHFormGeneric};
+pub use stab_vec::exact_scalar::ExactScalar;
+pub use stab_vec::sparse_binary_matrix::SparseBinaryMatrix;
+pub use stab_vec::{StabVec, StabVecBuilder, StabVecGeneric};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
@@ -101,7 +104,6 @@ pub use stabilizer::Stabilizer;
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 // StateVec uses the sparse SoA implementation optimized for QEC workloads.
 // The dense implementation is available as DenseStateVec / StateVecSoA.
-pub use state_vec::StateVec as StateVecOld;
 pub use state_vec_aos::StateVecAoS;
 pub use state_vec_soa::StateVecSoA as DenseStateVec;
 pub use state_vec_soa::StateVecSoA;

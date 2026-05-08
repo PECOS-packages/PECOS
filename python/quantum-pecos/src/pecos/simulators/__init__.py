@@ -18,22 +18,23 @@ and fault propagation simulators.
 
 # Rust simulators (direct exports without Python wrappers)
 # Simulator engine builder factory functions
-from pecos_rslib import clifford_rz, coin_toss, density_matrix, sparse_stab, stabilizer, state_vector
-from pecos_rslib.simulators import CliffordRz, SparseStab, Stabilizer
+from pecos_rslib import (
+    coin_toss,
+    density_matrix,
+    sparse_stab,
+    stab_vec,
+    stabilizer,
+    state_vector,
+)
+from pecos_rslib.simulators import SparseStab, Stabilizer, StabVec
 
 from pecos.simulators import sim_class_types
-
-# Coin toss simulator (uses Rust backend)
 from pecos.simulators.cointoss import CoinToss
-
-# Ignores quantum gates, coin toss for measurements
 from pecos.simulators.default_simulator import DefaultSimulator
 from pecos.simulators.pauliprop import (
     PauliFaultProp,  # Backward compatibility
     PauliProp,
 )
-
-# Pauli fault propagation sim
 from pecos.simulators.sparsestab import (
     SparseStabPy as SparseStabPy,
 )
@@ -71,28 +72,23 @@ except ImportError:
 
 __all__ = [
     "MPS",
-    # Rust simulators
-    "CliffordRz",
-    # Python simulators
     "CoinToss",
     "CuStateVec",
     "CudaStabilizer",
-    # CUDA simulators (Rust cuQuantum bindings)
     "CudaStateVec",
     "DefaultSimulator",
     "PauliFaultProp",
     "PauliProp",
     "SparseStab",
     "SparseStabPy",
+    "StabVec",
     "Stabilizer",
     "StateVec",
-    # Factory functions
-    "clifford_rz",
     "coin_toss",
     "density_matrix",
-    # Submodules
     "sim_class_types",
     "sparse_stab",
+    "stab_vec",
     "stabilizer",
     "state_vector",
 ]

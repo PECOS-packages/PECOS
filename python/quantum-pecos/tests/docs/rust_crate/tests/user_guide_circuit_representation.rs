@@ -76,8 +76,9 @@ circuit.h(&[0]).meta("error_rate", Attribute::Float(0.001));
 // Multiple metadata entries
 circuit.cx(&[(0, 1)]).meta("duration_ns", Attribute::Int(50));
 
-// Measurements break the chain but still support metadata
-circuit.mz(&[0]).meta("basis", Attribute::String("Z".into()));
+// Measurements return refs (not &mut Self), so chain separately
+circuit.mz(&[0]);
+circuit.meta("basis", Attribute::String("Z".into()));
 
 }
 

@@ -55,6 +55,8 @@ impl From<pecos_core::gate_type::GateType> for GateType {
             CoreGT::Y => Self::Y,
             CoreGT::Z => Self::Z,
             CoreGT::H => Self::H,
+            CoreGT::F => Self::F,
+            CoreGT::Fdg => Self::Fdg,
             CoreGT::SX => Self::SX,
             CoreGT::SXdg => Self::SXdg,
             CoreGT::SY => Self::SY,
@@ -101,6 +103,8 @@ impl From<GateType> for pecos_core::gate_type::GateType {
             GateType::Y => CoreGT::Y,
             GateType::Z => CoreGT::Z,
             GateType::H => CoreGT::H,
+            GateType::F => CoreGT::F,
+            GateType::Fdg => CoreGT::Fdg,
             GateType::SX => CoreGT::SX,
             GateType::SXdg => CoreGT::SXdg,
             GateType::SY => CoreGT::SY,
@@ -119,6 +123,10 @@ impl From<GateType> for pecos_core::gate_type::GateType {
             GateType::CZ => CoreGT::CZ,
             GateType::SZZ => CoreGT::SZZ,
             GateType::SZZdg => CoreGT::SZZdg,
+            GateType::SXX => CoreGT::SXX,
+            GateType::SXXdg => CoreGT::SXXdg,
+            GateType::SYY => CoreGT::SYY,
+            GateType::SYYdg => CoreGT::SYYdg,
             GateType::SWAP => CoreGT::SWAP,
             GateType::CRZ => CoreGT::CRZ,
             GateType::RXX => CoreGT::RXX,
@@ -288,6 +296,7 @@ impl From<&CommandQueue> for TickCircuit {
                         angles,
                         params: SmallVec::new(),
                         qubits: qubit_ids,
+                        meas_ids: SmallVec::new(),
                     };
                     // Use try_add_gate and ignore errors (shouldn't happen with one gate per tick)
                     let _ = tick.try_add_gate(gate);
@@ -419,6 +428,7 @@ mod tests {
             angles: smallvec::smallvec![Angle64::QUARTER_TURN],
             params: SmallVec::new(),
             qubits: smallvec::smallvec![QubitId(0)],
+            meas_ids: SmallVec::new(),
         };
 
         let cmd: GateCommand = (&gate).into();

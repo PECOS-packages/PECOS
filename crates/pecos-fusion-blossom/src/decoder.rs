@@ -6,8 +6,8 @@ use fusion_blossom::{
         CircuitLevelPlanarCode, CodeCapacityPlanarCode, CodeCapacityRotatedCode, ExampleCode,
         PhenomenologicalPlanarCode, PhenomenologicalRotatedCode,
     },
-    mwpm_solver::{LegacySolverSerial, PrimalDualSolver, SolverSerial},
-    util::{EdgeIndex, SolverInitializer, SyndromePattern, VertexIndex, Weight},
+    mwpm_solver::{LegacySolverSerial, SolverDualParallel, SolverSerial},
+    util::{EdgeIndex, PartitionConfig, SolverInitializer, SyndromePattern, VertexIndex, Weight},
 };
 use ndarray::{Array2, ArrayView1};
 use std::collections::HashMap;
@@ -21,6 +21,8 @@ pub enum SolverType {
     /// Serial solver (improved performance)
     #[default]
     Serial,
+    /// Parallel solver (intra-shot parallelism via partitioning)
+    Parallel,
 }
 
 /// Configuration for Fusion Blossom decoder
@@ -179,6 +181,18 @@ pub enum StandardCode {
 enum Solver {
     Legacy(LegacySolverSerial),
     Serial(SolverSerial),
+    Parallel(SolverDualParallel),
+}
+
+/// Pre-parsed correlated DEM for fast repeated FB construction.
+#[derive(Clone)]
+pub struct ParsedCorrelatedDem {
+    /// Number of detector nodes.
+    pub num_detectors: usize,
+    /// Number of observables.
+    pub num_observables: usize,
+    /// Per mechanism: (`detector_indices`, `observable_indices`, `original_weight`).
+    pub mechanisms: Vec<(Vec<usize>, Vec<usize>, f64)>,
 }
 
 /// Fusion Blossom decoder
@@ -186,6 +200,8 @@ pub struct FusionBlossomDecoder {
     config: FusionBlossomConfig,
     /// Map from edge index to observable mask
     edge_observables: HashMap<EdgeIndex, Vec<usize>>,
+    /// Pre-computed observable bitmask per edge (for fast decode path)
+    edge_obs_masks: Vec<u64>,
     /// Number of nodes (detectors)
     num_nodes: usize,
     /// Virtual boundary node (if used)
@@ -193,11 +209,17 @@ pub struct FusionBlossomDecoder {
     /// Edges to be added to the initializer
     weighted_edges: Vec<(VertexIndex, VertexIndex, Weight)>,
     /// Virtual vertices
-    virtual_vertices: Vec<VertexIndex>,
+    pub virtual_vertices: Vec<VertexIndex>,
     /// Cached solver instance for reuse
     solver: Option<Solver>,
     /// Cached initializer
     initializer: Option<SolverInitializer>,
+    /// Partition config for parallel solver (None for serial)
+    partition_config: Option<PartitionConfig>,
+    /// Reusable buffer for padded syndrome (avoids per-shot allocation)
+    _syndrome_buf: Vec<u8>,
+    /// Reusable buffer for defect vertices
+    defect_buf: Vec<VertexIndex>,
 }
 
 impl FusionBlossomDecoder {
@@ -235,13 +257,299 @@ impl FusionBlossomDecoder {
         Ok(Self {
             config,
             edge_observables: HashMap::new(),
+            edge_obs_masks: Vec::new(),
+            partition_config: None,
             num_nodes,
             boundary_node: None,
             weighted_edges: Vec::new(),
             virtual_vertices: Vec::new(),
             solver: None,
             initializer: None,
+            _syndrome_buf: vec![0u8; num_nodes + 1], // +1 for possible boundary node
+            defect_buf: Vec::new(),
         })
+    }
+
+    /// Create decoder from a `DemMatchingGraph`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the graph is empty or construction fails.
+    pub fn from_matching_graph(graph: &pecos_decoder_core::dem::DemMatchingGraph) -> Result<Self> {
+        let config = FusionBlossomConfig {
+            num_nodes: Some(graph.num_detectors),
+            num_observables: graph.num_observables,
+            ..Default::default()
+        };
+        let mut decoder = Self::new(config)?;
+        for edge in &graph.edges {
+            let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
+            match edge.node2 {
+                Some(n2) => {
+                    decoder.add_edge(edge.node1 as usize, n2 as usize, &obs, Some(edge.weight))?;
+                }
+                None => {
+                    decoder.add_boundary_edge(edge.node1 as usize, &obs, Some(edge.weight))?;
+                }
+            }
+        }
+        decoder.build_obs_masks();
+        Ok(decoder)
+    }
+
+    /// Create decoder from a DEM string.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the DEM is malformed.
+    pub fn from_dem(dem: &str) -> Result<Self> {
+        let graph = pecos_decoder_core::dem::DemMatchingGraph::from_dem_str(dem)
+            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+        Self::from_matching_graph(&graph)
+    }
+
+    /// Parse a DEM string into a reusable structure for correlated FB construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the DEM is malformed.
+    pub fn parse_correlated_dem(dem: &str) -> Result<ParsedCorrelatedDem> {
+        use pecos_decoder_core::dem::DemCheckMatrix;
+
+        let dcm = DemCheckMatrix::from_dem_str(dem)
+            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+
+        let mut mechanisms = Vec::new();
+        for m in 0..dcm.num_mechanisms {
+            let p = dcm.error_priors[m];
+            if p <= 0.0 {
+                continue;
+            }
+
+            let detectors: Vec<usize> = (0..dcm.num_detectors)
+                .filter(|&d| dcm.check_matrix[[d, m]] != 0)
+                .collect();
+
+            let obs: Vec<usize> = (0..dcm.num_observables)
+                .filter(|&o| dcm.observable_matrix[[o, m]] != 0)
+                .collect();
+
+            let weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
+
+            // Only graphlike (1-2 detector) mechanisms.
+            if detectors.len() <= 2 {
+                mechanisms.push((detectors, obs, weight));
+            }
+        }
+
+        Ok(ParsedCorrelatedDem {
+            num_detectors: dcm.num_detectors,
+            num_observables: dcm.num_observables,
+            mechanisms,
+        })
+    }
+
+    /// Build a correlated FB decoder from pre-parsed data with optional weight perturbation.
+    ///
+    /// `weight_factors[i]` multiplies the i-th mechanism's weight. Pass `None` for no perturbation.
+    /// Duplicate edges (same endpoints) are merged by keeping the lowest weight
+    /// (highest probability) mechanism's observable — matching PM's INDEPENDENT strategy.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if construction fails.
+    pub fn from_parsed_correlated(
+        parsed: &ParsedCorrelatedDem,
+        weight_factors: Option<&[f64]>,
+    ) -> Result<Self> {
+        use std::collections::BTreeMap;
+
+        let config = FusionBlossomConfig {
+            num_nodes: Some(parsed.num_detectors),
+            num_observables: parsed.num_observables,
+            ..Default::default()
+        };
+        let mut decoder = Self::new(config)?;
+
+        // Deduplicate edges: merge by independent-union probability,
+        // first-observable-wins (stable under perturbation).
+        // Key: (min_node, max_node, is_boundary). Value: (obs, prob, best_prob).
+        struct EdgeInfo {
+            obs: Vec<usize>,
+            prob: f64,
+            best_prob: f64,
+        }
+        let mut edge_map: BTreeMap<(usize, usize, bool), EdgeInfo> = BTreeMap::new();
+
+        for (i, (detectors, obs, base_weight)) in parsed.mechanisms.iter().enumerate() {
+            let weight = if let Some(factors) = weight_factors {
+                if i < factors.len() {
+                    (base_weight * factors[i]).max(0.01)
+                } else {
+                    *base_weight
+                }
+            } else {
+                *base_weight
+            };
+            // Convert weight to probability for merging.
+            let prob = 1.0 / (1.0 + weight.exp());
+
+            let key = match detectors.len() {
+                1 => (detectors[0], usize::MAX, true),
+                2 => {
+                    let (a, b) = if detectors[0] < detectors[1] {
+                        (detectors[0], detectors[1])
+                    } else {
+                        (detectors[1], detectors[0])
+                    };
+                    (a, b, false)
+                }
+                _ => continue,
+            };
+
+            let entry = edge_map.entry(key).or_insert_with(|| EdgeInfo {
+                obs: obs.clone(),
+                prob,
+                best_prob: prob,
+            });
+            // Independent union: P(A or B) = P(A) + P(B) - P(A)*P(B)
+            entry.prob = entry.prob + prob - entry.prob * prob;
+            if prob > entry.best_prob {
+                entry.obs = obs.clone();
+                entry.best_prob = prob;
+            }
+        }
+
+        for ((n1, n2, is_boundary), info) in &edge_map {
+            // Convert combined probability back to weight.
+            let p = info.prob.clamp(1e-15, 1.0 - 1e-15);
+            let weight = ((1.0 - p) / p).ln();
+            if *is_boundary {
+                decoder.add_boundary_edge(*n1, &info.obs, Some(weight))?;
+            } else {
+                decoder.add_edge(*n1, *n2, &info.obs, Some(weight))?;
+            }
+        }
+
+        decoder.build_obs_masks();
+        Ok(decoder)
+    }
+
+    /// Create decoder from a pre-parsed `DemCheckMatrix` preserving all mechanisms.
+    ///
+    /// Like `from_dem_correlated` but skips DEM string parsing.
+    /// Optionally applies multiplicative weight perturbation via `weight_factors`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if construction fails.
+    pub fn from_check_matrix_correlated(
+        dcm: &pecos_decoder_core::dem::DemCheckMatrix,
+        weight_factors: Option<&[f64]>,
+    ) -> Result<Self> {
+        // Use Legacy solver which tolerates duplicate edges (no assertion).
+        let config = FusionBlossomConfig {
+            num_nodes: Some(dcm.num_detectors),
+            num_observables: dcm.num_observables,
+            solver_type: SolverType::Legacy,
+            ..Default::default()
+        };
+        let mut decoder = Self::new(config)?;
+
+        for m in 0..dcm.num_mechanisms {
+            let p = dcm.error_priors[m];
+            if p <= 0.0 {
+                continue;
+            }
+
+            let detectors: Vec<usize> = (0..dcm.num_detectors)
+                .filter(|&d| dcm.check_matrix[[d, m]] != 0)
+                .collect();
+
+            let obs: Vec<usize> = (0..dcm.num_observables)
+                .filter(|&o| dcm.observable_matrix[[o, m]] != 0)
+                .collect();
+
+            let mut weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
+
+            if let Some(factors) = weight_factors
+                && m < factors.len() {
+                    weight *= factors[m];
+                    weight = weight.max(0.01);
+                }
+
+            match detectors.len() {
+                1 => {
+                    decoder.add_boundary_edge(detectors[0], &obs, Some(weight))?;
+                }
+                2 => {
+                    decoder.add_edge(detectors[0], detectors[1], &obs, Some(weight))?;
+                }
+                _ => {}
+            }
+        }
+
+        decoder.build_obs_masks();
+        Ok(decoder)
+    }
+
+    /// Create decoder from a DEM string preserving all mechanisms.
+    ///
+    /// Unlike `from_dem` which uses `DemMatchingGraph` (merges duplicate edges),
+    /// this uses `DemCheckMatrix` to keep every mechanism as a separate edge.
+    /// This preserves X-Z correlations from Y errors, similar to `PyMatching`'s
+    /// `enable_correlations` mode.
+    ///
+    /// Only 2-detector mechanisms are included (3+ detector hyperedges are
+    /// skipped since FB is a matching decoder).
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the DEM is malformed.
+    pub fn from_dem_correlated(dem: &str) -> Result<Self> {
+        use pecos_decoder_core::dem::DemCheckMatrix;
+
+        let dcm = DemCheckMatrix::from_dem_str(dem)
+            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+
+        let config = FusionBlossomConfig {
+            num_nodes: Some(dcm.num_detectors),
+            num_observables: dcm.num_observables,
+            ..Default::default()
+        };
+        let mut decoder = Self::new(config)?;
+
+        for m in 0..dcm.num_mechanisms {
+            let p = dcm.error_priors[m];
+            if p <= 0.0 {
+                continue;
+            }
+
+            let detectors: Vec<usize> = (0..dcm.num_detectors)
+                .filter(|&d| dcm.check_matrix[[d, m]] != 0)
+                .collect();
+
+            // Only handle 2-detector (graphlike) mechanisms.
+            // 1-detector = boundary, 3+ = hyperedge (skip).
+            let obs: Vec<usize> = (0..dcm.num_observables)
+                .filter(|&o| dcm.observable_matrix[[o, m]] != 0)
+                .collect();
+
+            let weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
+
+            match detectors.len() {
+                1 => {
+                    decoder.add_boundary_edge(detectors[0], &obs, Some(weight))?;
+                }
+                2 => {
+                    decoder.add_edge(detectors[0], detectors[1], &obs, Some(weight))?;
+                }
+                _ => {} // Skip hyperedges
+            }
+        }
+
+        decoder.build_obs_masks();
+        Ok(decoder)
     }
 
     /// Create decoder from a standard QEC code
@@ -331,12 +639,16 @@ impl FusionBlossomDecoder {
                 ..config
             },
             edge_observables,
+            edge_obs_masks: Vec::new(),
             num_nodes,
             boundary_node: None,
             weighted_edges: initializer.weighted_edges.clone(),
             virtual_vertices: initializer.virtual_vertices.clone(),
             solver: None,
             initializer: Some(initializer),
+            partition_config: None,
+            _syndrome_buf: vec![0u8; num_nodes + 1],
+            defect_buf: Vec::new(),
         };
 
         // Identify boundary nodes from virtual vertices
@@ -508,9 +820,21 @@ impl FusionBlossomDecoder {
         Ok(decoder)
     }
 
-    /// Clear the solver state for reuse
+    /// Set partition config for parallel solving.
+    ///
+    /// The partition config defines how the matching graph is split across
+    /// threads for intra-shot parallelism.
+    pub fn set_partition_config(&mut self, config: PartitionConfig) {
+        self.partition_config = Some(config);
+        self.config.solver_type = SolverType::Parallel;
+        self.solver = None; // force solver recreation
+    }
+
+    /// Clear the solver state for reuse between decodes.
+    ///
+    /// The Serial solver is cleared inline after each solve. This method
+    /// exists for external callers and the Legacy solver fallback.
     pub fn clear(&mut self) {
-        // For Fusion Blossom, we need to recreate the solver to clear state
         self.solver = None;
     }
 
@@ -544,6 +868,18 @@ impl FusionBlossomDecoder {
             let solver = match self.config.solver_type {
                 SolverType::Legacy => Solver::Legacy(LegacySolverSerial::new(&initializer)),
                 SolverType::Serial => Solver::Serial(SolverSerial::new(&initializer)),
+                SolverType::Parallel => {
+                    let partition_info = self
+                        .partition_config
+                        .as_ref()
+                        .expect("partition_config must be set for Parallel solver")
+                        .info();
+                    Solver::Parallel(SolverDualParallel::new(
+                        &initializer,
+                        &partition_info,
+                        serde_json::json!({}),
+                    ))
+                }
             };
 
             self.solver = Some(solver);
@@ -561,7 +897,7 @@ impl FusionBlossomDecoder {
     pub fn decode_with_options(
         &mut self,
         syndrome_data: SyndromeData,
-        options: DecodingOptions,
+        _options: DecodingOptions,
     ) -> Result<DecodingResult> {
         // Convert defects to VertexIndex
         let defect_vertices: Vec<VertexIndex> = syndrome_data
@@ -602,34 +938,27 @@ impl FusionBlossomDecoder {
                 SyndromePattern::new_vertices(defect_vertices)
             };
 
-        // Get or create solver
+        // Get or create solver, solve, extract results, then clear for next use.
         let solver = self.get_or_create_solver();
 
-        // Solve and get perfect matching if requested
         let (matched_edges, perfect_matching_info) = match solver {
             Solver::Legacy(s) => {
                 let edges = s.solve_subgraph(&syndrome_pattern);
-                let pm_info = if options.include_perfect_matching {
-                    // Legacy solver doesn't have easy access to perfect matching
-                    None
-                } else {
-                    None
-                };
-                (edges, pm_info)
+                (edges, None)
             }
             Solver::Serial(s) => {
+                use fusion_blossom::mwpm_solver::PrimalDualSolver;
                 s.solve(&syndrome_pattern);
                 let edges = s.subgraph();
-
-                let pm_info = if options.include_perfect_matching {
-                    // For Serial solver, we can't easily get perfect matching details
-                    // without accessing internal structures
-                    None
-                } else {
-                    None
-                };
-
-                (edges, pm_info)
+                s.clear();
+                (edges, None)
+            }
+            Solver::Parallel(s) => {
+                use fusion_blossom::mwpm_solver::PrimalDualSolver;
+                s.solve(&syndrome_pattern);
+                let edges = s.subgraph();
+                s.clear();
+                (edges, None)
             }
         };
 
@@ -712,7 +1041,13 @@ impl FusionBlossomDecoder {
         self.initializer = None;
     }
 
-    /// Get number of nodes
+    /// Get the boundary node index, if one exists.
+    #[must_use]
+    pub fn boundary_node(&self) -> Option<VertexIndex> {
+        self.boundary_node
+    }
+
+    /// Get number of nodes.
     #[must_use]
     pub fn num_nodes(&self) -> usize {
         self.num_nodes
@@ -722,5 +1057,99 @@ impl FusionBlossomDecoder {
     #[must_use]
     pub fn num_edges(&self) -> usize {
         self.weighted_edges.len()
+    }
+
+    /// Get node endpoints and weight of an edge by index.
+    #[must_use]
+    pub fn edge_endpoints(&self, edge_idx: usize) -> Option<(u32, u32, f64)> {
+        self.weighted_edges
+            .get(edge_idx)
+            .map(|&(n1, n2, w)| (n1 as u32, n2 as u32, (w as f64) / 1000.0))
+    }
+
+    /// Get per-edge observable bitmask.
+    #[must_use]
+    pub fn edge_obs_mask(&self, edge_idx: usize) -> u64 {
+        self.edge_obs_masks.get(edge_idx).copied().unwrap_or(0)
+    }
+
+    /// Compute observable mask from a set of matched edge indices.
+    /// Uses pre-computed bitmasks (builds them on first call).
+    pub fn obs_mask_from_edges(&mut self, matched_edges: &[usize]) -> u64 {
+        if self.edge_obs_masks.is_empty() && !self.edge_observables.is_empty() {
+            self.build_obs_masks();
+        }
+        let mut mask = 0u64;
+        for &edge_idx in matched_edges {
+            if let Some(&m) = self.edge_obs_masks.get(edge_idx) {
+                mask ^= m;
+            }
+        }
+        mask
+    }
+
+    /// Build pre-computed observable bitmasks for fast decode path.
+    /// Call once after all edges are added.
+    pub fn build_obs_masks(&mut self) {
+        let n = self.weighted_edges.len();
+        self.edge_obs_masks = vec![0u64; n];
+        for (&edge_idx, obs_indices) in &self.edge_observables {
+            if edge_idx < n {
+                let mut mask = 0u64;
+                for &obs_idx in obs_indices {
+                    mask |= 1 << obs_idx;
+                }
+                self.edge_obs_masks[edge_idx] = mask;
+            }
+        }
+    }
+
+    /// Fast decode: syndrome bytes -> observable bitmask.
+    /// Uses reusable buffers and pre-computed observable masks.
+    /// Handles padding for boundary node internally.
+    pub fn decode_to_obs_mask(&mut self, syndrome: &[u8]) -> Result<u64> {
+        // Build obs masks on first call
+        if self.edge_obs_masks.is_empty() && !self.edge_observables.is_empty() {
+            self.build_obs_masks();
+        }
+
+        // Fill defect buffer from syndrome (pad to num_nodes for boundary)
+        self.defect_buf.clear();
+        for (i, &v) in syndrome.iter().enumerate() {
+            if v != 0 {
+                self.defect_buf.push(i as VertexIndex);
+            }
+        }
+        // No defects in padding region (boundary node always 0)
+
+        if self.defect_buf.is_empty() {
+            return Ok(0);
+        }
+
+        let syndrome_pattern = SyndromePattern::new_vertices(self.defect_buf.clone());
+        let solver = self.get_or_create_solver();
+
+        let matched_edges = match solver {
+            Solver::Legacy(s) => s.solve_subgraph(&syndrome_pattern),
+            Solver::Serial(s) => {
+                use fusion_blossom::mwpm_solver::PrimalDualSolver;
+                s.solve(&syndrome_pattern);
+                let edges = s.subgraph();
+                s.clear();
+                edges
+            }
+            Solver::Parallel(s) => {
+                use fusion_blossom::mwpm_solver::PrimalDualSolver;
+                s.solve(&syndrome_pattern);
+                let edges = s.subgraph();
+                s.clear();
+                edges
+            }
+        };
+
+        // Compute observable mask using pre-computed bitmasks
+        let edge_indices: Vec<usize> = matched_edges.iter().copied().collect();
+        let mask = self.obs_mask_from_edges(&edge_indices);
+        Ok(mask)
     }
 }

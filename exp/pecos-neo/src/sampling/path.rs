@@ -535,6 +535,12 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
             GateType::H => {
                 self.simulator.h(&qubits);
             }
+            GateType::F => {
+                self.simulator.f(&qubits);
+            }
+            GateType::Fdg => {
+                self.simulator.fdg(&qubits);
+            }
             GateType::SX => {
                 self.simulator.sx(&qubits);
             }
@@ -577,6 +583,26 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                 let pairs: Vec<(QubitId, QubitId)> =
                     qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
                 self.simulator.szzdg(&pairs);
+            }
+            GateType::SXX => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.sxx(&pairs);
+            }
+            GateType::SXXdg => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.sxxdg(&pairs);
+            }
+            GateType::SYY => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.syy(&pairs);
+            }
+            GateType::SYYdg => {
+                let pairs: Vec<(QubitId, QubitId)> =
+                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                self.simulator.syydg(&pairs);
             }
             GateType::SWAP => {
                 let pairs: Vec<(QubitId, QubitId)> =
@@ -757,6 +783,42 @@ mod tests {
         let path1 = EnumeratedPath { bits: 1, len: 1 };
         let result1 = explorer.run_with_path(&commands, &path1);
         assert!(result1.outcomes.get_bit(QubitId(0)).unwrap());
+    }
+
+    #[test]
+    fn test_path_explorer_records_face_inverse_as_deterministic() {
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .f(&[0])
+            .fdg(&[0])
+            .mz(&[0])
+            .build();
+
+        let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
+        let result = explorer.run_and_record(&commands);
+
+        assert!(!result.outcomes.get_bit(QubitId(0)).unwrap());
+        assert_eq!(result.path.len(), 1);
+        let path_outcome = result.path.get(0).unwrap();
+        assert!(!path_outcome.outcome);
+        assert!(path_outcome.is_deterministic);
+    }
+
+    #[test]
+    fn test_path_explorer_replays_face_inverse_as_deterministic() {
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .f(&[0])
+            .fdg(&[0])
+            .mz(&[0])
+            .build();
+        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let forced_one = EnumeratedPath { bits: 1, len: 1 };
+
+        let result = explorer.run_with_path(&commands, &forced_one);
+
+        assert!(!result.outcomes.get_bit(QubitId(0)).unwrap());
+        assert!(result.path.get(0).unwrap().is_deterministic);
     }
 
     #[test]

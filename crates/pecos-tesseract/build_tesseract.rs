@@ -52,18 +52,19 @@ pub fn build() -> Result<()> {
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=tesseract-bridge");
 
-    // Get Tesseract and Stim sources (downloads to ~/.pecos/cache/, extracts to ~/.pecos/deps/)
+    // Get Tesseract, Stim, and Boost sources (downloads to ~/.pecos/cache/, extracts to ~/.pecos/deps/)
     let manifest = Manifest::find_and_load_validated()?;
     let tesseract_dir = ensure_dep_ready("tesseract", &manifest)?;
     let stim_dir = ensure_dep_ready("stim", &manifest)?;
+    let boost_dir = ensure_dep_ready("boost", &manifest)?;
 
     // Build using cxx
-    build_cxx_bridge(&tesseract_dir, &stim_dir);
+    build_cxx_bridge(&tesseract_dir, &stim_dir, &boost_dir);
 
     Ok(())
 }
 
-fn build_cxx_bridge(tesseract_dir: &Path, stim_dir: &Path) {
+fn build_cxx_bridge(tesseract_dir: &Path, stim_dir: &Path, boost_dir: &Path) {
     let tesseract_src_dir = tesseract_dir.join("src");
     let stim_src_dir = stim_dir.join("src");
 
@@ -87,6 +88,7 @@ fn build_cxx_bridge(tesseract_dir: &Path, stim_dir: &Path) {
     build
         .file(tesseract_src_dir.join("common.cc"))
         .file(tesseract_src_dir.join("utils.cc"))
+        .file(tesseract_src_dir.join("visualization.cc"))
         .file(tesseract_src_dir.join("tesseract.cc"));
 
     // Configure build
@@ -94,6 +96,7 @@ fn build_cxx_bridge(tesseract_dir: &Path, stim_dir: &Path) {
         .std("c++20")
         .include(&tesseract_src_dir)
         .include(&stim_src_dir)
+        .include(boost_dir)
         .include("include")
         .include("src")
         .define("TESSERACT_BRIDGE_EXPORTS", None);

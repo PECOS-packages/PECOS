@@ -524,7 +524,7 @@ impl PyBitInt {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("BitInt({}, 0b{})", self.inner.size(), self.inner,)
+        format!("BitInt({}, 0b{})", self.inner.size(), self.inner)
     }
 
     #[pyo3(signature = (reverse_bits=false, separator=None))]

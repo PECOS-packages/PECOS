@@ -236,7 +236,7 @@ def test_dem_comparison_d3() -> None:
     p1 = 0.01
     p2 = 0.01
     p_meas = 0.01
-    p_init = 0.01
+    p_prep = 0.01
 
     # Generate DEMs
     pecos_dem = generate_dem_from_tick_circuit(
@@ -244,7 +244,7 @@ def test_dem_comparison_d3() -> None:
         p1=p1,
         p2=p2,
         p_meas=p_meas,
-        p_init=p_init,
+        p_prep=p_prep,
         decompose_errors=False,
     )
     stim_dem = generate_dem_from_tick_circuit_via_stim(
@@ -252,7 +252,7 @@ def test_dem_comparison_d3() -> None:
         p1=p1,
         p2=p2,
         p_meas=p_meas,
-        p_init=p_init,
+        p_prep=p_prep,
     )
 
     print("\n--- PECOS DEM (raw, no decomposition) ---")
@@ -417,14 +417,14 @@ def analyze_decomposition_pattern() -> None:
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="Z")
 
-    p1, p2, p_meas, p_init = 0.01, 0.01, 0.01, 0.01
+    p1, p2, p_meas, p_prep = 0.01, 0.01, 0.01, 0.01
 
     stim_dem = generate_dem_from_tick_circuit_via_stim(
         tc,
         p1=p1,
         p2=p2,
         p_meas=p_meas,
-        p_init=p_init,
+        p_prep=p_prep,
     )
 
     errors, decomposed = parse_stim_dem_with_decomposed(stim_dem)
@@ -459,7 +459,7 @@ def analyze_decomposition_pattern() -> None:
         p1=p1,
         p2=p2,
         p_meas=p_meas,
-        p_init=p_init,
+        p_prep=p_prep,
         decompose_errors=False,
     )
     pecos_errors = parse_dem(pecos_dem)

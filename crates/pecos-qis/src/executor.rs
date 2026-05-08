@@ -725,6 +725,12 @@ impl QisHeliosInterface {
 
         debug!("Executable directory: {}", exe_dir.display());
 
+        let profile_order = if cfg!(debug_assertions) {
+            ["debug", "release"]
+        } else {
+            ["release", "debug"]
+        };
+
         let mut candidate_paths = vec![
             exe_dir.join(&lib_name),
             exe_dir.join(format!("deps/{lib_name}")),
@@ -737,20 +743,21 @@ impl QisHeliosInterface {
 
         if let Ok(current_dir) = std::env::current_dir() {
             debug!("Current directory: {}", current_dir.display());
-            candidate_paths.push(current_dir.join(format!("target/debug/{lib_name}")));
-            candidate_paths.push(current_dir.join(format!("target/debug/deps/{lib_name}")));
-            candidate_paths.push(current_dir.join(format!("target/release/{lib_name}")));
-            candidate_paths.push(current_dir.join(format!("target/release/deps/{lib_name}")));
+            for profile in &profile_order {
+                candidate_paths.push(current_dir.join(format!("target/{profile}/{lib_name}")));
+                candidate_paths.push(current_dir.join(format!("target/{profile}/deps/{lib_name}")));
+            }
 
             // Search up the directory tree for workspace root (when running from Python)
             let mut search_dir = current_dir.as_path();
             for _ in 0..5 {
                 // Search up to 5 levels
                 if let Some(parent) = search_dir.parent() {
-                    candidate_paths.push(parent.join(format!("target/debug/{lib_name}")));
-                    candidate_paths.push(parent.join(format!("target/debug/deps/{lib_name}")));
-                    candidate_paths.push(parent.join(format!("target/release/{lib_name}")));
-                    candidate_paths.push(parent.join(format!("target/release/deps/{lib_name}")));
+                    for profile in &profile_order {
+                        candidate_paths.push(parent.join(format!("target/{profile}/{lib_name}")));
+                        candidate_paths
+                            .push(parent.join(format!("target/{profile}/deps/{lib_name}")));
+                    }
                     search_dir = parent;
                 } else {
                     break;

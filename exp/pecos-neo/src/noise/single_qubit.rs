@@ -217,10 +217,12 @@ impl NoiseChannel for SingleQubitChannel {
         if self.error_probability <= 0.0 {
             return false;
         }
-        // Respond to BeforeGate for leaked qubit handling and AfterGate for noise
+        // Respond only to unitary single-qubit gates.
+        // Preparations (PZ, QAlloc) and measurements (MZ) have their own
+        // noise channels and should not get gate depolarizing noise.
         match event {
             NoiseEvent::BeforeGate { gate_type, .. } | NoiseEvent::AfterGate { gate_type, .. } => {
-                gate_type.is_single_qubit()
+                gate_type.is_single_qubit() && gate_type.is_unitary_gate()
             }
             _ => false,
         }
@@ -272,7 +274,7 @@ impl NoiseChannel for SingleQubitChannel {
             NoiseEvent::BeforeGate {
                 gate_type, qubits, ..
             } => {
-                if !gate_type.is_single_qubit() {
+                if !gate_type.is_single_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
                 // Skip noise for noiseless gates (but still check leakage)
@@ -284,7 +286,7 @@ impl NoiseChannel for SingleQubitChannel {
             NoiseEvent::AfterGate {
                 gate_type, qubits, ..
             } => {
-                if !gate_type.is_single_qubit() {
+                if !gate_type.is_single_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
                 // Skip noise for noiseless gates

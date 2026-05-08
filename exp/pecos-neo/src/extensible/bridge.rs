@@ -21,6 +21,8 @@ impl GateType {
 
             // Single-qubit Cliffords
             Self::H => gates::H,
+            Self::F => gates::F,
+            Self::Fdg => gates::Fdg,
             Self::SX => gates::SX,
             Self::SXdg => gates::SXdg,
             Self::SY => gates::SY,
@@ -43,6 +45,10 @@ impl GateType {
             Self::CZ => gates::CZ,
             Self::SZZ => gates::SZZ,
             Self::SZZdg => gates::SZZdg,
+            Self::SXX => gates::SXX,
+            Self::SXXdg => gates::SXXdg,
+            Self::SYY => gates::SYY,
+            Self::SYYdg => gates::SYYdg,
             Self::SWAP => gates::SWAP,
             Self::CRZ => gates::CRZ,
             Self::RXX => gates::RXX,
@@ -94,6 +100,8 @@ impl GateId {
             14 => GateType::SYdg,
             15 => GateType::SZ,
             16 => GateType::SZdg,
+            17 => GateType::F,
+            18 => GateType::Fdg,
 
             // T gates
             20 => GateType::T,
@@ -113,6 +121,10 @@ impl GateId {
             53 => GateType::SWAP,
 
             // Two-qubit Clifford rotations
+            60 => GateType::SXX,
+            61 => GateType::SXXdg,
+            62 => GateType::SYY,
+            63 => GateType::SYYdg,
             64 => GateType::SZZ,
             65 => GateType::SZZdg,
 
@@ -202,6 +214,8 @@ mod tests {
             GateType::Y,
             GateType::Z,
             GateType::H,
+            GateType::F,
+            GateType::Fdg,
             GateType::SX,
             GateType::SXdg,
             GateType::SY,
@@ -220,6 +234,10 @@ mod tests {
             GateType::CZ,
             GateType::SZZ,
             GateType::SZZdg,
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
             GateType::SWAP,
             GateType::CRZ,
             GateType::RXX,
@@ -286,6 +304,8 @@ mod tests {
         assert_eq!(GateType::I.to_gate_id(), gates::I);
         assert_eq!(GateType::X.to_gate_id(), gates::X);
         assert_eq!(GateType::H.to_gate_id(), gates::H);
+        assert_eq!(GateType::F.to_gate_id(), gates::F);
+        assert_eq!(GateType::Fdg.to_gate_id(), gates::Fdg);
         assert_eq!(GateType::RZ.to_gate_id(), gates::RZ);
         assert_eq!(GateType::CX.to_gate_id(), gates::CX);
         assert_eq!(GateType::CCX.to_gate_id(), gates::CCX);

@@ -13,7 +13,7 @@
 //! Evaluate `QuiZX` circuit simplification for T-count reduction.
 //!
 //! Tests whether ZX-calculus simplification meaningfully reduces the number
-//! of non-Clifford gates in circuits relevant to the `CliffordRz` simulator.
+//! of non-Clifford gates in circuits relevant to the `StabVec` simulator.
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
 use quizx::circuit::Circuit;

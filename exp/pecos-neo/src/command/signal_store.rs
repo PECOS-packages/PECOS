@@ -92,7 +92,7 @@ impl<S: Signal> SignalVec for TypedSignalVec<S> {
     }
 
     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}[{}]", S::name(), self.positions.len(),)
+        write!(f, "{}[{}]", S::name(), self.positions.len())
     }
 
     fn positions(&self) -> &[u32] {

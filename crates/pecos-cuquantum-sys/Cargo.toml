@@ -26,8 +26,6 @@ env_logger.workspace = true
 
 [features]
 default = []
-# Generate bindings at build time (requires cuQuantum headers)
-runtime-bindgen = []
 
 [package.metadata.docs.rs]
 # Don't try to build docs on docs.rs (no CUDA/cuQuantum available)

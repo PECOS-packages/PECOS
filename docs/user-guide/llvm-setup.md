@@ -23,7 +23,7 @@ If you don't need QIS LLVM IR/QIR execution features, you can skip LLVM installa
 
 ### Option 1: Automatic Installation (Recommended)
 
-Use the `pecos-llvm` CLI tool to automatically download and install LLVM 14.0.6:
+Use the `pecos` CLI (`pecos install llvm`, or `cargo run -p pecos-cli -- install llvm` in a source checkout) to automatically download and install LLVM 14.0.6:
 
 ```bash
 # Install LLVM 14.0.6 to ~/.pecos/deps/llvm-14/ (~400MB, ~5 minutes)
@@ -110,9 +110,9 @@ cargo run -p pecos-cli -- llvm version
 cargo run -p pecos-cli -- llvm find
 ```
 
-## pecos-llvm CLI Reference
+## `pecos llvm` CLI Reference
 
-The `pecos llvm` CLI tool provides several useful commands:
+The `pecos llvm` subcommand provides several useful commands:
 
 ### `install`
 
@@ -214,7 +214,7 @@ LLVM_SYS_140_PREFIX = { value = "/path/to/llvm", force = true }
 
 ### Detection Priority
 
-The `pecos-llvm` tool searches for LLVM 14 in this order:
+The `pecos llvm` tooling searches for LLVM 14 in this order:
 
 1. **Home directory:**
    - Windows: `~/.pecos/deps/llvm-14`
@@ -244,7 +244,7 @@ The `pecos-llvm` tool searches for LLVM 14 in this order:
 
 - Uses `.7z` archives for distribution
 - Pure Rust extraction (no external tools required)
-- Official LLVM Windows installer lacks development files - use `pecos-llvm install` or community packages
+- Official LLVM Windows installer lacks development files - use `pecos install llvm` or community packages
 
 ### Security
 

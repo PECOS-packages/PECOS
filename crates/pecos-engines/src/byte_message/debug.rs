@@ -211,9 +211,9 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
                                 qubits_offset + gate_header.num_qubits as usize * size_of::<u32>();
 
                             match gate_header.gate_type {
-                                32 => {
+                                32
                                     // RZ
-                                    if params_offset + size_of::<f64>() <= payload.len() {
+                                    if params_offset + size_of::<f64>() <= payload.len() => {
                                         let theta = f64::from_le_bytes([
                                             payload[params_offset],
                                             payload[params_offset + 1],
@@ -227,10 +227,9 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
 
                                         writeln!(output, "    Theta: {theta}").unwrap();
                                     }
-                                }
-                                36 => {
+                                36
                                     // R1XY
-                                    if params_offset + 2 * size_of::<f64>() <= payload.len() {
+                                    if params_offset + 2 * size_of::<f64>() <= payload.len() => {
                                         let phi = f64::from_le_bytes([
                                             payload[params_offset],
                                             payload[params_offset + 1],
@@ -256,7 +255,6 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
                                         writeln!(output, "    Phi: {phi}").unwrap();
                                         writeln!(output, "    Theta: {theta}").unwrap();
                                     }
-                                }
                                 _ => {}
                             }
                         }

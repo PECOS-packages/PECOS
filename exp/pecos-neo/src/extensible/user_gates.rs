@@ -204,11 +204,8 @@ impl GatePlugin for UserGatesPlugin {
     }
 
     fn build(&self, registry: &mut DecompositionRegistry) {
-        let mut current_id = self.next_id;
-
-        for def in &self.definitions {
+        for (current_id, def) in (self.next_id..).zip(self.definitions.iter()) {
             let gate_id = GateId(current_id);
-            current_id += 1;
 
             if let Some(ops) = &def.decomposition {
                 registry.register_dynamic(gate_id, def.requires.clone(), ops.clone());

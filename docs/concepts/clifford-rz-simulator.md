@@ -1,6 +1,6 @@
 # Clifford+RZ Simulator
 
-The `CliffordRz` simulator represents quantum states as weighted sums of stabilizer
+The `StabVec` simulator represents quantum states as weighted sums of stabilizer
 states using the CH-form representation from Bravyi et al. ([arXiv:1808.00128](https://arxiv.org/abs/1808.00128)). This
 enables efficient simulation of circuits with many Clifford gates and a moderate
 number of RZ rotations.
@@ -68,7 +68,7 @@ tableaux lack.
 
 ## Sum-over-Cliffords decomposition
 
-The `CliffordRz` simulator represents the full quantum state as:
+The `StabVec` simulator represents the full quantum state as:
 
 ```
 |psi> = sum_k  alpha_k |phi_k>
@@ -186,14 +186,14 @@ Default threshold: 1e-8. This trades exactness for keeping T manageable.
 When T exceeds a threshold (default: 2048), measurement uses O(T) term sampling instead
 of exact O(T^2) pairwise inner products.
 
-## When to use CliffordRz
+## When to use StabVec
 
 | Scenario                                     | Best approach                                                                  |
 |----------------------------------------------|--------------------------------------------------------------------------------|
 | Pure Clifford, no branching, pure depolarizing noise | DEM sampling (detector error model -- fastest, but limited to this restricted case) |
 | Pure Clifford circuits (general)             | SparseStab (single tableau, O(n^2) worst case, typically less due to sparsity) |
 | Few qubits, arbitrary gates                  | StateVec (full 2^n vector)                                                     |
-| Many qubits, mostly Clifford, some rotations | CliffordRz                                                                     |
+| Many qubits, mostly Clifford, some rotations | StabVec                                                                     |
 | Deep circuits with many rotations            | StateVec or cuQuantum (term count explodes)                                    |
 
 For pure Clifford QEC circuits without branching or conditional logic, and with only
@@ -202,7 +202,7 @@ entirely and is significantly faster. However, stabilizer tableaux like SparseSt
 full state simulators that handle the general case -- branching, conditional operations,
 arbitrary Clifford circuits, and complex noise models.
 
-The sweet spot for CliffordRz is large qubit counts with circuits dominated by Clifford
+The sweet spot for StabVec is large qubit counts with circuits dominated by Clifford
 gates and a moderate number of non-Clifford rotations -- typical of error correction
 circuits with T gates or variational circuits with few parameterized layers.
 

@@ -517,16 +517,16 @@ impl HugrToPhirConverter {
         }
 
         // Step 1: Emit all Measure instructions
-        let mut meas_results: Vec<(SSAValue, usize)> = Vec::with_capacity(measurements.len());
+        let mut meas_ids: Vec<(SSAValue, usize)> = Vec::with_capacity(measurements.len());
         for &(qubit_ssa, bit_idx) in measurements {
-            let meas_result = self.fresh_ssa();
+            let meas_id = self.fresh_ssa();
             block.add_instruction(Instruction::new(
                 Operation::Quantum(QuantumOp::Measure),
                 vec![qubit_ssa],
-                vec![meas_result],
+                vec![meas_id],
                 vec![Type::Bit],
             ));
-            meas_results.push((meas_result, bit_idx));
+            meas_ids.push((meas_id, bit_idx));
         }
 
         // Step 2: Combine bits into a single integer and emit Result
@@ -541,7 +541,7 @@ impl HugrToPhirConverter {
 
         let mut accum = zero_ssa;
 
-        for &(meas_ssa, bit_idx) in &meas_results {
+        for &(meas_ssa, bit_idx) in &meas_ids {
             // Bitcast measurement bit to i64
             let cast_ssa = self.fresh_ssa();
             block.add_instruction(Instruction::new(

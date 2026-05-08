@@ -3,14 +3,15 @@
 //! This module provides utilities for constructing binary messages
 //! according to the byte protocol.
 
+use crate::byte_message::GateType;
 use crate::byte_message::message::ByteMessage;
 use crate::byte_message::protocol::{
     BatchHeader, GateHeader, MessageFlags, MessageHeader, MessageType, OutcomeHeader,
     ReturnValueHeader, calc_padding,
 };
 use bytemuck::bytes_of;
+use pecos_core::Angle64;
 use pecos_core::gates::Gate;
-use pecos_core::{Angle64, QubitId};
 use std::mem::size_of;
 
 // ByteMessage guarantees 4-byte alignment by storing data in Vec<u32>
@@ -104,6 +105,180 @@ impl ByteMessageBuilder {
         }
     }
 
+    fn prepare_message(&mut self, msg_type: MessageType, payload_size: usize, flags: MessageFlags) {
+        match msg_type {
+            MessageType::Gate => {
+                assert!(
+                    !(self.mode == BuilderMode::MeasurementOutcomes),
+                    "Cannot mix quantum operations and measurement outcomes in the same message"
+                );
+                if self.mode == BuilderMode::Empty {
+                    self.mode = BuilderMode::QuantumOperations;
+                }
+            }
+            MessageType::Outcome => {
+                assert!(
+                    !(self.mode == BuilderMode::QuantumOperations
+                        || self.mode == BuilderMode::ReturnValue),
+                    "Cannot mix measurement outcomes with other message types"
+                );
+                self.mode = BuilderMode::MeasurementOutcomes;
+            }
+            MessageType::ReturnValue => {
+                assert!(
+                    self.mode == BuilderMode::Empty || self.mode == BuilderMode::ReturnValue,
+                    "Cannot mix return values with other message types"
+                );
+                self.mode = BuilderMode::ReturnValue;
+            }
+        }
+
+        self.add_padding(4);
+
+        let payload_size = u32::try_from(payload_size).unwrap_or_else(|_| {
+            log::warn!("Payload size exceeds u32::MAX, using maximum value");
+            u32::MAX
+        });
+        let header = MessageHeader::new(msg_type, payload_size, flags);
+        self.buffer.extend_from_slice(bytes_of(&header));
+        self.msg_count += 1;
+    }
+
+    fn add_gate_parts_from_usizes<I>(
+        &mut self,
+        gate_type: GateType,
+        num_qubits: usize,
+        qubits: I,
+        angles: &[Angle64],
+        params: &[f64],
+    ) -> &mut Self
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        let payload_size = size_of::<GateHeader>()
+            + num_qubits * size_of::<u32>()
+            + (angles.len() + params.len()) * size_of::<f64>();
+
+        self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
+
+        let header = GateHeader {
+            gate_type: gate_type as u8,
+            num_qubits: u8::try_from(num_qubits).expect("Too many qubits for gate"),
+            has_params: u8::from(!angles.is_empty() || !params.is_empty()),
+            reserved: 0,
+        };
+        self.buffer.extend_from_slice(bytes_of(&header));
+
+        for qubit in qubits {
+            let qubit_u32 = u32::try_from(qubit).expect("Qubit index too large");
+            self.buffer.extend_from_slice(&qubit_u32.to_le_bytes());
+        }
+
+        for angle in angles {
+            self.buffer
+                .extend_from_slice(&angle.to_radians().to_le_bytes());
+        }
+
+        for param in params {
+            self.buffer.extend_from_slice(&param.to_le_bytes());
+        }
+
+        self
+    }
+
+    fn add_gate_parts(
+        &mut self,
+        gate_type: GateType,
+        qubits: &[usize],
+        angles: &[Angle64],
+        params: &[f64],
+    ) -> &mut Self {
+        self.add_gate_parts_from_usizes(
+            gate_type,
+            qubits.len(),
+            qubits.iter().copied(),
+            angles,
+            params,
+        )
+    }
+
+    #[inline]
+    fn add_single_qubit_gate_parts(
+        &mut self,
+        gate_type: GateType,
+        qubit: usize,
+        angles: &[Angle64],
+        params: &[f64],
+    ) -> &mut Self {
+        let payload_size = size_of::<GateHeader>()
+            + size_of::<u32>()
+            + (angles.len() + params.len()) * size_of::<f64>();
+
+        self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
+
+        let header = GateHeader {
+            gate_type: gate_type as u8,
+            num_qubits: 1,
+            has_params: u8::from(!angles.is_empty() || !params.is_empty()),
+            reserved: 0,
+        };
+        self.buffer.extend_from_slice(bytes_of(&header));
+
+        let qubit_u32 = u32::try_from(qubit).expect("Qubit index too large");
+        self.buffer.extend_from_slice(&qubit_u32.to_le_bytes());
+
+        for angle in angles {
+            self.buffer
+                .extend_from_slice(&angle.to_radians().to_le_bytes());
+        }
+
+        for param in params {
+            self.buffer.extend_from_slice(&param.to_le_bytes());
+        }
+
+        self
+    }
+
+    #[inline]
+    fn add_two_qubit_gate_parts(
+        &mut self,
+        gate_type: GateType,
+        qubit0: usize,
+        qubit1: usize,
+        angles: &[Angle64],
+        params: &[f64],
+    ) -> &mut Self {
+        let payload_size = size_of::<GateHeader>()
+            + 2 * size_of::<u32>()
+            + (angles.len() + params.len()) * size_of::<f64>();
+
+        self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
+
+        let header = GateHeader {
+            gate_type: gate_type as u8,
+            num_qubits: 2,
+            has_params: u8::from(!angles.is_empty() || !params.is_empty()),
+            reserved: 0,
+        };
+        self.buffer.extend_from_slice(bytes_of(&header));
+
+        let qubit0_u32 = u32::try_from(qubit0).expect("Qubit index too large");
+        let qubit1_u32 = u32::try_from(qubit1).expect("Qubit index too large");
+        self.buffer.extend_from_slice(&qubit0_u32.to_le_bytes());
+        self.buffer.extend_from_slice(&qubit1_u32.to_le_bytes());
+
+        for angle in angles {
+            self.buffer
+                .extend_from_slice(&angle.to_radians().to_le_bytes());
+        }
+
+        for param in params {
+            self.buffer.extend_from_slice(&param.to_le_bytes());
+        }
+
+        self
+    }
+
     /// Add a message with a header and payload
     ///
     /// This method adds a new message to the builder with the specified type, payload,
@@ -129,61 +304,8 @@ impl ByteMessageBuilder {
         payload: &[u8],
         flags: MessageFlags,
     ) -> &mut Self {
-        // Validate message type compatibility with current mode
-        match msg_type {
-            MessageType::Gate => {
-                // Gates require QuantumOperations mode
-                assert!(
-                    !(self.mode == BuilderMode::MeasurementOutcomes),
-                    "Cannot mix quantum operations and measurement outcomes in the same message"
-                );
-
-                // Auto-set mode if not already set
-                if self.mode == BuilderMode::Empty {
-                    self.mode = BuilderMode::QuantumOperations;
-                }
-            }
-            MessageType::Outcome => {
-                // Outcomes require MeasurementOutcomes mode
-                assert!(
-                    !(self.mode == BuilderMode::QuantumOperations
-                        || self.mode == BuilderMode::ReturnValue),
-                    "Cannot mix measurement outcomes with other message types"
-                );
-
-                // Always set the mode (even if already in Empty state)
-                self.mode = BuilderMode::MeasurementOutcomes;
-            }
-            MessageType::ReturnValue => {
-                // Return values should be sent separately
-                assert!(
-                    self.mode == BuilderMode::Empty || self.mode == BuilderMode::ReturnValue,
-                    "Cannot mix return values with other message types"
-                );
-                self.mode = BuilderMode::ReturnValue;
-            }
-        }
-
-        // Ensure 4-byte alignment for message header
-        self.add_padding(4);
-
-        // Create and write message header
-        let payload_size = u32::try_from(payload.len()).unwrap_or_else(|_| {
-            // This is a very unlikely case, but we handle it gracefully
-            log::warn!("Payload size exceeds u32::MAX, using maximum value");
-            u32::MAX
-        });
-
-        let header = MessageHeader::new(msg_type, payload_size, flags);
-        self.buffer.extend_from_slice(bytes_of(&header));
-
-        // Write payload
+        self.prepare_message(msg_type, payload.len(), flags);
         self.buffer.extend_from_slice(payload);
-
-        // Increment message count
-        self.msg_count += 1;
-
-        // Return self for method chaining
         self
     }
 
@@ -204,50 +326,13 @@ impl ByteMessageBuilder {
     /// This function will panic if the number of qubits in the gate exceeds 255,
     /// as the protocol uses a u8 to represent the qubit count.
     pub fn add_gate_command(&mut self, gate: &Gate) -> &mut Self {
-        // Calculate total payload size
-        // Classical parameters in wire format include both angles (as radians) and other params
-        let header_size = size_of::<GateHeader>();
-        let qubits_size = gate.qubits.len() * size_of::<u32>();
-        let params_size = (gate.angles.len() + gate.params.len()) * size_of::<f64>();
-        let total_size = header_size + qubits_size + params_size;
-
-        // Create a buffer for the payload
-        let mut payload = Vec::with_capacity(total_size);
-
-        // Determine if there are any parameters (angles or other params)
-        let has_params = !gate.angles.is_empty() || !gate.params.is_empty();
-
-        // Create gate header
-        let header = GateHeader {
-            gate_type: gate.gate_type as u8,
-            num_qubits: u8::try_from(gate.qubits.len()).expect("Too many qubits for gate"),
-            has_params: u8::from(has_params),
-            reserved: 0,
-        };
-
-        // Add header to payload
-        payload.extend_from_slice(bytes_of(&header));
-
-        // Add qubit indices to payload (convert QubitId to usize to u32)
-        for qubit in &gate.qubits {
-            let qubit_u32 = u32::try_from(usize::from(*qubit)).expect("Qubit index too large");
-            payload.extend_from_slice(&qubit_u32.to_le_bytes());
-        }
-
-        // Add angles to payload (converted to radians for wire format)
-        for angle in &gate.angles {
-            let radians = angle.to_radians();
-            payload.extend_from_slice(&radians.to_le_bytes());
-        }
-
-        // Add other parameters to payload if any (e.g., duration for Idle)
-        for param in &gate.params {
-            payload.extend_from_slice(&param.to_le_bytes());
-        }
-
-        // Add the message to the buffer
-        self.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
-        self
+        self.add_gate_parts_from_usizes(
+            gate.gate_type,
+            gate.qubits.len(),
+            gate.qubits.iter().map(|qubit| usize::from(*qubit)),
+            &gate.angles,
+            &gate.params,
+        )
     }
 
     /// Add multiple gate commands at once
@@ -304,98 +389,139 @@ impl ByteMessageBuilder {
     ///
     /// A mutable reference to self for method chaining
     pub fn idle(&mut self, duration: f64, qubits: &[usize]) -> &mut Self {
-        // Ensure we have qubits to work with
         if qubits.is_empty() {
             return self;
         }
 
-        let mut idle_qubits = Vec::with_capacity(qubits.len());
-        for &q in qubits {
-            idle_qubits.push(q);
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::Idle, qubits[0], &[], &[duration]);
         }
 
-        // Create and add the idle gate
-        let idle_qubits_id: Vec<QubitId> = idle_qubits.into_iter().map(QubitId).collect();
-        let gate = Gate::idle(duration, idle_qubits_id);
-        self.add_gate_command(&gate)
+        self.add_gate_parts(GateType::Idle, qubits, &[], &[duration])
     }
 
     /// Add an X gate
     pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::x(qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::X, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::X, qubits, &[], &[])
     }
 
     /// Add a Y gate
     pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::y(qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::Y, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::Y, qubits, &[], &[])
     }
 
     /// Add a Z gate
     pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::z(qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::Z, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::Z, qubits, &[], &[])
     }
 
     /// Add an H gate
     pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::h(qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::H, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::H, qubits, &[], &[])
     }
 
     /// Add CX (controlled-X) gates between pairs of qubits.
     ///
     /// Each tuple is a (control, target) pair.
     pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::cx(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(control, target)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::CX, *control, *target, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::CX,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
+            &[],
+            &[],
+        )
     }
 
     /// Add RZZ gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn rzz(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::rzz(theta, pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::RZZ, *qubit1, *qubit2, &[theta], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::RZZ,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[theta],
+            &[],
+        )
     }
 
     /// Add SZZ gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn szz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::szz(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SZZ, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SZZ,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add `SZZdg` gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn szzdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::szzdg(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SZZdg, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SZZdg,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add an RZ gate
     pub fn rz(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::rz(theta, qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::RZ, qubits[0], &[theta], &[]);
+        }
+        self.add_gate_parts(GateType::RZ, qubits, &[theta], &[])
     }
 
     /// Add an R1XY gate
     pub fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::r1xy(theta, phi, qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::R1XY, qubits[0], &[theta, phi], &[]);
+        }
+        self.add_gate_parts(GateType::R1XY, qubits, &[theta, phi], &[])
     }
 
     /// Add a U gate
@@ -406,9 +532,15 @@ impl ByteMessageBuilder {
         lambda: Angle64,
         qubits: &[usize],
     ) -> &mut Self {
-        let gate = Gate::u(theta, phi, lambda, qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(
+                GateType::U,
+                qubits[0],
+                &[theta, phi, lambda],
+                &[],
+            );
+        }
+        self.add_gate_parts(GateType::U, qubits, &[theta, phi, lambda], &[])
     }
 
     /// Add measurement operations for multiple qubits
@@ -418,9 +550,7 @@ impl ByteMessageBuilder {
     /// Panics if any qubit ID is too large to fit in a u32.
     pub fn mz(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
-            // Add a measurement as a regular gate command
-            let gate = Gate::mz(&[qubit]);
-            self.add_gate_command(&gate);
+            self.add_single_qubit_gate_parts(GateType::MZ, qubit, &[], &[]);
         }
         self
     }
@@ -436,32 +566,27 @@ impl ByteMessageBuilder {
     /// Panics if any qubit ID is too large to fit in a u32.
     pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
-            // Add a measure_leaked as a regular gate command
-            let gate = Gate::measure_leaked(&[qubit]);
-            self.add_gate_command(&gate);
+            self.add_single_qubit_gate_parts(GateType::MeasureLeaked, qubit, &[], &[]);
         }
         self
     }
 
     /// Add a `MeasCrosstalkGlobalPayload`
     pub fn meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::meas_crosstalk_global_payload(qubits);
-        self.add_gate_command(&gate);
-        self
+        self.add_gate_parts(GateType::MeasCrosstalkGlobalPayload, qubits, &[], &[])
     }
 
     /// Add a `MeasCrosstalkLocalPayload`
     pub fn meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::meas_crosstalk_local_payload(qubits);
-        self.add_gate_command(&gate);
-        self
+        self.add_gate_parts(GateType::MeasCrosstalkLocalPayload, qubits, &[], &[])
     }
 
     /// Add a PZ (preparation/reset) gate
     pub fn pz(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::pz(qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::PZ, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::PZ, qubits, &[], &[])
     }
 
     /// Add an SZ (S) gate
@@ -490,125 +615,209 @@ impl ByteMessageBuilder {
 
     /// Add an RX gate
     pub fn rx(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::rx(theta, qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::RX, qubits[0], &[theta], &[]);
+        }
+        self.add_gate_parts(GateType::RX, qubits, &[theta], &[])
     }
 
     /// Add an RY gate
     pub fn ry(&mut self, theta: Angle64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::ry(theta, qubits);
-        self.add_gate_command(&gate);
-        self
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::RY, qubits[0], &[theta], &[]);
+        }
+        self.add_gate_parts(GateType::RY, qubits, &[theta], &[])
     }
 
     /// Add CY gates between pairs of qubits.
     ///
     /// Each tuple is a (control, target) pair.
     pub fn cy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::cy(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(control, target)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::CY, *control, *target, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::CY,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
+            &[],
+            &[],
+        )
     }
 
     /// Add CZ gates between pairs of qubits.
     ///
     /// Each tuple is a (control, target) pair.
     pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::cz(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(control, target)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::CZ, *control, *target, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::CZ,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
+            &[],
+            &[],
+        )
     }
 
     /// Add an SX (sqrt-X) gate
     pub fn sx(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::sx(qubits);
-        self.add_gate_command(&gate);
-        self
+        self.add_gate_parts(GateType::SX, qubits, &[], &[])
     }
 
     /// Add an `SXdg` (sqrt-X dagger) gate
     pub fn sxdg(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::sxdg(qubits);
-        self.add_gate_command(&gate);
-        self
+        self.add_gate_parts(GateType::SXdg, qubits, &[], &[])
     }
 
     /// Add an SY (sqrt-Y) gate
     pub fn sy(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::sy(qubits);
-        self.add_gate_command(&gate);
-        self
+        self.add_gate_parts(GateType::SY, qubits, &[], &[])
     }
 
     /// Add an `SYdg` (sqrt-Y dagger) gate
     pub fn sydg(&mut self, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::sydg(qubits);
-        self.add_gate_command(&gate);
-        self
+        self.add_gate_parts(GateType::SYdg, qubits, &[], &[])
     }
 
     /// Add SWAP gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn swap(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::swap(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SWAP, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SWAP,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add SXX gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn sxx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::sxx(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SXX, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SXX,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add `SXXdg` gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn sxxdg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::sxxdg(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SXXdg, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SXXdg,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add SYY gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn syy(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::syy(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SYY, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SYY,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add `SYYdg` gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn syydg(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::syydg(pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::SYYdg, *qubit1, *qubit2, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::SYYdg,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[],
+            &[],
+        )
     }
 
     /// Add RXX gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn rxx(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::rxx(theta, pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::RXX, *qubit1, *qubit2, &[theta], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::RXX,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[theta],
+            &[],
+        )
     }
 
     /// Add RYY gates between pairs of qubits.
     ///
     /// Each tuple is a (qubit1, qubit2) pair.
     pub fn ryy(&mut self, theta: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
-        let gate = Gate::ryy(theta, pairs);
-        self.add_gate_command(&gate);
-        self
+        if let [(qubit1, qubit2)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::RYY, *qubit1, *qubit2, &[theta], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::RYY,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(qubit1, qubit2)| [qubit1, qubit2]),
+            &[theta],
+            &[],
+        )
     }
 
     /// Check how many messages have been added
@@ -842,6 +1051,37 @@ mod tests {
         assert!((commands[5].angles[1].to_radians() - 0.2).abs() < 1e-10);
         assert!(commands[5].params.is_empty());
         assert_eq!(commands[6].gate_type, GateType::MZ);
+    }
+
+    #[test]
+    fn test_single_item_fast_paths_match_generic_gate_encoding() {
+        let theta_rx = Angle64::from_radians(0.3);
+        let theta_ry = Angle64::from_radians(0.4);
+        let theta_rz = Angle64::from_radians(0.5);
+        let theta_r1xy = Angle64::from_radians(0.6);
+        let phi_r1xy = Angle64::from_radians(0.7);
+        let theta_rzz = Angle64::from_radians(0.8);
+
+        let mut generic_builder = ByteMessageBuilder::new();
+        let _ = generic_builder.for_quantum_operations();
+        generic_builder.add_gate_command(&Gate::rx(theta_rx, &[1]));
+        generic_builder.add_gate_command(&Gate::ry(theta_ry, &[2]));
+        generic_builder.add_gate_command(&Gate::rz(theta_rz, &[3]));
+        generic_builder.add_gate_command(&Gate::r1xy(theta_r1xy, phi_r1xy, &[4]));
+        generic_builder.add_gate_command(&Gate::rzz(theta_rzz, &[(5, 6)]));
+
+        let mut fast_path_builder = ByteMessageBuilder::new();
+        let _ = fast_path_builder.for_quantum_operations();
+        fast_path_builder.rx(theta_rx, &[1]);
+        fast_path_builder.ry(theta_ry, &[2]);
+        fast_path_builder.rz(theta_rz, &[3]);
+        fast_path_builder.r1xy(theta_r1xy, phi_r1xy, &[4]);
+        fast_path_builder.rzz(theta_rzz, &[(5, 6)]);
+
+        let generic_message = generic_builder.build();
+        let fast_path_message = fast_path_builder.build();
+
+        assert_eq!(generic_message.as_bytes(), fast_path_message.as_bytes());
     }
 
     #[test]

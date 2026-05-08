@@ -16,10 +16,10 @@ struct Params {
     num_locations: u32,
     num_shots: u32,
     num_detectors: u32,
-    num_logicals: u32,
+    num_dem_outputs: u32,
     p_error_threshold: u32,  // Fixed-point threshold (p * 0xFFFFFFFF)
     detector_words: u32,     // ceil(num_detectors / 32)
-    logical_words: u32,      // ceil(num_logicals / 32)
+    dem_output_words: u32,   // ceil(num_dem_outputs / 32)
     _padding: u32,
 }
 
@@ -33,22 +33,22 @@ struct Params {
 @group(0) @binding(5) var<storage, read> det_offsets_z: array<u32>;
 @group(0) @binding(6) var<storage, read> det_data_z: array<u32>;
 
-// Logical influence CSR arrays
-@group(0) @binding(7) var<storage, read> log_offsets_x: array<u32>;
-@group(0) @binding(8) var<storage, read> log_data_x: array<u32>;
-@group(0) @binding(9) var<storage, read> log_offsets_y: array<u32>;
-@group(0) @binding(10) var<storage, read> log_data_y: array<u32>;
-@group(0) @binding(11) var<storage, read> log_offsets_z: array<u32>;
-@group(0) @binding(12) var<storage, read> log_data_z: array<u32>;
+// DEM-output influence CSR arrays
+@group(0) @binding(7) var<storage, read> dem_output_offsets_x: array<u32>;
+@group(0) @binding(8) var<storage, read> dem_output_data_x: array<u32>;
+@group(0) @binding(9) var<storage, read> dem_output_offsets_y: array<u32>;
+@group(0) @binding(10) var<storage, read> dem_output_data_y: array<u32>;
+@group(0) @binding(11) var<storage, read> dem_output_offsets_z: array<u32>;
+@group(0) @binding(12) var<storage, read> dem_output_data_z: array<u32>;
 
 // Random seeds (one per shot)
 @group(0) @binding(13) var<storage, read> random_seeds: array<u32>;
 
-// Output: detector and logical flips
+// Output: detector and DEM-output flips
 // Layout: [shot * words + word_idx] - each shot has its own contiguous region
 // NO atomics needed since each shot is processed by exactly one thread
 @group(0) @binding(14) var<storage, read_write> detector_flips: array<u32>;
-@group(0) @binding(15) var<storage, read_write> logical_flips: array<u32>;
+@group(0) @binding(15) var<storage, read_write> dem_output_flips: array<u32>;
 
 // PCG-style hash function for deterministic randomness
 fn hash(seed: u32, loc: u32, extra: u32) -> u32 {
@@ -71,12 +71,12 @@ fn xor_detector(shot_base: u32, det_idx: u32, detector_words: u32) {
     }
 }
 
-fn xor_logical(shot_base: u32, log_idx: u32, logical_words: u32) {
-    let word = log_idx / 32u;
-    let bit = log_idx % 32u;
-    if (word < logical_words) {
+fn xor_dem_output(shot_base: u32, dem_output_idx: u32, dem_output_words: u32) {
+    let word = dem_output_idx / 32u;
+    let bit = dem_output_idx % 32u;
+    if (word < dem_output_words) {
         let idx = shot_base + word;
-        logical_flips[idx] = logical_flips[idx] ^ (1u << bit);
+        dem_output_flips[idx] = dem_output_flips[idx] ^ (1u << bit);
     }
 }
 
@@ -90,14 +90,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let seed = random_seeds[shot];
     let det_base = shot * params.detector_words;
-    let log_base = shot * params.logical_words;
+    let dem_output_base = shot * params.dem_output_words;
 
     // Initialize this shot's output to zero
     for (var w = 0u; w < params.detector_words; w = w + 1u) {
         detector_flips[det_base + w] = 0u;
     }
-    for (var w = 0u; w < params.logical_words; w = w + 1u) {
-        logical_flips[log_base + w] = 0u;
+    for (var w = 0u; w < params.dem_output_words; w = w + 1u) {
+        dem_output_flips[dem_output_base + w] = 0u;
     }
 
     // Process ALL locations for this shot
@@ -113,7 +113,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let rand_pauli = hash(seed, loc, 1u);
         let pauli = rand_pauli % 3u;
 
-        // Process detector and logical influences based on Pauli type
+        // Process detector and DEM-output influences based on Pauli type
         if (pauli == 0u) {
             // X fault - process detector influences
             let det_start = det_offsets_x[loc];
@@ -122,11 +122,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 xor_detector(det_base, det_data_x[i], params.detector_words);
             }
 
-            // X fault - process logical influences
-            let log_start = log_offsets_x[loc];
-            let log_end = log_offsets_x[loc + 1u];
-            for (var i = log_start; i < log_end; i = i + 1u) {
-                xor_logical(log_base, log_data_x[i], params.logical_words);
+            // X fault - process DEM-output influences
+            let dem_output_start = dem_output_offsets_x[loc];
+            let dem_output_end = dem_output_offsets_x[loc + 1u];
+            for (var i = dem_output_start; i < dem_output_end; i = i + 1u) {
+                xor_dem_output(dem_output_base, dem_output_data_x[i], params.dem_output_words);
             }
         } else if (pauli == 1u) {
             // Y fault - process detector influences
@@ -136,11 +136,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 xor_detector(det_base, det_data_y[i], params.detector_words);
             }
 
-            // Y fault - process logical influences
-            let log_start = log_offsets_y[loc];
-            let log_end = log_offsets_y[loc + 1u];
-            for (var i = log_start; i < log_end; i = i + 1u) {
-                xor_logical(log_base, log_data_y[i], params.logical_words);
+            // Y fault - process DEM-output influences
+            let dem_output_start = dem_output_offsets_y[loc];
+            let dem_output_end = dem_output_offsets_y[loc + 1u];
+            for (var i = dem_output_start; i < dem_output_end; i = i + 1u) {
+                xor_dem_output(dem_output_base, dem_output_data_y[i], params.dem_output_words);
             }
         } else {
             // Z fault - process detector influences
@@ -150,11 +150,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 xor_detector(det_base, det_data_z[i], params.detector_words);
             }
 
-            // Z fault - process logical influences
-            let log_start = log_offsets_z[loc];
-            let log_end = log_offsets_z[loc + 1u];
-            for (var i = log_start; i < log_end; i = i + 1u) {
-                xor_logical(log_base, log_data_z[i], params.logical_words);
+            // Z fault - process DEM-output influences
+            let dem_output_start = dem_output_offsets_z[loc];
+            let dem_output_end = dem_output_offsets_z[loc + 1u];
+            for (var i = dem_output_start; i < dem_output_end; i = i + 1u) {
+                xor_dem_output(dem_output_base, dem_output_data_z[i], params.dem_output_words);
             }
         }
     }

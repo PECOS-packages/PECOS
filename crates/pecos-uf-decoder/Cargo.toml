@@ -1,0 +1,26 @@
+[package]
+name = "pecos-uf-decoder"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Fast syndrome-graph Union-Find decoder for PECOS"
+
+[dependencies]
+pecos-decoder-core.workspace = true
+pecos-random.workspace = true
+rayon.workspace = true
+
+[lib]
+name = "pecos_uf_decoder"
+
+[dev-dependencies]
+fastrand.workspace = true
+
+[lints]
+workspace = true

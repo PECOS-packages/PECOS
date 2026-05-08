@@ -10,8 +10,8 @@ use pecos_core::errors::PecosError;
 use pecos_random::{PecosRng, SeedableRng};
 use pecos_simulators::clifford_rotation::CliffordRotation;
 use pecos_simulators::{
-    ArbitraryRotationGateable, CliffordGateable, CliffordRz, CoinToss, DensityMatrix,
-    QuantumSimulator, SparseStab, Stabilizer, StateVec, StateVecAoS, StateVecSoA,
+    ArbitraryRotationGateable, CliffordGateable, CoinToss, DensityMatrix, QuantumSimulator,
+    SparseStab, StabVec, Stabilizer, StateVec, StateVecAoS, StateVecSoA,
 };
 use std::any::Any;
 use std::fmt::Debug;
@@ -21,12 +21,37 @@ fn quantum_error<S: Into<String>>(msg: S) -> PecosError {
     PecosError::Processing(msg.into())
 }
 
+/// Apply a closure to a flat qubit slice `[c0, t0, c1, t1, ...]` and return its result.
+///
+/// Most commands contain a single pair, so avoid heap allocation in that case
+/// and reuse a scratch buffer for the rarer batched-pair path. The closure's
+/// return value is forwarded so fallible gates (e.g. `try_rzz`) can bubble up
+/// a `Result` without a separate borrow-and-stash dance at the call site.
+fn with_flat_pairs<F, R>(
+    qubits: &[QubitId],
+    pair_scratch: &mut Vec<(QubitId, QubitId)>,
+    mut f: F,
+) -> R
+where
+    F: FnMut(&[(QubitId, QubitId)]) -> R,
+{
+    debug_assert_eq!(qubits.len() % 2, 0);
+
+    if qubits.len() == 2 {
+        let pair = [(qubits[0], qubits[1])];
+        return f(&pair);
+    }
+
+    pair_scratch.clear();
+    pair_scratch.extend(qubits.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+    f(pair_scratch)
+}
+
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
-    qubits
-        .chunks_exact(2)
-        .map(|pair| (pair[0], pair[1]))
-        .collect()
+    let mut pairs = Vec::with_capacity(qubits.len() / 2);
+    pairs.extend(qubits.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+    pairs
 }
 
 /// Process a `ByteMessage` against any Clifford-capable simulator.
@@ -40,6 +65,8 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 ) -> Result<ByteMessage, PecosError> {
     let batch = message.quantum_ops()?;
     let mut measurements: Vec<usize> = Vec::new();
+    let mut pair_scratch: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut mz_qubits: Vec<QubitId> = Vec::new();
 
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
@@ -79,39 +106,60 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 
             // Two-qubit Clifford gates
             GateType::CX => {
-                sim.cx(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.cx(pairs);
+                });
             }
             GateType::CY => {
-                sim.cy(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.cy(pairs);
+                });
             }
             GateType::CZ => {
-                sim.cz(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.cz(pairs);
+                });
             }
             GateType::SWAP => {
-                sim.swap(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.swap(pairs);
+                });
             }
             GateType::SZZ => {
-                sim.szz(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.szz(pairs);
+                });
             }
             GateType::SZZdg => {
-                sim.szzdg(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.szzdg(pairs);
+                });
             }
             GateType::SXX => {
-                sim.sxx(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.sxx(pairs);
+                });
             }
             GateType::SXXdg => {
-                sim.sxxdg(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.sxxdg(pairs);
+                });
             }
             GateType::SYY => {
-                sim.syy(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.syy(pairs);
+                });
             }
             GateType::SYYdg => {
-                sim.syydg(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.syydg(pairs);
+                });
             }
 
             // Batch consecutive MZ commands
             GateType::MZ | GateType::MeasureLeaked => {
-                let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
+                mz_qubits.clear();
+                mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
                     && matches!(
                         batch[cmd_idx + 1].gate_type,
@@ -121,9 +169,9 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                     cmd_idx += 1;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
-                let meas_results = sim.mz(&mz_qubits);
-                for meas_result in meas_results {
-                    measurements.push(usize::from(meas_result.outcome));
+                let meas_ids = sim.mz(&mz_qubits);
+                for meas_id in meas_ids {
+                    measurements.push(usize::from(meas_id.outcome));
                 }
             }
 
@@ -141,13 +189,19 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             | GateType::RYY => {
                 if !cmd.angles.is_empty() {
                     let angle = cmd.angles[0];
-                    let result = match cmd.gate_type {
-                        GateType::RZ => sim.try_rz(angle, &cmd.qubits),
-                        GateType::RX => sim.try_rx(angle, &cmd.qubits),
-                        GateType::RY => sim.try_ry(angle, &cmd.qubits),
-                        GateType::RZZ => sim.try_rzz(angle, &flat_to_pairs(&cmd.qubits)),
-                        GateType::RXX => sim.try_rxx(angle, &flat_to_pairs(&cmd.qubits)),
-                        GateType::RYY => sim.try_ryy(angle, &flat_to_pairs(&cmd.qubits)),
+                    let result: Result<(), String> = match cmd.gate_type {
+                        GateType::RZ => sim.try_rz(angle, &cmd.qubits).map(|_| ()),
+                        GateType::RX => sim.try_rx(angle, &cmd.qubits).map(|_| ()),
+                        GateType::RY => sim.try_ry(angle, &cmd.qubits).map(|_| ()),
+                        GateType::RZZ => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                            sim.try_rzz(angle, pairs).map(|_| ())
+                        }),
+                        GateType::RXX => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                            sim.try_rxx(angle, pairs).map(|_| ())
+                        }),
+                        GateType::RYY => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                            sim.try_ryy(angle, pairs).map(|_| ())
+                        }),
                         _ => unreachable!(),
                     };
                     result.map_err(PecosError::Processing)?;
@@ -161,8 +215,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             }
             GateType::CRZ => {
                 if !cmd.angles.is_empty() {
-                    sim.try_crz(cmd.angles[0], &flat_to_pairs(&cmd.qubits))
-                        .map_err(PecosError::Processing)?;
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.try_crz(cmd.angles[0], pairs).map(|_| ())
+                    })
+                    .map_err(PecosError::Processing)?;
                 }
             }
             GateType::U => {
@@ -173,12 +229,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             }
             GateType::RXXRYYRZZ => {
                 if cmd.angles.len() >= 3 {
-                    sim.try_rxxryyrzz(
-                        cmd.angles[0],
-                        cmd.angles[1],
-                        cmd.angles[2],
-                        &flat_to_pairs(&cmd.qubits),
-                    )
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs)
+                            .map(|_| ())
+                    })
                     .map_err(PecosError::Processing)?;
                 }
             }
@@ -193,8 +247,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                         [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
                         [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
                     ];
-                    sim.try_u2q(before, interaction, after, &flat_to_pairs(&cmd.qubits))
-                        .map_err(PecosError::Processing)?;
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.try_u2q(before, interaction, after, pairs).map(|_| ())
+                    })
+                    .map_err(PecosError::Processing)?;
                 }
             }
 
@@ -215,7 +271,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 
 /// Process a `ByteMessage` against any simulator supporting full gate set.
 ///
-/// Shared gate dispatch for `CliffordRzEngine`, `DensityMatrixEngine`, etc.
+/// Shared gate dispatch for `StabVecEngine`, `DensityMatrixEngine`, etc.
 /// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX, CRZ),
 /// preparations, and measurements with MZ batching.
 fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator>(
@@ -224,6 +280,8 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
 ) -> Result<ByteMessage, PecosError> {
     let batch = message.quantum_ops()?;
     let mut measurements: Vec<usize> = Vec::new();
+    let mut pair_scratch: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut mz_qubits: Vec<QubitId> = Vec::new();
 
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
@@ -277,34 +335,54 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
 
             // Two-qubit Clifford gates
             GateType::CX => {
-                sim.cx(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.cx(pairs);
+                });
             }
             GateType::CY => {
-                sim.cy(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.cy(pairs);
+                });
             }
             GateType::CZ => {
-                sim.cz(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.cz(pairs);
+                });
             }
             GateType::SZZ => {
-                sim.szz(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.szz(pairs);
+                });
             }
             GateType::SZZdg => {
-                sim.szzdg(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.szzdg(pairs);
+                });
             }
             GateType::SXX => {
-                sim.sxx(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.sxx(pairs);
+                });
             }
             GateType::SXXdg => {
-                sim.sxxdg(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.sxxdg(pairs);
+                });
             }
             GateType::SYY => {
-                sim.syy(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.syy(pairs);
+                });
             }
             GateType::SYYdg => {
-                sim.syydg(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.syydg(pairs);
+                });
             }
             GateType::SWAP => {
-                sim.swap(&flat_to_pairs(&cmd.qubits));
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.swap(pairs);
+                });
             }
 
             // Composite gates (decomposed into primitives)
@@ -363,17 +441,23 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
             }
             GateType::RZZ => {
                 if !cmd.angles.is_empty() {
-                    sim.rzz(cmd.angles[0], &flat_to_pairs(&cmd.qubits));
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.rzz(cmd.angles[0], pairs);
+                    });
                 }
             }
             GateType::RXX => {
                 if !cmd.angles.is_empty() {
-                    sim.rxx(cmd.angles[0], &flat_to_pairs(&cmd.qubits));
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.rxx(cmd.angles[0], pairs);
+                    });
                 }
             }
             GateType::RYY => {
                 if !cmd.angles.is_empty() {
-                    sim.ryy(cmd.angles[0], &flat_to_pairs(&cmd.qubits));
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.ryy(cmd.angles[0], pairs);
+                    });
                 }
             }
             GateType::CRZ => {
@@ -400,12 +484,9 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
             }
             GateType::RXXRYYRZZ => {
                 if cmd.angles.len() >= 3 {
-                    sim.rxxryyrzz(
-                        cmd.angles[0],
-                        cmd.angles[1],
-                        cmd.angles[2],
-                        &flat_to_pairs(&cmd.qubits),
-                    );
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs);
+                    });
                 }
             }
             GateType::U2q => {
@@ -419,13 +500,16 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
                         [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
                         [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
                     ];
-                    sim.u2q(before, interaction, after, &flat_to_pairs(&cmd.qubits));
+                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.u2q(before, interaction, after, pairs);
+                    });
                 }
             }
 
             // Batch consecutive MZ commands into one simulator call
             GateType::MZ | GateType::MeasureLeaked => {
-                let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
+                mz_qubits.clear();
+                mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
                     && matches!(
                         batch[cmd_idx + 1].gate_type,
@@ -435,15 +519,15 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
                     cmd_idx += 1;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
-                let meas_results = sim.mz(&mz_qubits);
-                for meas_result in meas_results {
-                    measurements.push(usize::from(meas_result.outcome));
+                let meas_ids = sim.mz(&mz_qubits);
+                for meas_id in meas_ids {
+                    measurements.push(usize::from(meas_id.outcome));
                 }
             }
             GateType::MeasureFree => {
-                let meas_results = sim.mz(&cmd.qubits);
-                for meas_result in meas_results {
-                    measurements.push(usize::from(meas_result.outcome));
+                let meas_ids = sim.mz(&cmd.qubits);
+                for meas_id in meas_ids {
+                    measurements.push(usize::from(meas_id.outcome));
                 }
             }
 
@@ -458,7 +542,8 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
             | GateType::MeasCrosstalkLocalPayload
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::QFree
-            | GateType::Custom => {}
+            | GateType::Custom
+            | GateType::PauliOperatorMeta => {}
         }
         cmd_idx += 1;
     }
@@ -517,9 +602,6 @@ pub trait StateVectorSimulator:
 where
     <Self as RngManageable>::Rng: Clone,
 {
-    /// Returns the number of qubits in the simulator.
-    fn num_qubits(&self) -> usize;
-
     /// Create a new simulator with the specified number of qubits.
     fn create(num_qubits: usize) -> Self;
 
@@ -531,10 +613,6 @@ where
 }
 
 impl StateVectorSimulator for StateVec {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits()
-    }
-
     fn create(num_qubits: usize) -> Self {
         StateVec::new(num_qubits)
     }
@@ -549,10 +627,6 @@ impl StateVectorSimulator for StateVec {
 }
 
 impl StateVectorSimulator for StateVecAoS {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits()
-    }
-
     fn create(num_qubits: usize) -> Self {
         StateVecAoS::new(num_qubits)
     }
@@ -567,10 +641,6 @@ impl StateVectorSimulator for StateVecAoS {
 }
 
 impl StateVectorSimulator for StateVecSoA {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits()
-    }
-
     fn create(num_qubits: usize) -> Self {
         StateVecSoA::new(num_qubits)
     }
@@ -1015,9 +1085,9 @@ where
                         "Processing batched measurement on {} qubits",
                         mz_qubits.len()
                     );
-                    let meas_results = self.simulator.mz(&mz_qubits);
-                    for meas_result in meas_results {
-                        measurements.push(usize::from(meas_result.outcome));
+                    let meas_ids = self.simulator.mz(&mz_qubits);
+                    for meas_id in meas_ids {
+                        measurements.push(usize::from(meas_id.outcome));
                     }
                 }
                 GateType::PZ => {
@@ -1029,7 +1099,8 @@ where
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree
-                | GateType::Custom => {
+                | GateType::Custom
+                | GateType::PauliOperatorMeta => {
                     // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
@@ -1073,9 +1144,9 @@ where
                 GateType::MeasureFree => {
                     // Measure and deallocate - measure first, then the qubit is implicitly freed
                     debug!("Processing MeasureFree gate on qubits {:?}", cmd.qubits);
-                    let meas_results = self.simulator.mz(&cmd.qubits);
-                    for meas_result in meas_results {
-                        measurements.push(usize::from(meas_result.outcome));
+                    let meas_ids = self.simulator.mz(&cmd.qubits);
+                    for meas_id in meas_ids {
+                        measurements.push(usize::from(meas_id.outcome));
                     }
                 }
                 GateType::U => {
@@ -1350,25 +1421,25 @@ impl QuantumEngine for StabilizerEngine {
 }
 
 // ============================================================================
-// Clifford+RZ Engine
+// StabVec Engine
 // ============================================================================
 
-/// A quantum engine that uses the Clifford+RZ simulator.
+/// A quantum engine that uses the `StabVec` simulator.
 ///
 /// Supports all Clifford gates plus arbitrary rotation gates (RZ, RX, RY, RZZ, etc.)
 /// via sum-over-Cliffords decomposition. More efficient than state vector for
 /// circuits with many qubits and few non-Clifford gates.
 #[derive(Debug, Clone)]
-pub struct CliffordRzEngine {
-    simulator: CliffordRz,
+pub struct StabVecEngine {
+    simulator: StabVec,
 }
 
-impl CliffordRzEngine {
-    /// Create a new Clifford+RZ engine with the specified number of qubits.
+impl StabVecEngine {
+    /// Create a new `StabVec` engine with the specified number of qubits.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self {
-            simulator: CliffordRz::new(num_qubits),
+            simulator: StabVec::new(num_qubits),
         }
     }
 
@@ -1376,12 +1447,12 @@ impl CliffordRzEngine {
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
-            simulator: CliffordRz::new_with_seed(num_qubits, seed),
+            simulator: StabVec::new_with_seed(num_qubits, seed),
         }
     }
 }
 
-impl Engine for CliffordRzEngine {
+impl Engine for StabVecEngine {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
@@ -1395,7 +1466,7 @@ impl Engine for CliffordRzEngine {
     }
 }
 
-impl RngManageable for CliffordRzEngine {
+impl RngManageable for StabVecEngine {
     type Rng = PecosRng;
 
     fn set_rng(&mut self, rng: Self::Rng) {
@@ -1411,7 +1482,7 @@ impl RngManageable for CliffordRzEngine {
     }
 }
 
-impl QuantumEngine for CliffordRzEngine {
+impl QuantumEngine for StabVecEngine {
     fn set_seed(&mut self, seed: u64) {
         let rng = PecosRng::seed_from_u64(seed);
         self.simulator.set_rng(rng);
@@ -1560,9 +1631,9 @@ impl Engine for CoinTossEngine {
                 GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         debug!("CoinToss: Processing measurement on qubit {q:?}");
-                        let meas_results = self.simulator.mz(&[*q]);
-                        for meas_result in &meas_results {
-                            let outcome = u32::from(meas_result.outcome);
+                        let meas_ids = self.simulator.mz(&[*q]);
+                        for meas_id in &meas_ids {
+                            let outcome = u32::from(meas_id.outcome);
                             measurements.push(outcome);
                         }
                     }

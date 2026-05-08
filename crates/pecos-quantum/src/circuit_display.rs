@@ -75,6 +75,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::I | GateType::Idle => "I",
         GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => "XT",
         GateType::Custom => "?",
+        GateType::PauliOperatorMeta => "PO",
     }
 }
 
@@ -217,7 +218,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::U
         | GateType::R1XY
         | GateType::RXXRYYRZZ
-        | GateType::U2q => CellColor::None,
+        | GateType::U2q
+        | GateType::PauliOperatorMeta => CellColor::None,
     }
 }
 

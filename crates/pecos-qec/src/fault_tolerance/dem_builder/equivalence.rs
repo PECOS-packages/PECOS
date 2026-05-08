@@ -18,7 +18,7 @@
 //! # Key Concepts
 //!
 //! - Two DEMs are equivalent if they produce the same probability distribution
-//!   over (`detector_events`, `observable_flips`) patterns.
+//!   over (`detector_events`, `dem_output_flips`) patterns.
 //! - Decomposed DEMs (using ^) create independent error channels that are `XORed`.
 //! - Different decomposition strategies can produce equivalent sampling results.
 //! - For non-decomposed DEMs, mechanisms must match exactly.
@@ -58,13 +58,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
-use super::types::combine_probabilities;
+use super::types::{DemOutput, combine_probabilities, parse_pecos_dem_metadata_line};
 
 // ============================================================================
 // Parsed DEM Types
 // ============================================================================
 
-/// A single error mechanism parsed from DEM format.
+/// A single fault mechanism parsed from DEM format.
 ///
 /// Can represent both simple mechanisms (D0 D1) and decomposed ones (D0 ^ D1).
 #[derive(Debug, Clone)]
@@ -134,6 +134,26 @@ impl ParsedMechanism {
             observables: obs,
         }
     }
+
+    /// Format the target string for this mechanism (e.g., "D0 D3 L0" or "D0 ^ D1 D3").
+    #[must_use]
+    pub fn format_targets(&self) -> String {
+        let parts: Vec<String> = self
+            .components
+            .iter()
+            .map(|comp| {
+                let mut tokens = Vec::new();
+                for &d in &comp.detectors {
+                    tokens.push(format!("D{d}"));
+                }
+                for &o in &comp.observables {
+                    tokens.push(format!("L{o}"));
+                }
+                tokens.join(" ")
+            })
+            .collect();
+        parts.join(" ^ ")
+    }
 }
 
 /// A single component of a mechanism (the part between ^ separators).
@@ -195,8 +215,12 @@ pub struct ParsedDem {
     pub mechanisms: Vec<ParsedMechanism>,
     /// Number of detectors (max ID + 1).
     pub num_detectors: u32,
-    /// Number of observables (max ID + 1).
-    pub num_observables: u32,
+    /// Total number of outputs in the DEM `L<n>` namespace.
+    pub num_dem_outputs: u32,
+    /// PECOS metadata for `L<n>` observables, indexed by `L<n>`.
+    pub dem_outputs: Vec<Option<DemOutput>>,
+    /// PECOS metadata for tracked operators in their own ID space.
+    pub tracked_ops: Vec<Option<DemOutput>>,
 }
 
 impl ParsedDem {
@@ -206,7 +230,9 @@ impl ParsedDem {
         Self {
             mechanisms: Vec::new(),
             num_detectors: 0,
-            num_observables: 0,
+            num_dem_outputs: 0,
+            dem_outputs: Vec::new(),
+            tracked_ops: Vec::new(),
         }
     }
 
@@ -219,6 +245,32 @@ impl ParsedDem {
     /// Returns `DemParseError` if the string cannot be parsed.
     pub fn parse(dem_str: &str) -> Result<Self, DemParseError> {
         dem_str.parse()
+    }
+
+    /// Total number of outputs in the DEM `L<n>` namespace.
+    #[must_use]
+    pub fn num_dem_outputs(&self) -> u32 {
+        self.num_dem_outputs
+    }
+
+    /// Number of observables.
+    #[must_use]
+    pub fn num_observables(&self) -> u32 {
+        self.num_dem_outputs
+    }
+
+    /// Number of tracked operators.
+    #[must_use]
+    pub fn num_tracked_ops(&self) -> u32 {
+        self.tracked_ops.iter().flatten().count() as u32
+    }
+
+    fn record_metadata(ops: &mut Vec<Option<DemOutput>>, op: DemOutput) {
+        let idx = op.id as usize;
+        if ops.len() <= idx {
+            ops.resize(idx + 1, None);
+        }
+        ops[idx] = Some(op);
     }
 
     /// Parses a single error line.
@@ -343,7 +395,7 @@ impl ParsedDem {
 
     /// Samples from this DEM.
     ///
-    /// Returns (`detector_events`, `observable_flips`).
+    /// Returns (`detector_events`, `dem_output_flips`).
     ///
     /// # Semantics
     ///
@@ -353,7 +405,7 @@ impl ParsedDem {
     /// independent firing - all components fire together as a single error.
     pub fn sample<R: Rng>(&self, rng: &mut R) -> (Vec<bool>, Vec<bool>) {
         let mut det_events = vec![false; self.num_detectors as usize];
-        let mut obs_flips = vec![false; self.num_observables as usize];
+        let mut obs_flips = vec![false; self.num_dem_outputs as usize];
 
         for mech in &self.mechanisms {
             // Single random check for the entire mechanism
@@ -379,7 +431,7 @@ impl ParsedDem {
 
     /// Samples multiple shots from this DEM.
     ///
-    /// Returns (`detector_events_per_shot`, `observable_flips_per_shot`).
+    /// Returns (`detector_events_per_shot`, `dem_output_flips_per_shot`).
     pub fn sample_batch<R: Rng>(
         &self,
         num_shots: usize,
@@ -413,8 +465,8 @@ impl ParsedDem {
     /// used for error tracking/decomposition but doesn't affect sampling - all
     /// components fire together.
     #[must_use]
-    pub fn to_dem_sampler(&self) -> super::dem_sampler::DemSampler {
-        // Convert mechanisms to the format expected by DemSampler::from_mechanisms
+    pub fn to_dem_sampler(&self) -> super::sampler::DemSampler {
+        // Convert mechanisms to the format expected by SamplingEngine::from_mechanisms
         // Use combined_effect() to get the union of all detectors/observables
         // since all components fire together when the error occurs
         let mechanisms = self.mechanisms.iter().map(|mech| {
@@ -422,11 +474,80 @@ impl ParsedDem {
             (mech.probability, dets, obs)
         });
 
-        super::dem_sampler::DemSampler::from_mechanisms(
+        let engine = super::dem_sampler::SamplingEngine::from_mechanisms(
             mechanisms,
             self.num_detectors as usize,
-            self.num_observables as usize,
-        )
+            self.num_dem_outputs as usize,
+        );
+        super::sampler::DemSampler::from_engine(engine)
+    }
+
+    /// Convert to a decomposed (graphlike) DEM string.
+    ///
+    /// Mechanisms with <= 2 detectors pass through unchanged. Already-decomposed
+    /// mechanisms (with `^` notation) pass through unchanged.
+    ///
+    /// Hyperedges (3+ detectors, not already decomposed) cannot be decomposed
+    /// without Pauli provenance and will cause an error. Use
+    /// `coherent_dem_decomposed()` or `noise_characterization()` for proper
+    /// X/Z-aware decomposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any mechanism has 3+ detectors without decomposition.
+    pub fn to_string_decomposed(&self) -> Result<String, String> {
+        let mut lines = Vec::new();
+
+        // Accumulate by target string to merge identical decomposed entries
+        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
+
+        for mech in &self.mechanisms {
+            if mech.probability <= 0.0 {
+                continue;
+            }
+
+            if mech.is_decomposed() {
+                // Already decomposed — pass through
+                let targets = mech.format_targets();
+                by_targets
+                    .entry(targets)
+                    .and_modify(|p| *p = combine_probabilities(*p, mech.probability))
+                    .or_insert(mech.probability);
+                continue;
+            }
+
+            // Single component
+            let comp = &mech.components[0];
+
+            if comp.detectors.len() <= 2 {
+                // Graphlike — pass through
+                let targets = mech.format_targets();
+                by_targets
+                    .entry(targets)
+                    .and_modify(|p| *p = combine_probabilities(*p, mech.probability))
+                    .or_insert(mech.probability);
+            } else {
+                // Hyperedge (3+ detectors) cannot be decomposed without Pauli
+                // provenance (X/Z component info). Use `coherent_dem_decomposed()`
+                // or `noise_characterization()` which track X/Z components from
+                // the backward mechanism extraction.
+                return Err(format!(
+                    "Cannot decompose hyperedge with {} detectors ({:?}) without \
+                     Pauli provenance. Use coherent_dem_decomposed() or \
+                     noise_characterization() for proper X/Z decomposition.",
+                    comp.detectors.len(),
+                    comp.detectors,
+                ));
+            }
+        }
+
+        for (targets, prob) in &by_targets {
+            if *prob > 0.0 {
+                lines.push(format!("error({prob}) {targets}"));
+            }
+        }
+
+        Ok(lines.join("\n"))
     }
 }
 
@@ -443,6 +564,8 @@ impl FromStr for ParsedDem {
         let mut mechanisms = Vec::new();
         let mut max_det: i32 = -1;
         let mut max_obs: i32 = -1;
+        let mut dem_outputs: Vec<Option<DemOutput>> = Vec::new();
+        let mut tracked_ops: Vec<Option<DemOutput>> = Vec::new();
 
         for line in dem_str.lines() {
             let line = line.trim();
@@ -491,6 +614,42 @@ impl FromStr for ParsedDem {
                 {
                     max_obs = max_obs.max(id as i32);
                 }
+                Self::record_metadata(
+                    &mut dem_outputs,
+                    DemOutput::new(id)
+                        .with_kind(crate::fault_tolerance::DemOutputKind::Observable),
+                );
+            }
+            // Parse PECOS DEM-superset metadata declarations.
+            else if line.starts_with("pecos_observable")
+                || line.starts_with("pecos_tracked_op")
+            {
+                let op = parse_pecos_dem_metadata_line(line)
+                    .map_err(|err| DemParseError::InvalidPecosMetadata(err.to_string()))?;
+                if op.is_tracked_operator() {
+                    Self::record_metadata(&mut tracked_ops, op);
+                } else {
+                    #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
+                    {
+                        max_obs = max_obs.max(op.id as i32);
+                    }
+                    Self::record_metadata(&mut dem_outputs, op);
+                }
+            }
+            // PECOS extensions are explicit; ordinary Stim lines remain valid,
+            // but unknown PECOS extension statements should not be silently
+            // accepted as historical aliases.
+            else if line.starts_with("pecos_") {
+                return Err(DemParseError::InvalidPecosMetadata(format!(
+                    "unsupported PECOS DEM extension line: {line}"
+                )));
+            }
+        }
+
+        if max_obs >= 0 {
+            #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
+            {
+                dem_outputs.resize(max_obs as usize + 1, None);
             }
         }
 
@@ -504,7 +663,7 @@ impl FromStr for ParsedDem {
             } else {
                 0
             },
-            num_observables: if max_obs >= 0 {
+            num_dem_outputs: if max_obs >= 0 {
                 #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
                 {
                     max_obs as u32 + 1
@@ -512,6 +671,8 @@ impl FromStr for ParsedDem {
             } else {
                 0
             },
+            dem_outputs,
+            tracked_ops,
         })
     }
 }
@@ -531,6 +692,8 @@ pub enum DemParseError {
     InvalidDetectorId(String),
     /// Invalid observable ID.
     InvalidObservableId(String),
+    /// Invalid PECOS DEM-superset metadata.
+    InvalidPecosMetadata(String),
 }
 
 impl std::fmt::Display for DemParseError {
@@ -540,6 +703,7 @@ impl std::fmt::Display for DemParseError {
             Self::InvalidProbability(s) => write!(f, "Invalid probability: {s}"),
             Self::InvalidDetectorId(s) => write!(f, "Invalid detector ID: {s}"),
             Self::InvalidObservableId(s) => write!(f, "Invalid observable ID: {s}"),
+            Self::InvalidPecosMetadata(s) => write!(f, "Invalid PECOS DEM metadata: {s}"),
         }
     }
 }
@@ -713,7 +877,7 @@ pub fn compare_dems_statistical(
 
     // Compute detector firing rates (marginals)
     let num_det = dem1.num_detectors.max(dem2.num_detectors) as usize;
-    let num_obs = dem1.num_observables.max(dem2.num_observables) as usize;
+    let num_obs = dem1.num_dem_outputs.max(dem2.num_dem_outputs) as usize;
 
     let mut det_rates1 = vec![0.0; num_det];
     let mut det_rates2 = vec![0.0; num_det];
@@ -1000,6 +1164,41 @@ mod tests {
         assert_eq!(dem.mechanisms.len(), 1);
         assert_eq!(dem.mechanisms[0].components[0].detectors, vec![0]);
         assert_eq!(dem.mechanisms[0].components[0].observables, vec![0]);
+    }
+
+    #[test]
+    fn test_parse_accepts_pecos_dem_superset_metadata() {
+        let dem_str = r#"
+            error(0.02) D0
+            pecos_tracked_op {"id":0,"kind":"tracked_operator","label":"track","pauli":"+X0 Z2","records":[]}
+        "#;
+        let dem = ParsedDem::from_str(dem_str).unwrap();
+
+        assert_eq!(dem.mechanisms.len(), 1);
+        assert_eq!(dem.num_detectors, 1);
+        assert_eq!(dem.num_dem_outputs(), 0);
+        assert_eq!(dem.num_observables(), 0);
+        assert_eq!(dem.num_tracked_ops(), 1);
+        let op = dem.tracked_ops[0].as_ref().unwrap();
+        assert_eq!(op.label.as_deref(), Some("track"));
+        assert_eq!(
+            op.kind,
+            Some(crate::fault_tolerance::DemOutputKind::TrackedOperator)
+        );
+        assert_eq!(op.pauli.as_ref().unwrap().to_sparse_str(), "+X0 Z2");
+    }
+
+    #[test]
+    fn test_parse_rejects_malformed_pecos_dem_superset_metadata() {
+        let err = ParsedDem::from_str("pecos_tracked_op not-json").unwrap_err();
+        assert!(matches!(err, DemParseError::InvalidPecosMetadata(_)));
+    }
+
+    #[test]
+    fn test_parse_rejects_unknown_pecos_dem_extension() {
+        let err = ParsedDem::from_str("pecos_old_extension {}").unwrap_err();
+        assert!(matches!(err, DemParseError::InvalidPecosMetadata(_)));
+        assert!(err.to_string().contains("unsupported PECOS DEM extension"));
     }
 
     #[test]

@@ -63,6 +63,14 @@ impl GateRegistry {
             &GateSpec::new("H").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
+            gates::F,
+            &GateSpec::new("F").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core(
+            gates::Fdg,
+            &GateSpec::new("Fdg").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core(
             gates::SX,
             &GateSpec::new("SX").with_category(GateCategory::SingleQubitUnitary),
         );

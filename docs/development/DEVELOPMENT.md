@@ -28,15 +28,14 @@ For developers who want to contribute or modify PECOS:
 
 1. Make sure you have [Python](https://www.python.org/downloads/) and [Rust](https://www.rust-lang.org/tools/install) installed for your system.
 
-2. Install all dev tools with a single command:
+2. Install the pre-clone dev tools from crates.io:
    ```sh
-   cargo install --locked uv just pecos
+   cargo install --locked uv just
    ```
 
    This installs:
    - `uv` - Python package manager
    - `just` - Command runner for build tasks
-   - `pecos` - PECOS dev tools (llvm, cuda, rust, python commands)
 
 3. Clone the repository:
    ```sh
@@ -44,12 +43,31 @@ For developers who want to contribute or modify PECOS:
    cd PECOS
    ```
 
-4. Create the development environment:
+4. Install the PECOS developer CLI from the repo:
+   ```sh
+   cargo install --path crates/pecos-cli
+   ```
+
+   This installs the `pecos` binary (llvm, cuda, cuquantum, rust, python, deps commands).
+
+5. Create the development environment:
    ```sh
    uv sync
    ```
 
-5. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
+   `uv sync` installs the default `dev` and `test` groups (lint, build,
+   docs, and pytest tooling). Optional groups you may want to add:
+
+   | Group         | When to enable                                              | Command                       |
+   |---------------|-------------------------------------------------------------|-------------------------------|
+   | `examples`    | Running notebooks under `examples/` or DataFrame benchmarks | `uv sync --group examples`    |
+   | `numpy-compat`| Verifying older NumPy/SciPy minimums                        | `uv sync --group numpy-compat`|
+   | `cuda`        | Building/running GPU simulators (requires CUDA toolkit)     | `uv sync --group cuda`        |
+
+   Combine groups with multiple `--group` flags
+   (e.g. `uv sync --group examples --group cuda`).
+
+6. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
 
    PECOS requires LLVM version 14 for LLVM IR execution features.
 
@@ -61,7 +79,7 @@ For developers who want to contribute or modify PECOS:
 
    For detailed installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../user-guide/llvm-setup.md).
 
-6. You may wish to explicitly activate the environment for development. To do so:
+7. You may wish to explicitly activate the environment for development. To do so:
 
     === "Linux/Mac"
         ```sh
@@ -73,24 +91,24 @@ For developers who want to contribute or modify PECOS:
         .\.venv\Scripts\activate
         ```
 
-6. Build the project in editable mode
+8. Build the project in editable mode
     ```sh
    just build
    ```
    Other build options: `just build-release` (optimized), `just build-native` (optimized for your CPU).
 
-7. Run all Python and Rust tests:
+9. Run all Python and Rust tests:
    ```sh
    just test
    ```
    Note: Make sure you have run a build command before running tests.
 
-8. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
-   ```sh
-   just lint
-   ```
+10. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
+    ```sh
+    just lint
+    ```
 
-9. To deactivate your development venv:
+11. To deactivate your development venv:
     ```sh
     deactivate
     ```
@@ -127,7 +145,7 @@ PECOS uses `~/.pecos/` to store external dependencies and build artifacts that c
 ```
 ~/.pecos/
 ├── llvm/       # LLVM-14 installation (for QIR/LLVM IR execution)
-├── deps/       # Downloaded C++ dependencies (Stim, QuEST, Qulacs, etc.)
+├── deps/       # Downloaded C++ dependencies (Stim, etc.)
 └── cache/      # Build artifacts and intermediate files
 ```
 

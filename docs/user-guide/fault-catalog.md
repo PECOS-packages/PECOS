@@ -1,0 +1,388 @@
+# Fault Catalog Tutorial
+
+The fault catalog API exposes the physical fault mechanisms in a `TickCircuit`.
+It is useful when you want to inspect fault locations, build lookup tables,
+debug detector/observable metadata, or lazily enumerate low-weight fault
+configurations.
+
+The core model is:
+
+- each `FaultLocation` is an independent physical fault mechanism
+- each location has one or more `FaultAlternative`s
+- exactly one alternative is chosen when the location fires
+- detector, measurement, and observable effects combine by XOR parity
+
+## Inputs
+
+A fault catalog needs two inputs:
+
+1. a `TickCircuit`
+2. stochastic noise parameters
+
+The circuit must already have detector and observable metadata:
+
+- `num_measurements`
+- `detectors`
+- `observables`
+
+The catalog does not infer detector definitions from the gate sequence. It uses
+the metadata on the circuit to map raw measurement flips into detector and
+observable flips.
+
+## Python: Build a Small Catalog
+
+```python
+from pecos.quantum import PauliString, TickCircuit
+from pecos_rslib_exp import depolarizing, fault_catalog
+
+circuit = TickCircuit()
+circuit.tick().h([0])
+circuit.tick().mz([0])
+
+circuit.set_meta("num_measurements", "1")
+circuit.set_meta("detectors", '[{"records":[-1]}]')
+circuit.set_meta("observables", '[{"records":[-1]}]')
+
+noise = depolarizing().p1(0.03).p2(0.0).p_meas(0.01).p_prep(0.0)
+catalog = fault_catalog(circuit, noise)
+```
+
+The returned object is sequence-like:
+
+```python
+print(len(catalog))
+print(catalog[0])
+print(catalog[-1])
+
+for location in catalog:
+    print(location.tick, location.gate_type, location.channel)
+```
+
+It also exposes the underlying locations list:
+
+```python
+locations = catalog.locations
+```
+
+## Location Fields
+
+Each `FaultLocation` represents one physical mechanism with nonzero channel
+probability.
+
+| Field | Meaning |
+|---|---|
+| `tick` | Tick index in the `TickCircuit` |
+| `gate_index` | Gate index within the tick |
+| `gate_type` | Gate name, such as `"H"`, `"CX"`, or `"MZ"` |
+| `qubits` | Qubits acted on by this gate |
+| `channel` | `"p1"`, `"p2"`, `"p_meas"`, or `"p_prep"` |
+| `channel_probability` | Total probability that the mechanism fires, `p_i` |
+| `no_fault_probability` | Probability the mechanism does not fire, `1 - p_i` |
+| `num_alternatives` | Number of alternatives at this location, `k_i` |
+| `faults` | List of `FaultAlternative` objects |
+
+Example:
+
+```python
+for loc in catalog:
+    print(
+        loc.tick,
+        loc.gate_type,
+        loc.channel,
+        loc.channel_probability,
+        loc.no_fault_probability,
+        loc.num_alternatives,
+    )
+```
+
+The catalog includes locations with nonzero channel probability even when all
+alternatives have empty detector/observable effects. This is necessary for
+correct probability accounting.
+
+## Alternative Fields
+
+Each `FaultAlternative` is one possible outcome when its parent location fires.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `"pauli"`, `"measurement_flip"`, or `"prep_flip"` |
+| `pauli` | A real PECOS `PauliString` for Pauli faults, or `None` |
+| `measurements` | Raw measurement indices flipped by the alternative |
+| `detectors` | Detector indices flipped by the alternative |
+| `observables` | Observable indices flipped by the alternative |
+| `conditional_probability` | `1 / k_i` |
+| `absolute_probability` | Marginal alternative probability at the location, `p_i / k_i` |
+| `channel_probability` | Same `p_i` as the parent location |
+
+Example:
+
+```python
+for loc in catalog:
+    for fault in loc.faults:
+        if fault.kind == "pauli":
+            assert isinstance(fault.pauli, PauliString)
+        else:
+            assert fault.pauli is None
+
+        print(fault.kind, fault.detectors, fault.observables)
+```
+
+`fault.absolute_probability` is intentionally local to one fault location. It is
+not the probability of "this alternative and no other faults in the circuit."
+
+## Probability Semantics
+
+For location `i`:
+
+```text
+p_i = location.channel_probability
+k_i = location.num_alternatives
+P(no fault at i) = 1 - p_i
+P(specific alternative at i) = p_i / k_i
+```
+
+For a full-circuit configuration:
+
+```text
+configuration_probability
+  = product selected alternatives (p_i / k_i)
+    * product unselected locations (1 - p_i)
+```
+
+For a single selected alternative at location `i`, the full event probability is:
+
+```python
+event_probability = fault.absolute_probability
+
+for j, loc in enumerate(catalog.locations):
+    if j != selected_location_index:
+        event_probability *= loc.no_fault_probability
+```
+
+## Lazy k-Fault Configurations
+
+Use `catalog.fault_configurations(k)` to lazily iterate every configuration
+where exactly `k` distinct locations fire and one alternative is chosen from
+each selected location.
+
+For `k = 0`, the iterator yields exactly one no-fault configuration:
+
+```python
+configs = list(catalog.fault_configurations(0))
+assert len(configs) == 1
+
+no_fault = configs[0]
+assert no_fault.location_indices == []
+assert no_fault.alternative_indices == []
+assert no_fault.measurements == []
+assert no_fault.detectors == []
+assert no_fault.observables == []
+assert no_fault.selected_probability == 1.0
+```
+
+The no-fault configuration probability is the product of every location's
+`no_fault_probability`:
+
+```python
+expected = 1.0
+for loc in catalog.locations:
+    expected *= loc.no_fault_probability
+
+assert abs(no_fault.configuration_probability - expected) < 1e-12
+```
+
+For `k > 0`, each yielded `FaultConfiguration` has:
+
+| Field | Meaning |
+|---|---|
+| `location_indices` | Indices into `catalog.locations` |
+| `alternative_indices` | Chosen alternative index for each selected location |
+| `locations` | The selected `FaultLocation` objects |
+| `faults` | The selected `FaultAlternative` objects |
+| `measurements` | XOR-combined measurement effects |
+| `detectors` | XOR-combined detector effects |
+| `observables` | XOR-combined observable effects |
+| `selected_probability` | Product of selected `absolute_probability` values |
+| `configuration_probability` | Selected probability times no-fault probabilities for unselected locations |
+
+The iterator is lazy:
+
+```python
+it = catalog.fault_configurations(1)
+first = next(it)
+
+print(first.location_indices)
+print(first.alternative_indices)
+print(first.locations[0] is catalog.locations[first.location_indices[0]])
+print(first.faults[0] is first.locations[0].faults[first.alternative_indices[0]])
+```
+
+## XOR Parity
+
+When multiple alternatives are selected, effects combine by XOR parity. If two
+faults flip the same detector, that detector cancels from the combined
+configuration.
+
+```python
+for event in catalog.fault_configurations(2):
+    print(event.detectors, event.observables, event.configuration_probability)
+```
+
+This is the right behavior for detector syndromes and logical observable flips.
+It is also why low-weight decoder tests should apply the selected correction and
+check the residual logical by XOR.
+
+## Building a Small Lookup Table
+
+A lookup decoder table groups configuration probability by:
+
+```text
+detector syndrome -> logical observable class -> probability
+```
+
+For a truncated table:
+
+```python
+from collections import defaultdict
+
+def add_weight(table, syndrome, logical, probability):
+    table[tuple(syndrome)][tuple(logical)] += probability
+
+table = defaultdict(lambda: defaultdict(float))
+
+for k in range(0, 3):
+    for event in catalog.fault_configurations(k):
+        add_weight(
+            table,
+            event.detectors,
+            event.observables,
+            event.configuration_probability,
+        )
+
+decoder = {}
+for syndrome, logical_weights in table.items():
+    best_logical = max(logical_weights.items(), key=lambda item: item[1])[0]
+    decoder[syndrome] = best_logical
+```
+
+To apply the decoder to an enumerated event, XOR the event's logical class with
+the selected correction:
+
+```python
+def xor_sorted(a, b):
+    out = set(a)
+    for item in b:
+        if item in out:
+            out.remove(item)
+        else:
+            out.add(item)
+    return tuple(sorted(out))
+
+for event in catalog.fault_configurations(1):
+    correction = decoder[tuple(event.detectors)]
+    residual = xor_sorted(event.observables, correction)
+    print(event.detectors, residual)
+```
+
+## Rust API
+
+The Rust API lives in `pecos-qec`:
+
+```rust
+use pecos_qec::fault_tolerance::fault_sampler::{
+    build_fault_catalog, StochasticNoiseParams,
+};
+use pecos_quantum::{Attribute, TickCircuit};
+
+let mut circuit = TickCircuit::new();
+circuit.tick().h(&[0]);
+circuit.tick().mz(&[0]);
+
+circuit.set_meta("num_measurements", Attribute::String("1".into()));
+circuit.set_meta(
+    "detectors",
+    Attribute::String(r#"[{"records":[-1]}]"#.into()),
+);
+circuit.set_meta(
+    "observables",
+    Attribute::String(r#"[{"records":[-1]}]"#.into()),
+);
+
+let noise = StochasticNoiseParams {
+    p1: 0.03,
+    p2: 0.0,
+    p_meas: 0.01,
+    p_prep: 0.0,
+};
+
+let catalog = build_fault_catalog(&circuit, &noise).unwrap();
+```
+
+Iterate locations and alternatives:
+
+```rust
+for loc in &catalog.locations {
+    println!(
+        "tick={} gate={:?} channel={:?} p={} k={}",
+        loc.tick,
+        loc.gate_type,
+        loc.channel,
+        loc.channel_probability,
+        loc.num_alternatives
+    );
+
+    for fault in &loc.faults {
+        println!(
+            "  {:?} dets={:?} obs={:?} p_alt={}",
+            fault.kind,
+            fault.affected_detectors,
+            fault.affected_observables,
+            fault.absolute_probability
+        );
+    }
+}
+```
+
+Iterate configurations:
+
+```rust
+for event in catalog.fault_configurations(2) {
+    println!(
+        "locations={:?} alternatives={:?} dets={:?} obs={:?} p={}",
+        event.location_indices,
+        event.alternative_indices,
+        event.affected_detectors,
+        event.affected_observables,
+        event.configuration_probability
+    );
+}
+```
+
+The Rust iterator borrows the catalog and does not materialize all
+configurations up front.
+
+## Common Pitfalls
+
+- `fault.absolute_probability` is `p_i / k_i`, not a full-circuit event
+  probability.
+- Empty-effect locations are real physical mechanisms and must remain in the
+  catalog for normalization.
+- `catalog.fault_configurations(k)` means exactly `k` distinct physical
+  locations fire, not at most `k`.
+- Detector and observable metadata must be correct before building the catalog.
+  Missing boundary detectors can make a correct decoder appear to fail.
+- The current catalog models the supported stochastic channels in
+  `StochasticNoiseParams`: `p1`, `p2`, `p_meas`, and `p_prep`.
+
+## Larger Example
+
+The Rust example `examples/surface/d3_fault_catalog_lookup.rs` builds a
+distance-3 surface-code memory experiment, walks `fault_configurations(k)` for
+`k = 0..=2`, and aggregates a truncated lookup decoder table.
+
+Run it from the repository root:
+
+```bash
+cargo run -p pecos-qec --example surface_d3_fault_catalog_lookup
+```
+

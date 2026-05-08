@@ -104,6 +104,10 @@ pub struct SparseStabGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug 
     pub(crate) stabs: GensGeneric<S>,
     pub(crate) destabs: GensGeneric<S>,
     pub(crate) rng: R,
+    /// When true, maintain destabilizer signs through Clifford gates.
+    /// Off by default (not needed for standard stabilizer simulation).
+    /// Required for STN-style decomposition that uses destabilizer phases.
+    track_destab_signs: bool,
 }
 
 /// Default sparse stabilizer simulator using `BitSet` for O(1) toggle operations.
@@ -269,9 +273,25 @@ where
             stabs: GensGeneric::<S>::new(num_qubits),
             destabs: GensGeneric::<S>::new(num_qubits),
             rng,
+            track_destab_signs: false,
         };
         stab.reset();
         stab
+    }
+
+    /// Enable tracking of destabilizer signs through Clifford gates.
+    /// Required for STN-style decomposition that uses destabilizer phases.
+    #[inline]
+    #[must_use]
+    pub fn with_destab_sign_tracking(mut self) -> Self {
+        self.track_destab_signs = true;
+        self
+    }
+
+    /// Whether destabilizer sign tracking is enabled.
+    #[inline]
+    pub fn tracks_destab_signs(&self) -> bool {
+        self.track_destab_signs
     }
 
     #[inline]
@@ -572,6 +592,9 @@ where
         if result.outcome {
             // Inline X gate: X -> X, Z -> -Z
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[q]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[q]);
+            }
         }
         self
     }
@@ -593,6 +616,10 @@ where
     S: IndexSet,
     R: SeedableRng + Rng + Debug,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)
@@ -613,6 +640,9 @@ where
         for &q in qubits {
             let qu = q.index();
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+            }
         }
         self
     }
@@ -625,6 +655,12 @@ where
             // Fused: XOR elements in (col_x[qu] ⊕ col_z[qu]) into signs_minus
             self.stabs.col_x[qu]
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+            }
         }
         self
     }
@@ -633,9 +669,11 @@ where
     #[inline]
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
-            self.stabs
-                .signs_minus
-                .xor_assign(&self.stabs.col_x[q.index()]);
+            let qu = q.index();
+            self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+            }
         }
         self
     }
@@ -661,6 +699,12 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+            }
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
@@ -682,6 +726,10 @@ where
             // Fused: XOR elements in (col_x[qu] ∩ col_z[qu]) into signs_minus
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             for g in [&mut self.stabs, &mut self.destabs] {
                 // Elements in col_x but not in col_z: X -> Z
@@ -721,6 +769,13 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+            }
 
             // Data: col_z ^= col_x (same as SZ)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -745,6 +800,13 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+            }
 
             // Data: col_x ^= col_z
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -768,6 +830,12 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+            }
 
             // Data: col_x ^= col_z
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -791,6 +859,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: swap col_x <-> col_z (same as H)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -823,6 +896,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: swap col_x <-> col_z (same as H)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -857,6 +935,12 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: swap col_x <-> col_z (same as H)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -890,6 +974,13 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+            }
 
             // Data: col_z ^= col_x (same as SZ)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -915,6 +1006,14 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+            }
 
             // Data: col_z ^= col_x (same as SZ)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -939,6 +1038,13 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+            }
 
             // Data: col_x ^= col_z (same as SX)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -964,6 +1070,14 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+            }
 
             // Data: col_x ^= col_z (same as SX)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -989,6 +1103,14 @@ where
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: col_z ^= col_x, then swap col_x <-> col_z
             // Row updates: (1,0)->(1,1): insert row_z; (0,1)->(1,0): move row_z->row_x; (1,1)->(0,1): remove row_x
@@ -1029,6 +1151,14 @@ where
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: col_x ^= col_z, then swap col_x <-> col_z
             // Row updates: (1,0)->(0,1): move row_x->row_z; (0,1)->(1,1): insert row_x; (1,1)->(1,0): remove row_z
@@ -1070,6 +1200,15 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+            }
 
             // Data: col_x ^= col_z, then swap (same as Fdg)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -1108,6 +1247,16 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+            }
 
             // Data: col_z ^= col_x, then swap (same as F)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -1145,6 +1294,15 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_x[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+            }
 
             // Data: col_z ^= col_x, then swap (same as F)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -1183,6 +1341,16 @@ where
                 .signs_i
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+            }
 
             // Data: col_x ^= col_z, then swap (same as Fdg)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -1220,6 +1388,15 @@ where
             self.stabs.signs_i.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: col_x ^= col_z, then swap (same as Fdg)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -1257,6 +1434,15 @@ where
             self.stabs.signs_i.xor_assign(&self.stabs.col_x[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs
+                    .signs_i
+                    .xor_intersection_into(&self.destabs.col_x[qu], &mut self.destabs.signs_minus);
+                self.destabs.signs_i.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
 
             // Data: col_z ^= col_x, then swap (same as F)
             for g in [&mut self.stabs, &mut self.destabs] {
@@ -1371,6 +1557,30 @@ where
                     }
                 }
             }
+            if self.track_destab_signs {
+                for g in self.destabs.col_z[q1].iter() {
+                    if !self.destabs.col_z[q2].contains(g) {
+                        self.destabs.signs_minus.toggle(g);
+                        if self.destabs.signs_i.contains(g) {
+                            self.destabs.signs_minus.toggle(g);
+                            self.destabs.signs_i.remove(g);
+                        } else {
+                            self.destabs.signs_i.insert(g);
+                        }
+                    }
+                }
+                for g in self.destabs.col_z[q2].iter() {
+                    if !self.destabs.col_z[q1].contains(g) {
+                        self.destabs.signs_minus.toggle(g);
+                        if self.destabs.signs_i.contains(g) {
+                            self.destabs.signs_minus.toggle(g);
+                            self.destabs.signs_i.remove(g);
+                        } else {
+                            self.destabs.signs_i.insert(g);
+                        }
+                    }
+                }
+            }
 
             // Pauli update (both stabs and destabs): toggle X on q1,q2 for odd-Z generators.
             for tab in [&mut self.stabs, &mut self.destabs] {
@@ -1459,6 +1669,28 @@ where
                         self.stabs.signs_i.remove(g);
                     } else {
                         self.stabs.signs_i.insert(g);
+                    }
+                }
+            }
+            if self.track_destab_signs {
+                for g in self.destabs.col_x[q1].iter() {
+                    if !self.destabs.col_x[q2].contains(g) {
+                        if self.destabs.signs_i.contains(g) {
+                            self.destabs.signs_minus.toggle(g);
+                            self.destabs.signs_i.remove(g);
+                        } else {
+                            self.destabs.signs_i.insert(g);
+                        }
+                    }
+                }
+                for g in self.destabs.col_x[q2].iter() {
+                    if !self.destabs.col_x[q1].contains(g) {
+                        if self.destabs.signs_i.contains(g) {
+                            self.destabs.signs_minus.toggle(g);
+                            self.destabs.signs_i.remove(g);
+                        } else {
+                            self.destabs.signs_i.insert(g);
+                        }
                     }
                 }
             }
@@ -1590,6 +1822,71 @@ where
                     apply_syy_sign!(g, x1, z1, x2, z2);
                 }
                 // Generators with identity at q1, non-identity at q2
+                for g in col_x[q2].iter() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) {
+                        continue;
+                    }
+                    let x2 = true;
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, false, false, x2, z2);
+                }
+                for g in col_z[q2].iter() {
+                    if col_x[q1].contains(g) || col_z[q1].contains(g) || col_x[q2].contains(g) {
+                        continue;
+                    }
+                    apply_syy_sign!(g, false, false, false, true);
+                }
+            }
+            if self.track_destab_signs {
+                let signs_minus = &mut self.destabs.signs_minus;
+                let signs_i = &mut self.destabs.signs_i;
+                let col_x = &self.destabs.col_x;
+                let col_z = &self.destabs.col_z;
+
+                macro_rules! mul_i {
+                    (plus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        if $signs_i.contains($g) {
+                            $signs_minus.toggle($g);
+                            $signs_i.remove($g);
+                        } else {
+                            $signs_i.insert($g);
+                        }
+                    };
+                    (minus, $g:expr, $signs_i:expr, $signs_minus:expr) => {
+                        $signs_minus.toggle($g);
+                        mul_i!(plus, $g, $signs_i, $signs_minus);
+                    };
+                }
+
+                macro_rules! apply_syy_sign {
+                    ($g:expr, $x1:expr, $z1:expr, $x2:expr, $z2:expr) => {
+                        if ($x1 != $z1) != ($x2 != $z2) {
+                            if $z1 == $z2 {
+                                mul_i!(minus, $g, signs_i, signs_minus);
+                            } else {
+                                mul_i!(plus, $g, signs_i, signs_minus);
+                            }
+                        }
+                    };
+                }
+
+                for g in col_x[q1].iter() {
+                    let x1 = true;
+                    let z1 = col_z[q1].contains(g);
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
+                for g in col_z[q1].iter() {
+                    if col_x[q1].contains(g) {
+                        continue;
+                    }
+                    let x1 = false;
+                    let z1 = true;
+                    let x2 = col_x[q2].contains(g);
+                    let z2 = col_z[q2].contains(g);
+                    apply_syy_sign!(g, x1, z1, x2, z2);
+                }
                 for g in col_x[q2].iter() {
                     if col_x[q1].contains(g) || col_z[q1].contains(g) {
                         continue;
@@ -1766,10 +2063,6 @@ where
 
     fn destab_tableau(&self) -> String {
         Self::tableau_string(self.num_qubits, &self.destabs)
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 
@@ -2169,6 +2462,7 @@ where
             stabs,
             destabs,
             rng: self.rng,
+            track_destab_signs: false,
         }
     }
 }
@@ -2177,6 +2471,10 @@ impl<R> QuantumSimulator for SparseStabHybrid<R>
 where
     R: SeedableRng + Rng + Debug,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)
@@ -3335,10 +3633,6 @@ where
 
     fn destab_tableau(&self) -> String {
         Self::tableau_string(self.num_qubits, &self.destabs)
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

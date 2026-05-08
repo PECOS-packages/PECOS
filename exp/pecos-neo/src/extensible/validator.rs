@@ -141,6 +141,8 @@ impl CliffordValidator {
 
         // Cliffords
         allowed_gates.insert(gates::H);
+        allowed_gates.insert(gates::F);
+        allowed_gates.insert(gates::Fdg);
         allowed_gates.insert(gates::SX);
         allowed_gates.insert(gates::SXdg);
         allowed_gates.insert(gates::SY);
@@ -154,6 +156,10 @@ impl CliffordValidator {
         allowed_gates.insert(gates::CZ);
         allowed_gates.insert(gates::SWAP);
         allowed_gates.insert(gates::ISWAP);
+        allowed_gates.insert(gates::SXX);
+        allowed_gates.insert(gates::SXXdg);
+        allowed_gates.insert(gates::SYY);
+        allowed_gates.insert(gates::SYYdg);
         allowed_gates.insert(gates::SZZ);
         allowed_gates.insert(gates::SZZdg);
 

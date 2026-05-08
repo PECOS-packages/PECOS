@@ -1,5 +1,5 @@
 use pecos_core::{Angle64, QubitId};
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, CliffordRz, StateVec};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec, StateVec};
 
 /// Verify MC sampling gives similar statistics to exact state vector.
 fn main() {
@@ -31,12 +31,12 @@ fn main() {
         exact_probs[x] = state[x].norm_sqr() / norm;
     }
 
-    // Sample from CliffordRz (which uses MC for T > 2048, exact otherwise)
+    // Sample from StabVec (which uses MC for T > 2048, exact otherwise)
     // Force the MC path by temporarily using it
     let mut mc_counts = vec![0u32; dim];
     #[allow(clippy::cast_sign_loss)] // num_shots is a positive literal
     for seed in 0..num_shots as u64 {
-        let mut crz = CliffordRz::new_with_seed(nq, seed);
+        let mut crz = StabVec::new_with_seed(nq, seed);
         for q in 0..nq {
             crz.h(&[QubitId(q)]);
         }
@@ -79,7 +79,7 @@ fn main() {
         }
     }
     eprintln!("n={nq}, nrz={nrz}, T={} (exact path, not MC)", {
-        let mut c = CliffordRz::new(nq);
+        let mut c = StabVec::new(nq);
         for q in 0..nq {
             c.h(&[QubitId(q)]);
         }

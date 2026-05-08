@@ -5,7 +5,7 @@
 //! parameters required by LDPC decoders.
 
 use crate::decoders::{
-    BeliefFindDecoder, BpLsdDecoder, BpOsdDecoder, FlipDecoder, SoftInfoBpDecoder,
+    BeliefFindDecoder, BpLsdDecoder, BpOsdDecoder, FlipDecoder, SoftInfoBpDecoder, UnionFindDecoder,
 };
 use crate::{DecodingResult, LdpcError};
 use ndarray::ArrayView1;
@@ -35,6 +35,10 @@ impl From<LdpcError> for pecos_decoder_core::DecoderError {
 impl DecodingResultTrait for DecodingResult {
     fn is_successful(&self) -> bool {
         self.converged
+    }
+
+    fn correction(&self) -> &[u8] {
+        self.decoding.as_slice().unwrap_or(&[])
     }
 
     fn iterations(&self) -> Option<usize> {
@@ -77,6 +81,24 @@ impl Decoder for BpLsdDecoder {
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
         self.decode(input)
+    }
+
+    fn check_count(&self) -> usize {
+        self.check_count()
+    }
+
+    fn bit_count(&self) -> usize {
+        self.bit_count()
+    }
+}
+
+/// Implement Decoder trait for `UnionFindDecoder`
+impl Decoder for UnionFindDecoder {
+    type Result = DecodingResult;
+    type Error = LdpcError;
+
+    fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
+        self.decode(input, &[], 0)
     }
 
     fn check_count(&self) -> usize {

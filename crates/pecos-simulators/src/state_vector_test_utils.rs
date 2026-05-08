@@ -57,9 +57,6 @@ pub trait StateVectorSimulator: CliffordGateable + QuantumSimulator + Sized {
     /// For sparse implementations, returns `Complex64::new(0.0, 0.0)` for
     /// basis states not present in the state vector.
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64;
-
-    /// Get the number of qubits in the simulator.
-    fn num_qubits(&self) -> usize;
 }
 
 /// Generates a Clifford-only test suite for a state vector simulator.
@@ -834,6 +831,33 @@ pub fn verify_pz<S: StateVectorSimulator>(sim: &mut S) {
     // After pz, qubit should be in |0⟩
     let result = sim.mz(&qid(0));
     assert!(!result[0].outcome, "pz should prepare |0⟩");
+
+    // PZ on |1⟩: must not produce NaN (regression test for
+    // projection-based mpz override that divided by sqrt(1-prob_one)
+    // where prob_one=1.0)
+    sim.reset();
+    sim.x(&qid(0)); // deterministic |1⟩
+    sim.pz(&qid(0));
+    let amp0 = sim.get_amplitude(0);
+    assert!(
+        !amp0.re.is_nan() && !amp0.im.is_nan(),
+        "pz on |1⟩ must not produce NaN amplitudes"
+    );
+    assert!(
+        (amp0.norm() - 1.0).abs() < TOLERANCE,
+        "After pz on |1⟩, qubit should be in |0⟩ with unit amplitude"
+    );
+    let result = sim.mz(&qid(0));
+    assert!(!result[0].outcome, "pz on |1⟩ should prepare |0⟩");
+
+    // PZ on |0⟩: trivial case, should remain |0⟩
+    sim.reset();
+    sim.pz(&qid(0));
+    let amp0 = sim.get_amplitude(0);
+    assert!(
+        (amp0.norm() - 1.0).abs() < TOLERANCE,
+        "pz on |0⟩ should remain |0⟩"
+    );
 }
 
 /// Verify pnz (prepare |1⟩) operation.
@@ -878,6 +902,37 @@ pub fn verify_pz_multiple_qubits<S: StateVectorSimulator>(sim: &mut S) {
 
     assert!(!result0[0].outcome, "pz should prepare qubit 0 to |0⟩");
     assert!(result1[0].outcome, "qubit 1 should still be |1⟩");
+}
+
+/// Verify mid-circuit reset pattern: H-CX-MZ-PZ-CX-MZ on a Bell pair.
+///
+/// This is the pattern used in QEC syndrome extraction with ancilla resets.
+/// The bug it catches: if mpz projects onto |0⟩ without proper measurement
+/// sampling + conditional X, subsequent gates after PZ produce wrong results.
+pub fn verify_mid_circuit_reset<S: StateVectorSimulator>(sim: &mut S) {
+    if sim.num_qubits() < 2 {
+        return;
+    }
+
+    // Run many seeds. After H-CX: Bell state (|00⟩+|11⟩)/sqrt(2).
+    // MZ(1) collapses to |00⟩ or |11⟩.
+    // PZ(1) resets q1 to |0⟩: state is |00⟩ or |10⟩.
+    // CX(0,1) re-entangles: |00⟩->|00⟩ or |10⟩->|11⟩.
+    // MZ(1): should always equal first measurement.
+    for seed in 0..100 {
+        let mut s = S::with_seed(2, seed);
+        s.h(&qid(0));
+        s.cx(&qid2(0, 1));
+        let r1 = s.mz(&qid(1));
+        s.pz(&qid(1));
+        s.cx(&qid2(0, 1));
+        let r2 = s.mz(&qid(1));
+        assert_eq!(
+            r1[0].outcome, r2[0].outcome,
+            "seed {seed}: mid-circuit reset: r1={}, r2={} — should match",
+            r1[0].outcome as u8, r2[0].outcome as u8
+        );
+    }
 }
 
 /// Verify measurement consistency - measuring the same qubit multiple times.
@@ -2630,6 +2685,7 @@ pub fn run_measurement_test_suite<S: StateVectorSimulator>(sim: &mut S) {
     verify_pz(sim);
     verify_pnz(sim);
     verify_pz_multiple_qubits(sim);
+    verify_mid_circuit_reset(sim);
     verify_measurement_consistency(sim);
     verify_mz_detailed(sim);
 }
@@ -2656,10 +2712,6 @@ impl StateVectorSimulator for StateVecAoS {
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         self.state()[basis_state]
     }
-
-    fn num_qubits(&self) -> usize {
-        StateVecAoS::num_qubits(self)
-    }
 }
 
 impl StateVectorSimulator for StateVecSoA {
@@ -2672,10 +2724,6 @@ impl StateVectorSimulator for StateVecSoA {
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         StateVecSoA::get_amplitude(self, basis_state)
     }
-
-    fn num_qubits(&self) -> usize {
-        StateVecSoA::num_qubits(self)
-    }
 }
 
 impl StateVectorSimulator for SparseStateVecAoS {
@@ -2686,10 +2734,6 @@ impl StateVectorSimulator for SparseStateVecAoS {
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         SparseStateVecAoS::get_amplitude(self, basis_state)
     }
-
-    fn num_qubits(&self) -> usize {
-        SparseStateVecAoS::num_qubits(self)
-    }
 }
 
 impl StateVectorSimulator for SparseStateVecSoA {
@@ -2699,10 +2743,6 @@ impl StateVectorSimulator for SparseStateVecSoA {
 
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         SparseStateVecSoA::get_amplitude(self, basis_state)
-    }
-
-    fn num_qubits(&self) -> usize {
-        SparseStateVecSoA::num_qubits(self)
     }
 }
 

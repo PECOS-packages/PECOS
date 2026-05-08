@@ -73,6 +73,19 @@ pub(crate) mod ffi {
         fn create_pymatching_graph_from_dem(dem_string: &str)
         -> Result<UniquePtr<PyMatchingGraph>>;
 
+        /// Create a `PyMatching` graph from a DEM string with correlation support.
+        ///
+        /// When `enable_correlations` is true, the decoder tracks edge correlations
+        /// during graph construction and uses them during decoding.
+        ///
+        /// # Errors
+        ///
+        /// Returns a CXX exception if the DEM string is malformed.
+        fn create_pymatching_graph_from_dem_with_correlations(
+            dem_string: &str,
+            enable_correlations: bool,
+        ) -> Result<UniquePtr<PyMatchingGraph>>;
+
         // ===== Edge Management =====
 
         /// Add an edge between two nodes.

@@ -16,6 +16,7 @@ pecos-decoder-core.workspace = true
 ndarray.workspace = true
 thiserror.workspace = true
 fusion-blossom.workspace = true
+serde_json.workspace = true
 
 [lib]
 name = "pecos_fusion_blossom"

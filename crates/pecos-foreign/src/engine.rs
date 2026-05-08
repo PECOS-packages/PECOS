@@ -20,7 +20,7 @@ use pecos_engines::Engine;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use pecos_engines::byte_message::message::ByteMessage;
 use pecos_engines::quantum::{
-    CliffordRzEngine, CoinTossEngine, DensityMatrixEngine, SparseStabEngine, StabilizerEngine,
+    CoinTossEngine, DensityMatrixEngine, SparseStabEngine, StabVecEngine, StabilizerEngine,
     StateVecEngine,
 };
 use std::ffi::CStr;
@@ -34,7 +34,7 @@ enum EngineInner {
     StateVec(StateVecEngine),
     SparseStab(SparseStabEngine),
     Stabilizer(StabilizerEngine),
-    CliffordRz(CliffordRzEngine),
+    StabVec(StabVecEngine),
     DensityMatrix(DensityMatrixEngine),
     CoinToss(CoinTossEngine),
 }
@@ -45,7 +45,7 @@ impl EngineInner {
             Self::StateVec(e) => e.process(input),
             Self::SparseStab(e) => e.process(input),
             Self::Stabilizer(e) => e.process(input),
-            Self::CliffordRz(e) => e.process(input),
+            Self::StabVec(e) => e.process(input),
             Self::DensityMatrix(e) => e.process(input),
             Self::CoinToss(e) => e.process(input),
         }
@@ -56,7 +56,7 @@ impl EngineInner {
             Self::StateVec(e) => e.reset(),
             Self::SparseStab(e) => e.reset(),
             Self::Stabilizer(e) => e.reset(),
-            Self::CliffordRz(e) => e.reset(),
+            Self::StabVec(e) => e.reset(),
             Self::DensityMatrix(e) => e.reset(),
             Self::CoinToss(e) => e.reset(),
         }
@@ -81,7 +81,7 @@ pub struct PecosCircuitBuilder {
 ///
 /// # Arguments
 /// - `engine_type`: null-terminated C string, one of:
-///   `"state_vec"`, `"sparse_stab"`, `"stabilizer"`, `"clifford_rz"`,
+///   `"state_vec"`, `"sparse_stab"`, `"stabilizer"`, `"stab_vec"`,
 ///   `"density_matrix"`, `"coin_toss"`
 /// - `num_qubits`: number of qubits
 /// - `seed`: RNG seed (0 means use default/random seed)
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn pecos_engine_create(
             "state_vec" => EngineInner::StateVec(StateVecEngine::new(num_qubits)),
             "sparse_stab" => EngineInner::SparseStab(SparseStabEngine::new(num_qubits)),
             "stabilizer" => EngineInner::Stabilizer(StabilizerEngine::new(num_qubits)),
-            "clifford_rz" => EngineInner::CliffordRz(CliffordRzEngine::new(num_qubits)),
+            "stab_vec" => EngineInner::StabVec(StabVecEngine::new(num_qubits)),
             "density_matrix" => EngineInner::DensityMatrix(DensityMatrixEngine::new(num_qubits)),
             "coin_toss" => EngineInner::CoinToss(CoinTossEngine::new(num_qubits)),
             _ => return std::ptr::null_mut(),
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn pecos_engine_create(
             "state_vec" => EngineInner::StateVec(StateVecEngine::with_seed(num_qubits, seed)),
             "sparse_stab" => EngineInner::SparseStab(SparseStabEngine::with_seed(num_qubits, seed)),
             "stabilizer" => EngineInner::Stabilizer(StabilizerEngine::with_seed(num_qubits, seed)),
-            "clifford_rz" => EngineInner::CliffordRz(CliffordRzEngine::with_seed(num_qubits, seed)),
+            "stab_vec" => EngineInner::StabVec(StabVecEngine::with_seed(num_qubits, seed)),
             "density_matrix" => {
                 EngineInner::DensityMatrix(DensityMatrixEngine::with_seed(num_qubits, seed))
             }

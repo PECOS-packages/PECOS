@@ -111,6 +111,10 @@ impl PauliProp {
 }
 
 impl QuantumSimulator for PauliProp {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits.unwrap_or(0)
+    }
+
     /// Resets the state by clearing all Pauli all tracked X and Z operators.
     ///
     /// # Returns
@@ -368,6 +372,15 @@ impl PauliProp {
         count
     }
 
+    /// Remove all Pauli operators from a specific qubit.
+    ///
+    /// Models reset (PZ) which absorbs any propagating error on that qubit.
+    pub fn clear_qubit(&mut self, qubit: usize) {
+        use pecos_core::sets::set::Set;
+        self.xs.remove(&qubit);
+        self.zs.remove(&qubit);
+    }
+
     /// Checks if this is the identity operator (no Pauli operators on any qubit).
     ///
     /// # Returns
@@ -533,6 +546,23 @@ impl PauliProp {
     pub fn to_dense_string(&self) -> String {
         format!("{}{}", self.sign_string(), self.dense_string())
     }
+
+    fn set_x_component(&mut self, q: usize, value: bool) {
+        if self.contains_x(q) != value {
+            self.track_x(&[q]);
+        }
+    }
+
+    fn set_z_component(&mut self, q: usize, value: bool) {
+        if self.contains_z(q) != value {
+            self.track_z(&[q]);
+        }
+    }
+
+    fn set_components(&mut self, q: usize, x: bool, z: bool) {
+        self.set_x_component(q, x);
+        self.set_z_component(q, z);
+    }
 }
 
 impl fmt::Display for PauliProp {
@@ -560,6 +590,21 @@ impl CliffordGateable for PauliProp {
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            if self.contains_x(qu) {
+                self.track_z(&[qu]);
+            }
+        }
+        self
+    }
+
+    /// Applies the adjoint square root of Z gate.
+    ///
+    /// Ignoring global phase, SZ and SZdg have the same binary Pauli action:
+    /// X <-> Y, Z -> Z.
+    #[inline]
+    fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
             if self.contains_x(qu) {
@@ -607,6 +652,62 @@ impl CliffordGateable for PauliProp {
         self
     }
 
+    /// Applies the square root of X gate.
+    ///
+    /// Binary Pauli action: X -> X, Z <-> Y.
+    #[inline]
+    fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            if self.contains_z(qu) {
+                self.track_x(&[qu]);
+            }
+        }
+        self
+    }
+
+    /// Applies the adjoint square root of X gate.
+    ///
+    /// Ignoring global phase, SX and SXdg have the same binary Pauli action.
+    #[inline]
+    fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            if self.contains_z(qu) {
+                self.track_x(&[qu]);
+            }
+        }
+        self
+    }
+
+    /// Applies the square root of Y gate.
+    ///
+    /// Binary Pauli action: X <-> Z, Y -> Y.
+    #[inline]
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            let x = self.contains_x(qu);
+            let z = self.contains_z(qu);
+            self.set_components(qu, z, x);
+        }
+        self
+    }
+
+    /// Applies the adjoint square root of Y gate.
+    ///
+    /// Ignoring global phase, SY and SYdg have the same binary Pauli action.
+    #[inline]
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            let x = self.contains_x(qu);
+            let z = self.contains_z(qu);
+            self.set_components(qu, z, x);
+        }
+        self
+    }
+
     /// Applies the controlled-X (CX) gate between pairs of qubits
     ///
     /// The CX gate transforms Pauli operators as follows:
@@ -637,6 +738,160 @@ impl CliffordGateable for PauliProp {
             if self.contains_z(q2) {
                 self.track_z(&[q1]);
             }
+        }
+        self
+    }
+
+    /// Applies the controlled-Y gate.
+    #[inline]
+    fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            self.set_components(q1, x1, z1 ^ x2 ^ z2);
+            self.set_components(q2, x2 ^ x1, z2 ^ x1);
+        }
+        self
+    }
+
+    /// Applies the controlled-Z gate.
+    #[inline]
+    fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            self.set_components(q1, x1, z1 ^ x2);
+            self.set_components(q2, x2, z2 ^ x1);
+        }
+        self
+    }
+
+    /// Applies the square root of XX gate.
+    #[inline]
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            let affected = z1 ^ z2;
+            self.set_components(q1, x1 ^ affected, z1);
+            self.set_components(q2, x2 ^ affected, z2);
+        }
+        self
+    }
+
+    /// Applies the adjoint square root of XX gate.
+    ///
+    /// Ignoring global phase, SXX and SXXdg have the same binary Pauli action.
+    #[inline]
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            let affected = z1 ^ z2;
+            self.set_components(q1, x1 ^ affected, z1);
+            self.set_components(q2, x2 ^ affected, z2);
+        }
+        self
+    }
+
+    /// Applies the square root of YY gate.
+    #[inline]
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            self.set_components(q1, x2 ^ z1 ^ z2, x1 ^ x2 ^ z2);
+            self.set_components(q2, x1 ^ z1 ^ z2, x1 ^ x2 ^ z1);
+        }
+        self
+    }
+
+    /// Applies the adjoint square root of YY gate.
+    ///
+    /// Ignoring global phase, SYY and SYYdg have the same binary Pauli action.
+    #[inline]
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            self.set_components(q1, x2 ^ z1 ^ z2, x1 ^ x2 ^ z2);
+            self.set_components(q2, x1 ^ z1 ^ z2, x1 ^ x2 ^ z1);
+        }
+        self
+    }
+
+    /// Applies the square root of ZZ gate.
+    #[inline]
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            let affected = x1 ^ x2;
+            self.set_components(q1, x1, z1 ^ affected);
+            self.set_components(q2, x2, z2 ^ affected);
+        }
+        self
+    }
+
+    /// Applies the adjoint square root of ZZ gate.
+    ///
+    /// Ignoring global phase, SZZ and SZZdg have the same binary Pauli action.
+    #[inline]
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            let affected = x1 ^ x2;
+            self.set_components(q1, x1, z1 ^ affected);
+            self.set_components(q2, x2, z2 ^ affected);
+        }
+        self
+    }
+
+    /// Applies the SWAP gate.
+    #[inline]
+    fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            let q1 = q1.index();
+            let q2 = q2.index();
+            let x1 = self.contains_x(q1);
+            let z1 = self.contains_z(q1);
+            let x2 = self.contains_x(q2);
+            let z2 = self.contains_z(q2);
+            self.set_components(q1, x2, z2);
+            self.set_components(q2, x1, z1);
         }
         self
     }
@@ -676,7 +931,105 @@ impl CliffordGateable for PauliProp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clifford_matrix_oracle::{CliffordMatrixGate, all_pauli_strings, conjugate_pauli};
     use std::collections::BTreeMap;
+
+    fn prop_from_dense(input: &str) -> PauliProp {
+        let mut prop = PauliProp::with_sign_tracking(input.len());
+        for (q, p) in input.chars().enumerate() {
+            match p {
+                'I' => {}
+                'X' => prop.track_x(&[q]),
+                'Y' => prop.track_y(&[q]),
+                'Z' => prop.track_z(&[q]),
+                _ => panic!("invalid Pauli label {p}"),
+            }
+        }
+        prop
+    }
+
+    fn assert_gate_table<F>(name: &str, table: &[(&str, &str)], mut apply: F)
+    where
+        F: FnMut(&mut PauliProp),
+    {
+        for &(input, expected) in table {
+            let mut prop = prop_from_dense(input);
+            apply(&mut prop);
+            assert_eq!(prop.dense_string(), expected, "{name}: {input}");
+        }
+    }
+
+    fn assert_gate_matches_matrix_oracle<F>(
+        name: &str,
+        gate: CliffordMatrixGate,
+        num_qubits: usize,
+        mut apply: F,
+    ) where
+        F: FnMut(&mut PauliProp),
+    {
+        for input in all_pauli_strings(num_qubits) {
+            let expected = conjugate_pauli(gate, &input);
+            let mut prop = prop_from_dense(&input);
+            apply(&mut prop);
+            assert_eq!(
+                prop.dense_string(),
+                expected.pauli,
+                "{name}: {input}, oracle sign {}",
+                expected.sign
+            );
+        }
+    }
+
+    fn reverse_two_qubit_pauli(pauli: &str) -> String {
+        let labels: Vec<char> = pauli.chars().collect();
+        assert_eq!(labels.len(), 2);
+        [labels[1], labels[0]].into_iter().collect()
+    }
+
+    fn assert_reversed_pair_matches_matrix_oracle<F>(
+        name: &str,
+        gate: CliffordMatrixGate,
+        mut apply: F,
+    ) where
+        F: FnMut(&mut PauliProp, &[(QubitId, QubitId)]),
+    {
+        let reversed_pair = [(QubitId(1), QubitId(0))];
+        for input in all_pauli_strings(2) {
+            let oracle_input = reverse_two_qubit_pauli(&input);
+            let mut expected = conjugate_pauli(gate, &oracle_input);
+            expected.pauli = reverse_two_qubit_pauli(&expected.pauli);
+
+            let mut prop = prop_from_dense(&input);
+            apply(&mut prop, &reversed_pair);
+            assert_eq!(
+                prop.dense_string(),
+                expected.pauli,
+                "{name} reversed pair: {input}, oracle sign {}",
+                expected.sign
+            );
+        }
+    }
+
+    fn assert_two_pair_batch_matches_sequential<F>(name: &str, mut apply: F)
+    where
+        F: FnMut(&mut PauliProp, &[(QubitId, QubitId)]),
+    {
+        let pairs = [(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))];
+        for input in all_pauli_strings(4) {
+            let mut batched = prop_from_dense(&input);
+            apply(&mut batched, &pairs);
+
+            let mut sequential = prop_from_dense(&input);
+            apply(&mut sequential, &pairs[0..1]);
+            apply(&mut sequential, &pairs[1..2]);
+
+            assert_eq!(
+                batched.dense_string(),
+                sequential.dense_string(),
+                "{name} batched: {input}"
+            );
+        }
+    }
 
     #[test]
     fn test_sign_tracking() {
@@ -780,5 +1133,266 @@ mod tests {
         assert!(sim.contains_y(0));
         // Phase should be -i (X·Z = -iY)
         assert_eq!(sim.sign_string(), "-i");
+    }
+
+    #[test]
+    fn test_direct_clifford_gate_binary_truth_tables() {
+        let q0 = QubitId(0);
+        let q1 = QubitId(1);
+        let pair = [(q0, q1)];
+
+        assert_gate_table(
+            "SZdg",
+            &[("I", "I"), ("X", "Y"), ("Y", "X"), ("Z", "Z")],
+            |prop| {
+                prop.szdg(&[q0]);
+            },
+        );
+        assert_gate_table(
+            "SX",
+            &[("I", "I"), ("X", "X"), ("Y", "Z"), ("Z", "Y")],
+            |prop| {
+                prop.sx(&[q0]);
+            },
+        );
+        assert_gate_table(
+            "SXdg",
+            &[("I", "I"), ("X", "X"), ("Y", "Z"), ("Z", "Y")],
+            |prop| {
+                prop.sxdg(&[q0]);
+            },
+        );
+        assert_gate_table(
+            "SY",
+            &[("I", "I"), ("X", "Z"), ("Y", "Y"), ("Z", "X")],
+            |prop| {
+                prop.sy(&[q0]);
+            },
+        );
+        assert_gate_table(
+            "SYdg",
+            &[("I", "I"), ("X", "Z"), ("Y", "Y"), ("Z", "X")],
+            |prop| {
+                prop.sydg(&[q0]);
+            },
+        );
+        assert_gate_table(
+            "CY",
+            &[("XI", "XY"), ("IX", "ZX"), ("ZI", "ZI"), ("IZ", "ZZ")],
+            |prop| {
+                prop.cy(&pair);
+            },
+        );
+        assert_gate_table(
+            "CZ",
+            &[("XI", "XZ"), ("IX", "ZX"), ("ZI", "ZI"), ("IZ", "IZ")],
+            |prop| {
+                prop.cz(&pair);
+            },
+        );
+        assert_gate_table(
+            "SXX",
+            &[("XI", "XI"), ("IX", "IX"), ("ZI", "YX"), ("IZ", "XY")],
+            |prop| {
+                prop.sxx(&pair);
+            },
+        );
+        assert_gate_table(
+            "SXXdg",
+            &[("XI", "XI"), ("IX", "IX"), ("ZI", "YX"), ("IZ", "XY")],
+            |prop| {
+                prop.sxxdg(&pair);
+            },
+        );
+        assert_gate_table(
+            "SYY",
+            &[("XI", "ZY"), ("IX", "YZ"), ("ZI", "XY"), ("IZ", "YX")],
+            |prop| {
+                prop.syy(&pair);
+            },
+        );
+        assert_gate_table(
+            "SYYdg",
+            &[("XI", "ZY"), ("IX", "YZ"), ("ZI", "XY"), ("IZ", "YX")],
+            |prop| {
+                prop.syydg(&pair);
+            },
+        );
+        assert_gate_table(
+            "SZZ",
+            &[("XI", "YZ"), ("IX", "ZY"), ("ZI", "ZI"), ("IZ", "IZ")],
+            |prop| {
+                prop.szz(&pair);
+            },
+        );
+        assert_gate_table(
+            "SZZdg",
+            &[("XI", "YZ"), ("IX", "ZY"), ("ZI", "ZI"), ("IZ", "IZ")],
+            |prop| {
+                prop.szzdg(&pair);
+            },
+        );
+        assert_gate_table(
+            "SWAP",
+            &[("XI", "IX"), ("IX", "XI"), ("ZI", "IZ"), ("IZ", "ZI")],
+            |prop| {
+                prop.swap(&pair);
+            },
+        );
+    }
+
+    #[test]
+    fn test_direct_clifford_gates_match_matrix_oracle_for_all_paulis() {
+        let q0 = QubitId(0);
+        let q1 = QubitId(1);
+        let pair = [(q0, q1)];
+
+        assert_gate_matches_matrix_oracle("CX", CliffordMatrixGate::CX, 2, |prop| {
+            prop.cx(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SZdg", CliffordMatrixGate::SZdg, 1, |prop| {
+            prop.szdg(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("F", CliffordMatrixGate::F, 1, |prop| {
+            prop.f(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("Fdg", CliffordMatrixGate::Fdg, 1, |prop| {
+            prop.fdg(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("SX", CliffordMatrixGate::SX, 1, |prop| {
+            prop.sx(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("SXdg", CliffordMatrixGate::SXdg, 1, |prop| {
+            prop.sxdg(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("SY", CliffordMatrixGate::SY, 1, |prop| {
+            prop.sy(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("SYdg", CliffordMatrixGate::SYdg, 1, |prop| {
+            prop.sydg(&[q0]);
+        });
+        assert_gate_matches_matrix_oracle("CY", CliffordMatrixGate::CY, 2, |prop| {
+            prop.cy(&pair);
+        });
+        assert_gate_matches_matrix_oracle("CZ", CliffordMatrixGate::CZ, 2, |prop| {
+            prop.cz(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SXX", CliffordMatrixGate::SXX, 2, |prop| {
+            prop.sxx(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SXXdg", CliffordMatrixGate::SXXdg, 2, |prop| {
+            prop.sxxdg(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SYY", CliffordMatrixGate::SYY, 2, |prop| {
+            prop.syy(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SYYdg", CliffordMatrixGate::SYYdg, 2, |prop| {
+            prop.syydg(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SZZ", CliffordMatrixGate::SZZ, 2, |prop| {
+            prop.szz(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SZZdg", CliffordMatrixGate::SZZdg, 2, |prop| {
+            prop.szzdg(&pair);
+        });
+        assert_gate_matches_matrix_oracle("SWAP", CliffordMatrixGate::SWAP, 2, |prop| {
+            prop.swap(&pair);
+        });
+    }
+
+    #[test]
+    fn test_two_qubit_gates_reversed_pair_matches_matrix_oracle() {
+        assert_reversed_pair_matches_matrix_oracle("CX", CliffordMatrixGate::CX, |prop, pairs| {
+            prop.cx(pairs);
+        });
+        assert_reversed_pair_matches_matrix_oracle("CY", CliffordMatrixGate::CY, |prop, pairs| {
+            prop.cy(pairs);
+        });
+        assert_reversed_pair_matches_matrix_oracle("CZ", CliffordMatrixGate::CZ, |prop, pairs| {
+            prop.cz(pairs);
+        });
+        assert_reversed_pair_matches_matrix_oracle(
+            "SXX",
+            CliffordMatrixGate::SXX,
+            |prop, pairs| {
+                prop.sxx(pairs);
+            },
+        );
+        assert_reversed_pair_matches_matrix_oracle(
+            "SXXdg",
+            CliffordMatrixGate::SXXdg,
+            |prop, pairs| {
+                prop.sxxdg(pairs);
+            },
+        );
+        assert_reversed_pair_matches_matrix_oracle(
+            "SYY",
+            CliffordMatrixGate::SYY,
+            |prop, pairs| {
+                prop.syy(pairs);
+            },
+        );
+        assert_reversed_pair_matches_matrix_oracle(
+            "SYYdg",
+            CliffordMatrixGate::SYYdg,
+            |prop, pairs| {
+                prop.syydg(pairs);
+            },
+        );
+        assert_reversed_pair_matches_matrix_oracle(
+            "SZZ",
+            CliffordMatrixGate::SZZ,
+            |prop, pairs| {
+                prop.szz(pairs);
+            },
+        );
+        assert_reversed_pair_matches_matrix_oracle(
+            "SZZdg",
+            CliffordMatrixGate::SZZdg,
+            |prop, pairs| {
+                prop.szzdg(pairs);
+            },
+        );
+        assert_reversed_pair_matches_matrix_oracle(
+            "SWAP",
+            CliffordMatrixGate::SWAP,
+            |prop, pairs| {
+                prop.swap(pairs);
+            },
+        );
+    }
+
+    #[test]
+    fn test_two_qubit_gate_batches_match_sequential_pairs() {
+        assert_two_pair_batch_matches_sequential("CX", |prop, pairs| {
+            prop.cx(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("CY", |prop, pairs| {
+            prop.cy(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("CZ", |prop, pairs| {
+            prop.cz(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SXX", |prop, pairs| {
+            prop.sxx(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SXXdg", |prop, pairs| {
+            prop.sxxdg(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SYY", |prop, pairs| {
+            prop.syy(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SYYdg", |prop, pairs| {
+            prop.syydg(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SZZ", |prop, pairs| {
+            prop.szz(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SZZdg", |prop, pairs| {
+            prop.szzdg(pairs);
+        });
+        assert_two_pair_batch_matches_sequential("SWAP", |prop, pairs| {
+            prop.swap(pairs);
+        });
     }
 }

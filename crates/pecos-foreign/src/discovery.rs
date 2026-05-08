@@ -45,6 +45,8 @@ pub struct PluginDescriptor {
 
     /// Opaque handle to the simulator, or null if the plugin does not provide one.
     pub simulator_handle: *mut (),
+    /// Number of qubits the simulator was created with.
+    pub simulator_num_qubits: usize,
     /// Simulator vtable, or null if the plugin does not provide a simulator.
     pub simulator_vtable: *const ForeignSimulatorVTable,
 }
@@ -132,6 +134,7 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginError> {
         decoder_handle: std::ptr::null_mut(),
         decoder_vtable: std::ptr::null(),
         simulator_handle: std::ptr::null_mut(),
+        simulator_num_qubits: 0,
         simulator_vtable: std::ptr::null(),
     };
 
@@ -163,7 +166,13 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginError> {
     // Wrap simulator if provided.
     let simulator = if !desc.simulator_handle.is_null() && !desc.simulator_vtable.is_null() {
         let vtable_copy = unsafe { *desc.simulator_vtable };
-        unsafe { ForeignSimulator::new(desc.simulator_handle, vtable_copy) }
+        unsafe {
+            ForeignSimulator::new(
+                desc.simulator_handle,
+                vtable_copy,
+                desc.simulator_num_qubits,
+            )
+        }
     } else {
         None
     };

@@ -26,9 +26,9 @@
 //! - `measurement_indices`: Set of measurement indices whose outcomes XOR together
 //! - `flip`: Boolean indicating whether to flip the result (from unitary gate phases)
 
-use crate::QuantumSimulator;
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
 use crate::symbolic_gens::SymbolicGensVecSet;
+use crate::QuantumSimulator;
 use core::mem;
 use pecos_core::{BitSet, Set, VecSet};
 
@@ -591,6 +591,139 @@ impl SymbolicSparseStabVecSet {
             .collect()
     }
 
+    /// Prepare qubit in |0⟩ (reset). Does not record a measurement.
+    ///
+    /// Physically: measure Z, discard the outcome, conditionally apply X
+    /// to force the +1 eigenvalue.
+    ///
+    /// Symbolically: project qubit onto +Z eigenstate with empty sign
+    /// (no measurement dependencies). If the qubit is already in a Z
+    /// eigenstate, H rotates it to the X basis first so the non-deterministic
+    /// projection path can properly disentangle it from all other qubits.
+    pub fn pz(&mut self, q: usize) -> &mut Self {
+        if self.stabs.col_x[q].is_empty() {
+            // Qubit is in a Z eigenstate. Rotate to X basis so the
+            // non-deterministic projection correctly disentangles it
+            // and transfers sign information through the stabilizer group.
+            self.h(&[q]);
+        }
+        self.pz_nondeterministic(q);
+        self
+    }
+
+    /// Project qubit onto +Z eigenstate without recording a measurement.
+    ///
+    /// Same Gaussian elimination as `nondeterministic_meas` but does not
+    /// record a measurement or increment the counter. The resulting Z_q
+    /// stabilizer gets an empty sign (eigenvalue +1).
+    fn pz_nondeterministic(&mut self, q: usize) {
+        let mut anticom_stabs_col = self.stabs.col_x[q].clone();
+        let mut anticom_destabs_col = self.destabs.col_x[q].clone();
+
+        // Find stabilizer to replace (smallest weight)
+        let mut smallest_wt = 2 * self.num_qubits + 2;
+        let mut removed_id: Option<usize> = None;
+
+        for stab_id in &anticom_stabs_col {
+            let weight = self.stabs.row_x[*stab_id].len() + self.stabs.row_z[*stab_id].len();
+            if weight < smallest_wt {
+                smallest_wt = weight;
+                removed_id = Some(*stab_id);
+            }
+        }
+
+        let id = removed_id.expect("col_x[q] was non-empty");
+        anticom_stabs_col.remove(&id);
+        let removed_row_x = self.stabs.row_x[id].clone();
+        let removed_row_z = self.stabs.row_z[id].clone();
+
+        // Phase tracking for anticommuting stabilizers
+        if self.stabs.signs_minus.contains(&id) {
+            self.stabs.signs_minus ^= &anticom_stabs_col;
+        }
+        if self.stabs.signs_i.contains(&id) {
+            self.stabs.signs_i.remove(&id);
+            let gens_common: Vec<_> = self
+                .stabs
+                .signs_i
+                .intersection(&anticom_stabs_col)
+                .copied()
+                .collect();
+            let gens_only_stabs: Vec<_> = anticom_stabs_col
+                .difference(&self.stabs.signs_i)
+                .copied()
+                .collect();
+            for i in gens_common {
+                self.stabs.signs_minus ^= &i;
+                self.stabs.signs_i.remove(&i);
+            }
+            for i in gens_only_stabs {
+                self.stabs.signs_i.insert(i);
+            }
+        }
+
+        // Multiply all other anticommuting stabilizers by the removed one
+        let removed_sign = self.stabs.signs[id].clone();
+        for g in &anticom_stabs_col {
+            self.stabs.signs[*g].multiply_assign(&removed_sign);
+            let num_minuses = removed_row_z.intersection(&self.stabs.row_x[*g]).count();
+            if num_minuses & 1 != 0 {
+                self.stabs.signs_minus ^= g;
+            }
+            self.stabs.row_x[*g] ^= &removed_row_x;
+            self.stabs.row_z[*g] ^= &removed_row_z;
+        }
+
+        // Update column storage for stabilizers
+        for i in &removed_row_x {
+            self.stabs.col_x[*i] ^= &anticom_stabs_col;
+        }
+        for i in &removed_row_z {
+            self.stabs.col_z[*i] ^= &anticom_stabs_col;
+        }
+
+        // Remove old stabilizer
+        for i in &self.stabs.row_x[id] {
+            self.stabs.col_x[*i].remove(&id);
+        }
+        for i in &self.stabs.row_z[id] {
+            self.stabs.col_z[*i].remove(&id);
+        }
+
+        // Replace with Z_q, sign = empty (forced +1 eigenvalue)
+        self.stabs.col_z[q].insert(id);
+        self.stabs.row_x[id].clear();
+        self.stabs.row_z[id].clear();
+        self.stabs.row_z[id].insert(q);
+        self.stabs.signs[id] = SymbolicSign::empty();
+        self.stabs.signs_minus.remove(&id);
+        self.stabs.signs_i.remove(&id);
+
+        // Update destabilizers
+        for i in &self.destabs.row_x[id] {
+            self.destabs.col_x[*i].remove(&id);
+        }
+        for i in &self.destabs.row_z[id] {
+            self.destabs.col_z[*i].remove(&id);
+        }
+
+        anticom_destabs_col.remove(&id);
+        for i in &removed_row_x {
+            self.destabs.col_x[*i].insert(id);
+            self.destabs.col_x[*i] ^= &anticom_destabs_col;
+        }
+        for i in &removed_row_z {
+            self.destabs.col_z[*i].insert(id);
+            self.destabs.col_z[*i] ^= &anticom_destabs_col;
+        }
+        for row in &anticom_destabs_col {
+            self.destabs.row_x[*row] ^= &removed_row_x;
+            self.destabs.row_z[*row] ^= &removed_row_z;
+        }
+        self.destabs.row_x[id] = removed_row_x;
+        self.destabs.row_z[id] = removed_row_z;
+    }
+
     /// Handle a deterministic measurement.
     /// The outcome is determined by combining:
     /// 1. XOR of measurement dependencies from contributing stabilizers
@@ -790,6 +923,10 @@ impl SymbolicSparseStabVecSet {
 }
 
 impl QuantumSimulator for SymbolicSparseStabVecSet {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         Self::reset(self)
@@ -1278,5 +1415,91 @@ mod tests {
         assert_eq!(history.format_all(), "[m0=1, m1=0]");
         assert_eq!(history.format_deterministic(), "[m0=1, m1=0]");
         assert_eq!(history.format_nondeterministic(), "[]");
+    }
+
+    /// Two-round X-stabilizer check: m1 must depend on m0 across reset.
+    #[test]
+    fn test_pz_two_round_x_check() {
+        use crate::measurement_sampler::MeasurementKind;
+        let mut sim = SymbolicSparseStabVecSet::new(3);
+
+        // Round 1: measure X₁X₂ via ancilla q0
+        sim.h(&[0]).cx(&[(0, 1)]).cx(&[(0, 2)]).h(&[0]);
+        let r0 = sim.mz(&[0]);
+        assert!(!r0[0].is_deterministic, "m0 should be non-det");
+
+        sim.pz(0);
+
+        // Round 2: same stabilizer
+        sim.h(&[0]).cx(&[(0, 1)]).cx(&[(0, 2)]).h(&[0]);
+        let r1 = sim.mz(&[0]);
+
+        assert!(r1[0].is_deterministic, "m1 should be det, got: {}", r1[0]);
+        assert_eq!(format!("{}", r1[0]), "m1=m0");
+
+        let kinds = MeasurementKind::from_history(sim.measurement_history());
+        assert!(matches!(kinds[0], MeasurementKind::Random));
+        assert!(matches!(kinds[1], MeasurementKind::Copy(0)));
+    }
+
+    /// Multi-round X-check: correlations must survive 6 reset cycles.
+    #[test]
+    fn test_pz_six_round_x_check() {
+        use crate::measurement_sampler::MeasurementKind;
+        let mut sim = SymbolicSparseStabVecSet::new(3);
+
+        for _ in 0..6 {
+            sim.h(&[0]).cx(&[(0, 1)]).cx(&[(0, 2)]).h(&[0]);
+            sim.mz(&[0]);
+            sim.pz(0);
+        }
+
+        let kinds = MeasurementKind::from_history(sim.measurement_history());
+        assert_eq!(kinds.len(), 6);
+        assert!(
+            matches!(kinds[0], MeasurementKind::Random),
+            "m0: {:?}",
+            kinds[0]
+        );
+        // All subsequent measurements must depend on a prior measurement
+        for (i, k) in kinds.iter().enumerate().skip(1) {
+            assert!(
+                matches!(k, MeasurementKind::Copy(_)),
+                "m{i} should be Copy, got {k:?}"
+            );
+        }
+    }
+
+    /// After PZ, the reset qubit itself must be fresh (deterministic |0⟩).
+    #[test]
+    fn test_pz_reset_qubit_is_fresh() {
+        let mut sim = SymbolicSparseStabVecSet::new(2);
+
+        // Entangle q0 and q1 via Bell state
+        sim.h(&[0]).cx(&[(0, 1)]);
+        // Measure q0 (non-det)
+        let r = sim.mz(&[0]);
+        assert!(!r[0].is_deterministic);
+
+        // Reset q0
+        sim.pz(0);
+
+        // Measuring q0 again must give deterministic 0 (fresh |0⟩)
+        let r2 = sim.mz(&[0]);
+        assert!(r2[0].is_deterministic, "reset qubit should be det");
+        assert_eq!(format!("{}", r2[0]), "m1=0", "reset qubit should measure 0");
+    }
+
+    /// PZ on a qubit that was never entangled should be a no-op.
+    #[test]
+    fn test_pz_on_fresh_qubit() {
+        let mut sim = SymbolicSparseStabVecSet::new(2);
+
+        // PZ on |0⟩ should not change anything
+        sim.pz(0);
+
+        let r = sim.mz(&[0]);
+        assert!(r[0].is_deterministic);
+        assert_eq!(format!("{}", r[0]), "m0=0");
     }
 }

@@ -62,6 +62,7 @@ pecos-experimental.workspace = true
 
 # Third-party
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
+rayon.workspace = true
 rand.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true

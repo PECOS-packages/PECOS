@@ -16,9 +16,6 @@ from pathlib import Path
 
 import pytest
 from pecos import WasmForeignObject
-from pecos.classical_interpreters.phir_classical_interpreter import (
-    PhirClassicalInterpreter,
-)
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.noise.generic_error_model import GenericErrorModel
 from phir.model import PHIRModel
@@ -60,7 +57,7 @@ def test_spec_example_noisy_wasmtime() -> None:
             "p1": 2e-1,
             "p2": 2e-1,
             "p_meas": 2e-1,
-            "p_init": 1e-1,
+            "p_prep": 1e-1,
             "p1_error_model": {
                 "X": 0.25,
                 "Y": 0.25,
@@ -95,7 +92,7 @@ def test_example1_noisy_wasmtime() -> None:
             "p1": 2e-1,
             "p2": 2e-1,
             "p_meas": 2e-1,
-            "p_init": 1e-1,
+            "p_prep": 1e-1,
             "p1_error_model": {
                 "X": 0.25,
                 "Y": 0.25,
@@ -129,7 +126,7 @@ def test_example1_no_wasm_noisy() -> None:
             "p1": 2e-1,
             "p2": 2e-1,
             "p_meas": 2e-1,
-            "p_init": 1e-1,
+            "p_prep": 1e-1,
             "p1_error_model": {
                 "X": 0.25,
                 "Y": 0.25,
@@ -211,11 +208,7 @@ def test_bell_qparallel_cliff() -> None:
     Tests that a program creating and measuring a Bell state using qparallel blocks returns expected results
     with Clifford circuits and stabilizer simulator.
     """
-    # Create an interpreter with validation disabled for testing Result instruction
-    interp = PhirClassicalInterpreter()
-    interp.phir_validate = False
-
-    results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
+    results = HybridEngine(qsim="stabilizer").run(
         program=json.load(
             Path.open(this_dir / "phir" / "bell_qparallel_cliff.phir.json"),
         ),
@@ -235,10 +228,7 @@ def test_bell_qparallel_cliff_barrier() -> None:
     Tests that a program creating and measuring a Bell state using qparallel blocks and barriers returns expected
     results with Clifford circuits and stabilizer simulator.
     """
-    interp = PhirClassicalInterpreter()
-    interp.phir_validate = False
-
-    results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
+    results = HybridEngine(qsim="stabilizer").run(
         program=json.load(
             Path.open(this_dir / "phir" / "bell_qparallel_cliff_barrier.phir.json"),
         ),
@@ -258,10 +248,7 @@ def test_bell_qparallel_cliff_ifbarrier() -> None:
     Tests that a program creating and measuring a Bell state using qparallel blocks and conditional barriers
     returns expected results with Clifford circuits and stabilizer simulator.
     """
-    interp = PhirClassicalInterpreter()
-    interp.phir_validate = False
-
-    results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
+    results = HybridEngine(qsim="stabilizer").run(
         program=json.load(
             Path.open(this_dir / "phir" / "bell_qparallel_cliff_ifbarrier.phir.json"),
         ),

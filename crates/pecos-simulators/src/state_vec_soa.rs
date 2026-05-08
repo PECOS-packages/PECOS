@@ -2814,6 +2814,10 @@ impl<R> QuantumSimulator for StateVecSoA<R>
 where
     R: Rng,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         // Clear pending gates (state is being reset anyway)
         for pg in &mut self.pending_gates {
@@ -4438,11 +4442,11 @@ where
         results
     }
 
-    /// Optimized measure-and-prepare-Z: always prepares |0⟩ state.
+    /// Optimized measure-and-prepare-Z: measures qubit, then prepares |0⟩.
     ///
-    /// This is more efficient than the default implementation because it:
-    /// 1. Always collapses to |0⟩ regardless of measurement outcome
-    /// 2. Avoids the conditional X correction step
+    /// Fuses projection + conditional X into a single pass over the state vector:
+    /// - outcome 0: zero |1⟩ amplitudes, normalize |0⟩ (already in |0⟩)
+    /// - outcome 1: move |1⟩ amplitudes to |0⟩ positions with normalization, zero |1⟩
     #[inline]
     fn mpz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         self.flush();
@@ -4452,28 +4456,37 @@ where
             let q_idx = q.index();
             let step = 1 << q_idx;
 
-            // Calculate probability of measuring |1⟩
             let prob_one = self.probability_one(q_idx);
-
-            // Sample outcome (for the measurement result)
             let outcome = self.rng.bernoulli(prob_one);
             let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
 
-            // Always prepare |0⟩: zero the |1⟩ amplitudes and normalize |0⟩
-            let norm_factor = 1.0 / (1.0 - prob_one).sqrt();
+            let norm_factor = if outcome {
+                1.0 / prob_one.sqrt()
+            } else {
+                1.0 / (1.0 - prob_one).sqrt()
+            };
 
             if step < 4 {
                 // Scalar path
                 for i in (0..self.real.len()).step_by(step * 2) {
-                    // Normalize |0⟩ states
-                    for j in i..(i + step) {
-                        self.real[j] *= norm_factor;
-                        self.imag[j] *= norm_factor;
-                    }
-                    // Zero |1⟩ states
-                    for j in (i + step)..(i + 2 * step) {
-                        self.real[j] = 0.0;
-                        self.imag[j] = 0.0;
+                    if outcome {
+                        // Move |1⟩ -> |0⟩ with normalization, zero |1⟩
+                        for j in 0..step {
+                            self.real[i + j] = self.real[i + step + j] * norm_factor;
+                            self.imag[i + j] = self.imag[i + step + j] * norm_factor;
+                            self.real[i + step + j] = 0.0;
+                            self.imag[i + step + j] = 0.0;
+                        }
+                    } else {
+                        // Normalize |0⟩, zero |1⟩
+                        for j in 0..step {
+                            self.real[i + j] *= norm_factor;
+                            self.imag[i + j] *= norm_factor;
+                        }
+                        for j in (i + step)..(i + 2 * step) {
+                            self.real[j] = 0.0;
+                            self.imag[j] = 0.0;
+                        }
                     }
                 }
             } else {
@@ -4481,23 +4494,40 @@ where
                 let norm_vec = f64x4::splat(norm_factor);
 
                 for i in (0..self.real.len()).step_by(step * 2) {
-                    // Normalize |0⟩ states
-                    let mut j = i;
-                    while j + 4 <= i + step {
-                        let re = f64x4::from(&self.real[j..j + 4]);
-                        let im = f64x4::from(&self.imag[j..j + 4]);
-                        let scaled_re: [f64; 4] = (norm_vec * re).into();
-                        let scaled_im: [f64; 4] = (norm_vec * im).into();
-                        self.real[j..j + 4].copy_from_slice(&scaled_re);
-                        self.imag[j..j + 4].copy_from_slice(&scaled_im);
-                        j += 4;
-                    }
-                    // Zero |1⟩ states
-                    let mut j = i + step;
-                    while j + 4 <= i + 2 * step {
-                        self.real[j..j + 4].copy_from_slice(&[0.0; 4]);
-                        self.imag[j..j + 4].copy_from_slice(&[0.0; 4]);
-                        j += 4;
+                    if outcome {
+                        // Move |1⟩ -> |0⟩ with normalization, zero |1⟩
+                        let mut j = 0;
+                        while j + 4 <= step {
+                            let re = f64x4::from(&self.real[i + step + j..i + step + j + 4]);
+                            let im = f64x4::from(&self.imag[i + step + j..i + step + j + 4]);
+                            let scaled_re: [f64; 4] = (norm_vec * re).into();
+                            let scaled_im: [f64; 4] = (norm_vec * im).into();
+                            self.real[i + j..i + j + 4].copy_from_slice(&scaled_re);
+                            self.imag[i + j..i + j + 4].copy_from_slice(&scaled_im);
+                            self.real[i + step + j..i + step + j + 4]
+                                .copy_from_slice(&[0.0; 4]);
+                            self.imag[i + step + j..i + step + j + 4]
+                                .copy_from_slice(&[0.0; 4]);
+                            j += 4;
+                        }
+                    } else {
+                        // Normalize |0⟩, zero |1⟩
+                        let mut j = i;
+                        while j + 4 <= i + step {
+                            let re = f64x4::from(&self.real[j..j + 4]);
+                            let im = f64x4::from(&self.imag[j..j + 4]);
+                            let scaled_re: [f64; 4] = (norm_vec * re).into();
+                            let scaled_im: [f64; 4] = (norm_vec * im).into();
+                            self.real[j..j + 4].copy_from_slice(&scaled_re);
+                            self.imag[j..j + 4].copy_from_slice(&scaled_im);
+                            j += 4;
+                        }
+                        let mut j = i + step;
+                        while j + 4 <= i + 2 * step {
+                            self.real[j..j + 4].copy_from_slice(&[0.0; 4]);
+                            self.imag[j..j + 4].copy_from_slice(&[0.0; 4]);
+                            j += 4;
+                        }
                     }
                 }
             }

@@ -1,5 +1,5 @@
 use pecos_core::{Angle64, QubitId};
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, CliffordRz};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
         .unwrap_or(12);
 
     let theta = Angle64::from_radians(0.3);
-    let mut sim = CliffordRz::new_with_seed(nq, 42);
+    let mut sim = StabVec::new_with_seed(nq, 42);
 
     for q in 0..nq {
         sim.h(&[QubitId(q)]);

@@ -46,7 +46,6 @@ def run_both(
         kw["qsim"] = qsim
 
     py_i = PhirClassicalInterpreter()
-    py_i.phir_validate = False
     py_r = HybridEngine(cinterp=py_i, **kw).run(
         phir,
         foreign_object=foreign_object,
@@ -56,7 +55,6 @@ def run_both(
     )
 
     rs_i = RustPhirClassicalInterpreter()
-    rs_i.phir_validate = False
     rs_r = HybridEngine(cinterp=rs_i, **kw).run(
         phir,
         foreign_object=foreign_object,
@@ -106,7 +104,6 @@ def test_wasm_spec_example() -> None:
     math_wat = WAT_DIR / "math.wat"
 
     py_i = PhirClassicalInterpreter()
-    py_i.phir_validate = False
     py_r = HybridEngine(cinterp=py_i).run(
         phir,
         foreign_object=WasmForeignObject(math_wat),
@@ -115,7 +112,6 @@ def test_wasm_spec_example() -> None:
     )
 
     rs_i = RustPhirClassicalInterpreter()
-    rs_i.phir_validate = False
     rs_r = HybridEngine(cinterp=rs_i).run(
         phir,
         foreign_object=WasmForeignObject(math_wat),

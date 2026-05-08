@@ -108,6 +108,16 @@ pub enum GateType {
     /// Free/deallocate a qubit
     QFree = 136,
     Idle = 200,
+    /// Meta-gate: Pauli operator annotation for fault tracking.
+    ///
+    /// This gate carries a Pauli string but has no effect on quantum state.
+    /// Its position in the circuit determines which faults can flip the operator
+    /// (only faults before this node are relevant). The propagator uses it as a
+    /// backward propagation start point.
+    ///
+    /// The Pauli string is encoded in `params`: each param encodes
+    /// `qubit * 4 + pauli_type` where `pauli_type` is 1=X, 2=Y, 3=Z.
+    PauliOperatorMeta = 210,
     MeasCrosstalkGlobalPayload = 218,
     MeasCrosstalkLocalPayload = 219,
     /// Custom/unrecognized gate type, with actual name stored in metadata
@@ -164,6 +174,7 @@ impl From<u8> for GateType {
             200 => GateType::Idle,
             218 => GateType::MeasCrosstalkGlobalPayload,
             219 => GateType::MeasCrosstalkLocalPayload,
+            210 => GateType::PauliOperatorMeta,
             255 => GateType::Custom,
             _ => panic!("Invalid gate type ID: {value}"),
         }
@@ -171,6 +182,15 @@ impl From<u8> for GateType {
 }
 
 impl GateType {
+    /// Returns true if this gate type is a meta-gate (annotation, not physical).
+    ///
+    /// Meta-gates have a position in the DAG but do not affect quantum state
+    /// and should not create fault locations or receive noise.
+    #[must_use]
+    pub const fn is_meta(self) -> bool {
+        matches!(self, GateType::PauliOperatorMeta)
+    }
+
     /// Returns the number of angle parameters this gate type requires
     ///
     /// # Returns
@@ -215,7 +235,8 @@ impl GateType {
             | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
-            | GateType::Custom => 0,
+            | GateType::Custom
+            | GateType::PauliOperatorMeta => 0,
 
             // Gates with one parameter
             GateType::RX
@@ -277,7 +298,11 @@ impl GateType {
             | GateType::Idle
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
-            | GateType::Custom => 1,
+            | GateType::Custom
+            // PauliOperatorMeta is variable-arity but returns 1 here because
+            // gate validation checks `is_multiple_of(quantum_arity())` and any
+            // count is a multiple of 1. The actual qubit count is in the gate.
+            | GateType::PauliOperatorMeta => 1,
 
             // Two-qubit gates
             GateType::CX
@@ -405,6 +430,7 @@ impl fmt::Display for GateType {
             GateType::MeasCrosstalkGlobalPayload => write!(f, "MeasCrosstalkGlobalPayload"),
             GateType::MeasCrosstalkLocalPayload => write!(f, "MeasCrosstalkLocalPayload"),
             GateType::Custom => write!(f, "Custom"),
+            GateType::PauliOperatorMeta => write!(f, "PauliOperator"),
         }
     }
 }

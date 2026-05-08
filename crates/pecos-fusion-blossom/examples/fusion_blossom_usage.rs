@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let result = decoder.decode(&syndrome.view())?;
         println!("Decoded observables: {:?}", result.observable);
         println!("Total weight: {:.2}", result.weight);
-        println!("Observable errors detected: ");
+        println!("Logical observable errors detected: ");
         for (i, &obs) in result.observable.iter().enumerate() {
             if obs != 0 {
                 println!("  - Observable {i} flipped");

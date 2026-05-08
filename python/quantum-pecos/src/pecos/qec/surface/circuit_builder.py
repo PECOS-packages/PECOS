@@ -19,11 +19,68 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from pecos.qec.surface.patch import SurfacePatch
+    from pecos.qec.surface.patch import (
+        LogicalDescriptor,
+        Stabilizer,
+        StabilizerDescriptor,
+        SurfacePatch,
+        SurfacePatchDescriptor,
+    )
     from pecos.quantum import DagCircuit, TickCircuit, TickHandle
+
+
+class SurfaceDetectorDescriptor(TypedDict):
+    """Public detector descriptor derived from TickCircuit metadata."""
+
+    id: int
+    detector_id: int
+    stabilizer_kind: str
+    stabilizer_index: int
+    round: int
+    is_final_round: bool
+    coords: list[int]
+    records: list[int]
+    stabilizer_is_boundary: bool
+    stabilizer_region: str
+    schedule_rounds: list[int]
+    schedule_start_round: int | None
+    schedule_end_round: int | None
+    schedule_entries: list[dict[str, int | str]]
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+
+
+class SurfaceObservableDescriptor(TypedDict):
+    """Public observable descriptor derived from TickCircuit metadata."""
+
+    id: int
+    observable_id: int
+    basis: str
+    records: list[int]
+    logical_type: str
+    data_qubits: list[int]
+    data_qubit_positions: list[list[int]]
+    weight: int
+    support_axis: str
+
+
+class SurfaceMemoryExperimentDescriptor(TypedDict):
+    """Public bundle describing a surface-memory experiment."""
+
+    patch: SurfacePatchDescriptor
+    basis: str
+    num_rounds: int
+    ancilla_budget: int | None
+    x_stabilizers: list[StabilizerDescriptor]
+    z_stabilizers: list[StabilizerDescriptor]
+    stabilizers: list[StabilizerDescriptor]
+    logicals: list[LogicalDescriptor]
+    detectors: list[SurfaceDetectorDescriptor]
+    observables: list[SurfaceObservableDescriptor]
 
 
 class OpType(Enum):
@@ -69,13 +126,47 @@ class QubitAllocation:
     @property
     def total(self) -> int:
         """Total number of qubits."""
-        return len(self.data_qubits) + len(self.x_ancilla_qubits) + len(self.z_ancilla_qubits)
+        return len(set(self.data_qubits) | set(self.x_ancilla_qubits) | set(self.z_ancilla_qubits))
+
+
+def _normalize_ancilla_budget(total_ancilla: int, ancilla_budget: int | None) -> int:
+    """Clamp ancilla budget to the valid range for a patch."""
+    if ancilla_budget is None:
+        return total_ancilla
+
+    if ancilla_budget < 1:
+        msg = f"ancilla_budget must be >= 1, got {ancilla_budget}"
+        raise ValueError(msg)
+
+    return min(ancilla_budget, total_ancilla)
+
+
+def _batched_stabilizers(
+    patch: SurfacePatch,
+    ancilla_budget: int,
+) -> list[list[tuple[str, int]]]:
+    """Partition stabilizers into ancilla-reuse batches.
+
+    This mirrors the public Guppy batching order so the abstract circuit and
+    its native DEMs match the actual low-ancilla circuit family.
+    """
+    geom = patch.geometry
+    stabilizers = [("X", stab.index) for stab in geom.x_stabilizers]
+    stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
+    # Sort key is load-bearing: it mirrors Guppy's stabilizer ordering (ascending
+    # index, X before Z on ties). Batched DEMs are compared against Guppy output
+    # shot-for-shot in the Selene parity tests, so any change here will diverge
+    # from the low-ancilla reference family.
+    stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
+
+    return [stabilizers[start : start + ancilla_budget] for start in range(0, len(stabilizers), ancilla_budget)]
 
 
 def build_surface_code_circuit(
     patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
+    ancilla_budget: int | None = None,
 ) -> tuple[list[CircuitOp], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
@@ -88,6 +179,9 @@ def build_surface_code_circuit(
         patch: Surface code patch with geometry
         num_rounds: Number of syndrome extraction rounds
         basis: 'Z' for |0_L> state or 'X' for |+_L> state
+        ancilla_budget: Optional cap on simultaneously live ancillas. When
+            provided below the total stabilizer count, ancillas are reused
+            across stabilizer batches following the public Guppy order.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -98,15 +192,36 @@ def build_surface_code_circuit(
     num_data = geom.num_data
     num_x_anc = len(geom.x_stabilizers)
     num_z_anc = len(geom.z_stabilizers)
+    total_ancilla = num_x_anc + num_z_anc
+    effective_ancilla_budget = _normalize_ancilla_budget(total_ancilla, ancilla_budget)
 
-    # Qubit allocation layout
-    allocation = QubitAllocation(
-        data_qubits=list(range(num_data)),
-        x_ancilla_qubits=list(range(num_data, num_data + num_x_anc)),
-        z_ancilla_qubits=list(
-            range(num_data + num_x_anc, num_data + num_x_anc + num_z_anc),
-        ),
-    )
+    # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
+    # shared ancilla pool and different stabilizers can intentionally share the
+    # same physical qubit id at different times.
+    if effective_ancilla_budget == total_ancilla:
+        allocation = QubitAllocation(
+            data_qubits=list(range(num_data)),
+            x_ancilla_qubits=list(range(num_data, num_data + num_x_anc)),
+            z_ancilla_qubits=list(
+                range(num_data + num_x_anc, num_data + num_x_anc + num_z_anc),
+            ),
+        )
+    else:
+        ancilla_pool = list(range(num_data, num_data + effective_ancilla_budget))
+        x_ancilla_qubits = [-1] * num_x_anc
+        z_ancilla_qubits = [-1] * num_z_anc
+        for batch in _batched_stabilizers(patch, effective_ancilla_budget):
+            for pool_idx, (stab_type, stab_idx) in enumerate(batch):
+                if stab_type == "X":
+                    x_ancilla_qubits[stab_idx] = ancilla_pool[pool_idx]
+                else:
+                    z_ancilla_qubits[stab_idx] = ancilla_pool[pool_idx]
+
+        allocation = QubitAllocation(
+            data_qubits=list(range(num_data)),
+            x_ancilla_qubits=x_ancilla_qubits,
+            z_ancilla_qubits=z_ancilla_qubits,
+        )
 
     def data_q(i: int) -> int:
         return allocation.data_qubits[i]
@@ -143,47 +258,115 @@ def build_surface_code_circuit(
         ops.append(
             CircuitOp(OpType.COMMENT, label=f"syndrome_extraction round {rnd + 1}"),
         )
+        if effective_ancilla_budget == total_ancilla:
+            ops.extend(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.extend(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
 
-        # Allocate X ancillas: ax{i} = qubit()
-        ops.extend(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
-        # Allocate Z ancillas: az{i} = qubit()
-        ops.extend(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
-
-        # H on X ancillas
-        ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-        ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)]) for s in geom.x_stabilizers)
-
-        ops.append(CircuitOp(OpType.TICK))
-
-        # 4 CNOT rounds
-        for rnd_idx, cx_round in enumerate(cnot_rounds):
-            ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
-            for stab_type, stab_idx, data_idx in cx_round:
-                if stab_type == "X":
-                    # cx(ax{stab_idx}, surf.data[{data_idx}])
-                    ops.append(
-                        CircuitOp(OpType.CX, [x_anc_q(stab_idx), data_q(data_idx)]),
-                    )
-                else:
-                    # cx(surf.data[{data_idx}], az{stab_idx})
-                    ops.append(
-                        CircuitOp(OpType.CX, [data_q(data_idx), z_anc_q(stab_idx)]),
-                    )
             ops.append(CircuitOp(OpType.TICK))
 
-        # H on X ancillas (second time)
-        ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-        ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)]) for s in geom.x_stabilizers)
+            for rnd_idx, cx_round in enumerate(cnot_rounds):
+                ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                for stab_type, stab_idx, data_idx in cx_round:
+                    if stab_type == "X":
+                        ops.append(
+                            CircuitOp(
+                                OpType.CX,
+                                [x_anc_q(stab_idx), data_q(data_idx)],
+                                f"X{stab_idx}",
+                            ),
+                        )
+                    else:
+                        ops.append(
+                            CircuitOp(
+                                OpType.CX,
+                                [data_q(data_idx), z_anc_q(stab_idx)],
+                                f"Z{stab_idx}",
+                            ),
+                        )
+                ops.append(CircuitOp(OpType.TICK))
 
-        # Measure X ancillas: sx{i} = measure(ax{i})
-        ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
-        ops.extend(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
+            ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
-        # Measure Z ancillas: sz{i} = measure(az{i})
-        ops.extend(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
+            ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
+            ops.extend(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
+            ops.extend(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
 
-        ops.append(CircuitOp(OpType.TICK))
+            ops.append(CircuitOp(OpType.TICK))
+        else:
+            stabilizer_batches = _batched_stabilizers(patch, effective_ancilla_budget)
+            for batch in stabilizer_batches:
+                ops.append(CircuitOp(OpType.COMMENT, label="Prepare ancillas"))
+                batch_ancillas = {
+                    (stab_type, stab_idx): x_anc_q(stab_idx) if stab_type == "X" else z_anc_q(stab_idx)
+                    for stab_type, stab_idx in batch
+                }
+
+                for stab_type, stab_idx in batch:
+                    ops.append(
+                        CircuitOp(
+                            OpType.ALLOC,
+                            [batch_ancillas[(stab_type, stab_idx)]],
+                            f"a{stab_type.lower()}{stab_idx}",
+                        ),
+                    )
+
+                x_stabilizers_in_batch = [stab_idx for stab_type, stab_idx in batch if stab_type == "X"]
+                if x_stabilizers_in_batch:
+                    ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+                    ops.extend(
+                        CircuitOp(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                        for stab_idx in x_stabilizers_in_batch
+                    )
+
+                ops.append(CircuitOp(OpType.TICK))
+
+                for rnd_idx, cx_round in enumerate(cnot_rounds):
+                    ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                    for stab_type, stab_idx, data_idx in cx_round:
+                        ancilla_q = batch_ancillas.get((stab_type, stab_idx))
+                        if ancilla_q is None:
+                            continue
+                        if stab_type == "X":
+                            ops.append(
+                                CircuitOp(
+                                    OpType.CX,
+                                    [ancilla_q, data_q(data_idx)],
+                                    f"X{stab_idx}",
+                                ),
+                            )
+                        else:
+                            ops.append(
+                                CircuitOp(
+                                    OpType.CX,
+                                    [data_q(data_idx), ancilla_q],
+                                    f"Z{stab_idx}",
+                                ),
+                            )
+                    ops.append(CircuitOp(OpType.TICK))
+
+                if x_stabilizers_in_batch:
+                    ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+                    ops.extend(
+                        CircuitOp(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                        for stab_idx in x_stabilizers_in_batch
+                    )
+
+                ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
+                for stab_type, stab_idx in batch:
+                    measure_label = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
+                    ops.append(
+                        CircuitOp(
+                            OpType.MEASURE,
+                            [batch_ancillas[(stab_type, stab_idx)]],
+                            measure_label,
+                        ),
+                    )
+
+                ops.append(CircuitOp(OpType.TICK))
 
     # =========================================================================
     # measure_z_basis / measure_x_basis
@@ -198,6 +381,148 @@ def build_surface_code_circuit(
     ops.extend(CircuitOp(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
 
     return ops, allocation
+
+
+def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d: int, dz: int | None = None) -> str:
+    """Public wrapper for classifying a boundary stabilizer."""
+    from pecos.qec.surface.schedule import _classify_boundary
+
+    if dz is None:
+        dz = d
+    return _classify_boundary(stab_type, data_qubits, d, dz)
+
+
+def get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
+    """Return a coarse region label like ``top+left`` for a stabilizer."""
+    geom = patch.geometry
+    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
+    avg_row = sum(row for row, _ in positions) / len(positions)
+    avg_col = sum(col for _, col in positions) / len(positions)
+    row_label = "top" if avg_row < (geom.dx - 1) / 2 else "bottom"
+    col_label = "left" if avg_col < (geom.dz - 1) / 2 else "right"
+    return f"{row_label}+{col_label}"
+
+
+def get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
+    """Label how a data qubit sits relative to a stabilizer support."""
+    geom = patch.geometry
+    if data_qubit not in stab.data_qubits:
+        msg = f"Qubit {data_qubit} is not in stabilizer {stab.stab_type}{stab.index}"
+        raise ValueError(msg)
+
+    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
+    data_row, data_col = geom.id_to_pos[data_qubit]
+    rows = [row for row, _ in positions]
+    cols = [col for _, col in positions]
+
+    if len(set(rows)) == 1:
+        return "left" if data_col == min(cols) else "right"
+    if len(set(cols)) == 1:
+        return "top" if data_row == min(rows) else "bottom"
+
+    vertical = "T" if data_row == min(rows) else "B"
+    horizontal = "L" if data_col == min(cols) else "R"
+    return vertical + horizontal
+
+
+def get_stabilizer_schedule_entries(stab: Stabilizer, patch: SurfacePatch) -> list[dict[str, int | str]]:
+    """Return the per-round touch schedule for one stabilizer."""
+    from pecos.qec.surface.schedule import get_stab_schedule
+
+    schedule = get_stab_schedule(stab.stab_type, stab.data_qubits, stab.is_boundary, patch.dx, patch.dz)
+    return [
+        {
+            "round_0based": round_0based,
+            "data_qubit": data_qubit,
+            "touch_label": get_stabilizer_touch_label(stab, patch, data_qubit),
+        }
+        for round_0based, data_qubit in schedule
+    ]
+
+
+def get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
+    """Return metadata describing one stabilizer's schedule and geometry."""
+    entries = get_stabilizer_schedule_entries(stab, patch)
+    rounds = [int(entry["round_0based"]) for entry in entries]
+    return {
+        "stabilizer_kind": stab.stab_type,
+        "stabilizer_index": stab.index,
+        "stabilizer_is_boundary": stab.is_boundary,
+        "stabilizer_region": get_stabilizer_region(stab, patch),
+        "schedule_rounds": rounds,
+        "schedule_start_round": rounds[0] if rounds else None,
+        "schedule_end_round": rounds[-1] if rounds else None,
+        "schedule_entries": entries,
+    }
+
+
+def _build_detector_descriptors(
+    detectors: list[dict[str, object]],
+    patch: SurfacePatch,
+) -> list[SurfaceDetectorDescriptor]:
+    """Build enriched detector descriptors from TickCircuit detector metadata."""
+    num_x_anc = len(patch.x_stabilizers)
+    final_round = max((int(det["coords"][2]) for det in detectors), default=-1)
+    descriptors: list[SurfaceDetectorDescriptor] = []
+
+    for det in detectors:
+        coords = [int(value) for value in det["coords"]]
+        records = [int(value) for value in det["records"]]
+        raw_index = coords[0]
+        if coords[1] == 0:
+            stab_kind = "X"
+            stab_index = raw_index
+        else:
+            stab_kind = "Z"
+            stab_index = raw_index - num_x_anc
+
+        descriptor = patch.get_stabilizer_descriptor(stab_kind, stab_index)
+        descriptors.append(
+            {
+                "id": int(det["id"]),
+                "detector_id": int(det["id"]),
+                "stabilizer_kind": descriptor["stabilizer_kind"],
+                "stabilizer_index": descriptor["stabilizer_index"],
+                "round": coords[2],
+                "is_final_round": coords[2] == final_round,
+                "coords": coords,
+                "records": records,
+                "stabilizer_is_boundary": descriptor["stabilizer_is_boundary"],
+                "stabilizer_region": descriptor["stabilizer_region"],
+                "schedule_rounds": descriptor["schedule_rounds"],
+                "schedule_start_round": descriptor["schedule_start_round"],
+                "schedule_end_round": descriptor["schedule_end_round"],
+                "schedule_entries": descriptor["schedule_entries"],
+                "data_qubits": descriptor["data_qubits"],
+                "data_qubit_positions": descriptor["data_qubit_positions"],
+                "weight": descriptor["weight"],
+            },
+        )
+
+    return descriptors
+
+
+def _build_observable_descriptors(
+    observables: list[dict[str, object]],
+    patch: SurfacePatch,
+    basis: str,
+) -> list[SurfaceObservableDescriptor]:
+    """Build enriched logical observable descriptors from TickCircuit metadata."""
+    logical = patch.get_logical_descriptor(basis.upper())
+    return [
+        {
+            "id": int(obs["id"]),
+            "observable_id": int(obs["id"]),
+            "basis": basis.upper(),
+            "records": [int(value) for value in obs["records"]],
+            "logical_type": logical["logical_type"],
+            "data_qubits": logical["data_qubits"],
+            "data_qubit_positions": logical["data_qubit_positions"],
+            "weight": logical["weight"],
+            "support_axis": logical["support_axis"],
+        }
+        for obs in observables
+    ]
 
 
 class CircuitRenderer(ABC):
@@ -224,7 +549,7 @@ class StimRenderer(CircuitRenderer):
         p1: float = 0.0,
         p2: float = 0.0,
         p_meas: float = 0.0,
-        p_init: float = 0.0,
+        p_prep: float = 0.0,
         add_detectors: bool = True,
     ) -> None:
         """Initialize Stim renderer.
@@ -233,13 +558,13 @@ class StimRenderer(CircuitRenderer):
             p1: Single-qubit depolarizing error rate
             p2: Two-qubit depolarizing error rate
             p_meas: Measurement error rate
-            p_init: Initialization error rate
+            p_prep: Initialization error rate
             add_detectors: Whether to add DETECTOR annotations
         """
         self.p1 = p1
         self.p2 = p2
         self.p_meas = p_meas
-        self.p_init = p_init
+        self.p_prep = p_prep
         self.add_detectors = add_detectors
 
     def render(
@@ -275,8 +600,8 @@ class StimRenderer(CircuitRenderer):
 
             elif op.op_type == OpType.ALLOC:
                 lines.append(f"R {op.qubits[0]}")
-                if self.p_init > 0:
-                    lines.append(f"X_ERROR({self.p_init}) {op.qubits[0]}")
+                if self.p_prep > 0:
+                    lines.append(f"X_ERROR({self.p_prep}) {op.qubits[0]}")
 
             elif op.op_type == OpType.H:
                 lines.append(f"H {op.qubits[0]}")
@@ -542,6 +867,7 @@ class TickCircuitRenderer(CircuitRenderer):
         from pecos_rslib.quantum import TickCircuit
 
         circuit = TickCircuit()
+        geom = patch.geometry
         allocated: set[int] = set()
         current_tick_handle = None
         current_tick_idx = -1
@@ -550,6 +876,8 @@ class TickCircuitRenderer(CircuitRenderer):
         # Track measurements for detector annotations
         meas_count = 0
         stab_meas_record: dict[tuple[str, int, int], int] = {}
+        stab_meas_refs: dict[tuple[str, int, int], list] = {}
+        final_meas_refs_by_qubit: dict[int, list] = {}
         current_round = -1
         current_phase = "prep"
         current_cx_round = 0
@@ -560,9 +888,24 @@ class TickCircuitRenderer(CircuitRenderer):
         # Format: {tick_idx: {'phase': str, 'round': int, 'cx_round': int, 'gates': [(label, role), ...]}}
         all_tick_metadata: dict[int, dict] = {}
 
+        def get_stabilizer_from_label(label: str) -> str:
+            """Decode surface stabilizer identity from an operation label."""
+            if not label:
+                return ""
+            if label[0] in {"X", "Z"} and label[1:].isdigit():
+                return label
+            if label.startswith(("ax", "sx")) and label[2:].isdigit():
+                return f"X{int(label[2:])}"
+            if label.startswith(("az", "sz")) and label[2:].isdigit():
+                return f"Z{int(label[2:])}"
+            return ""
+
         # Helper to get stabilizer name for a CX gate
-        def get_cx_stabilizer(control: int, target: int) -> str:
+        def get_cx_stabilizer(control: int, target: int, label: str = "") -> str:
             """Get stabilizer name for a CX gate (e.g., 'X0', 'Z2')."""
+            from_label = get_stabilizer_from_label(label)
+            if from_label:
+                return from_label
             if control in allocation.x_ancilla_qubits:
                 # X stabilizer: ancilla is control
                 stab_idx = allocation.x_ancilla_qubits.index(control)
@@ -572,6 +915,56 @@ class TickCircuitRenderer(CircuitRenderer):
                 stab_idx = allocation.z_ancilla_qubits.index(target)
                 return f"Z{stab_idx}"
             return ""
+
+        stabilizer_by_label = {
+            **{f"X{s.index}": s for s in geom.x_stabilizers},
+            **{f"Z{s.index}": s for s in geom.z_stabilizers},
+        }
+        stabilizer_by_ancilla_qubit = {
+            **{allocation.x_ancilla_qubits[s.index]: f"X{s.index}" for s in geom.x_stabilizers},
+            **{allocation.z_ancilla_qubits[s.index]: f"Z{s.index}" for s in geom.z_stabilizers},
+        }
+
+        def get_stabilizer_metadata(stab_label: str) -> dict[str, object]:
+            stab = stabilizer_by_label[stab_label]
+            return {
+                "stabilizer": stab_label,
+                "stabilizer_kind": stab.stab_type,
+                "stabilizer_index": stab.index,
+                "stabilizer_is_boundary": stab.is_boundary,
+                "stabilizer_region": get_stabilizer_region(stab, patch),
+            }
+
+        def get_ancilla_gate_metadata(qubit: int, label: str = "") -> dict[str, object]:
+            stab_label = get_stabilizer_from_label(label) or stabilizer_by_ancilla_qubit.get(qubit)
+            if stab_label is None:
+                return {}
+            metadata = get_stabilizer_metadata(stab_label)
+            metadata["ancilla_qubit"] = qubit
+            return metadata
+
+        def get_cx_gate_metadata(control: int, target: int, label: str = "") -> dict[str, object]:
+            stab_label = get_cx_stabilizer(control, target, label)
+            if not stab_label:
+                return {}
+            metadata = get_stabilizer_metadata(stab_label)
+            ancilla_qubit = next(
+                (q for q in (control, target) if q in stabilizer_by_ancilla_qubit),
+                None,
+            )
+            data_qubit = next((q for q in (control, target) if q in allocation.data_qubits), None)
+            if ancilla_qubit is not None:
+                metadata["ancilla_qubit"] = ancilla_qubit
+            if data_qubit is not None:
+                metadata["data_qubit"] = data_qubit
+                metadata["touch_label"] = get_stabilizer_touch_label(
+                    stabilizer_by_label[stab_label],
+                    patch,
+                    data_qubit,
+                )
+            if current_cx_round > 0:
+                metadata["cx_round_0based"] = current_cx_round - 1
+            return metadata
 
         def new_tick() -> TickHandle:
             nonlocal current_tick_handle, current_tick_idx, qubits_in_current_tick
@@ -611,13 +1004,26 @@ class TickCircuitRenderer(CircuitRenderer):
                 meta: Optional dict with gate metadata (e.g., {"label": "data[0]"})
             """
             if current_tick_idx >= 0:
-                all_tick_metadata[current_tick_idx]["gates"].append(meta or {})
+                context = {
+                    "phase": current_phase,
+                }
+                if current_round >= 0:
+                    context["syndrome_round"] = current_round
+                if current_cx_round > 0:
+                    context["cx_round"] = current_cx_round
+                merged_meta = context
+                if meta:
+                    merged_meta = {**context, **meta}
+                all_tick_metadata[current_tick_idx]["gates"].append(merged_meta)
 
         for op in ops:
             if op.op_type == OpType.COMMENT:
                 # Track phase from comments
                 if "syndrome_extraction round" in op.label:
                     current_round = int(op.label.split()[-1]) - 1
+                    current_phase = "syndrome_prep"
+                    current_cx_round = 0
+                elif "Prepare ancillas" in op.label:
                     current_phase = "syndrome_prep"
                     current_cx_round = 0
                 elif "Hadamard on X ancillas" in op.label:
@@ -642,57 +1048,80 @@ class TickCircuitRenderer(CircuitRenderer):
                     tick.pz([q])
                 mark_qubits_used([q])
                 # Label helps identify which qubit (e.g., "data[0]", "ax0")
-                queue_gate_metadata({"label": op.label} if op.label else None)
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.PREP:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).pz([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.H:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).h([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.X:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).x([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.Z:
                 q = op.qubits[0]
                 get_tick_for_qubits([q]).z([q])
                 mark_qubits_used([q])
-                queue_gate_metadata()
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.CX:
                 qubits = op.qubits
                 get_tick_for_qubits(qubits).cx([(qubits[0], qubits[1])])
                 mark_qubits_used(qubits)
-                # Stabilizer name helps identify which stabilizer (e.g., "X0", "Z2")
-                stab = get_cx_stabilizer(qubits[0], qubits[1])
-                queue_gate_metadata({"stabilizer": stab} if stab else None)
+                meta = get_cx_gate_metadata(qubits[0], qubits[1], op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).mz([q])
+                meas_refs = get_tick_for_qubits([q]).mz([q])
                 mark_qubits_used([q])
                 # Label helps identify measurement (e.g., "sx0", "sz0", "final[0]")
-                queue_gate_metadata({"label": op.label} if op.label else None)
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                queue_gate_metadata(meta or None)
 
-                # Track measurement index for detectors
+                # Track measurement index and refs for detectors
                 if op.label.startswith("sx"):
                     stab_idx = int(op.label[2:])
                     stab_meas_record[("X", stab_idx, current_round)] = meas_count
+                    stab_meas_refs[("X", stab_idx, current_round)] = meas_refs
                 elif op.label.startswith("sz"):
                     stab_idx = int(op.label[2:])
                     stab_meas_record[("Z", stab_idx, current_round)] = meas_count
+                    stab_meas_refs[("Z", stab_idx, current_round)] = meas_refs
                 elif op.label.startswith("final"):
                     if "final[0]" in op.label:
                         final_meas_start = meas_count
+                    # Track all final measurement refs by data qubit
+                    final_meas_refs_by_qubit[q] = meas_refs
                 meas_count += 1
 
             elif op.op_type == OpType.TICK:
@@ -820,14 +1249,102 @@ class TickCircuitRenderer(CircuitRenderer):
                 },
             ]
 
-            # Store as metadata
+            # Store as metadata (legacy path for DemBuilder/caching)
             circuit.set_meta("detectors", json.dumps(detectors))
             circuit.set_meta("observables", json.dumps(observables))
             circuit.set_meta("num_measurements", str(meas_count))
             circuit.set_meta("num_detectors", str(len(detectors)))
-            circuit.set_meta("basis", basis.upper())
+
+            # Also add typed PauliAnnotation annotations (new path)
+            self._add_typed_annotations(
+                circuit,
+                geom,
+                num_rounds,
+                basis,
+                stab_meas_refs,
+                final_meas_refs_by_qubit,
+                deterministic_type_round0,
+            )
+        circuit.set_meta("basis", basis.upper())
+        circuit.set_meta("ancilla_budget", str(allocation.total - len(allocation.data_qubits)))
 
         return circuit
+
+    @staticmethod
+    def _add_typed_annotations(
+        circuit: TickCircuit,
+        geom: object,
+        num_rounds: int,
+        basis: str,
+        stab_meas_refs: dict,
+        final_meas_refs_by_qubit: dict,
+        deterministic_type_round0: str,
+    ) -> None:
+        """Add typed PauliAnnotation detectors and observables to the circuit.
+
+        This mirrors the JSON detector logic but uses the new annotation API
+        with TickMeasRef measurement references.
+        """
+        # Syndrome detectors for X stabilizers
+        for rnd in range(num_rounds):
+            for s in geom.x_stabilizers:
+                curr_refs = stab_meas_refs.get(("X", s.index, rnd))
+                if curr_refs is None:
+                    continue
+                if rnd == 0:
+                    if deterministic_type_round0 == "X":
+                        circuit.detector(curr_refs, label=f"Sx{s.index}_r{rnd}")
+                else:
+                    prev_refs = stab_meas_refs.get(("X", s.index, rnd - 1), [])
+                    circuit.detector(prev_refs + curr_refs, label=f"Sx{s.index}_r{rnd}")
+
+        # Syndrome detectors for Z stabilizers
+        for rnd in range(num_rounds):
+            for s in geom.z_stabilizers:
+                curr_refs = stab_meas_refs.get(("Z", s.index, rnd))
+                if curr_refs is None:
+                    continue
+                if rnd == 0:
+                    if deterministic_type_round0 == "Z":
+                        circuit.detector(curr_refs, label=f"Sz{s.index}_r{rnd}")
+                else:
+                    prev_refs = stab_meas_refs.get(("Z", s.index, rnd - 1), [])
+                    circuit.detector(prev_refs + curr_refs, label=f"Sz{s.index}_r{rnd}")
+
+        # Final detectors
+        if basis.upper() == "Z":
+            stabilizers = geom.z_stabilizers
+            stab_type = "Z"
+            logical_qubits = list(geom.logical_z.data_qubits) if geom.logical_z else []
+        else:
+            stabilizers = geom.x_stabilizers
+            stab_type = "X"
+            logical_qubits = list(geom.logical_x.data_qubits) if geom.logical_x else []
+
+        for s in stabilizers:
+            # Data qubit measurement refs for this stabilizer
+            data_refs = []
+            for dq in s.data_qubits:
+                if dq in final_meas_refs_by_qubit:
+                    data_refs.extend(final_meas_refs_by_qubit[dq])
+            # Last syndrome round ref
+            last_syn_refs = stab_meas_refs.get(
+                (stab_type, s.index, num_rounds - 1),
+                [],
+            )
+            label_prefix = "Sx" if stab_type == "X" else "Sz"
+            circuit.detector(
+                data_refs + last_syn_refs,
+                label=f"{label_prefix}{s.index}_final",
+            )
+
+        # Logical observable
+        obs_refs = []
+        for q in logical_qubits:
+            if q in final_meas_refs_by_qubit:
+                obs_refs.extend(final_meas_refs_by_qubit[q])
+        if obs_refs:
+            circuit.observable(obs_refs, label=f"logical_{basis.upper()}")
 
 
 # Convenience functions
@@ -838,10 +1355,11 @@ def generate_stim_from_patch(
     num_rounds: int,
     basis: str = "Z",
     *,
+    ancilla_budget: int | None = None,
     p1: float = 0.0,
     p2: float = 0.0,
     p_meas: float = 0.0,
-    p_init: float = 0.0,
+    p_prep: float = 0.0,
 ) -> str:
     """Generate Stim circuit from SurfacePatch.
 
@@ -849,16 +1367,17 @@ def generate_stim_from_patch(
         patch: Surface code patch
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
+        ancilla_budget: Optional cap on simultaneously live ancillas
         p1: Single-qubit error rate
         p2: Two-qubit error rate
         p_meas: Measurement error rate
-        p_init: Initialization error rate
+        p_prep: Initialization error rate
 
     Returns:
         Stim circuit string
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis)
-    renderer = StimRenderer(p1=p1, p2=p2, p_meas=p_meas, p_init=p_init)
+    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
+    renderer = StimRenderer(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
 
@@ -894,6 +1413,7 @@ def generate_dag_circuit_from_patch(
     patch: SurfacePatch,
     num_rounds: int,
     basis: str = "Z",
+    ancilla_budget: int | None = None,
 ) -> DagCircuit:
     """Generate PECOS DagCircuit from SurfacePatch.
 
@@ -901,11 +1421,12 @@ def generate_dag_circuit_from_patch(
         patch: Surface code patch
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
+        ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         PECOS DagCircuit instance
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis)
+    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
     renderer = DagCircuitRenderer()
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
@@ -916,6 +1437,7 @@ def generate_tick_circuit_from_patch(
     basis: str = "Z",
     *,
     add_detectors: bool = True,
+    ancilla_budget: int | None = None,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
 
@@ -937,13 +1459,119 @@ def generate_tick_circuit_from_patch(
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
         add_detectors: Whether to add detector annotations as metadata
+        ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         PECOS TickCircuit instance
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis)
+    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
     renderer = TickCircuitRenderer(add_detectors=add_detectors)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
+
+
+def get_detector_descriptors_from_tick_circuit(
+    tick_circuit: TickCircuit,
+    patch: SurfacePatch,
+) -> list[SurfaceDetectorDescriptor]:
+    """Return structured detector descriptors for a generated TickCircuit.
+
+    The returned descriptors are cached in TickCircuit metadata when the circuit
+    is created by :func:`generate_tick_circuit_from_patch`.
+
+    Example:
+        >>> from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        >>> patch = SurfacePatch.create(distance=3)
+        >>> tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z")
+        >>> len(get_detector_descriptors_from_tick_circuit(tc, patch))
+        12
+    """
+    import json
+
+    cached = tick_circuit.get_meta("detector_descriptors")
+    if cached:
+        return json.loads(cached)
+
+    detectors = json.loads(tick_circuit.get_meta("detectors") or "[]")
+    descriptors = _build_detector_descriptors(detectors, patch)
+    tick_circuit.set_meta("detector_descriptors", json.dumps(descriptors))
+    return descriptors
+
+
+def get_observable_descriptors_from_tick_circuit(
+    tick_circuit: TickCircuit,
+    patch: SurfacePatch,
+) -> list[SurfaceObservableDescriptor]:
+    """Return structured logical observable descriptors for a TickCircuit.
+
+    Example:
+        >>> from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
+        >>> patch = SurfacePatch.create(distance=3)
+        >>> tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        >>> get_observable_descriptors_from_tick_circuit(tc, patch)[0]["basis"]
+        'X'
+    """
+    import json
+
+    cached = tick_circuit.get_meta("observable_descriptors")
+    if cached:
+        return json.loads(cached)
+
+    observables = json.loads(tick_circuit.get_meta("observables") or "[]")
+    basis = tick_circuit.get_meta("basis") or "Z"
+    descriptors = _build_observable_descriptors(observables, patch, basis)
+    tick_circuit.set_meta("observable_descriptors", json.dumps(descriptors))
+    return descriptors
+
+
+def describe_surface_memory_experiment(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str = "Z",
+    *,
+    add_detectors: bool = True,
+    ancilla_budget: int | None = None,
+) -> SurfaceMemoryExperimentDescriptor:
+    """Return a structured descriptor bundle for a surface-memory experiment.
+
+    This is a convenience wrapper for users who want one public entry point
+    that covers patch geometry, stabilizers, logicals, detectors, and
+    observables for a generated memory circuit.
+
+    The descriptor helpers are regression-covered on rotated memory circuits and
+    also exposed for non-rotated and asymmetric patches created by
+    :class:`pecos.qec.surface.SurfacePatch`.
+
+    Example:
+        >>> from pecos.qec.surface import SurfacePatch, describe_surface_memory_experiment
+        >>> summary = describe_surface_memory_experiment(SurfacePatch.create(distance=3), 2, basis="X")
+        >>> summary["basis"]
+        'X'
+    """
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=num_rounds,
+        basis=basis,
+        add_detectors=add_detectors,
+        ancilla_budget=ancilla_budget,
+    )
+    x_stabilizers = list(patch.iter_stabilizer_descriptors("X"))
+    z_stabilizers = list(patch.iter_stabilizer_descriptors("Z"))
+    logicals = list(patch.iter_logical_descriptors())
+    detectors = get_detector_descriptors_from_tick_circuit(tick_circuit, patch)
+    observables = get_observable_descriptors_from_tick_circuit(tick_circuit, patch)
+
+    return {
+        "patch": patch.get_patch_descriptor(),
+        "basis": basis.upper(),
+        "num_rounds": num_rounds,
+        "ancilla_budget": ancilla_budget,
+        "x_stabilizers": x_stabilizers,
+        "z_stabilizers": z_stabilizers,
+        "stabilizers": x_stabilizers + z_stabilizers,
+        "logicals": logicals,
+        "detectors": detectors,
+        "observables": observables,
+    }
 
 
 def tick_circuit_to_stim(
@@ -952,7 +1580,7 @@ def tick_circuit_to_stim(
     p1: float = 0.0,
     p2: float = 0.0,
     p_meas: float = 0.0,
-    p_init: float = 0.0,
+    p_prep: float = 0.0,
 ) -> str:
     """Convert TickCircuit to Stim circuit string.
 
@@ -964,78 +1592,135 @@ def tick_circuit_to_stim(
         p1: Single-qubit error rate
         p2: Two-qubit error rate
         p_meas: Measurement error rate
-        p_init: Initialization error rate
+        p_prep: Initialization error rate
 
     Returns:
         Stim circuit string
     """
     import json
+    import math
 
     lines = []
 
-    # Track measurement count for DETECTOR record references
-    measurement_count = 0
-
-    # Map gate type names to Stim instructions
-    gate_map = {
-        "H": "H",
-        "X": "X",
-        "Y": "Y",
-        "Z": "Z",
-        "CX": "CX",
-        "CY": "CY",
-        "CZ": "CZ",
-        "MZ": "M",
-        "PZ": "R",
-        "QAlloc": "R",  # QAlloc treated as reset
+    simple_gate_map = {
+        "H": ("H", "single"),
+        "X": ("X", "single"),
+        "Y": ("Y", "single"),
+        "Z": ("Z", "single"),
+        "CX": ("CX", "two"),
+        "CY": ("CY", "two"),
+        "CZ": ("CZ", "two"),
+        "MZ": ("M", "measure"),
+        "PZ": ("R", "prep"),
+        "QAlloc": ("R", "prep"),
     }
+
+    def _normalized_angle(angle: float) -> float:
+        value = angle % math.tau
+        if math.isclose(value, math.tau, abs_tol=1e-9):
+            return 0.0
+        return value
+
+    def _is_close_turn(angle: float, target: float) -> bool:
+        return math.isclose(_normalized_angle(angle), target, abs_tol=1e-9)
+
+    def _gate_to_stim(
+        gate: object,
+    ) -> tuple[list[tuple[str, list[int]]], str | None]:
+        gate_name = gate.gate_type.name
+        qubits = [int(q) for q in gate.qubits]
+
+        mapped = simple_gate_map.get(gate_name)
+        if mapped is not None:
+            stim_name, noise_kind = mapped
+            return [(stim_name, qubits)], noise_kind
+
+        if gate_name == "RZ":
+            if not gate.angles:
+                return [], None
+            angle = float(gate.angles[0])
+            if _is_close_turn(angle, 0.0):
+                return [], None
+            if _is_close_turn(angle, math.pi):
+                return [("Z", qubits)], "single"
+            if _is_close_turn(angle, math.pi / 2):
+                return [("S", qubits)], "single"
+            if _is_close_turn(angle, 3 * math.pi / 2):
+                return [("S_DAG", qubits)], "single"
+            msg = f"Unsupported traced Clifford RZ angle: {angle!r}"
+            raise ValueError(msg)
+
+        if gate_name == "RZZ":
+            if not gate.angles:
+                return [], None
+            angle = float(gate.angles[0])
+            if _is_close_turn(angle, 0.0):
+                return [], None
+            if _is_close_turn(angle, math.pi / 2):
+                return [("SQRT_ZZ", qubits)], "two"
+            if _is_close_turn(angle, 3 * math.pi / 2):
+                return [("SQRT_ZZ_DAG", qubits)], "two"
+            msg = f"Unsupported traced Clifford RZZ angle: {angle!r}"
+            raise ValueError(msg)
+
+        if gate_name == "R1XY":
+            if len(gate.angles) < 2:
+                return [], None
+            theta = float(gate.angles[0])
+            phi = float(gate.angles[1])
+            if _is_close_turn(theta, 0.0):
+                return [], None
+            if _is_close_turn(theta, math.pi):
+                if _is_close_turn(phi, 0.0) or _is_close_turn(phi, math.pi):
+                    return [("X", qubits)], "single"
+                if _is_close_turn(phi, math.pi / 2) or _is_close_turn(phi, 3 * math.pi / 2):
+                    return [("Y", qubits)], "single"
+            if _is_close_turn(theta, math.pi / 2):
+                if _is_close_turn(phi, 0.0):
+                    return [("SQRT_X", qubits)], "single"
+                if _is_close_turn(phi, math.pi / 2):
+                    return [("SQRT_Y", qubits)], "single"
+                if _is_close_turn(phi, math.pi):
+                    return [("SQRT_X_DAG", qubits)], "single"
+                if _is_close_turn(phi, 3 * math.pi / 2):
+                    return [("SQRT_Y_DAG", qubits)], "single"
+            if _is_close_turn(theta, 3 * math.pi / 2):
+                if _is_close_turn(phi, 0.0):
+                    return [("SQRT_X_DAG", qubits)], "single"
+                if _is_close_turn(phi, math.pi / 2):
+                    return [("SQRT_Y_DAG", qubits)], "single"
+                if _is_close_turn(phi, math.pi):
+                    return [("SQRT_X", qubits)], "single"
+                if _is_close_turn(phi, 3 * math.pi / 2):
+                    return [("SQRT_Y", qubits)], "single"
+            msg = f"Unsupported traced Clifford R1XY angles: theta={theta!r}, phi={phi!r}"
+            raise ValueError(msg)
+
+        return [], None
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
-
-        # Group gates by type for efficient Stim output
-        gates_by_type: dict[str, list[int]] = {}
-
         for gate in tick.gates():
-            gate_type = gate.gate_type
-            stim_name = gate_map.get(gate_type.name)
-
-            if stim_name is None:
+            instructions, noise_kind = _gate_to_stim(gate)
+            if not instructions:
                 continue
 
-            qubits = list(gate.qubits)
-
-            if stim_name not in gates_by_type:
-                gates_by_type[stim_name] = []
-
-            if stim_name == "CX":
-                # Two-qubit gate
-                gates_by_type[stim_name].extend(qubits)
-            else:
-                # Single-qubit gate
-                gates_by_type[stim_name].extend(qubits)
-
-        # Output gates grouped by type
-        for stim_name, qubits in gates_by_type.items():
-            if not qubits:
-                continue
-
+            qubits = [int(q) for q in gate.qubits]
             qubit_str = " ".join(str(q) for q in qubits)
-            lines.append(f"{stim_name} {qubit_str}")
 
-            # Add noise after gates
-            if stim_name in ("H", "X", "Y", "Z") and p1 > 0:
+            if noise_kind == "measure" and p_meas > 0:
+                lines.append(f"X_ERROR({p_meas}) {qubit_str}")
+
+            for stim_name, op_qubits in instructions:
+                op_qubit_str = " ".join(str(q) for q in op_qubits)
+                lines.append(f"{stim_name} {op_qubit_str}")
+
+            if noise_kind == "single" and p1 > 0:
                 lines.append(f"DEPOLARIZE1({p1}) {qubit_str}")
-            elif stim_name == "CX" and p2 > 0:
+            elif noise_kind == "two" and p2 > 0:
                 lines.append(f"DEPOLARIZE2({p2}) {qubit_str}")
-            elif stim_name == "R" and p_init > 0:
-                lines.append(f"X_ERROR({p_init}) {qubit_str}")
-            elif stim_name == "M":
-                if p_meas > 0:
-                    # Add measurement error before the M instruction
-                    # Need to insert before the M line
-                    lines.insert(-1, f"X_ERROR({p_meas}) {qubit_str}")
-                measurement_count += len(qubits)
+            elif noise_kind == "prep" and p_prep > 0:
+                lines.append(f"X_ERROR({p_prep}) {qubit_str}")
 
         # Add TICK after each tick (except the last)
         if tick_idx < tc.num_ticks() - 1:
@@ -1099,7 +1784,7 @@ def generate_dem_from_patch(
         p1=p,
         p2=p,
         p_meas=p,
-        p_init=p,
+        p_prep=p,
     )
     circuit = stim.Circuit(circuit_str)
     return str(circuit.detector_error_model())
@@ -1111,7 +1796,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     p1: float = 0.01,
     p2: float = 0.01,
     p_meas: float = 0.01,
-    p_init: float = 0.01,
+    p_prep: float = 0.01,
 ) -> str:
     """Generate DEM from TickCircuit using pure Python Pauli frame simulation.
 
@@ -1127,7 +1812,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
-        p_init: Initialization (prep) error rate
+        p_prep: Initialization (prep) error rate
 
     Returns:
         DEM string in Stim-compatible format
@@ -1304,13 +1989,13 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     # Process each gate as a potential error location
     for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
 
-        if gate_name in ("QAlloc", "PZ") and p_init > 0:
+        if gate_name in ("QAlloc", "PZ") and p_prep > 0:
             # Initialization error: X error after prep
             q = qubits[0]
             dets, obs = simulate_error(op_idx + 1, {q: "X"})
             if dets or obs:
                 key = (frozenset(dets), frozenset(obs))
-                error_mechanisms[key] += p_init
+                error_mechanisms[key] += p_prep
 
         elif gate_name == "H" and p1 > 0:
             # Single-qubit gate error: depolarizing (each Pauli with prob p1/3)
@@ -1383,7 +2068,9 @@ def generate_dem_from_tick_circuit_via_stim(
     p1: float = 0.01,
     p2: float = 0.01,
     p_meas: float = 0.01,
-    p_init: float = 0.01,
+    p_prep: float = 0.01,
+    decompose_errors: bool = True,
+    maximal_decomposition: bool = False,
 ) -> str:
     """Generate DEM from TickCircuit via Stim conversion.
 
@@ -1396,7 +2083,13 @@ def generate_dem_from_tick_circuit_via_stim(
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
-        p_init: Initialization (prep) error rate
+        p_prep: Initialization (prep) error rate
+        decompose_errors: If True (default), ask Stim to decompose hyperedge
+            errors into graphlike components. Set to False to preserve raw
+            hyperedges.
+        maximal_decomposition: If True, post-process Stim's graphlike output
+            into the same singleton-preferring maximal decomposition used by
+            the native DEM path. Ignored when False.
 
     Returns:
         DEM string in Stim format
@@ -1407,9 +2100,11 @@ def generate_dem_from_tick_circuit_via_stim(
         msg = "Stim is required for this function. Install with: pip install stim"
         raise ImportError(msg) from e
 
-    stim_str = tick_circuit_to_stim(tc, p1=p1, p2=p2, p_meas=p_meas, p_init=p_init)
+    stim_str = tick_circuit_to_stim(tc, p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
     circuit = stim.Circuit(stim_str)
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
+    if maximal_decomposition:
+        return _maximally_decompose_graphlike_dem(str(dem))
     return str(dem)
 
 
@@ -1449,13 +2144,74 @@ def _extract_measurement_order(tc: TickCircuit) -> list[int]:
     return measurement_order
 
 
+def get_measurement_order_from_tick_circuit(tc: TickCircuit) -> list[int]:
+    """Public wrapper returning the TickCircuit measurement execution order."""
+    return _extract_measurement_order(tc)
+
+
+def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
+    """Prefer singleton graphlike components when the decomposed DEM exposes them.
+
+    This is a formatting-level refinement over the standard decomposed DEM:
+    when a 2-detector direct mechanism `D_i D_j` has corresponding singleton
+    components already present in the DEM, prefer `D_i ^ D_j` (or the boundary
+    form `D_i L0 ^ D_j L0`) instead.
+    """
+    standalone_detectors: set[str] = set()
+    det_l0_detectors: set[str] = set()
+    lines = dem_text.splitlines()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("error("):
+            continue
+        payload = stripped.split(")", 1)[1].strip()
+        if "^" in payload:
+            continue
+        tokens = payload.split()
+        detectors = [token for token in tokens if token.startswith("D")]
+        logicals = [token for token in tokens if token.startswith("L")]
+        if len(detectors) == 1 and not logicals:
+            standalone_detectors.add(detectors[0])
+        elif len(detectors) == 1 and logicals == ["L0"]:
+            det_l0_detectors.add(detectors[0])
+
+    rewritten_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("error("):
+            rewritten_lines.append(line)
+            continue
+        prefix, payload = stripped.split(")", 1)
+        payload = payload.strip()
+        if "^" in payload:
+            rewritten_lines.append(line)
+            continue
+        tokens = payload.split()
+        detectors = [token for token in tokens if token.startswith("D")]
+        logicals = [token for token in tokens if token.startswith("L")]
+        if len(detectors) == 2 and not logicals:
+            d0, d1 = detectors
+            replacement: str | None = None
+            if d0 in standalone_detectors and d1 in standalone_detectors:
+                replacement = f"{d0} ^ {d1}"
+            elif d0 in det_l0_detectors and d1 in det_l0_detectors:
+                replacement = f"{d0} L0 ^ {d1} L0"
+            if replacement is not None:
+                rewritten_lines.append(f"{prefix}) {replacement}")
+                continue
+        rewritten_lines.append(line)
+
+    return "\n".join(rewritten_lines)
+
+
 def generate_dem_from_tick_circuit(
     tc: TickCircuit,
     *,
     p1: float = 0.01,
     p2: float = 0.01,
     p_meas: float = 0.01,
-    p_init: float = 0.01,
+    p_prep: float = 0.01,
     decompose_errors: bool = True,
     maximal_decomposition: bool = False,
 ) -> str:
@@ -1482,7 +2238,7 @@ def generate_dem_from_tick_circuit(
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
-        p_init: Initialization (prep) error rate
+        p_prep: Initialization (prep) error rate
         decompose_errors: If True (default), decompose hyperedge errors into
             graphlike components using the `^` separator. Set to False to
             output raw hyperedges. Ignored if maximal_decomposition=True.
@@ -1517,7 +2273,7 @@ def generate_dem_from_tick_circuit(
 
     # Build DEM using Rust DemBuilder
     builder = DemBuilder(influence_map)
-    builder.with_noise(p1, p2, p_meas, p_init)
+    builder.with_noise(p1, p2, p_meas, p_prep)
     builder.with_num_measurements(num_measurements)
     builder.with_measurement_order(measurement_order)
     builder.with_detectors_json(detectors_json)
@@ -1526,8 +2282,9 @@ def generate_dem_from_tick_circuit(
 
     dem = builder.build_with_source_tracking()
 
-    # Use decomposed output if either decompose_errors or maximal_decomposition is set
-    if decompose_errors or maximal_decomposition:
+    if maximal_decomposition:
+        return _maximally_decompose_graphlike_dem(dem.to_string_decomposed())
+    if decompose_errors:
         return dem.to_string_decomposed()
     return dem.to_string()
 
@@ -1535,12 +2292,12 @@ def generate_dem_from_tick_circuit(
 def generate_dem_from_tick_circuit_via_autodetection(
     tc: TickCircuit,
     *,
-    logical_z_qubits: list[int] | None = None,
-    logical_x_qubits: list[int] | None = None,
+    tracked_z_qubits: list[int] | None = None,
+    tracked_x_qubits: list[int] | None = None,
     p1: float = 0.01,
     p2: float = 0.01,
     p_meas: float = 0.01,
-    p_init: float = 0.01,
+    p_prep: float = 0.01,
 ) -> str:
     """Generate DEM from TickCircuit using auto-discovered detectors.
 
@@ -1554,17 +2311,20 @@ def generate_dem_from_tick_circuit_via_autodetection(
 
     Args:
         tc: TickCircuit (detector annotations not required)
-        logical_z_qubits: Qubit indices for logical Z operator (for X error tracking)
-        logical_x_qubits: Qubit indices for logical X operator (for Z error tracking)
+        tracked_z_qubits: Qubit indices for a tracked Z operator (for X error tracking)
+        tracked_x_qubits: Qubit indices for a tracked X operator (for Z error tracking)
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
-        p_init: Initialization (prep) error rate
+        p_prep: Initialization (prep) error rate
 
     Returns:
-        DEM string in Stim-compatible format
+        PECOS DEM string. With no tracked operators this is Stim-compatible;
+        tracked operators are represented with PECOS `pecos_tracked_op`
+        metadata lines.
     """
     from collections import defaultdict
+    import json
 
     from pecos.qec import PAULI_X, PAULI_Y, PAULI_Z, InfluenceBuilder
 
@@ -1573,18 +2333,17 @@ def generate_dem_from_tick_circuit_via_autodetection(
 
     # Build influence map with auto-discovered detectors
     builder = InfluenceBuilder(dag)
-    if logical_z_qubits:
-        builder.with_logical_z(logical_z_qubits)
-    if logical_x_qubits:
-        builder.with_logical_x(logical_x_qubits)
+    if tracked_x_qubits:
+        builder.with_tracked_x(tracked_x_qubits)
+    if tracked_z_qubits:
+        builder.with_tracked_z(tracked_z_qubits)
     influence_map = builder.build()
 
     # Get all fault locations and auto-discovered detectors
     locations = influence_map.get_locations()
     num_detectors = influence_map.num_detectors
-    num_logicals = influence_map.num_logicals
 
-    # Collect error mechanisms: (detectors, logicals) -> probability
+    # Collect error mechanisms: (detectors, DEM outputs) -> probability
     error_mechanisms: dict[tuple[frozenset[int], frozenset[int]], float] = defaultdict(
         float,
     )
@@ -1594,23 +2353,23 @@ def generate_dem_from_tick_circuit_via_autodetection(
         gate_type = loc.gate_type
 
         if "PZ" in gate_type or "QAlloc" in gate_type:
-            if p_init <= 0:
+            if p_prep <= 0:
                 continue
             for pauli in [PAULI_X]:
                 dets = set(influence_map.get_detector_indices(loc_idx, pauli))
-                logs = set(influence_map.get_logical_indices(loc_idx, pauli))
-                if dets or logs:
-                    key = (frozenset(dets), frozenset(logs))
-                    error_mechanisms[key] += p_init
+                dem_outputs = set(influence_map.get_observable_indices(loc_idx, pauli))
+                if dets or dem_outputs:
+                    key = (frozenset(dets), frozenset(dem_outputs))
+                    error_mechanisms[key] += p_prep
 
         elif "MZ" in gate_type:
             if p_meas <= 0:
                 continue
             for pauli in [PAULI_X]:
                 dets = set(influence_map.get_detector_indices(loc_idx, pauli))
-                logs = set(influence_map.get_logical_indices(loc_idx, pauli))
-                if dets or logs:
-                    key = (frozenset(dets), frozenset(logs))
+                dem_outputs = set(influence_map.get_observable_indices(loc_idx, pauli))
+                if dets or dem_outputs:
+                    key = (frozenset(dets), frozenset(dem_outputs))
                     error_mechanisms[key] += p_meas
 
         elif "CX" in gate_type:
@@ -1618,9 +2377,9 @@ def generate_dem_from_tick_circuit_via_autodetection(
                 continue
             for pauli in [PAULI_X, PAULI_Y, PAULI_Z]:
                 dets = set(influence_map.get_detector_indices(loc_idx, pauli))
-                logs = set(influence_map.get_logical_indices(loc_idx, pauli))
-                if dets or logs:
-                    key = (frozenset(dets), frozenset(logs))
+                dem_outputs = set(influence_map.get_observable_indices(loc_idx, pauli))
+                if dets or dem_outputs:
+                    key = (frozenset(dets), frozenset(dem_outputs))
                     error_mechanisms[key] += p2 / 3
 
         elif "H" in gate_type:
@@ -1628,27 +2387,53 @@ def generate_dem_from_tick_circuit_via_autodetection(
                 continue
             for pauli in [PAULI_X, PAULI_Y, PAULI_Z]:
                 dets = set(influence_map.get_detector_indices(loc_idx, pauli))
-                logs = set(influence_map.get_logical_indices(loc_idx, pauli))
-                if dets or logs:
-                    key = (frozenset(dets), frozenset(logs))
+                dem_outputs = set(influence_map.get_observable_indices(loc_idx, pauli))
+                if dets or dem_outputs:
+                    key = (frozenset(dets), frozenset(dem_outputs))
                     error_mechanisms[key] += p1 / 3
 
     # Generate DEM output
     # Add detector declarations (auto-discovered, no coordinates)
     lines = [f"detector D{det_idx}" for det_idx in range(num_detectors)]
 
-    # Add logical observables
-    lines.extend(f"logical_observable L{log_idx}" for log_idx in range(num_logicals))
+    def _pauli_string(pauli: str, qubits: list[int] | None) -> str:
+        if not qubits:
+            return "+I"
+        return "+" + " ".join(f"{pauli}{q}" for q in qubits)
+
+    tracked_op_metadata = []
+    if tracked_x_qubits:
+        tracked_op_metadata.append(
+            {
+                "id": len(tracked_op_metadata),
+                "kind": "tracked_operator",
+                "label": "tracked_x",
+                "pauli": _pauli_string("X", tracked_x_qubits),
+            }
+        )
+    if tracked_z_qubits:
+        tracked_op_metadata.append(
+            {
+                "id": len(tracked_op_metadata),
+                "kind": "tracked_operator",
+                "label": "tracked_z",
+                "pauli": _pauli_string("Z", tracked_z_qubits),
+            }
+        )
+    lines.extend(
+        f"pecos_tracked_op {json.dumps(metadata, separators=(',', ':'))}"
+        for metadata in tracked_op_metadata
+    )
 
     # Add error mechanisms
-    for (dets, logs), prob in sorted(
+    for (dets, dem_outputs), prob in sorted(
         error_mechanisms.items(),
         key=lambda x: (sorted(x[0][0]), sorted(x[0][1])),
     ):
-        if prob > 0 and (dets or logs):
+        if prob > 0 and (dets or dem_outputs):
             det_str = " ".join(f"D{d}" for d in sorted(dets))
-            log_str = " ".join(f"L{log_idx}" for log_idx in sorted(logs))
-            targets = f"{det_str} {log_str}".strip()
+            dem_output_str = " ".join(f"L{idx}" for idx in sorted(dem_outputs))
+            targets = f"{det_str} {dem_output_str}".strip()
             lines.append(f"error({prob:.6g}) {targets}")
 
     return "\n".join(lines)

@@ -2,9 +2,14 @@
 resolver = "2"
 members = [
   "python/pecos-rslib",
+  "python/pecos-rslib-exp",
   "python/pecos-rslib-cuda",
   "python/pecos-rslib-llvm",
-  "python/selene-plugins/pecos-selene-*",
+  "python/selene-plugins/pecos-selene-mast",
+  "python/selene-plugins/pecos-selene-stab-mps",
+  "python/selene-plugins/pecos-selene-stab-vec",
+  "python/selene-plugins/pecos-selene-stabilizer",
+  "python/selene-plugins/pecos-selene-statevec",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",
   "crates/pecos*",
@@ -152,6 +157,7 @@ quizx = "0.3"
 
 # --- Decoder libraries ---
 fusion-blossom = "0.2"
+mwpf = { git = "https://github.com/yuewuo/mwpf", tag = "v0.2.12", default-features = false, features = ["f64_weight"] }
 relay-bp = "0.2"
 # ndarray 0.16 for relay-bp compat (relay-bp uses ndarray 0.16, PECOS uses 0.17)
 ndarray-016 = { package = "ndarray", version = "0.16" }
@@ -172,6 +178,8 @@ pecos-cuquantum-sys = { version = "0.2.0-dev.0", path = "crates/pecos-cuquantum-
 pecos-decoder-core = { version = "0.2.0-dev.0", path = "crates/pecos-decoder-core" }
 pecos-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-decoders" }
 pecos-engines = { version = "0.2.0-dev.0", path = "crates/pecos-engines" }
+pecos-eeg = { version = "0.2.0-dev.0", path = "exp/pecos-eeg" }
+pecos-stab-tn = { version = "0.2.0-dev.0", path = "exp/pecos-stab-tn" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
@@ -180,6 +188,7 @@ pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
 pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
 pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
 pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
+pecos-mwpf = { version = "0.2.0-dev.0", path = "crates/pecos-mwpf" }
 pecos-neo = { version = "0.2.0-dev.0", path = "exp/pecos-neo" }
 pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }
 pecos-phir = { version = "0.2.0-dev.0", path = "crates/pecos-phir" }
@@ -198,6 +207,7 @@ pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
 pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
 pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
 pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }
+pecos-uf-decoder = { version = "0.2.0-dev.0", path = "crates/pecos-uf-decoder" }
 pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
 pecos-zx = { version = "0.2.0-dev.0", path = "exp/pecos-zx" }
 
@@ -214,6 +224,14 @@ opt-level = 3     # Maximum optimization
 lto = true        # Link-time optimization (same as "fat")
 codegen-units = 1 # Single codegen unit for better optimization
 strip = true      # Strip debug symbols for smaller binaries
+
+# Profiling profile: release optimizations but keeps debug info for perf/samply.
+# Use with: cargo build --profile profiling
+# Or: maturin develop --profile profiling
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = 1  # line tables only — minimal size impact
 
 # Native profile: release + CPU-specific optimizations
 # Use with: cargo build --profile native

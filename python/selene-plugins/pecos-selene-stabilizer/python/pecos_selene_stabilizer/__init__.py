@@ -10,8 +10,8 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""PECOS Stab simulator plugin for the Selene quantum emulator."""
+"""PECOS stabilizer simulator plugin for the Selene quantum emulator."""
 
-from pecos_selene_stabilizer.plugin import StabPlugin
+from pecos_selene_stabilizer.plugin import StabilizerPlugin
 
-__all__ = ["StabPlugin"]
+__all__ = ["StabilizerPlugin"]

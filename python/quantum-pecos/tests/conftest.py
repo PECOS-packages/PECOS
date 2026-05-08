@@ -11,6 +11,8 @@
 
 """Test configuration and shared fixtures."""
 
+import pytest
+
 # Configure matplotlib to use non-interactive backend for tests (if available)
 # This must be done before importing matplotlib.pyplot to avoid GUI backend issues on Windows
 try:
@@ -23,3 +25,14 @@ except ImportError:
 
 # Note: llvmlite functionality is now always available via Rust (pecos_rslib.ir and pecos_rslib.binding)
 # No need for conditional test skipping
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register test-tree-local markers used by direct pytest invocations."""
+    config.addinivalue_line(
+        "markers",
+        (
+            "slow: mark tests that provide extra integration coverage but are "
+            "excluded from the default fast Python test lane"
+        ),
+    )

@@ -296,10 +296,8 @@ impl OperationInterface for Instruction {
                     return Err("Measure operation must produce at least one result".to_string());
                 }
             }
-            Operation::ControlFlow(ControlFlowOp::Loop(_)) => {
-                if self.regions.is_empty() {
-                    return Err("Loop operation must have at least one region".to_string());
-                }
+            Operation::ControlFlow(ControlFlowOp::Loop(_)) if self.regions.is_empty() => {
+                return Err("Loop operation must have at least one region".to_string());
             }
             _ => {}
         }

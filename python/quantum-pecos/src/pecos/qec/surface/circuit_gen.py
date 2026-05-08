@@ -33,7 +33,7 @@ def generate_stim_circuit(
     p1: float = 0.0,
     p2: float = 0.0,
     p_meas: float = 0.0,
-    p_init: float = 0.0,
+    p_prep: float = 0.0,
 ) -> str:
     """Generate a Stim circuit from SurfacePatch geometry.
 
@@ -53,7 +53,7 @@ def generate_stim_circuit(
         p1: Single-qubit gate depolarizing error rate
         p2: Two-qubit gate depolarizing error rate
         p_meas: Measurement error rate (X_ERROR before M)
-        p_init: Initialization error rate (X_ERROR after R)
+        p_prep: Initialization error rate (X_ERROR after R)
 
     Returns:
         Stim circuit string with noise and detector annotations
@@ -109,8 +109,8 @@ def generate_stim_circuit(
     # Allocate data qubits (R = reset = qubit())
     for i in range(num_data):
         lines.append(f"R {data_q(i)}")
-        if p_init > 0:
-            lines.append(f"X_ERROR({p_init}) {data_q(i)}")
+        if p_prep > 0:
+            lines.append(f"X_ERROR({p_prep}) {data_q(i)}")
 
     # For X-basis: H on each data qubit
     if basis.upper() == "X":
@@ -140,14 +140,14 @@ def generate_stim_circuit(
         # Guppy: ax{i} = qubit() for each X stabilizer
         for s in geom.x_stabilizers:
             lines.append(f"R {x_anc_q(s.index)}")
-            if p_init > 0:
-                lines.append(f"X_ERROR({p_init}) {x_anc_q(s.index)}")
+            if p_prep > 0:
+                lines.append(f"X_ERROR({p_prep}) {x_anc_q(s.index)}")
 
         # Guppy: az{i} = qubit() for each Z stabilizer
         for s in geom.z_stabilizers:
             lines.append(f"R {z_anc_q(s.index)}")
-            if p_init > 0:
-                lines.append(f"X_ERROR({p_init}) {z_anc_q(s.index)}")
+            if p_prep > 0:
+                lines.append(f"X_ERROR({p_prep}) {z_anc_q(s.index)}")
 
         lines.append("")
 
@@ -341,7 +341,7 @@ def generate_circuit_level_dem(
         p1=p,
         p2=p,
         p_meas=p,
-        p_init=p,
+        p_prep=p,
     )
 
     # Parse and generate DEM
@@ -474,7 +474,7 @@ def compare_dems(
     stim_dem = generate_circuit_level_dem(patch, num_rounds, basis, p=p)
 
     # Generate phenomenological DEM
-    noise = NoiseModel(p1=p, p2=p, p_meas=p, p_init=p)
+    noise = NoiseModel(p1=p, p2=p, p_meas=p, p_prep=p)
     stab_type = "X" if basis.upper() == "X" else "Z"
     phenom_dem = generate_surface_code_dem(patch, num_rounds, noise, stab_type)
 

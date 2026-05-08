@@ -32,22 +32,28 @@ class RotatedPosition:
     y: int
 
 
-def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
+def compute_rotated_x_stabilizers(dx: int, dz: int | None = None) -> list[StabilizerSupport]:
     """Compute X stabilizer supports for rotated surface code.
 
     X stabilizers are placed at dual lattice faces where (row + col) is odd.
     Boundary X stabilizers (weight 2) are on the top and bottom edges.
 
-    This convention matches the QASM reference and Rust implementations.
+    Degenerate cases:
+    - dx=1: no X stabilizers (single row, no top/bottom boundary)
+    - dz=1: no X stabilizers (single column, no X-type faces)
+    - dx=1, dz=1: single qubit, no stabilizers
 
     Args:
-        d: Code distance (must be odd >= 3)
+        dx: Number of rows (X distance). Must be >= 1.
+        dz: Number of columns (Z distance). Must be >= 1. Defaults to dx.
 
     Returns:
         List of StabilizerSupport for X stabilizers
     """
-    if d < 3 or d % 2 == 0:
-        msg = f"Distance must be odd >= 3, got {d}"
+    if dz is None:
+        dz = dx
+    if dx < 1 or dz < 1:
+        msg = f"Distances must be >= 1, got dx={dx}, dz={dz}"
         raise ValueError(msg)
 
     supports = []
@@ -55,7 +61,7 @@ def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
 
     # Top boundary X stabilizers (weight 2)
     # Virtual dual row r=-1: X-type when (-1+col)%2==1, i.e. col even
-    for col in range(0, d - 1, 2):
+    for col in range(0, dz - 1, 2):
         q1 = col
         q2 = col + 1
         supports.append(
@@ -68,13 +74,13 @@ def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
         stab_idx += 1
 
     # Bulk X stabilizers (weight 4)
-    for row in range(d - 1):
-        for col in range(d - 1):
+    for row in range(dx - 1):
+        for col in range(dz - 1):
             if (row + col) % 2 == 1:
-                q_tl = row * d + col
-                q_tr = row * d + col + 1
-                q_bl = (row + 1) * d + col
-                q_br = (row + 1) * d + col + 1
+                q_tl = row * dz + col
+                q_tr = row * dz + col + 1
+                q_bl = (row + 1) * dz + col
+                q_br = (row + 1) * dz + col + 1
 
                 supports.append(
                     StabilizerSupport(
@@ -86,10 +92,11 @@ def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
                 stab_idx += 1
 
     # Bottom boundary X stabilizers (weight 2)
-    # Virtual dual row r=d-1: for odd d, (d-1+col)%2==1 requires col odd
-    for col in range(1, d - 1, 2):
-        q1 = (d - 1) * d + col
-        q2 = (d - 1) * d + col + 1
+    # Virtual dual row r=dx-1: X-type when (dx-1+col)%2==1
+    bottom_start = 1 if dx % 2 == 1 else 0
+    for col in range(bottom_start, dz - 1, 2):
+        q1 = (dx - 1) * dz + col
+        q2 = (dx - 1) * dz + col + 1
         supports.append(
             StabilizerSupport(
                 index=stab_idx,
@@ -102,32 +109,39 @@ def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
     return supports
 
 
-def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
+def compute_rotated_z_stabilizers(dx: int, dz: int | None = None) -> list[StabilizerSupport]:
     """Compute Z stabilizer supports for rotated surface code.
 
     Z stabilizers are placed at dual lattice faces where (row + col) is even.
     Boundary Z stabilizers (weight 2) are on the left and right edges.
 
-    This convention matches the QASM reference and Rust implementations.
+    Degenerate cases:
+    - dz=1: no Z stabilizers (single column, no left/right boundary)
+    - dx=1: Z stabilizers become the repetition code parity checks
+    - dx=1, dz=1: single qubit, no stabilizers
 
     Args:
-        d: Code distance (must be odd >= 3)
+        dx: Number of rows (X distance). Must be >= 1.
+        dz: Number of columns (Z distance). Must be >= 1. Defaults to dx.
 
     Returns:
         List of StabilizerSupport for Z stabilizers
     """
-    if d < 3 or d % 2 == 0:
-        msg = f"Distance must be odd >= 3, got {d}"
+    if dz is None:
+        dz = dx
+    if dx < 1 or dz < 1:
+        msg = f"Distances must be >= 1, got dx={dx}, dz={dz}"
         raise ValueError(msg)
 
     supports = []
     stab_idx = 0
 
     # Right boundary Z stabilizers (weight 2)
-    # Virtual dual col c=d-1: Z-type when (row+d-1)%2==0, i.e. row even (for odd d)
-    for row in range(0, d - 1, 2):
-        q1 = row * d + (d - 1)
-        q2 = (row + 1) * d + (d - 1)
+    # Virtual dual col c=dz-1: Z-type when (row+dz-1)%2==0
+    right_start = 0 if dz % 2 == 1 else 1
+    for row in range(right_start, dx - 1, 2):
+        q1 = row * dz + (dz - 1)
+        q2 = (row + 1) * dz + (dz - 1)
         supports.append(
             StabilizerSupport(
                 index=stab_idx,
@@ -138,13 +152,13 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
         stab_idx += 1
 
     # Bulk Z stabilizers (weight 4)
-    for row in range(d - 1):
-        for col in range(d - 1):
+    for row in range(dx - 1):
+        for col in range(dz - 1):
             if (row + col) % 2 == 0:
-                q_tl = row * d + col
-                q_tr = row * d + col + 1
-                q_bl = (row + 1) * d + col
-                q_br = (row + 1) * d + col + 1
+                q_tl = row * dz + col
+                q_tr = row * dz + col + 1
+                q_bl = (row + 1) * dz + col
+                q_br = (row + 1) * dz + col + 1
 
                 supports.append(
                     StabilizerSupport(
@@ -156,10 +170,10 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
                 stab_idx += 1
 
     # Left boundary Z stabilizers (weight 2)
-    # Virtual dual col c=-1: Z-type when (row+(-1))%2==0, i.e. row odd
-    for row in range(1, d - 1, 2):
-        q1 = row * d
-        q2 = (row + 1) * d
+    # Virtual dual col c=-1: Z-type when (row-1)%2==0, i.e. row odd
+    for row in range(1, dx - 1, 2):
+        q1 = row * dz
+        q2 = (row + 1) * dz
         supports.append(
             StabilizerSupport(
                 index=stab_idx,
@@ -172,8 +186,8 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
     # Re-order: left-to-right (ascending column), bottom-to-top (descending row)
     supports.sort(
         key=lambda s: (
-            sum(q % d for q in s.data_qubits) / len(s.data_qubits),
-            -sum(q // d for q in s.data_qubits) / len(s.data_qubits),
+            sum(q % dz for q in s.data_qubits) / len(s.data_qubits),
+            -sum(q // dz for q in s.data_qubits) / len(s.data_qubits),
         ),
     )
     return [
@@ -181,14 +195,18 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
     ]
 
 
-def get_rotated_logical_x(d: int) -> tuple[int, ...]:
-    """Get logical X operator qubits (left edge)."""
-    return tuple(i * d for i in range(d))
+def get_rotated_logical_x(dx: int, dz: int | None = None) -> tuple[int, ...]:
+    """Get logical X operator qubits (left edge, weight dx)."""
+    if dz is None:
+        dz = dx
+    return tuple(i * dz for i in range(dx))
 
 
-def get_rotated_logical_z(d: int) -> tuple[int, ...]:
-    """Get logical Z operator qubits (top edge)."""
-    return tuple(range(d))
+def get_rotated_logical_z(dx: int, dz: int | None = None) -> tuple[int, ...]:
+    """Get logical Z operator qubits (top edge, weight dz)."""
+    if dz is None:
+        dz = dx
+    return tuple(range(dz))
 
 
 def rotated_id_to_position(qubit_id: int, d: int) -> tuple[int, int]:

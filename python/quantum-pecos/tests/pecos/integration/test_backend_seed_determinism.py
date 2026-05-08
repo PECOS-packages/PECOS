@@ -108,7 +108,7 @@ ERROR_MODEL = GenericErrorModel(
         "p1": 2e-1,
         "p2": 2e-1,
         "p_meas": 2e-1,
-        "p_init": 1e-1,
+        "p_prep": 1e-1,
         "p1_error_model": {
             "X": 0.25,
             "Y": 0.25,

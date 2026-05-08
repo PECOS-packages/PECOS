@@ -436,9 +436,12 @@ impl NoiseChannel for TwoQubitChannel {
         if self.error_probability <= 0.0 {
             return false;
         }
+        // Only respond to unitary two-qubit gates.
+        // Non-unitary two-qubit operations (if any) should not get
+        // gate depolarizing noise.
         match event {
             NoiseEvent::BeforeGate { gate_type, .. } | NoiseEvent::AfterGate { gate_type, .. } => {
-                gate_type.is_two_qubit()
+                gate_type.is_two_qubit() && gate_type.is_unitary_gate()
             }
             _ => false,
         }
@@ -493,7 +496,7 @@ impl NoiseChannel for TwoQubitChannel {
             NoiseEvent::BeforeGate {
                 gate_type, qubits, ..
             } => {
-                if !gate_type.is_two_qubit() {
+                if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
                 if ctx.is_noiseless(*gate_type) {
@@ -507,7 +510,7 @@ impl NoiseChannel for TwoQubitChannel {
                 angles,
                 ..
             } => {
-                if !gate_type.is_two_qubit() {
+                if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
                 if ctx.is_noiseless(*gate_type) {

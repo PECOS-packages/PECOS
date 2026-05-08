@@ -205,6 +205,62 @@ prog = make_color_transversal_cnot_d3(num_rounds=1)
 prog = make_surface_transversal_cnot(distance=5, num_rounds=2)
 ```
 
+## Writing Your Own QEC Circuit
+
+You can write QEC circuits directly in Guppy without using the factory functions. Here is a minimal 3-qubit repetition code:
+
+```python
+from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.quantum import qubit, cx, measure, measure_array
+
+
+@guppy.struct
+class RepSyndrome:
+    """Two-bit syndrome for the 3-qubit repetition code."""
+
+    s: array[bool, 2]
+
+
+@guppy
+def extract_rep_syndrome(data: array[qubit, 3]) -> RepSyndrome:
+    """Measure Z_0 Z_1 and Z_1 Z_2 stabilizers."""
+    a0 = qubit()
+    a1 = qubit()
+
+    # Z_0 Z_1 stabilizer
+    cx(data[0], a0)
+    cx(data[1], a0)
+
+    # Z_1 Z_2 stabilizer
+    cx(data[1], a1)
+    cx(data[2], a1)
+
+    s0 = measure(a0)
+    s1 = measure(a1)
+
+    return RepSyndrome(array(s0, s1))
+
+
+@guppy
+def rep_code_experiment() -> tuple[array[bool, 3], RepSyndrome]:
+    """Run one round of the 3-qubit repetition code."""
+    data = array(qubit(), qubit(), qubit())
+    syndrome = extract_rep_syndrome(data)
+    results = measure_array(data)
+    return results, syndrome
+
+
+# Verify it compiles
+compiled = rep_code_experiment.compile()
+```
+
+Key patterns:
+- `@guppy.struct` defines data types (qubits are linear — they must be consumed)
+- `@guppy` functions can call each other freely
+- Ancilla qubits are allocated with `qubit()` and consumed by `measure()`
+- Use `measure_array()` to measure all qubits in an array at once
+
 ## Generated Code Structure
 
 ```hidden-python
@@ -256,27 +312,19 @@ def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
 
 ### Syndrome Extraction
 
-<!--skip: illustrative generated code, not executable-->
+The generated module includes a `syndrome_extraction` function that applies all stabilizer measurements in a parallelized CNOT schedule and returns the syndrome:
+
 ```python
-@guppy
-def syndrome_extraction(
-    surf: SurfaceCode_3x3,
-    ax: qubit,
-    az: qubit,
-) -> Syndrome_3x3:
-    """Extract full syndrome."""
-    # Z stabilizers
-    sz0 = measure_z_stab_0(az, surf.data)
-    sz1 = measure_z_stab_1(az, surf.data)
-    # ...
+from pecos.guppy import generate_surface_code_module
 
-    # X stabilizers
-    sx0 = measure_x_stab_0(ax, surf.data)
-    sx1 = measure_x_stab_1(ax, surf.data)
-    # ...
+source = generate_surface_code_module(d=3)
 
-    return Syndrome_3x3(array(sx0, sx1, ...), array(sz0, sz1, ...))
+# The generated module contains the full syndrome extraction circuit
+assert "def syndrome_extraction" in source
+assert "Syndrome_3x3" in source
 ```
+
+To see the full generated code, see [Viewing Generated Source](#viewing-generated-source) below.
 
 ## Viewing Generated Source
 

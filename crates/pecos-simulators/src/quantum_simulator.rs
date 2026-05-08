@@ -37,4 +37,7 @@ pub trait QuantumSimulator {
     ///    .z(&qid(1));    // Can continue chaining methods
     /// ```
     fn reset(&mut self) -> &mut Self;
+
+    /// Returns the number of qubits in the simulator.
+    fn num_qubits(&self) -> usize;
 }

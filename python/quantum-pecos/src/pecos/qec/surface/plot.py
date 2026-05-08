@@ -136,6 +136,7 @@ def _annotate_cnot_order(ax: plt.Axes, stabilizers: list, d: int) -> None:
             stab.data_qubits,
             stab.is_boundary,
             d,
+            d,
         )
 
         # Compute centroid of the stabilizer

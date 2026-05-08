@@ -535,6 +535,31 @@ impl PyMatchingDecoder {
         Ok(Self { graph, config })
     }
 
+    /// Create a decoder from a DEM string with correlation support
+    ///
+    /// When `enable_correlations` is true, the decoder tracks edge correlations
+    /// during graph construction and uses them during decoding.
+    ///
+    /// # Errors
+    /// Returns an error if the DEM string is invalid or cannot be parsed.
+    pub fn from_dem_with_correlations(dem_string: &str, enable_correlations: bool) -> Result<Self> {
+        let graph = ffi::create_pymatching_graph_from_dem_with_correlations(
+            dem_string,
+            enable_correlations,
+        )?;
+
+        let num_nodes = ffi::pymatching_get_num_nodes(&graph);
+        let num_observables = ffi::pymatching_get_num_observables(&graph);
+
+        let config = PyMatchingConfig {
+            num_neighbours: None,
+            num_nodes: Some(num_nodes),
+            num_observables,
+        };
+
+        Ok(Self { graph, config })
+    }
+
     /// Create a decoder from a check matrix
     ///
     /// The check matrix should be in sparse format where:
@@ -1553,11 +1578,7 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
         // The result from FFI is already in the requested format
         // We just need to reshape it by shots
         let num_shots = result.weights.len();
-        let bytes_per_shot = if num_shots > 0 {
-            result.predictions.len() / num_shots
-        } else {
-            0
-        };
+        let bytes_per_shot = result.predictions.len().checked_div(num_shots).unwrap_or(0);
 
         let predictions = if bytes_per_shot > 0 {
             result

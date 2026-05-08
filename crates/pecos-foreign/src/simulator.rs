@@ -116,6 +116,7 @@ unsafe impl Send for ForeignSimulator {}
 pub struct ForeignSimulator {
     handle: *mut (),
     vtable: ForeignSimulatorVTable,
+    num_qubits: usize,
     /// RNG used by PECOS's noise system. The foreign simulator has its own
     /// internal RNG; this one is for the Rust framework (noise injection, etc.).
     rng: PecosRng,
@@ -133,7 +134,11 @@ impl ForeignSimulator {
     /// - The foreign simulator is thread-safe (Send)
     ///
     /// Returns `None` if the vtable version does not match the expected ABI version.
-    pub unsafe fn new(handle: *mut (), vtable: ForeignSimulatorVTable) -> Option<Self> {
+    pub unsafe fn new(
+        handle: *mut (),
+        vtable: ForeignSimulatorVTable,
+        num_qubits: usize,
+    ) -> Option<Self> {
         if vtable.version != crate::version::SIMULATOR_VTABLE_VERSION {
             log::error!(
                 "Foreign simulator ABI version mismatch: plugin has v{}, PECOS expects v{}",
@@ -145,6 +150,7 @@ impl ForeignSimulator {
         Some(Self {
             handle,
             vtable,
+            num_qubits,
             rng: PecosRng::seed_from_u64(0),
         })
     }
@@ -185,6 +191,10 @@ impl QuantumSimulator for ForeignSimulator {
             (self.vtable.reset)(self.handle);
         }
         self
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
     }
 }
 

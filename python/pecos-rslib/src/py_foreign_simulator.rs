@@ -116,6 +116,16 @@ impl QuantumSimulator for PyForeignSimulator {
         });
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        Python::attach(|py| {
+            self.inner
+                .call_method0(py, "num_qubits")
+                .expect("Python simulator num_qubits() failed")
+                .extract::<usize>(py)
+                .expect("num_qubits() must return an integer")
+        })
+    }
 }
 
 impl CliffordGateable for PyForeignSimulator {

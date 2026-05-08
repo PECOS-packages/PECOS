@@ -80,7 +80,7 @@ class GenericErrorModel:
                 - p1: Single-qubit gate error probability
                 - p2: Two-qubit gate error probability
                 - p_meas: Measurement error probability
-                - p_init: Initialization error probability
+                - p_prep: Preparation error probability
                 - scale: Optional scaling factor for all error rates
                 - p1_error_model: Optional custom single-qubit Pauli error distribution
                 - p2_error_model: Optional custom two-qubit Pauli error distribution
@@ -134,7 +134,7 @@ class GenericErrorModel:
             self._eparams["p_meas"] = pc.mean(self._eparams["p_meas"])
 
         self._eparams["p_meas"] *= scale
-        self._eparams["p_init"] *= scale
+        self._eparams["p_prep"] *= scale
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
@@ -165,7 +165,7 @@ class GenericErrorModel:
             if op.name in {"init |0>", "Init", "Init +Z"}:
                 qops_after = noise_initz_bitflip_leakage(
                     op,
-                    p=self._eparams["p_init"],
+                    p=self._eparams["p_prep"],
                     machine=self.machine,
                 )
 

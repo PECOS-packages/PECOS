@@ -115,6 +115,10 @@ impl Stabilizer {
 }
 
 impl QuantumSimulator for Stabilizer {
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         self.inner.reset();
@@ -219,10 +223,6 @@ impl StabilizerTableauSimulator for Stabilizer {
 
     fn destab_tableau(&self) -> String {
         self.inner.destab_tableau()
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.inner.num_qubits()
     }
 }
 

@@ -67,6 +67,8 @@ pub mod gates {
     pub const SYdg: GateId = GateId(14);
     pub const SZ: GateId = GateId(15);
     pub const SZdg: GateId = GateId(16);
+    pub const F: GateId = GateId(17);
+    pub const Fdg: GateId = GateId(18);
 
     // T gates
     pub const T: GateId = GateId(20);

@@ -2464,6 +2464,10 @@ impl<R: Rng + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
         self.initialize_state();
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits as usize
+    }
 }
 
 impl<R: Rng + SeedableRng + Debug> Debug for GpuStab<R> {

@@ -7,8 +7,8 @@ use crate::decoder::{CheckMatrix, CheckMatrixConfig, DecodingResult, PyMatchingD
 use crate::errors::PyMatchingError;
 use ndarray::{ArrayView1, ArrayView2};
 use pecos_decoder_core::{
-    BatchDecoder, CheckMatrixDecoder, Decoder, DecodingStats, DemDecoder, DetailedDecoder,
-    MatchedEdge, MatchedPair as CoreMatchedPair,
+    BatchDecoder, CheckMatrixDecoder, Decoder, DecoderError, DecodingStats, DemDecoder,
+    DetailedDecoder, MatchedEdge, MatchedPair as CoreMatchedPair, ObservableDecoder,
 };
 
 /// Implement the core Decoder trait for `PyMatchingDecoder`
@@ -181,6 +181,52 @@ impl DetailedDecoder for PyMatchingDecoder {
             converged: true,
             confidence: None,
         }
+    }
+}
+
+/// Implement `ObservableDecoder` for `PyMatchingDecoder`.
+///
+/// Converts the observable vector to a bitmask for the sample+decode loop.
+impl ObservableDecoder for PyMatchingDecoder {
+    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        let result = self
+            .decode(syndrome)
+            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+        let mut mask = 0u64;
+        for (i, &v) in result.observable.iter().enumerate() {
+            if v != 0 {
+                mask |= 1 << i;
+            }
+        }
+        Ok(mask)
+    }
+
+    fn decode_batch_to_observables(
+        &mut self,
+        shots: &[u8],
+        num_shots: usize,
+        num_detectors: usize,
+    ) -> Result<Vec<u64>, DecoderError> {
+        use crate::decoder::BatchConfig;
+        let config = BatchConfig {
+            bit_packed_input: false,
+            bit_packed_output: true,
+            return_weights: false,
+        };
+        let result = self
+            .decode_batch_with_config(shots, num_shots, num_detectors, config)
+            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+
+        // Convert per-shot bit-packed predictions to u64 masks.
+        let mut masks = Vec::with_capacity(num_shots);
+        for pred in &result.predictions {
+            let mut mask = 0u64;
+            for (byte_idx, &byte) in pred.iter().enumerate() {
+                mask |= u64::from(byte) << (byte_idx * 8);
+            }
+            masks.push(mask);
+        }
+        Ok(masks)
     }
 }
 

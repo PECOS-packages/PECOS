@@ -11,7 +11,6 @@ pub(crate) mod ffi {
         pub det_beam: u16,
         pub beam_climbing: bool,
         pub no_revisit_dets: bool,
-        pub at_most_two_errors_per_detector: bool,
         pub verbose: bool,
         pub pqlimit: usize,
         pub det_penalty: f64,
@@ -79,9 +78,6 @@ pub(crate) mod ffi {
 
         /// Check if detector revisiting is disabled.
         fn get_no_revisit_dets(decoder: &TesseractDecoderWrapper) -> bool;
-
-        /// Check if at-most-two-errors-per-detector is enabled.
-        fn get_at_most_two_errors_per_detector(decoder: &TesseractDecoderWrapper) -> bool;
 
         /// Check if verbose mode is enabled.
         fn get_verbose(decoder: &TesseractDecoderWrapper) -> bool;

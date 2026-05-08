@@ -1,5 +1,5 @@
 use pecos_core::{Angle64, QubitId};
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, CliffordRz};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
 /// Benchmark that actually creates many terms by interleaving H and RZ.
@@ -14,7 +14,7 @@ fn main() {
         .unwrap_or(8);
 
     let theta = Angle64::from_radians(0.3);
-    let mut sim = CliffordRz::new_with_seed(nq, 42);
+    let mut sim = StabVec::new_with_seed(nq, 42);
 
     // Create entangled state
     for q in 0..nq {

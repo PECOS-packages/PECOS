@@ -12,10 +12,10 @@
 //! 5. **Direct array access**: Skips Option-returning methods in hot loops
 
 use super::SpacetimeLocation;
-use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, LogicalId, MeasurementId};
-use pecos_core::gate_type::GateType;
+use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, MeasurementId, TrackedOpId};
+use pecos_core::{QubitId, gate_type::GateType};
 use pecos_quantum::tick_circuit_soa::TickCircuitSoA;
-use pecos_simulators::PauliProp;
+use pecos_simulators::{CliffordGateable, PauliProp};
 
 // ============================================================================
 // Work Buffers for Reuse
@@ -145,14 +145,14 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
     /// Builds the complete fault influence map.
     #[must_use]
     pub fn build_influence_map(&self) -> FaultInfluenceMap {
-        self.build_influence_map_with_logicals(&[])
+        self.build_influence_map_with_tracked_ops(&[])
     }
 
-    /// Builds the fault influence map with logical operator tracking.
+    /// Builds the fault influence map with tracked Pauli operator tracking.
     #[must_use]
-    pub fn build_influence_map_with_logicals(
+    pub fn build_influence_map_with_tracked_ops(
         &self,
-        logicals: &[(&[usize], &[usize])],
+        tracked_ops: &[(&[usize], &[usize])],
     ) -> FaultInfluenceMap {
         let mut map = FaultInfluenceMap::new();
 
@@ -165,11 +165,11 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
             map.detectors.push(DetectorId::single(*m));
         }
 
-        // Create logical IDs
-        for (i, _) in logicals.iter().enumerate() {
-            map.logicals.push(LogicalId {
-                logical_qubit: i,
-                observable: 0,
+        // Create tracked-operator IDs
+        for (i, _) in tracked_ops.iter().enumerate() {
+            map.tracked_ops.push(TrackedOpId {
+                op_index: i,
+                component: 0,
             });
         }
 
@@ -189,16 +189,16 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
             self.propagate_from_measurement_optimized(measurement, &mut map, &mut buffers);
         }
 
-        // Backward propagate from each logical operator
-        for (i, (x_pos, z_pos)) in logicals.iter().enumerate() {
-            let logical_id = LogicalId {
-                logical_qubit: i,
-                observable: 0,
+        // Backward propagate from each tracked Pauli operator
+        for (i, (x_pos, z_pos)) in tracked_ops.iter().enumerate() {
+            let tracked_op_id = TrackedOpId {
+                op_index: i,
+                component: 0,
             };
-            self.propagate_from_logical_optimized(
+            self.propagate_from_tracked_op_optimized(
                 x_pos,
                 z_pos,
-                &logical_id,
+                &tracked_op_id,
                 &mut map,
                 &mut buffers,
             );
@@ -347,45 +347,85 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         let qubits = storage.qubits_unchecked(idx);
 
         match gate_type {
-            GateType::CX => {
-                if qubits.len() >= 2 {
-                    let control = qubits[0].index();
-                    let target = qubits[1].index();
+            GateType::CX if qubits.len() >= 2 => {
+                let control = qubits[0].index();
+                let target = qubits[1].index();
 
-                    let ctrl_x = prop.contains_x(control);
-                    let tgt_z = prop.contains_z(target);
+                let ctrl_x = prop.contains_x(control);
+                let tgt_z = prop.contains_z(target);
 
-                    if ctrl_x {
-                        prop.track_x(&[target]);
-                    }
-                    if tgt_z {
-                        prop.track_z(&[control]);
-                    }
-
-                    // Update active qubits
-                    Self::update_active_qubit(control, prop, buffers);
-                    Self::update_active_qubit(target, prop, buffers);
+                if ctrl_x {
+                    prop.track_x(&[target]);
                 }
+                if tgt_z {
+                    prop.track_z(&[control]);
+                }
+
+                // Update active qubits
+                Self::update_active_qubit(control, prop, buffers);
+                Self::update_active_qubit(target, prop, buffers);
             }
 
-            GateType::CZ => {
-                if qubits.len() >= 2 {
-                    let q0 = qubits[0].index();
-                    let q1 = qubits[1].index();
+            GateType::CZ if qubits.len() >= 2 => {
+                let q0 = qubits[0].index();
+                let q1 = qubits[1].index();
 
-                    let x0 = prop.contains_x(q0);
-                    let x1 = prop.contains_x(q1);
+                let x0 = prop.contains_x(q0);
+                let x1 = prop.contains_x(q1);
 
-                    if x0 {
-                        prop.track_z(&[q1]);
-                    }
-                    if x1 {
-                        prop.track_z(&[q0]);
-                    }
-
-                    Self::update_active_qubit(q0, prop, buffers);
-                    Self::update_active_qubit(q1, prop, buffers);
+                if x0 {
+                    prop.track_z(&[q1]);
                 }
+                if x1 {
+                    prop.track_z(&[q0]);
+                }
+
+                Self::update_active_qubit(q0, prop, buffers);
+                Self::update_active_qubit(q1, prop, buffers);
+            }
+
+            GateType::CY
+            | GateType::SWAP
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SZZ
+            | GateType::SZZdg
+                if qubits.len() >= 2 =>
+            {
+                let q0 = qubits[0];
+                let q1 = qubits[1];
+                let pair = [(q0, q1)];
+                match gate_type {
+                    GateType::CY => {
+                        prop.cy(&pair);
+                    }
+                    GateType::SWAP => {
+                        prop.swap(&pair);
+                    }
+                    GateType::SXX => {
+                        prop.sxxdg(&pair);
+                    }
+                    GateType::SXXdg => {
+                        prop.sxx(&pair);
+                    }
+                    GateType::SYY => {
+                        prop.syydg(&pair);
+                    }
+                    GateType::SYYdg => {
+                        prop.syy(&pair);
+                    }
+                    GateType::SZZ => {
+                        prop.szzdg(&pair);
+                    }
+                    GateType::SZZdg => {
+                        prop.szz(&pair);
+                    }
+                    _ => unreachable!(),
+                }
+                Self::update_active_qubit(q0.index(), prop, buffers);
+                Self::update_active_qubit(q1.index(), prop, buffers);
             }
 
             GateType::H => {
@@ -403,6 +443,39 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                     }
 
                     Self::update_active_qubit(q, prop, buffers);
+                }
+            }
+
+            GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::F
+            | GateType::Fdg => {
+                if let Some(qid) = qubits.first() {
+                    let q = [QubitId(qid.index())];
+                    match gate_type {
+                        GateType::SX => {
+                            prop.sxdg(&q);
+                        }
+                        GateType::SXdg => {
+                            prop.sx(&q);
+                        }
+                        GateType::SY => {
+                            prop.sydg(&q);
+                        }
+                        GateType::SYdg => {
+                            prop.sy(&q);
+                        }
+                        GateType::F => {
+                            prop.fdg(&q);
+                        }
+                        GateType::Fdg => {
+                            prop.f(&q);
+                        }
+                        _ => unreachable!(),
+                    }
+                    Self::update_active_qubit(qid.index(), prop, buffers);
                 }
             }
 
@@ -448,12 +521,12 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         }
     }
 
-    /// Optimized backward propagation from a logical operator.
-    fn propagate_from_logical_optimized(
+    /// Optimized backward propagation from a tracked Pauli operator.
+    fn propagate_from_tracked_op_optimized(
         &self,
         x_positions: &[usize],
         z_positions: &[usize],
-        logical_id: &LogicalId,
+        tracked_op_id: &TrackedOpId,
         map: &mut FaultInfluenceMap,
         buffers: &mut AnalyzerWorkBuffers,
     ) {
@@ -486,7 +559,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 tick_idx,
                 &prop,
                 &dummy_detector,
-                Some(logical_id),
+                Some(tracked_op_id),
                 map,
                 false,
             );
@@ -497,7 +570,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 tick_idx,
                 &prop,
                 &dummy_detector,
-                Some(logical_id),
+                Some(tracked_op_id),
                 map,
                 true,
             );
@@ -511,7 +584,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         tick_idx: usize,
         prop: &PauliProp,
         detector: &DetectorId,
-        logical: Option<&LogicalId>,
+        tracked_op: Option<&TrackedOpId>,
         map: &mut FaultInfluenceMap,
         only_before: bool,
     ) {
@@ -535,8 +608,8 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 if let Some(influence) = map.influences.get_mut(loc) {
                     // X fault anticommutes with Z or Y observable
                     if obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[1].push(*log);
+                        if let Some(op) = tracked_op {
+                            influence.tracked_op_flips[1].push(*op);
                         } else {
                             influence.detector_flips[1].push(detector.clone());
                             influence.measurement_flips[1]
@@ -551,8 +624,8 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
 
                     // Z fault anticommutes with X or Y observable
                     if obs_x {
-                        if let Some(log) = logical {
-                            influence.logical_flips[3].push(*log);
+                        if let Some(op) = tracked_op {
+                            influence.tracked_op_flips[3].push(*op);
                         } else {
                             influence.detector_flips[3].push(detector.clone());
                             influence.measurement_flips[3]
@@ -565,10 +638,10 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                         }
                     }
 
-                    // Y fault anticommutes with any non-identity observable
-                    if obs_x || obs_z {
-                        if let Some(log) = logical {
-                            influence.logical_flips[2].push(*log);
+                    // Y fault: anticommutes with X or Z but NOT both (Y commutes with Y)
+                    if obs_x ^ obs_z {
+                        if let Some(op) = tracked_op {
+                            influence.tracked_op_flips[2].push(*op);
                         } else {
                             influence.detector_flips[2].push(detector.clone());
                             influence.measurement_flips[2]
@@ -599,12 +672,12 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
                 }
             }
 
-            for (pauli, logicals) in influence.logical_flips.iter().enumerate() {
+            for (pauli, tracked_ops) in influence.tracked_op_flips.iter().enumerate() {
                 #[allow(clippy::cast_possible_truncation)] // Pauli index 0..2
                 let pauli_u8 = pauli as u8;
-                for logical in logicals {
-                    map.logical_to_faults
-                        .entry(*logical)
+                for tracked_op in tracked_ops {
+                    map.tracked_op_to_faults
+                        .entry(*tracked_op)
                         .or_default()
                         .push((loc.clone(), pauli_u8));
                 }
@@ -667,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn test_logical_propagation() {
+    fn test_tracked_op_propagation() {
         let mut builder = TickCircuitSoABuilder::new();
         builder
             .tick()
@@ -682,9 +755,9 @@ mod tests {
         let circuit = builder.build();
         let analyzer = TickFaultAnalyzerSoA::new(&circuit);
 
-        let logicals = [(&[] as &[usize], &[1usize] as &[usize])];
-        let map = analyzer.build_influence_map_with_logicals(&logicals);
+        let tracked_ops = [(&[] as &[usize], &[1usize] as &[usize])];
+        let map = analyzer.build_influence_map_with_tracked_ops(&tracked_ops);
 
-        assert_eq!(map.logicals.len(), 1);
+        assert_eq!(map.tracked_ops.len(), 1);
     }
 }

@@ -154,7 +154,7 @@ class TestDemSamplerVsStim:
     @pytest.fixture
     def noise_params(self) -> dict[str, float]:
         """Standard noise parameters for testing."""
-        return {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        return {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
     def test_dem_mechanism_counts_match(
         self,
@@ -278,19 +278,19 @@ class TestDemSamplerVsStim:
         # Stim sampling - returns (det_events, obs_flips, error_data)
         stim_det_events, stim_obs_flips, _ = stim_sampler.sample(num_shots)
         stim_syndrome_count = np.any(stim_det_events, axis=1).sum()
-        stim_logical_count = np.any(stim_obs_flips, axis=1).sum()
+        stim_observable_count = np.any(stim_obs_flips, axis=1).sum()
 
         # Compare rates
         pecos_syndrome_rate = pecos_stats["syndrome_rate"]
         stim_syndrome_rate = stim_syndrome_count / num_shots
 
         pecos_logical_rate = pecos_stats["logical_error_rate"]
-        stim_logical_rate = stim_logical_count / num_shots
+        stim_logical_rate = stim_observable_count / num_shots
 
         # Compare absolute differences - allow up to 10% relative difference
         # Known: PECOS and Stim have slightly different DEM generation
         syndrome_diff = abs(pecos_syndrome_rate - stim_syndrome_rate)
-        logical_diff = abs(pecos_logical_rate - stim_logical_rate)
+        observable_diff = abs(pecos_logical_rate - stim_logical_rate)
 
         # Syndrome rates should be within 20% relative
         max_rate = max(pecos_syndrome_rate, stim_syndrome_rate, 0.001)
@@ -301,11 +301,11 @@ class TestDemSamplerVsStim:
         )
 
         # Logical error rates should be within 30% relative (more variable)
-        max_logical = max(pecos_logical_rate, stim_logical_rate, 0.001)
-        logical_rel_diff = logical_diff / max_logical
-        assert logical_rel_diff < 0.5, (
+        max_observable = max(pecos_logical_rate, stim_logical_rate, 0.001)
+        observable_rel_diff = observable_diff / max_observable
+        assert observable_rel_diff < 0.5, (
             f"Logical error rate mismatch: PECOS={pecos_logical_rate:.4f}, "
-            f"Stim={stim_logical_rate:.4f}, rel_diff={logical_rel_diff:.1%}"
+            f"Stim={stim_logical_rate:.4f}, rel_diff={observable_rel_diff:.1%}"
         )
 
     def test_detector_firing_rates_correlate(
@@ -386,7 +386,7 @@ class TestDemSamplerMultiRound:
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=3, basis="Z")
 
-        noise_params = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise_params = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         # Build PECOS sampler
         dag = tc.to_dag_circuit()
@@ -423,7 +423,7 @@ class TestDemSamplerMultiRound:
         max_rate = max(pecos_stats["logical_error_rate"], stim_logical_rate, 0.001)
         rel_diff = abs(pecos_stats["logical_error_rate"] - stim_logical_rate) / max_rate
         assert rel_diff < 0.5, (
-            f"Logical rate mismatch for d=3, r=3: "
+            f"Observable rate mismatch for d=3, r=3: "
             f"PECOS={pecos_stats['logical_error_rate']:.4f}, Stim={stim_logical_rate:.4f}, "
             f"rel_diff={rel_diff:.1%}"
         )
@@ -441,7 +441,7 @@ class TestDemSamplerHigherDistance:
         patch = SurfacePatch.create(distance=distance)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="Z")
 
-        noise_params = {"p1": 0.001, "p2": 0.001, "p_meas": 0.001, "p_init": 0.001}
+        noise_params = {"p1": 0.001, "p2": 0.001, "p_meas": 0.001, "p_prep": 0.001}
 
         # Build sampler
         dag = tc.to_dag_circuit()
@@ -482,7 +482,7 @@ class TestXBasisMemory:
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="X")
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         # Generate DEMs (non-decomposed for exact comparison)
         pecos_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
@@ -531,7 +531,7 @@ class TestXBasisMemory:
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         # Build PECOS sampler
         dag = tc.to_dag_circuit()
@@ -541,7 +541,9 @@ class TestXBasisMemory:
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise)
         builder.with_detectors_json(tc.get_meta("detectors") or "[]")
-        builder.with_observables_json(tc.get_meta("observables") or "[]")
+        builder.with_observables_json(
+            tc.get_meta("observables") or "[]"
+        )
         builder.with_measurement_order(extract_measurement_order(tc))
         pecos_sampler = builder.build()
 
@@ -572,20 +574,20 @@ class TestAsymmetricNoise:
     @pytest.mark.parametrize(
         "noise_params",
         [
-            {"p1": 0.001, "p2": 0.01, "p_meas": 0.005, "p_init": 0.002},  # p2 dominant
-            {"p1": 0.02, "p2": 0.001, "p_meas": 0.001, "p_init": 0.001},  # p1 dominant
+            {"p1": 0.001, "p2": 0.01, "p_meas": 0.005, "p_prep": 0.002},  # p2 dominant
+            {"p1": 0.02, "p2": 0.001, "p_meas": 0.001, "p_prep": 0.001},  # p1 dominant
             {
                 "p1": 0.001,
                 "p2": 0.001,
                 "p_meas": 0.05,
-                "p_init": 0.001,
+                "p_prep": 0.001,
             },  # p_meas dominant
             {
                 "p1": 0.001,
                 "p2": 0.001,
                 "p_meas": 0.001,
-                "p_init": 0.05,
-            },  # p_init dominant
+                "p_prep": 0.05,
+            },  # p_prep dominant
         ],
     )
     def test_asymmetric_noise_dem_matches_stim(
@@ -740,8 +742,8 @@ class TestRandomCliffordFuzzing:
             if name == "R":
                 for t in targets:
                     noisy.append("R", [t.value])
-                    if noise["p_init"] > 0:
-                        noisy.append("X_ERROR", [t.value], noise["p_init"])
+                    if noise["p_prep"] > 0:
+                        noisy.append("X_ERROR", [t.value], noise["p_prep"])
             elif name in ("H", "S", "S_DAG"):
                 for t in targets:
                     noisy.append(name, [t.value])
@@ -823,7 +825,7 @@ class TestRandomCliffordFuzzing:
         records = [-i for i in range(1, num_qubits + 1)]
         detectors_json = f'[{{"id": 0, "records": {records}}}]'
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise)
@@ -864,7 +866,7 @@ class TestDemEquivalenceComprehensive:
         patch = SurfacePatch.create(distance=distance)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=num_rounds, basis=basis)
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         # Generate non-decomposed DEMs
         pecos_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)

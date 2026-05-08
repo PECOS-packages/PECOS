@@ -444,6 +444,10 @@ impl<R> QuantumSimulator for StateVecAoS<R>
 where
     R: Rng + SeedableRng + Debug,
 {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     /// # Examples
     /// ```rust
     /// use pecos_simulators::{QuantumSimulator, StateVecAoS};

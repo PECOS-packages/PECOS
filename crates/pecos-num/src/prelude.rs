@@ -99,8 +99,8 @@ pub use num_complex::{Complex, Complex32, Complex64};
 // Re-export array operations
 // Note: sum() for slices removed - use .iter().sum() directly (idiomatic Rust)
 pub use crate::array::{
-    arange, broadcast_shapes, broadcast_to, delete, diag, diag_matrix, linspace, ones, sum_axis,
-    zeros,
+    arange, broadcast_shapes, broadcast_to, delete, diag, diag_matrix, geomspace, linspace, ones,
+    sum_axis, zeros,
 };
 
 // Re-export graph types and algorithms

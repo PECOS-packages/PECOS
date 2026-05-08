@@ -157,11 +157,9 @@ def _run_phir_json(phir: dict, *, shots: int = 1, seed: int = 42) -> dict:
     from pecos_rslib import RustPhirClassicalInterpreter
 
     py_i = PhirClassicalInterpreter()
-    py_i.phir_validate = False
     py_r = HybridEngine(cinterp=py_i).run(phir, shots=shots, seed=seed, return_int=True)
 
     rs_i = RustPhirClassicalInterpreter()
-    rs_i.phir_validate = False
     rs_r = HybridEngine(cinterp=rs_i).run(phir, shots=shots, seed=seed, return_int=True)
 
     py_vals = {k: int(v[0]) for k, v in py_r.items()}

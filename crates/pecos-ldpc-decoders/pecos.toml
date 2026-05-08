@@ -10,13 +10,13 @@ sha256 = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e"
 description = "C++ Boost libraries"
 
 [dependencies.ldpc]
-version = "31cf9f33872f32579af1efbe1e84552d42b03ea8"
-url = "https://github.com/quantumgizmos/ldpc/archive/31cf9f33872f32579af1efbe1e84552d42b03ea8.tar.gz"
-sha256 = "43ea9bfe543233c5f65e2dfb7966229df803040b4b26e25e99c3068eb23a797a"
+version = "d3429964cd4ffe1abfc041c6ec8b8425cb174f40"
+url = "https://github.com/quantumgizmos/ldpc/archive/d3429964cd4ffe1abfc041c6ec8b8425cb174f40.tar.gz"
+sha256 = "76af0f01446ee7cbed33a47d6b597c10d8d12b2f10d508911b3d0763844d467e"
 description = "LDPC decoders"
 
 [dependencies.stim]
-version = "bd60b73525fd5a9b30839020eb7554ad369e4337"
-url = "https://github.com/quantumlib/Stim/archive/bd60b73525fd5a9b30839020eb7554ad369e4337.tar.gz"
-sha256 = "2a4be24295ce3018d79e08369b31e401a2d33cd8b3a75675d57dac3afd9de37d"
+version = "213275795e49027772bea7c610b6aac3a80583e1"
+url = "https://github.com/quantumlib/Stim/archive/213275795e49027772bea7c610b6aac3a80583e1.tar.gz"
+sha256 = "b63c4ae94494a8819d440757776cf80a829ec1e30454fa7c9b0f670e981938ab"
 description = "Stabilizer simulator for QEC"

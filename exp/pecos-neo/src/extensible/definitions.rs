@@ -326,6 +326,14 @@ impl GateDefinitions {
             GateSpec::new("H").with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core_spec(
+            gates::F,
+            GateSpec::new("F").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::Fdg,
+            GateSpec::new("Fdg").with_category(GateCategory::SingleQubitUnitary),
+        );
+        self.set_core_spec(
             gates::SX,
             GateSpec::new("SX").with_category(GateCategory::SingleQubitUnitary),
         );
@@ -414,6 +422,42 @@ impl GateDefinitions {
         self.set_core_spec(
             gates::SWAP,
             GateSpec::new("SWAP")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SXX,
+            GateSpec::new("SXX")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SXXdg,
+            GateSpec::new("SXXdg")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SYY,
+            GateSpec::new("SYY")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SYYdg,
+            GateSpec::new("SYYdg")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SZZ,
+            GateSpec::new("SZZ")
+                .with_quantum_arity(2)
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+        self.set_core_spec(
+            gates::SZZdg,
+            GateSpec::new("SZZdg")
                 .with_quantum_arity(2)
                 .with_category(GateCategory::TwoQubitUnitary),
         );

@@ -651,15 +651,15 @@ impl GpuPauliProp {
 
     /// Check if a Pauli string anticommutes with the accumulated faults.
     ///
-    /// This is used to check for logical errors: if the fault anticommutes
-    /// with a logical operator, it's a logical error.
+    /// This is used to check whether faults flip a tracked Pauli string:
+    /// an odd number of anticommutations means the tracked operator flips.
     ///
     /// # Arguments
     /// * `x_qubits` - Qubits with X in the Pauli string
     /// * `z_qubits` - Qubits with Z in the Pauli string
     ///
     /// # Returns
-    /// A vector of bools, one per shot, true if anticommutes (logical error).
+    /// A vector of bools, one per shot, true if the tracked Pauli string flips.
     pub fn check_anticommutation(&mut self, x_qubits: &[usize], z_qubits: &[usize]) -> Vec<bool> {
         self.sync();
 
@@ -674,7 +674,7 @@ impl GpuPauliProp {
 
             let mut anticom_count = 0u32;
 
-            // X in logical anticommutes with Z faults
+            // X in the tracked operator anticommutes with Z faults.
             for &q in x_qubits {
                 let base = q * self.shot_words as usize;
                 if (z_faults[base + word_idx] >> bit_idx) & 1 != 0 {
@@ -682,7 +682,7 @@ impl GpuPauliProp {
                 }
             }
 
-            // Z in logical anticommutes with X faults
+            // Z in the tracked operator anticommutes with X faults.
             for &q in z_qubits {
                 let base = q * self.shot_words as usize;
                 if (x_faults[base + word_idx] >> bit_idx) & 1 != 0 {
@@ -885,11 +885,11 @@ mod tests {
         prop.inject_x_fault(0);
         prop.flush();
 
-        // Check against Z logical on qubit 0 (should anticommute)
+        // Check against tracked Z on qubit 0 (should anticommute)
         let results = prop.check_anticommutation(&[], &[0]);
         assert!(results.iter().all(|&b| b)); // All shots: anticommutes
 
-        // Check against X logical on qubit 0 (should commute)
+        // Check against tracked X on qubit 0 (should commute)
         let results = prop.check_anticommutation(&[0], &[]);
         assert!(results.iter().all(|&b| !b)); // All shots: commutes
     }

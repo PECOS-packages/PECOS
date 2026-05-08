@@ -72,7 +72,7 @@ class DepolarizingErrorModel(ParentErrorModel):
             self.error_params["p_meas"] = pc.mean(self.error_params["p_meas"])
 
         self.error_params["p_meas"] *= scale
-        self.error_params["p_init"] *= scale
+        self.error_params["p_prep"] *= scale
 
     def start(
         self,
@@ -152,7 +152,7 @@ class DepolarizingErrorModel(ParentErrorModel):
             # INITS WITH X NOISE
             elif symbol == "init |0>":
                 noisy = set(locations) - self.error_params["noiseless_qubits"]
-                noise_init_bitflip(noisy, after, "X", p=self.error_params["p_init"])
+                noise_init_bitflip(noisy, after, "X", p=self.error_params["p_prep"])
 
             # ########################################
             # ONE QUBIT GATES

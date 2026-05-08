@@ -5,7 +5,9 @@
 #include <memory>
 #include <stdexcept>
 #include <sstream>
-#include <numeric>  // Required for std::iota on MSVC
+#include <numeric>   // Required for std::iota on MSVC
+#include <random>    // std::mt19937, std::shuffle
+#include <algorithm> // std::shuffle
 
 // Include Tesseract headers
 #include "tesseract.h"
@@ -40,28 +42,21 @@ public:
                           INF_DET_BEAM : static_cast<int>(config_repr.det_beam);
         config.beam_climbing = config_repr.beam_climbing;
         config.no_revisit_dets = config_repr.no_revisit_dets;
-        config.at_most_two_errors_per_detector = config_repr.at_most_two_errors_per_detector;
         config.verbose = config_repr.verbose;
+        config.merge_errors = true;
         config.pqlimit = config_repr.pqlimit;
         config.det_penalty = config_repr.det_penalty;
 
-        // Initialize detector orders with a default ordering
-        if (config.det_orders.empty()) {
-            std::vector<size_t> default_order;
-            size_t num_dets = config.dem.count_detectors();
-            for (size_t i = 0; i < num_dets; ++i) {
-                default_order.push_back(i);
-            }
-            config.det_orders.push_back(default_order);
-        }
+        // Generate BFS-based detector orderings (upstream default).
+        // BFS on the detector graph produces spatially-aware orderings
+        // that help the A* search find short paths faster.
+        config.det_orders = build_det_orders(config.dem, 20, DetOrder::DetBFS, 2384753);
 
         config_ = config;
         decoder_ = std::make_unique<TesseractDecoder>(std::move(config));
     }
 
     DecodingResultRepr decode_detections(const rust::Slice<const uint64_t> detections) {
-        // Use data()+size() instead of begin()/end() iterators to avoid
-        // Xcode 15.4 libc++ pointer_traits incompatibility with cxx iterators in C++20
         std::vector<uint64_t> det_vec(detections.data(), detections.data() + detections.size());
 
         decoder_->decode_to_errors(det_vec);
@@ -72,7 +67,8 @@ public:
             result.predicted_errors.push_back(err);
         }
 
-        result.observables_mask = decoder_->mask_from_errors(decoder_->predicted_errors_buffer);
+        result.observables_mask = vector_to_u64_mask(
+            decoder_->get_flipped_observables(decoder_->predicted_errors_buffer));
         result.cost = decoder_->cost_from_errors(decoder_->predicted_errors_buffer);
         result.low_confidence = decoder_->low_confidence_flag;
 
@@ -85,7 +81,7 @@ public:
     ) {
         std::vector<uint64_t> det_vec(detections.data(), detections.data() + detections.size());
 
-        decoder_->decode_to_errors(det_vec, det_order);
+        decoder_->decode_to_errors(det_vec, det_order, config_.det_beam);
 
         DecodingResultRepr result;
         result.predicted_errors = rust::Vec<size_t>();
@@ -93,7 +89,8 @@ public:
             result.predicted_errors.push_back(err);
         }
 
-        result.observables_mask = decoder_->mask_from_errors(decoder_->predicted_errors_buffer);
+        result.observables_mask = vector_to_u64_mask(
+            decoder_->get_flipped_observables(decoder_->predicted_errors_buffer));
         result.cost = decoder_->cost_from_errors(decoder_->predicted_errors_buffer);
         result.low_confidence = decoder_->low_confidence_flag;
 
@@ -125,10 +122,6 @@ public:
         return config_.no_revisit_dets;
     }
 
-    bool get_at_most_two_errors_per_detector() const {
-        return config_.at_most_two_errors_per_detector;
-    }
-
     bool get_verbose() const {
         return config_.verbose;
     }
@@ -145,7 +138,7 @@ public:
         if (error_idx >= decoder_->errors.size()) {
             throw std::out_of_range("Error index out of range");
         }
-        return decoder_->errors[error_idx].probability;
+        return decoder_->errors[error_idx].get_probability();
     }
 
     double get_error_cost(size_t error_idx) const {
@@ -171,31 +164,17 @@ public:
         if (error_idx >= decoder_->errors.size()) {
             throw std::out_of_range("Error index out of range");
         }
-        return decoder_->errors[error_idx].symptom.observables;
+        return vector_to_u64_mask(decoder_->errors[error_idx].symptom.observables);
     }
 
     uint64_t mask_from_errors(const rust::Slice<const size_t> error_indices) const {
-        // Work around Tesseract bug: functions ignore parameter and use internal buffer
-        // So we calculate the mask ourselves
-        uint64_t mask = 0;
-        for (size_t ei : error_indices) {
-            if (ei < decoder_->errors.size()) {
-                mask ^= decoder_->errors[ei].symptom.observables;
-            }
-        }
-        return mask;
+        std::vector<size_t> indices(error_indices.data(), error_indices.data() + error_indices.size());
+        return vector_to_u64_mask(decoder_->get_flipped_observables(indices));
     }
 
     double cost_from_errors(const rust::Slice<const size_t> error_indices) const {
-        // Work around Tesseract bug: functions ignore parameter and use internal buffer
-        // So we calculate the cost ourselves
-        double total_cost = 0;
-        for (size_t ei : error_indices) {
-            if (ei < decoder_->errors.size()) {
-                total_cost += decoder_->errors[ei].likelihood_cost;
-            }
-        }
-        return total_cost;
+        std::vector<size_t> indices(error_indices.data(), error_indices.data() + error_indices.size());
+        return decoder_->cost_from_errors(indices);
     }
 };
 
@@ -245,9 +224,6 @@ bool TesseractDecoderWrapper::get_no_revisit_dets() const {
     return pimpl_->get_no_revisit_dets();
 }
 
-bool TesseractDecoderWrapper::get_at_most_two_errors_per_detector() const {
-    return pimpl_->get_at_most_two_errors_per_detector();
-}
 
 bool TesseractDecoderWrapper::get_verbose() const {
     return pimpl_->get_verbose();
@@ -343,10 +319,6 @@ bool get_beam_climbing(const TesseractDecoderWrapper& decoder) {
 
 bool get_no_revisit_dets(const TesseractDecoderWrapper& decoder) {
     return decoder.get_no_revisit_dets();
-}
-
-bool get_at_most_two_errors_per_detector(const TesseractDecoderWrapper& decoder) {
-    return decoder.get_at_most_two_errors_per_detector();
 }
 
 bool get_verbose(const TesseractDecoderWrapper& decoder) {

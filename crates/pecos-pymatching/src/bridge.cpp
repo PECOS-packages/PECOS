@@ -15,7 +15,6 @@
 // PyMatching includes
 #include "pymatching/sparse_blossom/driver/user_graph.h"
 #include "pymatching/sparse_blossom/driver/mwpm_decoding.h"
-#include "pymatching/sparse_blossom/driver/io.h"
 #include "pymatching/sparse_blossom/search/search_graph.h"
 #include "pymatching/rand/rand_gen.h"
 
@@ -32,6 +31,7 @@ public:
     std::unique_ptr<pm::Mwpm> mwpm_;
     pm::SearchFlooder* search_flooder_ = nullptr;
     double normalising_constant_ = 1.0;
+    bool enable_correlations_ = false;
 
     // Constructor
     Impl(size_t num_nodes, size_t num_observables) {
@@ -39,7 +39,7 @@ public:
     }
 
     // Initialize MWPM decoder when needed
-    void ensure_mwpm(bool include_search_graph = false) {
+    void ensure_mwpm(bool include_search_graph) {
         if (!mwpm_ || (include_search_graph && !search_flooder_)) {
             normalising_constant_ = user_graph_->get_edge_weight_normalising_constant(pm::NUM_DISTINCT_WEIGHTS);
             if (normalising_constant_ == 0) {
@@ -73,12 +73,14 @@ PyMatchingGraph::PyMatchingGraph(size_t num_nodes, size_t num_observables)
 
 PyMatchingGraph::~PyMatchingGraph() = default;
 
-std::unique_ptr<PyMatchingGraph> PyMatchingGraph::from_dem(const std::string& dem_string) {
+std::unique_ptr<PyMatchingGraph> PyMatchingGraph::from_dem(
+    const std::string& dem_string, bool enable_correlations) {
     try {
         auto dem = stim::DetectorErrorModel(dem_string.c_str());
 
         // Create user graph from DEM
-        auto user_graph = pm::detector_error_model_to_user_graph(dem);
+        auto user_graph = pm::detector_error_model_to_user_graph(
+            dem, enable_correlations, pm::NUM_DISTINCT_WEIGHTS);
 
         // Create PyMatchingGraph and move the user graph
         auto graph = std::make_unique<PyMatchingGraph>(
@@ -88,6 +90,7 @@ std::unique_ptr<PyMatchingGraph> PyMatchingGraph::from_dem(const std::string& de
 
         // Replace the default user graph with the one from DEM
         graph->pimpl_->user_graph_ = std::make_unique<pm::UserGraph>(std::move(user_graph));
+        graph->pimpl_->enable_correlations_ = enable_correlations;
 
         return graph;
     } catch (const std::exception& e) {
@@ -305,7 +308,7 @@ bool PyMatchingGraph::is_boundary_node(size_t node) const {
 ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
     const rust::Slice<const uint8_t> detection_events) {
 
-    pimpl_->ensure_mwpm();
+    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events to vector of indices
     std::vector<uint64_t> detections;
@@ -316,7 +319,8 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
     }
 
     try {
-        auto result = pm::decode_detection_events_for_up_to_64_observables(*pimpl_->mwpm_, detections);
+        auto result = pm::decode_detection_events_for_up_to_64_observables(
+            *pimpl_->mwpm_, detections, pimpl_->enable_correlations_);
         pimpl_->reset_mwpm();
 
         ExtendedMatchingResult ext_result;
@@ -338,7 +342,7 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
 ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
     const rust::Slice<const uint8_t> detection_events) {
 
-    pimpl_->ensure_mwpm();
+    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -353,7 +357,8 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
         std::vector<uint8_t> obs_vec(num_obs, 0);
         pm::total_weight_int weight = 0;
 
-        pm::decode_detection_events(*pimpl_->mwpm_, detections, obs_vec.data(), weight);
+        pm::decode_detection_events(
+            *pimpl_->mwpm_, detections, obs_vec.data(), weight, pimpl_->enable_correlations_);
         pimpl_->reset_mwpm();
 
         ExtendedMatchingResult result;
@@ -373,7 +378,7 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
 rust::Vec<MatchedPair> PyMatchingGraph::decode_to_matched_pairs(
     const rust::Slice<const uint8_t> detection_events) {
 
-    pimpl_->ensure_mwpm();
+    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -408,7 +413,7 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_matched_pairs(
 rust::Vec<MatchedPair> PyMatchingGraph::decode_to_edges(
     const rust::Slice<const uint8_t> detection_events) {
 
-    pimpl_->ensure_mwpm();
+    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -450,7 +455,7 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
     bool bit_packed_shots,
     bool bit_packed_predictions) {
 
-    pimpl_->ensure_mwpm();
+    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     BatchDecodingResult result;
     result.predictions = rust::Vec<uint8_t>();
@@ -493,7 +498,8 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
 
             // Decode
             if (num_obs <= 64) {
-                auto res = pm::decode_detection_events_for_up_to_64_observables(*pimpl_->mwpm_, detections);
+                auto res = pm::decode_detection_events_for_up_to_64_observables(
+                    *pimpl_->mwpm_, detections, pimpl_->enable_correlations_);
 
                 if (bit_packed_predictions) {
                     // Pack obs_mask into bytes
@@ -518,7 +524,8 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
                 std::vector<uint8_t> obs_vec(num_obs, 0);
                 pm::total_weight_int weight = 0;
 
-                pm::decode_detection_events(*pimpl_->mwpm_, detections, obs_vec.data(), weight);
+                pm::decode_detection_events(
+                    *pimpl_->mwpm_, detections, obs_vec.data(), weight, pimpl_->enable_correlations_);
 
                 if (bit_packed_predictions) {
                     // Pack observables into bytes
@@ -678,7 +685,12 @@ std::unique_ptr<PyMatchingGraph> create_pymatching_graph_with_observables(
 }
 
 std::unique_ptr<PyMatchingGraph> create_pymatching_graph_from_dem(const rust::Str dem_string) {
-    return PyMatchingGraph::from_dem(std::string(dem_string));
+    return PyMatchingGraph::from_dem(std::string(dem_string), false);
+}
+
+std::unique_ptr<PyMatchingGraph> create_pymatching_graph_from_dem_with_correlations(
+    const rust::Str dem_string, bool enable_correlations) {
+    return PyMatchingGraph::from_dem(std::string(dem_string), enable_correlations);
 }
 
 void add_edge(

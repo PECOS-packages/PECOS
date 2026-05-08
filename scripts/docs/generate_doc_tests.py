@@ -1252,6 +1252,13 @@ def main() -> None:
         if not pytest_blocks:
             continue
 
+        # Skip file entirely if every block has an unconditional skip marker
+        # (e.g. document-level <!--skip-->). No point generating a test file
+        # full of skipped tests — it just adds noise to pytest output.
+        if all(b.skip for b in pytest_blocks):
+            total_skipped += len(pytest_blocks)
+            continue
+
         # Count skipped blocks
         total_skipped += sum(
             1

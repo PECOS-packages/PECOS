@@ -168,8 +168,7 @@ fn is_tool_available(tool: &str) -> bool {
     Command::new(tool)
         .args(["--version"])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Run a cargo command and return success status
@@ -374,6 +373,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
     // hugr = qis (includes llvm) + hugr compilation
+    // pecos-cli is excluded here and tested separately below with --features=runtime
+    // to ensure the pecos binary has PHIR/QIS support for integration tests.
     let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr"];
 
     for crate_name in FFI_CRATES {
@@ -384,6 +385,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     args.extend(&[
         "--exclude",
         "pecos-cuquantum", // Requires cuQuantum SDK, test separately if available
+        "--exclude",
+        "pecos-cli", // Test separately with --features=runtime (see below)
         "--exclude",
         "pecos-decoders",
         "--exclude",
@@ -396,6 +399,22 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
 
     if !run_cargo_command(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));
+    }
+
+    // Test pecos-cli separately with --features=runtime.
+    // cargo test --workspace --features=runtime overwrites the pecos binary
+    // WITHOUT runtime features (cargo feature unification bug), so the CLI
+    // integration tests that invoke `cargo_bin!("pecos")` would get a broken
+    // binary. Testing separately ensures the binary is built correctly.
+    println!("Testing pecos-cli with runtime features...");
+    let mut cli_args: Vec<&str> = vec!["test", "-p", "pecos-cli", "--features=runtime"];
+    if !release_flag.is_empty() {
+        cli_args.push(release_flag);
+    }
+    if !run_cargo_command(&cli_args) {
+        return Err(Error::Config(
+            "cargo test (pecos-cli with runtime) failed".to_string(),
+        ));
     }
 
     // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)

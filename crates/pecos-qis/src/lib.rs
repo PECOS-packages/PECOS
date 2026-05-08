@@ -97,12 +97,11 @@ pub mod engine_builder;
 pub mod interface_impl;
 pub mod program;
 
-pub use ccengine::QisEngine;
+pub use ccengine::{LoweredQuantumGateTrace, OperationTraceChunk, OperationTraceStore, QisEngine};
 pub use engine_builder::{QisEngineBuilder, qis_engine};
 
 pub use program::{
     InterfaceChoice, IntoQisInterface, ProgramType, QisEngineProgram, QisInterfaceBuilder,
-    QisInterfaceProvider,
 };
 
 // ============================================================================
@@ -188,36 +187,38 @@ pub fn setup_qis_engine_with_runtime(
     Ok(Box::new(engine) as Box<dyn ClassicalControlEngine>)
 }
 
-/// Setup a QIS control engine for a program file (deprecated)
-///
-/// **Deprecated**: This function is deprecated because it relied on implicit runtime selection.
-/// Use `setup_qis_engine_with_runtime` instead and provide an explicit runtime.
-///
-/// # Parameters
-///
-/// - `program_path`: Path to the QIS program file (.ll or .bc)
-///
-/// # Returns
-///
-/// Returns an error directing users to use the explicit runtime version.
+/// Create a QIS engine builder preconfigured with the default Selene simple runtime.
 ///
 /// # Errors
-/// Always returns an error directing users to use `setup_qis_engine_with_runtime` instead.
-#[deprecated(
-    since = "0.1.1",
-    note = "Use setup_qis_engine_with_runtime with an explicit runtime instead"
-)]
-pub fn setup_qis_engine(
-    _program_path: &Path,
-) -> Result<Box<dyn ClassicalControlEngine>, PecosError> {
-    Err(PecosError::Processing(
-        "setup_qis_engine is deprecated.\n\
-        \n\
-        Please use setup_qis_engine_with_runtime and provide an explicit runtime:\n\
-        \n\
-        use pecos_qis::{setup_qis_engine_with_runtime, selene_simple_runtime};\n\
-        \n\
-        let engine = setup_qis_engine_with_runtime(path, selene_simple_runtime()?)?;"
-            .to_string(),
-    ))
+///
+/// Returns an error if the default Selene simple runtime cannot be located or loaded.
+#[cfg(feature = "selene")]
+pub fn selene_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
+    Ok(qis_engine()
+        .runtime(selene_simple_runtime()?)
+        .interface(helios_interface_builder()))
+}
+
+/// Create a QIS engine builder preconfigured with a named Selene runtime plugin.
+///
+/// # Errors
+///
+/// Returns an error if the requested Selene runtime plugin cannot be located or loaded.
+#[cfg(feature = "selene")]
+pub fn selene_engine_auto(lib_name: &str) -> Result<QisEngineBuilder, RuntimeFetchError> {
+    Ok(qis_engine()
+        .runtime(selene_runtime_auto(lib_name)?)
+        .interface(helios_interface_builder()))
+}
+
+/// Create a QIS engine builder preconfigured with the Selene soft-RZ runtime.
+///
+/// # Errors
+///
+/// Returns an error if the Selene soft-RZ runtime cannot be located or loaded.
+#[cfg(feature = "selene")]
+pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
+    Ok(qis_engine()
+        .runtime(selene_soft_rz_runtime()?)
+        .interface(helios_interface_builder()))
 }

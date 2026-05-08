@@ -19,6 +19,9 @@ pub mod errors;
 pub use builder::FusionBlossomBuilder;
 pub use decoder::{
     DecodingOptions, DecodingResult, FusionBlossomConfig, FusionBlossomDecoder,
-    PerfectMatchingInfo, SolverType, StandardCode, SyndromeData,
+    ParsedCorrelatedDem, PerfectMatchingInfo, SolverType, StandardCode, SyndromeData,
 };
 pub use errors::FusionBlossomError;
+
+// Re-export partition types from fusion-blossom for parallel solver
+pub use fusion_blossom::util::{PartitionConfig, VertexRange};

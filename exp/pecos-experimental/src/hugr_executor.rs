@@ -213,7 +213,8 @@ where
             | GateType::QFree
             | GateType::Idle
             | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload => {}
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::PauliOperatorMeta => {}
 
             // Single-qubit Clifford gates
             GateType::X => {

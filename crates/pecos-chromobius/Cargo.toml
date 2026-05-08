@@ -13,6 +13,7 @@ description = "Chromobius color code decoder for PECOS"
 
 [dependencies]
 pecos-decoder-core.workspace = true
+pecos-pymatching.workspace = true
 ndarray.workspace = true
 thiserror.workspace = true
 cxx.workspace = true

@@ -23,12 +23,143 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Generic, Protocol, TypeAlias, TypedDict, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, Protocol, TypeAlias, TypedDict, TypeVar
 
 import pecos_rslib as prs
+from phir.model import (
+    Barrier as _Barrier,
+)
+from phir.model import (
+    Comment as _Comment,
+)
+from phir.model import (
+    COp as _COp,
+)
+from phir.model import (
+    CVarDefine as _CVarDefine,
+)
+from phir.model import (
+    ExportVar as _ExportVar,
+)
+from phir.model import (
+    FFCall as _FFCall,
+)
+from phir.model import (
+    IfBlock as _IfBlock,
+)
+from phir.model import (
+    MOpType as _MOpType,
+)
+from phir.model import (
+    Op as _Op,
+)
+from phir.model import (
+    PHIRModel as _PHIRModel,
+)
+from phir.model import (
+    QOp as _QOp,
+)
+from phir.model import (
+    QParBlock as _QParBlock,
+)
+from phir.model import (
+    QVarDefine as _QVarDefine,
+)
+from phir.model import (
+    SeqBlock as _SeqBlock,
+)
+from pydantic import model_validator
 
-# Import external PHIR model with consistent naming
-from phir.model import PHIRModel as PhirModel
+
+class _PecosCVarDefine(_CVarDefine):
+    """CVarDefine extended with 8-bit and 16-bit integer data types.
+
+    The upstream PHIR spec's ``CVarDefine`` only accepts ``i32``, ``i64``,
+    ``u32``, ``u64``. PECOS additionally supports ``i8``, ``u8``, ``i16``,
+    ``u16`` for classical registers. The parent class's ``check_size``
+    validator covers 32 and 64-bit cases; this subclass adds the matching
+    check for 8-bit and 16-bit sizes.
+    """
+
+    data_type: Literal["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _check_size_small(self) -> _PecosCVarDefine:
+        """Check that ``size`` fits within 8-bit and 16-bit data types."""
+        msg = "`size` is greater than what `data_type` can handle"
+        if self.size:
+            match self.data_type:
+                case "i8" | "u8":
+                    if self.size > 8:
+                        raise ValueError(msg)
+                case "i16" | "u16":
+                    if self.size > 16:
+                        raise ValueError(msg)
+        return self
+
+
+_PecosDataMgmt: TypeAlias = _PecosCVarDefine | _QVarDefine | _ExportVar
+
+
+class ResultCOp(_Op):
+    """PECOS-specific ``Result`` classical operation.
+
+    Copies the value of internal classical registers to external result
+    variables, creating the destination variable if needed. Used by the
+    PECOS ``HybridEngine`` to transmit measurement bits between the inner
+    and outer classical interpreters.
+
+    Example:
+        ``{"cop": "Result", "args": ["m"], "returns": ["c"]}``
+
+    This operation is a PECOS extension, not part of the upstream PHIR
+    specification.
+    """
+
+    cop: Literal["Result"]
+    args: list[str]
+    returns: list[str]
+
+
+_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | _QOp | _MOpType | _Barrier
+
+
+class _PecosSeqBlock(_SeqBlock):
+    """SeqBlock extended with PECOS-specific classical operations."""
+
+    ops: list[_PecosOpType | _PecosBlockType]  # type: ignore[assignment]
+
+
+class _PecosIfBlock(_IfBlock):
+    """IfBlock extended with PECOS-specific classical operations."""
+
+    true_branch: list[_PecosOpType | _PecosBlockType]  # type: ignore[assignment]
+    false_branch: list[_PecosOpType | _PecosBlockType] | None = None  # type: ignore[assignment]
+
+
+_PecosBlockType: TypeAlias = _PecosSeqBlock | _QParBlock | _PecosIfBlock
+_PecosCmd: TypeAlias = _PecosDataMgmt | _PecosOpType | _PecosBlockType | _Comment
+
+
+class PhirModel(_PHIRModel):
+    """PHIR model extended with PECOS-specific classical operations.
+
+    Adds support for the ``Result`` cop used by PECOS ``HybridEngine`` to
+    map internal measurement registers to external result variables. Fully
+    backwards-compatible with upstream PHIR programs.
+
+    The upstream ``phir.model.PHIRModel`` rejects programs containing
+    ``Result`` cops because ``Result`` is not in the PHIR specification.
+    Use this class (or ``pecos.typing.PhirModel``) when validating
+    programs that may contain PECOS extensions.
+    """
+
+    ops: list[_PecosCmd]  # type: ignore[assignment]
+
+
+_PecosSeqBlock.model_rebuild()
+_PecosIfBlock.model_rebuild()
+PhirModel.model_rebuild()
 
 # Type variable for dtype (used with Array[DType])
 DType = TypeVar("DType")
@@ -139,7 +270,7 @@ class ErrorParams(TypedDict, total=False):
     p2: float
     p2_mem: float | None
     p_meas: float | tuple[float, ...]
-    p_init: float
+    p_prep: float
     scale: float
     noiseless_qubits: set[int]
 

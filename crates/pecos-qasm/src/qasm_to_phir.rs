@@ -228,14 +228,14 @@ impl Converter {
             Vec::with_capacity(measurements.len());
 
         for (qubit_ssa, reg_name, bit_idx) in measurements {
-            let meas_result = self.new_ssa();
+            let meas_id = self.new_ssa();
             block.add_instruction(Instruction::new(
                 Operation::Quantum(QuantumOp::Measure),
                 vec![*qubit_ssa],
-                vec![meas_result],
+                vec![meas_id],
                 vec![Type::Bit],
             ));
-            measure_results.push((meas_result, reg_name.clone(), *bit_idx));
+            measure_results.push((meas_id, reg_name.clone(), *bit_idx));
         }
 
         // Step 2: Group by register and combine bits

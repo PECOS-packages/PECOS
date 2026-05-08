@@ -4,6 +4,7 @@
 //! gate operation with its type, qubits, and parameters.
 
 use crate::Angle64;
+use crate::MeasId;
 use crate::QubitId;
 use crate::gate_type::GateType;
 use smallvec::SmallVec;
@@ -19,6 +20,10 @@ pub type GateAngles = SmallVec<[Angle64; 3]>;
 /// Stack-allocated parameter buffer for gates (up to 2 params inline).
 /// Most gates have 0-1 non-angle parameters.
 pub type GateParams = SmallVec<[f64; 2]>;
+
+/// Measurement result identities for measurement gates.
+/// Empty for non-measurement gates. One entry per qubit for MZ/MX/MY.
+pub type GateMeasIds = SmallVec<[MeasId; 1]>;
 
 /// Flat gate command representation for quantum operations
 ///
@@ -45,6 +50,12 @@ pub struct Gate {
     /// The qubits the gate acts on.
     /// Stack-allocated for up to 4 qubits.
     pub qubits: GateQubits,
+    /// Measurement result identities (one per qubit for measurement gates).
+    ///
+    /// Assigned at circuit construction time, carried through all
+    /// transformations. Empty for non-measurement gates.
+    /// Follows the MLIR SSA pattern: defined once, referenced everywhere.
+    pub meas_ids: GateMeasIds,
 }
 
 /// Legacy quantum gate representation for `ByteMessageBuilder` compatibility
@@ -67,6 +78,7 @@ impl Gate {
             angles: angles.into(),
             params: params.into(),
             qubits: qubits.into(),
+            meas_ids: GateMeasIds::new(),
         }
     }
 

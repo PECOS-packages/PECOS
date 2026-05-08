@@ -623,7 +623,8 @@ impl QASMEngine {
             | GateType::MeasCrosstalkLocalPayload
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::QFree
-            | GateType::Custom => Ok(()), // No-op gates (QFree is just a marker, Custom is a placeholder)
+            | GateType::Custom
+            | GateType::PauliOperatorMeta => Ok(()), // No-op gates
             GateType::X
             | GateType::Z
             | GateType::Y
@@ -1591,10 +1592,7 @@ impl ControlEngine for QASMEngine {
     ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
         debug!("QASMEngine::continue_processing() called");
 
-        let measurement_count = measurements
-            .outcomes()
-            .map(|outcomes| outcomes.len())
-            .unwrap_or(0);
+        let measurement_count = measurements.outcomes().map_or(0, |outcomes| outcomes.len());
         debug!("Received {measurement_count} measurements");
 
         debug!("Processing measurement results");

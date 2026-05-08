@@ -30,6 +30,7 @@ pub mod index_set;
 pub mod pauli;
 pub mod phase;
 pub mod prelude;
+pub mod meas_id;
 pub mod qubit_id;
 pub mod rng;
 pub mod sets;
@@ -49,6 +50,7 @@ pub use index_set::IndexSet;
 pub use phase::GlobalPhase;
 pub use phase::quarter_phase::QuarterPhase;
 pub use phase::sign::Sign;
+pub use meas_id::MeasId;
 pub use qubit_id::{QubitId, QubitIdSet, qid, qid2, qids, qids2};
 pub use rng::{RngManageable, derive_seed};
 pub use sets::set::Set;
@@ -69,8 +71,12 @@ pub use gate_registry::{
     AngleSource, ConcreteStep, DecompStep, GateDefinition, GateDefinitionBuilder, GateRegistry,
     GateSignature,
 };
-pub use gates::{Gate, GateAngles, GateParams, GateQubits};
+pub use gates::{Gate, GateAngles, GateMeasIds, GateParams, GateQubits};
 pub use pauli::pauli_bitmap::PauliBitmap;
+pub use pauli::pauli_bitmask::{
+    BitmaskStorage, Conjugated, PauliBitmask, PauliBitmaskGeneric, PauliBitmaskSmall,
+    PauliBitmaskVec,
+};
 pub use pauli::pauli_sparse::PauliSparse;
 pub use pauli::pauli_string::{ParsePauliStringError, PauliString};
 pub use pauli::{Pauli, PauliOperator};

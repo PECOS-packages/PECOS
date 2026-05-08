@@ -539,6 +539,10 @@ impl QuantumSimulator for CuStateVec {
             .expect("Failed to reset state vector");
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
 }
 
 impl CliffordGateable for CuStateVec {

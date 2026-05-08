@@ -20,7 +20,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
-use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
+use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_qec::fault_tolerance::{DagFaultInfluenceMap, InfluenceBuilder};
 use pecos_quantum::DagCircuit;
 use std::hint::black_box;
@@ -105,31 +105,44 @@ fn build_influence_maps(
     circuit: &DagCircuit,
     num_data: usize,
 ) -> (DagFaultInfluenceMap, GpuInfluenceMapData) {
-    let logical_qubits: Vec<usize> = (0..num_data).collect();
-    let builder = InfluenceBuilder::new(circuit).with_logical_z(logical_qubits);
+    let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
+    let builder = InfluenceBuilder::new(circuit).with_z(&tracked_op_qubits);
     let influence_map = builder.build();
 
     let (
         num_loc,
         num_det,
-        num_log,
+        num_dem_outputs,
         det_off_x,
         det_data_x,
         det_off_y,
         det_data_y,
         det_off_z,
         det_data_z,
-        log_off_x,
-        log_data_x,
-        log_off_y,
-        log_data_y,
-        log_off_z,
-        log_data_z,
+        dem_output_offsets_x,
+        dem_output_data_x,
+        dem_output_offsets_y,
+        dem_output_data_y,
+        dem_output_offsets_z,
+        dem_output_data_z,
     ) = influence_map.export_csr();
 
     let gpu_map = GpuInfluenceMapData::from_csr(
-        num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
-        det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+        num_loc,
+        num_det,
+        num_dem_outputs,
+        det_off_x,
+        det_data_x,
+        det_off_y,
+        det_data_y,
+        det_off_z,
+        det_data_z,
+        dem_output_offsets_x,
+        dem_output_data_x,
+        dem_output_offsets_y,
+        dem_output_data_y,
+        dem_output_offsets_z,
+        dem_output_data_z,
     );
 
     (influence_map, gpu_map)
@@ -155,11 +168,11 @@ fn bench_cpu_vs_gpu_surface_codes<M: Measurement>(c: &mut Criterion<M>) {
         group.throughput(Throughput::Elements(u64::from(num_shots)));
 
         // CPU benchmark
-        let noise = UniformNoiseModel::depolarizing(p_error);
-        let mut cpu_sampler = NoisySampler::new(&cpu_map, noise, seed);
+        let probs = vec![p_error; cpu_map.locations.len()];
+        let cpu_sampler = DemSampler::from_influence_map(&cpu_map, &probs);
 
         group.bench_with_input(BenchmarkId::new("CPU", &label), &(), |b, ()| {
-            b.iter(|| black_box(cpu_sampler.sample(num_shots as usize)));
+            b.iter(|| black_box(cpu_sampler.sample_statistics(num_shots as usize, seed)));
         });
 
         // GPU benchmark
@@ -196,11 +209,11 @@ fn bench_gpu_sampler_shot_scaling<M: Measurement>(c: &mut Criterion<M>) {
         group.throughput(Throughput::Elements(u64::from(num_shots)));
 
         // CPU benchmark
-        let noise = UniformNoiseModel::depolarizing(p_error);
-        let mut cpu_sampler = NoisySampler::new(&cpu_map, noise, seed);
+        let probs = vec![p_error; cpu_map.locations.len()];
+        let cpu_sampler = DemSampler::from_influence_map(&cpu_map, &probs);
 
         group.bench_with_input(BenchmarkId::new("CPU", &label), &num_shots, |b, &shots| {
-            b.iter(|| black_box(cpu_sampler.sample(shots as usize)));
+            b.iter(|| black_box(cpu_sampler.sample_statistics(shots as usize, seed)));
         });
 
         // GPU benchmark

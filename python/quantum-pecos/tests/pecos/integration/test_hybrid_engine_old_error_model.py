@@ -18,7 +18,7 @@ def test_simple_conditional() -> None:
     error_params = {
         "p1": 0.01,
         "p2": 0.01,
-        "p_init": 0.01,
+        "p_prep": 0.01,
         "p_meas": 0.01,
         "p2_mem": 0.01,
     }

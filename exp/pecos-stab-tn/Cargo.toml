@@ -1,0 +1,49 @@
+[package]
+name = "pecos-stab-tn"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Experimental hybrid stabilizer + tensor network simulation methods (STN, MAST, CAMPS, etc.)."
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+pecos-core.workspace = true
+pecos-quantum.workspace = true
+pecos-random.workspace = true
+pecos-simulators.workspace = true
+nalgebra.workspace = true
+num-complex.workspace = true
+rayon = "1.10"
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
+paste.workspace = true
+
+[lints.clippy]
+# Inherit workspace pedantic lint policy
+suspicious = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+multiple-crate-versions = "allow"
+similar-names = "allow"
+many-single-char-names = "allow"
+too-many-lines = "allow"
+# Numeric casts in test/example code use small values (qubits <= 64, trial
+# counts <= 10000) where the casts are exact. Library code avoids lossy casts.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"

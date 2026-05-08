@@ -19,41 +19,30 @@
 //! # Architecture
 //!
 //! The DEM builder takes a [`DagFaultInfluenceMap`] (which maps fault locations
-//! to their effects on measurements) and detector/observable metadata to produce
+//! to their effects on measurements) and detector/DEM-output metadata to produce
 //! a complete DEM.
 //!
 //! # Example
 //!
 //! ```
-//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
-//! use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-//! use pecos_quantum::DagCircuit;
+//! use pecos_qec::DemBuilder;
+//! use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
 //!
-//! // Build a simple syndrome extraction circuit
-//! let mut dag = DagCircuit::new();
-//! dag.pz(&[2]);
-//! dag.cx(&[(0, 2)]);
-//! dag.cx(&[(1, 2)]);
-//! dag.mz(&[2]);
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Normally `influence_map` comes from `DagFaultAnalyzer::build_influence_map()`;
+//! // here we use an empty map to keep the doctest self-contained.
+//! let influence_map = DagFaultInfluenceMap::with_capacity(0);
 //!
-//! // Build influence map from circuit
-//! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
-//!
-//! // Detector: measurement record -1 (the single measurement)
-//! let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
-//! let observables_json = "[]";
-//!
-//! // Build DEM with noise model
 //! let dem = DemBuilder::new(&influence_map)
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .with_detectors_json(detectors_json).unwrap()
-//!     .with_observables_json(observables_json).unwrap()
+//!     .with_detectors_json("[]")?
+//!     .with_observables_json("[]")?
 //!     .build();
 //!
-//! // Output in Stim-compatible format
-//! let dem_str = dem.to_string();
-//! assert!(!dem_str.is_empty());
+//! // Output in Stim format (non-decomposed).
+//! let _ = dem.to_string();
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Error Decomposition
@@ -75,64 +64,40 @@
 //!   Pauli combinations (IX, IY, IZ, XI, ..., ZZ) are considered.
 //!
 //! - **XOR effect combining**: Correlated errors are properly combined
-//!   by XOR-ing detector/observable effects.
+//!   by XOR-ing detector/DEM-output effects.
 //!
-//! - **Independent probability combination**: When the same error mechanism
+//! - **Independent probability combination**: When the same fault mechanism
 //!   is triggered by multiple error sources, probabilities are combined
 //!   using p1*(1-p2) + p2*(1-p1).
 //!
 //! # Measurement Noise Model (MNM)
 //!
-//! In addition to the DEM, this module provides a Measurement Noise Model (MNM)
-//! for fast approximate sampling. Unlike the DEM which maps to detectors, the
-//! MNM maps directly to raw measurement effects.
-//!
-//! ```
-//! use pecos_qec::fault_tolerance::DagFaultAnalyzer;
-//! use pecos_qec::fault_tolerance::dem_builder::MemBuilder;
-//! use pecos_quantum::DagCircuit;
-//! use rand::SeedableRng;
-//! use rand::rngs::SmallRng;
-//!
-//! let mut dag = DagCircuit::new();
-//! dag.pz(&[2]);
-//! dag.cx(&[(0, 2)]);
-//! dag.cx(&[(1, 2)]);
-//! dag.mz(&[2]);
-//!
-//! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
-//!
-//! // Build MNM for fast sampling
-//! let mnm = MemBuilder::new(&influence_map)
-//!     .with_noise(0.01, 0.01, 0.01, 0.01)
-//!     .build();
-//!
-//! // Sample measurement outcomes
-//! let mut rng = SmallRng::seed_from_u64(42);
-//! let outcomes = mnm.sample(&mut rng);
-//! ```
-//!
-//! The MNM aggregates fault locations by their measurement effects (which
-//! measurements flip together), enabling faster sampling with fewer random
-//! draws compared to per-fault-location sampling.
+//! The [`DemSampler`] provides both raw measurement and detector-event
+//! output from a single mechanism engine. It replaces the former `MemBuilder`
+//! (measurement-level) and `DemSamplerBuilder` (detector-level) paths with a
+//! unified interface that validates detector definitions at build time.
 
 mod builder;
 mod dem_sampler;
 mod equivalence;
-mod mem_builder;
+pub(crate) mod sampler;
 mod types;
 
 pub use builder::{DemBuilder, DemBuilderError};
-pub use dem_sampler::{DemSampler, DemSamplerBuilder, SamplingStatistics};
+pub use dem_sampler::{SamplingEngine, SamplingStatistics};
 pub use equivalence::{
     ComparisonDetails, ComparisonMethod, DemParseError, EffectKey, EquivalenceResult,
     MechanismComponent, ParsedDem, ParsedMechanism, ProbabilityMismatch, compare_dems_exact,
     compare_dems_statistical, verify_dem_equivalence,
 };
-pub use mem_builder::MemBuilder;
+pub use sampler::{
+    DemSampler, DemSamplerBuilder, DetectorValidationError, DualSampleResult, OutputMode,
+    SamplerLabels,
+};
 pub use types::{
-    DecomposedError, DetectorDef, DetectorErrorModel, ErrorContribution, ErrorMechanism,
-    ErrorSourceType, LogicalObservable, MeasurementMechanism, MeasurementNoiseModel, NoiseConfig,
-    combine_probabilities,
+    ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
+    ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, NoiseConfig,
+    PauliProbs, PauliWeights, PecosDemMetadataError, TwoDetectorDirectRenderPolicy,
+    combine_probabilities, record_offset_to_absolute_index,
 };

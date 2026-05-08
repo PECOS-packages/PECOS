@@ -18,14 +18,17 @@
 //! For a full guide, see `docs/user-guide/fault-tolerance.md`.
 
 pub mod circuit_runner;
+pub mod correlation;
 pub mod decoder_integration;
 pub mod dem_builder;
+pub mod fault_sampler;
 pub mod gadget_checker;
 pub mod influence_builder;
-pub mod noisy_sampler;
+pub mod lookup_decoder;
 pub mod pauli_prop_checker;
 pub mod propagator;
 pub mod stabilizer_flip_checker;
+pub mod targeted_lookup_decoder;
 
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
@@ -53,11 +56,12 @@ pub use pauli_prop_checker::{
     has_syndrome, propagate_fault, propagate_faults,
 };
 pub use propagator::{
-    DagFaultAnalyzer, DagFaultInfluenceMap, DagPropagator, DagSpacetimeLocation, DetectorId,
-    Direction, FaultInfluence, FaultInfluenceMap, InfluenceBasedChecker, LogicalId, MeasurementId,
-    TickFaultAnalyzer, apply_gate, propagate_backward_from_node, propagate_backward_from_tick,
-    propagate_fault_backward, propagate_observable_backward, propagate_sparse_dag,
-    propagate_through_circuit, propagate_through_dag, propagate_tick_range,
+    DagFaultAnalyzer, DagFaultInfluenceMap, DagPropagator, DagSpacetimeLocation, DemOutputKind,
+    DemOutputMetadata, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
+    InfluenceBasedChecker, MeasurementId, TickFaultAnalyzer, TrackedOpId, apply_gate,
+    propagate_backward_from_node, propagate_backward_from_tick, propagate_fault_backward,
+    propagate_observable_backward, propagate_sparse_dag, propagate_through_circuit,
+    propagate_through_dag, propagate_tick_range,
 };
 pub use stabilizer_flip_checker::{
     ErrorClass, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,

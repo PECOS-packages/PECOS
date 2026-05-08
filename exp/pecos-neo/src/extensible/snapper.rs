@@ -141,7 +141,7 @@ impl AngleSnapper {
     /// Snap or return original (for permissive mode).
     #[must_use]
     pub fn snap_or_keep(&self, angle: Angle64) -> Angle64 {
-        self.snap(angle).map(|r| r.snapped).unwrap_or(angle)
+        self.snap(angle).map_or(angle, |r| r.snapped)
     }
 
     /// Snap or return original, with flag indicating if snapped.

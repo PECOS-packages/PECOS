@@ -291,7 +291,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.h(qubits).x(qubits)
+        self.z(qubits).h(qubits)
     }
 
     /// Applies the adjoint (inverse) of the square root of Y gate.
@@ -319,7 +319,7 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.x(qubits).h(qubits)
+        self.h(qubits).z(qubits)
     }
 
     /// Applies a square root of Z (SZ) gate to the specified qubits.

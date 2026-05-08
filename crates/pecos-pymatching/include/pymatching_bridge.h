@@ -20,7 +20,8 @@ public:
     // Constructors
     PyMatchingGraph(size_t num_nodes);
     PyMatchingGraph(size_t num_nodes, size_t num_observables);
-    static std::unique_ptr<PyMatchingGraph> from_dem(const std::string& dem_string);
+    static std::unique_ptr<PyMatchingGraph> from_dem(
+        const std::string& dem_string, bool enable_correlations = false);
     ~PyMatchingGraph();
 
     // Edge management
@@ -104,6 +105,8 @@ std::unique_ptr<PyMatchingGraph> create_pymatching_graph_with_observables(
     size_t num_nodes, size_t num_observables);
 std::unique_ptr<PyMatchingGraph> create_pymatching_graph_from_dem(
     const rust::Str dem_string);
+std::unique_ptr<PyMatchingGraph> create_pymatching_graph_from_dem_with_correlations(
+    const rust::Str dem_string, bool enable_correlations);
 
 void add_edge(
     PyMatchingGraph& graph,

@@ -519,6 +519,50 @@ impl PyPyMatchingDecoder {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
+    /// Decode a batch of syndromes at once.
+    ///
+    /// Much faster than calling `decode()` in a Python loop -- the entire batch
+    /// is processed in Rust with no per-shot Python overhead.
+    ///
+    /// # Arguments
+    ///
+    /// * `detection_events` - Flattened detection events array (`num_shots` * `num_detectors` bytes)
+    /// * `num_shots` - Number of shots in the batch
+    ///
+    /// # Returns
+    ///
+    /// List of observable predictions (one per shot), where each prediction
+    /// is a list of 0/1 values (one per observable). Use `observables_mask`
+    /// property on each element or just check index 0 for single-observable codes.
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// # detection_events is shape (num_shots, num_detectors), flattened
+    /// flat = detection_events.flatten().tolist()
+    /// predictions = decoder.decode_batch(flat, num_shots=len(detection_events))
+    /// num_errors = sum(p[0] != t for p, t in zip(predictions, true_flips))
+    /// ```
+    fn decode_batch(
+        &mut self,
+        detection_events: Vec<u8>,
+        num_shots: usize,
+    ) -> PyResult<Vec<Vec<u8>>> {
+        use pecos_decoders::BatchConfig as RustBatchConfig;
+
+        let num_detectors = self.inner.num_detectors();
+        let config = RustBatchConfig {
+            bit_packed_input: false,
+            bit_packed_output: false,
+            return_weights: false,
+        };
+
+        self.inner
+            .decode_batch_with_config(&detection_events, num_shots, num_detectors, config)
+            .map(|result| result.predictions)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
     /// Number of detector nodes in the matching graph.
     #[getter]
     fn num_detectors(&self) -> usize {
@@ -1452,6 +1496,8 @@ impl PyTesseractResult {
 #[pyclass(name = "TesseractDecoder", module = "pecos_rslib.decoders", unsendable)]
 pub struct PyTesseractDecoder {
     inner: RustTesseractDecoder,
+    dem_string: String,
+    config: RustTesseractConfig,
 }
 
 #[pymethods]
@@ -1498,8 +1544,13 @@ impl PyTesseractDecoder {
         }
         config.verbose = verbose;
 
-        RustTesseractDecoder::new(dem, config)
-            .map(|inner| Self { inner })
+        let dem_string = dem.to_string();
+        RustTesseractDecoder::new(dem, config.clone())
+            .map(|inner| Self {
+                inner,
+                dem_string,
+                config,
+            })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
@@ -1551,6 +1602,82 @@ impl PyTesseractDecoder {
             .collect();
 
         self.decode(detections)
+    }
+
+    /// Decode a batch of syndromes in parallel using multiple decoder instances.
+    ///
+    /// Creates worker decoders on background threads and distributes shots
+    /// across them. Much faster than sequential decoding for large batches.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndromes` - List of dense syndrome vectors
+    /// * `num_workers` - Number of parallel workers (default: number of CPUs)
+    ///
+    /// # Returns
+    ///
+    /// List of `TesseractResult` in the same order as inputs.
+    #[pyo3(signature = (syndromes, num_workers=None))]
+    fn decode_batch(
+        &self,
+        syndromes: Vec<Vec<u8>>,
+        num_workers: Option<usize>,
+    ) -> PyResult<Vec<PyTesseractResult>> {
+        use rayon::prelude::*;
+
+        let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
+
+        // Build a thread pool with the requested size
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(n_workers)
+            .build()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        let dem_str = &self.dem_string;
+        let config = &self.config;
+
+        let results: Result<Vec<_>, _> = pool.install(|| {
+            syndromes
+                .par_iter()
+                .map(|syndrome| {
+                    // Each rayon task gets its own thread-local decoder
+                    thread_local! {
+                        static DECODER: std::cell::RefCell<Option<RustTesseractDecoder>> =
+                            const { std::cell::RefCell::new(None) };
+                    }
+
+                    DECODER.with(|cell| {
+                        let mut decoder_ref = cell.borrow_mut();
+                        if decoder_ref.is_none() {
+                            *decoder_ref = Some(
+                                RustTesseractDecoder::new(dem_str, config.clone())
+                                    .map_err(|e| e.to_string())?,
+                            );
+                        }
+                        let decoder = decoder_ref.as_mut().unwrap();
+
+                        // Convert dense to sparse
+                        let detections: Vec<u64> = syndrome
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
+                            .collect();
+
+                        let detections_arr = ndarray::Array1::from_vec(detections);
+                        decoder
+                            .decode_detections(&detections_arr.view())
+                            .map(|r| PyTesseractResult {
+                                observables_mask: r.observables_mask,
+                                cost: r.cost,
+                                low_confidence: r.low_confidence,
+                            })
+                            .map_err(|e| e.to_string())
+                    })
+                })
+                .collect()
+        });
+
+        results.map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)
     }
 
     /// Number of detectors in the error model.
@@ -2037,6 +2164,292 @@ impl PyMinSumBpDecoder {
 }
 
 // =============================================================================
+// DEM-Aware Decoder (wraps check-matrix decoders for DEM-level decoding)
+// =============================================================================
+
+use pecos_decoder_core::DemCheckMatrix;
+
+/// Decoder type for the DEM-aware wrapper.
+enum InnerDecoder {
+    BpOsd(RustBpOsdDecoder),
+    BpLsd(RustBpLsdDecoder),
+    UnionFind(RustUnionFindDecoder),
+    RelayBp(Box<RustRelayBpDecoder>),
+    MinSumBp(Box<RustMinSumBpDecoder>),
+}
+
+/// DEM-aware decoder that wraps a check-matrix decoder.
+///
+/// Parses a DEM string, extracts the check matrix and observable matrix,
+/// creates the inner decoder, and provides `decode_syndrome()` that returns
+/// an `observables_mask` -- the same interface as `PyMatching` and Tesseract.
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib.decoders import DemAwareDecoder
+///
+/// decoder = DemAwareDecoder.from_dem(dem_string, decoder_type="bp_osd")
+/// result = decoder.decode_syndrome([0, 1, 1, 0])
+/// print(f"Observable prediction: {result.observables_mask}")
+/// ```
+#[pyclass(name = "DemAwareDecoder", module = "pecos_rslib.decoders", unsendable)]
+pub struct PyDemAwareDecoder {
+    inner: InnerDecoder,
+    dem_check_matrix: DemCheckMatrix,
+}
+
+/// Result from a DEM-aware decoder.
+#[pyclass(
+    name = "DemAwareResult",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyDemAwareResult {
+    /// Bitmask of predicted observable flips.
+    #[pyo3(get)]
+    pub observables_mask: u64,
+    /// Whether the BP decoder converged.
+    #[pyo3(get)]
+    pub converged: bool,
+    /// Number of BP iterations used.
+    #[pyo3(get)]
+    pub iterations: usize,
+}
+
+#[pymethods]
+impl PyDemAwareResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "DemAwareResult(observables_mask={}, converged={}, iterations={})",
+            self.observables_mask, self.converged, self.iterations
+        )
+    }
+}
+
+#[pymethods]
+impl PyDemAwareDecoder {
+    /// Create a DEM-aware decoder from a DEM string.
+    ///
+    /// # Arguments
+    ///
+    /// * `dem` - DEM string in Stim format
+    /// * `decoder_type` - One of "`bp_osd`", "`bp_lsd`", "`union_find`", "`relay_bp`", "`min_sum_bp`"
+    /// * `error_rate` - Override error rate for BP priors (default: use DEM probabilities)
+    /// * `max_iter` - Maximum BP iterations (default: 100)
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// decoder = DemAwareDecoder.from_dem(dem, decoder_type="bp_osd")
+    /// ```
+    #[staticmethod]
+    #[pyo3(signature = (dem, decoder_type="bp_osd", error_rate=None, max_iter=100))]
+    fn from_dem(
+        dem: &str,
+        decoder_type: &str,
+        error_rate: Option<f64>,
+        max_iter: usize,
+    ) -> PyResult<Self> {
+        let dcm = DemCheckMatrix::from_dem_str(dem)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        if dcm.num_mechanisms == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "DEM contains no error mechanisms",
+            ));
+        }
+
+        // Error priors: use per-mechanism probabilities from DEM, or uniform override
+        let priors: Vec<f64> = if let Some(p) = error_rate {
+            vec![p; dcm.num_mechanisms]
+        } else {
+            dcm.error_priors.clone()
+        };
+
+        // Build the check matrix in the two formats decoders need:
+        // SparseMatrix for LDPC decoders, Array2 view for Relay/MinSum.
+        let sparse_h = RustSparseMatrix::from_dense(&dcm.check_matrix.view());
+
+        let inner = match decoder_type {
+            "bp_osd" => {
+                let decoder = RustBpOsdDecoder::new(
+                    &sparse_h,
+                    None,          // error_rate
+                    Some(&priors), // error_channel
+                    max_iter,
+                    RustBpMethod::ProductSum,
+                    RustBpSchedule::Parallel,
+                    1.0, // ms_scaling_factor
+                    RustOsdMethod::Osd0,
+                    0, // osd_order
+                    RustInputVectorType::Syndrome,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                InnerDecoder::BpOsd(decoder)
+            }
+            "bp_lsd" => {
+                let decoder = RustBpLsdDecoder::new(
+                    &sparse_h,
+                    None,          // error_rate
+                    Some(&priors), // error_channel
+                    max_iter,
+                    RustBpMethod::ProductSum,
+                    RustBpSchedule::Parallel,
+                    1.0,                // ms_scaling_factor
+                    RustOsdMethod::Off, // lsd_method (LSD-0)
+                    0,                  // lsd_order
+                    0,                  // bits_per_step
+                    RustInputVectorType::Syndrome,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                InnerDecoder::BpLsd(decoder)
+            }
+            "union_find" => {
+                let decoder = RustUnionFindDecoder::new(&sparse_h, RustUfMethod::Inversion)
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
+                InnerDecoder::UnionFind(decoder)
+            }
+            "relay_bp" => {
+                use pecos_decoders::RelayBpBuilder as RustRelayBpBuilderT;
+                let h_view = dcm.check_matrix.view();
+                let decoder = RustRelayBpBuilderT::new(&h_view)
+                    .error_priors(&priors)
+                    .max_iter(max_iter)
+                    .build()
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
+                InnerDecoder::RelayBp(Box::new(decoder))
+            }
+            "min_sum_bp" => {
+                use pecos_decoders::MinSumBpBuilder as RustMinSumBpBuilderT;
+                let h_view = dcm.check_matrix.view();
+                let decoder = RustMinSumBpBuilderT::new(&h_view)
+                    .error_priors(&priors)
+                    .max_iter(max_iter)
+                    .build()
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
+                InnerDecoder::MinSumBp(Box::new(decoder))
+            }
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Unknown decoder type: {decoder_type}. \
+                     Supported: bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp"
+                )));
+            }
+        };
+
+        Ok(Self {
+            inner,
+            dem_check_matrix: dcm,
+        })
+    }
+
+    /// Decode a dense syndrome vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndrome` - Dense syndrome vector (0 or 1 for each detector)
+    ///
+    /// # Returns
+    ///
+    /// `DemAwareResult` with `observables_mask`, `converged`, and `iterations`.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyDemAwareResult> {
+        let arr = Array1::from_vec(syndrome);
+        let (decoding, converged, iterations) = match &mut self.inner {
+            InnerDecoder::BpOsd(d) => {
+                let r = d.decode(&arr.view()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
+                (r.decoding.to_vec(), r.converged, r.iterations)
+            }
+            InnerDecoder::BpLsd(d) => {
+                let r = d.decode(&arr.view()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
+                (r.decoding.to_vec(), r.converged, r.iterations)
+            }
+            InnerDecoder::UnionFind(d) => {
+                let r = d.decode(&arr.view(), &[], 0).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
+                (r.decoding.to_vec(), r.converged, r.iterations)
+            }
+            InnerDecoder::RelayBp(d) => {
+                let r = d.decode(&arr.view()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
+                (r.decoding.to_vec(), r.converged, r.iterations)
+            }
+            InnerDecoder::MinSumBp(d) => {
+                let r = d.decode(&arr.view()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
+                (r.decoding.to_vec(), r.converged, r.iterations)
+            }
+        };
+
+        let correction: Vec<u8> = decoding.iter().map(|&v| v & 1).collect();
+        let observables_mask = self
+            .dem_check_matrix
+            .observables_mask_from_correction(&correction);
+
+        Ok(PyDemAwareResult {
+            observables_mask,
+            converged,
+            iterations,
+        })
+    }
+
+    /// Number of detectors in the model.
+    #[getter]
+    fn num_detectors(&self) -> usize {
+        self.dem_check_matrix.num_detectors
+    }
+
+    /// Number of observables in the model.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.dem_check_matrix.num_observables
+    }
+
+    /// Number of error mechanisms in the model.
+    #[getter]
+    fn num_mechanisms(&self) -> usize {
+        self.dem_check_matrix.num_mechanisms
+    }
+
+    fn __repr__(&self) -> String {
+        let decoder_name = match &self.inner {
+            InnerDecoder::BpOsd(_) => "bp_osd",
+            InnerDecoder::BpLsd(_) => "bp_lsd",
+            InnerDecoder::UnionFind(_) => "union_find",
+            InnerDecoder::RelayBp(_) => "relay_bp",
+            InnerDecoder::MinSumBp(_) => "min_sum_bp",
+        };
+        format!(
+            "DemAwareDecoder(type={}, detectors={}, mechanisms={}, observables={})",
+            decoder_name,
+            self.dem_check_matrix.num_detectors,
+            self.dem_check_matrix.num_mechanisms,
+            self.dem_check_matrix.num_observables,
+        )
+    }
+}
+
+// =============================================================================
 // Module Registration
 // =============================================================================
 
@@ -2074,6 +2487,10 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     decoders_module.add_class::<PyRelayBpDecoder>()?;
     decoders_module.add_class::<PyMinSumBpBuilder>()?;
     decoders_module.add_class::<PyMinSumBpDecoder>()?;
+
+    // DEM-aware decoder wrapper
+    decoders_module.add_class::<PyDemAwareResult>()?;
+    decoders_module.add_class::<PyDemAwareDecoder>()?;
 
     // Add submodule to parent
     parent_module.add_submodule(&decoders_module)?;

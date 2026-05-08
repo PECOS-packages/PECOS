@@ -66,8 +66,8 @@ pub fn register_engines_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         parent.getattr("StabilizerEngineBuilder")?,
     )?;
     engines.add(
-        "CliffordRzEngineBuilder",
-        parent.getattr("CliffordRzEngineBuilder")?,
+        "StabVecEngineBuilder",
+        parent.getattr("StabVecEngineBuilder")?,
     )?;
     engines.add(
         "DensityMatrixEngineBuilder",

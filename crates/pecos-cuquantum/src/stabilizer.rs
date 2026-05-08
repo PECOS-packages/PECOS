@@ -524,6 +524,10 @@ impl QuantumSimulator for CuStabilizer {
         self.measurement_count = 0;
         self
     }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
 }
 
 impl CliffordGateable for CuStabilizer {
@@ -624,10 +628,6 @@ impl StabilizerTableauSimulator for CuStabilizer {
 
     fn destab_tableau(&self) -> String {
         unimplemented!("CuStabilizer does not support local tableau access")
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }
 

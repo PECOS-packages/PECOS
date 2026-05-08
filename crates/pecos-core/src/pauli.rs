@@ -17,6 +17,9 @@ pub mod constructors;
 pub mod pauli_bitmap;
 
 #[allow(clippy::module_name_repetitions)]
+pub mod pauli_bitmask;
+
+#[allow(clippy::module_name_repetitions)]
 pub mod pauli_sparse;
 
 #[allow(clippy::module_name_repetitions)]

@@ -298,4 +298,4 @@ PECOS separates stabilizer code concerns into layers:
 - **`StabilizerCode`** (pecos-qec): Mathematical code definition, on-demand analysis.
 - **`StabilizerCodeSpec`** (pecos-qec): Operational specification with verification and fault tolerance integration.
 
-For architecture details, see [Stabilizer Code Architecture](../development/STABILIZER_CODE_ARCHITECTURE.md).
+For architecture details, see `design/STABILIZER_CODE_ARCHITECTURE.md` in the repository root.

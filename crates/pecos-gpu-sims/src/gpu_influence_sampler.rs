@@ -11,14 +11,14 @@ use wgpu::util::DeviceExt;
 /// Influence map data for GPU sampling.
 ///
 /// Contains CSR (Compressed Sparse Row) arrays mapping fault locations
-/// to their detector and logical influences for X, Y, and Z Pauli faults.
+/// to their detector and DEM-output influences for X, Y, and Z Pauli faults.
 pub struct GpuInfluenceMapData {
     /// Number of fault locations.
     pub num_locations: u32,
     /// Number of detectors.
     pub num_detectors: u32,
-    /// Number of logicals.
-    pub num_logicals: u32,
+    /// Number of DEM `L<n>` outputs.
+    pub num_dem_outputs: u32,
 
     // CSR arrays for detector influences
     /// Offsets for X detector influences: `offsets_x`[loc] to `offsets_x`[loc+1]
@@ -34,19 +34,19 @@ pub struct GpuInfluenceMapData {
     /// Detector indices for Z faults.
     pub detector_data_z: Vec<u32>,
 
-    // CSR arrays for logical influences
-    /// Offsets for X logical influences.
-    pub logical_offsets_x: Vec<u32>,
-    /// Logical indices for X faults.
-    pub logical_data_x: Vec<u32>,
-    /// Offsets for Y logical influences.
-    pub logical_offsets_y: Vec<u32>,
-    /// Logical indices for Y faults.
-    pub logical_data_y: Vec<u32>,
-    /// Offsets for Z logical influences.
-    pub logical_offsets_z: Vec<u32>,
-    /// Logical indices for Z faults.
-    pub logical_data_z: Vec<u32>,
+    // CSR arrays for DEM-output influences
+    /// Offsets for X DEM-output influences.
+    pub dem_output_offsets_x: Vec<u32>,
+    /// DEM-output indices for X faults.
+    pub dem_output_data_x: Vec<u32>,
+    /// Offsets for Y DEM-output influences.
+    pub dem_output_offsets_y: Vec<u32>,
+    /// DEM-output indices for Y faults.
+    pub dem_output_data_y: Vec<u32>,
+    /// Offsets for Z DEM-output influences.
+    pub dem_output_offsets_z: Vec<u32>,
+    /// DEM-output indices for Z faults.
+    pub dem_output_data_z: Vec<u32>,
 }
 
 impl GpuInfluenceMapData {
@@ -56,19 +56,19 @@ impl GpuInfluenceMapData {
         Self {
             num_locations: 0,
             num_detectors: 0,
-            num_logicals: 0,
+            num_dem_outputs: 0,
             detector_offsets_x: vec![0],
             detector_data_x: vec![],
             detector_offsets_y: vec![0],
             detector_data_y: vec![],
             detector_offsets_z: vec![0],
             detector_data_z: vec![],
-            logical_offsets_x: vec![0],
-            logical_data_x: vec![],
-            logical_offsets_y: vec![0],
-            logical_data_y: vec![],
-            logical_offsets_z: vec![0],
-            logical_data_z: vec![],
+            dem_output_offsets_x: vec![0],
+            dem_output_data_x: vec![],
+            dem_output_offsets_y: vec![0],
+            dem_output_data_y: vec![],
+            dem_output_offsets_z: vec![0],
+            dem_output_data_z: vec![],
         }
     }
 
@@ -78,36 +78,36 @@ impl GpuInfluenceMapData {
     pub fn from_csr(
         num_locations: u32,
         num_detectors: u32,
-        num_logicals: u32,
+        num_dem_outputs: u32,
         detector_offsets_x: Vec<u32>,
         detector_data_x: Vec<u32>,
         detector_offsets_y: Vec<u32>,
         detector_data_y: Vec<u32>,
         detector_offsets_z: Vec<u32>,
         detector_data_z: Vec<u32>,
-        logical_offsets_x: Vec<u32>,
-        logical_data_x: Vec<u32>,
-        logical_offsets_y: Vec<u32>,
-        logical_data_y: Vec<u32>,
-        logical_offsets_z: Vec<u32>,
-        logical_data_z: Vec<u32>,
+        dem_output_offsets_x: Vec<u32>,
+        dem_output_data_x: Vec<u32>,
+        dem_output_offsets_y: Vec<u32>,
+        dem_output_data_y: Vec<u32>,
+        dem_output_offsets_z: Vec<u32>,
+        dem_output_data_z: Vec<u32>,
     ) -> Self {
         Self {
             num_locations,
             num_detectors,
-            num_logicals,
+            num_dem_outputs,
             detector_offsets_x,
             detector_data_x,
             detector_offsets_y,
             detector_data_y,
             detector_offsets_z,
             detector_data_z,
-            logical_offsets_x,
-            logical_data_x,
-            logical_offsets_y,
-            logical_data_y,
-            logical_offsets_z,
-            logical_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         }
     }
 }
@@ -119,10 +119,10 @@ struct SamplerParams {
     num_locations: u32,
     num_shots: u32,
     num_detectors: u32,
-    num_logicals: u32,
+    num_dem_outputs: u32,
     p_error_threshold: u32,
     detector_words: u32,
-    logical_words: u32,
+    dem_output_words: u32,
     _padding: u32,
 }
 
@@ -133,7 +133,7 @@ struct SamplerParams {
 pub struct GpuInfluenceSampler {
     num_locations: u32,
     num_detectors: u32,
-    num_logicals: u32,
+    num_dem_outputs: u32,
 
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -147,12 +147,12 @@ pub struct GpuInfluenceSampler {
     detector_data_y_buffer: wgpu::Buffer,
     detector_offsets_z_buffer: wgpu::Buffer,
     detector_data_z_buffer: wgpu::Buffer,
-    logical_offsets_x_buffer: wgpu::Buffer,
-    logical_data_x_buffer: wgpu::Buffer,
-    logical_offsets_y_buffer: wgpu::Buffer,
-    logical_data_y_buffer: wgpu::Buffer,
-    logical_offsets_z_buffer: wgpu::Buffer,
-    logical_data_z_buffer: wgpu::Buffer,
+    dem_output_offsets_x_buffer: wgpu::Buffer,
+    dem_output_data_x_buffer: wgpu::Buffer,
+    dem_output_offsets_y_buffer: wgpu::Buffer,
+    dem_output_data_y_buffer: wgpu::Buffer,
+    dem_output_offsets_z_buffer: wgpu::Buffer,
+    dem_output_data_z_buffer: wgpu::Buffer,
 
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
@@ -199,22 +199,22 @@ impl GpuInfluenceSampler {
         let detector_data_y_buffer = create_buffer(&map.detector_data_y, "DetDataY");
         let detector_offsets_z_buffer = create_buffer(&map.detector_offsets_z, "DetOffZ");
         let detector_data_z_buffer = create_buffer(&map.detector_data_z, "DetDataZ");
-        let logical_offsets_x_buffer = create_buffer(&map.logical_offsets_x, "LogOffX");
-        let logical_data_x_buffer = create_buffer(&map.logical_data_x, "LogDataX");
-        let logical_offsets_y_buffer = create_buffer(&map.logical_offsets_y, "LogOffY");
-        let logical_data_y_buffer = create_buffer(&map.logical_data_y, "LogDataY");
-        let logical_offsets_z_buffer = create_buffer(&map.logical_offsets_z, "LogOffZ");
-        let logical_data_z_buffer = create_buffer(&map.logical_data_z, "LogDataZ");
+        let dem_output_offsets_x_buffer = create_buffer(&map.dem_output_offsets_x, "DemOutOffX");
+        let dem_output_data_x_buffer = create_buffer(&map.dem_output_data_x, "DemOutDataX");
+        let dem_output_offsets_y_buffer = create_buffer(&map.dem_output_offsets_y, "DemOutOffY");
+        let dem_output_data_y_buffer = create_buffer(&map.dem_output_data_y, "DemOutDataY");
+        let dem_output_offsets_z_buffer = create_buffer(&map.dem_output_offsets_z, "DemOutOffZ");
+        let dem_output_data_z_buffer = create_buffer(&map.dem_output_data_z, "DemOutDataZ");
 
         // Create params buffer
         let params = SamplerParams {
             num_locations: map.num_locations,
             num_shots: 0,
             num_detectors: map.num_detectors,
-            num_logicals: map.num_logicals,
+            num_dem_outputs: map.num_dem_outputs,
             p_error_threshold: 0,
             detector_words: 0,
-            logical_words: 0,
+            dem_output_words: 0,
             _padding: 0,
         };
         let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -419,7 +419,7 @@ impl GpuInfluenceSampler {
         Ok(Self {
             num_locations: map.num_locations,
             num_detectors: map.num_detectors,
-            num_logicals: map.num_logicals,
+            num_dem_outputs: map.num_dem_outputs,
             device,
             queue,
             params_buffer,
@@ -429,12 +429,12 @@ impl GpuInfluenceSampler {
             detector_data_y_buffer,
             detector_offsets_z_buffer,
             detector_data_z_buffer,
-            logical_offsets_x_buffer,
-            logical_data_x_buffer,
-            logical_offsets_y_buffer,
-            logical_data_y_buffer,
-            logical_offsets_z_buffer,
-            logical_data_z_buffer,
+            dem_output_offsets_x_buffer,
+            dem_output_data_x_buffer,
+            dem_output_offsets_y_buffer,
+            dem_output_data_y_buffer,
+            dem_output_offsets_z_buffer,
+            dem_output_data_z_buffer,
             bind_group_layout,
             pipeline,
             rng: PecosRng::seed_from_u64(seed),
@@ -444,7 +444,7 @@ impl GpuInfluenceSampler {
     /// Sample with uniform depolarizing noise.
     pub fn sample_uniform(&mut self, num_shots: u32, p_error: f64) -> GpuSamplingResult {
         let detector_words = self.num_detectors.div_ceil(32).max(1);
-        let logical_words = self.num_logicals.div_ceil(32).max(1);
+        let dem_output_words = self.num_dem_outputs.div_ceil(32).max(1);
 
         // Update params
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
@@ -454,10 +454,10 @@ impl GpuInfluenceSampler {
             num_locations: self.num_locations,
             num_shots,
             num_detectors: self.num_detectors,
-            num_logicals: self.num_logicals,
+            num_dem_outputs: self.num_dem_outputs,
             p_error_threshold: p_threshold,
             detector_words,
-            logical_words,
+            dem_output_words,
             _padding: 0,
         };
         self.queue
@@ -476,7 +476,7 @@ impl GpuInfluenceSampler {
 
         // Create output buffers - layout: [shot * words + word_idx]
         let detector_output_size = (num_shots as usize * detector_words as usize * 4) as u64;
-        let logical_output_size = (num_shots as usize * logical_words as usize * 4) as u64;
+        let dem_output_size = (num_shots as usize * dem_output_words as usize * 4) as u64;
 
         let detector_output_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Detector Output"),
@@ -485,9 +485,9 @@ impl GpuInfluenceSampler {
             mapped_at_creation: false,
         });
 
-        let logical_output_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Logical Output"),
-            size: logical_output_size.max(4),
+        let dem_output_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("DEM Output"),
+            size: dem_output_size.max(4),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -527,27 +527,27 @@ impl GpuInfluenceSampler {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: self.logical_offsets_x_buffer.as_entire_binding(),
+                    resource: self.dem_output_offsets_x_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: self.logical_data_x_buffer.as_entire_binding(),
+                    resource: self.dem_output_data_x_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
-                    resource: self.logical_offsets_y_buffer.as_entire_binding(),
+                    resource: self.dem_output_offsets_y_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 10,
-                    resource: self.logical_data_y_buffer.as_entire_binding(),
+                    resource: self.dem_output_data_y_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 11,
-                    resource: self.logical_offsets_z_buffer.as_entire_binding(),
+                    resource: self.dem_output_offsets_z_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
-                    resource: self.logical_data_z_buffer.as_entire_binding(),
+                    resource: self.dem_output_data_z_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 13,
@@ -559,7 +559,7 @@ impl GpuInfluenceSampler {
                 },
                 wgpu::BindGroupEntry {
                     binding: 15,
-                    resource: logical_output_buffer.as_entire_binding(),
+                    resource: dem_output_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -591,20 +591,20 @@ impl GpuInfluenceSampler {
             num_shots as usize,
             detector_words as usize,
         );
-        let logical_flips = self.read_output(
-            &logical_output_buffer,
+        let dem_output_flips = self.read_output(
+            &dem_output_buffer,
             num_shots as usize,
-            logical_words as usize,
+            dem_output_words as usize,
         );
 
         GpuSamplingResult {
             num_shots: num_shots as usize,
             detector_flips,
-            logical_flips,
+            dem_output_flips,
             num_detectors: self.num_detectors as usize,
-            num_logicals: self.num_logicals as usize,
+            num_dem_outputs: self.num_dem_outputs as usize,
             detector_words: detector_words as usize,
-            logical_words: logical_words as usize,
+            dem_output_words: dem_output_words as usize,
         }
     }
 
@@ -652,42 +652,61 @@ pub struct GpuSamplingResult {
     pub num_shots: usize,
     /// Flat array: [shot * `detector_words` + word]
     pub detector_flips: Vec<u32>,
-    /// Flat array: [shot * `logical_words` + word]
-    pub logical_flips: Vec<u32>,
+    /// Flat array: [shot * `dem_output_words` + word]
+    pub dem_output_flips: Vec<u32>,
     pub num_detectors: usize,
-    pub num_logicals: usize,
+    pub num_dem_outputs: usize,
     pub detector_words: usize,
-    pub logical_words: usize,
+    pub dem_output_words: usize,
 }
 
 impl GpuSamplingResult {
+    fn logical_word_mask(&self, word_idx: usize) -> u32 {
+        if self.num_dem_outputs == 0 || word_idx >= self.dem_output_words {
+            return 0;
+        }
+        let remaining = self.num_dem_outputs.saturating_sub(word_idx * 32);
+        if remaining >= 32 {
+            u32::MAX
+        } else if remaining == 0 {
+            0
+        } else {
+            (1u32 << remaining) - 1
+        }
+    }
+
     /// Count shots with any logical error.
     #[must_use]
     pub fn count_logical_errors(&self) -> usize {
-        if self.num_logicals == 0 {
+        if self.num_dem_outputs == 0 {
             return 0;
         }
 
         let mut count = 0;
         for shot in 0..self.num_shots {
-            let base = shot * self.logical_words;
-            let has_error = (0..self.logical_words)
-                .any(|w| self.logical_flips.get(base + w).copied().unwrap_or(0) != 0);
-            if has_error {
+            let base = shot * self.dem_output_words;
+            let has_flip = (0..self.dem_output_words).any(|w| {
+                let word = self.dem_output_flips.get(base + w).copied().unwrap_or(0);
+                (word & self.logical_word_mask(w)) != 0
+            });
+            if has_flip {
                 count += 1;
             }
         }
         count
     }
 
-    /// Check if a specific shot has a logical error.
+    /// Check if a specific shot has any logical error.
     #[must_use]
     pub fn has_logical_error(&self, shot: usize) -> bool {
-        if shot >= self.num_shots || self.num_logicals == 0 {
+        if shot >= self.num_shots || self.num_dem_outputs == 0 {
             return false;
         }
-        let base = shot * self.logical_words;
-        (0..self.logical_words).any(|w| self.logical_flips.get(base + w).copied().unwrap_or(0) != 0)
+        let base = shot * self.dem_output_words;
+        (0..self.dem_output_words).any(|w| {
+            let word = self.dem_output_flips.get(base + w).copied().unwrap_or(0);
+            (word & self.logical_word_mask(w)) != 0
+        })
     }
 
     /// Get detector flip bits for a specific shot.

@@ -14,7 +14,7 @@ from pecos_rslib.qec import (
 )
 
 
-class TestErrorMechanismParsing:
+class TestFaultMechanismParsing:
     """Test parsing of error mechanisms."""
 
     def test_parse_simple_mechanism(self) -> None:
@@ -25,15 +25,18 @@ class TestErrorMechanismParsing:
         assert dem.num_mechanisms == 1
         assert dem.num_detectors == 2
         assert dem.num_observables == 0
+        assert dem.num_tracked_ops == 0
 
-    def test_parse_mechanism_with_observable(self) -> None:
-        """Parse mechanism with observable."""
+    def test_parse_mechanism_with_tracked_op(self) -> None:
+        """Parse mechanism with a Stim DEM output exposed as a tracked op."""
         dem_str = "error(0.02) D0 L0"
         dem = ParsedDem.from_string(dem_str)
 
         assert dem.num_mechanisms == 1
         assert dem.num_detectors == 1
+        assert dem.num_dem_outputs == 1
         assert dem.num_observables == 1
+        assert dem.num_tracked_ops == 0
 
     def test_parse_decomposed_mechanism(self) -> None:
         """Parse a decomposed mechanism (XOR chain)."""
@@ -55,7 +58,9 @@ error(0.03) D0 D1 L0
 
         assert dem.num_mechanisms == 3
         assert dem.num_detectors == 3
+        assert dem.num_dem_outputs == 1
         assert dem.num_observables == 1
+        assert dem.num_tracked_ops == 0
 
     def test_parse_detector_declarations(self) -> None:
         """Parse detector declarations."""
@@ -337,7 +342,7 @@ class TestIntegrationWithPecos:
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=1, basis="Z")
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         pecos_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
 
@@ -403,7 +408,7 @@ class TestPecosDecompositionEquivalence:
         patch = SurfacePatch.create(distance=3)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z")
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         raw_dem = generate_dem_from_tick_circuit(tc, **noise, decompose_errors=False)
         decomposed_dem = generate_dem_from_tick_circuit(
@@ -523,7 +528,7 @@ class TestPecosDecompositionEquivalence:
         patch = SurfacePatch.create(distance=distance)
         tc = generate_tick_circuit_from_patch(patch, num_rounds=num_rounds, basis="Z")
 
-        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_init": 0.01}
+        noise = {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
         raw_dem_str = generate_dem_from_tick_circuit(
             tc,

@@ -3,14 +3,12 @@
 //! Pipeline steps:
 //! 1. Build a syndrome extraction circuit using `DagCircuit`
 //! 2. Use `InfluenceBuilder` to extract detectors and build influence map
-//! 3. Use `NoisySampler` for CPU-based noisy sampling
+//! 3. Use `DemSampler` for fast CPU-based noisy sampling
 //!
 //! Run with: cargo run --example `influence_builder_example` --release -p pecos-qec
 
 use pecos_qec::fault_tolerance::InfluenceBuilder;
-use pecos_qec::fault_tolerance::noisy_sampler::{
-    NoisySampler, SamplingStatistics, UniformNoiseModel,
-};
+use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_quantum::DagCircuit;
 
 /// Build a simple repetition code syndrome extraction circuit.
@@ -42,7 +40,7 @@ fn build_repetition_code_circuit(num_rounds: usize) -> DagCircuit {
 }
 
 fn main() {
-    println!("CPU Pipeline Example: Circuit -> Influence Map -> CPU Sampling\n");
+    println!("CPU Pipeline Example: Circuit -> Influence Map -> DemSampler\n");
     println!("{:=<70}", "");
 
     // =========================================================================
@@ -57,7 +55,7 @@ fn main() {
     // =========================================================================
     // Build influence map with InfluenceBuilder
     // =========================================================================
-    let builder = InfluenceBuilder::new(&circuit).with_logical_z(vec![0, 1, 2]); // Z logical on all data qubits
+    let builder = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]); // Z logical on all data qubits
 
     let influence_map = builder.build();
 
@@ -78,27 +76,23 @@ fn main() {
     }
 
     // =========================================================================
-    // Sample with CPU NoisySampler
+    // Sample with DemSampler
     // =========================================================================
     let p_error = 0.001; // 0.1% error rate per location
-    let noise_model = UniformNoiseModel::depolarizing(p_error);
     let seed = 42u64;
+    let num_locations = influence_map.locations.len();
+    let per_location_probs = vec![p_error; num_locations];
 
-    let mut sampler = NoisySampler::new(&influence_map, noise_model, seed);
+    let sampler = DemSampler::from_influence_map(&influence_map, &per_location_probs);
 
-    println!("\n3. Sampling with CPU NoisySampler:");
+    println!("\n3. Sampling with DemSampler:");
     println!("   Error rate: {p_error}");
+    println!("   Mechanisms: {}", sampler.num_mechanisms());
 
     let num_shots = 100_000;
     let start = std::time::Instant::now();
-    let results = sampler.sample(num_shots);
+    let stats = sampler.sample_statistics(num_shots, seed);
     let elapsed = start.elapsed();
-
-    // Collect statistics
-    let mut stats = SamplingStatistics::new();
-    for result in &results {
-        stats.record(result);
-    }
 
     println!("   Shots: {num_shots}");
     println!("   Time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
@@ -116,7 +110,6 @@ fn main() {
         "   Undetectable error rate: {:.6}%",
         stats.undetectable_rate() * 100.0
     );
-    println!("   Avg faults per shot: {:.2}", stats.average_faults());
 
     // =========================================================================
     // Compare with different error rates
@@ -129,14 +122,9 @@ fn main() {
     println!("   {:->8} {:->15} {:->15}", "", "", "");
 
     for p in [0.0001, 0.0005, 0.001, 0.002, 0.005] {
-        let noise = UniformNoiseModel::depolarizing(p);
-        let mut sampler = NoisySampler::new(&influence_map, noise, seed);
-        let results = sampler.sample(50_000);
-
-        let mut stats = SamplingStatistics::new();
-        for result in &results {
-            stats.record(result);
-        }
+        let probs = vec![p; num_locations];
+        let sampler = DemSampler::from_influence_map(&influence_map, &probs);
+        let stats = sampler.sample_statistics(50_000, seed);
 
         println!(
             "   {:>8.4} {:>14.4}% {:>14.4}%",

@@ -10,7 +10,7 @@
 //!
 //! ```
 //! use pecos_qec::fault_tolerance::InfluenceBuilder;
-//! use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
+//! use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 //! use pecos_quantum::DagCircuit;
 //!
 //! // Build a syndrome extraction circuit
@@ -24,13 +24,13 @@
 //! let builder = InfluenceBuilder::new(&dag);
 //! let influence_map = builder.build();
 //!
-//! // Use with CPU sampler
-//! let noise = UniformNoiseModel::depolarizing(0.001);
-//! let mut sampler = NoisySampler::new(&influence_map, noise, 42);
-//! let results = sampler.sample(100);
+//! // Build a fast DemSampler from the influence map
+//! let num_locations = influence_map.locations.len();
+//! let sampler = DemSampler::from_influence_map(&influence_map, &vec![0.001; num_locations]);
+//! let stats = sampler.sample_statistics(100, 42);
 //! ```
 
-use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation};
+use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, DemOutputMetadata};
 use super::propagator::types::{DetectorId, MeasurementId};
 use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate};
 use pecos_core::QubitId;
@@ -42,11 +42,26 @@ use std::collections::BinaryHeap;
 ///
 /// This integrates forward symbolic simulation with backward propagation
 /// to create complete influence maps suitable for noisy sampling.
+/// Re-export `PauliString` as the type used for Pauli operator tracking.
+///
+/// All circuit annotations (detectors, observables, operators) are Pauli
+/// strings tracked for flipping via backward propagation. The difference
+/// is role and readout:
+///
+/// | Kind | Pauli | Readout | API |
+/// |------|-------|---------|-----|
+/// | Detector | Z on measured qubits | measurement XOR = 0 | `dag.detector(&[...])` |
+/// | Observable | Z on measured qubits | measurement XOR | `dag.observable(&[...])` |
+/// | Operator | user-specified | propagation only | `dag.pauli_operator(&[...])` |
+pub use pecos_core::PauliString;
+
 pub struct InfluenceBuilder<'a> {
     dag: &'a pecos_quantum::DagCircuit,
-    /// Logical operators to track (qubit indices with X or Z component)
-    logical_x_qubits: Vec<usize>,
-    logical_z_qubits: Vec<usize>,
+    /// Pauli operators to track for flipping, with optional start position.
+    /// `None` means propagate from circuit end; `Some(node)` means propagate
+    /// from that DAG node's topological position.
+    /// (`metadata`, meta-gate node)
+    pauli_operators: Vec<(DemOutputMetadata, Option<usize>)>,
 }
 
 impl<'a> InfluenceBuilder<'a> {
@@ -55,26 +70,96 @@ impl<'a> InfluenceBuilder<'a> {
     pub fn new(dag: &'a pecos_quantum::DagCircuit) -> Self {
         Self {
             dag,
-            logical_x_qubits: Vec::new(),
-            logical_z_qubits: Vec::new(),
+            pauli_operators: Vec::new(),
         }
     }
 
-    /// Add a logical X operator to track.
-    ///
-    /// The logical X is defined as X on all specified qubits.
+    /// Add a tracked X operator (X on all specified qubits).
     #[must_use]
-    pub fn with_logical_x(mut self, qubits: Vec<usize>) -> Self {
-        self.logical_x_qubits = qubits;
+    pub fn with_x(mut self, qubits: &[usize]) -> Self {
+        self.pauli_operators.push((
+            DemOutputMetadata::tracked_operator(PauliString::xs(qubits)),
+            None,
+        ));
         self
     }
 
-    /// Add a logical Z operator to track.
-    ///
-    /// The logical Z is defined as Z on all specified qubits.
+    /// Add a tracked Z operator (Z on all specified qubits).
     #[must_use]
-    pub fn with_logical_z(mut self, qubits: Vec<usize>) -> Self {
-        self.logical_z_qubits = qubits;
+    pub fn with_z(mut self, qubits: &[usize]) -> Self {
+        self.pauli_operators.push((
+            DemOutputMetadata::tracked_operator(PauliString::zs(qubits)),
+            None,
+        ));
+        self
+    }
+
+    /// Add a tracked Y operator (Y on all specified qubits).
+    #[must_use]
+    pub fn with_y(mut self, qubits: &[usize]) -> Self {
+        self.pauli_operators.push((
+            DemOutputMetadata::tracked_operator(PauliString::ys(qubits)),
+            None,
+        ));
+        self
+    }
+
+    /// Add a Pauli check: track whether this Pauli string flips due to faults.
+    ///
+    /// Unlike observables (`dag.observable()`), a Pauli check
+    /// uses backward propagation to detect flips WITHOUT requiring a measurement.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Check if Y = X_0 * Z_1 * Z_2 flips
+    /// builder.with_pauli_operator(PauliString::from_paulis(vec![(0, 1), (1, 3), (2, 3)]))
+    /// ```
+    #[must_use]
+    pub fn with_pauli_operator(mut self, pauli: PauliString) -> Self {
+        self.pauli_operators
+            .push((DemOutputMetadata::tracked_operator(pauli), None));
+        self
+    }
+
+    /// Extract tracked operator annotations from the circuit.
+    ///
+    /// Operator annotations have a corresponding `PauliOperatorMeta` node
+    /// that marks their time position. Observable annotations are
+    /// measurement-record outputs and are handled by DEM/sampler builders,
+    /// not by backward tracked-operator propagation.
+    ///
+    /// Detector annotations are NOT handled here -- they are processed
+    /// by `DemSamplerBuilder::with_circuit_annotations` which maps them
+    /// to auto-detected detectors.
+    #[must_use]
+    pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
+        // Find PauliOperatorMeta nodes in topological order.
+        // The nth meta-gate corresponds to the nth Operator annotation.
+        let meta_nodes: Vec<usize> = circuit
+            .topological_order()
+            .into_iter()
+            .filter(|&node| circuit.gate(node).is_some_and(|g| g.gate_type.is_meta()))
+            .collect();
+
+        let mut operator_idx = 0;
+        for ann in circuit.annotations() {
+            match &ann.kind {
+                pecos_quantum::AnnotationKind::Operator => {
+                    let meta_node = meta_nodes.get(operator_idx).copied();
+                    operator_idx += 1;
+                    self.pauli_operators.push((
+                        DemOutputMetadata::tracked_operator(ann.pauli.clone())
+                            .with_optional_label(ann.label.clone()),
+                        meta_node,
+                    ));
+                }
+                pecos_quantum::AnnotationKind::Observable { .. } => {}
+                pecos_quantum::AnnotationKind::Detector { .. } => {
+                    // Detectors handled separately by DemSamplerBuilder
+                }
+            }
+        }
         self
     }
 
@@ -83,7 +168,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// This performs:
     /// 1. Forward symbolic simulation to get measurement correlations
     /// 2. Detector extraction from deterministic measurements
-    /// 3. Backward propagation from detectors and logicals
+    /// 3. Backward propagation from detectors and DEM outputs
     #[must_use]
     pub fn build(&self) -> DagFaultInfluenceMap {
         // Step 1: Run forward symbolic simulation
@@ -125,14 +210,31 @@ impl<'a> InfluenceBuilder<'a> {
                     pecos_quantum::GateType::H => {
                         sim.h(&[qubits[0]]);
                     }
+                    pecos_quantum::GateType::F => {
+                        sim.sx(&[qubits[0]]);
+                        sim.sz(&[qubits[0]]);
+                    }
+                    pecos_quantum::GateType::Fdg => {
+                        sim.szdg(&[qubits[0]]);
+                        sim.sxdg(&[qubits[0]]);
+                    }
+                    pecos_quantum::GateType::SX => {
+                        sim.sx(&[qubits[0]]);
+                    }
+                    pecos_quantum::GateType::SXdg => {
+                        sim.sxdg(&[qubits[0]]);
+                    }
+                    pecos_quantum::GateType::SY => {
+                        sim.sy(&[qubits[0]]);
+                    }
+                    pecos_quantum::GateType::SYdg => {
+                        sim.sydg(&[qubits[0]]);
+                    }
                     pecos_quantum::GateType::SZ => {
                         sim.sz(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::SZdg => {
-                        // SZdg = SZ^3 = SZ * SZ * SZ
-                        sim.sz(&[qubits[0]]);
-                        sim.sz(&[qubits[0]]);
-                        sim.sz(&[qubits[0]]);
+                        sim.szdg(&[qubits[0]]);
                     }
                     pecos_quantum::GateType::X => {
                         sim.x(&[qubits[0]]);
@@ -146,11 +248,32 @@ impl<'a> InfluenceBuilder<'a> {
                     pecos_quantum::GateType::CX => {
                         sim.cx(&[(qubits[0], qubits[1])]);
                     }
+                    pecos_quantum::GateType::CY => {
+                        sim.cy(&[(qubits[0], qubits[1])]);
+                    }
                     pecos_quantum::GateType::CZ => {
-                        // CZ = H(target) CX H(target)
-                        sim.h(&[qubits[1]]);
-                        sim.cx(&[(qubits[0], qubits[1])]);
-                        sim.h(&[qubits[1]]);
+                        sim.cz(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SXX => {
+                        sim.sxx(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SXXdg => {
+                        sim.sxxdg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SYY => {
+                        sim.syy(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SYYdg => {
+                        sim.syydg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SZZ => {
+                        sim.szz(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SZZdg => {
+                        sim.szzdg(&[(qubits[0], qubits[1])]);
+                    }
+                    pecos_quantum::GateType::SWAP => {
+                        sim.swap(&[(qubits[0], qubits[1])]);
                     }
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
                         sim.mz(&[qubits[0]]);
@@ -222,8 +345,9 @@ impl<'a> InfluenceBuilder<'a> {
         map.locations = Self::extract_locations(propagator);
 
         // Build measurement node lookup
-        let measurements = Self::extract_measurements(propagator);
+        let (measurements, meas_ids) = Self::extract_measurements(propagator);
         map.measurements.clone_from(&measurements);
+        map.meas_ids = meas_ids;
 
         // Create DetectorId entries for each detector
         for detector in detectors {
@@ -256,30 +380,34 @@ impl<'a> InfluenceBuilder<'a> {
             });
         }
 
-        // Add logical operators as additional "detectors" for tracking
+        // Add tracked Pauli operators in their PECOS tracked-op namespace.
         let num_detectors = detectors.len();
-        let mut num_logicals = 0;
-
-        // Track logical X (sensitive to Z errors)
-        if !self.logical_x_qubits.is_empty() {
-            num_logicals += 1;
-        }
-        // Track logical Z (sensitive to X errors)
-        if !self.logical_z_qubits.is_empty() {
-            num_logicals += 1;
-        }
+        let num_tracked_ops = self.pauli_operators.len();
 
         // Build the influence structure using backward propagation
-        let mut recorder = CompoundRecorder::new(map.locations.len(), num_detectors, num_logicals);
+        let mut recorder =
+            CompoundRecorder::new(map.locations.len(), num_detectors, num_tracked_ops);
 
         // Propagate from each detector
         Self::propagate_detectors(propagator, info, detectors, &mut recorder);
 
-        // Propagate from logicals
-        self.propagate_logicals(propagator, &mut recorder);
+        // Propagate from tracked Pauli operators.
+        self.propagate_tracked_ops(propagator, &mut recorder);
 
         // Convert to SoA format
         map.influences = recorder.into_soa();
+
+        // Store DEM-output labels
+        map.dem_output_labels = self
+            .pauli_operators
+            .iter()
+            .map(|(metadata, _)| metadata.label.clone())
+            .collect();
+        map.dem_output_metadata = self
+            .pauli_operators
+            .iter()
+            .map(|(metadata, _)| metadata.clone())
+            .collect();
 
         map
     }
@@ -290,43 +418,32 @@ impl<'a> InfluenceBuilder<'a> {
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
+                // Meta-gates are not physical -- they don't generate faults
+                if gate.gate_type.is_meta() {
+                    continue;
+                }
+
                 let qubits: Vec<QubitId> = gate.qubits.to_vec();
 
                 let is_measurement = matches!(
                     gate.gate_type,
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
                 );
-                let is_prep = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
-                );
 
-                if is_measurement {
+                // Standard circuit noise model: one fault location per gate.
+                //   Measurement: before. All others: after.
+                let before = is_measurement;
+                for &q in &qubits {
+                    // idle_duration() returns a non-negative integer stored as f64;
+                    // truncation and sign loss are not a concern.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let idle_duration = gate.idle_duration() as u64;
                     locations.push(DagSpacetimeLocation {
                         node,
-                        qubits: qubits.clone(),
-                        before: true,
+                        qubits: vec![q],
+                        before,
                         gate_type: gate.gate_type,
-                    });
-                } else if is_prep {
-                    locations.push(DagSpacetimeLocation {
-                        node,
-                        qubits: qubits.clone(),
-                        before: false,
-                        gate_type: gate.gate_type,
-                    });
-                } else {
-                    locations.push(DagSpacetimeLocation {
-                        node,
-                        qubits: qubits.clone(),
-                        before: true,
-                        gate_type: gate.gate_type,
-                    });
-                    locations.push(DagSpacetimeLocation {
-                        node,
-                        qubits,
-                        before: false,
-                        gate_type: gate.gate_type,
+                        idle_duration,
                     });
                 }
             }
@@ -336,8 +453,10 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Extract measurements from the propagator.
-    fn extract_measurements(propagator: &DagPropagator<'_>) -> Vec<(usize, usize, u8)> {
-        let mut measurements = Vec::new();
+    fn extract_measurements(
+        propagator: &DagPropagator<'_>,
+    ) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
+        let mut entries: Vec<(usize, usize, usize, u8, Option<pecos_core::MeasId>)> = Vec::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -346,13 +465,39 @@ impl<'a> InfluenceBuilder<'a> {
                     _ => continue,
                 };
 
-                for qubit in &gate.qubits {
-                    measurements.push((node, qubit.index(), basis));
+                if !gate.meas_ids.is_empty() {
+                    for (i, qubit) in gate.qubits.iter().enumerate() {
+                        let mr = gate.meas_ids.get(i).copied();
+                        let sort_key = mr.map(|m| m.index()).unwrap_or(usize::MAX);
+                        entries.push((sort_key, node, qubit.index(), basis, mr));
+                    }
+                } else {
+                    let topo_pos = propagator.topo_position(node);
+                    for qubit in &gate.qubits {
+                        entries.push((topo_pos, node, qubit.index(), basis, None));
+                    }
                 }
             }
         }
 
-        measurements
+        entries.sort_by_key(|&(sort_key, _, qubit, _, _)| (sort_key, qubit));
+
+        let has_meas_ids = entries.iter().any(|(_, _, _, _, mr)| mr.is_some());
+        let meas_ids = if has_meas_ids {
+            entries
+                .iter()
+                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId(usize::MAX)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let measurements = entries
+            .into_iter()
+            .map(|(_, node, qubit, basis, _)| (node, qubit, basis))
+            .collect();
+
+        (measurements, meas_ids)
     }
 
     /// Propagate backward from all detectors.
@@ -398,61 +543,66 @@ impl<'a> InfluenceBuilder<'a> {
                 &mut visited,
                 &mut active_qubits,
                 &mut heap,
+                None, // detectors: walk from circuit end
             );
         }
     }
 
-    /// Propagate backward from logical operators.
-    fn propagate_logicals(&self, propagator: &DagPropagator<'_>, recorder: &mut CompoundRecorder) {
+    /// Propagate backward from tracked Pauli operators.
+    ///
+    /// If a Pauli operator has a corresponding `PauliOperatorMeta` node in the
+    /// DAG, propagation starts from that node's topological position. Otherwise
+    /// (e.g. operators added via `with_z`/`with_x` without a circuit annotation),
+    /// propagation walks from the circuit end.
+    fn propagate_tracked_ops(
+        &self,
+        propagator: &DagPropagator<'_>,
+        recorder: &mut CompoundRecorder,
+    ) {
         let max_node = propagator.max_node();
         let max_qubit = propagator.max_qubit();
 
         let mut visited = vec![false; max_node + 1];
         let mut active_qubits = vec![false; max_qubit + 1];
         let mut heap = BinaryHeap::new();
-        let mut logical_idx = 0;
 
-        // Logical X (product of X on specified qubits) - sensitive to Z errors
-        if !self.logical_x_qubits.is_empty() {
+        for (dem_output_idx, (metadata, meta_node)) in self.pauli_operators.iter().enumerate() {
             let mut prop = PauliProp::new();
-            for &q in &self.logical_x_qubits {
-                prop.track_x(&[q]);
+
+            for &(pauli, qubit) in metadata.pauli.paulis() {
+                use pecos_core::Pauli;
+                let q = qubit.index();
+                match pauli {
+                    Pauli::X => prop.track_x(&[q]),
+                    Pauli::Y => prop.track_y(&[q]),
+                    Pauli::Z => prop.track_z(&[q]),
+                    Pauli::I => {}
+                }
             }
+
+            // Resolve the meta-gate node to its topological position.
+            // None means no positional bound (walk from circuit end).
+            let start_pos = meta_node.map(|node| propagator.topo_position(node));
 
             Self::propagate_observable(
                 propagator,
                 &prop,
-                logical_idx,
-                false, // is_detector (this is a logical)
+                dem_output_idx,
+                false, // is_detector = false (this is a DEM output)
                 recorder,
                 &mut visited,
                 &mut active_qubits,
                 &mut heap,
-            );
-            logical_idx += 1;
-        }
-
-        // Logical Z (product of Z on specified qubits) - sensitive to X errors
-        if !self.logical_z_qubits.is_empty() {
-            let mut prop = PauliProp::new();
-            for &q in &self.logical_z_qubits {
-                prop.track_z(&[q]);
-            }
-
-            Self::propagate_observable(
-                propagator,
-                &prop,
-                logical_idx,
-                false, // is_detector (this is a logical)
-                recorder,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
+                start_pos,
             );
         }
     }
 
     /// Propagate a single observable backward and record influences.
+    ///
+    /// When `start_topo_pos` is `Some(pos)`, only gates at or before that
+    /// topological position are considered. This makes Pauli operator
+    /// annotations positional: only faults before the meta-gate affect it.
     #[allow(clippy::too_many_arguments)]
     fn propagate_observable(
         propagator: &DagPropagator<'_>,
@@ -463,6 +613,7 @@ impl<'a> InfluenceBuilder<'a> {
         visited: &mut [bool],
         active_qubits: &mut [bool],
         heap: &mut BinaryHeap<(usize, usize)>,
+        start_topo_pos: Option<usize>,
     ) {
         // Clear work arrays
         visited.fill(false);
@@ -476,8 +627,11 @@ impl<'a> InfluenceBuilder<'a> {
             if prop.contains_x(q) || prop.contains_z(q) {
                 *is_active = true;
 
-                // Add all gates on this qubit to the heap
+                // Add gates on this qubit to the heap, bounded by start position
                 for (topo_pos, node) in propagator.qubit_gates_backward(q) {
+                    if start_topo_pos.is_some_and(|max| topo_pos > max) {
+                        continue;
+                    }
                     if !visited[node] {
                         visited[node] = true;
                         heap.push((topo_pos, node));
@@ -492,9 +646,9 @@ impl<'a> InfluenceBuilder<'a> {
         // Process gates in reverse topological order
         while let Some((_, node)) = heap.pop() {
             if let Some(gate) = propagator.gate(node) {
-                // Record influences at before=false location
-                if let Some(&loc_idx) = loc_map.get(&(node, false)) {
-                    Self::record_influence(&prop, loc_idx, target_idx, is_detector, recorder);
+                // Record per-qubit influences at before=false location
+                if let Some(qubit_locs) = loc_map.get(&(node, false)) {
+                    Self::record_influence(&prop, qubit_locs, target_idx, is_detector, recorder);
                 }
 
                 // Track which qubits were active before the gate
@@ -505,12 +659,36 @@ impl<'a> InfluenceBuilder<'a> {
                     }
                 }
 
+                // Prep gates (PZ/QAlloc) reset the qubit -- kill the Pauli
+                // and mark the qubit inactive. Faults before the prep
+                // cannot propagate past it.
+                let is_prep = matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                );
+                if is_prep {
+                    for q in &gate.qubits {
+                        let qi = q.index();
+                        // Toggle off X and Z components (XOR to zero)
+                        if prop.contains_x(qi) {
+                            prop.track_x(&[qi]);
+                        }
+                        if prop.contains_z(qi) {
+                            prop.track_z(&[qi]);
+                        }
+                        if qi < active_qubits.len() {
+                            active_qubits[qi] = false;
+                        }
+                    }
+                    continue; // don't propagate further on these qubits
+                }
+
                 // Apply gate backward
                 apply_gate(&mut prop, gate, Direction::Backward);
 
-                // Record influences at before=true location
-                if let Some(&loc_idx) = loc_map.get(&(node, true)) {
-                    Self::record_influence(&prop, loc_idx, target_idx, is_detector, recorder);
+                // Record per-qubit influences at before=true location
+                if let Some(qubit_locs) = loc_map.get(&(node, true)) {
+                    Self::record_influence(&prop, qubit_locs, target_idx, is_detector, recorder);
                 }
 
                 // Check if Pauli spread to new qubits
@@ -537,34 +715,30 @@ impl<'a> InfluenceBuilder<'a> {
         }
     }
 
-    /// Build a map from (node, before) to location index.
+    /// Build a map from (node, before) to per-qubit location indices.
     fn build_location_map(
         propagator: &DagPropagator<'_>,
-    ) -> std::collections::HashMap<(usize, bool), usize> {
-        let mut map = std::collections::HashMap::new();
+    ) -> std::collections::HashMap<(usize, bool), Vec<(usize, usize)>> {
+        // (node, before) -> [(qubit_index, loc_idx), ...]
+        let mut map: std::collections::HashMap<(usize, bool), Vec<(usize, usize)>> =
+            std::collections::HashMap::new();
         let mut loc_idx = 0;
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
+                if gate.gate_type.is_meta() {
+                    continue;
+                }
+
                 let is_measurement = matches!(
                     gate.gate_type,
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
                 );
-                let is_prep = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
-                );
 
-                if is_measurement {
-                    map.insert((node, true), loc_idx);
-                    loc_idx += 1;
-                } else if is_prep {
-                    map.insert((node, false), loc_idx);
-                    loc_idx += 1;
-                } else {
-                    map.insert((node, true), loc_idx);
-                    loc_idx += 1;
-                    map.insert((node, false), loc_idx);
+                let before = is_measurement;
+                for q in &gate.qubits {
+                    let qi = q.index();
+                    map.entry((node, before)).or_default().push((qi, loc_idx));
                     loc_idx += 1;
                 }
             }
@@ -573,50 +747,41 @@ impl<'a> InfluenceBuilder<'a> {
         map
     }
 
-    /// Record influence of a fault at a location on a target (detector or logical).
+    /// Record per-qubit influence of a fault at a gate location.
     fn record_influence(
         prop: &PauliProp,
-        loc_idx: usize,
+        qubit_locs: &[(usize, usize)], // [(qubit, loc_idx), ...]
         target_idx: usize,
         is_detector: bool,
         recorder: &mut CompoundRecorder,
     ) {
-        // Check each Pauli type
-        for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
-            if Self::fault_anticommutes(prop, pauli) {
-                if is_detector {
-                    #[allow(clippy::cast_possible_truncation)] // index fits in u32
-                    recorder.record_detector(loc_idx, pauli, target_idx as u32);
-                } else {
-                    #[allow(clippy::cast_possible_truncation)] // index fits in u32
-                    recorder.record_logical(loc_idx, pauli, target_idx as u32);
+        for &(qubit, loc_idx) in qubit_locs {
+            for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
+                if Self::fault_anticommutes_qubit(prop, qubit, pauli) {
+                    if is_detector {
+                        #[allow(clippy::cast_possible_truncation)]
+                        recorder.record_detector(loc_idx, pauli, target_idx as u32);
+                    } else {
+                        #[allow(clippy::cast_possible_truncation)]
+                        recorder.record_dem_output(loc_idx, pauli, target_idx as u32);
+                    }
                 }
             }
         }
     }
 
-    /// Check if a fault Pauli anticommutes with the propagated observable.
-    fn fault_anticommutes(prop: &PauliProp, fault: Pauli) -> bool {
-        let mut anticom_count = 0;
+    /// Check if a single-qubit fault Pauli anticommutes with the propagated
+    /// observable on a specific qubit.
+    fn fault_anticommutes_qubit(prop: &PauliProp, qubit: usize, fault: Pauli) -> bool {
+        let has_x = prop.contains_x(qubit);
+        let has_z = prop.contains_z(qubit);
 
         match fault {
-            Pauli::I => return false,
-            Pauli::X => {
-                // X fault anticommutes with Z component
-                anticom_count += prop.get_z_qubits().len();
-            }
-            Pauli::Z => {
-                // Z fault anticommutes with X component
-                anticom_count += prop.get_x_qubits().len();
-            }
-            Pauli::Y => {
-                // Y fault anticommutes with both X and Z
-                anticom_count += prop.get_x_qubits().len();
-                anticom_count += prop.get_z_qubits().len();
-            }
+            Pauli::I => false,
+            Pauli::X => has_z,         // X anticommutes with Z
+            Pauli::Z => has_x,         // Z anticommutes with X
+            Pauli::Y => has_x ^ has_z, // Y anticommutes with X or Z but not both
         }
-
-        anticom_count % 2 == 1
     }
 }
 
@@ -643,31 +808,31 @@ struct CompoundRecorder {
     #[allow(dead_code)]
     num_detectors: usize,
     #[allow(dead_code)]
-    num_logicals: usize,
+    num_tracked_ops: usize,
 
     // Buckets for detector influences [loc_idx][pauli] -> Vec<detector_idx>
     detector_x: Vec<Vec<u32>>,
     detector_y: Vec<Vec<u32>>,
     detector_z: Vec<Vec<u32>>,
 
-    // Buckets for logical influences
-    logical_x: Vec<Vec<u32>>,
-    logical_y: Vec<Vec<u32>>,
-    logical_z: Vec<Vec<u32>>,
+    // Buckets for DEM-output influences.
+    dem_output_x: Vec<Vec<u32>>,
+    dem_output_y: Vec<Vec<u32>>,
+    dem_output_z: Vec<Vec<u32>>,
 }
 
 impl CompoundRecorder {
-    fn new(num_locations: usize, num_detectors: usize, num_logicals: usize) -> Self {
+    fn new(num_locations: usize, num_detectors: usize, num_tracked_ops: usize) -> Self {
         Self {
             num_locations,
             num_detectors,
-            num_logicals,
+            num_tracked_ops,
             detector_x: vec![Vec::new(); num_locations],
             detector_y: vec![Vec::new(); num_locations],
             detector_z: vec![Vec::new(); num_locations],
-            logical_x: vec![Vec::new(); num_locations],
-            logical_y: vec![Vec::new(); num_locations],
-            logical_z: vec![Vec::new(); num_locations],
+            dem_output_x: vec![Vec::new(); num_locations],
+            dem_output_y: vec![Vec::new(); num_locations],
+            dem_output_z: vec![Vec::new(); num_locations],
         }
     }
 
@@ -683,14 +848,14 @@ impl CompoundRecorder {
         }
     }
 
-    fn record_logical(&mut self, loc_idx: usize, pauli: Pauli, logical_idx: u32) {
+    fn record_dem_output(&mut self, loc_idx: usize, pauli: Pauli, dem_output_idx: u32) {
         if loc_idx >= self.num_locations {
             return;
         }
         match pauli {
-            Pauli::X => self.logical_x[loc_idx].push(logical_idx),
-            Pauli::Y => self.logical_y[loc_idx].push(logical_idx),
-            Pauli::Z => self.logical_z[loc_idx].push(logical_idx),
+            Pauli::X => self.dem_output_x[loc_idx].push(dem_output_idx),
+            Pauli::Y => self.dem_output_y[loc_idx].push(dem_output_idx),
+            Pauli::Z => self.dem_output_z[loc_idx].push(dem_output_idx),
             Pauli::I => {}
         }
     }
@@ -712,15 +877,15 @@ impl CompoundRecorder {
                 soa.detectors_z.push(det);
             }
 
-            // Add logical influences
-            for &log in &self.logical_x[loc_idx] {
-                soa.logicals_x.push(log);
+            // Add DEM-output influences
+            for &dem_output in &self.dem_output_x[loc_idx] {
+                soa.dem_outputs_x.push(dem_output);
             }
-            for &log in &self.logical_y[loc_idx] {
-                soa.logicals_y.push(log);
+            for &dem_output in &self.dem_output_y[loc_idx] {
+                soa.dem_outputs_y.push(dem_output);
             }
-            for &log in &self.logical_z[loc_idx] {
-                soa.logicals_z.push(log);
+            for &dem_output in &self.dem_output_z[loc_idx] {
+                soa.dem_outputs_z.push(dem_output);
             }
 
             soa.finish_location();
@@ -733,6 +898,7 @@ impl CompoundRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fault_tolerance::propagator::DemOutputKind;
     use pecos_quantum::DagCircuit;
 
     #[test]
@@ -801,17 +967,57 @@ mod tests {
     }
 
     #[test]
-    fn test_with_logical() {
+    fn test_with_pauli_operator() {
         let mut dag = DagCircuit::new();
         dag.pz(&[2]);
         dag.cx(&[(0, 2)]);
         dag.mz(&[2]);
 
-        let builder = InfluenceBuilder::new(&dag).with_logical_z(vec![0]); // Track Z logical on qubit 0
+        let builder = InfluenceBuilder::new(&dag).with_z(&[0]); // Track Z logical on qubit 0
 
         let map = builder.build();
 
         // Should track the logical
-        assert!(map.influences.max_logical_index().is_some());
+        assert!(map.influences.max_dem_output_index().is_some());
+    }
+
+    #[test]
+    fn test_dem_output_metadata_accepts_pauli_string_and_normalizes_phase() {
+        use pecos_core::{Pauli, QuarterPhase};
+
+        let pauli =
+            PauliString::from_paulis_with_phase(QuarterPhase::MinusI, &[Pauli::X, Pauli::Z]);
+        let metadata = DemOutputMetadata::tracked_operator(pauli).with_label("xz");
+
+        assert_eq!(metadata.kind, DemOutputKind::TrackedOperator);
+        assert_eq!(metadata.label.as_deref(), Some("xz"));
+        assert_eq!(metadata.pauli.phase(), QuarterPhase::PlusOne);
+        assert_eq!(metadata.pauli.to_sparse_str(), "+X0 Z1");
+    }
+
+    #[test]
+    fn test_circuit_annotation_dem_output_metadata_tracks_only_operator_annotations() {
+        use pecos_core::pauli::constructors::X;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        let meas = dag.mz(&[0]);
+        dag.observable_labeled("record_obs", &[meas[0]]);
+        dag.pauli_operator_labeled("track_x", X(0));
+
+        let map = InfluenceBuilder::new(&dag)
+            .with_circuit_annotations(&dag)
+            .build();
+
+        assert_eq!(map.num_dem_outputs(), 0);
+        assert_eq!(map.num_tracked_ops(), 1);
+        assert_eq!(map.dem_output_metadata.len(), 1);
+        assert_eq!(
+            map.dem_output_metadata[0].kind,
+            DemOutputKind::TrackedOperator
+        );
+        assert_eq!(map.dem_output_metadata[0].label.as_deref(), Some("track_x"));
+        assert_eq!(map.dem_output_metadata[0].pauli.to_sparse_str(), "+X0");
     }
 }

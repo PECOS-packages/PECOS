@@ -40,3 +40,5 @@ egative = "egative"
 agger = "agger"
 # Ruff rule code prefix (flake8-copyright)
 CPY = "CPY"
+# Abbreviation for "undetectable" in fault enumeration debug output
+UNDET = "UNDET"

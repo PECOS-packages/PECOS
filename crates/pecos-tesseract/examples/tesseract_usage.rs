@@ -131,7 +131,6 @@ error(0.0005) D1 D3 L0
         det_beam: 50,
         beam_climbing: true,
         no_revisit_dets: false,
-        at_most_two_errors_per_detector: true,
         verbose: false,
         pqlimit: 10000,
         det_penalty: 0.05,
@@ -160,10 +159,6 @@ error(0.0005) D1 D3 L0
     println!(
         "  No revisit detectors: {}",
         custom_decoder.no_revisit_dets()
-    );
-    println!(
-        "  At most two errors per detector: {}",
-        custom_decoder.at_most_two_errors_per_detector()
     );
     println!("  Priority queue limit: {}", custom_decoder.pqlimit());
     println!("  Detector penalty: {:.3}", custom_decoder.det_penalty());

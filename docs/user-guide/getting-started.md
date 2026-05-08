@@ -180,7 +180,6 @@ Most users won't need these, but they're available for specialized use cases:
 |---------|-----------------|-------------|
 | **LLVM** (Rust only) | QIR/LLVM IR execution | [LLVM Setup](llvm-setup.md) |
 | **CUDA** | GPU-accelerated simulation | [CUDA Setup](cuda-setup.md) |
-| **QuEST** | Alternative simulator backend | `pip install quantum-pecos[all]` |
 
 !!! tip "Python users"
     Pre-built wheels include LLVM support—no extra setup needed.

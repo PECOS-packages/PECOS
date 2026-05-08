@@ -102,7 +102,7 @@ std::unique_ptr<BpOsdDecoder> create_bp_osd_decoder(
         omp_thread_count,
         serial_schedule_vec,
         random_schedule_seed,
-        true,  // random_schedule_at_every_iteration
+        serial_schedule_vec.empty(),  // random_serial_schedule: use random if no fixed schedule
         static_cast<bp::BpInputType>(input_vector_type)
     );
 
@@ -254,7 +254,7 @@ std::unique_ptr<BpLsdDecoder> create_bp_lsd_decoder(
         omp_thread_count,
         serial_schedule_vec,
         random_schedule_seed,
-        true,  // random_schedule_at_every_iteration
+        serial_schedule_vec.empty(),  // random_serial_schedule: use random if no fixed schedule
         static_cast<bp::BpInputType>(input_vector_type)
     );
 

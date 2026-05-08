@@ -48,7 +48,7 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
     #[allow(dead_code)]
     meas_data_buffer: wgpu::Buffer,
     meas_random_buffer: wgpu::Buffer,
-    meas_results_buffer: wgpu::Buffer,
+    meas_ids_buffer: wgpu::Buffer,
     meas_staging_buffer: wgpu::Buffer,
     meas_bind_group: wgpu::BindGroup,
     meas_find_pipeline: wgpu::ComputePipeline,
@@ -228,7 +228,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             mapped_at_creation: false,
         });
 
-        let meas_results_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let meas_ids_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Multi Measurement Results Buffer"),
             size: u64::from(shots_per_batch) * 4,
             usage: wgpu::BufferUsages::STORAGE
@@ -506,7 +506,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: meas_results_buffer.as_entire_binding(),
+                    resource: meas_ids_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -602,7 +602,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             // GPU-side measurement
             meas_data_buffer,
             meas_random_buffer,
-            meas_results_buffer,
+            meas_ids_buffer,
             meas_staging_buffer,
             meas_bind_group,
             meas_find_pipeline,
@@ -1427,7 +1427,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
             // Copy this measurement's results to staging buffer
             encoder.copy_buffer_to_buffer(
-                &self.meas_results_buffer,
+                &self.meas_ids_buffer,
                 0,
                 &self.meas_staging_buffer,
                 0,
@@ -1576,7 +1576,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             }
 
             encoder.copy_buffer_to_buffer(
-                &self.meas_results_buffer,
+                &self.meas_ids_buffer,
                 0,
                 &self.meas_staging_buffer,
                 0,

@@ -15,20 +15,24 @@ description = "Unified decoder meta-crate for PECOS"
 pecos-decoder-core.workspace = true
 pecos-ldpc-decoders = { workspace = true, optional = true }
 pecos-fusion-blossom = { workspace = true, optional = true }
+pecos-mwpf = { workspace = true, optional = true }
 pecos-pymatching = { workspace = true, optional = true }
 pecos-tesseract = { workspace = true, optional = true }
 pecos-chromobius = { workspace = true, optional = true }
 pecos-relay-bp = { workspace = true, optional = true }
+pecos-uf-decoder = { workspace = true, optional = true }
 
 [features]
 default = []
 ldpc = ["dep:pecos-ldpc-decoders"]
 fusion-blossom = ["dep:pecos-fusion-blossom"]
+mwpf = ["dep:pecos-mwpf"]
 pymatching = ["dep:pecos-pymatching"]
 tesseract = ["dep:pecos-tesseract"]
 chromobius = ["dep:pecos-chromobius"]
 relay-bp = ["dep:pecos-relay-bp"]
-all = ["ldpc", "fusion-blossom", "pymatching", "tesseract", "chromobius", "relay-bp"]
+uf = ["dep:pecos-uf-decoder"]
+all = ["ldpc", "fusion-blossom", "mwpf", "pymatching", "tesseract", "chromobius", "relay-bp", "uf"]
 
 [lints]
 workspace = true

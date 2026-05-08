@@ -9,7 +9,7 @@
 
 use pecos_gpu_sims::{GpuInfluenceMapData, GpuInfluenceSampler};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
-use pecos_qec::fault_tolerance::noisy_sampler::{NoisySampler, UniformNoiseModel};
+use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_quantum::DagCircuit;
 use std::time::{Duration, Instant};
 
@@ -127,8 +127,8 @@ struct BenchmarkResult {
     build_time: Duration,
     cpu_time: Duration,
     gpu_time: Duration,
-    _cpu_logical_errors: usize,
-    _gpu_logical_errors: usize,
+    _cpu_logical_error_count: usize,
+    _gpu_logical_error_count: usize,
 }
 
 impl BenchmarkResult {
@@ -150,14 +150,14 @@ impl BenchmarkResult {
 fn benchmark_circuit(
     name: &str,
     circuit: &DagCircuit,
-    logical_qubits: Vec<usize>,
+    tracked_op_qubits: &[usize],
     num_shots: u32,
     p_error: f64,
     seed: u64,
 ) -> BenchmarkResult {
     // Build influence map (common to both pipelines)
     let build_start = Instant::now();
-    let builder = InfluenceBuilder::new(circuit).with_logical_z(logical_qubits);
+    let builder = InfluenceBuilder::new(circuit).with_z(tracked_op_qubits);
     let influence_map = builder.build();
     let build_time = build_start.elapsed();
 
@@ -165,37 +165,50 @@ fn benchmark_circuit(
     let num_detectors = influence_map.detectors.len();
 
     // CPU sampling
-    let noise = UniformNoiseModel::depolarizing(p_error);
-    let mut cpu_sampler = NoisySampler::new(&influence_map, noise, seed);
+    let probs = vec![p_error; num_locations];
+    let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs);
 
     let cpu_start = Instant::now();
-    let cpu_results = cpu_sampler.sample(num_shots as usize);
+    let cpu_stats = cpu_sampler.sample_statistics(num_shots as usize, seed);
     let cpu_time = cpu_start.elapsed();
 
-    let cpu_logical_errors = cpu_results.iter().filter(|r| r.has_logical_error()).count();
+    let cpu_logical_error_count = cpu_stats.logical_error_count;
 
     // GPU sampling
     let (
         num_loc,
         num_det,
-        num_log,
+        num_dem_outputs,
         det_off_x,
         det_data_x,
         det_off_y,
         det_data_y,
         det_off_z,
         det_data_z,
-        log_off_x,
-        log_data_x,
-        log_off_y,
-        log_data_y,
-        log_off_z,
-        log_data_z,
+        dem_output_offsets_x,
+        dem_output_data_x,
+        dem_output_offsets_y,
+        dem_output_data_y,
+        dem_output_offsets_z,
+        dem_output_data_z,
     ) = influence_map.export_csr();
 
     let gpu_map = GpuInfluenceMapData::from_csr(
-        num_loc, num_det, num_log, det_off_x, det_data_x, det_off_y, det_data_y, det_off_z,
-        det_data_z, log_off_x, log_data_x, log_off_y, log_data_y, log_off_z, log_data_z,
+        num_loc,
+        num_det,
+        num_dem_outputs,
+        det_off_x,
+        det_data_x,
+        det_off_y,
+        det_data_y,
+        det_off_z,
+        det_data_z,
+        dem_output_offsets_x,
+        dem_output_data_x,
+        dem_output_offsets_y,
+        dem_output_data_y,
+        dem_output_offsets_z,
+        dem_output_data_z,
     );
 
     let mut gpu_sampler =
@@ -208,7 +221,7 @@ fn benchmark_circuit(
     let gpu_result = gpu_sampler.sample_uniform(num_shots, p_error);
     let gpu_time = gpu_start.elapsed();
 
-    let gpu_logical_errors = gpu_result.count_logical_errors();
+    let gpu_logical_error_count = gpu_result.count_logical_errors();
 
     BenchmarkResult {
         name: name.to_string(),
@@ -218,8 +231,8 @@ fn benchmark_circuit(
         build_time,
         cpu_time,
         gpu_time,
-        _cpu_logical_errors: cpu_logical_errors,
-        _gpu_logical_errors: gpu_logical_errors,
+        _cpu_logical_error_count: cpu_logical_error_count,
+        _gpu_logical_error_count: gpu_logical_error_count,
     }
 }
 
@@ -283,10 +296,17 @@ fn main() {
 
     for (num_data, num_rounds) in [(3, 2), (5, 3), (7, 4), (9, 5), (11, 6), (15, 8)] {
         let circuit = build_repetition_code(num_data, num_rounds);
-        let logical_qubits: Vec<usize> = (0..num_data).collect();
+        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
         let name = format!("rep_d{num_data}r{num_rounds}");
 
-        let result = benchmark_circuit(&name, &circuit, logical_qubits, num_shots, p_error, seed);
+        let result = benchmark_circuit(
+            &name,
+            &circuit,
+            &tracked_op_qubits,
+            num_shots,
+            p_error,
+            seed,
+        );
         results.push(result);
     }
 
@@ -298,7 +318,7 @@ fn main() {
     println!("\nTest 2: Fixed Circuit (rep_d7r4) - Varying Shots\n");
 
     let circuit = build_repetition_code(7, 4);
-    let logical_qubits: Vec<usize> = (0..7).collect();
+    let tracked_op_qubits: Vec<usize> = (0..7).collect();
 
     let mut shot_results = Vec::new();
 
@@ -307,7 +327,7 @@ fn main() {
         let result = benchmark_circuit(
             &name,
             &circuit,
-            logical_qubits.clone(),
+            &tracked_op_qubits,
             num_shots,
             p_error,
             seed,
@@ -328,10 +348,17 @@ fn main() {
     for (distance, rounds) in [(3, 2), (4, 2), (5, 3), (6, 3), (7, 4)] {
         let circuit = build_surface_code_grid(distance, rounds);
         let num_data = distance * distance;
-        let logical_qubits: Vec<usize> = (0..num_data).collect();
+        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
         let name = format!("surf_d{distance}r{rounds}");
 
-        let result = benchmark_circuit(&name, &circuit, logical_qubits, num_shots, p_error, seed);
+        let result = benchmark_circuit(
+            &name,
+            &circuit,
+            &tracked_op_qubits,
+            num_shots,
+            p_error,
+            seed,
+        );
         surface_results.push(result);
     }
 

@@ -68,13 +68,13 @@ pub mod simulators {
     #[cfg(feature = "cppsparsestab")]
     pub use pecos_cppsparsestab::CppSparseStab;
     pub use pecos_engines::quantum::{
-        CliffordRzEngine, DensityMatrixEngine, QuantumEngine, SparseStabEngine, StabilizerEngine,
+        DensityMatrixEngine, QuantumEngine, SparseStabEngine, StabVecEngine, StabilizerEngine,
         StateVecEngine, new_quantum_engine_arbitrary_qgate,
     };
     pub use pecos_engines::quantum_engine_builder::{
-        CliffordRzEngineBuilder, DensityMatrixEngineBuilder, IntoQuantumEngineBuilder,
-        SparseStabEngineBuilder, StabilizerEngineBuilder, StateVectorEngineBuilder, clifford_rz,
-        density_matrix, sparse_stab, stabilizer, state_vector,
+        DensityMatrixEngineBuilder, IntoQuantumEngineBuilder, SparseStabEngineBuilder,
+        StabVecEngineBuilder, StabilizerEngineBuilder, StateVectorEngineBuilder, density_matrix,
+        sparse_stab, stab_vec, stabilizer, state_vector,
     };
     pub use pecos_simulators::*;
 }
@@ -201,7 +201,7 @@ pub use pecos_engines::{
 pub use pecos_engines::{SimInput, sim_builder};
 #[cfg(feature = "sim")]
 pub use pecos_engines::{
-    clifford_rz, coin_toss, density_matrix, sparse_stab, stabilizer, state_vector,
+    coin_toss, density_matrix, sparse_stab, stab_vec, stabilizer, state_vector,
 };
 #[cfg(feature = "hugr")]
 pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};

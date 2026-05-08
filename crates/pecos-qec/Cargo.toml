@@ -15,15 +15,21 @@ readme = "README.md"
 ndarray.workspace = true
 pecos-core.workspace = true
 pecos-decoder-core.workspace = true
+pecos-num.workspace = true
 pecos-quantum.workspace = true
 pecos-simulators.workspace = true
 pecos-random.workspace = true
 rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 wide.workspace = true
+
+[[example]]
+name = "surface_d3_fault_catalog_lookup"
+path = "../../examples/surface/d3_fault_catalog_lookup.rs"
 
 [lints]
 workspace = true

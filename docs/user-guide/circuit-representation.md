@@ -245,8 +245,9 @@ Gates can have arbitrary metadata attached:
     # Multiple metadata entries
     circuit.cx([(0, 1)]).meta("duration_ns", 50)
 
-    # Measurements break the chain but still support metadata
-    circuit.mz([0]).meta("basis", "Z")
+    # Measurements return refs (not the circuit), so chain separately
+    circuit.mz([0])
+    circuit.meta("basis", "Z")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -261,8 +262,9 @@ Gates can have arbitrary metadata attached:
     // Multiple metadata entries
     circuit.cx(&[(0, 1)]).meta("duration_ns", Attribute::Int(50));
 
-    // Measurements break the chain but still support metadata
-    circuit.mz(&[0]).meta("basis", Attribute::String("Z".into()));
+    // Measurements return refs (not &mut Self), so chain separately
+    circuit.mz(&[0]);
+    circuit.meta("basis", Attribute::String("Z".into()));
     ```
 
 ### Circuit Analysis
@@ -272,7 +274,10 @@ Gates can have arbitrary metadata attached:
     from pecos.quantum import DagCircuit
 
     circuit = DagCircuit()
-    circuit.h([0]).cx([(0, 1)]).h([1]).cx([(1, 2)]).mz([0]).mz([1]).mz([2])
+    circuit.h([0]).cx([(0, 1)]).h([1]).cx([(1, 2)])
+    circuit.mz([0])
+    circuit.mz([1])
+    circuit.mz([2])
 
     # Basic metrics
     print(f"Total gates: {circuit.gate_count()}")

@@ -339,11 +339,11 @@ pub fn stabilizer() -> StabilizerEngineBuilder {
 
 /// Builder for Clifford+RZ quantum engine
 #[derive(Debug, Clone, Default)]
-pub struct CliffordRzEngineBuilder {
+pub struct StabVecEngineBuilder {
     num_qubits: Option<usize>,
 }
 
-impl CliffordRzEngineBuilder {
+impl StabVecEngineBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -356,12 +356,12 @@ impl CliffordRzEngineBuilder {
     }
 }
 
-impl QuantumEngineBuilder for CliffordRzEngineBuilder {
+impl QuantumEngineBuilder for StabVecEngineBuilder {
     fn build(&mut self) -> Result<Box<dyn QuantumEngine>, PecosError> {
         let num_qubits = self.num_qubits.ok_or_else(|| {
             PecosError::Input("Number of qubits not specified for Clifford+RZ engine".to_string())
         })?;
-        Ok(Box::new(crate::quantum::CliffordRzEngine::new(num_qubits)))
+        Ok(Box::new(crate::quantum::StabVecEngine::new(num_qubits)))
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
@@ -371,7 +371,7 @@ impl QuantumEngineBuilder for CliffordRzEngineBuilder {
     }
 }
 
-impl IntoQuantumEngineBuilder for CliffordRzEngineBuilder {
+impl IntoQuantumEngineBuilder for StabVecEngineBuilder {
     type Builder = Self;
 
     fn into_quantum_engine_builder(self) -> Self::Builder {
@@ -381,8 +381,8 @@ impl IntoQuantumEngineBuilder for CliffordRzEngineBuilder {
 
 /// Create a Clifford+RZ quantum engine builder
 #[must_use]
-pub fn clifford_rz() -> CliffordRzEngineBuilder {
-    CliffordRzEngineBuilder::new()
+pub fn stab_vec() -> StabVecEngineBuilder {
+    StabVecEngineBuilder::new()
 }
 
 /// Builder for density matrix quantum engine

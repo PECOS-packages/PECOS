@@ -3,7 +3,224 @@
 
 use super::validator::GateForValidation;
 use super::*;
+use crate::command::{CommandBuilder, GateType as CommandGateType};
 use pecos_core::{Angle64, QubitId};
+
+#[derive(Debug, Clone, Copy)]
+struct StandardCliffordCase {
+    gate_type: CommandGateType,
+    gate_id: GateId,
+    name: &'static str,
+    arity: u8,
+    inverse: CommandGateType,
+}
+
+fn standard_clifford_cases() -> &'static [StandardCliffordCase] {
+    use CommandGateType::{
+        CX, CY, CZ, F, Fdg, H, I, SWAP, SX, SXX, SXXdg, SXdg, SY, SYY, SYYdg, SYdg, SZ, SZZ, SZZdg,
+        SZdg, X, Y, Z,
+    };
+
+    &[
+        StandardCliffordCase {
+            gate_type: I,
+            gate_id: gates::I,
+            name: "I",
+            arity: 1,
+            inverse: I,
+        },
+        StandardCliffordCase {
+            gate_type: X,
+            gate_id: gates::X,
+            name: "X",
+            arity: 1,
+            inverse: X,
+        },
+        StandardCliffordCase {
+            gate_type: Y,
+            gate_id: gates::Y,
+            name: "Y",
+            arity: 1,
+            inverse: Y,
+        },
+        StandardCliffordCase {
+            gate_type: Z,
+            gate_id: gates::Z,
+            name: "Z",
+            arity: 1,
+            inverse: Z,
+        },
+        StandardCliffordCase {
+            gate_type: H,
+            gate_id: gates::H,
+            name: "H",
+            arity: 1,
+            inverse: H,
+        },
+        StandardCliffordCase {
+            gate_type: F,
+            gate_id: gates::F,
+            name: "F",
+            arity: 1,
+            inverse: Fdg,
+        },
+        StandardCliffordCase {
+            gate_type: Fdg,
+            gate_id: gates::Fdg,
+            name: "Fdg",
+            arity: 1,
+            inverse: F,
+        },
+        StandardCliffordCase {
+            gate_type: SX,
+            gate_id: gates::SX,
+            name: "SX",
+            arity: 1,
+            inverse: SXdg,
+        },
+        StandardCliffordCase {
+            gate_type: SXdg,
+            gate_id: gates::SXdg,
+            name: "SXdg",
+            arity: 1,
+            inverse: SX,
+        },
+        StandardCliffordCase {
+            gate_type: SY,
+            gate_id: gates::SY,
+            name: "SY",
+            arity: 1,
+            inverse: SYdg,
+        },
+        StandardCliffordCase {
+            gate_type: SYdg,
+            gate_id: gates::SYdg,
+            name: "SYdg",
+            arity: 1,
+            inverse: SY,
+        },
+        StandardCliffordCase {
+            gate_type: SZ,
+            gate_id: gates::SZ,
+            name: "SZ",
+            arity: 1,
+            inverse: SZdg,
+        },
+        StandardCliffordCase {
+            gate_type: SZdg,
+            gate_id: gates::SZdg,
+            name: "SZdg",
+            arity: 1,
+            inverse: SZ,
+        },
+        StandardCliffordCase {
+            gate_type: CX,
+            gate_id: gates::CX,
+            name: "CX",
+            arity: 2,
+            inverse: CX,
+        },
+        StandardCliffordCase {
+            gate_type: CY,
+            gate_id: gates::CY,
+            name: "CY",
+            arity: 2,
+            inverse: CY,
+        },
+        StandardCliffordCase {
+            gate_type: CZ,
+            gate_id: gates::CZ,
+            name: "CZ",
+            arity: 2,
+            inverse: CZ,
+        },
+        StandardCliffordCase {
+            gate_type: SXX,
+            gate_id: gates::SXX,
+            name: "SXX",
+            arity: 2,
+            inverse: SXXdg,
+        },
+        StandardCliffordCase {
+            gate_type: SXXdg,
+            gate_id: gates::SXXdg,
+            name: "SXXdg",
+            arity: 2,
+            inverse: SXX,
+        },
+        StandardCliffordCase {
+            gate_type: SYY,
+            gate_id: gates::SYY,
+            name: "SYY",
+            arity: 2,
+            inverse: SYYdg,
+        },
+        StandardCliffordCase {
+            gate_type: SYYdg,
+            gate_id: gates::SYYdg,
+            name: "SYYdg",
+            arity: 2,
+            inverse: SYY,
+        },
+        StandardCliffordCase {
+            gate_type: SZZ,
+            gate_id: gates::SZZ,
+            name: "SZZ",
+            arity: 2,
+            inverse: SZZdg,
+        },
+        StandardCliffordCase {
+            gate_type: SZZdg,
+            gate_id: gates::SZZdg,
+            name: "SZZdg",
+            arity: 2,
+            inverse: SZZ,
+        },
+        StandardCliffordCase {
+            gate_type: SWAP,
+            gate_id: gates::SWAP,
+            name: "SWAP",
+            arity: 2,
+            inverse: SWAP,
+        },
+    ]
+}
+
+fn command_from_builder(gate_type: CommandGateType) -> crate::command::GateCommand {
+    let queue = match gate_type {
+        CommandGateType::I => CommandBuilder::new().identity(&[0]).build(),
+        CommandGateType::X => CommandBuilder::new().x(&[0]).build(),
+        CommandGateType::Y => CommandBuilder::new().y(&[0]).build(),
+        CommandGateType::Z => CommandBuilder::new().z(&[0]).build(),
+        CommandGateType::H => CommandBuilder::new().h(&[0]).build(),
+        CommandGateType::F => CommandBuilder::new().f(&[0]).build(),
+        CommandGateType::Fdg => CommandBuilder::new().fdg(&[0]).build(),
+        CommandGateType::SX => CommandBuilder::new().sx(&[0]).build(),
+        CommandGateType::SXdg => CommandBuilder::new().sxdg(&[0]).build(),
+        CommandGateType::SY => CommandBuilder::new().sy(&[0]).build(),
+        CommandGateType::SYdg => CommandBuilder::new().sydg(&[0]).build(),
+        CommandGateType::SZ => CommandBuilder::new().sz(&[0]).build(),
+        CommandGateType::SZdg => CommandBuilder::new().szdg(&[0]).build(),
+        CommandGateType::CX => CommandBuilder::new().cx(&[(0, 1)]).build(),
+        CommandGateType::CY => CommandBuilder::new().cy(&[(0, 1)]).build(),
+        CommandGateType::CZ => CommandBuilder::new().cz(&[(0, 1)]).build(),
+        CommandGateType::SXX => CommandBuilder::new().sxx(&[(0, 1)]).build(),
+        CommandGateType::SXXdg => CommandBuilder::new().sxxdg(&[(0, 1)]).build(),
+        CommandGateType::SYY => CommandBuilder::new().syy(&[(0, 1)]).build(),
+        CommandGateType::SYYdg => CommandBuilder::new().syydg(&[(0, 1)]).build(),
+        CommandGateType::SZZ => CommandBuilder::new().szz(&[(0, 1)]).build(),
+        CommandGateType::SZZdg => CommandBuilder::new().szzdg(&[(0, 1)]).build(),
+        CommandGateType::SWAP => CommandBuilder::new().swap(&[(0, 1)]).build(),
+        other => panic!("not a standard Clifford conformance gate: {other:?}"),
+    };
+
+    assert_eq!(
+        queue.len(),
+        1,
+        "{gate_type:?} builder should emit one command"
+    );
+    queue.iter().next().unwrap().clone()
+}
 
 // ============================================================================
 // GateId Tests
@@ -1267,6 +1484,78 @@ fn test_validator_is_gate_allowed() {
 }
 
 #[test]
+fn test_standard_cliffords_are_registered_defined_and_allowed() {
+    let registry = GateRegistry::new();
+    let definitions = GateDefinitions::new();
+    let validator = CliffordValidator::new();
+
+    for case in standard_clifford_cases() {
+        assert!(
+            registry.get(case.gate_id).is_some(),
+            "missing registry spec for {}",
+            case.name
+        );
+        assert!(
+            definitions.spec(case.gate_id).is_some(),
+            "missing gate definition for {}",
+            case.name
+        );
+        assert!(
+            validator.is_gate_allowed(case.gate_id, &[], &registry),
+            "Clifford validator should allow {}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn test_standard_clifford_gate_surface_is_consistent() {
+    let registry = GateRegistry::new();
+    let definitions = GateDefinitions::new();
+
+    for case in standard_clifford_cases() {
+        let registry_spec = registry.get(case.gate_id).unwrap();
+        let definition_spec = definitions.spec(case.gate_id).unwrap();
+        assert_eq!(registry_spec.name, case.name, "{case:?}");
+        assert_eq!(definition_spec.name, case.name, "{case:?}");
+        assert_eq!(registry_spec.quantum_arity, case.arity, "{case:?}");
+        assert_eq!(definition_spec.quantum_arity, case.arity, "{case:?}");
+        assert_eq!(
+            case.gate_type.quantum_arity(),
+            case.arity as usize,
+            "{case:?}"
+        );
+        assert_eq!(case.gate_type.angle_arity(), 0, "{case:?}");
+        assert_eq!(case.gate_type.to_gate_id(), case.gate_id, "{case:?}");
+        assert_eq!(
+            case.gate_id.try_to_gate_type(),
+            Some(case.gate_type),
+            "{case:?}"
+        );
+
+        let command = command_from_builder(case.gate_type);
+        assert_eq!(command.gate_type, case.gate_type, "{case:?}");
+        assert_eq!(command.qubits.len(), case.arity as usize, "{case:?}");
+        assert!(command.angles.is_empty(), "{case:?}");
+    }
+}
+
+#[test]
+fn test_standard_clifford_inverse_table_is_symmetric() {
+    for case in standard_clifford_cases() {
+        let inverse = standard_clifford_cases()
+            .iter()
+            .find(|candidate| candidate.gate_type == case.inverse)
+            .unwrap_or_else(|| panic!("missing inverse {:?} for {}", case.inverse, case.name));
+        assert_eq!(
+            inverse.inverse, case.gate_type,
+            "inverse table should be symmetric for {}",
+            case.name
+        );
+    }
+}
+
+#[test]
 fn test_validation_error_display() {
     let err = ValidationError::ForbiddenGate {
         gate_id: gates::T,
@@ -1294,7 +1583,7 @@ fn test_validation_error_display() {
 
 #[test]
 fn test_standard_adaptor_can_adapt() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     assert!(adaptor.can_adapt(gates::T));
     assert!(adaptor.can_adapt(gates::Tdg));
@@ -1312,7 +1601,7 @@ fn test_standard_adaptor_can_adapt() {
 
 #[test]
 fn test_standard_adaptor_t_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::T, &[QubitId(0)], &[]);
 
@@ -1325,7 +1614,7 @@ fn test_standard_adaptor_t_gate() {
 
 #[test]
 fn test_standard_adaptor_tdg_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::Tdg, &[QubitId(0)], &[]);
 
@@ -1338,7 +1627,7 @@ fn test_standard_adaptor_tdg_gate() {
 
 #[test]
 fn test_standard_adaptor_rx_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let theta = Angle64::QUARTER_TURN;
     let result = adaptor.adapt(gates::RX, &[QubitId(0)], &[theta]);
@@ -1353,7 +1642,7 @@ fn test_standard_adaptor_rx_gate() {
 
 #[test]
 fn test_standard_adaptor_swap_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::SWAP, &[QubitId(0), QubitId(1)], &[]);
 
@@ -1364,7 +1653,7 @@ fn test_standard_adaptor_swap_gate() {
 
 #[test]
 fn test_standard_adaptor_rzz_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let theta = Angle64::QUARTER_TURN;
     let result = adaptor.adapt(gates::RZZ, &[QubitId(0), QubitId(1)], &[theta]);
@@ -1379,7 +1668,7 @@ fn test_standard_adaptor_rzz_gate() {
 
 #[test]
 fn test_standard_adaptor_ccx_gate() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
 
     let result = adaptor.adapt(gates::CCX, &[QubitId(0), QubitId(1), QubitId(2)], &[]);
 
@@ -1394,7 +1683,7 @@ fn test_standard_adaptor_ccx_gate() {
 
 #[test]
 fn test_composite_adaptor() {
-    let adaptor = CompositeAdaptor::new().with(StandardAdaptor::clifford_rz());
+    let adaptor = CompositeAdaptor::new().with(StandardAdaptor::stab_vec());
 
     assert!(adaptor.can_adapt(gates::T));
     assert!(adaptor.can_adapt(gates::SWAP));
@@ -1432,7 +1721,7 @@ fn test_custom_adaptor() {
 
 #[test]
 fn test_adaptor_adaptable_gates() {
-    let adaptor = StandardAdaptor::clifford_rz();
+    let adaptor = StandardAdaptor::stab_vec();
     let adaptable = adaptor.adaptable_gates();
 
     assert!(adaptable.contains(gates::T));

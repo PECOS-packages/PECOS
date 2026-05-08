@@ -10,6 +10,7 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "PyMatching MWPM decoder for PECOS"
+links = "pymatching-pecos"
 
 [dependencies]
 pecos-decoder-core.workspace = true

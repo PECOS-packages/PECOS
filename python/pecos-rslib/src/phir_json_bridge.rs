@@ -216,18 +216,12 @@ impl PhirJsonEngine {
                                     let params_dict = PyDict::new(py);
                                     // Use string matching instead of GateType enum
                                     match op.gate_type.to_string().as_str() {
-                                        "RZ" => {
-                                            if !op.params.is_empty() {
-                                                params_dict.set_item("theta", op.params[0])?;
-                                            }
+                                        "RZ" if !op.params.is_empty() => {
+                                            params_dict.set_item("theta", op.params[0])?;
                                         }
-                                        "R1XY" => {
-                                            if op.params.len() >= 2 {
-                                                params_dict.set_item(
-                                                    "angles",
-                                                    [op.params[0], op.params[1]],
-                                                )?;
-                                            }
+                                        "R1XY" if op.params.len() >= 2 => {
+                                            params_dict
+                                                .set_item("angles", [op.params[0], op.params[1]])?;
                                         }
                                         #[allow(clippy::match_same_arms)]
                                         "Measure" => {

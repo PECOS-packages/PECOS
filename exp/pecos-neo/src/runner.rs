@@ -211,7 +211,7 @@ impl GateEventHandlers {
     fn insert(vec: &mut Vec<PrioritizedHandler>, handler: ErasedGateHandler, priority: i32) {
         vec.push(PrioritizedHandler { handler, priority });
         // Stable sort so same-priority handlers keep registration order
-        vec.sort_by(|a, b| b.priority.cmp(&a.priority));
+        vec.sort_by_key(|h| std::cmp::Reverse(h.priority));
     }
 
     /// Dispatch all handlers in a Vec and combine their responses.
@@ -789,7 +789,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         fn merge_vec(dst: &mut Vec<PrioritizedHandler>, src: Vec<PrioritizedHandler>) {
             if !src.is_empty() {
                 dst.extend(src);
-                dst.sort_by(|a, b| b.priority.cmp(&a.priority));
+                dst.sort_by_key(|h| std::cmp::Reverse(h.priority));
             }
         }
         merge_vec(
@@ -1443,6 +1443,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 sim.h(qubits);
                 true
             }
+            GateType::F => {
+                sim.f(qubits);
+                true
+            }
+            GateType::Fdg => {
+                sim.fdg(qubits);
+                true
+            }
             GateType::SX => {
                 sim.sx(qubits);
                 true
@@ -1490,6 +1498,26 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             GateType::SZZdg => {
                 let pairs = flat_to_pairs(qubits);
                 sim.szzdg(&pairs);
+                true
+            }
+            GateType::SXX => {
+                let pairs = flat_to_pairs(qubits);
+                sim.sxx(&pairs);
+                true
+            }
+            GateType::SXXdg => {
+                let pairs = flat_to_pairs(qubits);
+                sim.sxxdg(&pairs);
+                true
+            }
+            GateType::SYY => {
+                let pairs = flat_to_pairs(qubits);
+                sim.syy(&pairs);
+                true
+            }
+            GateType::SYYdg => {
+                let pairs = flat_to_pairs(qubits);
+                sim.syydg(&pairs);
                 true
             }
             GateType::SWAP => {
@@ -1566,9 +1594,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Perform measurement
         let results = sim.mz(&[qubit]);
-        let meas_result = results.first();
-        let outcome = meas_result.is_some_and(|r| r.outcome);
-        let is_deterministic = meas_result.is_none_or(|r| r.is_deterministic);
+        let meas_id = results.first();
+        let outcome = meas_id.is_some_and(|r| r.outcome);
+        let is_deterministic = meas_id.is_none_or(|r| r.is_deterministic);
 
         // Store result for conditionals
         if let Some(slot) = self.results.get_mut(result_id.0 as usize) {
@@ -2062,7 +2090,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
             NoiseResponse::InjectGates(gates) => {
                 for gate in gates.iter() {
-                    Self::execute_noise_gate(sim, gate);
+                    self.execute_noise_gate(sim, gate);
                 }
             }
 
@@ -2092,8 +2120,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
     }
 
-    /// Execute a noise gate (injected Pauli error).
-    fn execute_noise_gate(sim: &mut S, gate: &GateCommand) {
+    /// Execute a noise gate (injected error).
+    ///
+    /// Handles Pauli gates directly. For non-Pauli gates (rotations, Cliffords),
+    /// delegates to the rotation executor if available, otherwise skips.
+    fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) {
         let qubits = gate.qubits.as_slice();
         match gate.gate_type {
             GateType::X => {
@@ -2105,7 +2136,81 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             GateType::Z => {
                 sim.z(qubits);
             }
-            _ => {}
+            GateType::H => {
+                sim.h(qubits);
+            }
+            GateType::F => {
+                sim.f(qubits);
+            }
+            GateType::Fdg => {
+                sim.fdg(qubits);
+            }
+            GateType::SX => {
+                sim.sx(qubits);
+            }
+            GateType::SXdg => {
+                sim.sxdg(qubits);
+            }
+            GateType::SY => {
+                sim.sy(qubits);
+            }
+            GateType::SYdg => {
+                sim.sydg(qubits);
+            }
+            GateType::SZ => {
+                sim.sz(qubits);
+            }
+            GateType::SZdg => {
+                sim.szdg(qubits);
+            }
+            GateType::CX => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.cx(&pairs);
+            }
+            GateType::CY => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.cy(&pairs);
+            }
+            GateType::CZ => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.cz(&pairs);
+            }
+            GateType::SXX => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.sxx(&pairs);
+            }
+            GateType::SXXdg => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.sxxdg(&pairs);
+            }
+            GateType::SYY => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.syy(&pairs);
+            }
+            GateType::SYYdg => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.syydg(&pairs);
+            }
+            GateType::SZZ => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.szz(&pairs);
+            }
+            GateType::SZZdg => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.szzdg(&pairs);
+            }
+            GateType::SWAP => {
+                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                sim.swap(&pairs);
+            }
+            // Non-Clifford gates: delegate to rotation executor
+            other => {
+                if let Some(executor) = self.rotation_executor {
+                    executor(sim, GateId::from(other), gate.angles.as_slice(), qubits);
+                }
+                // If no rotation executor, silently skip (noise channel injected
+                // a gate the simulator can't handle).
+            }
         }
     }
 }
@@ -2248,46 +2353,38 @@ where
                 }
             }
             // CRZ decomposition: RZ(theta/2), CX, RZ(-theta/2), CX
-            GateType::CRZ => {
-                if qubits.len() >= 2 {
-                    let control = qubits[0];
-                    let target = qubits[1];
-                    let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
-                    let half_angle = angle / 2u64;
-                    sim.rz(half_angle, &[target]);
-                    sim.cx(&[(control, target)]);
-                    sim.rz(-half_angle, &[target]);
-                    sim.cx(&[(control, target)]);
-                    true
-                } else {
-                    false
-                }
+            GateType::CRZ if qubits.len() >= 2 => {
+                let control = qubits[0];
+                let target = qubits[1];
+                let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
+                let half_angle = angle / 2u64;
+                sim.rz(half_angle, &[target]);
+                sim.cx(&[(control, target)]);
+                sim.rz(-half_angle, &[target]);
+                sim.cx(&[(control, target)]);
+                true
             }
             // CCX (Toffoli) decomposition
-            GateType::CCX => {
-                if qubits.len() >= 3 {
-                    let c1 = qubits[0];
-                    let c2 = qubits[1];
-                    let target = qubits[2];
-                    sim.h(&[target]);
-                    sim.cx(&[(c2, target)]);
-                    sim.tdg(&[target]);
-                    sim.cx(&[(c1, target)]);
-                    sim.t(&[target]);
-                    sim.cx(&[(c2, target)]);
-                    sim.tdg(&[target]);
-                    sim.cx(&[(c1, target)]);
-                    sim.t(&[c2]);
-                    sim.t(&[target]);
-                    sim.h(&[target]);
-                    sim.cx(&[(c1, c2)]);
-                    sim.t(&[c1]);
-                    sim.tdg(&[c2]);
-                    sim.cx(&[(c1, c2)]);
-                    true
-                } else {
-                    false
-                }
+            GateType::CCX if qubits.len() >= 3 => {
+                let c1 = qubits[0];
+                let c2 = qubits[1];
+                let target = qubits[2];
+                sim.h(&[target]);
+                sim.cx(&[(c2, target)]);
+                sim.tdg(&[target]);
+                sim.cx(&[(c1, target)]);
+                sim.t(&[target]);
+                sim.cx(&[(c2, target)]);
+                sim.tdg(&[target]);
+                sim.cx(&[(c1, target)]);
+                sim.t(&[c2]);
+                sim.t(&[target]);
+                sim.h(&[target]);
+                sim.cx(&[(c1, c2)]);
+                sim.t(&[c1]);
+                sim.tdg(&[c2]);
+                sim.cx(&[(c1, c2)]);
+                true
             }
             _ => false,
         }
@@ -2300,6 +2397,9 @@ mod tests {
     use crate::command::CommandBuilder;
     use crate::extensible::{GateCategory, GateSpec, OpBuilder, gates};
     use crate::noise::single_qubit::SingleQubitChannel;
+    use num_complex::Complex64;
+    use pecos_core::clifford::Clifford;
+    use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
     use pecos_simulators::{SparseStab, StateVec};
 
     // --- Basic execution tests ---
@@ -2941,5 +3041,225 @@ mod tests {
 
         let outcomes = runner.take_outcomes();
         assert_eq!(outcomes.len(), 1);
+    }
+
+    #[test]
+    fn test_apply_gate_standard_clifford_inverse_sequences() {
+        let mut state = SparseStab::new(2);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+
+        runner
+            .apply_gate(&mut state, GateType::PZ, &[QubitId(0), QubitId(1)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::F, &[QubitId(0)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::Fdg, &[QubitId(0)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::SXX, &[QubitId(0), QubitId(1)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::SXXdg, &[QubitId(0), QubitId(1)], &[])
+            .unwrap();
+        runner
+            .apply_gate(&mut state, GateType::MZ, &[QubitId(0), QubitId(1)], &[])
+            .unwrap();
+
+        let outcomes = runner.take_outcomes();
+        assert_eq!(outcomes.len(), 2);
+        for outcome in outcomes.iter() {
+            assert!(
+                !outcome.outcome,
+                "inverse Clifford sequence should preserve |0>"
+            );
+            assert!(outcome.is_deterministic);
+        }
+    }
+
+    #[test]
+    fn test_apply_gate_standard_clifford_inverse_table() {
+        let cases = [
+            (GateType::I, GateType::I, vec![QubitId(0)]),
+            (GateType::X, GateType::X, vec![QubitId(0)]),
+            (GateType::Y, GateType::Y, vec![QubitId(0)]),
+            (GateType::Z, GateType::Z, vec![QubitId(0)]),
+            (GateType::H, GateType::H, vec![QubitId(0)]),
+            (GateType::F, GateType::Fdg, vec![QubitId(0)]),
+            (GateType::Fdg, GateType::F, vec![QubitId(0)]),
+            (GateType::SX, GateType::SXdg, vec![QubitId(0)]),
+            (GateType::SXdg, GateType::SX, vec![QubitId(0)]),
+            (GateType::SY, GateType::SYdg, vec![QubitId(0)]),
+            (GateType::SYdg, GateType::SY, vec![QubitId(0)]),
+            (GateType::SZ, GateType::SZdg, vec![QubitId(0)]),
+            (GateType::SZdg, GateType::SZ, vec![QubitId(0)]),
+            (GateType::CX, GateType::CX, vec![QubitId(0), QubitId(1)]),
+            (GateType::CY, GateType::CY, vec![QubitId(0), QubitId(1)]),
+            (GateType::CZ, GateType::CZ, vec![QubitId(0), QubitId(1)]),
+            (GateType::SXX, GateType::SXXdg, vec![QubitId(0), QubitId(1)]),
+            (GateType::SXXdg, GateType::SXX, vec![QubitId(0), QubitId(1)]),
+            (GateType::SYY, GateType::SYYdg, vec![QubitId(0), QubitId(1)]),
+            (GateType::SYYdg, GateType::SYY, vec![QubitId(0), QubitId(1)]),
+            (GateType::SZZ, GateType::SZZdg, vec![QubitId(0), QubitId(1)]),
+            (GateType::SZZdg, GateType::SZZ, vec![QubitId(0), QubitId(1)]),
+            (GateType::SWAP, GateType::SWAP, vec![QubitId(0), QubitId(1)]),
+        ];
+
+        for (gate, inverse, qubits) in cases {
+            let mut state = SparseStab::new(2);
+            let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+
+            runner
+                .apply_gate(&mut state, GateType::PZ, &[QubitId(0), QubitId(1)], &[])
+                .unwrap();
+            runner.apply_gate(&mut state, gate, &qubits, &[]).unwrap();
+            runner
+                .apply_gate(&mut state, inverse, &qubits, &[])
+                .unwrap();
+            runner
+                .apply_gate(&mut state, GateType::MZ, &[QubitId(0), QubitId(1)], &[])
+                .unwrap();
+
+            let outcomes = runner.take_outcomes();
+            assert_eq!(outcomes.len(), 2, "{gate:?} then {inverse:?}");
+            for outcome in outcomes.iter() {
+                assert!(
+                    !outcome.outcome,
+                    "{gate:?} then {inverse:?} should preserve |00>"
+                );
+                assert!(outcome.is_deterministic);
+            }
+        }
+    }
+
+    fn matrix_times_state(matrix: &UnitaryMatrix, state: &[Complex64]) -> Vec<Complex64> {
+        (0..matrix.nrows())
+            .map(|row| {
+                let mut value = Complex64::new(0.0, 0.0);
+                for col in 0..matrix.ncols() {
+                    value += matrix[(row, col)] * state[col];
+                }
+                value
+            })
+            .collect()
+    }
+
+    fn assert_states_close(actual: &[Complex64], expected: &[Complex64], label: &str) {
+        const TOLERANCE: f64 = 1e-10;
+        assert_eq!(actual.len(), expected.len(), "{label}");
+
+        let phase = actual
+            .iter()
+            .zip(expected.iter())
+            .find(|(a, e)| a.norm() > TOLERANCE || e.norm() > TOLERANCE)
+            .map(|(a, e)| {
+                assert!(
+                    a.norm() > TOLERANCE && e.norm() > TOLERANCE,
+                    "{label}: support differs, actual={a:?}, expected={e:?}"
+                );
+                *a / *e
+            })
+            .unwrap_or(Complex64::new(1.0, 0.0));
+
+        for (idx, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+            let diff = (*a - phase * *e).norm();
+            assert!(
+                diff < TOLERANCE,
+                "{label}: amplitude {idx} differs up to global phase {phase:?}, actual={a:?}, expected={e:?}, diff={diff}"
+            );
+        }
+    }
+
+    fn prepare_matrix_test_state(prep_index: usize) -> StateVec {
+        let mut state = StateVec::new(2);
+        match prep_index {
+            0 => {}
+            1 => {
+                state.x(&[QubitId(0)]);
+            }
+            2 => {
+                state.x(&[QubitId(1)]);
+            }
+            3 => {
+                state.h(&[QubitId(0)]);
+                state.cx(&[(QubitId(0), QubitId(1))]);
+            }
+            4 => {
+                state.sx(&[QubitId(0)]);
+                state.h(&[QubitId(1)]);
+            }
+            _ => unreachable!(),
+        }
+        state
+    }
+
+    #[test]
+    fn test_apply_gate_standard_cliffords_match_unitary_matrices() {
+        let one_qubit_cases = [
+            (GateType::I, Clifford::I),
+            (GateType::X, Clifford::X),
+            (GateType::Y, Clifford::Y),
+            (GateType::Z, Clifford::Z),
+            (GateType::H, Clifford::H),
+            (GateType::F, Clifford::F),
+            (GateType::Fdg, Clifford::Fdg),
+            (GateType::SX, Clifford::SX),
+            (GateType::SXdg, Clifford::SXdg),
+            (GateType::SY, Clifford::SY),
+            (GateType::SYdg, Clifford::SYdg),
+            (GateType::SZ, Clifford::SZ),
+            (GateType::SZdg, Clifford::SZdg),
+        ];
+        let two_qubit_cases = [
+            (GateType::CX, Clifford::CX),
+            (GateType::CY, Clifford::CY),
+            (GateType::CZ, Clifford::CZ),
+            (GateType::SXX, Clifford::SXX),
+            (GateType::SXXdg, Clifford::SXXdg),
+            (GateType::SYY, Clifford::SYY),
+            (GateType::SYYdg, Clifford::SYYdg),
+            (GateType::SZZ, Clifford::SZZ),
+            (GateType::SZZdg, Clifford::SZZdg),
+            (GateType::SWAP, Clifford::SWAP),
+        ];
+
+        for prep_index in 0..5 {
+            for (gate_type, clifford) in one_qubit_cases {
+                let mut state = prepare_matrix_test_state(prep_index);
+                let input = state.state();
+                let expected = matrix_times_state(&clifford.on_qubit(1).to_matrix(), &input);
+
+                let mut runner = CircuitRunner::<StateVec>::new().with_seed(42);
+                runner
+                    .apply_gate(&mut state, gate_type, &[QubitId(1)], &[])
+                    .unwrap();
+                let actual = state.state();
+
+                assert_states_close(
+                    &actual,
+                    &expected,
+                    &format!("{gate_type:?} on prep {prep_index}"),
+                );
+            }
+
+            for (gate_type, clifford) in two_qubit_cases {
+                let mut state = prepare_matrix_test_state(prep_index);
+                let input = state.state();
+                let expected = matrix_times_state(&clifford.on_qubits(0, 1).to_matrix(), &input);
+
+                let mut runner = CircuitRunner::<StateVec>::new().with_seed(42);
+                runner
+                    .apply_gate(&mut state, gate_type, &[QubitId(0), QubitId(1)], &[])
+                    .unwrap();
+                let actual = state.state();
+
+                assert_states_close(
+                    &actual,
+                    &expected,
+                    &format!("{gate_type:?} on prep {prep_index}"),
+                );
+            }
+        }
     }
 }

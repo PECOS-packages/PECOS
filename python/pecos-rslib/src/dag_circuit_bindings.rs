@@ -28,7 +28,6 @@ use pecos_core::{Angle64, GateQubits, GateSignature, TimeUnits};
 use pecos_quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use std::collections::HashMap;
 
 /// Convert a Rust Attribute to a Python object.
 fn attribute_to_py(py: Python<'_>, attr: &Attribute) -> Py<PyAny> {
@@ -619,6 +618,12 @@ impl PyGate {
         self.inner.qubits.iter().map(|q| usize::from(*q)).collect()
     }
 
+    /// Measurement result identities (one per qubit for measurement gates, empty otherwise).
+    #[getter]
+    fn meas_ids(&self) -> Vec<usize> {
+        self.inner.meas_ids.iter().map(|mr| mr.0).collect()
+    }
+
     /// Check if this is a single-qubit gate.
     fn is_single_qubit(&self) -> bool {
         self.inner.is_single_qubit()
@@ -865,6 +870,27 @@ pyo3::create_exception!(
     DagCircuitWouldCycleError,
     pyo3::exceptions::PyException
 );
+
+/// Extract node indices from a list of either `int` or `(int, int)` tuples.
+/// This allows `detector()` / `observable()` to accept both raw node indices
+/// and measurement refs from `mz()`.
+fn extract_measurement_nodes(list: &Bound<'_, pyo3::types::PyList>) -> PyResult<Vec<usize>> {
+    list.iter()
+        .map(|item| {
+            // Try (node, qubit) tuple first
+            if let Ok((node, _qubit)) = item.extract::<(usize, usize)>() {
+                Ok(node)
+            } else {
+                // Fall back to plain int
+                item.extract::<usize>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err(
+                        "measurements must be a list of ints or (node, qubit) tuples from mz()",
+                    )
+                })
+            }
+        })
+        .collect()
+}
 
 /// Python wrapper for `DagCircuit`.
 ///
@@ -1246,11 +1272,16 @@ impl PyDagCircuit {
 
     /// Measure qubits in the Z basis.
     ///
-    /// Note: Unlike gates, measurements break the chain in simulators.
-    /// This method still returns self for convenience in Python.
-    fn mz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
-        slf.borrow_mut(py).inner.mz(&qubits);
-        slf
+    /// Returns a list of `(node, qubit)` tuples that can be passed to
+    /// `detector()` and `observable()`.
+    ///
+    /// Example:
+    ///     >>> dag = `DagCircuit()`
+    ///     >>> ms = dag.mz([0, 1])
+    ///     >>> dag.detector(ms)
+    fn mz(slf: &Bound<'_, Self>, qubits: Vec<usize>) -> Vec<(usize, usize)> {
+        let refs = slf.borrow_mut().inner.mz(&qubits);
+        refs.iter().map(|r| (r.node, r.qubit.index())).collect()
     }
 
     /// Measure and free qubits (destructive measurement).
@@ -1276,6 +1307,113 @@ impl PyDagCircuit {
         slf.borrow_mut(py).inner.qfree(&qubits);
         slf
     }
+
+    // ==================== Annotations ====================
+
+    /// Annotate a detector: measurements whose XOR should be deterministic.
+    ///
+    /// Args:
+    ///     measurements: List of measurement refs from `mz()` (tuples of
+    ///         `(node, qubit)`), or plain node indices.
+    ///     label: Optional label string.
+    ///
+    /// Returns:
+    ///     The annotation index.
+    ///
+    /// Example:
+    ///     >>> ms = dag.mz([0, 1])
+    ///     >>> dag.detector(ms, `label="Z_0` `Z_1`")
+    #[pyo3(signature = (measurements, label=None))]
+    fn detector(
+        &mut self,
+        measurements: &Bound<'_, pyo3::types::PyList>,
+        label: Option<String>,
+    ) -> PyResult<usize> {
+        let nodes = extract_measurement_nodes(measurements)?;
+        Ok(if let Some(l) = label {
+            self.inner.detector_labeled(&l, &nodes)
+        } else {
+            self.inner.detector(&nodes)
+        })
+    }
+
+    /// Annotate a logical observable: measurements whose XOR gives a logical outcome.
+    ///
+    /// Args:
+    ///     measurements: List of measurement refs from `mz()` (tuples of
+    ///         `(node, qubit)`), or plain node indices.
+    ///     label: Optional label string.
+    ///
+    /// Returns:
+    ///     The annotation index.
+    #[pyo3(signature = (measurements, label=None))]
+    fn observable(
+        &mut self,
+        measurements: &Bound<'_, pyo3::types::PyList>,
+        label: Option<String>,
+    ) -> PyResult<usize> {
+        let nodes = extract_measurement_nodes(measurements)?;
+        Ok(if let Some(l) = label {
+            self.inner.observable_labeled(&l, &nodes)
+        } else {
+            self.inner.observable(&nodes)
+        })
+    }
+
+    /// Place a Pauli operator annotation at this point in the circuit.
+    ///
+    /// Only faults BEFORE this annotation can flip the operator.
+    /// Accepts a `PauliString`, which supports `PauliString.X(0) & PauliString.Z(1)`.
+    ///
+    /// Args:
+    ///     pauli: A `PauliString` to track.
+    ///     label: Optional label string.
+    ///
+    /// Returns:
+    ///     The annotation index.
+    ///
+    /// Example:
+    ///     >>> from pecos import `PauliString`
+    ///     >>> `dag.pauli_operator(PauliString.Z(0)` & PauliString.Z(1))
+    #[pyo3(signature = (pauli, label=None))]
+    fn pauli_operator(
+        &mut self,
+        pauli: &crate::pauli_bindings::PauliString,
+        label: Option<String>,
+    ) -> usize {
+        if let Some(l) = label {
+            self.inner.pauli_operator_labeled(&l, pauli.inner.clone())
+        } else {
+            self.inner.pauli_operator(pauli.inner.clone())
+        }
+    }
+
+    /// Get all annotations as a list of dicts.
+    ///
+    /// Each dict has keys: "pauli" (`PauliString`), "kind" (str), "label" (str or None).
+    fn annotations(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyList>> {
+        let list = pyo3::types::PyList::empty(py);
+
+        for ann in self.inner.annotations() {
+            let dict = pyo3::types::PyDict::new(py);
+            let ps = crate::pauli_bindings::PauliString {
+                inner: ann.pauli.clone(),
+            };
+            dict.set_item("pauli", ps.into_pyobject(py)?)?;
+            let kind_str = match &ann.kind {
+                pecos_quantum::AnnotationKind::Detector { .. } => "detector",
+                pecos_quantum::AnnotationKind::Observable { .. } => "observable",
+                pecos_quantum::AnnotationKind::Operator => "operator",
+            };
+            dict.set_item("kind", kind_str)?;
+            dict.set_item("label", &ann.label)?;
+            list.append(dict)?;
+        }
+
+        Ok(list.unbind())
+    }
+
+    // ==================== Metadata ====================
 
     /// Add metadata to the last added gate.
     ///
@@ -1947,7 +2085,8 @@ impl PyTick {
 /// Use `tick()` to create a new tick and get a handle for adding gates.
 #[pyclass(name = "TickCircuit", module = "pecos_rslib.quantum")]
 pub struct PyTickCircuit {
-    inner: TickCircuit,
+    /// The underlying Rust TickCircuit.
+    pub inner: TickCircuit,
 }
 
 #[pymethods]
@@ -2274,6 +2413,60 @@ impl PyTickCircuit {
         }
     }
 
+    /// Lower Clifford-angle rotations to named Clifford gates.
+    ///
+    /// Replaces parameterized rotations at Clifford angles with their named
+    /// equivalents: RZ(pi/2) -> SZ, RZ(pi) -> Z, RX(pi/2) -> SX, etc.
+    ///
+    /// Use this on circuits from QIS trace (Guppy/Selene) that use
+    /// parameterized gates even for Clifford operations. Without this,
+    /// stabilizer simulators may reject the circuit.
+    ///
+    /// Modifies the circuit in place.
+    fn lower_clifford_rotations(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, SimplifyRotations};
+        SimplifyRotations.apply_tick(&mut self.inner);
+    }
+
+    /// Assign MeasId to measurement gates that don't have them.
+    ///
+    /// Use on circuits from external sources (QIS trace, Stim import)
+    /// that don't assign MeasId during construction.
+    fn assign_missing_meas_ids(&mut self) {
+        use pecos_quantum::pass::{AssignMissingMeasIds, CircuitPass};
+        AssignMissingMeasIds.apply_tick(&mut self.inner);
+    }
+
+    /// Insert Idle gates after each two-qubit gate on both of its qubits.
+    ///
+    /// Models idle noise during two-qubit gate execution. The noise model
+    /// applies RZ(p_idle * duration) when it encounters an Idle gate.
+    ///
+    /// Args:
+    ///     duration: Idle time in abstract time units (default: 1.0).
+    #[pyo3(signature = (duration=1.0))]
+    fn insert_idle_after_two_qubit_gates(&mut self, duration: f64) {
+        self.inner.insert_idle_after_two_qubit_gates(duration);
+    }
+
+    /// Insert identity gates for qubits not operated on during each tick.
+    ///
+    /// For each tick, qubits not involved in any gate get an identity (I)
+    /// gate that receives `p1` noise. This matches Stim's convention of
+    /// `DEPOLARIZE1` on idle qubits between ticks.
+    fn fill_idle_gates(&mut self) {
+        self.inner.fill_idle_gates();
+    }
+
+    /// Compact ticks by merging gates into earlier ticks when possible.
+    ///
+    /// ASAP scheduling: gates that don't share qubits are merged into the
+    /// same tick. Useful after replaying a serialized trace where each
+    /// gate got its own tick.
+    fn compact_ticks(&mut self) {
+        self.inner.compact_ticks();
+    }
+
     // --- Gate signature validation ---
 
     /// Import gate signatures for validation.
@@ -2281,7 +2474,7 @@ impl PyTickCircuit {
     /// Args:
     ///     sigs: A dictionary mapping gate names to (`quantum_arity`, `angle_arity`) tuples.
     fn import_gate_signatures(&mut self, sigs: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut sig_map = HashMap::new();
+        let mut sig_map = std::collections::BTreeMap::new();
         for (key, value) in sigs.iter() {
             let name: String = key.extract()?;
             let (quantum_arity, angle_arity): (usize, usize) = value.extract()?;
@@ -2314,7 +2507,8 @@ impl PyTickCircuit {
     /// Extracts signatures from all registered gates and imports them
     /// for validation when adding custom gates.
     fn import_registry(&mut self, registry: &PyGateRegistry) {
-        let sigs = registry.inner.signatures();
+        let sigs: std::collections::BTreeMap<_, _> =
+            registry.inner.signatures().into_iter().collect();
         self.inner.import_signatures(&sigs);
     }
 
@@ -2325,6 +2519,97 @@ impl PyTickCircuit {
             self.inner.gate_count()
         )
     }
+
+    // ==================== Annotations ====================
+
+    /// Annotate a detector: measurements whose XOR should be deterministic.
+    #[pyo3(signature = (measurements, label=None))]
+    fn detector(
+        &mut self,
+        measurements: &Bound<'_, pyo3::types::PyList>,
+        label: Option<String>,
+    ) -> PyResult<usize> {
+        let refs = extract_tick_meas_refs(measurements)?;
+        let idx = if let Some(l) = label {
+            self.inner.detector_labeled(&l, &refs)
+        } else {
+            self.inner.detector(&refs)
+        };
+        Ok(idx)
+    }
+
+    /// Annotate a logical observable.
+    #[pyo3(signature = (measurements, label=None))]
+    fn observable(
+        &mut self,
+        measurements: &Bound<'_, pyo3::types::PyList>,
+        label: Option<String>,
+    ) -> PyResult<usize> {
+        let refs = extract_tick_meas_refs(measurements)?;
+        let idx = if let Some(l) = label {
+            self.inner.observable_labeled(&l, &refs)
+        } else {
+            self.inner.observable(&refs)
+        };
+        Ok(idx)
+    }
+
+    /// Place a Pauli operator annotation.
+    #[pyo3(signature = (pauli, label=None))]
+    fn pauli_operator(
+        &mut self,
+        pauli: &crate::pauli_bindings::PauliString,
+        label: Option<String>,
+    ) -> usize {
+        if let Some(l) = label {
+            self.inner.pauli_operator_labeled(&l, pauli.inner.clone())
+        } else {
+            self.inner.pauli_operator(pauli.inner.clone())
+        }
+    }
+
+    /// Get all annotations.
+    fn annotations(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyList>> {
+        let list = pyo3::types::PyList::empty(py);
+        for ann in self.inner.annotations() {
+            let dict = pyo3::types::PyDict::new(py);
+            let ps = crate::pauli_bindings::PauliString {
+                inner: ann.pauli.clone(),
+            };
+            dict.set_item("pauli", ps.into_pyobject(py)?)?;
+            let kind_str = match &ann.kind {
+                pecos_quantum::AnnotationKind::Detector { .. } => "detector",
+                pecos_quantum::AnnotationKind::Observable { .. } => "observable",
+                pecos_quantum::AnnotationKind::Operator => "operator",
+            };
+            dict.set_item("kind", kind_str)?;
+            dict.set_item("label", &ann.label)?;
+            list.append(dict)?;
+        }
+        Ok(list.unbind())
+    }
+}
+
+/// Extract `TickMeasRef` from Python list of `(tick, gate_idx, qubit)` tuples.
+fn extract_tick_meas_refs(
+    list: &Bound<'_, pyo3::types::PyList>,
+) -> PyResult<Vec<pecos_quantum::TickMeasRef>> {
+    list.iter()
+        .map(|item| {
+            let (tick, gate_idx, qubit): (usize, usize, usize) = item.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "measurements must be (tick, gate_idx, qubit) tuples from mz()",
+                )
+            })?;
+            Ok(pecos_quantum::TickMeasRef {
+                tick,
+                gate_idx,
+                qubit: pecos_core::QubitId::from(qubit),
+                record_idx: 0, // Populated by TickCircuit; placeholder for external construction
+                meas_id: pecos_core::MeasId(0), // Placeholder
+            })
+        })
+        .collect()
 }
 
 /// Handle to a specific tick for adding gates.
@@ -3083,35 +3368,91 @@ impl PyTickHandle {
 
     /// Measure qubits in the Z basis.
     ///
-    /// Returns a `TickMeasureHandle` that allows attaching metadata via `.meta()`.
-    /// This breaks the chain - only `.meta()` can be called on the result.
-    fn mz(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<PyTickMeasureHandle> {
-        let (circuit, tick_idx, gate_idx) = {
-            let mut handle = slf.borrow_mut(py);
-            let gate_idx = handle.add_gate_get_idx(py, Gate::mz(&qubits))?;
-            (handle.circuit.clone_ref(py), handle.tick_idx, gate_idx)
-        };
-        Ok(PyTickMeasureHandle {
-            circuit,
-            tick_idx,
-            gate_idx,
-        })
+    /// Returns a list of `(tick, gate_idx, qubit)` measurement refs
+    /// for use in `detector()` and `observable()` annotations.
+    fn mz(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+    ) -> PyResult<Vec<(usize, usize, usize)>> {
+        let mut handle = slf.borrow_mut(py);
+        let mut gate = Gate::mz(&qubits);
+        // Assign MeasId values (SSA identity for each measurement)
+        {
+            let mut circuit = handle.circuit.borrow_mut(py);
+            let base = circuit.inner.num_measurements();
+            for (i, _) in qubits.iter().enumerate() {
+                gate.meas_ids.push(pecos_core::MeasId(base + i));
+            }
+            // Increment the measurement counter
+            circuit.inner.advance_meas_counter(qubits.len());
+        }
+        let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        let tick_idx = handle.tick_idx;
+        Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
+    }
+
+    /// Measure qubits with explicit MeasIds.
+    ///
+    /// Like ``mz()`` but assigns the given MeasIds instead of auto-assigning.
+    /// Used when MeasIds flow from an external source (e.g., Guppy result() IDs).
+    ///
+    /// The ``meas_ids`` list must have the same length as ``qubits``.
+    fn mz_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Vec<(usize, usize, usize)>> {
+        if meas_ids.len() != qubits.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "meas_ids length {} != qubits length {}",
+                meas_ids.len(),
+                qubits.len()
+            )));
+        }
+        let mut handle = slf.borrow_mut(py);
+        let mut gate = Gate::mz(&qubits);
+        for &mid in &meas_ids {
+            gate.meas_ids.push(pecos_core::MeasId(mid));
+        }
+        {
+            let mut circuit = handle.circuit.borrow_mut(py);
+            // Advance counter to at least past the highest ID we're assigning
+            let max_id = meas_ids.iter().copied().max().unwrap_or(0);
+            let current = circuit.inner.num_measurements();
+            if max_id >= current {
+                circuit.inner.advance_meas_counter(max_id + 1 - current);
+            }
+        }
+        let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        let tick_idx = handle.tick_idx;
+        Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
     }
 
     /// Measure and free qubits (destructive measurement).
     ///
-    /// Returns a `TickMeasureHandle` that allows attaching metadata via `.meta()`.
-    fn mz_free(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<PyTickMeasureHandle> {
-        let (circuit, tick_idx, gate_idx) = {
-            let mut handle = slf.borrow_mut(py);
-            let gate_idx = handle.add_gate_get_idx(py, Gate::mz_free(&qubits))?;
-            (handle.circuit.clone_ref(py), handle.tick_idx, gate_idx)
-        };
-        Ok(PyTickMeasureHandle {
-            circuit,
-            tick_idx,
-            gate_idx,
-        })
+    /// Measure and free qubits (destructive measurement).
+    ///
+    /// Returns measurement refs for annotations.
+    fn mz_free(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+    ) -> PyResult<Vec<(usize, usize, usize)>> {
+        let mut handle = slf.borrow_mut(py);
+        let mut gate = Gate::mz_free(&qubits);
+        {
+            let mut circuit = handle.circuit.borrow_mut(py);
+            let base = circuit.inner.num_measurements();
+            for (i, _) in qubits.iter().enumerate() {
+                gate.meas_ids.push(pecos_core::MeasId(base + i));
+            }
+            circuit.inner.advance_meas_counter(qubits.len());
+        }
+        let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        let tick_idx = handle.tick_idx;
+        Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
     }
 
     // --- Resource management ---

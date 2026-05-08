@@ -914,7 +914,7 @@ pub struct StandardAdaptor {
 
 impl StandardAdaptor {
     /// Create adaptor targeting Clifford+RZ gate set
-    pub fn clifford_rz() -> Self {
+    pub fn stab_vec() -> Self {
         let mut bits = BitVec::repeat(false, 256);
         // Mark gates we can decompose
         bits.set(gates::RX.0 as usize, true);

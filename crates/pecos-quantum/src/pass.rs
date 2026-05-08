@@ -26,12 +26,103 @@ use pecos_core::{Angle64, Gate, GateQubits, QubitId};
 use crate::{Attribute, DagCircuit, TickCircuit};
 
 /// A transformation pass that can be applied to circuits.
+///
+/// Passes transform circuits in-place. For a copy, clone the circuit first:
+///
+/// ```no_run
+/// # use pecos_quantum::pass::{CircuitPass, SimplifyRotations};
+/// # use pecos_quantum::TickCircuit;
+/// # let circuit = TickCircuit::new();
+/// // In-place
+/// let mut tc = circuit;
+/// SimplifyRotations.apply_tick(&mut tc);
+///
+/// // Copy (clone first)
+/// # let original = TickCircuit::new();
+/// let transformed = SimplifyRotations.transform_tick(original);
+/// ```
 pub trait CircuitPass {
-    /// Apply this pass to a [`TickCircuit`].
+    /// Apply this pass to a [`TickCircuit`] in-place.
     fn apply_tick(&self, circuit: &mut TickCircuit);
-    /// Apply this pass to a [`DagCircuit`].
+
+    /// Apply this pass to a [`DagCircuit`] in-place.
     fn apply_dag(&self, circuit: &mut DagCircuit);
+
+    /// Take ownership, transform, return.
+    fn transform_tick(&self, mut circuit: TickCircuit) -> TickCircuit {
+        self.apply_tick(&mut circuit);
+        circuit
+    }
+
+    /// Take ownership, transform, return.
+    fn transform_dag(&self, mut circuit: DagCircuit) -> DagCircuit {
+        self.apply_dag(&mut circuit);
+        circuit
+    }
 }
+
+// ============================================================================
+// Free functions: primary user-facing pass API
+// ============================================================================
+
+/// Lower Clifford-angle rotations to named Clifford gates.
+///
+/// RZ(pi/2) -> SZ, RZ(pi) -> Z, RX(pi/2) -> SX, etc.
+/// Also decomposes two-qubit rotations: RZZ(pi) -> Z+Z.
+pub fn lower_clifford_rotations(circuit: &mut TickCircuit) {
+    SimplifyRotations.apply_tick(circuit);
+}
+
+/// Insert Idle gates after each two-qubit gate on both of its qubits.
+///
+/// Adds Idle(duration) on both qubits of each 2q gate. Models idle noise
+/// during 2q gate execution.
+pub fn insert_idle_after_two_qubit_gates(circuit: &mut TickCircuit, duration: f64) {
+    InsertIdleAfterTwoQubitGates(duration).apply_tick(circuit);
+}
+
+/// Remove identity gates (I, Idle, zero-angle rotations).
+pub fn remove_identity(circuit: &mut TickCircuit) {
+    RemoveIdentity.apply_tick(circuit);
+}
+
+/// Cancel adjacent inverse gate pairs (H-H, S-Sdg, T-Tdg, etc.).
+pub fn cancel_inverses(circuit: &mut TickCircuit) {
+    CancelInverses.apply_tick(circuit);
+}
+
+/// Merge adjacent rotations on the same qubit into a single rotation.
+pub fn merge_adjacent_rotations(circuit: &mut TickCircuit) {
+    MergeAdjacentRotations.apply_tick(circuit);
+}
+
+/// Peephole optimization (rotation merging + Clifford lowering).
+pub fn peephole_optimize(circuit: &mut TickCircuit) {
+    PeepholeOptimize.apply_tick(circuit);
+}
+
+/// Absorb single-qubit basis gates into adjacent preps/measurements.
+pub fn absorb_basis_gates(circuit: &mut TickCircuit) {
+    AbsorbBasisGates.apply_tick(circuit);
+}
+
+/// Compact ticks by ASAP scheduling (merge gates into earlier ticks).
+pub fn compact_ticks(circuit: &mut TickCircuit) {
+    CompactTicks.apply_tick(circuit);
+}
+
+/// Assign MeasId to measurement gates that don't have them.
+///
+/// Walks the circuit in tick order and assigns sequential MeasIds
+/// to any MZ/MeasureFree gate with empty `meas_ids`. Existing MeasIds
+/// are preserved. New IDs continue from the circuit's current counter.
+pub fn assign_missing_meas_ids(circuit: &mut TickCircuit) {
+    AssignMissingMeasIds.apply_tick(circuit);
+}
+
+// ============================================================================
+// Pass trait and pipeline
+// ============================================================================
 
 /// An ordered collection of passes applied sequentially.
 ///
@@ -122,9 +213,70 @@ impl CircuitPass for PassPipeline {
 /// | RYY | pi | Y + Y |
 pub struct SimplifyRotations;
 
+/// Insert Idle gates after each two-qubit gate on both of its qubits.
+///
+/// For each tick containing two-qubit gates, adds a new tick immediately
+/// after with `Idle(duration)` on each qubit involved in a two-qubit gate.
+///
+/// This models the idle noise that qubits experience during two-qubit
+/// gate execution. The noise model applies `RZ(p_idle * duration)` when
+/// it encounters an Idle gate.
+///
+/// The inner value is the idle duration in time units (typically 1.0).
+pub struct InsertIdleAfterTwoQubitGates(pub f64);
+
+impl CircuitPass for InsertIdleAfterTwoQubitGates {
+    fn apply_tick(&self, circuit: &mut TickCircuit) {
+        let duration = self.0;
+        let mut new_ticks = Vec::with_capacity(circuit.ticks().len() * 2);
+
+        // Drain ticks from circuit and rebuild with idle insertions
+        let old_ticks: Vec<_> = std::mem::take(circuit.ticks_vec_mut());
+
+        for tick in old_ticks {
+            let mut idle_qubits: Vec<QubitId> = Vec::new();
+            for gate in tick.gates() {
+                if gate.is_two_qubit() {
+                    for q in &gate.qubits {
+                        if !idle_qubits.contains(q) {
+                            idle_qubits.push(*q);
+                        }
+                    }
+                }
+            }
+
+            new_ticks.push(tick);
+
+            if !idle_qubits.is_empty() {
+                let mut idle_tick = crate::Tick::new();
+                for q in idle_qubits {
+                    idle_tick.add_gate(Gate::idle(duration, vec![q]));
+                }
+                new_ticks.push(idle_tick);
+            }
+        }
+
+        *circuit.ticks_vec_mut() = new_ticks;
+    }
+
+    fn apply_dag(&self, _circuit: &mut DagCircuit) {
+        // DAG doesn't have tick structure — no-op
+    }
+}
+
 /// Apply an in-place simplification to a gate. Returns `true` if the gate was
 /// simplified (either renamed in place or needs decomposition handling).
 fn simplify_gate_in_place(gate: &mut Gate) -> bool {
+    // R1XY has two angles — handle separately
+    if gate.gate_type == GateType::R1XY && gate.angles.len() == 2 {
+        if let Some(named) = pecos_core::try_simplify_r1xy(gate.angles[0], gate.angles[1]) {
+            gate.gate_type = named;
+            gate.angles.clear();
+            return true;
+        }
+        return false;
+    }
+
     if gate.angles.len() != 1 {
         return false;
     }
@@ -582,10 +734,7 @@ impl CircuitPass for MergeAdjacentRotations {
     fn apply_dag(&self, circuit: &mut DagCircuit) {
         let topo = circuit.topological_order();
         for node in topo {
-            loop {
-                let Some(gate) = circuit.gate(node) else {
-                    break;
-                };
+            while let Some(gate) = circuit.gate(node) {
                 if !is_rotation(gate.gate_type) || gate.angles.len() != 1 {
                     break;
                 }
@@ -1032,6 +1181,41 @@ impl CircuitPass for CompactTicks {
 
     fn apply_dag(&self, _circuit: &mut DagCircuit) {
         // No-op: a DAG has no fixed time slots to compact.
+    }
+}
+
+/// Assign [`MeasId`](pecos_core::MeasId) to measurement gates that don't have them.
+///
+/// Walks the circuit in tick order and assigns sequential IDs to any
+/// measurement gate with empty `meas_ids`. Existing IDs are preserved.
+/// New IDs continue from the circuit's current measurement counter.
+///
+/// Use this on circuits from external sources (QIS trace, Stim import)
+/// that don't assign MeasId during construction.
+pub struct AssignMissingMeasIds;
+
+impl CircuitPass for AssignMissingMeasIds {
+    fn apply_tick(&self, circuit: &mut TickCircuit) {
+        let mut next_id = circuit.num_measurements();
+        for tick in circuit.ticks_mut() {
+            for gate in tick.gates_mut() {
+                let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+                if is_measurement && gate.meas_ids.is_empty() {
+                    for _ in gate.qubits.iter() {
+                        gate.meas_ids.push(pecos_core::MeasId(next_id));
+                        next_id += 1;
+                    }
+                }
+            }
+        }
+        let added = next_id - circuit.num_measurements();
+        if added > 0 {
+            circuit.advance_meas_counter(added);
+        }
+    }
+
+    fn apply_dag(&self, _circuit: &mut DagCircuit) {
+        // No-op: DagCircuit gates are accessed differently.
     }
 }
 

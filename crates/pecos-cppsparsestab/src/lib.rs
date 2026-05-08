@@ -172,6 +172,10 @@ impl CppSparseStab {
 }
 
 impl QuantumSimulator for CppSparseStab {
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
     fn reset(&mut self) -> &mut Self {
         self.state_mut().clear();
         // Don't reset the RNG - just reset the quantum state
@@ -511,9 +515,5 @@ impl StabilizerTableauSimulator for CppSparseStab {
 
     fn destab_tableau(&self) -> String {
         self.format_generators(false)
-    }
-
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
     }
 }

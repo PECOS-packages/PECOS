@@ -48,18 +48,18 @@
 //! let map = analyzer.build_influence_map();
 //!
 //! // O(1) fault classification
-//! let (has_syndrome, has_logical) = map.classify_fault(0, 1); // loc 0, X fault
+//! let (has_syndrome, flips_dem_output) = map.classify_fault(0, 1); // loc 0, X fault
 //! ```
 
 use super::{
     DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli, apply_gate,
 };
-use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
+use pecos_core::{PauliString, QuarterPhase, QubitId};
 use pecos_quantum::DagCircuit;
 use pecos_simulators::PauliProp;
 use smallvec::SmallVec;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeMap, BinaryHeap};
 
 /// Reusable work buffers for propagation, avoiding per-call allocation.
 pub struct PropagationBuffers {
@@ -179,6 +179,7 @@ impl FaultLocations {
                 qubits: self.qubits[i].iter().map(|&q| QubitId::from(q)).collect(),
                 before: self.before[i],
                 gate_type: self.gate_types[i],
+                idle_duration: 0,
             })
             .collect()
     }
@@ -202,6 +203,8 @@ pub struct DagSpacetimeLocation {
     pub before: bool,
     /// The type of gate at this location.
     pub gate_type: GateType,
+    /// Duration for idle gates (in abstract time units). 0 for non-idle gates.
+    pub idle_duration: u64,
 }
 
 // ============================================================================
@@ -348,14 +351,14 @@ pub struct InfluencesSoA {
     /// Detector indices flipped by Z faults (Pauli=3).
     pub detectors_z: CsrArray,
 
-    /// Logical indices flipped by X faults.
-    pub logicals_x: CsrArray,
+    /// DEM `L<n>` DEM-output indices flipped by X faults.
+    pub dem_outputs_x: CsrArray,
 
-    /// Logical indices flipped by Y faults.
-    pub logicals_y: CsrArray,
+    /// DEM `L<n>` DEM-output indices flipped by Y faults.
+    pub dem_outputs_y: CsrArray,
 
-    /// Logical indices flipped by Z faults.
-    pub logicals_z: CsrArray,
+    /// DEM `L<n>` DEM-output indices flipped by Z faults.
+    pub dem_outputs_z: CsrArray,
 }
 
 impl InfluencesSoA {
@@ -369,9 +372,9 @@ impl InfluencesSoA {
             detectors_x: CsrArray::with_capacity(num_locations, estimated_data),
             detectors_y: CsrArray::with_capacity(num_locations, estimated_data),
             detectors_z: CsrArray::with_capacity(num_locations, estimated_data),
-            logicals_x: CsrArray::with_capacity(num_locations, estimated_data / 4),
-            logicals_y: CsrArray::with_capacity(num_locations, estimated_data / 4),
-            logicals_z: CsrArray::with_capacity(num_locations, estimated_data / 4),
+            dem_outputs_x: CsrArray::with_capacity(num_locations, estimated_data / 4),
+            dem_outputs_y: CsrArray::with_capacity(num_locations, estimated_data / 4),
+            dem_outputs_z: CsrArray::with_capacity(num_locations, estimated_data / 4),
         }
     }
 
@@ -387,15 +390,15 @@ impl InfluencesSoA {
         }
     }
 
-    /// Returns the logical indices for a location and Pauli type.
+    /// Returns the DEM-output indices for a location and Pauli type.
     #[inline]
     #[must_use]
-    pub fn logicals(&self, loc_idx: usize, pauli: Pauli) -> &[u32] {
+    pub fn dem_outputs(&self, loc_idx: usize, pauli: Pauli) -> &[u32] {
         match pauli {
             Pauli::I => &[],
-            Pauli::X => self.logicals_x.row(loc_idx),
-            Pauli::Y => self.logicals_y.row(loc_idx),
-            Pauli::Z => self.logicals_z.row(loc_idx),
+            Pauli::X => self.dem_outputs_x.row(loc_idx),
+            Pauli::Y => self.dem_outputs_y.row(loc_idx),
+            Pauli::Z => self.dem_outputs_z.row(loc_idx),
         }
     }
 
@@ -411,27 +414,27 @@ impl InfluencesSoA {
         }
     }
 
-    /// Returns whether the location has any logical flips for the given Pauli.
+    /// Returns whether the location has any DEM-output flips for the given Pauli.
     #[inline]
     #[must_use]
-    pub fn has_logical_flips(&self, loc_idx: usize, pauli: Pauli) -> bool {
+    pub fn has_dem_output_flips(&self, loc_idx: usize, pauli: Pauli) -> bool {
         match pauli {
             Pauli::I => false,
-            Pauli::X => !self.logicals_x.row_is_empty(loc_idx),
-            Pauli::Y => !self.logicals_y.row_is_empty(loc_idx),
-            Pauli::Z => !self.logicals_z.row_is_empty(loc_idx),
+            Pauli::X => !self.dem_outputs_x.row_is_empty(loc_idx),
+            Pauli::Y => !self.dem_outputs_y.row_is_empty(loc_idx),
+            Pauli::Z => !self.dem_outputs_z.row_is_empty(loc_idx),
         }
     }
 
     /// Classifies a fault at the given location.
     ///
-    /// Returns (`has_syndrome`, `causes_logical_error`).
+    /// Returns (`has_syndrome`, `flips_dem_output`).
     #[inline]
     #[must_use]
     pub fn classify(&self, loc_idx: usize, pauli: Pauli) -> (bool, bool) {
         (
             self.has_detector_flips(loc_idx, pauli),
-            self.has_logical_flips(loc_idx, pauli),
+            self.has_dem_output_flips(loc_idx, pauli),
         )
     }
 
@@ -440,9 +443,9 @@ impl InfluencesSoA {
         self.detectors_x.finish_row();
         self.detectors_y.finish_row();
         self.detectors_z.finish_row();
-        self.logicals_x.finish_row();
-        self.logicals_y.finish_row();
-        self.logicals_z.finish_row();
+        self.dem_outputs_x.finish_row();
+        self.dem_outputs_y.finish_row();
+        self.dem_outputs_z.finish_row();
         self.num_locations += 1;
     }
 
@@ -452,17 +455,17 @@ impl InfluencesSoA {
         let offset_bytes = (self.detectors_x.offsets.len()
             + self.detectors_y.offsets.len()
             + self.detectors_z.offsets.len()
-            + self.logicals_x.offsets.len()
-            + self.logicals_y.offsets.len()
-            + self.logicals_z.offsets.len())
+            + self.dem_outputs_x.offsets.len()
+            + self.dem_outputs_y.offsets.len()
+            + self.dem_outputs_z.offsets.len())
             * std::mem::size_of::<u32>();
 
         let data_bytes = (self.detectors_x.data.len()
             + self.detectors_y.data.len()
             + self.detectors_z.data.len()
-            + self.logicals_x.data.len()
-            + self.logicals_y.data.len()
-            + self.logicals_z.data.len())
+            + self.dem_outputs_x.data.len()
+            + self.dem_outputs_y.data.len()
+            + self.dem_outputs_z.data.len())
             * std::mem::size_of::<u32>();
 
         InfluencesSoAStats {
@@ -470,23 +473,25 @@ impl InfluencesSoA {
             total_detector_entries: self.detectors_x.total_elements()
                 + self.detectors_y.total_elements()
                 + self.detectors_z.total_elements(),
-            total_logical_entries: self.logicals_x.total_elements()
-                + self.logicals_y.total_elements()
-                + self.logicals_z.total_elements(),
+            total_dem_output_entries: self.dem_outputs_x.total_elements()
+                + self.dem_outputs_y.total_elements()
+                + self.dem_outputs_z.total_elements(),
             offset_bytes,
             data_bytes,
             total_bytes: offset_bytes + data_bytes,
         }
     }
 
-    /// Returns the maximum logical index found in the influence map, if any.
+    /// Returns the maximum raw DEM-output influence index, if any.
     ///
-    /// This is useful for determining the number of logical operators tracked.
+    /// When metadata is present, callers should use [`Self::num_dem_outputs`]
+    /// for the standard observable `L<n>` namespace and [`Self::num_tracked_ops`]
+    /// for PECOS tracked operators.
     #[must_use]
-    pub fn max_logical_index(&self) -> Option<usize> {
-        let max_x = self.logicals_x.data.iter().max();
-        let max_y = self.logicals_y.data.iter().max();
-        let max_z = self.logicals_z.data.iter().max();
+    pub fn max_dem_output_index(&self) -> Option<usize> {
+        let max_x = self.dem_outputs_x.data.iter().max();
+        let max_y = self.dem_outputs_y.data.iter().max();
+        let max_z = self.dem_outputs_z.data.iter().max();
 
         [max_x, max_y, max_z]
             .into_iter()
@@ -503,8 +508,8 @@ pub struct InfluencesSoAStats {
     pub num_locations: usize,
     /// Total detector entries across all Pauli types.
     pub total_detector_entries: usize,
-    /// Total logical entries across all Pauli types.
-    pub total_logical_entries: usize,
+    /// Total DEM-output entries across all Pauli types.
+    pub total_dem_output_entries: usize,
     /// Bytes used for offset arrays.
     pub offset_bytes: usize,
     /// Bytes used for data arrays.
@@ -529,7 +534,24 @@ pub struct DagFaultInfluenceMap {
     pub detectors: Vec<DetectorId>,
 
     /// All measurements in the circuit (node, qubit, basis).
+    /// Ordered by MeasId when gates carry MeasId values.
     pub measurements: Vec<(usize, usize, u8)>,
+
+    /// MeasId IDs for each measurement, in the same order as `measurements`.
+    /// When populated, `meas_ids[i]` is the stable identity of `measurements[i]`.
+    /// Empty for legacy circuits without MeasId on gates.
+    pub meas_ids: Vec<pecos_core::MeasId>,
+
+    /// Optional labels for non-detector DEM outputs.
+    /// Indices match the DEM-output indices in `influences`.
+    pub dem_output_labels: Vec<Option<String>>,
+
+    /// Optional metadata for non-detector outputs tracked by backward propagation.
+    ///
+    /// These entries are PECOS tracked operators unless explicitly marked as
+    /// observables by a specialized builder. Standard DEM `L<n>` observables
+    /// should normally come from measurement-record metadata instead.
+    pub dem_output_metadata: Vec<DemOutputMetadata>,
 }
 
 impl DagFaultInfluenceMap {
@@ -541,12 +563,15 @@ impl DagFaultInfluenceMap {
             locations: Vec::with_capacity(num_locations),
             detectors: Vec::new(),
             measurements: Vec::new(),
+            meas_ids: Vec::new(),
+            dem_output_labels: Vec::new(),
+            dem_output_metadata: Vec::new(),
         }
     }
 
     /// Classifies a fault at the given location index.
     ///
-    /// Returns (`has_syndrome`, `causes_logical_error`).
+    /// Returns (`has_syndrome`, `flips_dem_output`).
     #[inline]
     #[must_use]
     pub fn classify_fault(&self, loc_idx: usize, pauli: u8) -> (bool, bool) {
@@ -560,11 +585,132 @@ impl DagFaultInfluenceMap {
         self.influences.detectors(loc_idx, Pauli::from_u8(pauli))
     }
 
-    /// Returns the logical indices flipped by a fault.
+    /// Returns all non-detector DEM output indices flipped by a fault.
     #[inline]
     #[must_use]
-    pub fn get_logical_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {
-        self.influences.logicals(loc_idx, Pauli::from_u8(pauli))
+    pub fn get_dem_output_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {
+        self.influences.dem_outputs(loc_idx, Pauli::from_u8(pauli))
+    }
+
+    /// Returns the number of standard DEM `L<n>` observable outputs.
+    #[must_use]
+    pub fn num_dem_outputs(&self) -> usize {
+        if self.dem_output_metadata.is_empty() {
+            return self.influences.max_dem_output_index().map_or(0, |i| i + 1);
+        }
+        self.dem_output_metadata
+            .iter()
+            .filter(|metadata| metadata.kind == DemOutputKind::Observable)
+            .count()
+    }
+
+    /// Returns the number of observables.
+    #[must_use]
+    pub fn num_observables(&self) -> usize {
+        self.num_dem_outputs()
+    }
+
+    /// Returns the number of PECOS tracked operators.
+    #[must_use]
+    pub fn num_tracked_ops(&self) -> usize {
+        self.dem_output_metadata
+            .iter()
+            .filter(|metadata| metadata.kind == DemOutputKind::TrackedOperator)
+            .count()
+    }
+
+    /// Returns tracked-Pauli-operator output indices flipped by a fault.
+    #[must_use]
+    pub fn get_tracked_op_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
+        let outputs = self.get_dem_output_indices(loc_idx, pauli);
+        outputs
+            .iter()
+            .filter_map(|&idx| self.tracked_op_id_for_internal_dem_output(idx))
+            .collect()
+    }
+
+    /// Returns observable output indices flipped by a fault.
+    #[must_use]
+    pub fn get_observable_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
+        let outputs = self.get_dem_output_indices(loc_idx, pauli);
+        if self.dem_output_metadata.is_empty() {
+            return outputs.to_vec();
+        }
+        outputs
+            .iter()
+            .filter_map(|&idx| self.observable_id_for_internal_dem_output(idx))
+            .collect()
+    }
+
+    /// Map an internal non-detector output index to the standard observable
+    /// `L<n>` ID space.
+    #[must_use]
+    pub fn observable_id_for_internal_dem_output(&self, idx: u32) -> Option<u32> {
+        if self.dem_output_metadata.is_empty() {
+            return Some(idx);
+        }
+        self.output_id_for_kind(idx, DemOutputKind::Observable)
+    }
+
+    /// Map an internal non-detector output index to the PECOS tracked-operator
+    /// ID space.
+    #[must_use]
+    pub fn tracked_op_id_for_internal_dem_output(&self, idx: u32) -> Option<u32> {
+        self.output_id_for_kind(idx, DemOutputKind::TrackedOperator)
+    }
+
+    /// Returns true if a fault flips any non-detector DEM output.
+    #[inline]
+    #[must_use]
+    pub fn has_dem_output_flips(&self, loc_idx: usize, pauli: u8) -> bool {
+        !self.get_dem_output_indices(loc_idx, pauli).is_empty()
+    }
+
+    /// Returns true if a fault flips any tracked Pauli operator.
+    #[must_use]
+    pub fn has_tracked_op_flips(&self, loc_idx: usize, pauli: u8) -> bool {
+        !self.get_tracked_op_indices(loc_idx, pauli).is_empty()
+    }
+
+    /// Returns true if a fault flips any observable.
+    #[must_use]
+    pub fn has_observable_flips(&self, loc_idx: usize, pauli: u8) -> bool {
+        !self.get_observable_indices(loc_idx, pauli).is_empty()
+    }
+
+    /// Returns the label for a detector, if any.
+    #[inline]
+    #[must_use]
+    pub fn detector_label(&self, detector_idx: usize) -> Option<&str> {
+        self.detectors
+            .get(detector_idx)
+            .and_then(|d| d.name.as_deref())
+    }
+
+    /// Returns the label for a DEM output, if any.
+    #[inline]
+    #[must_use]
+    pub fn dem_output_label(&self, dem_output_idx: usize) -> Option<&str> {
+        self.dem_output_labels
+            .get(dem_output_idx)
+            .and_then(|l| l.as_deref())
+    }
+
+    /// Returns metadata for a DEM output, if available.
+    #[inline]
+    #[must_use]
+    pub fn dem_output_metadata(&self, dem_output_idx: usize) -> Option<&DemOutputMetadata> {
+        self.dem_output_metadata.get(dem_output_idx)
+    }
+
+    /// Replace this map's backward-propagated non-detector outputs with
+    /// another map's outputs and metadata.
+    pub fn merge_dem_outputs_from(&mut self, other: &Self) {
+        self.influences.dem_outputs_x = other.influences.dem_outputs_x.clone();
+        self.influences.dem_outputs_y = other.influences.dem_outputs_y.clone();
+        self.influences.dem_outputs_z = other.influences.dem_outputs_z.clone();
+        self.dem_output_labels = other.dem_output_labels.clone();
+        self.dem_output_metadata = other.dem_output_metadata.clone();
     }
 
     /// Returns the location at the given index.
@@ -589,14 +735,19 @@ impl DagFaultInfluenceMap {
 
     /// Export CSR data for GPU use.
     ///
+    /// The exported DEM-output arrays contain only standard observable `L<n>`
+    /// outputs. PECOS tracked operators share the internal backward-propagation
+    /// storage but are intentionally filtered out here so decoder-oriented GPU
+    /// code cannot count tracked probes as logical errors.
+    ///
     /// Returns all CSR arrays needed to construct a GPU influence sampler:
-    /// (`num_locations`, `num_detectors`, `num_logicals`,
+    /// (`num_locations`, `num_detectors`, `num_dem_outputs`,
     ///  `detector_offsets_x`, `detector_data_x`,
     ///  `detector_offsets_y`, `detector_data_y`,
     ///  `detector_offsets_z`, `detector_data_z`,
-    ///  `logical_offsets_x`, `logical_data_x`,
-    ///  `logical_offsets_y`, `logical_data_y`,
-    ///  `logical_offsets_z`, `logical_data_z`)
+    ///  `dem_output_offsets_x`, `dem_output_data_x`,
+    ///  `dem_output_offsets_y`, `dem_output_data_y`,
+    ///  `dem_output_offsets_z`, `dem_output_data_z`)
     #[allow(clippy::type_complexity)]
     #[must_use]
     pub fn export_csr(
@@ -622,29 +773,683 @@ impl DagFaultInfluenceMap {
         let num_locations = self.locations.len() as u32;
         #[allow(clippy::cast_possible_truncation)] // detector count fits in u32
         let num_detectors = self.detectors.len() as u32;
-        #[allow(clippy::cast_possible_truncation)] // logical index fits in u32
-        let num_logicals = self
-            .influences
-            .max_logical_index()
-            .map_or(0, |i| i as u32 + 1);
+        #[allow(clippy::cast_possible_truncation)] // DEM-output count fits in u32
+        let num_dem_outputs = self.num_dem_outputs() as u32;
+        let (dem_output_offsets_x, dem_output_data_x) =
+            self.observable_csr(&self.influences.dem_outputs_x);
+        let (dem_output_offsets_y, dem_output_data_y) =
+            self.observable_csr(&self.influences.dem_outputs_y);
+        let (dem_output_offsets_z, dem_output_data_z) =
+            self.observable_csr(&self.influences.dem_outputs_z);
 
         (
             num_locations,
             num_detectors,
-            num_logicals,
+            num_dem_outputs,
             self.influences.detectors_x.offsets.clone(),
             self.influences.detectors_x.data.clone(),
             self.influences.detectors_y.offsets.clone(),
             self.influences.detectors_y.data.clone(),
             self.influences.detectors_z.offsets.clone(),
             self.influences.detectors_z.data.clone(),
-            self.influences.logicals_x.offsets.clone(),
-            self.influences.logicals_x.data.clone(),
-            self.influences.logicals_y.offsets.clone(),
-            self.influences.logicals_y.data.clone(),
-            self.influences.logicals_z.offsets.clone(),
-            self.influences.logicals_z.data.clone(),
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
         )
+    }
+
+    fn observable_csr(&self, csr: &CsrArray) -> (Vec<u32>, Vec<u32>) {
+        if self.dem_output_metadata.is_empty() {
+            return (csr.offsets.clone(), csr.data.clone());
+        }
+
+        let mut offsets = Vec::with_capacity(csr.offsets.len());
+        let mut data = Vec::new();
+        offsets.push(0);
+        for row_idx in 0..csr.num_rows() {
+            data.extend(
+                csr.row(row_idx)
+                    .iter()
+                    .filter_map(|&idx| self.observable_id_for_internal_dem_output(idx)),
+            );
+            #[allow(clippy::cast_possible_truncation)] // CSR data length fits in u32
+            offsets.push(data.len() as u32);
+        }
+        (offsets, data)
+    }
+
+    fn output_id_for_kind(&self, idx: u32, kind: DemOutputKind) -> Option<u32> {
+        let metadata = self.dem_output_metadata.get(idx as usize)?;
+        if metadata.kind != kind {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation)] // filtered output count fits in u32
+        Some(
+            self.dem_output_metadata[..idx as usize]
+                .iter()
+                .filter(|metadata| metadata.kind == kind)
+                .count() as u32,
+        )
+    }
+}
+
+/// Role of a non-detector DEM output under backward Pauli propagation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DemOutputKind {
+    /// An observable DEM output.
+    Observable,
+    /// A tracked operator annotation with no observable readout.
+    TrackedOperator,
+}
+
+impl DemOutputKind {
+    /// Stable string used by PECOS metadata JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Observable => "observable",
+            Self::TrackedOperator => "tracked_operator",
+        }
+    }
+
+    /// Parses a stable PECOS metadata string.
+    #[must_use]
+    pub fn from_metadata_str(kind: &str) -> Option<Self> {
+        match kind {
+            "observable" => Some(Self::Observable),
+            "tracked_operator" => Some(Self::TrackedOperator),
+            _ => None,
+        }
+    }
+}
+
+/// Metadata for a PECOS non-detector DEM output.
+///
+/// Stim-compatible DEM strings only have `L<n>` markers. PECOS keeps this
+/// richer record alongside the DEM so callers can tell whether a marker came
+/// from an observable or from a tracked Pauli operator annotation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DemOutputMetadata {
+    /// The output role.
+    pub kind: DemOutputKind,
+    /// Pauli string whose flip is tracked.
+    pub pauli: PauliString,
+    /// Optional user label.
+    pub label: Option<String>,
+}
+
+impl DemOutputMetadata {
+    /// Creates DEM output metadata.
+    #[must_use]
+    pub fn new(kind: DemOutputKind, mut pauli: PauliString, label: Option<String>) -> Self {
+        // A tracked Pauli op flip is an anticommutation property; global phase has
+        // no meaning for DEM/sampler output.
+        pauli.set_phase(QuarterPhase::PlusOne);
+        Self { kind, pauli, label }
+    }
+
+    /// Creates metadata for a tracked operator.
+    #[must_use]
+    pub fn tracked_operator(pauli: PauliString) -> Self {
+        Self::new(DemOutputKind::TrackedOperator, pauli, None)
+    }
+
+    /// Creates metadata for an observable.
+    #[must_use]
+    pub fn observable(pauli: PauliString) -> Self {
+        Self::new(DemOutputKind::Observable, pauli, None)
+    }
+
+    /// Sets a user-facing op label.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Sets an optional user-facing op label.
+    #[must_use]
+    pub fn with_optional_label(mut self, label: Option<String>) -> Self {
+        self.label = label;
+        self
+    }
+}
+
+// ============================================================================
+// Fault Introspection
+// ============================================================================
+
+/// A per-gate fault location with access to all possible fault events.
+///
+/// Each gate at a specific timing (before/after) is one fault location.
+/// Multi-qubit gates have multiple per-qubit sub-locations whose effects
+/// compose via XOR (symmetric difference) for multi-qubit Pauli events.
+///
+/// Borrows the influence map so you can query events directly:
+/// ```ignore
+/// for loc in map.gate_fault_locations() {
+///     for event in loc.events() { ... }
+/// }
+/// ```
+pub struct GateFaultLocation<'a> {
+    map: &'a DagFaultInfluenceMap,
+    /// DAG node index.
+    pub node: usize,
+    /// Gate type.
+    pub gate_type: GateType,
+    /// Qubits this gate acts on.
+    pub qubits: Vec<QubitId>,
+    /// Before (true) or after (false) the gate.
+    pub before: bool,
+    /// Per-qubit location indices in the influence map.
+    qubit_loc_indices: Vec<(usize, usize)>, // (qubit, loc_idx)
+}
+
+/// The effect of a specific fault event (multi-qubit Pauli error).
+#[derive(Debug, Clone)]
+pub struct FaultEffect {
+    /// The multi-qubit Pauli error.
+    pub pauli: pecos_core::PauliString,
+    /// Detector indices that flip.
+    pub detectors: Vec<u32>,
+    /// DEM-output indices that flip.
+    pub dem_outputs: Vec<u32>,
+    /// Raw measurements that flip: `(node, qubit, basis)`.
+    ///
+    /// Derived from the flipped detectors. Each auto-detected detector
+    /// corresponds to one or more measurements; this expands them.
+    pub measurements: Vec<(usize, usize, u8)>,
+}
+
+impl FaultEffect {
+    /// Compose two fault effects (as if both faults occurred).
+    ///
+    /// - Paulis are multiplied (handles same-qubit algebra + tensor product)
+    /// - Detectors/dem_outputs/measurements are XOR'd (symmetric difference)
+    ///
+    /// This is the building block for weight-w fault analysis:
+    /// ```ignore
+    /// let w2 = effect_a.compose(&effect_b);
+    /// let w3 = w2.compose(&effect_c);
+    /// ```
+    #[must_use]
+    pub fn compose(&self, other: &Self) -> Self {
+        let mut pauli = self.pauli.clone() * other.pauli.clone();
+        pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+
+        let mut detectors = self.detectors.clone();
+        xor_sorted(&mut detectors, &other.detectors);
+
+        let mut dem_outputs = self.dem_outputs.clone();
+        xor_sorted(&mut dem_outputs, &other.dem_outputs);
+
+        let mut measurements = self.measurements.clone();
+        xor_sorted_tuples(&mut measurements, &other.measurements);
+
+        Self {
+            pauli,
+            detectors,
+            dem_outputs,
+            measurements,
+        }
+    }
+}
+
+impl GateFaultLocation<'_> {
+    /// Number of qubits this gate acts on.
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        self.qubits.len()
+    }
+
+    /// All possible fault events at this location.
+    ///
+    /// Only returns multi-qubit Paulis where at least one qubit's
+    /// single-qubit component has a non-trivial effect in the influence
+    /// map. E.g., a measurement-before location might only yield X
+    /// faults since Z before MZ is invisible.
+    #[must_use]
+    pub fn possible_faults(&self) -> Vec<pecos_core::PauliString> {
+        let active = self.active_paulis_per_qubit();
+        if active.is_empty() {
+            return Vec::new();
+        }
+
+        let mut combos: Vec<Vec<(usize, pecos_core::Pauli)>> = vec![vec![]];
+        for &(q, ref paulis) in &active {
+            let mut next = Vec::new();
+            for existing in &combos {
+                next.push(existing.clone());
+                for &p in paulis {
+                    let mut extended = existing.clone();
+                    extended.push((q.index(), p));
+                    next.push(extended);
+                }
+            }
+            combos = next;
+        }
+
+        combos
+            .into_iter()
+            .filter(|c| !c.is_empty())
+            .map(|entries| {
+                pecos_core::PauliString::with_phase_and_paulis(
+                    pecos_core::QuarterPhase::PlusOne,
+                    entries
+                        .iter()
+                        .map(|&(q, p)| (p, QubitId::from(q)))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// All fault events that have non-trivial effects (flip at least one
+    /// detector or logical).
+    #[must_use]
+    pub fn events(&self) -> Vec<FaultEffect> {
+        self.possible_faults()
+            .into_iter()
+            .map(|ps| self.query(&ps))
+            .filter(|e| !e.detectors.is_empty() || !e.dem_outputs.is_empty())
+            .collect()
+    }
+
+    /// All physically possible fault events, including those with no effect.
+    ///
+    /// Use this for probability-correct enumeration (e.g., ML decoder).
+    /// Events with empty detectors and dem_outputs are "trivial" faults that
+    /// happen with real probability but don't change any observable.
+    #[must_use]
+    pub fn all_events(&self) -> Vec<FaultEffect> {
+        self.all_physical_paulis()
+            .into_iter()
+            .map(|ps| self.query(&ps))
+            .collect()
+    }
+
+    /// All physically meaningful single-qubit Paulis per qubit, regardless
+    /// of whether they have non-trivial effects in the influence map.
+    ///
+    /// Gate-type filtering applies (PZ/MZ only X/Y) but effect filtering
+    /// does not. This ensures correct probability accounting.
+    fn all_physical_paulis(&self) -> Vec<pecos_core::PauliString> {
+        let physical: &[pecos_core::Pauli] = match self.gate_type {
+            // Z-basis prep/measurement: only X (bit-flip) fault.
+            GateType::PZ | GateType::QAlloc | GateType::MZ | GateType::MeasureFree => {
+                &[pecos_core::Pauli::X]
+            }
+            // Unitary gates: all single-qubit Paulis.
+            _ => &[
+                pecos_core::Pauli::X,
+                pecos_core::Pauli::Y,
+                pecos_core::Pauli::Z,
+            ],
+        };
+
+        // Build all combinations (including I on each qubit)
+        let mut combos: Vec<Vec<(usize, pecos_core::Pauli)>> = vec![vec![]];
+        for &q in &self.qubits {
+            let mut next = Vec::new();
+            for existing in &combos {
+                next.push(existing.clone()); // I on this qubit
+                for &p in physical {
+                    let mut extended = existing.clone();
+                    extended.push((q.index(), p));
+                    next.push(extended);
+                }
+            }
+            combos = next;
+        }
+
+        combos
+            .into_iter()
+            .filter(|c| !c.is_empty())
+            .map(|entries| {
+                pecos_core::PauliString::with_phase_and_paulis(
+                    pecos_core::QuarterPhase::PlusOne,
+                    entries
+                        .iter()
+                        .map(|&(q, p)| (p, QubitId::from(q)))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// Query the effect of a specific multi-qubit Pauli event.
+    #[must_use]
+    pub fn query(&self, pauli: &pecos_core::PauliString) -> FaultEffect {
+        let entries: Vec<(usize, pecos_core::Pauli)> = pauli
+            .paulis()
+            .iter()
+            .map(|&(p, q)| (q.index(), p))
+            .collect();
+        let (detectors, dem_outputs) = self.compose_effects(&entries);
+
+        // Resolve detector indices to raw measurements
+        let measurements = self.resolve_measurements(&detectors);
+
+        FaultEffect {
+            pauli: pauli.clone(),
+            detectors,
+            dem_outputs,
+            measurements,
+        }
+    }
+
+    /// Which single-qubit Paulis are physically meaningful at each qubit.
+    ///
+    /// Filters based on both the influence map (has non-trivial effect) and
+    /// the gate type (Z after PZ is unphysical, Z before MZ is invisible).
+    fn active_paulis_per_qubit(&self) -> Vec<(QubitId, Vec<pecos_core::Pauli>)> {
+        // Determine which Paulis are physical for this gate type
+        let physical_paulis: &[Pauli] = match self.gate_type {
+            // Z-basis prep/measurement: only X (bit-flip) fault.
+            GateType::PZ | GateType::QAlloc | GateType::MZ | GateType::MeasureFree => &[Pauli::X],
+            // Unitary gates: all single-qubit Paulis.
+            _ => &[Pauli::X, Pauli::Y, Pauli::Z],
+        };
+
+        self.qubit_loc_indices
+            .iter()
+            .filter_map(|&(qubit, loc_idx)| {
+                let mut paulis = Vec::new();
+                for &p in physical_paulis {
+                    if self.map.influences.has_detector_flips(loc_idx, p)
+                        || self.map.influences.has_dem_output_flips(loc_idx, p)
+                    {
+                        paulis.push(propagator_to_core_pauli(p));
+                    }
+                }
+                if paulis.is_empty() {
+                    None
+                } else {
+                    Some((QubitId::from(qubit), paulis))
+                }
+            })
+            .collect()
+    }
+
+    /// Compose per-qubit effects via XOR (symmetric difference).
+    fn compose_effects(&self, entries: &[(usize, pecos_core::Pauli)]) -> (Vec<u32>, Vec<u32>) {
+        let mut det_set: Vec<u32> = Vec::new();
+        let mut dem_output_set: Vec<u32> = Vec::new();
+
+        for &(qubit, pauli) in entries {
+            if pauli == pecos_core::Pauli::I {
+                continue;
+            }
+            let prop_pauli = core_to_propagator_pauli(pauli);
+
+            if let Some(&(_, loc_idx)) = self.qubit_loc_indices.iter().find(|&&(q, _)| q == qubit) {
+                let dets = self.map.influences.detectors(loc_idx, prop_pauli);
+                xor_sorted(&mut det_set, dets);
+                let dem_outputs = self.map.influences.dem_outputs(loc_idx, prop_pauli);
+                xor_sorted(&mut dem_output_set, dem_outputs);
+            }
+        }
+
+        (det_set, dem_output_set)
+    }
+
+    /// Resolve detector indices to raw measurement tuples.
+    fn resolve_measurements(&self, detector_indices: &[u32]) -> Vec<(usize, usize, u8)> {
+        let mut measurements = Vec::new();
+        for &det_idx in detector_indices {
+            if let Some(det) = self.map.detectors.get(det_idx as usize) {
+                for meas_id in &det.measurements {
+                    measurements.push((meas_id.tick, meas_id.qubit, meas_id.basis));
+                }
+            }
+        }
+        measurements
+    }
+}
+
+/// Symmetric difference for sorted `(usize, usize, u8)` tuples (measurements).
+fn xor_sorted_tuples(acc: &mut Vec<(usize, usize, u8)>, other: &[(usize, usize, u8)]) {
+    if other.is_empty() {
+        return;
+    }
+    if acc.is_empty() {
+        acc.extend_from_slice(other);
+        return;
+    }
+    let mut result = Vec::with_capacity(acc.len() + other.len());
+    let mut i = 0;
+    let mut j = 0;
+    while i < acc.len() && j < other.len() {
+        match acc[i].cmp(&other[j]) {
+            std::cmp::Ordering::Less => {
+                result.push(acc[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                result.push(other[j]);
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    result.extend_from_slice(&acc[i..]);
+    result.extend_from_slice(&other[j..]);
+    *acc = result;
+}
+
+/// Convert `pecos_core::Pauli` to the propagator's `Pauli`.
+fn core_to_propagator_pauli(p: pecos_core::Pauli) -> Pauli {
+    match p {
+        pecos_core::Pauli::I => Pauli::I,
+        pecos_core::Pauli::X => Pauli::X,
+        pecos_core::Pauli::Y => Pauli::Y,
+        pecos_core::Pauli::Z => Pauli::Z,
+    }
+}
+
+/// Convert the propagator's `Pauli` to `pecos_core::Pauli`.
+fn propagator_to_core_pauli(p: Pauli) -> pecos_core::Pauli {
+    match p {
+        Pauli::I => pecos_core::Pauli::I,
+        Pauli::X => pecos_core::Pauli::X,
+        Pauli::Y => pecos_core::Pauli::Y,
+        Pauli::Z => pecos_core::Pauli::Z,
+    }
+}
+
+/// Symmetric difference of two sorted u32 slices, mutating `acc` in place.
+fn xor_sorted(acc: &mut Vec<u32>, other: &[u32]) {
+    if other.is_empty() {
+        return;
+    }
+    if acc.is_empty() {
+        acc.extend_from_slice(other);
+        return;
+    }
+    // Build symmetric difference: elements in exactly one of the two sets
+    let mut result = Vec::with_capacity(acc.len() + other.len());
+    let mut i = 0;
+    let mut j = 0;
+    while i < acc.len() && j < other.len() {
+        match acc[i].cmp(&other[j]) {
+            std::cmp::Ordering::Less => {
+                result.push(acc[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                result.push(other[j]);
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                // In both sets -- they cancel (XOR)
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    result.extend_from_slice(&acc[i..]);
+    result.extend_from_slice(&other[j..]);
+    *acc = result;
+}
+
+impl DagFaultInfluenceMap {
+    /// Group per-qubit locations into per-gate fault locations.
+    ///
+    /// Each returned [`GateFaultLocation`] represents a gate at a specific
+    /// timing (before/after) and supports querying multi-qubit Pauli events.
+    ///
+    /// ```ignore
+    /// for loc in map.gate_fault_locations() {
+    ///     for event in loc.events() {
+    ///         println!("{}: dets={:?} dem_outputs={:?}", event.pauli, event.detectors, event.dem_outputs);
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    pub fn gate_fault_locations(&self) -> Vec<GateFaultLocation<'_>> {
+        let mut groups: std::collections::BTreeMap<(usize, bool), Vec<(usize, usize)>> =
+            std::collections::BTreeMap::new();
+
+        for (loc_idx, loc) in self.locations.iter().enumerate() {
+            let key = (loc.node, loc.before);
+            for q in &loc.qubits {
+                groups.entry(key).or_default().push((q.index(), loc_idx));
+            }
+        }
+
+        groups
+            .into_iter()
+            .map(|((node, before), qubit_locs)| {
+                let gate_type = self.locations[qubit_locs[0].1].gate_type;
+                let qubits: Vec<QubitId> =
+                    qubit_locs.iter().map(|&(q, _)| QubitId::from(q)).collect();
+                GateFaultLocation {
+                    map: self,
+                    node,
+                    gate_type,
+                    qubits,
+                    before,
+                    qubit_loc_indices: qubit_locs,
+                }
+            })
+            .collect()
+    }
+}
+
+// ============================================================================
+// Weight-w Fault Enumeration
+// ============================================================================
+
+/// A single component of a multi-fault combination.
+#[derive(Debug, Clone)]
+pub struct FaultComponent {
+    /// Index into `gate_fault_locations()`.
+    pub location_index: usize,
+    /// The fault event at this location.
+    pub event: FaultEffect,
+}
+
+/// A weight-w combination of faults and their combined effect.
+#[derive(Debug, Clone)]
+pub struct FaultCombo {
+    /// The individual (location, event) pairs.
+    pub components: Vec<FaultComponent>,
+    /// Combined effect (XOR of all component effects).
+    pub effect: FaultEffect,
+}
+
+impl DagFaultInfluenceMap {
+    /// Enumerate all weight-w fault combinations, calling `f` for each.
+    ///
+    /// At weight 1, this iterates every fault location and every possible
+    /// fault event. At weight 2, all pairs of (location, event). And so on.
+    ///
+    /// Uses a callback to avoid allocating a potentially huge result vec.
+    ///
+    /// ```ignore
+    /// // Find all undetectable weight-2 errors
+    /// map.for_each_fault_combo(2, |combo| {
+    ///     if !combo.effect.dem_outputs.is_empty() && combo.effect.detectors.is_empty() {
+    ///         println!("Undetectable w=2:");
+    ///         for c in &combo.components {
+    ///             println!("  {} at loc {}", c.event.pauli, c.location_index);
+    ///         }
+    ///     }
+    /// });
+    /// ```
+    pub fn for_each_fault_combo(&self, weight: usize, mut f: impl FnMut(&FaultCombo)) {
+        let locs = self.gate_fault_locations();
+
+        // Pre-compute events for each location
+        let all_events: Vec<Vec<FaultEffect>> =
+            locs.iter().map(GateFaultLocation::events).collect();
+
+        let empty_effect = FaultEffect {
+            pauli: pecos_core::PauliString::identity(),
+            detectors: Vec::new(),
+            dem_outputs: Vec::new(),
+            measurements: Vec::new(),
+        };
+
+        let mut components = Vec::with_capacity(weight);
+        let mut effects_stack = vec![empty_effect];
+
+        enumerate_combos(
+            &all_events,
+            weight,
+            0, // start_loc
+            &mut components,
+            &mut effects_stack,
+            &mut f,
+        );
+    }
+}
+
+/// Recursive helper for weight-w combination enumeration.
+fn enumerate_combos(
+    all_events: &[Vec<FaultEffect>],
+    remaining: usize,
+    start_loc: usize,
+    components: &mut Vec<FaultComponent>,
+    effects_stack: &mut Vec<FaultEffect>,
+    f: &mut impl FnMut(&FaultCombo),
+) {
+    if remaining == 0 {
+        f(&FaultCombo {
+            components: components.clone(),
+            effect: effects_stack.last().unwrap().clone(),
+        });
+        return;
+    }
+
+    for loc_idx in start_loc..all_events.len() {
+        for event in &all_events[loc_idx] {
+            let combined = effects_stack.last().unwrap().compose(event);
+
+            components.push(FaultComponent {
+                location_index: loc_idx,
+                event: event.clone(),
+            });
+            effects_stack.push(combined);
+
+            enumerate_combos(
+                all_events,
+                remaining - 1,
+                loc_idx + 1, // no repeats
+                components,
+                effects_stack,
+                f,
+            );
+
+            components.pop();
+            effects_stack.pop();
+        }
     }
 }
 
@@ -779,8 +1584,8 @@ impl InfluenceRecorder for BucketRecorder {
         if obs_x {
             self.z_buckets[loc_idx].push(det);
         }
-        // Y fault anticommutes with X or Z observable
-        if obs_x || obs_z {
+        // Y fault anticommutes with X or Z but NOT both (Y commutes with Y)
+        if obs_x ^ obs_z {
             self.y_buckets[loc_idx].push(det);
         }
     }
@@ -873,28 +1678,26 @@ impl<'a> DagFaultAnalyzer<'a> {
 
         for &node in &topo_order {
             if let Some(gate) = propagator.gate(node) {
+                // Skip meta-gates — they don't create fault locations
+                if gate.gate_type.is_meta() {
+                    continue;
+                }
+
                 let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
-                let is_prep = matches!(gate.gate_type, GateType::PZ | GateType::QAlloc);
 
                 // Convert QubitId to usize
                 let qubits: SmallVec<[usize; 2]> =
                     gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
-                // Create per-qubit fault locations for proper depolarizing noise analysis
+                // Standard circuit noise model: one fault location per gate.
+                //   Measurement: before (X flip before readout)
+                //   All others (prep, unitary, idle): after
+                // Idle gates on non-active qubits provide the missing "before"
+                // coverage that would otherwise require before-gate locations.
+                let before = is_measurement;
                 for &q in &qubits {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
-
-                    if is_measurement {
-                        // Measurements only have before=true locations
-                        locations.push(node, single_qubit, true, gate.gate_type);
-                    } else if is_prep {
-                        // Preps only have before=false locations
-                        locations.push(node, single_qubit, false, gate.gate_type);
-                    } else {
-                        // Regular gates have both before and after locations
-                        locations.push(node, single_qubit.clone(), true, gate.gate_type);
-                        locations.push(node, single_qubit, false, gate.gate_type);
-                    }
+                    locations.push(node, single_qubit, before, gate.gate_type);
                 }
             }
         }
@@ -934,8 +1737,9 @@ impl<'a> DagFaultAnalyzer<'a> {
         map.locations = self.locations.to_dag_spacetime_locations();
 
         // Extract measurements and create detectors
-        let measurements = self.extract_measurements();
+        let (measurements, meas_ids) = self.extract_measurements();
         map.measurements.clone_from(&measurements);
+        map.meas_ids = meas_ids;
 
         for &(node, qubit, basis) in &measurements {
             let measurement_id = MeasurementId {
@@ -946,11 +1750,8 @@ impl<'a> DagFaultAnalyzer<'a> {
             map.detectors.push(DetectorId::single(measurement_id));
         }
 
-        // Use bucket recorder for O(n) construction
-        let mut recorder = BucketRecorder::new(num_locations);
-
-        // Propagate using the generic method with bucket recorder
-        self.propagate_all(&mut recorder);
+        // Use forest propagation: per-ancilla Phase 1/Phase 2 split.
+        let recorder = self.propagate_all_forest();
 
         // Convert buckets to SoA format (O(n) flattening)
         map.influences = recorder.into_soa();
@@ -968,8 +1769,13 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// measurements on lower-indexed qubits appear first when they're in the
     /// same "layer" of the circuit.
     #[must_use]
-    pub fn extract_measurements(&self) -> Vec<(usize, usize, u8)> {
-        let mut measurements = Vec::new();
+    /// Extract measurements with optional MeasId IDs.
+    ///
+    /// Returns `(measurements, meas_ids)` where:
+    /// - `measurements` is `Vec<(node, qubit, basis)>` in MeasId order
+    /// - `meas_ids` is `Vec<MeasId>` (empty for legacy circuits)
+    pub fn extract_measurements(&self) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
+        let mut entries = Vec::new(); // (sort_key, qubit, node, basis, Option<MeasId>)
 
         for &node in self.propagator.topo_order() {
             if let Some(gate) = self.propagator.gate(node) {
@@ -978,23 +1784,39 @@ impl<'a> DagFaultAnalyzer<'a> {
                     _ => continue,
                 };
 
-                let topo_pos = self.propagator.topo_position(node);
-                for qubit in &gate.qubits {
-                    // Store (topo_pos, qubit, node, basis) for sorting
-                    measurements.push((topo_pos, qubit.index(), node, basis));
+                if !gate.meas_ids.is_empty() {
+                    for (i, qubit) in gate.qubits.iter().enumerate() {
+                        let mr = gate.meas_ids.get(i).copied();
+                        let sort_key = mr.map(|m| m.index()).unwrap_or(usize::MAX);
+                        entries.push((sort_key, qubit.index(), node, basis, mr));
+                    }
+                } else {
+                    let topo_pos = self.propagator.topo_position(node);
+                    for qubit in &gate.qubits {
+                        entries.push((topo_pos, qubit.index(), node, basis, None));
+                    }
                 }
             }
         }
 
-        // Sort by (topological_position, qubit_index) for deterministic ordering
-        // This ensures measurements on lower-indexed qubits come first when concurrent
-        measurements.sort_by_key(|&(topo_pos, qubit, _, _)| (topo_pos, qubit));
+        entries.sort_by_key(|&(sort_key, qubit, _, _, _)| (sort_key, qubit));
 
-        // Return in the expected format: (node, qubit, basis)
-        measurements
+        let has_meas_ids = entries.iter().any(|(_, _, _, _, mr)| mr.is_some());
+        let meas_ids = if has_meas_ids {
+            entries
+                .iter()
+                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId(usize::MAX)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let measurements = entries
             .into_iter()
-            .map(|(_, qubit, node, basis)| (node, qubit, basis))
-            .collect()
+            .map(|(_, qubit, node, basis, _)| (node, qubit, basis))
+            .collect();
+
+        (measurements, meas_ids)
     }
 
     // =========================================================================
@@ -1152,6 +1974,317 @@ impl<'a> DagFaultAnalyzer<'a> {
         }
     }
 
+    // ====================================================================
+    // Forest propagation: per-ancilla Phase 1 / Phase 2 split
+    // ====================================================================
+
+    /// Captured influence entry from Phase 2 (shared tail below PZ).
+    /// Stored with `topo_pos` for prefix slicing across measurements.
+
+    /// Phase 1: propagate from MZ backward through within-round gates,
+    /// stopping at the ancilla's PZ. Records influences normally.
+    /// Returns the PZ node's topo position, or None if no PZ was hit.
+    ///
+    /// After return, `work.heap` still contains data qubit gates below
+    /// the PZ — ready for Phase 2.
+    fn propagate_phase1<R: InfluenceRecorder>(
+        &self,
+        meas_node: usize,
+        meas_qubit: usize,
+        basis: u8,
+        detector_idx: usize,
+        recorder: &mut R,
+        work: &mut PropagationBuffers,
+        prop: &mut PauliProp,
+    ) -> Option<usize> {
+        let visited = &mut work.visited;
+        let active_qubits = &mut work.active_qubits;
+        let heap = &mut work.heap;
+        visited.fill(false);
+        active_qubits.fill(false);
+        heap.clear();
+
+        *prop = PauliProp::new();
+        if basis == 0 {
+            prop.track_z(&[meas_qubit]);
+        } else {
+            prop.track_x(&[meas_qubit]);
+        }
+
+        let meas_topo_pos = self.propagator.topo_position(meas_node);
+        self.record_at_node_generic(meas_node, prop, detector_idx, recorder, true);
+
+        if meas_qubit <= self.max_qubit() {
+            active_qubits[meas_qubit] = true;
+            for (topo_pos, node) in self.propagator.qubit_gates_backward(meas_qubit) {
+                if topo_pos < meas_topo_pos && !visited[node] {
+                    visited[node] = true;
+                    heap.push((topo_pos, node));
+                }
+            }
+        }
+
+        while let Some((_, node)) = heap.pop() {
+            if let Some(gate) = self.propagator.gate(node) {
+                let mut was_active = [false; 8];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    if j < was_active.len() && q.index() <= self.max_qubit() {
+                        was_active[j] = active_qubits[q.index()];
+                    }
+                }
+
+                self.record_at_node_generic(node, prop, detector_idx, recorder, false);
+
+                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                    let pz_topo = self.propagator.topo_position(node);
+                    for q in &gate.qubits {
+                        let idx = q.index();
+                        if idx <= self.max_qubit() {
+                            if prop.contains_x(idx) {
+                                prop.track_x(&[idx]);
+                            }
+                            if prop.contains_z(idx) {
+                                prop.track_z(&[idx]);
+                            }
+                            active_qubits[idx] = false;
+                        }
+                    }
+                    // Stop Phase 1 — data qubit gates remain in the heap.
+                    return Some(pz_topo);
+                }
+
+                apply_gate(prop, gate, Direction::Backward);
+                self.record_at_node_generic(node, prop, detector_idx, recorder, true);
+
+                let node_topo_pos = self.propagator.topo_position(node);
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    let idx = q.index();
+                    if idx <= self.max_qubit() {
+                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
+                        let was = j < was_active.len() && was_active[j];
+                        if now_active && !was {
+                            active_qubits[idx] = true;
+                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
+                                if topo_pos < node_topo_pos && !visited[new_node] {
+                                    visited[new_node] = true;
+                                    heap.push((topo_pos, new_node));
+                                }
+                            }
+                        } else if !now_active && was {
+                            active_qubits[idx] = false;
+                        }
+                    }
+                }
+            }
+        }
+        None // No PZ hit (e.g., first round init detectors)
+    }
+
+    /// Phase 2: continue backward propagation from data qubit frontier
+    /// below PZ. Records to `recorder` AND captures the visited node
+    /// sequence for replay.
+    fn propagate_phase2_capture<R: InfluenceRecorder>(
+        &self,
+        detector_idx: usize,
+        recorder: &mut R,
+        work: &mut PropagationBuffers,
+        prop: &mut PauliProp,
+    ) -> Vec<usize> {
+        let mut visited_nodes: Vec<usize> = Vec::new();
+        let visited = &mut work.visited;
+        let active_qubits = &mut work.active_qubits;
+        let heap = &mut work.heap;
+
+        while let Some((_, node)) = heap.pop() {
+            if let Some(gate) = self.propagator.gate(node) {
+                let mut was_active = [false; 8];
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    if j < was_active.len() && q.index() <= self.max_qubit() {
+                        was_active[j] = active_qubits[q.index()];
+                    }
+                }
+
+                self.record_at_node_generic(node, prop, detector_idx, recorder, false);
+                visited_nodes.push(node);
+
+                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                    for q in &gate.qubits {
+                        let idx = q.index();
+                        if idx <= self.max_qubit() {
+                            if prop.contains_x(idx) {
+                                prop.track_x(&[idx]);
+                            }
+                            if prop.contains_z(idx) {
+                                prop.track_z(&[idx]);
+                            }
+                            active_qubits[idx] = false;
+                        }
+                    }
+                    continue;
+                }
+
+                apply_gate(prop, gate, Direction::Backward);
+                self.record_at_node_generic(node, prop, detector_idx, recorder, true);
+
+                let node_topo = self.propagator.topo_position(node);
+                for (j, q) in gate.qubits.iter().enumerate() {
+                    let idx = q.index();
+                    if idx <= self.max_qubit() {
+                        let now_active = prop.contains_x(idx) || prop.contains_z(idx);
+                        let was = j < was_active.len() && was_active[j];
+                        if now_active && !was {
+                            active_qubits[idx] = true;
+                            for (topo_pos, new_node) in self.propagator.qubit_gates_backward(idx) {
+                                if topo_pos < node_topo && !visited[new_node] {
+                                    visited[new_node] = true;
+                                    heap.push((topo_pos, new_node));
+                                }
+                            }
+                        } else if !now_active && was {
+                            active_qubits[idx] = false;
+                        }
+                    }
+                }
+            }
+        }
+        visited_nodes
+    }
+
+    /// Replay Phase 2 using a cached node sequence.
+    ///
+    /// Iterates the captured nodes, re-applies gates backward to the Pauli
+    /// state, and re-records with the correct `obs_x/obs_z` values. No heap
+    /// or visited array needed — just a flat loop over known nodes.
+    fn replay_phase2<R: InfluenceRecorder>(
+        &self,
+        nodes: &[usize],
+        pz_topo: usize,
+        detector_idx: usize,
+        recorder: &mut R,
+        prop: &mut PauliProp,
+    ) {
+        for &node in nodes {
+            if self.propagator.topo_position(node) >= pz_topo {
+                continue;
+            }
+
+            if let Some(gate) = self.propagator.gate(node) {
+                self.record_at_node_generic(node, prop, detector_idx, recorder, false);
+
+                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                    for q in &gate.qubits {
+                        let idx = q.index();
+                        if idx <= self.max_qubit() {
+                            if prop.contains_x(idx) {
+                                prop.track_x(&[idx]);
+                            }
+                            if prop.contains_z(idx) {
+                                prop.track_z(&[idx]);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                apply_gate(prop, gate, Direction::Backward);
+                self.record_at_node_generic(node, prop, detector_idx, recorder, true);
+            }
+        }
+    }
+
+    /// Parallel forest propagation: groups measurements by ancilla qubit,
+    /// propagates the latest measurement fully with capture, replays the
+    /// shared tail prefix for earlier measurements.
+    #[must_use]
+    pub fn propagate_all_forest(&self) -> BucketRecorder {
+        use rayon::prelude::*;
+
+        let (measurements, _meas_ids) = self.extract_measurements();
+        let num_locations = self.locations.len();
+
+        // Group measurement indices by qubit (ancilla).
+        let mut by_qubit: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (det_idx, &(_, qubit, _)) in measurements.iter().enumerate() {
+            by_qubit.entry(qubit).or_default().push(det_idx);
+        }
+
+        // Collect ancilla groups for parallel iteration.
+        let groups: Vec<Vec<usize>> = by_qubit.into_values().collect();
+
+        let per_thread: Vec<BucketRecorder> = groups
+            .par_iter()
+            .map(|det_indices| {
+                let mut recorder = BucketRecorder::new(num_locations);
+                let mut work = PropagationBuffers {
+                    visited: vec![false; self.propagator.max_node() + 1],
+                    active_qubits: vec![false; self.propagator.max_qubit() + 1],
+                    heap: BinaryHeap::with_capacity(64),
+                };
+
+                // Sort by topo position (ascending = earliest first).
+                let mut sorted = det_indices.clone();
+                sorted.sort_by_key(|&i| self.propagator.topo_position(measurements[i].0));
+
+                // Latest measurement: Phase 1 + Phase 2 with capture
+                let latest = *sorted.last().unwrap();
+                let (l_node, l_qubit, l_basis) = measurements[latest];
+
+                let mut prop = PauliProp::new();
+
+                let _pz_topo = self.propagate_phase1(
+                    l_node,
+                    l_qubit,
+                    l_basis,
+                    latest,
+                    &mut recorder,
+                    &mut work,
+                    &mut prop,
+                );
+                let tail_capture =
+                    self.propagate_phase2_capture(latest, &mut recorder, &mut work, &mut prop);
+
+                // Earlier measurements: Phase 1 + replay tail with correct Pauli state
+                for &det_idx in sorted[..sorted.len() - 1].iter().rev() {
+                    let (m_node, m_qubit, m_basis) = measurements[det_idx];
+
+                    let pz_topo_i = self.propagate_phase1(
+                        m_node,
+                        m_qubit,
+                        m_basis,
+                        det_idx,
+                        &mut recorder,
+                        &mut work,
+                        &mut prop,
+                    );
+
+                    // Replay cached node sequence with correct Pauli state
+                    if let Some(pz_pos) = pz_topo_i {
+                        self.replay_phase2(
+                            &tail_capture,
+                            pz_pos,
+                            det_idx,
+                            &mut recorder,
+                            &mut prop,
+                        );
+                    }
+                }
+
+                recorder
+            })
+            .collect();
+
+        // Merge all recorders
+        let mut merged = BucketRecorder::new(num_locations);
+        for rec in per_thread {
+            for i in 0..num_locations {
+                merged.x_buckets[i].extend(rec.x_buckets[i].iter().copied());
+                merged.y_buckets[i].extend(rec.y_buckets[i].iter().copied());
+                merged.z_buckets[i].extend(rec.z_buckets[i].iter().copied());
+            }
+        }
+        merged
+    }
+
     /// Builds a fault influence map using a custom recorder.
     ///
     /// This is the most flexible method, allowing custom recording strategies.
@@ -1176,7 +2309,7 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// println!("Total influences: {}", recorder.count);
     /// ```
     pub fn propagate_all<R: InfluenceRecorder>(&self, recorder: &mut R) {
-        let measurements = self.extract_measurements();
+        let (measurements, _) = self.extract_measurements();
 
         let mut work = PropagationBuffers {
             visited: vec![false; self.propagator.max_node() + 1],
@@ -1194,6 +2327,55 @@ impl<'a> DagFaultAnalyzer<'a> {
                 &mut work,
             );
         }
+    }
+
+    /// Parallel version: propagates from all measurements using rayon.
+    /// Each thread gets its own `BucketRecorder`, results are merged.
+    #[must_use]
+    pub fn propagate_all_parallel(&self) -> BucketRecorder {
+        use rayon::prelude::*;
+
+        let (measurements, _) = self.extract_measurements();
+        let num_locations = self.locations.len();
+
+        let chunk_size = measurements.len().div_ceil(rayon::current_num_threads());
+
+        let per_thread: Vec<BucketRecorder> = measurements
+            .par_chunks(chunk_size.max(1))
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                let base_idx = chunk_idx * chunk_size;
+                let mut recorder = BucketRecorder::new(num_locations);
+                let mut work = PropagationBuffers {
+                    visited: vec![false; self.propagator.max_node() + 1],
+                    active_qubits: vec![false; self.propagator.max_qubit() + 1],
+                    heap: BinaryHeap::with_capacity(64),
+                };
+
+                for (i, &(node, qubit, basis)) in chunk.iter().enumerate() {
+                    self.propagate_from_measurement_generic(
+                        node,
+                        qubit,
+                        basis,
+                        base_idx + i,
+                        &mut recorder,
+                        &mut work,
+                    );
+                }
+                recorder
+            })
+            .collect();
+
+        // Merge all recorders
+        let mut merged = BucketRecorder::new(num_locations);
+        for rec in per_thread {
+            for i in 0..num_locations {
+                merged.x_buckets[i].extend(rec.x_buckets[i].iter().copied());
+                merged.y_buckets[i].extend(rec.y_buckets[i].iter().copied());
+                merged.z_buckets[i].extend(rec.z_buckets[i].iter().copied());
+            }
+        }
+        merged
     }
 }
 
@@ -1370,12 +2552,14 @@ mod tests {
             qubits: vec![QubitId::from(0)],
             before: true,
             gate_type: GateType::H,
+            idle_duration: 0,
         };
         let loc2 = DagSpacetimeLocation {
             node: 1,
             qubits: vec![QubitId::from(0)],
             before: true,
             gate_type: GateType::H,
+            idle_duration: 0,
         };
         assert!(loc1 < loc2);
     }
@@ -1414,9 +2598,9 @@ mod tests {
         soa.detectors_y.finish_row();
         soa.detectors_z.finish_row();
         soa.detectors_x.finish_row();
-        soa.logicals_x.finish_row();
-        soa.logicals_y.finish_row();
-        soa.logicals_z.finish_row();
+        soa.dem_outputs_x.finish_row();
+        soa.dem_outputs_y.finish_row();
+        soa.dem_outputs_z.finish_row();
         soa.num_locations += 1;
 
         // Location 1: Z flips detector 1
@@ -1424,15 +2608,112 @@ mod tests {
         soa.detectors_y.finish_row();
         soa.detectors_z.push(1);
         soa.detectors_z.finish_row();
-        soa.logicals_x.finish_row();
-        soa.logicals_y.finish_row();
-        soa.logicals_z.finish_row();
+        soa.dem_outputs_x.finish_row();
+        soa.dem_outputs_y.finish_row();
+        soa.dem_outputs_z.finish_row();
         soa.num_locations += 1;
 
         assert!(soa.has_detector_flips(0, Pauli::X));
         assert!(!soa.has_detector_flips(0, Pauli::Z));
         assert!(!soa.has_detector_flips(1, Pauli::X));
         assert!(soa.has_detector_flips(1, Pauli::Z));
+    }
+
+    #[test]
+    fn test_export_csr_filters_tracked_operators_from_dem_outputs() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+
+        let map = crate::fault_tolerance::InfluenceBuilder::new(&dag)
+            .with_z(&[0])
+            .build();
+
+        assert_eq!(map.num_dem_outputs(), 0);
+        assert_eq!(map.num_tracked_ops(), 1);
+        assert!(
+            map.influences.max_dem_output_index().is_some(),
+            "tracked operator should still use internal propagation storage"
+        );
+
+        let (
+            _num_locations,
+            _num_detectors,
+            num_dem_outputs,
+            _detector_offsets_x,
+            _detector_data_x,
+            _detector_offsets_y,
+            _detector_data_y,
+            _detector_offsets_z,
+            _detector_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            dem_output_offsets_y,
+            dem_output_data_y,
+            dem_output_offsets_z,
+            dem_output_data_z,
+        ) = map.export_csr();
+
+        assert_eq!(num_dem_outputs, 0);
+        assert!(dem_output_data_x.is_empty());
+        assert!(dem_output_data_y.is_empty());
+        assert!(dem_output_data_z.is_empty());
+        assert_eq!(dem_output_offsets_x.len(), map.locations.len() + 1);
+        assert_eq!(dem_output_offsets_y.len(), map.locations.len() + 1);
+        assert_eq!(dem_output_offsets_z.len(), map.locations.len() + 1);
+    }
+
+    #[test]
+    fn test_dem_output_helpers_use_separate_compact_id_spaces() {
+        let mut map = DagFaultInfluenceMap::with_capacity(1);
+        map.locations.push(DagSpacetimeLocation {
+            node: 0,
+            qubits: vec![QubitId(0)],
+            before: false,
+            gate_type: GateType::H,
+            idle_duration: 0,
+        });
+        map.dem_output_metadata = vec![
+            DemOutputMetadata::tracked_operator(pecos_core::PauliString::xs(&[0])),
+            DemOutputMetadata::observable(pecos_core::PauliString::zs(&[0])),
+            DemOutputMetadata::tracked_operator(pecos_core::PauliString::zs(&[1])),
+        ];
+
+        map.influences.dem_outputs_x.extend([0, 1, 2]);
+        map.influences.dem_outputs_x.finish_row();
+        map.influences.dem_outputs_y.finish_row();
+        map.influences.dem_outputs_z.finish_row();
+        map.influences.detectors_x.finish_row();
+        map.influences.detectors_y.finish_row();
+        map.influences.detectors_z.finish_row();
+        map.influences.num_locations = 1;
+
+        assert_eq!(map.num_dem_outputs(), 1);
+        assert_eq!(map.num_tracked_ops(), 2);
+        assert_eq!(map.get_observable_indices(0, Pauli::X.as_u8()), vec![0]);
+        assert_eq!(map.get_tracked_op_indices(0, Pauli::X.as_u8()), vec![0, 1]);
+
+        let (
+            _num_locations,
+            _num_detectors,
+            num_dem_outputs,
+            _detector_offsets_x,
+            _detector_data_x,
+            _detector_offsets_y,
+            _detector_data_y,
+            _detector_offsets_z,
+            _detector_data_z,
+            dem_output_offsets_x,
+            dem_output_data_x,
+            _dem_output_offsets_y,
+            _dem_output_data_y,
+            _dem_output_offsets_z,
+            _dem_output_data_z,
+        ) = map.export_csr();
+
+        assert_eq!(num_dem_outputs, 1);
+        assert_eq!(dem_output_offsets_x, vec![0, 1]);
+        assert_eq!(dem_output_data_x, vec![0]);
     }
 
     // =========================================================================
@@ -1460,11 +2741,11 @@ mod tests {
             .filter(|loc| matches!(loc.gate_type, GateType::CX))
             .collect();
 
-        // Should have 4 locations: before/after for each of 2 qubits
+        // Should have 2 locations: one per qubit (after only)
         assert_eq!(
             cx_locations.len(),
-            4,
-            "CX should have 4 fault locations (before/after x 2 qubits)"
+            2,
+            "CX should have 2 fault locations (1 per qubit, after gate)"
         );
 
         // Each location should have exactly 1 qubit (per-qubit fault model)
@@ -1509,31 +2790,31 @@ mod tests {
 
     #[test]
     fn test_per_qubit_fault_influences() {
-        // Test that per-qubit fault locations correctly track influences
+        // Test that per-qubit fault locations correctly track influences.
+        // In the standard model, faults are AFTER unitary gates.
+        // X on the TARGET after CX(0, 2) flips the Z-measurement on qubit 2.
         let mut dag = DagCircuit::new();
         dag.pz(&[2]); // ancilla
-        dag.cx(&[(0, 2)]); // X on control spreads to target
+        dag.cx(&[(0, 2)]); // X on target flips measurement
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let map = analyzer.build_influence_map();
 
-        // X error on data qubit 0 (control of CX) should flip the Z-measurement
-        // because X on control stays on control, but also spreads to target
-        let mut found_data_qubit_influence = false;
+        // X error on target qubit 2 after CX should flip the measurement
+        let mut found_target_influence = false;
         for (loc_idx, loc) in map.locations.iter().enumerate() {
-            // Check data qubit 0 locations
-            if loc.qubits.iter().any(|q| q.index() == 0) {
-                // X fault (pauli=1) should have detector flips
-                if map.influences.has_detector_flips(loc_idx, Pauli::X) {
-                    found_data_qubit_influence = true;
-                }
+            if loc.qubits.iter().any(|q| q.index() == 2)
+                && matches!(loc.gate_type, GateType::CX)
+                && map.influences.has_detector_flips(loc_idx, Pauli::X)
+            {
+                found_target_influence = true;
             }
         }
 
         assert!(
-            found_data_qubit_influence,
-            "X error on data qubit should influence measurement"
+            found_target_influence,
+            "X error on target qubit after CX should influence measurement"
         );
     }
 

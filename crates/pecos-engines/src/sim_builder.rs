@@ -196,9 +196,8 @@ impl SimBuilder {
     /// Use automatic worker count based on available CPUs
     #[must_use]
     pub fn auto_workers(mut self) -> Self {
-        self.config.workers = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(4);
+        self.config.workers =
+            std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         self
     }
 

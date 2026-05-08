@@ -1,5 +1,5 @@
 use pecos_core::{Angle64, QubitId};
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, CliffordRz};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
 /// QEC-like circuit: repeated rounds of gates + measurement on ancilla qubits.
@@ -20,7 +20,7 @@ fn main() {
     let nq = data_q + ancilla_q;
 
     let theta = Angle64::from_radians(0.3);
-    let mut sim = CliffordRz::new_with_seed(nq, 42);
+    let mut sim = StabVec::new_with_seed(nq, 42);
 
     // Initialize
     for q in 0..data_q {

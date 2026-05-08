@@ -46,6 +46,7 @@ pub mod polynomial;
 pub mod prelude;
 pub mod random;
 pub mod stats;
+pub mod z2_linalg;
 
 pub use compare::{allclose, relative_eq};
 pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};

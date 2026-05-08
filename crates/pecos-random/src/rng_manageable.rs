@@ -86,8 +86,7 @@ pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
 pub fn time_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(12345)
+        .map_or(12345, |d| d.as_nanos() as u64)
 }
 
 /// Resolve an optional seed, using system time if none provided.

@@ -55,10 +55,17 @@ nav:
   - WASM Foreign Objects: user-guide/wasm-foreign-objects.md
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Simulators: user-guide/simulators.md
+  - Engine Selection: user-guide/engine-selection.md
   - Gate Reference: user-guide/gates.md
   - Gate Naming Conventions: user-guide/gate-naming-conventions.md
   - Gate Naming (Future): user-guide/gate-naming-speculation.md
+  - Gate and Angle Types: user-guide/gate-angle-types.md
   - Noise Model Builders: user-guide/noise-model-builders.md
+  - Quantum Operator Algebra: user-guide/quantum-operator-algebra.md
+  - Stabilizer Codes: user-guide/stabilizer-codes.md
+  - Pauli Algebra and QEC in Python: user-guide/python-pauli-qec.md
+  - Fault Tolerance Analysis: user-guide/fault-tolerance.md
+  - Fault Catalog Tutorial: user-guide/fault-catalog.md
   - QEC Geometry: user-guide/qec-geometry.md
   - QEC with Guppy: user-guide/qec-guppy.md
   - Decoders: user-guide/decoders.md
@@ -69,7 +76,7 @@ nav:
   - CUDA Setup: user-guide/cuda-setup.md
 - Concepts:
   - concepts/index.md
-  - Clifford+RZ Simulator: concepts/clifford-rz-simulator.md
+  - StabVec Simulator: concepts/clifford-rz-simulator.md
 - API:
   - api/api-reference.md
 - Development:
@@ -77,9 +84,14 @@ nav:
   - Developer Tools CLI: development/dev-tools.md
   - Documentation Testing: development/doc-testing.md
   - SLR and QECLib: development/slr-qeclib.md
-  - Circuit Representations: development/circuit-representations.md
+  - AST Infrastructure: development/ast-infrastructure.md
+  - Foreign Language Plugins: development/foreign-plugins.md
   - Parallel Blocks: development/parallel-blocks-and-optimization.md
-  - development/QIS_ARCHITECTURE.md
+- Experimental:
+  - experimental/index.md
+  - Composable Noise (pecos-neo): experimental/composable-noise.md
+- Proposals:
+  - proposals/README.md
 - Releases:
   - releases/changelog.md
 markdown_extensions:
@@ -126,4 +138,4 @@ extra:
     link: https://pypi.org/project/quantum-pecos/
   - icon: fontawesome/solid/book
     link: https://quantum-pecos.readthedocs.io/
-copyright: Copyright &copy; 2018-2025 The PECOS Developers
+copyright: Copyright &copy; 2018-2026 The PECOS Developers

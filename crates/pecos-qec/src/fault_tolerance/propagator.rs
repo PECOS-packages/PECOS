@@ -13,9 +13,10 @@
 //! Pauli propagation infrastructure and fault analysis.
 //!
 //! This module provides bidirectional Pauli propagation through quantum circuits,
-//! with specialized support for fault tolerance analysis. By propagating observables
-//! backward from measurements and tracked Pauli operators, we can efficiently determine which faults
-//! affect which detectors:
+//! with specialized support for fault tolerance analysis. By propagating
+//! detector/observable measurement parities and unmeasured tracked Pauli
+//! operators backward through the circuit, we can efficiently determine which
+//! faults affect which outputs:
 //!
 //! 1. **Speed up fault enumeration** - O(1) lookup instead of `O(circuit_depth)` propagation
 //! 2. **Build detector error models** - Direct mapping from faults to detectors
@@ -43,9 +44,16 @@
 //! let analyzer = DagFaultAnalyzer::new(&dag);
 //! let map = analyzer.build_influence_map();
 //!
-//! // O(1) lookup: which measurements does a fault at location L flip?
-//! let (has_syndrome, flips_tracked_op) = map.classify_fault(0, 1); // loc 0, X fault
+//! // O(1) lookup: which detector/non-detector outputs does a fault at location L flip?
+//! let (has_syndrome, _flips_non_detector_output) = map.classify_fault(0, 1); // loc 0, X fault
 //! ```
+//!
+//! Observables and tracked operators are distinct. Observables are values
+//! observed through measurement-record parities and become standard `L<n>`
+//! outputs in DEM text. Tracked operators are Pauli operators annotated at
+//! circuit points; they are not measured and are not applied to the computation.
+//! PECOS records whether each fault anticommutes with, and therefore would flip,
+//! the propagated operator.
 //!
 //! # Concept
 //!

@@ -256,7 +256,8 @@ impl<'a> DemBuilder<'a> {
         let num_influence_dem_outputs = self
             .num_influence_dem_outputs()
             .max(self.influence_map.dem_output_metadata.len());
-        let mut dem = DetectorErrorModel::with_capacity(self.detectors.len(), self.observables.len());
+        let mut dem =
+            DetectorErrorModel::with_capacity(self.detectors.len(), self.observables.len());
 
         // Add detector definitions
         for det in &self.detectors {
@@ -296,7 +297,7 @@ impl<'a> DemBuilder<'a> {
             }
         }
 
-        // Add observable definitions in the standard Stim `L<n>` namespace.
+        // Add observable definitions in the standard `L<n>` namespace.
         // Observable IDs are not shifted by tracked operators.
         for obs in &self.observables {
             let def = DemOutput::new(obs.id).with_records(obs.records.iter().copied());
@@ -816,6 +817,7 @@ impl<'a> DemBuilder<'a> {
     fn build_measurement_mappings(&self) -> (BTreeMap<usize, Vec<u32>>, BTreeMap<usize, Vec<u32>>) {
         let mut meas_to_detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let mut meas_to_observables: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+        let influence_observable_ids = self.influence_map.observable_ids();
 
         // Build a mapping from (qubit, occurrence_index) to influence_map_index
         // This handles multi-round circuits where the same qubit is measured multiple times
@@ -879,6 +881,9 @@ impl<'a> DemBuilder<'a> {
         }
 
         for obs in &self.observables {
+            if influence_observable_ids.contains(&obs.id) {
+                continue;
+            }
             for &rec in &obs.records {
                 if let Some(tc_meas_idx) =
                     record_offset_to_absolute_index(self.num_measurements, rec)
@@ -1232,8 +1237,7 @@ fn build_dem_from_circuit(
     use pecos_num::graph::Attribute;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
-    let annotated_observable_records =
-        observable_records_from_annotations(circuit, &influence_map);
+    let annotated_observable_records = observable_records_from_annotations(circuit, &influence_map);
     let annotation_map = InfluenceBuilder::new(circuit)
         .with_circuit_annotations(circuit)
         .build();
@@ -1416,6 +1420,40 @@ mod tests {
                 .iter()
                 .any(|summary| summary.effect.dem_outputs.as_slice() == [0]),
             "observable should remain L0"
+        );
+    }
+
+    #[test]
+    fn test_circuit_observable_annotation_is_not_double_counted() {
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let meas = circuit.mz(&[0]);
+        circuit.observable_labeled("obs0", &[meas[0]]);
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0);
+
+        assert_eq!(dem.num_dem_outputs(), 1);
+        assert_eq!(dem.num_observables(), 1);
+        assert_eq!(dem.dem_outputs().len(), 1);
+        assert_eq!(dem.dem_outputs()[0].id, 0);
+        assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-1]);
+        assert_eq!(dem.dem_outputs()[0].label.as_deref(), Some("obs0"));
+
+        let logical_observable_lines = dem
+            .to_string()
+            .lines()
+            .filter(|line| *line == "logical_observable L0")
+            .count();
+        assert_eq!(logical_observable_lines, 1);
+
+        let summaries = dem.contribution_effect_summaries();
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary.effect.dem_outputs.as_slice() == [0]),
+            "measurement fault should flip observable L0 once, not cancel"
         );
     }
 

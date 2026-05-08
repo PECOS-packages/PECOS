@@ -32,6 +32,26 @@
 //! - [`DagSpacetimeLocation`]: Identifies a fault location in a DAG circuit
 //! - [`DagFaultInfluenceMap`]: Cache-optimized influence map using CSR layout
 //!
+//! # Output Terminology
+//!
+//! The influence map has one detector namespace plus one raw internal
+//! non-detector-output namespace. That raw namespace is only a storage detail:
+//! metadata maps each raw non-detector output to either a standard observable
+//! (`L<n>`) or a PECOS tracked operator. Decoder and sampler code should use
+//! [`DagFaultInfluenceMap::observable_ids`],
+//! [`DagFaultInfluenceMap::observable_id_for_internal_dem_output`], and
+//! [`DagFaultInfluenceMap::tracked_op_id_for_internal_dem_output`] instead of
+//! assuming raw indices are public `L<n>` IDs.
+//!
+//! Observables and tracked operators differ by definition, not just by name.
+//! Observables are values observed through measurement-record parities and are
+//! visible to DEM decoders as standard `L<n>` outputs. Tracked operators are
+//! unmeasured Pauli operators annotated at a circuit point, such as logical
+//! operators, stabilizers, or other Paulis of interest; the influence map
+//! records whether a fault anticommutes with, and therefore would flip, the
+//! propagated operator. They are PECOS metadata and are not measurement-record
+//! observables.
+//!
 //! # Example
 //!
 //! ```
@@ -48,7 +68,7 @@
 //! let map = analyzer.build_influence_map();
 //!
 //! // O(1) fault classification
-//! let (has_syndrome, flips_dem_output) = map.classify_fault(0, 1); // loc 0, X fault
+//! let (has_syndrome, _flips_non_detector_output) = map.classify_fault(0, 1); // loc 0, X fault
 //! ```
 
 use super::{
@@ -59,7 +79,7 @@ use pecos_core::{PauliString, QuarterPhase, QubitId};
 use pecos_quantum::DagCircuit;
 use pecos_simulators::PauliProp;
 use smallvec::SmallVec;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 /// Reusable work buffers for propagation, avoiding per-call allocation.
 pub struct PropagationBuffers {
@@ -351,13 +371,17 @@ pub struct InfluencesSoA {
     /// Detector indices flipped by Z faults (Pauli=3).
     pub detectors_z: CsrArray,
 
-    /// DEM `L<n>` DEM-output indices flipped by X faults.
+    /// Internal non-detector output indices flipped by X faults.
+    ///
+    /// These raw indices may name either standard observables or PECOS tracked
+    /// operators. Use [`DagFaultInfluenceMap`] metadata helpers to map them into
+    /// the public `L<n>` observable namespace or tracked-operator namespace.
     pub dem_outputs_x: CsrArray,
 
-    /// DEM `L<n>` DEM-output indices flipped by Y faults.
+    /// Internal non-detector output indices flipped by Y faults.
     pub dem_outputs_y: CsrArray,
 
-    /// DEM `L<n>` DEM-output indices flipped by Z faults.
+    /// Internal non-detector output indices flipped by Z faults.
     pub dem_outputs_z: CsrArray,
 }
 
@@ -390,7 +414,13 @@ impl InfluencesSoA {
         }
     }
 
-    /// Returns the DEM-output indices for a location and Pauli type.
+    /// Returns raw internal non-detector output indices for a location and Pauli type.
+    ///
+    /// These indices are not necessarily standard `L<n>` IDs. Callers that
+    /// need public observable IDs should use
+    /// [`DagFaultInfluenceMap::observable_id_for_internal_dem_output`]; callers
+    /// that need tracked-operator IDs should use
+    /// [`DagFaultInfluenceMap::tracked_op_id_for_internal_dem_output`].
     #[inline]
     #[must_use]
     pub fn dem_outputs(&self, loc_idx: usize, pauli: Pauli) -> &[u32] {
@@ -414,7 +444,7 @@ impl InfluencesSoA {
         }
     }
 
-    /// Returns whether the location has any DEM-output flips for the given Pauli.
+    /// Returns whether the location has any non-detector output flips for the given Pauli.
     #[inline]
     #[must_use]
     pub fn has_dem_output_flips(&self, loc_idx: usize, pauli: Pauli) -> bool {
@@ -428,7 +458,7 @@ impl InfluencesSoA {
 
     /// Classifies a fault at the given location.
     ///
-    /// Returns (`has_syndrome`, `flips_dem_output`).
+    /// Returns (`has_syndrome`, `flips_non_detector_output`).
     #[inline]
     #[must_use]
     pub fn classify(&self, loc_idx: usize, pauli: Pauli) -> (bool, bool) {
@@ -482,7 +512,7 @@ impl InfluencesSoA {
         }
     }
 
-    /// Returns the maximum raw DEM-output influence index, if any.
+    /// Returns the maximum raw non-detector output influence index, if any.
     ///
     /// When metadata is present, callers should use [`Self::num_dem_outputs`]
     /// for the standard observable `L<n>` namespace and [`Self::num_tracked_ops`]
@@ -542,15 +572,16 @@ pub struct DagFaultInfluenceMap {
     /// Empty for legacy circuits without MeasId on gates.
     pub meas_ids: Vec<pecos_core::MeasId>,
 
-    /// Optional labels for non-detector DEM outputs.
-    /// Indices match the DEM-output indices in `influences`.
+    /// Optional labels for non-detector parity outputs.
+    /// Indices match the raw non-detector output indices in `influences`.
     pub dem_output_labels: Vec<Option<String>>,
 
     /// Optional metadata for non-detector outputs tracked by backward propagation.
     ///
-    /// These entries are PECOS tracked operators unless explicitly marked as
-    /// observables by a specialized builder. Standard DEM `L<n>` observables
-    /// should normally come from measurement-record metadata instead.
+    /// These entries may be standard observables or PECOS tracked operators.
+    /// The metadata kind is the authority for translating raw influence indices
+    /// into public namespaces; standard observables use compact `L<n>` IDs and
+    /// tracked operators use their own compact PECOS-only IDs.
     pub dem_output_metadata: Vec<DemOutputMetadata>,
 }
 
@@ -571,7 +602,7 @@ impl DagFaultInfluenceMap {
 
     /// Classifies a fault at the given location index.
     ///
-    /// Returns (`has_syndrome`, `flips_dem_output`).
+    /// Returns (`has_syndrome`, `flips_non_detector_output`).
     #[inline]
     #[must_use]
     pub fn classify_fault(&self, loc_idx: usize, pauli: u8) -> (bool, bool) {
@@ -585,7 +616,11 @@ impl DagFaultInfluenceMap {
         self.influences.detectors(loc_idx, Pauli::from_u8(pauli))
     }
 
-    /// Returns all non-detector DEM output indices flipped by a fault.
+    /// Returns all raw non-detector output indices flipped by a fault.
+    ///
+    /// Raw indices are an internal storage detail shared by observables and
+    /// tracked operators. Prefer [`Self::get_observable_indices`] or
+    /// [`Self::get_tracked_op_indices`] when a public namespace is needed.
     #[inline]
     #[must_use]
     pub fn get_dem_output_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {
@@ -593,6 +628,9 @@ impl DagFaultInfluenceMap {
     }
 
     /// Returns the number of standard DEM `L<n>` observable outputs.
+    ///
+    /// This is a DEM-output alias for [`Self::num_observables`]. It does
+    /// not include PECOS tracked operators.
     #[must_use]
     pub fn num_dem_outputs(&self) -> usize {
         if self.dem_output_metadata.is_empty() {
@@ -608,6 +646,18 @@ impl DagFaultInfluenceMap {
     #[must_use]
     pub fn num_observables(&self) -> usize {
         self.num_dem_outputs()
+    }
+
+    /// Returns the standard observable `L<n>` IDs present in this map.
+    ///
+    /// Tracked operators share internal propagation storage but never appear in
+    /// this set. Public decoder and sampler paths should use this namespace
+    /// rather than raw internal DEM-output indices.
+    #[must_use]
+    pub fn observable_ids(&self) -> BTreeSet<u32> {
+        (0..self.num_dem_outputs())
+            .filter_map(|idx| u32::try_from(idx).ok())
+            .collect()
     }
 
     /// Returns the number of PECOS tracked operators.
@@ -738,7 +788,7 @@ impl DagFaultInfluenceMap {
     /// The exported DEM-output arrays contain only standard observable `L<n>`
     /// outputs. PECOS tracked operators share the internal backward-propagation
     /// storage but are intentionally filtered out here so decoder-oriented GPU
-    /// code cannot count tracked probes as logical errors.
+    /// code cannot count tracked operators as logical errors.
     ///
     /// Returns all CSR arrays needed to construct a GPU influence sampler:
     /// (`num_locations`, `num_detectors`, `num_dem_outputs`,
@@ -836,12 +886,12 @@ impl DagFaultInfluenceMap {
     }
 }
 
-/// Role of a non-detector DEM output under backward Pauli propagation.
+/// Role of a non-detector output under backward Pauli propagation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DemOutputKind {
-    /// An observable DEM output.
+    /// A standard `L<n>` observable defined by measurement records.
     Observable,
-    /// A tracked operator annotation with no observable readout.
+    /// An unmeasured Pauli-operator annotation, separate from measurement records.
     TrackedOperator,
 }
 
@@ -866,16 +916,21 @@ impl DemOutputKind {
     }
 }
 
-/// Metadata for a PECOS non-detector DEM output.
+/// Metadata for a PECOS non-detector output.
 ///
-/// Stim-compatible DEM strings only have `L<n>` markers. PECOS keeps this
-/// richer record alongside the DEM so callers can tell whether a marker came
-/// from an observable or from a tracked Pauli operator annotation.
+/// Standard DEM text only has `L<n>` observable markers. PECOS keeps this richer
+/// record alongside the DEM so callers can distinguish those measurement-record
+/// observables from tracked Pauli operators, which live in a separate
+/// PECOS-only namespace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DemOutputMetadata {
     /// The output role.
     pub kind: DemOutputKind,
     /// Pauli string whose flip is tracked.
+    ///
+    /// For observables this is the Pauli associated with the measurement-record
+    /// observable. For tracked operators this is the unmeasured Pauli operator
+    /// annotated at a circuit point.
     pub pauli: PauliString,
     /// Optional user label.
     pub label: Option<String>,
@@ -1765,9 +1820,9 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// 1. Topological position (to respect causal dependencies)
     /// 2. Qubit index (to break ties for concurrent/independent measurements)
     ///
-    /// This ensures the measurement ordering matches Stim's convention where
-    /// measurements on lower-indexed qubits appear first when they're in the
-    /// same "layer" of the circuit.
+    /// This gives deterministic measurement ordering where measurements on
+    /// lower-indexed qubits appear first when they are in the same "layer" of
+    /// the circuit.
     #[must_use]
     /// Extract measurements with optional MeasId IDs.
     ///

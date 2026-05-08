@@ -238,7 +238,7 @@ impl ParsedDem {
 
     /// Parses a DEM from a string.
     ///
-    /// Supports both Stim and PECOS DEM formats.
+    /// Supports both standard and PECOS DEM formats.
     ///
     /// # Errors
     ///
@@ -399,7 +399,7 @@ impl ParsedDem {
     ///
     /// # Semantics
     ///
-    /// In Stim's DEM format, `error(p) A ^ B` means that when the error fires
+    /// In DEM syntax, `error(p) A ^ B` means that when the error fires
     /// (with probability p), ALL components (A and B) flip together. The `^`
     /// separator is used for error tracking/decomposition but doesn't create
     /// independent firing - all components fire together as a single error.
@@ -460,7 +460,7 @@ impl ParsedDem {
     ///
     /// # Note on decomposed errors
     ///
-    /// In Stim's DEM format, `error(p) D0 ^ D1` means that when the error fires
+    /// In DEM syntax, `error(p) D0 ^ D1` means that when the error fires
     /// (with probability p), BOTH D0 and D1 flip together. The `^` separator is
     /// used for error tracking/decomposition but doesn't affect sampling - all
     /// components fire together.
@@ -616,14 +616,11 @@ impl FromStr for ParsedDem {
                 }
                 Self::record_metadata(
                     &mut dem_outputs,
-                    DemOutput::new(id)
-                        .with_kind(crate::fault_tolerance::DemOutputKind::Observable),
+                    DemOutput::new(id).with_kind(crate::fault_tolerance::DemOutputKind::Observable),
                 );
             }
             // Parse PECOS DEM-superset metadata declarations.
-            else if line.starts_with("pecos_observable")
-                || line.starts_with("pecos_tracked_op")
-            {
+            else if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_op") {
                 let op = parse_pecos_dem_metadata_line(line)
                     .map_err(|err| DemParseError::InvalidPecosMetadata(err.to_string()))?;
                 if op.is_tracked_operator() {
@@ -636,7 +633,7 @@ impl FromStr for ParsedDem {
                     Self::record_metadata(&mut dem_outputs, op);
                 }
             }
-            // PECOS extensions are explicit; ordinary Stim lines remain valid,
+            // PECOS extensions are explicit; ordinary DEM lines remain valid,
             // but unknown PECOS extension statements should not be silently
             // accepted as historical aliases.
             else if line.starts_with("pecos_") {
@@ -1261,7 +1258,7 @@ error(0.02) D1 D2
 
     #[test]
     fn test_decomposed_equivalent_to_simple() {
-        // In Stim's DEM format, these should be equivalent for sampling:
+        // In DEM syntax, these should be equivalent for sampling:
         // - error(0.1) D0 D1: D0 and D1 flip together with p=0.1
         // - error(0.1) D0 ^ D1: D0 and D1 flip together with p=0.1 (^ is for decomposition tracking)
         let dem1 = ParsedDem::from_str("error(0.1) D0 D1").unwrap();

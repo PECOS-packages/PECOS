@@ -689,11 +689,11 @@ impl PyInfluenceBuilder {
 // Detector Error Model
 // =============================================================================
 
-/// A Detector Error Model (DEM) in Stim-compatible format.
+/// A Detector Error Model (DEM) in standard DEM text format.
 ///
 /// This represents the error model of a quantum circuit, mapping error
-/// mechanisms to their probabilities. It can be converted to Stim format
-/// for use with Stim-based decoders.
+/// mechanisms to their probabilities. It can be exported as DEM text for use
+/// with compatible decoders.
 ///
 /// # Example
 ///
@@ -991,8 +991,7 @@ impl PyDetectorErrorModel {
     /// Convert the DEM to a string in standard DEM format.
     ///
     /// Each error mechanism is output with its total probability, with no
-    /// splitting into decomposed forms. This matches Stim's
-    /// `detector_error_model(decompose_errors=False)` output.
+    /// splitting into decomposed forms.
     ///
     /// Returns:
     ///     A string in DEM format with one entry per mechanism.
@@ -1006,8 +1005,6 @@ impl PyDetectorErrorModel {
     /// For 2-detector mechanisms, outputs multiple equivalent representations
     /// including L0 cancellation forms where available. Hyperedge errors
     /// (affecting 3+ detectors) are decomposed into graphlike components.
-    ///
-    /// This matches Stim's `detector_error_model(decompose_errors=True)` output.
     ///
     /// Returns:
     ///     A string in DEM format with decomposed representations.
@@ -2704,7 +2701,7 @@ impl PySampleBatch {
     /// This runs entirely in Rust -- no per-shot Python crossing.
     ///
     /// Args:
-    ///     dem: DEM string (Stim format) for the decoder.
+    ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `decoder_type`: "pymatching", "tesseract", "`bp_osd`", "`bp_lsd`", "`union_find`",
     ///                   "`relay_bp`", or "`min_sum_bp`".
     ///
@@ -3130,7 +3127,7 @@ impl PyDemSampler {
         }
     }
 
-    /// Create a sampler from a Stim-format DEM string.
+    /// Create a sampler from a standard DEM-format string.
     ///
     /// Parses `error(p) D0 D3 L0` lines and builds a sampling engine.
     /// Useful for sampling from DEMs produced by EEG analysis.
@@ -3416,8 +3413,8 @@ impl PyDemSampler {
 
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
         let stats = self.inner.sample_statistics(num_shots, actual_seed);
-        let observable_indices = self.inner.observable_dem_output_indices();
-        let tracked_op_indices = self.inner.tracked_operator_dem_output_indices();
+        let observable_indices = self.inner.observable_ids();
+        let tracked_op_indices = self.inner.tracked_operator_ids();
         let per_observable = stats.observable_counts(&observable_indices);
         let per_tracked_op: Vec<usize> = tracked_op_indices
             .iter()
@@ -3476,7 +3473,7 @@ impl PyDemSampler {
     /// are counted, all in Rust.
     ///
     /// Args:
-    ///     dem: DEM string (Stim format) for the decoder.
+    ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `num_shots`: Number of shots to sample and decode.
     ///     `decoder_type`: "pymatching" or "tesseract".
     ///     seed: Optional random seed for reproducibility.
@@ -3521,7 +3518,7 @@ impl PyDemSampler {
     /// Much faster for slow decoders (Tesseract) where decode time dominates.
     ///
     /// Args:
-    ///     dem: DEM string (Stim format) for the decoder.
+    ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `num_shots`: Number of shots to sample and decode.
     ///     `decoder_type`: "pymatching", "tesseract", "`bp_osd`", "`bp_lsd`", or "`union_find`".
     ///     seed: Optional base random seed. Each thread gets seed + `thread_id`.
@@ -3853,7 +3850,7 @@ impl PyEquivalenceResult {
 
 /// A parsed Detector Error Model.
 ///
-/// Parses DEM strings in Stim/PECOS format and provides methods for
+/// Parses standard and PECOS DEM strings and provides methods for
 /// aggregation and sampling.
 ///
 /// # Example
@@ -3875,7 +3872,7 @@ impl PyParsedDem {
     /// Parse a DEM from a string.
     ///
     /// Args:
-    ///     `dem_str`: DEM string in Stim/PECOS format.
+    ///     `dem_str`: DEM string in standard or PECOS DEM text format.
     ///
     /// Returns:
     ///     `ParsedDem` object.
@@ -4321,7 +4318,7 @@ impl PyCssUfDecoder {
 /// stabilizer coordinate information, then decodes each independently.
 ///
 /// Args:
-///     dem: DEM string in Stim format with detector coordinate declarations.
+///     dem: DEM string with detector coordinate declarations.
 ///     `stab_coords`: List of dicts, one per logical qubit. Each dict has
 ///         keys "X" and "Z" mapping to lists of (x, y) ancilla coordinates.
 ///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:fast`").
@@ -5460,7 +5457,7 @@ fn fit_dem_to_marginals(
     (result, residuals)
 }
 
-/// Format DEM mechanisms as a Stim DEM string.
+/// Format DEM mechanisms as a standard DEM string.
 #[pyfunction]
 fn mechanisms_to_dem_string(mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>) -> String {
     use pecos_qec::fault_tolerance::correlation::{

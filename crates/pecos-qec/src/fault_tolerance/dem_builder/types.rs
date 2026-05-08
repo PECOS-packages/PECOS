@@ -17,23 +17,32 @@
 //!
 //! # Terminology
 //!
-//! Stim DEM syntax calls `L<n>` entries logical observables. PECOS keeps that
-//! namespace reserved for measurement-record observables only. Tracked Pauli
-//! operators are PECOS metadata with their own ID space so decoders can ignore
-//! them while PECOS tools can still inspect them.
+//! - **Detectors** are syndrome bits defined by measurement-record parity.
+//! - **Observables** are values observed through measurements. In a DEM they are
+//!   defined by measurement records and rendered as standard `L<n>` observable
+//!   outputs.
+//! - **Tracked operators** are not measured values and are not applied to the
+//!   simulated computation. They are Pauli operators annotated at a circuit point
+//!   (for example a logical operator, stabilizer, or other Pauli of interest);
+//!   PECOS reports whether each fault event anticommutes with, and therefore
+//!   would flip, that operator under propagation.
+//!
+//! PECOS keeps the standard `L<n>` namespace reserved for measurement-record
+//! observables only. Tracked Pauli operators are PECOS metadata with their own
+//! ID space, so decoders can ignore them while PECOS tools can still inspect
+//! them.
 //!
 //! # Output Formats
 //!
 //! The DEM supports two output formats:
 //!
-//! - [`DetectorErrorModel::to_string()`] - Non-decomposed format matching Stim's
-//!   `decompose_errors=False` output. Each mechanism is output once with its
-//!   combined probability.
+//! - [`DetectorErrorModel::to_string()`] - Non-decomposed format. Each
+//!   mechanism is output once with its combined probability.
 //!
-//! - [`DetectorErrorModel::to_string_decomposed()`] - Decomposed format matching
-//!   Stim's `decompose_errors=True` output. Hyperedge errors (3+ detectors) are
-//!   decomposed into graphlike components, and 2-detector mechanisms may have
-//!   multiple representations for decoder compatibility.
+//! - [`DetectorErrorModel::to_string_decomposed()`] - Decomposed format.
+//!   Hyperedge errors (3+ detectors) are decomposed into graphlike components,
+//!   and 2-detector mechanisms may have multiple representations for decoder
+//!   compatibility.
 //!
 //! Decomposed errors use the `^` separator to indicate XOR composition:
 //!
@@ -512,8 +521,7 @@ pub struct FaultMechanism {
     pub detectors: SmallVec<[u32; 4]>,
     /// DEM `L<n>` target indices that flip together (sorted).
     ///
-    /// The field name follows Stim's DEM-output terminology.
-    /// New code should treat these as `L<n>` target output channels.
+    /// New code should treat these as standard observable `L<n>` output channels.
     pub dem_outputs: SmallVec<[u32; 2]>,
 }
 
@@ -802,19 +810,18 @@ impl DecomposedFault {
 /// # Algorithm
 ///
 /// Uses a detector-driven recursive search over graphlike components whose
-/// detector sets are subsets of the hyperedge. This is closer to Stim's
-/// decomposition strategy than the older fixed-width 2-part/3-part search,
-/// and it allows decompositions into 4+ graphlike pieces when needed.
+/// detector sets are subsets of the hyperedge. This is more general than the
+/// older fixed-width 2-part/3-part search, and it allows decompositions into 4+
+/// graphlike pieces when needed.
 ///
 /// Decompositions are filtered to only include components whose detectors are
-/// subsets of the original hyperedge's detectors, matching Stim's behavior of
-/// not introducing extra detector symptoms.
+/// subsets of the original hyperedge's detectors, so decomposition does not
+/// introduce extra detector symptoms.
 ///
 /// # Selection
 ///
 /// The search returns the first valid decomposition found using a deterministic
-/// ordering that prefers detector pairs before singlets, similar to Stim's
-/// decompose pass over known graphlike symptoms.
+/// ordering that prefers detector pairs before singlets.
 #[cfg(test)]
 fn find_hyperedge_decomposition(
     hyperedge: &FaultMechanism,
@@ -1089,7 +1096,7 @@ fn convert_location_indices(location_indices: &[usize]) -> SmallVec<[u32; 2]> {
         .collect()
 }
 
-/// Converts a measurement record offset (Stim-style) to an absolute measurement index.
+/// Converts a DEM measurement-record offset to an absolute measurement index.
 ///
 /// Negative offsets count backward from the end of the measurement record
 /// (`-1` is the last measurement). Positive offsets are treated as absolute
@@ -1162,11 +1169,12 @@ impl DetectorDef {
 // DEM Outputs
 // ============================================================================
 
-/// Metadata for a PECOS non-detector output.
+/// Metadata for a non-detector output definition.
 ///
-/// Observables are rendered as standard Stim `L<n>` targets. Tracked operators
+/// Observables are rendered as standard `L<n>` targets. Tracked operators
 /// use the same metadata shape but live in a separate PECOS-only ID space and
-/// are never rendered as `L<n>`.
+/// are never rendered as `L<n>` because they are unmeasured Pauli-operator
+/// annotations, not measurement-record observables.
 #[derive(Debug, Clone)]
 pub struct DemOutput {
     /// Unique ID within this output's ID space.
@@ -1211,7 +1219,10 @@ impl DemOutput {
     /// Sets the measurement records.
     #[must_use]
     pub fn with_records(mut self, records: impl IntoIterator<Item = i32>) -> Self {
-        self.records = records.into_iter().collect();
+        self.records.clear();
+        for record in records {
+            toggle_dem_output_record(&mut self.records, record);
+        }
         self.kind.get_or_insert(DemOutputKind::Observable);
         self
     }
@@ -1258,6 +1269,23 @@ impl DemOutput {
             Some(DemOutputKind::Observable) => false,
             None => self.pauli.is_some() && self.records.is_empty(),
         }
+    }
+}
+
+fn merge_record_parity(existing: &mut SmallVec<[i32; 4]>, incoming: SmallVec<[i32; 4]>) {
+    for record in incoming {
+        toggle_dem_output_record(existing, record);
+    }
+}
+
+fn toggle_dem_output_record(records: &mut SmallVec<[i32; 4]>, record: i32) {
+    if let Some(pos) = records
+        .iter()
+        .position(|&existing_record| existing_record == record)
+    {
+        records.remove(pos);
+    } else {
+        records.push(record);
     }
 }
 
@@ -1700,11 +1728,11 @@ pub(crate) fn parse_pecos_dem_metadata_line(
                 payload.trim(),
                 Some(DemOutputKind::Observable),
             )
-    } else {
-        return Err(PecosDemMetadataError::new(
-            "missing PECOS DEM metadata prefix",
-        ));
-    };
+        } else {
+            return Err(PecosDemMetadataError::new(
+                "missing PECOS DEM metadata prefix",
+            ));
+        };
     if payload.is_empty() {
         return Err(PecosDemMetadataError::new(format!(
             "{prefix} is missing its JSON payload"
@@ -1751,30 +1779,29 @@ fn parse_pecos_metadata_json(json: &str) -> Result<ParsedPecosDemMetadata, Pecos
         )));
     }
 
-    let parse_array = |name: &str,
-                       kind: DemOutputKind|
-     -> Result<Vec<DemOutput>, PecosDemMetadataError> {
-        let Some(values) = root.get(name) else {
-            return Ok(Vec::new());
+    let parse_array =
+        |name: &str, kind: DemOutputKind| -> Result<Vec<DemOutput>, PecosDemMetadataError> {
+            let Some(values) = root.get(name) else {
+                return Ok(Vec::new());
+            };
+            let values = values.as_array().ok_or_else(|| {
+                PecosDemMetadataError::new(format!("{name} metadata is not an array"))
+            })?;
+            values
+                .iter()
+                .enumerate()
+                .map(|(idx, value)| {
+                    let mut output = parse_pecos_metadata_dem_output(idx, value)?;
+                    output.kind = Some(kind);
+                    if kind == DemOutputKind::TrackedOperator && !output.records.is_empty() {
+                        return Err(PecosDemMetadataError::new(format!(
+                            "tracked operator metadata {idx} cannot have measurement records"
+                        )));
+                    }
+                    Ok(output)
+                })
+                .collect()
         };
-        let values = values.as_array().ok_or_else(|| {
-            PecosDemMetadataError::new(format!("{name} metadata is not an array"))
-        })?;
-        values
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| {
-                let mut output = parse_pecos_metadata_dem_output(idx, value)?;
-                output.kind = Some(kind);
-                if kind == DemOutputKind::TrackedOperator && !output.records.is_empty() {
-                    return Err(PecosDemMetadataError::new(format!(
-                        "tracked operator metadata {idx} cannot have measurement records"
-                    )));
-                }
-                Ok(output)
-            })
-            .collect()
-    };
 
     let parsed = ParsedPecosDemMetadata {
         observables: parse_array("observables", DemOutputKind::Observable)?,
@@ -1928,7 +1955,7 @@ fn parse_pecos_metadata_dem_output(
 pub struct DetectorErrorModel {
     /// Detector definitions.
     pub detectors: Vec<DetectorDef>,
-    /// Measurement-record observables rendered as standard Stim `L<n>` outputs.
+    /// Measurement-record observables rendered as standard `L<n>` outputs.
     pub observables: Vec<DemOutput>,
     /// PECOS tracked Pauli operators.
     ///
@@ -1959,10 +1986,10 @@ impl DetectorErrorModel {
 
     /// Creates a DEM with pre-allocated capacity.
     #[must_use]
-    pub fn with_capacity(num_detectors: usize, num_dem_outputs: usize) -> Self {
+    pub fn with_capacity(num_detectors: usize, num_observables: usize) -> Self {
         Self {
             detectors: Vec::with_capacity(num_detectors),
-            observables: Vec::with_capacity(num_dem_outputs),
+            observables: Vec::with_capacity(num_observables),
             tracked_ops: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
@@ -1987,7 +2014,10 @@ impl DetectorErrorModel {
             .unwrap_or(0)
     }
 
-    /// Returns the number of standard DEM `L<n>` outputs.
+    /// Returns the number of standard DEM `L<n>` observable outputs.
+    ///
+    /// This is a DEM-output alias for [`Self::num_observables`]. It does
+    /// not include PECOS tracked operators.
     #[inline]
     #[must_use]
     pub fn num_dem_outputs(&self) -> usize {
@@ -2006,6 +2036,9 @@ impl DetectorErrorModel {
     }
 
     /// Returns standard DEM output definitions (`L<n>` observables).
+    ///
+    /// This DEM-output accessor does not include PECOS tracked operators;
+    /// use [`Self::tracked_ops`] for those.
     #[inline]
     #[must_use]
     pub fn dem_outputs(&self) -> &[DemOutput] {
@@ -2013,6 +2046,8 @@ impl DetectorErrorModel {
     }
 
     /// Returns mutable standard DEM output definitions (`L<n>` observables).
+    ///
+    /// This DEM-output accessor does not include PECOS tracked operators.
     #[inline]
     #[must_use]
     pub fn dem_outputs_mut(&mut self) -> &mut [DemOutput] {
@@ -2043,8 +2078,7 @@ impl DetectorErrorModel {
         self.contributions.len()
     }
 
-    /// Exports PECOS-only metadata that is not representable in standard Stim
-    /// DEM syntax.
+    /// Exports PECOS-only metadata that is not representable in standard DEM syntax.
     ///
     /// The standard DEM string remains decoder-compatible and uses ordinary
     /// `logical_observable L<n>` declarations. This JSON form preserves the
@@ -2113,27 +2147,19 @@ impl DetectorErrorModel {
     #[must_use]
     pub fn to_pecos_string(&self) -> String {
         let mut text = self.to_string();
-        let observable_lines = self
-            .observables
-            .iter()
-            .map(|observable| {
-                let value = pecos_metadata_dem_output_value(observable);
-                let payload = serde_json::to_string(&value)
-                    .expect("serializing PECOS observable metadata should not fail");
-                format!("pecos_observable {payload}")
-            });
-        let tracked_op_lines = self
-            .tracked_ops
-            .iter()
-            .map(|tracked_op| {
-                let value = pecos_metadata_dem_output_value(tracked_op);
-                let payload = serde_json::to_string(&value)
-                    .expect("serializing PECOS tracked-op metadata should not fail");
-                format!("pecos_tracked_op {payload}")
-            });
-        let metadata_lines: Vec<String> = observable_lines
-            .chain(tracked_op_lines)
-            .collect();
+        let observable_lines = self.observables.iter().map(|observable| {
+            let value = pecos_metadata_dem_output_value(observable);
+            let payload = serde_json::to_string(&value)
+                .expect("serializing PECOS observable metadata should not fail");
+            format!("pecos_observable {payload}")
+        });
+        let tracked_op_lines = self.tracked_ops.iter().map(|tracked_op| {
+            let value = pecos_metadata_dem_output_value(tracked_op);
+            let payload = serde_json::to_string(&value)
+                .expect("serializing PECOS tracked-op metadata should not fail");
+            format!("pecos_tracked_op {payload}")
+        });
+        let metadata_lines: Vec<String> = observable_lines.chain(tracked_op_lines).collect();
 
         if metadata_lines.is_empty() {
             return text;
@@ -2147,7 +2173,7 @@ impl DetectorErrorModel {
 
     /// Applies PECOS metadata embedded in extended DEM text.
     ///
-    /// Stim-compatible lines are ignored by this method. PECOS extension lines
+    /// Standard DEM lines are ignored by this method. PECOS extension lines
     /// are parsed and merged into the observable/tracked-op definitions.
     ///
     /// # Errors
@@ -2162,9 +2188,7 @@ impl DetectorErrorModel {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            if line.starts_with("pecos_observable")
-                || line.starts_with("pecos_tracked_op")
-            {
+            if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_op") {
                 self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(line)?);
             } else if line.starts_with("pecos_") {
                 return Err(PecosDemMetadataError::new(format!(
@@ -2645,8 +2669,8 @@ impl DetectorErrorModel {
         }
 
         // Y-containing channels are always classified as YDecomposed for source
-        // tracking purposes. This matches Stim's behavior where Y channels
-        // contribute to decomposed output forms regardless of component structure.
+        // tracking purposes so they can contribute to decomposed output forms
+        // regardless of component structure.
         //
         // The combined effect is X XOR Z. When one is empty, the combined effect
         // is just the non-empty one.
@@ -2794,10 +2818,47 @@ impl DetectorErrorModel {
         }
     }
 
-    /// Adds a standard Stim observable (`L<n>`) definition.
+    /// Adds a standard DEM observable (`L<n>`) definition.
     pub fn add_observable(&mut self, mut observable: DemOutput) {
-        observable.kind.get_or_insert(DemOutputKind::Observable);
+        observable.kind = Some(DemOutputKind::Observable);
+        if let Some(existing) = self
+            .observables
+            .iter_mut()
+            .find(|existing| existing.id == observable.id)
+        {
+            Self::merge_observable_definition(existing, observable);
+            return;
+        }
         self.observables.push(observable);
+    }
+
+    fn merge_observable_definition(existing: &mut DemOutput, incoming: DemOutput) {
+        existing.kind = Some(DemOutputKind::Observable);
+        merge_record_parity(&mut existing.records, incoming.records);
+
+        if let Some(incoming_pauli) = incoming.pauli {
+            if let Some(existing_pauli) = &existing.pauli {
+                debug_assert_eq!(
+                    existing_pauli, &incoming_pauli,
+                    "conflicting Pauli metadata for observable L{}",
+                    existing.id
+                );
+            } else {
+                existing.pauli = Some(incoming_pauli);
+            }
+        }
+
+        if let Some(incoming_label) = incoming.label {
+            if let Some(existing_label) = &existing.label {
+                debug_assert_eq!(
+                    existing_label, &incoming_label,
+                    "conflicting labels for observable L{}",
+                    existing.id
+                );
+            } else {
+                existing.label = Some(incoming_label);
+            }
+        }
     }
 
     /// Adds a PECOS tracked operator definition.
@@ -2809,8 +2870,7 @@ impl DetectorErrorModel {
     /// Converts the DEM to a string in standard DEM format.
     ///
     /// Each fault mechanism is output with its total probability, with no
-    /// splitting into decomposed forms. This matches Stim's
-    /// `detector_error_model(decompose_errors=False)` output.
+    /// splitting into decomposed forms.
     ///
     /// Requires source tracking to be enabled and contributions to be populated.
     /// Use `build_with_source_tracking()` to create a DEM with contributions.
@@ -3124,9 +3184,8 @@ impl DetectorErrorModel {
         .0
     }
 
-    /// Converts the DEM to Stim format using source tracking (decomposed format).
+    /// Converts the DEM to decomposed text using source tracking.
     ///
-    /// This matches Stim's `detector_error_model(decompose_errors=True)` output.
     /// Fault mechanisms are split into direct and decomposed forms based on
     /// their source types (X/Z vs Y errors).
     ///
@@ -3187,8 +3246,8 @@ impl DetectorErrorModel {
         };
 
         // Process each tracked contribution individually, then regroup identical
-        // decomposed outputs. This is closer to Stim's decomposition pass, which
-        // rewrites each error class before merging identical rewritten targets.
+        // decomposed outputs. Rewriting each error class before merging keeps
+        // source-aware decompositions stable.
         for contrib in &self.contributions {
             if contrib.effect.is_empty() || contrib.probability <= 0.0 {
                 continue;
@@ -3452,6 +3511,59 @@ mod tests {
     }
 
     #[test]
+    fn test_duplicate_observable_definitions_merge_records_by_parity() {
+        use pecos_core::pauli::constructors::X;
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_observable(
+            DemOutput::new(0)
+                .with_records([-1, -2])
+                .with_pauli(X(0))
+                .with_label("logical_z"),
+        );
+        dem.add_observable(
+            DemOutput::new(0)
+                .with_records([-2, -3])
+                .with_pauli(X(0))
+                .with_label("logical_z"),
+        );
+
+        assert_eq!(dem.num_observables(), 1);
+        let observable = &dem.dem_outputs()[0];
+        assert_eq!(observable.records.as_slice(), &[-1, -3]);
+        assert_eq!(observable.pauli.as_ref().unwrap().to_sparse_str(), "+X0");
+        assert_eq!(observable.label.as_deref(), Some("logical_z"));
+    }
+
+    #[test]
+    fn test_observable_records_are_stored_by_xor_parity() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_observable(DemOutput::new(0).with_records([-1, -2, -1, -3]));
+
+        assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-2, -3]);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "conflicting labels for observable L0")]
+    fn test_duplicate_observable_definitions_reject_conflicting_labels() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_observable(DemOutput::new(0).with_label("first"));
+        dem.add_observable(DemOutput::new(0).with_label("second"));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "conflicting Pauli metadata for observable L0")]
+    fn test_duplicate_observable_definitions_reject_conflicting_paulis() {
+        use pecos_core::pauli::constructors::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_observable(DemOutput::new(0).with_pauli(X(0)));
+        dem.add_observable(DemOutput::new(0).with_pauli(Z(0)));
+    }
+
+    #[test]
     fn test_dem_output_kind_predicates_are_mutually_exclusive() {
         use pecos_core::pauli::constructors::X;
 
@@ -3493,7 +3605,10 @@ mod tests {
         assert_eq!(recovered.num_dem_outputs(), 1);
         assert_eq!(recovered.num_tracked_ops(), 0);
         assert_eq!(recovered.dem_outputs()[0].id, 0);
-        assert_eq!(recovered.dem_outputs()[0].kind, Some(DemOutputKind::Observable));
+        assert_eq!(
+            recovered.dem_outputs()[0].kind,
+            Some(DemOutputKind::Observable)
+        );
     }
 
     #[test]
@@ -3683,7 +3798,7 @@ mod tests {
             DemOutput::new(0)
                 .with_kind(DemOutputKind::TrackedOperator)
                 .with_pauli(Z(3))
-                .with_label("probe_z3"),
+                .with_label("tracked_z3"),
         );
         dem.add_direct_contribution(FaultMechanism::from_unsorted([0], [0]), 0.01);
         dem.add_direct_contribution(FaultMechanism::from_unsorted([], [1]), 0.02);
@@ -3705,7 +3820,11 @@ mod tests {
         assert_eq!(recovered.num_dem_outputs(), 2);
         assert_eq!(recovered.num_tracked_ops(), 1);
         assert_eq!(
-            recovered.dem_outputs().iter().map(|op| op.id).collect::<Vec<_>>(),
+            recovered
+                .dem_outputs()
+                .iter()
+                .map(|op| op.id)
+                .collect::<Vec<_>>(),
             [0, 1]
         );
         assert_eq!(
@@ -3717,12 +3836,16 @@ mod tests {
             [0]
         );
         assert_eq!(
-            recovered.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            recovered.tracked_ops()[0]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
             "+Z3"
         );
         assert_eq!(
             recovered.tracked_ops()[0].label.as_deref(),
-            Some("probe_z3")
+            Some("tracked_z3")
         );
     }
 

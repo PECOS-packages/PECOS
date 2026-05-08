@@ -36,10 +36,10 @@ use pecos_core::pauli::pauli_string::PauliString;
 use pecos_core::{Pauli, QubitId};
 use pecos_quantum::{AnnotationKind, TickCircuit};
 use pecos_random::{PecosRng, RngExt};
+use pecos_simulators::CliffordGateable;
 use pecos_simulators::measurement_sampler::{MeasurementKind, SampleResult};
 use pecos_simulators::pauli_prop::PauliProp;
 use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
-use pecos_simulators::CliffordGateable;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
@@ -2625,7 +2625,7 @@ mod tests {
     fn test_catalog_keeps_observables_and_tracked_ops_distinct() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
-        tc.pauli_operator_labeled("z_probe", PauliString::z(0));
+        tc.pauli_operator_labeled("tracked_z0", PauliString::z(0));
         tc.set_meta(
             "detectors",
             pecos_quantum::Attribute::String("[]".to_string()),
@@ -2673,10 +2673,12 @@ mod tests {
         assert_eq!(z_fault.affected_tracked_ops, Vec::<usize>::new());
 
         let configs: Vec<_> = catalog.fault_configurations(1).collect();
-        assert!(configs
-            .iter()
-            .any(|config| config.affected_tracked_ops.as_slice() == [0]
-                && config.affected_observables.is_empty()));
+        assert!(
+            configs
+                .iter()
+                .any(|config| config.affected_tracked_ops.as_slice() == [0]
+                    && config.affected_observables.is_empty())
+        );
     }
 
     #[test]

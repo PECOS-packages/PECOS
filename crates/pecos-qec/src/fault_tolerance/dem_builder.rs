@@ -12,9 +12,8 @@
 
 //! Detector Error Model (DEM) generation from fault influence maps.
 //!
-//! This module provides Rust-native DEM generation that produces output
-//! compatible with Stim's format. It uses the per-qubit fault model for
-//! accurate depolarizing noise analysis.
+//! This module provides Rust-native DEM generation in standard DEM text format.
+//! It uses the per-qubit fault model for accurate depolarizing noise analysis.
 //!
 //! # Architecture
 //!
@@ -39,7 +38,7 @@
 //!     .with_observables_json("[]")?
 //!     .build();
 //!
-//! // Output in Stim format (non-decomposed).
+//! // Output in standard DEM format (non-decomposed).
 //! let _ = dem.to_string();
 //! # Ok(())
 //! # }
@@ -47,7 +46,7 @@
 //!
 //! # Error Decomposition
 //!
-//! When using `to_stim_format_decomposed()`, hyperedge errors (affecting 3+
+//! When using decomposed DEM output, hyperedge errors (affecting 3+
 //! detectors) are decomposed into combinations of graphlike errors (affecting
 //! 1-2 detectors). This is necessary for MWPM decoders which only work on
 //! graphs, not hypergraphs.

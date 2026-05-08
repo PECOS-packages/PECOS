@@ -391,7 +391,7 @@ pub fn fit_dem_to_marginals(
     (fitted, residuals)
 }
 
-/// Format fitted mechanisms as a Stim DEM string.
+/// Format fitted mechanisms as a standard DEM string.
 pub fn mechanisms_to_dem_string(mechanisms: &[DemMechanism]) -> String {
     let mut lines = Vec::new();
     for mech in mechanisms {

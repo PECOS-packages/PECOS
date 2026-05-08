@@ -44,8 +44,8 @@ use std::collections::BTreeMap;
 pub struct LookupDecoder {
     /// Syndrome -> most likely observable flip pattern.
     table: BTreeMap<Vec<u32>, Vec<bool>>,
-    /// DEM output IDs classified as observables.
-    observable_dem_outputs: Vec<u32>,
+    /// Standard observable `L<n>` IDs in correction-vector order.
+    observable_ids: Vec<u32>,
     /// Maximum fault weight enumerated.
     max_weight: usize,
     /// Total probability mass accounted for (weight 0 through `max_weight`).
@@ -72,8 +72,8 @@ impl LookupDecoder {
     /// 1-qubit, p/15 for 2-qubit). Idle gates with T1/T2 use biased noise.
     #[must_use]
     pub fn build(map: &DagFaultInfluenceMap, noise: &NoiseConfig, max_weight: usize) -> Self {
-        let observable_dem_outputs = observable_dem_output_indices(map);
-        let num_observables = observable_dem_outputs.len();
+        let observable_ids = observable_ids(map);
+        let num_observables = observable_ids.len();
 
         let loc_probs = compute_location_probs(&map.locations, noise);
         let locs = map.gate_fault_locations();
@@ -167,7 +167,11 @@ impl LookupDecoder {
                     EventData {
                         prob: ratio,
                         detectors: event.detectors,
-                        dem_outputs: event.dem_outputs,
+                        observable_ids: event
+                            .dem_outputs
+                            .iter()
+                            .filter_map(|&idx| map.observable_id_for_internal_dem_output(idx))
+                            .collect(),
                     }
                 })
                 .collect();
@@ -175,6 +179,11 @@ impl LookupDecoder {
             loc_no_fault_probs.push(no_fault);
             loc_events.push(event_data);
         }
+
+        // Accumulate syndrome probabilities separately from per-observable
+        // correction weights. This keeps probability accounting well-defined
+        // even for detector-only maps with zero observables.
+        let mut syndrome_probabilities: BTreeMap<Vec<u32>, f64> = BTreeMap::new();
 
         // Accumulate: syndrome -> per-observable (flip_prob, noflip_prob)
         let mut syndrome_data: BTreeMap<Vec<u32>, Vec<(f64, f64)>> = BTreeMap::new();
@@ -184,6 +193,7 @@ impl LookupDecoder {
 
         // Weight 0: no faults. Empty syndrome, no observable flips.
         {
+            syndrome_probabilities.insert(Vec::new(), base_prob);
             let entry = syndrome_data
                 .entry(Vec::new())
                 .or_insert_with(|| vec![(0.0, 0.0); num_observables]);
@@ -198,7 +208,7 @@ impl LookupDecoder {
         let combo_state = ComboState {
             prob: base_prob,
             detectors: Vec::new(),
-            dem_outputs: Vec::new(),
+            observable_ids: Vec::new(),
         };
 
         for weight in 1..=max_weight {
@@ -207,18 +217,13 @@ impl LookupDecoder {
                 weight,
                 0,
                 &combo_state,
-                &observable_dem_outputs,
+                &observable_ids,
+                &mut syndrome_probabilities,
                 &mut syndrome_data,
             );
         }
 
-        // Compute total accounted probability.
-        // For each syndrome, the total probability is flip + noflip for any single
-        // observable channel (they all see the same total probability for that syndrome).
-        let accounted_probability: f64 = syndrome_data
-            .values()
-            .map(|weights| weights.first().map_or(0.0, |&(f, nf)| f + nf))
-            .sum();
+        let accounted_probability: f64 = syndrome_probabilities.values().sum();
 
         // Build ML decision table
         let table = syndrome_data
@@ -234,7 +239,7 @@ impl LookupDecoder {
 
         Self {
             table,
-            observable_dem_outputs,
+            observable_ids,
             max_weight,
             accounted_probability,
         }
@@ -255,7 +260,7 @@ impl LookupDecoder {
             }
         } else {
             DecoderResult {
-                corrections: vec![false; self.observable_dem_outputs.len()],
+                corrections: vec![false; self.observable_ids.len()],
                 known_syndrome: false,
                 detected,
             }
@@ -295,13 +300,13 @@ impl LookupDecoder {
     /// Number of observable channels.
     #[must_use]
     pub fn num_observables(&self) -> usize {
-        self.observable_dem_outputs.len()
+        self.observable_ids.len()
     }
 
-    /// DEM output IDs classified as observables, in correction-vector order.
+    /// Standard observable `L<n>` IDs in correction-vector order.
     #[must_use]
-    pub fn observable_dem_output_indices(&self) -> &[u32] {
-        &self.observable_dem_outputs
+    pub fn observable_ids(&self) -> &[u32] {
+        &self.observable_ids
     }
 
     /// Estimated upper bound on the probability mass NOT accounted for
@@ -331,27 +336,27 @@ impl LookupDecoder {
 struct EventData {
     prob: f64,
     detectors: Vec<u32>,
-    dem_outputs: Vec<u32>,
+    observable_ids: Vec<u32>,
 }
 
 #[derive(Clone)]
 struct ComboState {
     prob: f64,
     detectors: Vec<u32>,
-    dem_outputs: Vec<u32>,
+    observable_ids: Vec<u32>,
 }
 
 impl ComboState {
-    /// Compose with a new event: XOR detectors/DEM outputs, multiply prob.
+    /// Compose with a new event: XOR detectors/observable IDs, multiply prob.
     fn compose(&self, event: &EventData) -> Self {
         let mut detectors = self.detectors.clone();
         xor_into(&mut detectors, &event.detectors);
-        let mut dem_outputs = self.dem_outputs.clone();
-        xor_into(&mut dem_outputs, &event.dem_outputs);
+        let mut observable_ids = self.observable_ids.clone();
+        xor_into(&mut observable_ids, &event.observable_ids);
         Self {
             prob: self.prob * event.prob,
             detectors,
-            dem_outputs,
+            observable_ids,
         }
     }
 }
@@ -394,19 +399,24 @@ fn enumerate_combos(
     remaining: usize,
     start_loc: usize,
     state: &ComboState,
-    observable_dem_outputs: &[u32],
+    observable_ids: &[u32],
+    syndrome_probabilities: &mut BTreeMap<Vec<u32>, f64>,
     syndrome_data: &mut BTreeMap<Vec<u32>, Vec<(f64, f64)>>,
 ) {
     if remaining == 0 {
         let mut syndrome = state.detectors.clone();
         syndrome.sort_unstable();
 
+        *syndrome_probabilities
+            .entry(syndrome.clone())
+            .or_insert(0.0) += state.prob;
+
         let entry = syndrome_data
             .entry(syndrome)
-            .or_insert_with(|| vec![(0.0, 0.0); observable_dem_outputs.len()]);
+            .or_insert_with(|| vec![(0.0, 0.0); observable_ids.len()]);
 
-        for (&observable_id, weights) in observable_dem_outputs.iter().zip(entry.iter_mut()) {
-            let flipped = state.dem_outputs.contains(&observable_id);
+        for (&observable_id, weights) in observable_ids.iter().zip(entry.iter_mut()) {
+            let flipped = state.observable_ids.contains(&observable_id);
             if flipped {
                 weights.0 += state.prob;
             } else {
@@ -424,7 +434,8 @@ fn enumerate_combos(
                 remaining - 1,
                 loc_idx + 1,
                 &next_state,
-                observable_dem_outputs,
+                observable_ids,
+                syndrome_probabilities,
                 syndrome_data,
             );
         }
@@ -454,18 +465,49 @@ fn gate_location_prob(
     0.0
 }
 
-fn observable_dem_output_indices(map: &DagFaultInfluenceMap) -> Vec<u32> {
-    let num_dem_outputs = map.influences.max_dem_output_index().map_or(0, |i| i + 1);
-    if map.dem_output_metadata.is_empty() {
-        return (0..num_dem_outputs as u32).collect();
+fn observable_ids(map: &DagFaultInfluenceMap) -> Vec<u32> {
+    map.observable_ids().into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fault_tolerance::InfluenceBuilder;
+    use pecos_core::pauli::constructors::X;
+    use pecos_quantum::DagCircuit;
+
+    #[test]
+    fn observable_indices_use_compact_l_namespace_with_tracked_ops() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.pauli_operator_labeled("track_x", X(0));
+        let meas = dag.mz(&[0]);
+        dag.observable_labeled("obs0", &[meas[0]]);
+
+        let map = InfluenceBuilder::new(&dag)
+            .with_circuit_annotations(&dag)
+            .build();
+        assert_eq!(map.num_tracked_ops(), 1);
+        assert_eq!(map.num_observables(), 1);
+
+        let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 1);
+        assert_eq!(decoder.observable_ids(), &[0]);
     }
 
-    map.dem_output_metadata
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, metadata)| {
-            (idx < num_dem_outputs && metadata.kind == super::propagator::DemOutputKind::Observable)
-                .then_some(idx as u32)
-        })
-        .collect()
+    #[test]
+    fn detector_only_decoder_accounts_probability_without_observables() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        dag.cx(&[(0, 1)]);
+        let meas = dag.mz(&[1]);
+        dag.detector(&[meas[0]]);
+
+        let map = InfluenceBuilder::new(&dag).build();
+        assert_eq!(map.num_observables(), 0);
+
+        let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 0);
+        assert_eq!(decoder.num_observables(), 0);
+        assert!(decoder.accounted_probability() > 0.0);
+        assert!(decoder.truncation_bound() < 1.0);
+    }
 }

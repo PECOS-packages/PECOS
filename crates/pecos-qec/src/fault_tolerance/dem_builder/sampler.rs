@@ -201,11 +201,20 @@ fn dem_outputs_from_records(
     for (record_id, records) in observable_records.iter().enumerate() {
         let dem_output_id = record_id;
         if dem_output_id < targets.len() {
-            #[allow(clippy::cast_possible_truncation)] // DEM output count fits in u32
-            {
-                targets[dem_output_id] = Some(
-                    DemOutput::new(dem_output_id as u32).with_records(records.iter().copied()),
-                );
+            if let Some(target) = &mut targets[dem_output_id] {
+                if target.records.is_empty() {
+                    target.records = DemOutput::new(target.id)
+                        .with_records(records.iter().copied())
+                        .records;
+                }
+                target.kind.get_or_insert(DemOutputKind::Observable);
+            } else {
+                #[allow(clippy::cast_possible_truncation)] // DEM output count fits in u32
+                {
+                    targets[dem_output_id] = Some(
+                        DemOutput::new(dem_output_id as u32).with_records(records.iter().copied()),
+                    );
+                }
             }
         }
     }
@@ -248,7 +257,9 @@ fn merge_dem_output_metadata(
 
     let tracked_op_labels = labels_from_dem_outputs(&labels.tracked_ops);
     if labels.tracked_op_labels.len() < tracked_op_labels.len() {
-        labels.tracked_op_labels.resize(tracked_op_labels.len(), None);
+        labels
+            .tracked_op_labels
+            .resize(tracked_op_labels.len(), None);
     }
     for (idx, label) in tracked_op_labels.into_iter().enumerate() {
         if labels.tracked_op_labels[idx].is_none() {
@@ -363,15 +374,13 @@ impl DemSampler {
         };
         let observables_json = {
             use pecos_num::graph::Attribute;
-            circuit
-                .get_attr("observables")
-                .and_then(|a| {
-                    if let Attribute::String(s) = a {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
+            circuit.get_attr("observables").and_then(|a| {
+                if let Attribute::String(s) = a {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
         };
         let num_meas = {
             use pecos_num::graph::Attribute;
@@ -512,15 +521,15 @@ impl DemSampler {
         self.labels.tracked_ops.iter().flatten().count()
     }
 
-    /// DEM output indices classified as observables.
+    /// Standard observable `L<n>` IDs selected from this sampler.
     #[must_use]
-    pub fn observable_dem_output_indices(&self) -> Vec<usize> {
+    pub fn observable_ids(&self) -> Vec<usize> {
         (0..self.num_dem_outputs).collect()
     }
 
-    /// DEM output indices classified as tracked operators.
+    /// PECOS tracked-operator IDs selected from this sampler.
     #[must_use]
-    pub fn tracked_operator_dem_output_indices(&self) -> Vec<usize> {
+    pub fn tracked_operator_ids(&self) -> Vec<usize> {
         Vec::new()
     }
 
@@ -531,7 +540,7 @@ impl DemSampler {
     /// existing mask-based paths.
     #[must_use]
     pub fn observable_dem_output_mask(&self) -> u64 {
-        self.observable_dem_output_indices()
+        self.observable_ids()
             .into_iter()
             .filter(|&idx| idx < u64::BITS as usize)
             .fold(0u64, |acc, idx| acc | (1u64 << idx))
@@ -719,7 +728,7 @@ impl DemSampler {
         num_shots: usize,
         rng: &mut R,
     ) -> super::dem_sampler::SamplingStatistics {
-        let observable_indices = self.observable_dem_output_indices();
+        let observable_indices = self.observable_ids();
         self.inner
             .sample_statistics_with_rng_for_observable_indices(num_shots, rng, &observable_indices)
     }
@@ -736,7 +745,7 @@ impl DemSampler {
         num_shots: usize,
         seed: u64,
     ) -> super::dem_sampler::SamplingStatistics {
-        let observable_indices = self.observable_dem_output_indices();
+        let observable_indices = self.observable_ids();
         self.inner
             .sample_statistics_for_observable_indices(num_shots, seed, &observable_indices)
     }
@@ -821,7 +830,7 @@ impl<'a> DemSamplerBuilder<'a> {
 
     /// Request detector-event output with the given detector/DEM output definitions.
     ///
-    /// Detector records use Stim-style negative offsets: `[-1]` means "the last
+    /// Detector records use DEM-style negative offsets: `[-1]` means "the last
     /// measurement", `[-3, -1]` means "XOR of the last and third-to-last."
     #[must_use]
     pub fn with_detectors(
@@ -892,8 +901,9 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Extract annotations from a [`DagCircuit`] and configure the sampler.
     ///
     /// Detector annotations are mapped to auto-detected detector indices.
-    /// Observables are converted to measurement-record outputs. Operators are
-    /// tracked through PECOS metadata only.
+    /// Observables are converted to measurement-record outputs. Tracked
+    /// operators remain unmeasured Pauli-operator annotations and are carried
+    /// through PECOS metadata only.
     #[must_use]
     pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
         use pecos_quantum::AnnotationKind;
@@ -1554,6 +1564,48 @@ mod tests {
     }
 
     #[test]
+    fn detector_mode_does_not_double_apply_annotation_observable_records() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let meas = circuit.mz(&[0]);
+        circuit.observable_labeled("obs0", &[meas[0]]);
+
+        let im = InfluenceBuilder::new(&circuit)
+            .with_circuit_annotations(&circuit)
+            .build();
+
+        let sampler = DemSamplerBuilder::new(&im)
+            .with_noise(0.0, 0.0, 1.0, 0.0)
+            .with_detectors(Vec::new(), vec![vec![-1]])
+            .build()
+            .unwrap();
+
+        assert_eq!(sampler.num_dem_outputs(), 1);
+        assert_eq!(sampler.num_observables(), 1);
+        assert_eq!(sampler.num_tracked_ops(), 0);
+        assert_eq!(
+            sampler.labels().dem_outputs[0]
+                .as_ref()
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("obs0")
+        );
+        assert_eq!(
+            sampler.labels().dem_outputs[0]
+                .as_ref()
+                .unwrap()
+                .records
+                .as_slice(),
+            &[-1]
+        );
+
+        let mut rng = PecosRng::seed_from_u64(42);
+        let (_detectors, observables) = sampler.sample(&mut rng);
+        assert_eq!(observables, vec![true]);
+    }
+
+    #[test]
     fn from_detector_error_model_preserves_observable_and_tracked_operator_split() {
         use super::super::builder::DemBuilder;
         use pecos_core::pauli::constructors::X;
@@ -1626,17 +1678,11 @@ mod tests {
         let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0);
         let sampler = DemSampler::from_detector_error_model(&dem);
 
-        assert_eq!(sampler.observable_dem_output_indices(), vec![0]);
-        assert_eq!(sampler.tracked_operator_dem_output_indices(), Vec::<usize>::new());
+        assert_eq!(sampler.observable_ids(), vec![0]);
+        assert_eq!(sampler.tracked_operator_ids(), Vec::<usize>::new());
         assert_eq!(sampler.observable_dem_output_mask(), 1);
-        assert_eq!(
-            sampler.observable_mask_from_dem_output_flips(&[false]),
-            0
-        );
-        assert_eq!(
-            sampler.observable_mask_from_dem_output_flips(&[true]),
-            1
-        );
+        assert_eq!(sampler.observable_mask_from_dem_output_flips(&[false]), 0);
+        assert_eq!(sampler.observable_mask_from_dem_output_flips(&[true]), 1);
     }
 
     #[test]

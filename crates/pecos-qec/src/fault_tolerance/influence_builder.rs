@@ -48,20 +48,44 @@ use std::collections::BinaryHeap;
 /// strings tracked for flipping via backward propagation. The difference
 /// is role and readout:
 ///
-/// | Kind | Pauli | Readout | API |
-/// |------|-------|---------|-----|
-/// | Detector | Z on measured qubits | measurement XOR = 0 | `dag.detector(&[...])` |
-/// | Observable | Z on measured qubits | measurement XOR | `dag.observable(&[...])` |
-/// | Operator | user-specified | propagation only | `dag.pauli_operator(&[...])` |
+/// | Kind | Meaning | Readout | API |
+/// |------|---------|---------|-----|
+/// | Detector | Syndrome parity from measurements | measurement XOR = 0 | `dag.detector(&[...])` |
+/// | Observable | Standard `L<n>` output from measurements | measurement XOR | `dag.observable(&[...])` |
+/// | Tracked operator | User Pauli operator annotated at a circuit point | fault anticommutes with operator | `dag.pauli_operator(&[...])` |
+///
+/// Observables and tracked operators both use backward Pauli propagation, but
+/// they are not the same concept. Observables are values observed through
+/// measurements, are defined by measurement records, and are decoder-visible
+/// `L<n>` outputs. Tracked operators are not measured and are not applied to the
+/// computation; they ask whether a fault would flip a Pauli operator placed as
+/// an annotation in the circuit, such as a logical operator, stabilizer, or
+/// other Pauli of interest. They live in a separate PECOS-only namespace.
 pub use pecos_core::PauliString;
+
+struct NonDetectorOutputTarget {
+    metadata: DemOutputMetadata,
+    terms: Vec<PauliPropagationTerm>,
+}
+
+struct PauliPropagationTerm {
+    pauli: PauliString,
+    start_node: Option<usize>,
+}
 
 pub struct InfluenceBuilder<'a> {
     dag: &'a pecos_quantum::DagCircuit,
-    /// Pauli operators to track for flipping, with optional start position.
-    /// `None` means propagate from circuit end; `Some(node)` means propagate
-    /// from that DAG node's topological position.
-    /// (`metadata`, meta-gate node)
-    pauli_operators: Vec<(DemOutputMetadata, Option<usize>)>,
+    /// Non-detector parity outputs to track for flipping.
+    ///
+    /// This internal list contains both standard observables and PECOS tracked
+    /// operators. The metadata kind is the authority for which public namespace
+    /// each entry belongs to; callers should not infer that from the raw index.
+    ///
+    /// Each entry has one metadata item and one or more propagation terms.
+    /// Multiple terms accumulate into the same output index, which is needed
+    /// for measurement-record observables whose measurements occur at different
+    /// circuit positions.
+    non_detector_outputs: Vec<NonDetectorOutputTarget>,
 }
 
 impl<'a> InfluenceBuilder<'a> {
@@ -70,37 +94,37 @@ impl<'a> InfluenceBuilder<'a> {
     pub fn new(dag: &'a pecos_quantum::DagCircuit) -> Self {
         Self {
             dag,
-            pauli_operators: Vec::new(),
+            non_detector_outputs: Vec::new(),
         }
     }
 
     /// Add a tracked X operator (X on all specified qubits).
     #[must_use]
     pub fn with_x(mut self, qubits: &[usize]) -> Self {
-        self.pauli_operators.push((
+        self.push_single_term_output(
             DemOutputMetadata::tracked_operator(PauliString::xs(qubits)),
             None,
-        ));
+        );
         self
     }
 
     /// Add a tracked Z operator (Z on all specified qubits).
     #[must_use]
     pub fn with_z(mut self, qubits: &[usize]) -> Self {
-        self.pauli_operators.push((
+        self.push_single_term_output(
             DemOutputMetadata::tracked_operator(PauliString::zs(qubits)),
             None,
-        ));
+        );
         self
     }
 
     /// Add a tracked Y operator (Y on all specified qubits).
     #[must_use]
     pub fn with_y(mut self, qubits: &[usize]) -> Self {
-        self.pauli_operators.push((
+        self.push_single_term_output(
             DemOutputMetadata::tracked_operator(PauliString::ys(qubits)),
             None,
-        ));
+        );
         self
     }
 
@@ -117,16 +141,26 @@ impl<'a> InfluenceBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_pauli_operator(mut self, pauli: PauliString) -> Self {
-        self.pauli_operators
-            .push((DemOutputMetadata::tracked_operator(pauli), None));
+        self.push_single_term_output(DemOutputMetadata::tracked_operator(pauli), None);
         self
+    }
+
+    fn push_single_term_output(&mut self, metadata: DemOutputMetadata, start_node: Option<usize>) {
+        self.non_detector_outputs.push(NonDetectorOutputTarget {
+            terms: vec![PauliPropagationTerm {
+                pauli: metadata.pauli.clone(),
+                start_node,
+            }],
+            metadata,
+        });
     }
 
     /// Extract observable and tracked-operator annotations from the circuit.
     ///
     /// Observable annotations define logical observables via measurement records.
-    /// For backward propagation, each observable is converted to a Z-type Pauli
-    /// on the measured qubits, starting from the latest measurement node.
+    /// For backward propagation, each referenced measurement contributes its
+    /// own Z-type propagation term starting at that measurement node. The terms
+    /// accumulate into the same observable `L<n>` output.
     ///
     /// Operator annotations have a corresponding `PauliOperatorMeta` node
     /// that marks their time position.
@@ -148,35 +182,31 @@ impl<'a> InfluenceBuilder<'a> {
         for ann in circuit.annotations() {
             match &ann.kind {
                 pecos_quantum::AnnotationKind::Observable { measurement_nodes } => {
-                    // Convert measurement-based observable to Z-Pauli on measured qubits.
-                    // Backward propagation starts from the latest measurement node.
-                    let mut qubits = Vec::new();
-                    let mut latest_node = None;
+                    let mut terms = Vec::new();
                     for &meas_node in measurement_nodes {
                         if let Some(gate) = circuit.gate(meas_node) {
-                            for q in &gate.qubits {
-                                qubits.push(q.index());
-                            }
+                            let qubits: Vec<usize> =
+                                gate.qubits.iter().map(|q| q.index()).collect();
+                            terms.push(PauliPropagationTerm {
+                                pauli: PauliString::zs(&qubits),
+                                start_node: Some(meas_node),
+                            });
                         }
-                        latest_node = Some(
-                            latest_node.map_or(meas_node, |prev: usize| prev.max(meas_node)),
-                        );
                     }
-                    let pauli = PauliString::zs(&qubits);
-                    self.pauli_operators.push((
-                        DemOutputMetadata::observable(pauli)
+                    self.non_detector_outputs.push(NonDetectorOutputTarget {
+                        metadata: DemOutputMetadata::observable(ann.pauli.clone())
                             .with_optional_label(ann.label.clone()),
-                        latest_node,
-                    ));
+                        terms,
+                    });
                 }
                 pecos_quantum::AnnotationKind::Operator => {
                     let meta_node = meta_nodes.get(operator_idx).copied();
                     operator_idx += 1;
-                    self.pauli_operators.push((
+                    self.push_single_term_output(
                         DemOutputMetadata::tracked_operator(ann.pauli.clone())
                             .with_optional_label(ann.label.clone()),
                         meta_node,
-                    ));
+                    );
                 }
                 pecos_quantum::AnnotationKind::Detector { .. } => {
                     // Detectors handled separately by DemSamplerBuilder
@@ -403,33 +433,28 @@ impl<'a> InfluenceBuilder<'a> {
             });
         }
 
-        // Add tracked Pauli operators in their PECOS tracked-op namespace.
-        let num_detectors = detectors.len();
-        let num_tracked_ops = self.pauli_operators.len();
-
         // Build the influence structure using backward propagation
-        let mut recorder =
-            CompoundRecorder::new(map.locations.len(), num_detectors, num_tracked_ops);
+        let mut recorder = CompoundRecorder::new(map.locations.len());
 
         // Propagate from each detector
         Self::propagate_detectors(propagator, info, detectors, &mut recorder);
 
-        // Propagate from tracked Pauli operators.
-        self.propagate_tracked_ops(propagator, &mut recorder);
+        // Propagate from non-detector DEM outputs.
+        self.propagate_non_detector_outputs(propagator, &mut recorder);
 
         // Convert to SoA format
         map.influences = recorder.into_soa();
 
         // Store DEM-output labels
         map.dem_output_labels = self
-            .pauli_operators
+            .non_detector_outputs
             .iter()
-            .map(|(metadata, _)| metadata.label.clone())
+            .map(|output| output.metadata.label.clone())
             .collect();
         map.dem_output_metadata = self
-            .pauli_operators
+            .non_detector_outputs
             .iter()
-            .map(|(metadata, _)| metadata.clone())
+            .map(|output| output.metadata.clone())
             .collect();
 
         map
@@ -571,13 +596,13 @@ impl<'a> InfluenceBuilder<'a> {
         }
     }
 
-    /// Propagate backward from tracked Pauli operators.
+    /// Propagate backward from non-detector DEM outputs.
     ///
-    /// If a Pauli operator has a corresponding `PauliOperatorMeta` node in the
-    /// DAG, propagation starts from that node's topological position. Otherwise
-    /// (e.g. operators added via `with_z`/`with_x` without a circuit annotation),
-    /// propagation walks from the circuit end.
-    fn propagate_tracked_ops(
+    /// If a propagation term has a corresponding DAG node, propagation starts
+    /// from that node's topological position. Otherwise (e.g. operators added
+    /// via `with_z`/`with_x` without a circuit annotation), propagation walks
+    /// from the circuit end.
+    fn propagate_non_detector_outputs(
         &self,
         propagator: &DagPropagator<'_>,
         recorder: &mut CompoundRecorder,
@@ -589,35 +614,37 @@ impl<'a> InfluenceBuilder<'a> {
         let mut active_qubits = vec![false; max_qubit + 1];
         let mut heap = BinaryHeap::new();
 
-        for (dem_output_idx, (metadata, meta_node)) in self.pauli_operators.iter().enumerate() {
-            let mut prop = PauliProp::new();
+        for (dem_output_idx, output) in self.non_detector_outputs.iter().enumerate() {
+            for term in &output.terms {
+                let mut prop = PauliProp::new();
 
-            for &(pauli, qubit) in metadata.pauli.paulis() {
-                use pecos_core::Pauli;
-                let q = qubit.index();
-                match pauli {
-                    Pauli::X => prop.track_x(&[q]),
-                    Pauli::Y => prop.track_y(&[q]),
-                    Pauli::Z => prop.track_z(&[q]),
-                    Pauli::I => {}
+                for &(pauli, qubit) in term.pauli.paulis() {
+                    use pecos_core::Pauli;
+                    let q = qubit.index();
+                    match pauli {
+                        Pauli::X => prop.track_x(&[q]),
+                        Pauli::Y => prop.track_y(&[q]),
+                        Pauli::Z => prop.track_z(&[q]),
+                        Pauli::I => {}
+                    }
                 }
+
+                // Resolve the term's node to its topological position.
+                // None means no positional bound (walk from circuit end).
+                let start_pos = term.start_node.map(|node| propagator.topo_position(node));
+
+                Self::propagate_observable(
+                    propagator,
+                    &prop,
+                    dem_output_idx,
+                    false, // is_detector = false (this is a DEM output)
+                    recorder,
+                    &mut visited,
+                    &mut active_qubits,
+                    &mut heap,
+                    start_pos,
+                );
             }
-
-            // Resolve the meta-gate node to its topological position.
-            // None means no positional bound (walk from circuit end).
-            let start_pos = meta_node.map(|node| propagator.topo_position(node));
-
-            Self::propagate_observable(
-                propagator,
-                &prop,
-                dem_output_idx,
-                false, // is_detector = false (this is a DEM output)
-                recorder,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
-                start_pos,
-            );
         }
     }
 
@@ -828,10 +855,6 @@ struct DetectorDef {
 /// Recorder for compound detector propagation.
 struct CompoundRecorder {
     num_locations: usize,
-    #[allow(dead_code)]
-    num_detectors: usize,
-    #[allow(dead_code)]
-    num_tracked_ops: usize,
 
     // Buckets for detector influences [loc_idx][pauli] -> Vec<detector_idx>
     detector_x: Vec<Vec<u32>>,
@@ -845,11 +868,9 @@ struct CompoundRecorder {
 }
 
 impl CompoundRecorder {
-    fn new(num_locations: usize, num_detectors: usize, num_tracked_ops: usize) -> Self {
+    fn new(num_locations: usize) -> Self {
         Self {
             num_locations,
-            num_detectors,
-            num_tracked_ops,
             detector_x: vec![Vec::new(); num_locations],
             detector_y: vec![Vec::new(); num_locations],
             detector_z: vec![Vec::new(); num_locations],
@@ -864,9 +885,9 @@ impl CompoundRecorder {
             return;
         }
         match pauli {
-            Pauli::X => self.detector_x[loc_idx].push(detector_idx),
-            Pauli::Y => self.detector_y[loc_idx].push(detector_idx),
-            Pauli::Z => self.detector_z[loc_idx].push(detector_idx),
+            Pauli::X => toggle_bucket(&mut self.detector_x[loc_idx], detector_idx),
+            Pauli::Y => toggle_bucket(&mut self.detector_y[loc_idx], detector_idx),
+            Pauli::Z => toggle_bucket(&mut self.detector_z[loc_idx], detector_idx),
             Pauli::I => {}
         }
     }
@@ -876,19 +897,26 @@ impl CompoundRecorder {
             return;
         }
         match pauli {
-            Pauli::X => self.dem_output_x[loc_idx].push(dem_output_idx),
-            Pauli::Y => self.dem_output_y[loc_idx].push(dem_output_idx),
-            Pauli::Z => self.dem_output_z[loc_idx].push(dem_output_idx),
+            Pauli::X => toggle_bucket(&mut self.dem_output_x[loc_idx], dem_output_idx),
+            Pauli::Y => toggle_bucket(&mut self.dem_output_y[loc_idx], dem_output_idx),
+            Pauli::Z => toggle_bucket(&mut self.dem_output_z[loc_idx], dem_output_idx),
             Pauli::I => {}
         }
     }
 
-    fn into_soa(self) -> super::propagator::dag::InfluencesSoA {
+    fn into_soa(mut self) -> super::propagator::dag::InfluencesSoA {
         use super::propagator::dag::InfluencesSoA;
 
         let mut soa = InfluencesSoA::with_capacity(self.num_locations);
 
         for loc_idx in 0..self.num_locations {
+            self.detector_x[loc_idx].sort_unstable();
+            self.detector_y[loc_idx].sort_unstable();
+            self.detector_z[loc_idx].sort_unstable();
+            self.dem_output_x[loc_idx].sort_unstable();
+            self.dem_output_y[loc_idx].sort_unstable();
+            self.dem_output_z[loc_idx].sort_unstable();
+
             // Add detector influences
             for &det in &self.detector_x[loc_idx] {
                 soa.detectors_x.push(det);
@@ -915,6 +943,14 @@ impl CompoundRecorder {
         }
 
         soa
+    }
+}
+
+fn toggle_bucket(bucket: &mut Vec<u32>, value: u32) {
+    if let Some(pos) = bucket.iter().position(|&existing| existing == value) {
+        bucket.remove(pos);
+    } else {
+        bucket.push(value);
     }
 }
 
@@ -1039,11 +1075,11 @@ mod tests {
         assert_eq!(map.dem_output_metadata.len(), 2);
 
         // Observable comes first (annotations are processed in order)
+        assert_eq!(map.dem_output_metadata[0].kind, DemOutputKind::Observable);
         assert_eq!(
-            map.dem_output_metadata[0].kind,
-            DemOutputKind::Observable
+            map.dem_output_metadata[0].label.as_deref(),
+            Some("record_obs")
         );
-        assert_eq!(map.dem_output_metadata[0].label.as_deref(), Some("record_obs"));
 
         // Tracked operator second
         assert_eq!(
@@ -1052,5 +1088,158 @@ mod tests {
         );
         assert_eq!(map.dem_output_metadata[1].label.as_deref(), Some("track_x"));
         assert_eq!(map.dem_output_metadata[1].pauli.to_sparse_str(), "+X0");
+    }
+
+    #[test]
+    fn test_observable_measurements_propagate_from_their_own_nodes() {
+        use pecos_quantum::GateType;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let early = dag.mz(&[0]);
+        dag.h(&[0]);
+        let late = dag.mz(&[1]);
+        dag.observable_labeled("split_time_obs", &[early[0], late[0]]);
+
+        let map = InfluenceBuilder::new(&dag)
+            .with_circuit_annotations(&dag)
+            .build();
+
+        assert_eq!(map.num_observables(), 1);
+
+        let post_early_h = map
+            .locations
+            .iter()
+            .enumerate()
+            .find(|(_, loc)| {
+                loc.gate_type == GateType::H
+                    && loc.qubits.first().is_some_and(|q| q.index() == 0)
+                    && !loc.before
+            })
+            .map(|(idx, _)| idx)
+            .expect("H fault location after the early measurement");
+
+        for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
+            assert!(
+                map.get_observable_indices(post_early_h, pauli.as_u8())
+                    .is_empty(),
+                "faults after an already-recorded measurement must not flip that record"
+            );
+        }
+    }
+
+    #[test]
+    fn test_split_time_observable_fault_before_early_measurement_flips() {
+        // Circuit: PZ(0), PZ(1), MZ(0) [early], H(1), MZ(1) [late]
+        // Observable = MZ(0) XOR MZ(1)
+        //
+        // A prep fault on qubit 0 (after PZ(0), before MZ(0)) should flip the
+        // observable via the early measurement term.
+        use pecos_quantum::GateType;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let early = dag.mz(&[0]);
+        dag.h(&[1]);
+        let late = dag.mz(&[1]);
+        dag.observable_labeled("split_obs", &[early[0], late[0]]);
+
+        let map = InfluenceBuilder::new(&dag)
+            .with_circuit_annotations(&dag)
+            .build();
+
+        assert_eq!(map.num_observables(), 1);
+
+        // Prep fault on qubit 0 (PZ after-gate location) should flip the
+        // observable because it propagates through the early MZ(0).
+        let prep_q0 = map
+            .locations
+            .iter()
+            .enumerate()
+            .find(|(_, loc)| {
+                loc.gate_type == GateType::PZ
+                    && loc.qubits.first().is_some_and(|q| q.index() == 0)
+                    && !loc.before
+            })
+            .map(|(idx, _)| idx)
+            .expect("PZ(0) fault location");
+
+        // X fault after PZ propagates through MZ as a bit flip
+        assert!(
+            !map.get_observable_indices(prep_q0, Pauli::X.as_u8())
+                .is_empty(),
+            "X fault before early measurement should flip observable"
+        );
+    }
+
+    #[test]
+    fn test_split_time_observable_fault_between_measurements_flips_late_only() {
+        // Circuit: PZ(0), PZ(1), MZ(0) [early], H(1), MZ(1) [late]
+        // Observable = MZ(0) XOR MZ(1)
+        //
+        // An H fault on qubit 1 (between the two measurements) should flip the
+        // observable via the late measurement term only.
+        use pecos_quantum::GateType;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let early = dag.mz(&[0]);
+        dag.h(&[1]);
+        let late = dag.mz(&[1]);
+        dag.observable_labeled("split_obs", &[early[0], late[0]]);
+
+        let map = InfluenceBuilder::new(&dag)
+            .with_circuit_annotations(&dag)
+            .build();
+
+        assert_eq!(map.num_observables(), 1);
+
+        // H(1) fault location — between the two measurements, on qubit 1
+        let h_q1 = map
+            .locations
+            .iter()
+            .enumerate()
+            .find(|(_, loc)| {
+                loc.gate_type == GateType::H
+                    && loc.qubits.first().is_some_and(|q| q.index() == 1)
+                    && !loc.before
+            })
+            .map(|(idx, _)| idx)
+            .expect("H(1) fault location");
+
+        // X fault after H(1) becomes Z before MZ(1), which does NOT flip MZ.
+        // Z fault after H(1) becomes X before MZ(1), which DOES flip MZ.
+        assert!(
+            !map.get_observable_indices(h_q1, Pauli::X.as_u8())
+                .is_empty()
+                || !map
+                    .get_observable_indices(h_q1, Pauli::Z.as_u8())
+                    .is_empty(),
+            "at least one Pauli fault between measurements should flip the late term"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_observable_terms_cancel_in_influence_map() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        let meas = dag.mz(&[0]);
+        dag.observable_labeled("duplicate_record_obs", &[meas[0], meas[0]]);
+
+        let map = InfluenceBuilder::new(&dag)
+            .with_circuit_annotations(&dag)
+            .build();
+
+        assert_eq!(map.num_observables(), 1);
+        for loc_idx in 0..map.locations.len() {
+            for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
+                assert!(
+                    map.get_observable_indices(loc_idx, pauli.as_u8())
+                        .is_empty(),
+                    "observable record XOR should cancel duplicate measurement terms"
+                );
+            }
+        }
     }
 }

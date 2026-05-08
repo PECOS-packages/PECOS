@@ -267,9 +267,9 @@ fn xor_sets(a: &BTreeSet<usize>, b: &BTreeSet<usize>) -> BTreeSet<usize> {
 mod tests {
     use super::*;
     use crate::fault_tolerance::fault_sampler::{
-        build_fault_catalog, FaultCatalog, StochasticNoiseParams,
+        FaultCatalog, StochasticNoiseParams, build_fault_catalog,
     };
-    use pecos_core::{gate_type::GateType, QubitId};
+    use pecos_core::{QubitId, gate_type::GateType};
     use pecos_quantum::TickCircuit;
 
     /// Build a tiny circuit: H(0) CX(0,1) H(0) MZ(0) MZ(1)
@@ -452,22 +452,30 @@ mod tests {
             p_prep: 0.0,
         };
         let catalog = build_fault_catalog(&tc, &noise).unwrap();
-        assert!(catalog
-            .locations
-            .iter()
-            .any(|loc| loc.gate_type == GateType::SX));
-        assert!(catalog
-            .locations
-            .iter()
-            .any(|loc| loc.gate_type == GateType::CY));
-        assert!(catalog
-            .locations
-            .iter()
-            .any(|loc| loc.gate_type == GateType::SXX));
-        assert!(catalog
-            .locations
-            .iter()
-            .any(|loc| loc.gate_type == GateType::SWAP));
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.gate_type == GateType::SX)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.gate_type == GateType::CY)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.gate_type == GateType::SXX)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.gate_type == GateType::SWAP)
+        );
 
         let decoder = TargetedLookupDecoder::new(&catalog).max_faults(2);
         let bf = brute_force_weights(&catalog, 2);

@@ -20,7 +20,8 @@
 //! Fast DEM-style sampler for threshold estimation.
 //!
 //! This module provides a sampler that aggregates fault effects directly into
-//! detector/`L<n>` target signatures, matching Stim's DEM sampler semantics.
+//! detector/standard observable `L<n>` signatures, matching DEM sampling
+//! semantics.
 //!
 //! # Data-Oriented Design
 //!
@@ -28,8 +29,8 @@
 //! cache-efficient sampling:
 //!
 //! - **Probabilities**: Stored in a contiguous array for sequential access
-//! - **Detector/`L<n>` target indices**: CSR layout (offsets + flat data) for variable-length lists
-//! - **Bit-packed outcomes**: Uses `u64` words for compact detector/`L<n>` state
+//! - **Detector/observable indices**: CSR layout (offsets + flat data) for variable-length lists
+//! - **Bit-packed outcomes**: Uses `u64` words for compact detector/observable state
 //!
 //! # Example
 //!
@@ -67,7 +68,7 @@ use pecos_random::{PecosRng, RngProbabilityExt};
 use rand_core::Rng;
 use rayon::prelude::*;
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
 use super::types::combine_probabilities;
@@ -76,13 +77,13 @@ use super::types::combine_probabilities;
 // DEM Mechanism (used during building)
 // ============================================================================
 
-/// A single fault mechanism with its detector and `L<n>` target effects.
+/// A single fault mechanism with its detector and standard observable `L<n>` effects.
 /// Used during building, then converted to `SoA` layout.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct DemMechanism {
     /// Sorted detector indices that flip when this mechanism fires.
     detectors: SmallVec<[u32; 4]>,
-    /// Sorted `L<n>` target indices that flip when this mechanism fires.
+    /// Sorted standard observable `L<n>` indices that flip when this mechanism fires.
     dem_outputs: SmallVec<[u32; 2]>,
 }
 
@@ -213,7 +214,7 @@ pub struct SamplingEngine {
     detector_data: Vec<u32>,
 
     /// CSR-style offsets into `dem_output_data`. Length = `num_mechanisms` + 1.
-    /// These are Stim-compatible `L<n>` DEM outputs.
+    /// These are standard observable `L<n>` DEM outputs.
     dem_output_offsets: Vec<u32>,
     /// Flat array of `L<n>` target indices.
     dem_output_data: Vec<u32>,
@@ -237,10 +238,10 @@ impl SamplingEngine {
         self.num_detectors
     }
 
-    /// Number of observables in a pure Stim DEM.
+    /// Number of observables represented by `L<n>` columns.
     ///
-    /// Parsed Stim DEMs do not carry PECOS tracked-operator metadata, so every
-    /// `L<n>` output is treated as an observable.
+    /// When no PECOS tracked-operator metadata is present, every `L<n>` output
+    /// is treated as an observable.
     #[must_use]
     pub fn num_observables(&self) -> usize {
         self.num_dem_outputs
@@ -605,8 +606,8 @@ impl SamplingEngine {
     ///
     /// The sampler still reports per-DEM-output flip counts for every `L<n>`
     /// output. `logical_error_count` and `undetectable_count` are computed
-    /// from the selected observable outputs only, so tracked-operator probes do
-    /// not affect decoder-style observable statistics.
+    /// from the selected observable outputs only, so unmeasured tracked
+    /// operators do not affect decoder-style observable statistics.
     #[must_use]
     pub fn sample_statistics_for_observable_indices(
         &self,
@@ -1783,7 +1784,7 @@ impl SamplingStatistics {
 /// Builder for [`SamplingEngine`].
 ///
 /// Constructs a [`SamplingEngine`] from a fault influence map, noise parameters,
-/// and explicit detector/`L<n>` target definitions.
+/// and explicit detector/standard observable `L<n>` definitions.
 pub(crate) struct SamplingEngineBuilder<'a> {
     influence_map: &'a DagFaultInfluenceMap,
     p1: f64,
@@ -1883,7 +1884,8 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn build(self) -> SamplingEngine {
         let num_detectors = self.detector_records.len();
-        let num_influence_observables = self.influence_map.num_dem_outputs();
+        let influence_observable_ids = self.influence_map.observable_ids();
+        let num_influence_observables = self.influence_map.num_observables();
         let num_dem_outputs = num_influence_observables.max(self.observable_records.len());
         let num_im_measurements = self.influence_map.measurements.len();
         let num_tc_measurements = self.num_tc_measurements.unwrap_or(num_im_measurements);
@@ -1908,7 +1910,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             Pauli::X,
                             self.p_prep,
                             im_to_tc.as_deref(),
-                            0,
+                            &influence_observable_ids,
                             num_tc_measurements,
                             &mut aggregated,
                         );
@@ -1921,7 +1923,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             Pauli::X,
                             self.p_meas,
                             im_to_tc.as_deref(),
-                            0,
+                            &influence_observable_ids,
                             num_tc_measurements,
                             &mut aggregated,
                         );
@@ -1968,7 +1970,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             loc_idx,
                             self.p1,
                             im_to_tc.as_deref(),
-                            0,
+                            &influence_observable_ids,
                             num_tc_measurements,
                             &mut aggregated,
                         );
@@ -1987,7 +1989,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                                 loc_idx,
                                 p,
                                 im_to_tc.as_deref(),
-                                0,
+                                &influence_observable_ids,
                                 num_tc_measurements,
                                 &mut aggregated,
                             );
@@ -2005,7 +2007,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         loc_indices[0],
                         loc_indices[1],
                         im_to_tc.as_deref(),
-                        0,
+                        &influence_observable_ids,
                         num_tc_measurements,
                         &mut aggregated,
                     );
@@ -2108,7 +2110,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         pauli: Pauli,
         prob: f64,
         im_to_tc: Option<&[usize]>,
-        observable_id_offset: usize,
+        influence_observable_ids: &BTreeSet<u32>,
         num_tc_measurements: usize,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
@@ -2116,7 +2118,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             loc_idx,
             pauli,
             im_to_tc,
-            observable_id_offset,
+            influence_observable_ids,
             num_tc_measurements,
         );
         if !mechanism.is_empty() {
@@ -2131,7 +2133,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         loc_idx: usize,
         prob: f64,
         im_to_tc: Option<&[usize]>,
-        observable_id_offset: usize,
+        influence_observable_ids: &BTreeSet<u32>,
         num_tc_measurements: usize,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
@@ -2141,7 +2143,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 loc_idx,
                 pauli,
                 im_to_tc,
-                observable_id_offset,
+                influence_observable_ids,
                 num_tc_measurements,
             );
             if !mechanism.is_empty() {
@@ -2157,7 +2159,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         loc1: usize,
         loc2: usize,
         im_to_tc: Option<&[usize]>,
-        observable_id_offset: usize,
+        influence_observable_ids: &BTreeSet<u32>,
         num_tc_measurements: usize,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
@@ -2173,14 +2175,14 @@ impl<'a> SamplingEngineBuilder<'a> {
                 loc1,
                 p,
                 im_to_tc,
-                observable_id_offset,
+                influence_observable_ids,
                 num_tc_measurements,
             ));
             effects2[p as usize] = Some(self.compute_mechanism(
                 loc2,
                 p,
                 im_to_tc,
-                observable_id_offset,
+                influence_observable_ids,
                 num_tc_measurements,
             ));
         }
@@ -2203,7 +2205,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         .clone()
                         .unwrap_or_else(DemMechanism::empty)
                 } else {
-                    // Correlated: XOR the detector/`L<n>` target effects
+                    // Correlated: XOR the detector/standard observable effects
                     let e1 = effects1[p1 as usize].as_ref();
                     let e2 = effects2[p2 as usize].as_ref();
                     xor_mechanisms(e1, e2)
@@ -2217,13 +2219,13 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
     }
 
-    /// Compute the mechanism (detector/`L<n>` target effects) for a fault.
+    /// Compute the mechanism (detector/standard observable effects) for a fault.
     fn compute_mechanism(
         &self,
         loc_idx: usize,
         pauli: Pauli,
         im_to_tc: Option<&[usize]>,
-        observable_id_offset: usize,
+        influence_observable_ids: &BTreeSet<u32>,
         num_tc_measurements: usize,
     ) -> DemMechanism {
         // Get measurement indices that flip (in IM order)
@@ -2286,8 +2288,13 @@ impl<'a> SamplingEngineBuilder<'a> {
             })
             .collect();
 
-        // Apply `L<n>` target definitions (XOR of measurement outcomes)
+        // Apply standard observable `L<n>` definitions (XOR of measurement outcomes)
         for (obs_id, records) in self.observable_records.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)] // observable ID fits in u32
+            let obs_id_u32 = obs_id as u32;
+            if influence_observable_ids.contains(&obs_id_u32) {
+                continue;
+            }
             let mut xor_result = false;
             for &offset in records {
                 #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)] // measurement count fits in i32
@@ -2304,8 +2311,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             }
             if xor_result {
                 #[allow(clippy::cast_possible_truncation)] // `L<n>` target ID fits in u32
-                let obs_idx = (observable_id_offset + obs_id) as u32;
-                xor_toggle_u32(&mut dem_outputs, obs_idx);
+                xor_toggle_u32(&mut dem_outputs, obs_id_u32);
             }
         }
         dem_outputs.sort_unstable();
@@ -2326,7 +2332,7 @@ where
     }
 }
 
-/// XORs two [`DemMechanism`]s (symmetric difference of detectors and `L<n>` targets).
+/// XORs two [`DemMechanism`]s (symmetric difference of detectors and standard observables).
 fn xor_mechanisms(a: Option<&DemMechanism>, b: Option<&DemMechanism>) -> DemMechanism {
     match (a, b) {
         (Some(m1), Some(m2)) => {

@@ -40,7 +40,7 @@ fn main() {
     // 1. Builder + preset
     // ------------------------------------------------------------------
     //
-    // `StabMps::builder(n).for_sparse_t().build()` sets:
+    // `StabMps::builder(n).for_qec().build()` sets:
     //   - max_bond_dim = 128 (enough for syndrome rounds without truncation)
     //   - max_truncation_error = 1e-8 (very tight)
     //   - merge_rz = true (batch same-qubit RZ noise)
@@ -58,11 +58,11 @@ fn main() {
 
     let mut stn = StabMps::builder(n)
         .seed(42)
-        .for_sparse_t()
+        .for_qec()
         .pauli_frame_tracking(true)
         .build();
 
-    println!("Step 1: built StabMps with for_sparse_t() preset + pauli_frame_tracking");
+    println!("Step 1: built StabMps with for_qec() preset + pauli_frame_tracking");
     println!("  data qubits  : 0..{num_data}");
     println!("  ancillas     : {num_data}..{n}");
     println!();
@@ -140,7 +140,7 @@ fn main() {
         let mut non_zero_syndromes = 0u32;
         let mut stn = StabMps::builder(n)
             .seed(100 + (p * 1e6) as u64)
-            .for_sparse_t()
+            .for_qec()
             .pauli_frame_tracking(true)
             .build();
 
@@ -179,7 +179,7 @@ fn main() {
 
     let mut stn = StabMps::builder(n)
         .seed(77)
-        .for_sparse_t()
+        .for_qec()
         .pauli_frame_tracking(true)
         .build();
     let start = Instant::now();
@@ -222,7 +222,7 @@ fn main() {
     }
 
     println!("\nTutorial done. Key API summary:");
-    println!("  - StabMps::builder(n).for_sparse_t().pauli_frame_tracking(true).build()");
+    println!("  - StabMps::builder(n).for_qec().pauli_frame_tracking(true).build()");
     println!("  - extract_syndromes(generators, ancillas)");
     println!("  - reset_qubit(q), pz(q), px(q)");
     println!("  - inject_{{x,y,z}}_in_frame(q), inject_paulis_in_frame(&[...])");

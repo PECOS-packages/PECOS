@@ -325,42 +325,36 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Preset for circuits with sparse T gates: Clifford-dominated QEC
-    /// circuits with occasional T gates or small-angle RZ, such as
-    /// magic-state distillation or T-gate injection.
-    ///
-    /// Enables aggressive MPS truncation that is safe when non-Clifford
-    /// content is sparse (t << N). NOT suitable for circuits with dense
-    /// coherent noise (e.g., RZ idle noise on every CX) where the MPS
-    /// grows more complex and truncation introduces bias.
+    /// Preset for QEC-style workloads: stabilizer-code circuits with
+    /// non-Clifford noise (T gates, small-angle RZ), syndrome extraction,
+    /// magic-state distillation.
     ///
     /// Sets:
     /// - `max_truncation_error(1e-8)` — adaptive bond dim; bonds with low
     ///   entanglement shrink naturally, saving time on deep circuits.
-    /// - `max_bond_dim(128)` — 2x the library default, giving more headroom
+    /// - Keeps `lazy_measure = false` — benchmarks (see `examples/qec_bench.rs`)
+    ///   show the default eager path is faster for typical QEC workloads.
+    /// - `max_bond_dim(128)` — 2× the library default, giving more headroom
     ///   for adversarial T-heavy subcircuits before truncation hits the cap.
-    /// - `merge_rz(true)` — fuses consecutive RZ on the same qubit.
-    ///
-    /// For dense non-Clifford noise (coherent idle RZ, many rotations),
-    /// use the default settings instead (no truncation threshold).
     ///
     /// Override any of these with subsequent builder calls:
     /// ```ignore
-    /// StabMps::builder(n).for_sparse_t().max_bond_dim(64).build()
+    /// StabMps::builder(n).for_qec().max_bond_dim(64).build()
     /// ```
     #[must_use]
-    pub fn for_sparse_t(self) -> Self {
-        self.for_sparse_t_with_bond_dim(128)
+    pub fn for_qec(self) -> Self {
+        self.for_qec_with_bond_dim(128)
     }
 
-    /// Like `for_sparse_t()` but with a caller-chosen `max_bond_dim` cap.
+    /// Like `for_qec()` but with a caller-chosen `max_bond_dim` cap.
+    /// Use when the default 128 is too tight (deep T-heavy circuits)
+    /// or too loose (memory-constrained environments).
     #[must_use]
-    pub fn for_sparse_t_with_bond_dim(self, bond_dim: usize) -> Self {
+    pub fn for_qec_with_bond_dim(self, bond_dim: usize) -> Self {
         self.max_truncation_error(1e-8)
             .max_bond_dim(bond_dim)
             .merge_rz(true)
     }
-
 
     /// Build the simulator.
     #[must_use]
@@ -1400,86 +1394,6 @@ impl StabMps {
     /// # Panics
     ///
     /// Panics if any MPS gate application fails on a valid site.
-    /// Flush accumulated deferred ops from lazy measurement to the MPS.
-    ///
-    /// The lazy measurement path accumulates a virtual Clifford frame V
-    /// in `deferred_ops`. The effective state is `V · C · |MPS⟩`. This
-    /// method absorbs V into the MPS by applying each deferred gate to
-    /// the MPS tensors, restoring `state = C · |MPS_new⟩`.
-    ///
-    /// Must be called before any Clifford gate (CX, H, etc.) that
-    /// operates on the tableau, since those gates assume the MPS is
-    /// in the same frame as the tableau.
-    /// Ensure deferred ops are flushed before any gate that modifies the
-    /// tableau. This is a no-op when deferred_ops is empty (common case).
-    #[inline]
-    fn ensure_deferred_flushed(&mut self) {
-        if !self.deferred_ops.is_empty() {
-            self.flush_deferred_ops_to_mps();
-        }
-    }
-
-    pub fn flush_deferred_ops_to_mps(&mut self) {
-        use measure::DeferredOp;
-
-        if self.deferred_ops.is_empty() {
-            return;
-        }
-
-        let h_mat = nalgebra::DMatrix::from_row_slice(2, 2, &[
-            Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
-            Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
-            Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
-            Complex64::new(-std::f64::consts::FRAC_1_SQRT_2, 0.0),
-        ]);
-        let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-        let sz_diag = [Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)];
-        let szdg_diag = [Complex64::new(1.0, 0.0), Complex64::new(0.0, -1.0)];
-
-        // Apply deferred ops in order (first pushed = first applied)
-        for op in std::mem::take(&mut self.deferred_ops) {
-            match op {
-                DeferredOp::H(q) => {
-                    self.mps.apply_one_site_gate(q, &h_mat)
-                        .expect("flush deferred H");
-                }
-                DeferredOp::Z(q) => {
-                    self.mps.apply_diagonal_one_site(q, &z_diag)
-                        .expect("flush deferred Z");
-                }
-                DeferredOp::SZ(q) => {
-                    self.mps.apply_diagonal_one_site(q, &sz_diag)
-                        .expect("flush deferred SZ");
-                }
-                DeferredOp::SZdg(q) => {
-                    self.mps.apply_diagonal_one_site(q, &szdg_diag)
-                        .expect("flush deferred SZdg");
-                }
-                DeferredOp::Cz(q1, q2) => {
-                    // CZ = diag(1,1,1,-1). Apply as diagonal two-site gate.
-                    let o = Complex64::new(0.0, 0.0);
-                    let one = Complex64::new(1.0, 0.0);
-                    let neg = Complex64::new(-1.0, 0.0);
-                    let cz = nalgebra::DMatrix::from_row_slice(4, 4, &[
-                        one, o, o, o, o, one, o, o, o, o, one, o, o, o, o, neg,
-                    ]);
-                    let (lo, hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
-                    if hi == lo + 1 {
-                        self.mps.apply_two_site_gate(lo, &cz)
-                            .expect("flush deferred CZ");
-                    } else {
-                        self.mps.apply_long_range_two_site_gate(lo, hi, &cz)
-                            .expect("flush deferred CZ long-range");
-                    }
-                }
-                DeferredOp::Cnot(c, t) => {
-                    measure::apply_cnot_to_mps(&mut self.mps, c, t);
-                }
-            }
-        }
-        self.mps.compress();
-    }
-
     pub fn flush_pauli_frame_to_state(&mut self) {
         // Flush pending RZ first so the tableau C reflects the true Clifford
         // the frame will be composed with.
@@ -1732,41 +1646,29 @@ impl StabMps {
     /// may remain. Measurement outcomes on other qubits are unaffected.)
     pub fn reset_qubit(&mut self, q: QubitId) -> bool {
         let idx = q.index();
-
-        // Reset requires a consistent (tableau, MPS) pair after
-        // measurement so that the conditional X operates correctly.
-        // Always use the lazy measurement path for reset, even if the
-        // global setting is pragmatic. The pragmatic path leaves the
-        // MPS in a wrong frame, which makes the conditional X and all
-        // subsequent gates on this qubit produce wrong results.
-        self.flush_pending_rz(idx);
-        let result = measure::measure_qubit_stab_mps_lazy(
-            &mut self.tableau,
-            &mut self.mps,
-            &mut self.rng,
-            idx,
-            &mut self.deferred_ops,
-        );
-
-        // Account for Pauli frame
-        let frame_x = self.flags.pauli_frame_tracking() && self.pauli_frame_x[idx];
-        let reported = result.outcome ^ frame_x;
-        let physical_outcome = result.outcome;
-
-        // Clear frame bits (reset erases tracked errors)
+        let reported = self.mz(&[q])[0].outcome;
+        // `mz` XORs the frame X-bit into the reported outcome. Undo that
+        // to find the stored-state collapse outcome (== physical outcome
+        // with frame applied elsewhere but not here).
+        let frame_x_before = self.flags.pauli_frame_tracking() && self.pauli_frame_x[idx];
+        let physical_outcome = reported ^ frame_x_before;
+        // Clear this qubit's frame bits BEFORE applying X so the frame
+        // propagation rule for X doesn't spuriously flip the global phase
+        // on a Z-bit we're about to erase anyway.
         if self.flags.pauli_frame_tracking() {
             self.pauli_frame_x[idx] = false;
             self.pauli_frame_z[idx] = false;
         }
-
         if physical_outcome {
-            // Apply X to bring |1⟩ back to |0⟩
-            self.x(&[q]);
+            // Apply X to bring stored |1⟩ back to |0⟩. Bypass the
+            // public `x` method — we've already flushed pending_rz via mz
+            // and cleared the frame, so there's nothing to propagate.
+            self.tableau.x(&[q]);
         }
-
         // Refresh the disent flag: after reset, q is a Z(+1) eigenstate.
         self.disent_flags[idx] = Some(SiteEigenstate::Z(false));
-        self.maybe_grow_bond_dim();
+        // Return the REPORTED outcome (frame-adjusted) — this is the
+        // physical measurement the user observes before reset.
         reported
     }
 
@@ -1950,22 +1852,6 @@ impl StabMps {
     }
 }
 
-impl pecos_core::rng::RngManageable for StabMps {
-    type Rng = PecosRng;
-
-    fn set_rng(&mut self, rng: PecosRng) {
-        self.rng = rng;
-    }
-
-    fn rng(&self) -> &PecosRng {
-        &self.rng
-    }
-
-    fn rng_mut(&mut self) -> &mut PecosRng {
-        &mut self.rng
-    }
-}
-
 impl QuantumSimulator for StabMps {
     fn reset(&mut self) -> &mut Self {
         self.tableau = SparseStabY::new(self.num_qubits).with_destab_sign_tracking();
@@ -1994,9 +1880,24 @@ impl QuantumSimulator for StabMps {
     }
 }
 
+impl pecos_random::RngManageable for StabMps {
+    type Rng = PecosRng;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.rng = rng;
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        &self.rng
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        &mut self.rng
+    }
+}
+
 impl CliffordGateable for StabMps {
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.ensure_deferred_flushed();
         // SZ commutes with RZ: skip `flush_pending_rz`. The pending RZ
         // angle stays valid; applying it later yields the same physical
         // state as flushing first and then applying SZ (since RZ(θ)·SZ =
@@ -2013,7 +1914,6 @@ impl CliffordGateable for StabMps {
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.ensure_deferred_flushed();
         // SZdg commutes with RZ: skip flush. Same reasoning as sz().
         self.tableau.szdg(qubits);
         for &q in qubits {
@@ -2023,7 +1923,6 @@ impl CliffordGateable for StabMps {
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.ensure_deferred_flushed();
         // Z commutes with RZ: skip flush.
         self.tableau.z(qubits);
         for &q in qubits {
@@ -2037,7 +1936,6 @@ impl CliffordGateable for StabMps {
         for &q in qubits {
             self.flush_pending_rz(q.index());
         }
-        self.ensure_deferred_flushed();
         self.tableau.h(qubits);
         for &q in qubits {
             self.propagate_frame_single_qubit(SingleQubitCliffordKind::H, q.index());
@@ -2046,7 +1944,6 @@ impl CliffordGateable for StabMps {
     }
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.ensure_deferred_flushed();
         // X anticommutes with RZ: X·RZ(θ) = RZ(-θ)·X, so applying X
         // after a pending RZ(θ) is equivalent to applying X first then
         // RZ(-θ). Flip sign of pending_rz and skip flush.
@@ -2064,7 +1961,6 @@ impl CliffordGateable for StabMps {
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.ensure_deferred_flushed();
         // Y anticommutes with RZ (same as X for this purpose): flip
         // pending_rz sign, skip flush.
         for &q in qubits {
@@ -2087,7 +1983,6 @@ impl CliffordGateable for StabMps {
             self.flush_pending_rz(c.index());
             self.flush_pending_rz(t.index());
         }
-        self.ensure_deferred_flushed();
         self.tableau.cx(pairs);
         for &(c, t) in pairs {
             self.propagate_frame_cx(c.index(), t.index());
@@ -2096,7 +1991,6 @@ impl CliffordGateable for StabMps {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        self.ensure_deferred_flushed();
         // CZ IS diagonal and commutes with RZ on either qubit. Skip flush.
         self.tableau.cz(pairs);
         for &(a, b) in pairs {
@@ -5161,7 +5055,7 @@ mod tests {
             .auto_grow_max_bond_dim(64)
             .build();
 
-        // Initial state: spread into GHZ-like entanglement
+        // Spread + entangle.
         for q in 0..n {
             stn.h(&[QubitId(q)]);
         }
@@ -5699,7 +5593,7 @@ mod tests {
             ],
         ];
         let ancillas: Vec<QubitId> = (7..13).map(QubitId).collect();
-        let mut stn = StabMps::builder(13).seed(42).for_sparse_t().build();
+        let mut stn = StabMps::builder(13).seed(42).for_qec().build();
         // Prep Steane |0_L⟩ (pivots 0, 1, 3).
         stn.h(&[QubitId(0), QubitId(1), QubitId(3)]);
         for (c, t) in [
@@ -5773,7 +5667,7 @@ mod tests {
             ],
         ];
         let ancillas: Vec<QubitId> = (7..13).map(QubitId).collect();
-        let mut stn = StabMps::builder(13).seed(42).for_sparse_t().build();
+        let mut stn = StabMps::builder(13).seed(42).for_qec().build();
         stn.h(&[QubitId(0), QubitId(1), QubitId(3)]);
         for (c, t) in [
             (3, 4),
@@ -5805,7 +5699,7 @@ mod tests {
             vec![(1, PauliKind::Z), (2, PauliKind::Z)],
         ];
         let ancillas = vec![QubitId(3), QubitId(4)];
-        let mut stn = StabMps::builder(5).seed(42).for_sparse_t().build();
+        let mut stn = StabMps::builder(5).seed(42).for_qec().build();
         // Trivial |000⟩ data is already a +1 eigenstate of Z_iZ_j.
         for _round in 0..2 {
             let s = stn.extract_syndromes(&stabs, &ancillas);
@@ -6438,17 +6332,17 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_for_sparse_t_preset() {
+    fn test_builder_for_qec_preset() {
         // Smoke test: the preset should build a working StabMps and handle
         // a Clifford + T + measurement sequence.
-        let mut stn = StabMps::builder(4).seed(99).for_sparse_t().build();
+        let mut stn = StabMps::builder(4).seed(99).for_qec().build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(2)]);
         let r0 = stn.mz(&[QubitId(0)])[0].outcome;
         let r1 = stn.mz(&[QubitId(1)])[0].outcome;
-        assert_eq!(r0, r1, "for_sparse_t preset: Bell+T correlation");
+        assert_eq!(r0, r1, "for_qec preset: Bell+T correlation");
     }
 
     #[test]

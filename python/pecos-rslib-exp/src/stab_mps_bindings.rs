@@ -45,7 +45,7 @@ impl PyStabMps {
         merge_rz=None,
         pauli_frame_tracking=None,
         lazy_measure=None,
-        for_sparse_t=None,
+        for_qec=None,
         auto_grow_bond_dim=None,
         auto_grow_max_bond_dim=None,
         max_truncation_error=None,
@@ -58,7 +58,7 @@ impl PyStabMps {
         merge_rz: Option<bool>,
         pauli_frame_tracking: Option<bool>,
         lazy_measure: Option<bool>,
-        for_sparse_t: Option<bool>,
+        for_qec: Option<bool>,
         auto_grow_bond_dim: Option<f64>,
         auto_grow_max_bond_dim: Option<usize>,
         max_truncation_error: Option<f64>,
@@ -67,8 +67,8 @@ impl PyStabMps {
         if let Some(s) = seed {
             b = b.seed(s);
         }
-        if for_sparse_t == Some(true) {
-            b = b.for_sparse_t();
+        if for_qec == Some(true) {
+            b = b.for_qec();
         }
         if let Some(bd) = max_bond_dim {
             b = b.max_bond_dim(bd);

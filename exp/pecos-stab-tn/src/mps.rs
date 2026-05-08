@@ -192,35 +192,6 @@ impl Mps {
     ///
     /// Returns [`MpsError::GateDimMismatch`] if the gate dimensions don't match the
     /// physical dimension, or [`MpsError::SiteOutOfBounds`] if `q` is out of range.
-    /// Apply a 2×2 gate to a qubit site using raw coefficients (no DMatrix allocation).
-    /// Gate is specified as [[g00, g01], [g10, g11]].
-    #[inline]
-    pub fn apply_gate_2x2(
-        &mut self,
-        q: usize,
-        g: [[Complex64; 2]; 2],
-    ) {
-        debug_assert!(q < self.num_sites);
-        let chi_l = self.bond_dims[q];
-        let chi_r = self.bond_dims[q + 1];
-        if chi_l == 1 && chi_r == 1 {
-            let a0 = self.tensors[q][(0, 0)];
-            let a1 = self.tensors[q][(0, 1)];
-            self.tensors[q][(0, 0)] = g[0][0] * a0 + g[0][1] * a1;
-            self.tensors[q][(0, 1)] = g[1][0] * a0 + g[1][1] * a1;
-        } else {
-            // General path: iterate over bond dimensions
-            for alpha_l in 0..chi_l {
-                for alpha_r in 0..chi_r {
-                    let a0 = self.tensors[q][(alpha_l, 0 * chi_r + alpha_r)];
-                    let a1 = self.tensors[q][(alpha_l, 1 * chi_r + alpha_r)];
-                    self.tensors[q][(alpha_l, 0 * chi_r + alpha_r)] = g[0][0] * a0 + g[0][1] * a1;
-                    self.tensors[q][(alpha_l, 1 * chi_r + alpha_r)] = g[1][0] * a0 + g[1][1] * a1;
-                }
-            }
-        }
-    }
-
     pub fn apply_one_site_gate(
         &mut self,
         q: usize,
@@ -241,17 +212,7 @@ impl Mps {
             });
         }
 
-        let chi_l = self.bond_dims[q];
         let chi_r = self.bond_dims[q + 1];
-
-        // Fast path for d=2, bd=1: just a 2×2 matrix times a 2-vector, no allocation.
-        if d == 2 && chi_l == 1 && chi_r == 1 {
-            let a0 = self.tensors[q][(0, 0)];
-            let a1 = self.tensors[q][(0, 1)];
-            self.tensors[q][(0, 0)] = gate[(0, 0)] * a0 + gate[(0, 1)] * a1;
-            self.tensors[q][(0, 1)] = gate[(1, 0)] * a0 + gate[(1, 1)] * a1;
-            return Ok(());
-        }
 
         // Collect old blocks
         let old_blocks: Vec<DMatrix<Complex64>> = (0..d)
@@ -260,7 +221,7 @@ impl Mps {
 
         // Compute new blocks: new_block[sigma_out] = sum_sigma_in gate[sigma_out, sigma_in] * old_block[sigma_in]
         for sigma_out in 0..d {
-            let mut new_block = DMatrix::zeros(chi_l, chi_r);
+            let mut new_block = DMatrix::zeros(self.bond_dims[q], chi_r);
             for (sigma_in, old_block) in old_blocks.iter().enumerate() {
                 let coeff = gate[(sigma_out, sigma_in)];
                 if coeff != Complex64::new(0.0, 0.0) {
@@ -346,13 +307,6 @@ impl Mps {
         let chi_mid = self.bond_dims[q + 1];
         let chi_r = self.bond_dims[q + 2];
 
-        // Fast path: when all three bond dims are 1, the two-site state
-        // is a product of two d-vectors. We can apply the d²×d² gate
-        // and do a rank-1 check / 2×2 SVD inline without DMatrix allocation.
-        if d == 2 && chi_l == 1 && chi_mid == 1 && chi_r == 1 {
-            return self.apply_two_site_gate_bd1(q, gate);
-        }
-
         // Contract the two site tensors into a two-site tensor
         let two_site = contract_two_sites(
             &self.tensors[q],
@@ -416,206 +370,6 @@ impl Mps {
         Ok(())
     }
 
-    /// Fast path for `apply_two_site_gate` when d=2 and all bond dims are 1.
-    ///
-    /// The two-site state is just 4 complex numbers. We apply the 4×4 gate,
-    /// then do a 2×2 SVD inline to split back into two site tensors.
-    /// Avoids all DMatrix heap allocation.
-    fn apply_two_site_gate_bd1(
-        &mut self,
-        q: usize,
-        gate: &DMatrix<Complex64>,
-    ) -> Result<(), MpsError> {
-        let zero = Complex64::new(0.0, 0.0);
-
-        // Read the two 1×2 site tensors as scalars
-        let a0 = self.tensors[q][(0, 0)];
-        let a1 = self.tensors[q][(0, 1)];
-        let b0 = self.tensors[q + 1][(0, 0)];
-        let b1 = self.tensors[q + 1][(0, 1)];
-
-        // Combined 4-vector: |00⟩, |01⟩, |10⟩, |11⟩
-        let psi_in = [a0 * b0, a0 * b1, a1 * b0, a1 * b1];
-
-        // Apply gate
-        let mut psi_out = [zero; 4];
-        for i in 0..4 {
-            let mut v = zero;
-            for j in 0..4 {
-                let g = gate[(i, j)];
-                if g != zero {
-                    v += g * psi_in[j];
-                }
-            }
-            psi_out[i] = v;
-        }
-
-        // Reshape as 2×2 matrix M[sigma_l, sigma_r] for SVD:
-        // M = [[psi_out[0], psi_out[1]], [psi_out[2], psi_out[3]]]
-        let m00 = psi_out[0];
-        let m01 = psi_out[1];
-        let m10 = psi_out[2];
-        let m11 = psi_out[3];
-
-        // Check if rank 1: det(M) ≈ 0 means we can stay at bd=1
-        let det = m00 * m11 - m01 * m10;
-        if det.norm_sqr() < self.config.svd_cutoff * self.config.svd_cutoff {
-            // Rank 1: M ≈ u * v^T. Find the dominant column/row.
-            let col0_norm = m00.norm_sqr() + m10.norm_sqr();
-            let col1_norm = m01.norm_sqr() + m11.norm_sqr();
-
-            if col0_norm > col1_norm {
-                // Use column 0 as left vector, compute right from it
-                let norm = col0_norm.sqrt();
-                if norm < 1e-15 {
-                    // Zero state — both tensors zero
-                    self.tensors[q][(0, 0)] = zero;
-                    self.tensors[q][(0, 1)] = zero;
-                    self.tensors[q + 1][(0, 0)] = zero;
-                    self.tensors[q + 1][(0, 1)] = zero;
-                } else {
-                    let inv = Complex64::new(1.0 / norm, 0.0);
-                    // Left tensor: normalized column 0
-                    self.tensors[q][(0, 0)] = m00 * inv;
-                    self.tensors[q][(0, 1)] = m10 * inv;
-                    // Right tensor: project row from left
-                    let u0 = m00 * inv;
-                    let u1 = m10 * inv;
-                    self.tensors[q + 1][(0, 0)] = u0.conj() * m00 + u1.conj() * m10;
-                    self.tensors[q + 1][(0, 1)] = u0.conj() * m01 + u1.conj() * m11;
-                }
-            } else {
-                let norm = col1_norm.sqrt();
-                if norm < 1e-15 {
-                    self.tensors[q][(0, 0)] = zero;
-                    self.tensors[q][(0, 1)] = zero;
-                    self.tensors[q + 1][(0, 0)] = zero;
-                    self.tensors[q + 1][(0, 1)] = zero;
-                } else {
-                    let inv = Complex64::new(1.0 / norm, 0.0);
-                    self.tensors[q][(0, 0)] = m01 * inv;
-                    self.tensors[q][(0, 1)] = m11 * inv;
-                    let u0 = m01 * inv;
-                    let u1 = m11 * inv;
-                    self.tensors[q + 1][(0, 0)] = u0.conj() * m00 + u1.conj() * m10;
-                    self.tensors[q + 1][(0, 1)] = u0.conj() * m01 + u1.conj() * m11;
-                }
-            }
-            // Bond dim stays 1
-        } else {
-            // Rank 2: inline 2×2 SVD without nalgebra allocation.
-            // M = U * diag(σ₁,σ₂) * V†. Compute via M†M eigendecomposition.
-            //
-            // M†M = [[|m00|²+|m10|², m00'*m01+m10'*m11],
-            //        [m01'*m00+m11'*m10, |m01|²+|m11|²]]
-            let a = m00.norm_sqr() + m10.norm_sqr();      // real
-            let d_val = m01.norm_sqr() + m11.norm_sqr();   // real
-            let b = m00.conj() * m01 + m10.conj() * m11;  // complex
-
-            // Eigenvalues of 2×2 Hermitian [[a,b],[b*,d]]:
-            // λ± = (a+d)/2 ± sqrt((a-d)²/4 + |b|²)
-            let sum = a + d_val;
-            let diff = a - d_val;
-            let disc_sq = diff * diff / 4.0 + b.norm_sqr();
-            let disc_val = disc_sq.sqrt();
-            let lambda1 = (sum / 2.0 + disc_val).max(0.0);
-            let lambda2 = (sum / 2.0 - disc_val).max(0.0);
-            let sigma1 = lambda1.sqrt();
-            let sigma2 = lambda2.sqrt();
-
-            // Check if second singular value is below cutoff
-            let keep_both = sigma2 > self.config.svd_cutoff
-                && self.config.max_bond_dim >= 2;
-
-            if !keep_both {
-                // Truncate to rank 1 (same as the rank-1 path above but
-                // the dominant singular vector is the eigenvector of M†M).
-                if sigma1 < 1e-15 {
-                    self.tensors[q][(0, 0)] = zero;
-                    self.tensors[q][(0, 1)] = zero;
-                    self.tensors[q + 1][(0, 0)] = zero;
-                    self.tensors[q + 1][(0, 1)] = zero;
-                } else {
-                    // Right singular vector v1: eigenvector of M†M for λ₁
-                    // (M†M - λ₁I)v = 0. Use: v ∝ [b, λ₁-a] or [λ₁-d, b*]
-                    let (v0, v1) = if (lambda1 - a).abs() > b.norm() * 0.5 {
-                        let raw = (b, Complex64::new(lambda1 - a, 0.0));
-                        let n = (raw.0.norm_sqr() + raw.1.norm_sqr()).sqrt();
-                        (raw.0 / n, raw.1 / n)
-                    } else {
-                        let raw = (Complex64::new(lambda1 - d_val, 0.0), b.conj());
-                        let n = (raw.0.norm_sqr() + raw.1.norm_sqr()).sqrt();
-                        (raw.0 / n, raw.1 / n)
-                    };
-                    // Left singular vector: u1 = M*v1 / σ₁
-                    let inv_s = Complex64::new(1.0 / sigma1, 0.0);
-                    let u0 = (m00 * v0 + m01 * v1) * inv_s;
-                    let u1 = (m10 * v0 + m11 * v1) * inv_s;
-                    // Left tensor = u * σ₁ (absorbed)
-                    self.tensors[q][(0, 0)] = u0 * Complex64::new(sigma1, 0.0);
-                    self.tensors[q][(0, 1)] = u1 * Complex64::new(sigma1, 0.0);
-                    // Right tensor = v†
-                    self.tensors[q + 1][(0, 0)] = v0.conj();
-                    self.tensors[q + 1][(0, 1)] = v1.conj();
-                }
-                // Record truncation if we dropped sigma2
-                if sigma2 > self.config.svd_cutoff {
-                    self.truncation_error = self.truncation_error.max(sigma2);
-                    self.bond_cap_hits += 1;
-                }
-            } else {
-                // Keep both singular values: grow bond dim to 2.
-                // Right singular vectors from M†M eigenvectors.
-                let (v1_0, v1_1, v2_0, v2_1) = if b.norm() > 1e-15 {
-                    let v1_raw = (b, Complex64::new(lambda1 - a, 0.0));
-                    let n1 = (v1_raw.0.norm_sqr() + v1_raw.1.norm_sqr()).sqrt();
-                    let v2_raw = (b, Complex64::new(lambda2 - a, 0.0));
-                    let n2 = (v2_raw.0.norm_sqr() + v2_raw.1.norm_sqr()).sqrt();
-                    (v1_raw.0 / n1, v1_raw.1 / n1, v2_raw.0 / n2, v2_raw.1 / n2)
-                } else {
-                    // M†M is diagonal — eigenvectors are standard basis
-                    if a >= d_val {
-                        (Complex64::new(1.0, 0.0), zero, zero, Complex64::new(1.0, 0.0))
-                    } else {
-                        (zero, Complex64::new(1.0, 0.0), Complex64::new(1.0, 0.0), zero)
-                    }
-                };
-
-                // Left singular vectors: u_i = M * v_i / σ_i
-                let inv_s1 = if sigma1 > 1e-15 { Complex64::new(1.0 / sigma1, 0.0) } else { zero };
-                let inv_s2 = if sigma2 > 1e-15 { Complex64::new(1.0 / sigma2, 0.0) } else { zero };
-
-                let u1_0 = (m00 * v1_0 + m01 * v1_1) * inv_s1;
-                let u1_1 = (m10 * v1_0 + m11 * v1_1) * inv_s1;
-                let u2_0 = (m00 * v2_0 + m01 * v2_1) * inv_s2;
-                let u2_1 = (m10 * v2_0 + m11 * v2_1) * inv_s2;
-
-                // Left tensor: U*S absorbed, shape (1, 2*2) = (1, 4)
-                // Layout: [σ=0: (us_00, us_01), σ=1: (us_10, us_11)]
-                let s1 = Complex64::new(sigma1, 0.0);
-                let s2 = Complex64::new(sigma2, 0.0);
-                let mut t_left = DMatrix::zeros(1, 4);
-                t_left[(0, 0)] = u1_0 * s1;  // σ=0, χ=0
-                t_left[(0, 1)] = u2_0 * s2;  // σ=0, χ=1
-                t_left[(0, 2)] = u1_1 * s1;  // σ=1, χ=0
-                t_left[(0, 3)] = u2_1 * s2;  // σ=1, χ=1
-                self.tensors[q] = t_left;
-
-                // Right tensor: V†, shape (2, 2)
-                let mut t_right = DMatrix::zeros(2, 2);
-                t_right[(0, 0)] = v1_0.conj(); // χ=0, σ=0
-                t_right[(0, 1)] = v1_1.conj(); // χ=0, σ=1
-                t_right[(1, 0)] = v2_0.conj(); // χ=1, σ=0
-                t_right[(1, 1)] = v2_1.conj(); // χ=1, σ=1
-                self.tensors[q + 1] = t_right;
-
-                self.bond_dims[q + 1] = 2;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Apply a two-site gate between arbitrary (possibly non-adjacent) sites.
     ///
     /// Uses SWAP gates to bring site `q1` adjacent to `q0`, applies the gate,
@@ -651,48 +405,7 @@ impl Mps {
             return self.apply_two_site_gate(q0, gate);
         }
 
-        // Fast path for bd=1: SWAP is just tensor swap (no gate application needed).
-        // Check if ALL bonds in the range [q0..q1+1] are bd=1.
-        let all_bd1 = self.phys_dim == 2
-            && self.bond_dims[q0..=q1 + 1].iter().all(|&bd| bd <= 1);
-
-        if all_bd1 {
-            // SWAP q1 leftward by swapping tensors (no SVD needed at bd=1)
-            for i in (q0 + 1..q1).rev() {
-                self.tensors.swap(i, i + 1);
-            }
-            // Apply the gate on the now-adjacent pair
-            self.apply_two_site_gate(q0, gate)?;
-
-            if self.bond_dims[q0 + 1] == 1 {
-                // Result is still bd=1, can swap tensors back cheaply
-                for i in q0 + 1..q1 {
-                    self.tensors.swap(i, i + 1);
-                }
-            } else {
-                // Gate grew bond dim — need proper SWAP gates to restore
-                // qubit order while maintaining correct tensor shapes.
-                let swap = DMatrix::from_row_slice(
-                    4, 4,
-                    &[
-                        Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-                        Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0),
-                        Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0),
-                        Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-                        Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0),
-                        Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0),
-                        Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0),
-                        Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0),
-                    ],
-                );
-                for i in q0 + 1..q1 {
-                    self.apply_two_site_gate(i, &swap)?;
-                }
-            }
-            return Ok(());
-        }
-
-        // General path: SWAP chain via two-site gates.
+        // Non-adjacent: SWAP chain to bring sites together, apply gate, SWAP back.
         let swap = DMatrix::from_row_slice(
             4,
             4,
@@ -987,11 +700,6 @@ impl Mps {
     /// truncation at each bond to enforce `max_bond_dim` and `svd_cutoff`.
     pub fn compress(&mut self) {
         if self.num_sites <= 1 {
-            return;
-        }
-
-        // Skip if all interior bonds are already bd=1 (product state).
-        if self.bond_dims[1..self.num_sites].iter().all(|&bd| bd <= 1) {
             return;
         }
 

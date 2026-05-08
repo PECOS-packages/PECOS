@@ -24,7 +24,7 @@
 //!   - Verify codespace fidelity = 1.0 using `StabMps::code_state_fidelity`.
 //!   - Inject per-qubit depolarizing noise via
 //!     `StabMps::apply_depolarizing_all`, observe the fidelity drop.
-//!   - Confirm `for_sparse_t()` preset and `auto_grow_bond_dim` work.
+//!   - Confirm `for_qec()` preset and `auto_grow_bond_dim` work.
 //!
 //! Now also includes a correct Steane [[7, 1, 3]] CSS code encoder +
 //! codespace fidelity verification.
@@ -167,7 +167,7 @@ fn steane_syndrome_detection_rate(p_noise: f64, num_shots: u64) -> (usize, usize
     let mut any_errors = 0;
     for shot in 0..num_shots {
         // 7 data + 6 ancillas = 13 qubits.
-        let mut stn = StabMps::builder(13).seed(shot).for_sparse_t().build();
+        let mut stn = StabMps::builder(13).seed(shot).for_qec().build();
         prepare_steane_logical_zero(&mut stn);
         // Inject per-data-qubit depolarizing.
         let data_qubits: Vec<QubitId> = (0..7).map(QubitId).collect();
@@ -214,7 +214,7 @@ fn run_code_scenario(
 
     // Phase 1: noiseless prep + codespace fidelity check.
     let start = Instant::now();
-    let mut stn = StabMps::builder(num_qubits).seed(42).for_sparse_t().build();
+    let mut stn = StabMps::builder(num_qubits).seed(42).for_qec().build();
     prep(&mut stn);
     let prep_time = start.elapsed().as_secs_f64();
     let f_clean = stn.code_state_fidelity(stabs);
@@ -233,7 +233,7 @@ fn run_code_scenario(
     for shot in 0..num_shots {
         let mut stn_noisy = StabMps::builder(num_qubits)
             .seed(100 + shot as u64)
-            .for_sparse_t()
+            .for_qec()
             .build();
         prep(&mut stn_noisy);
         stn_noisy.apply_depolarizing_all(&qubits, p_noise);
@@ -257,7 +257,7 @@ fn main() {
     println!("End-to-end QEC code demo using STN");
     println!("{:-<70}", "");
     println!(
-        "Toolchain: StabMps::builder().for_sparse_t() + apply_depolarizing_all + code_state_fidelity"
+        "Toolchain: StabMps::builder().for_qec() + apply_depolarizing_all + code_state_fidelity"
     );
 
     // 3-qubit bit-flip code: trivial prep (|000⟩ already in code).
@@ -357,7 +357,7 @@ fn main() {
 
     println!();
     println!("{:-<70}", "");
-    println!("Demo complete. The StabMps::for_sparse_t() preset plus apply_depolarizing_all");
+    println!("Demo complete. The StabMps::for_qec() preset plus apply_depolarizing_all");
     println!("+ code_state_fidelity gives a complete API for QEC code-state");
     println!("verification + noise impact studies. Adding pauli_frame_tracking");
     println!("eliminates per-injection tableau overhead — useful for noise-heavy");

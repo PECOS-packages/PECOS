@@ -47,7 +47,7 @@ impl SimulatorInterface for StabMpsSimulator {
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         self.simulator = StabMps::builder(Self::to_usize(self.n_qubits))
             .seed(seed)
-            .for_sparse_t()
+            .for_qec()
             .build();
         Ok(())
     }
@@ -185,7 +185,7 @@ impl SimulatorInterfaceFactory for StabMpsSimulatorFactory {
         Ok(Box::new(StabMpsSimulator {
             simulator: StabMps::builder(StabMpsSimulator::to_usize(n_qubits))
                 .seed(0)
-                .for_sparse_t()
+                .for_qec()
                 .build(),
             n_qubits,
         }))

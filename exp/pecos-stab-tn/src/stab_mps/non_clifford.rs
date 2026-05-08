@@ -32,100 +32,66 @@ fn z_diag() -> [Complex64; 2] {
     [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)]
 }
 
-// Cached gate matrices — allocated once per thread, reused across calls.
-use std::cell::RefCell;
-use std::collections::HashMap;
-
-thread_local! {
-    static GATE_CACHE: RefCell<HashMap<&'static str, DMatrix<Complex64>>> = RefCell::new(HashMap::new());
-}
-
-fn cached_gate(name: &'static str, init: impl FnOnce() -> DMatrix<Complex64>) -> DMatrix<Complex64> {
-    GATE_CACHE.with(|cache| {
-        cache.borrow_mut().entry(name).or_insert_with(init).clone()
-    })
-}
-
-fn x_gate_matrix() -> DMatrix<Complex64> {
-    cached_gate("X", || {
-        let o = Complex64::new(0.0, 0.0);
-        let one = Complex64::new(1.0, 0.0);
-        DMatrix::from_row_slice(2, 2, &[o, one, one, o])
-    })
-}
-
-fn xz_gate_matrix() -> DMatrix<Complex64> {
-    cached_gate("XZ", || {
-        let o = Complex64::new(0.0, 0.0);
-        let one = Complex64::new(1.0, 0.0);
-        DMatrix::from_row_slice(2, 2, &[o, -one, one, o])
-    })
-}
-
-fn z_gate_matrix() -> DMatrix<Complex64> {
-    cached_gate("Z", || {
-        let o = Complex64::new(0.0, 0.0);
-        let one = Complex64::new(1.0, 0.0);
-        DMatrix::from_row_slice(2, 2, &[one, o, o, -one])
-    })
+fn h_gate() -> DMatrix<Complex64> {
+    let r = Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0);
+    DMatrix::from_row_slice(2, 2, &[r, r, r, -r])
 }
 
 fn s_gate() -> DMatrix<Complex64> {
-    cached_gate("S", || {
-        DMatrix::from_row_slice(
-            2, 2,
-            &[
-                Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0), Complex64::new(0.0, 1.0),
-            ],
-        )
-    })
+    DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 1.0),
+        ],
+    )
 }
 
 fn sdg_gate() -> DMatrix<Complex64> {
-    cached_gate("Sdg", || {
-        DMatrix::from_row_slice(
-            2, 2,
-            &[
-                Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0), Complex64::new(0.0, -1.0),
-            ],
-        )
-    })
+    DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, -1.0),
+        ],
+    )
 }
 
 fn rx_gate(theta: f64) -> DMatrix<Complex64> {
-    // RX depends on theta — can't cache. But the bd=1 fast path
-    // reads elements directly, so allocation is only for bd>1.
     let half = theta / 2.0;
     let c = Complex64::new(half.cos(), 0.0);
     let s = Complex64::new(0.0, -half.sin());
     DMatrix::from_row_slice(2, 2, &[c, s, s, c])
 }
 
-fn cnot_lo_gate() -> DMatrix<Complex64> {
-    cached_gate("CX_lo", || {
-        let o = Complex64::new(0.0, 0.0);
-        let one = Complex64::new(1.0, 0.0);
-        DMatrix::from_row_slice(
-            4, 4,
-            &[one, o, o, o, o, one, o, o, o, o, o, one, o, o, one, o],
-        )
-    })
-}
-
-fn cnot_hi_gate() -> DMatrix<Complex64> {
-    cached_gate("CX_hi", || {
-        let o = Complex64::new(0.0, 0.0);
-        let one = Complex64::new(1.0, 0.0);
-        DMatrix::from_row_slice(
-            4, 4,
-            &[one, o, o, o, o, o, o, one, o, o, one, o, o, one, o, o],
-        )
-    })
-}
-
 /// CNOT with first qubit (lower index) as control.
+fn cnot_lo_ctrl() -> DMatrix<Complex64> {
+    let o = Complex64::new(0.0, 0.0);
+    let one = Complex64::new(1.0, 0.0);
+    DMatrix::from_row_slice(
+        4,
+        4,
+        &[one, o, o, o, o, one, o, o, o, o, o, one, o, o, one, o],
+    )
+}
+
+/// CNOT with second qubit (higher index) as control.
+fn cnot_hi_ctrl() -> DMatrix<Complex64> {
+    let o = Complex64::new(0.0, 0.0);
+    let one = Complex64::new(1.0, 0.0);
+    DMatrix::from_row_slice(
+        4,
+        4,
+        &[one, o, o, o, o, o, o, one, o, o, one, o, o, one, o, o],
+    )
+}
+
 /// Per-site Pauli type for the rotation decomposition.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PauliType {
@@ -352,121 +318,6 @@ pub fn apply_rz_stab_mps(
 
                 // Clear the flag (rot_site's MPS is no longer |0⟩).
                 disent_flags[rot_site] = None;
-            } else if affected_sites.len() > 1 && is_ofd_in_span {
-                // OFD path: the flip pattern is in the GF(2) span of
-                // previously recorded patterns. Apply the disentangling
-                // Clifford to BOTH MPS and tableau simultaneously (which
-                // preserves the quantum state since the Clifford acts on
-                // both sides). Then apply the single-site non-Clifford RX
-                // on the MPS. This avoids the expensive MPS clone + add +
-                // compress cycle.
-                //
-                // For each right_compose_X on the tableau, we simultaneously
-                // apply X† on the MPS. The net effect of the matched pair is
-                // identity on the state — only the non-Clifford RX changes it.
-                stats.multi_disent += 1;
-                stats.ofd_in_span_disent += 1;
-
-                let rot_site = pauli_map
-                    .iter()
-                    .find(|(_, pt)| matches!(pt, PauliType::X | PauliType::Y))
-                    .expect("DestabilizerFlip must have at least one X/Y site")
-                    .0;
-
-                gf2_matrix.add_row_with_meta(&[rot_site], super::ofd::RowMetadata { rot_site });
-
-                // Compute RX angle (same as disent path).
-                let y_count = pauli_map.iter().filter(|(_, p)| *p == PauliType::Y).count();
-                let mut co = Complex64::new(0.0, -sin_half) * phase;
-                let i_val = Complex64::new(0.0, 1.0);
-                let mut factor = Complex64::new(1.0, 0.0);
-                for _ in 0..=y_count {
-                    factor *= i_val;
-                }
-                co *= factor;
-                debug_assert!(
-                    co.im.abs() < 1e-8,
-                    "OFD: co should be real: phase={phase}, Ys={y_count}, co={co}"
-                );
-                let rx_sign: f64 = if sin_half.abs() < 1e-12
-                    || (co.re - sin_half).abs() < (co.re + sin_half).abs()
-                {
-                    1.0
-                } else {
-                    -1.0
-                };
-                let theta = 2.0 * sin_half.atan2(cos_half);
-                let rx_angle = rx_sign * theta;
-
-                // Basis changes: apply to both MPS (gate†) and tableau (right_compose).
-                // Use raw 2×2 arrays for MPS to avoid DMatrix allocation.
-                let zero = Complex64::new(0.0, 0.0);
-                let one = Complex64::new(1.0, 0.0);
-                let i_pos = Complex64::new(0.0, 1.0);
-                let i_neg = Complex64::new(0.0, -1.0);
-                let r2 = Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0);
-
-                let s_raw = [[one, zero], [zero, i_pos]];
-                let sdg_raw = [[one, zero], [zero, i_neg]];
-                let h_raw = [[r2, r2], [r2, -r2]];
-
-                for &(site, pt) in &pauli_map {
-                    match pt {
-                        PauliType::Y => {
-                            mps.apply_gate_2x2(site, s_raw);
-                            super::tableau_compose::right_compose_szdg(tableau, site);
-                        }
-                        PauliType::Z => {
-                            mps.apply_gate_2x2(site, h_raw);
-                            super::tableau_compose::right_compose_h(tableau, site);
-                        }
-                        PauliType::X => {}
-                    }
-                }
-
-                // CNOT cascade: apply to both MPS and tableau.
-                let cx_lo = cnot_lo_gate();
-                let cx_hi = cnot_hi_gate();
-                for &(other_site, _) in &pauli_map {
-                    if other_site == rot_site {
-                        continue;
-                    }
-                    let (lo, hi) = (rot_site.min(other_site), rot_site.max(other_site));
-                    let gate = if rot_site < other_site { &cx_lo } else { &cx_hi };
-                    mps.apply_long_range_two_site_gate(lo, hi, gate)
-                        .expect("CX should succeed on MPS");
-                    super::tableau_compose::right_compose_cx(tableau, rot_site, other_site);
-                }
-
-                // Non-Clifford: RX at rot_site (MPS only).
-                let half = rx_angle / 2.0;
-                let rx_c = Complex64::new(half.cos(), 0.0);
-                let rx_s = Complex64::new(0.0, -half.sin());
-                mps.apply_gate_2x2(rot_site, [[rx_c, rx_s], [rx_s, rx_c]]);
-
-                // Undo basis changes at non-rot sites (MPS + tableau).
-                for &(site, pt) in &pauli_map {
-                    if site == rot_site {
-                        continue;
-                    }
-                    match pt {
-                        PauliType::Y => {
-                            mps.apply_gate_2x2(site, sdg_raw);
-                            super::tableau_compose::right_compose_sz(tableau, site);
-                        }
-                        PauliType::Z => {
-                            mps.apply_gate_2x2(site, h_raw);
-                            super::tableau_compose::right_compose_h(tableau, site);
-                        }
-                        PauliType::X => {}
-                    }
-                }
-
-                // Compress: the CNOT cascade may have temporarily grown
-                // bond dim, but the undo basis changes partially restore it.
-                mps.compress();
-
-                disent_flags[rot_site] = None;
             } else if affected_sites.len() == 1 {
                 stats.single_site += 1;
                 if is_ofd_in_span {
@@ -533,8 +384,6 @@ pub fn apply_rz_stab_mps(
                 // only match against truly-absorbed rows.
                 // All flip sites, no Z overlap: operator is cos*I + s*prod(X_j).
                 // Use MPS addition (exact, no SWAP-chain SVD drift).
-                let cos = Complex64::new(cos_half, 0.0);
-                let s = Complex64::new(0.0, -sin_half) * phase;
                 let x_gate = DMatrix::from_row_slice(
                     2,
                     2,
@@ -551,8 +400,9 @@ pub fn apply_rz_stab_mps(
                         .apply_one_site_gate(j, &x_gate)
                         .expect("MPS op on valid site");
                 }
+                let s = Complex64::new(0.0, -sin_half) * phase;
                 mps_x.scale(s);
-                mps.scale(cos);
+                mps.scale(Complex64::new(cos_half, 0.0));
                 *mps = mps.add(&mps_x);
                 mps.compress();
                 for &j in flip_sites {
@@ -564,31 +414,125 @@ pub fn apply_rz_stab_mps(
                     stats.ofd_in_span_std += 1;
                 }
                 // Std path creates MPS entanglement; do NOT add to gf2 basis.
-                // Multi-site rotation via MPS addition instead of CNOT cascade.
-                //
-                // The decomposition tells us: Z_q = phase * P where P is a
-                // multi-site Pauli. The rotation exp(-i*θ/2 * Z_q) expands as:
-                //   cos(θ/2)*I - i*sin(θ/2) * phase * P
-                // We compute cos*|ψ⟩ + s * P|ψ⟩ where s = -i*sin(θ/2)*phase,
-                // applying each per-site Pauli gate directly.
-                let cos = Complex64::new(cos_half, 0.0);
-                let s = Complex64::new(0.0, -sin_half) * phase;
+                // Multi-site rotation via CNOT cascade + RX + basis changes.
 
-                let mut mps_p = mps.clone();
-                for &(site, pt) in &pauli_map {
-                    let gate = match pt {
-                        PauliType::X => x_gate_matrix(),
-                        PauliType::Z => z_gate_matrix(),
-                        PauliType::Y => xz_gate_matrix(),
-                    };
-                    mps_p
-                        .apply_one_site_gate(site, &gate)
-                        .expect("MPS op on valid site");
+                // Count Y sites for the coefficient extraction
+                let y_count = pauli_map.iter().filter(|(_, p)| *p == PauliType::Y).count();
+
+                // co = -i*sin*phase · i^(Ys+1). After correction co = ±sin(θ/2).
+                let mut co = Complex64::new(0.0, -sin_half) * phase;
+                let i_val = Complex64::new(0.0, 1.0);
+                let mut factor = Complex64::new(1.0, 0.0);
+                for _ in 0..=y_count {
+                    factor *= i_val;
                 }
-                mps_p.scale(s);
-                mps.scale(cos);
-                *mps = mps.add(&mps_p);
-                mps.compress();
+                co *= factor;
+
+                let rx_sign: f64 = if sin_half.abs() < 1e-12
+                    || (co.re - sin_half).abs() < (co.re + sin_half).abs()
+                {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let theta = 2.0 * sin_half.atan2(cos_half);
+                let rx_angle = rx_sign * theta;
+
+                // Choose rotation site as the median of affected sites.
+                // This minimizes the total SWAP distance for the CNOT cascade.
+                let rot_idx = affected_sites.len() / 2;
+                let rot_site = affected_sites[rot_idx];
+
+                // Apply basis changes: H for Z, S for Y
+                for &(site, pt) in &pauli_map {
+                    match pt {
+                        PauliType::Z => {
+                            mps.apply_one_site_gate(site, &h_gate())
+                                .expect("MPS op on valid site");
+                        }
+                        PauliType::Y => {
+                            mps.apply_one_site_gate(site, &s_gate())
+                                .expect("MPS op on valid site");
+                        }
+                        PauliType::X => {}
+                    }
+                }
+
+                // CNOT chain cascade (matches reference: stabilizer-TN apply_xvec_rot).
+                // Chain through consecutive affected sites toward rot_site,
+                // accumulating parity. Each CNOT has the current site as control
+                // and the previous site as target (parity accumulator).
+                // This produces shorter-range CNOTs than the star pattern.
+                let cnot_lo = cnot_lo_ctrl();
+                let cnot_hi = cnot_hi_ctrl();
+
+                // Helper: apply CNOT with `ctrl` as control and `tgt` as target.
+                let apply_cnot = |mps: &mut Mps, ctrl: usize, tgt: usize| {
+                    let (lo, hi) = (ctrl.min(tgt), ctrl.max(tgt));
+                    // cnot_lo = lower qubit controls; cnot_hi = higher qubit controls
+                    let gate = if ctrl < tgt { &cnot_lo } else { &cnot_hi };
+                    mps.apply_long_range_two_site_gate(lo, hi, gate)
+                        .expect("CNOT should succeed");
+                };
+
+                // Left chain: [0] <- [1] <- ... <- [rot_idx]
+                // Each step: control=current, target=previous
+                let mut prev = affected_sites[0];
+                for &site in &affected_sites[1..=rot_idx] {
+                    apply_cnot(mps, site, prev);
+                    prev = site;
+                }
+
+                // Right chain: [last] <- [last-1] <- ... <- [rot_idx]
+                if rot_idx + 1 < affected_sites.len() {
+                    prev = *affected_sites
+                        .last()
+                        .expect("affected_sites must be non-empty");
+                    for &site in affected_sites[rot_idx..affected_sites.len() - 1]
+                        .iter()
+                        .rev()
+                    {
+                        apply_cnot(mps, site, prev);
+                        prev = site;
+                    }
+                }
+
+                // Apply RX on rotation site (parity accumulated here)
+                mps.apply_one_site_gate(rot_site, &rx_gate(rx_angle))
+                    .expect("MPS op on valid site");
+
+                // Reverse CNOT cascade (undo in opposite order)
+                // Right chain reverse: [rot_idx] -> [rot_idx+1] -> ... -> [last]
+                if rot_idx + 1 < affected_sites.len() {
+                    prev = affected_sites[rot_idx];
+                    for &site in &affected_sites[rot_idx + 1..] {
+                        apply_cnot(mps, prev, site);
+                        prev = site;
+                    }
+                }
+
+                // Left chain reverse: [rot_idx] -> [rot_idx-1] -> ... -> [0]
+                prev = affected_sites[rot_idx];
+                for &site in affected_sites[..rot_idx].iter().rev() {
+                    apply_cnot(mps, prev, site);
+                    prev = site;
+                }
+
+                // Undo basis changes
+                for &(site, pt) in &pauli_map {
+                    match pt {
+                        PauliType::Z => {
+                            mps.apply_one_site_gate(site, &h_gate())
+                                .expect("MPS op on valid site");
+                        }
+                        PauliType::Y => {
+                            mps.apply_one_site_gate(site, &sdg_gate())
+                                .expect("MPS op on valid site");
+                        }
+                        PauliType::X => {}
+                    }
+                }
+                // MPS modified at all affected sites -- clear flags.
                 for &site in &affected_sites {
                     disent_flags[site] = None;
                 }

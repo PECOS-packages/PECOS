@@ -37,15 +37,13 @@ pub struct RowMetadata {
 /// Each row is a binary vector of length `num_sites` (MPS sites). A 1 at position
 /// j means the j-th destabilizer index was flipped (X or Y Pauli) in the
 /// decomposition of `Z_q` for that non-Clifford gate.
-///
-/// Rows are stored as `u128` bitmasks for allocation-free GF(2) operations.
-/// Supports up to 128 MPS sites.
 #[derive(Clone, Debug)]
 pub struct Gf2FlipMatrix {
     num_sites: usize,
-    /// Rows stored as u128 bitmasks. Bit j is set iff site j is flipped.
-    rows: Vec<u128>,
-    /// Metadata per row (parallel to `rows`).
+    /// Rows stored as bit vectors (Vec<bool> for clarity; could use bitvec for perf).
+    rows: Vec<Vec<bool>>,
+    /// Metadata per row (parallel to `rows`). Populated by callers that want
+    /// OFD fix-up info; left as default when only tracking rank.
     metadata: Vec<RowMetadata>,
 }
 
@@ -71,10 +69,10 @@ impl Gf2FlipMatrix {
 
     /// Add a row with explicit metadata for OFD fix-up construction.
     pub fn add_row_with_meta(&mut self, flip_sites: &[usize], meta: RowMetadata) {
-        let mut row: u128 = 0;
+        let mut row = vec![false; self.num_sites];
         for &site in flip_sites {
-            if site < self.num_sites && site < 128 {
-                row |= 1u128 << site;
+            if site < self.num_sites {
+                row[site] = true;
             }
         }
         self.rows.push(row);
@@ -102,32 +100,46 @@ impl Gf2FlipMatrix {
             return 0;
         }
 
-        let mut matrix: Vec<u128> = self.rows.clone();
+        // Work on a copy for row reduction
+        let mut matrix: Vec<Vec<bool>> = self.rows.clone();
         let num_rows = matrix.len();
-        let cols = self.num_sites.min(128);
+        let num_cols = self.num_sites;
 
         let mut current_row = 0;
-        for col in 0..cols {
+
+        // Standard GF(2) Gaussian elimination: sweep over columns.
+        // Row pointer only advances when a pivot is found.
+        for col in 0..num_cols {
             if current_row >= num_rows {
                 break;
             }
-            let col_bit = 1u128 << col;
+
+            // Find a row with a 1 in this column at or below current_row
             let found = matrix[current_row..]
                 .iter()
-                .position(|&row| row & col_bit != 0)
+                .position(|row| row[col])
                 .map(|offset| current_row + offset);
+
             if let Some(swap_row) = found {
                 matrix.swap(current_row, swap_row);
-                let pivot = matrix[current_row];
+
+                // Eliminate all other 1s in this column.
+                // We need to XOR the pivot row into other rows, so split
+                // into slices to avoid double-borrow.
+                let pivot_row = matrix[current_row].clone();
                 for (r, row) in matrix.iter_mut().enumerate() {
-                    if r != current_row && *row & col_bit != 0 {
-                        *row ^= pivot;
+                    if r != current_row && row[col] {
+                        for (cell, &piv) in row.iter_mut().zip(pivot_row.iter()) {
+                            *cell ^= piv;
+                        }
                     }
                 }
+
                 current_row += 1;
             }
         }
-        current_row
+
+        current_row // = rank
     }
 
     /// Theoretical minimum bond dimension achievable by Clifford disentangling.
@@ -166,124 +178,48 @@ impl Gf2FlipMatrix {
     /// are original row indices whose XOR equals `new_row`. Returns `None`
     /// if `new_row` is linearly independent (would grow rank).
     ///
-    /// Uses u128 bitmasks for both data and provenance — zero heap allocation.
+    /// Algorithm: augment the matrix with identity (tracking which original
+    /// rows contribute), perform row-reduction, then reduce the target row
+    /// against the augmented basis.
     #[must_use]
     pub fn span_decomposition(&self, new_row: &[usize]) -> Option<Vec<usize>> {
         let num_rows = self.rows.len();
-        if num_rows == 0 {
-            // Empty matrix: new_row is in span only if it's zero.
-            let mut target: u128 = 0;
-            for &s in new_row {
-                if s < self.num_sites && s < 128 { target |= 1u128 << s; }
-            }
-            return if target == 0 { Some(Vec::new()) } else { None };
-        }
-
-        // Augmented rows: (data bits, provenance bits).
-        // Provenance uses u128 bitmask — supports up to 64 accumulated rows.
-        // For larger matrices, fall back to Vec-based provenance.
-        if num_rows <= 128 {
-            return self.span_decomposition_fast(new_row);
-        }
-
-        // Fallback for >64 rows (unlikely in practice)
-        self.span_decomposition_large(new_row)
-    }
-
-    /// Fast span decomposition using u128 bitmasks for both data and provenance.
-    fn span_decomposition_fast(&self, new_row: &[usize]) -> Option<Vec<usize>> {
-        let num_rows = self.rows.len();
-
-        // Augmented: (data_bits, provenance_bits) — all stack-allocated.
-        let mut data: Vec<u128> = self.rows.clone();
-        let mut prov: Vec<u128> = (0..num_rows).map(|i| 1u128 << i).collect();
-
-        // Gaussian elimination to RREF.
-        let cols = self.num_sites.min(128);
-        let mut current_row = 0;
-        for col in 0..cols {
-            if current_row >= num_rows {
-                break;
-            }
-            let col_bit = 1u128 << col;
-            let found = data[current_row..]
-                .iter()
-                .position(|&d| d & col_bit != 0)
-                .map(|offset| current_row + offset);
-            if let Some(sw) = found {
-                data.swap(current_row, sw);
-                prov.swap(current_row, sw);
-                let pivot_d = data[current_row];
-                let pivot_p = prov[current_row];
-                for r in 0..num_rows {
-                    if r != current_row && data[r] & col_bit != 0 {
-                        data[r] ^= pivot_d;
-                        prov[r] ^= pivot_p;
-                    }
-                }
-                current_row += 1;
-            }
-        }
-
-        // Build target and reduce against RREF basis.
-        let mut v: u128 = 0;
-        for &s in new_row {
-            if s < self.num_sites && s < 128 { v |= 1u128 << s; }
-        }
-        let mut combination: u128 = 0;
-
-        for i in 0..current_row {
-            let pivot = data[i].trailing_zeros() as usize;
-            if pivot < self.num_sites && v & (1u128 << pivot) != 0 {
-                v ^= data[i];
-                combination ^= prov[i];
-            }
-        }
-
-        if v == 0 {
-            Some(
-                (0..num_rows)
-                    .filter(|&i| combination & (1u128 << i) != 0)
-                    .collect(),
-            )
-        } else {
-            None
-        }
-    }
-
-    /// Fallback span decomposition for >64 rows.
-    fn span_decomposition_large(&self, new_row: &[usize]) -> Option<Vec<usize>> {
-        let num_rows = self.rows.len();
-        let mut data: Vec<u128> = self.rows.clone();
-        let mut prov: Vec<Vec<bool>> = (0..num_rows)
-            .map(|i| {
-                let mut p = vec![false; num_rows];
-                p[i] = true;
-                p
+        let num_cols = self.num_sites;
+        // Augmented matrix: each row is (original row bits, provenance bits).
+        // provenance[i] tracks which original rows have been XORed into this row.
+        let mut aug: Vec<(Vec<bool>, Vec<bool>)> = self
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let mut prov = vec![false; num_rows];
+                prov[i] = true;
+                (r.clone(), prov)
             })
             .collect();
 
-        let cols = self.num_sites.min(128);
+        // Gaussian eliminate to RREF, maintaining provenance.
         let mut current_row = 0;
-        for col in 0..cols {
+        for col in 0..num_cols {
             if current_row >= num_rows {
                 break;
             }
-            let col_bit = 1u128 << col;
-            let found = data[current_row..]
+            let found = aug[current_row..]
                 .iter()
-                .position(|&d| d & col_bit != 0)
+                .position(|entry| entry.0[col])
                 .map(|offset| current_row + offset);
             if let Some(sw) = found {
-                data.swap(current_row, sw);
-                prov.swap(current_row, sw);
-                let pivot_d = data[current_row];
-                let pivot_p = prov[current_row].clone();
-                for r in 0..num_rows {
-                    if r != current_row && data[r] & col_bit != 0 {
-                        data[r] ^= pivot_d;
-                        for (c, &p) in prov[r].iter_mut().zip(pivot_p.iter()) {
-                            *c ^= p;
+                aug.swap(current_row, sw);
+                let pivot_data = aug[current_row].0.clone();
+                let pivot_prov = aug[current_row].1.clone();
+                for (r, entry) in aug.iter_mut().enumerate() {
+                    if r != current_row && entry.0[col] {
+                        // XOR current_row into r (both data and provenance).
+                        for (cell, &piv) in entry.0.iter_mut().zip(pivot_data.iter()) {
+                            *cell ^= piv;
+                        }
+                        for (cell, &piv) in entry.1.iter_mut().zip(pivot_prov.iter()) {
+                            *cell ^= piv;
                         }
                     }
                 }
@@ -291,24 +227,35 @@ impl Gf2FlipMatrix {
             }
         }
 
-        let mut v: u128 = 0;
+        // Build target vector.
+        let mut v = vec![false; num_cols];
         for &s in new_row {
-            if s < self.num_sites && s < 128 { v |= 1u128 << s; }
+            if s < num_cols {
+                v[s] = true;
+            }
         }
         let mut combination = vec![false; num_rows];
-        for i in 0..current_row {
-            let pivot = data[i].trailing_zeros() as usize;
-            if pivot < self.num_sites && v & (1u128 << pivot) != 0 {
-                v ^= data[i];
-                for (c, &p) in combination.iter_mut().zip(prov[i].iter()) {
-                    *c ^= p;
+
+        // Reduce v against RREF basis, accumulating provenance.
+        for entry in &aug[..current_row] {
+            if let Some(pivot) = entry.0.iter().position(|&b| b)
+                && v[pivot]
+            {
+                for (vc, &ec) in v.iter_mut().zip(entry.0.iter()) {
+                    *vc ^= ec;
+                }
+                for (cc, &ep) in combination.iter_mut().zip(entry.1.iter()) {
+                    *cc ^= ep;
                 }
             }
         }
 
-        if v == 0 {
+        // If v is all-zero, the new_row was in span; combination gives the decomposition.
+        if v.iter().all(|&b| !b) {
             Some(
-                combination.iter().enumerate()
+                combination
+                    .iter()
+                    .enumerate()
                     .filter_map(|(i, &b)| if b { Some(i) } else { None })
                     .collect(),
             )
@@ -435,15 +382,17 @@ mod tests {
         let target = &[0, 2, 4];
         let dep = m.span_decomposition(target).expect("should be in span");
         // Verify the XOR reconstructs target.
-        let mut recon: u128 = 0;
+        let mut recon = vec![false; 5];
         for &i in &dep {
-            recon ^= m.rows[i];
+            for (rc, &rv) in recon.iter_mut().zip(m.rows[i].iter()) {
+                *rc ^= rv;
+            }
         }
-        let mut target_bits: u128 = 0;
+        let mut target_vec = vec![false; 5];
         for &s in target {
-            target_bits |= 1u128 << s;
+            target_vec[s] = true;
         }
-        assert_eq!(recon, target_bits, "XOR of rows {dep:?} should equal target");
+        assert_eq!(recon, target_vec, "XOR of rows {dep:?} should equal target");
     }
 
     #[test]

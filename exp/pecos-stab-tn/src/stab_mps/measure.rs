@@ -233,7 +233,7 @@ fn pre_reduce_for_measurement(
     }
 }
 
-pub fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
+fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
     // Optimization: if the control site has no |1⟩_virt amplitude, CNOT is
     // identity on this MPS — skip to avoid bond-dim blowup from SWAP chains.
     // Mirror: if control has no |0⟩_virt amp, CNOT reduces to X on target.

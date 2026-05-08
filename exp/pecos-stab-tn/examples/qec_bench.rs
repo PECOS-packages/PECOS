@@ -217,7 +217,7 @@ fn main() {
             Some(1e-8),
             true,
         ),
-        ("for_sparse_t()", false, Some(1e-8), true),
+        ("for_qec()", false, Some(1e-8), true),
     ];
 
     for &(name, lazy, trunc, merge) in configs {

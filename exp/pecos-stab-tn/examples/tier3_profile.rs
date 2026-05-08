@@ -97,7 +97,7 @@ fn main() {
 
     let n = 12;
     let num_rounds = 50;
-    let mut stn = StabMps::builder(n).seed(42).for_sparse_t().build();
+    let mut stn = StabMps::builder(n).seed(42).for_qec().build();
     let t = pecos_core::Angle64::QUARTER_TURN / 2u64;
     bench("T+longrange-CX round × 50 (n=12)", num_rounds, || {
         for _ in 0..num_rounds {

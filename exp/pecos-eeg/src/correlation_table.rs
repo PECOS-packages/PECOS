@@ -33,7 +33,9 @@ use crate::dem_mapping::{Detector, Observable};
 use crate::noise::NoiseSpec;
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::Gate;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// Exact k-body correlation table for detectors and observables.
 ///
@@ -55,6 +57,27 @@ pub struct CorrelationTable {
     pub num_observables: usize,
     /// Number of Heisenberg walks performed
     pub num_walks: usize,
+}
+
+/// Inputs for exact correlation table construction.
+#[derive(Clone, Copy)]
+pub struct CorrelationTableInput<'a> {
+    /// Circuit gates.
+    pub gates: &'a [Gate],
+    /// Noise model used for exact correlation targets.
+    pub noise: &'a dyn NoiseSpec,
+    /// Detector definitions.
+    pub detectors: &'a [Detector],
+    /// Observable definitions.
+    pub observables: &'a [Observable],
+    /// Initial stabilizer group.
+    pub initial_stab: &'a StabilizerGroup,
+    /// Number of circuit qubits.
+    pub num_qubits: usize,
+    /// Maximum detector/observable correlation order.
+    pub max_order: usize,
+    /// Drop probabilities below this threshold.
+    pub prune_threshold: f64,
 }
 
 impl CorrelationTable {
@@ -120,7 +143,7 @@ impl CorrelationTable {
 
             let mut targets = format!("D{di} D{dj}");
             for o in &obs_list {
-                targets.push_str(&format!(" L{o}"));
+                let _ = write!(targets, " L{o}");
             }
             lines.push(format!("error({p_edge:.6e}) {targets}"));
         }
@@ -156,16 +179,19 @@ impl CorrelationTable {
 ///
 /// Each entry gives the exact joint detection probability for a subset of
 /// detectors, including all coherent interference effects.
-pub fn compute_correlation_table(
-    gates: &[Gate],
-    noise: &dyn NoiseSpec,
-    detectors: &[Detector],
-    observables: &[Observable],
-    initial_stab: &StabilizerGroup,
-    num_qubits: usize,
-    max_order: usize,
-    prune_threshold: f64,
-) -> CorrelationTable {
+#[must_use]
+pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> CorrelationTable {
+    let CorrelationTableInput {
+        gates,
+        noise,
+        detectors,
+        observables,
+        initial_stab,
+        num_qubits,
+        max_order,
+        prune_threshold,
+    } = input;
+
     let n = detectors.len();
     let n_obs = observables.len();
     let has_stochastic = true; // conservative; could check noise params
@@ -215,7 +241,6 @@ pub fn compute_correlation_table(
     }
 
     // Run all walks in parallel
-    use rayon::prelude::*;
     let walk_results: Vec<(Vec<usize>, f64)> = walk_items
         .par_iter()
         .map(|(det_ids, product)| {
@@ -243,7 +268,11 @@ pub fn compute_correlation_table(
             // Iterate over all subsets T of {0..k-1}
             for mask in 0..(1u64 << k) {
                 let subset_size = mask.count_ones() as usize;
-                let sign = if subset_size % 2 == 0 { 1.0 } else { -1.0 };
+                let sign = if subset_size.is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
 
                 if subset_size == 0 {
                     // Empty subset: <I> = 1, contribution = (-1)^k * 1

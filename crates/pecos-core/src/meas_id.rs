@@ -6,8 +6,8 @@
 //!
 //! Each measurement gate (MZ, MX, etc.) produces a `MeasId` — a unique
 //! identifier for that measurement's outcome. Assigned once at circuit
-//! construction time, carried through all transformations (TickCircuit →
-//! DagCircuit → InfluenceMap → DEM). Never reassigned.
+//! construction time, carried through all transformations (`TickCircuit` →
+//! `DagCircuit` → `InfluenceMap` → DEM). Never reassigned.
 //!
 //! This follows the MLIR SSA pattern: the value is defined at one point
 //! and referenced everywhere. Detectors reference `MeasId` values

@@ -27,10 +27,42 @@
 use crate::Bm;
 use crate::noise::NoiseSpec;
 use crate::stabilizer::StabilizerGroup;
-use pecos_core::gate_type::GateType;
-use pecos_core::pauli::pauli_bitmask::*;
 use pecos_core::Gate;
+use pecos_core::gate_type::GateType;
+use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use smallvec::SmallVec;
+use std::collections::BinaryHeap;
+
+const CX_PHASE: [[u8; 4]; 4] = [[0, 0, 0, 0], [0, 0, 3, 1], [0, 1, 0, 3], [0, 3, 1, 0]];
+
+fn sign_parity<const N: usize>(signs: [bool; N]) -> bool {
+    signs.into_iter().fold(false, |parity, sign| parity ^ sign)
+}
+
+fn activate_qubit(
+    q: u16,
+    before_gate: u32,
+    active: &mut [bool],
+    visited: &mut [bool],
+    heap: &mut BinaryHeap<u32>,
+    gate_index: &crate::expand::GateIndex,
+) {
+    let qu = q as usize;
+    if qu >= active.len() {
+        return;
+    }
+    active[qu] = true;
+    for gi in gate_index.gates_on_qubit_rev(qu) {
+        if gi >= before_gate {
+            continue;
+        } // already passed
+        let gi_usize = gi as usize;
+        if !visited[gi_usize] {
+            visited[gi_usize] = true;
+            heap.push(gi);
+        }
+    }
+}
 
 /// Precomputed noise for a single gate: H-type injections + batched S-type scale.
 ///
@@ -79,8 +111,8 @@ pub fn build_noise_map(
             continue;
         }
 
-        let qubits: SmallVec<[usize; 4]> = gate.qubits.iter()
-            .map(|q| q.index()).collect();
+        let qubits: SmallVec<[usize; 4]> =
+            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(i, gate.gate_type, &qubits);
 
         if injections.is_empty() {
@@ -93,40 +125,47 @@ pub fn build_noise_map(
         // We compute a combined scale factor for each support pattern.
         let mut s_rates_q0_only = Vec::new(); // S noise on q0 only
         let mut s_rates_q1_only = Vec::new(); // S noise on q1 only
-        let mut s_rates_both = Vec::new();    // S noise on both q0 and q1
-        let mut s_rates_other = Vec::new();   // S noise on other patterns
+        let mut s_rates_both = Vec::new(); // S noise on both q0 and q1
+        let mut s_rates_other = Vec::new(); // S noise on other patterns
 
         let q0 = qubits.first().copied().unwrap_or(0) as u16;
-        let q1 = if qubits.len() >= 2 { qubits[1] as u16 } else { q0 };
+        let q1 = if qubits.len() >= 2 {
+            qubits[1] as u16
+        } else {
+            q0
+        };
 
         for inj in &injections {
-            match inj.eeg_type {
-                crate::eeg::EegType::H => { h_inj.push(inj.clone()); }
-                crate::eeg::EegType::S => {
-                    let rate = inj.rate;
-                    // Classify by qubit support
-                    let on_q0 = inj.label.has_x(q0 as usize) || inj.label.has_z(q0 as usize);
-                    let on_q1 = qubits.len() >= 2
-                        && (inj.label.has_x(q1 as usize) || inj.label.has_z(q1 as usize));
+            if inj.eeg_type == crate::eeg::EegType::S {
+                let rate = inj.rate;
+                // Classify by qubit support
+                let on_q0 = inj.label.has_x(q0 as usize) || inj.label.has_z(q0 as usize);
+                let on_q1 = qubits.len() >= 2
+                    && (inj.label.has_x(q1 as usize) || inj.label.has_z(q1 as usize));
 
-                    // For each S injection with rate s (s < 0), the scale for
-                    // anticommuting terms is (1 - 2*(-s)) = (1 + 2s).
-                    // We need to count how many of the term's components
-                    // anticommute. For a uniform depolarizing model this is
-                    // predetermined by the support pattern.
-                    //
-                    // Instead of trying to batch analytically (which requires
-                    // knowing the exact anticommutation count), we accumulate
-                    // the log of the scale factors and compute the combined
-                    // scale per support pattern.
-                    //
-                    // For now, just collect individual rates.
-                    if on_q0 && !on_q1 { s_rates_q0_only.push(rate); }
-                    else if !on_q0 && on_q1 { s_rates_q1_only.push(rate); }
-                    else if on_q0 && on_q1 { s_rates_both.push(rate); }
-                    else { s_rates_other.push(rate); }
+                // For each S injection with rate s (s < 0), the scale for
+                // anticommuting terms is (1 - 2*(-s)) = (1 + 2s).
+                // We need to count how many of the term's components
+                // anticommute. For a uniform depolarizing model this is
+                // predetermined by the support pattern.
+                //
+                // Instead of trying to batch analytically (which requires
+                // knowing the exact anticommutation count), we accumulate
+                // the log of the scale factors and compute the combined
+                // scale per support pattern.
+                //
+                // For now, just collect individual rates.
+                if on_q0 && !on_q1 {
+                    s_rates_q0_only.push(rate);
+                } else if !on_q0 && on_q1 {
+                    s_rates_q1_only.push(rate);
+                } else if on_q0 && on_q1 {
+                    s_rates_both.push(rate);
+                } else {
+                    s_rates_other.push(rate);
                 }
-                _ => { h_inj.push(inj.clone()); }
+            } else {
+                h_inj.push(inj.clone());
             }
         }
 
@@ -144,11 +183,13 @@ pub fn build_noise_map(
         // Optimization: if ALL S rates are the same (uniform depol), use
         // closed-form. Otherwise, keep individual injections.
         let all_s_same_rate = {
-            let all_s: Vec<f64> = s_rates_q0_only.iter()
+            let all_s: Vec<f64> = s_rates_q0_only
+                .iter()
                 .chain(&s_rates_q1_only)
                 .chain(&s_rates_both)
                 .chain(&s_rates_other)
-                .copied().collect();
+                .copied()
+                .collect();
             !all_s.is_empty() && all_s.iter().all(|&r| (r - all_s[0]).abs() < 1e-20)
         };
 
@@ -158,10 +199,12 @@ pub fn build_noise_map(
             // For single-qubit: 3 S generators, 2 anticommute → scale = (1+2s)^2
             // For two-qubit: 15 S generators, 8 anticommute for any non-trivial → (1+2s)^8
             let total_s = s_rates_q0_only.len() + s_rates_q1_only.len() + s_rates_both.len();
-            let s = s_rates_q0_only.first()
+            let s = s_rates_q0_only
+                .first()
                 .or(s_rates_q1_only.first())
                 .or(s_rates_both.first())
-                .copied().unwrap_or(0.0);
+                .copied()
+                .unwrap_or(0.0);
             let p = -s;
             let individual_scale = 1.0 - 2.0 * p;
 
@@ -181,7 +224,13 @@ pub fn build_noise_map(
             // Actually, let me just precompute this properly.
             // For 1q depol (3 generators): non-identity on q → 2 anticommute → (1-2p/3)^2
             // For 2q depol (15 generators): non-identity on either q → 8 anticommute → (1-2p/15)^8
-            let n_anti = if total_s == 3 { 2 } else if total_s == 15 { 8 } else { 0 };
+            let n_anti = if total_s == 3 {
+                2
+            } else if total_s == 15 {
+                8
+            } else {
+                0
+            };
             if n_anti == 0 && total_s > 0 {
                 // Non-standard S count (e.g., 1 for p_meas, 1 for p_prep):
                 // can't batch — put in h_injections for individual processing.
@@ -202,8 +251,10 @@ pub fn build_noise_map(
                 both_scale: combined,
                 num_gate_qubits: qubits.len().min(2) as u8,
             }));
-        } else if s_rates_q0_only.is_empty() && s_rates_q1_only.is_empty()
-            && s_rates_both.is_empty() && s_rates_other.is_empty()
+        } else if s_rates_q0_only.is_empty()
+            && s_rates_q1_only.is_empty()
+            && s_rates_both.is_empty()
+            && s_rates_other.is_empty()
         {
             // H-type only, no S noise
             if h_inj.is_empty() {
@@ -211,7 +262,11 @@ pub fn build_noise_map(
             } else {
                 map.push(Some(PrecomputedGateNoise {
                     h_injections: h_inj,
-                    q0_scale: 1.0, q0, q1_scale: 1.0, q1, both_scale: 1.0,
+                    q0_scale: 1.0,
+                    q0,
+                    q1_scale: 1.0,
+                    q1,
+                    both_scale: 1.0,
                     num_gate_qubits: qubits.len().min(2) as u8,
                 }));
             }
@@ -225,7 +280,11 @@ pub fn build_noise_map(
             }
             map.push(Some(PrecomputedGateNoise {
                 h_injections: h_inj,
-                q0_scale: 1.0, q0, q1_scale: 1.0, q1, both_scale: 1.0,
+                q0_scale: 1.0,
+                q0,
+                q1_scale: 1.0,
+                q1,
+                both_scale: 1.0,
                 num_gate_qubits: qubits.len().min(2) as u8,
             }));
         }
@@ -253,16 +312,24 @@ impl SparsePauli {
         let max_z = bm.z_bits.highest_set_bit().unwrap_or(0);
         let max_q = max_x.max(max_z);
         for q in 0..=max_q {
-            if bm.has_x(q) { sp.x_qubits.push(q as u16); }
-            if bm.has_z(q) { sp.z_qubits.push(q as u16); }
+            if bm.has_x(q) {
+                sp.x_qubits.push(q as u16);
+            }
+            if bm.has_z(q) {
+                sp.z_qubits.push(q as u16);
+            }
         }
         sp
     }
 
     pub(crate) fn to_bm(&self) -> Bm {
         let mut bm = Bm::default();
-        for &q in &self.x_qubits { bm.x_bits.set_bit(q as usize); }
-        for &q in &self.z_qubits { bm.z_bits.set_bit(q as usize); }
+        for &q in &self.x_qubits {
+            bm.x_bits.set_bit(q as usize);
+        }
+        for &q in &self.z_qubits {
+            bm.z_bits.set_bit(q as usize);
+        }
         bm
     }
 
@@ -284,15 +351,23 @@ impl SparsePauli {
     /// Toggle x-bit at qubit q (insert if missing, remove if present).
     fn toggle_x(&mut self, q: u16) {
         match self.x_qubits.binary_search(&q) {
-            Ok(i) => { self.x_qubits.remove(i); }
-            Err(i) => { self.x_qubits.insert(i, q); }
+            Ok(i) => {
+                self.x_qubits.remove(i);
+            }
+            Err(i) => {
+                self.x_qubits.insert(i, q);
+            }
         }
     }
 
     fn toggle_z(&mut self, q: u16) {
         match self.z_qubits.binary_search(&q) {
-            Ok(i) => { self.z_qubits.remove(i); }
-            Err(i) => { self.z_qubits.insert(i, q); }
+            Ok(i) => {
+                self.z_qubits.remove(i);
+            }
+            Err(i) => {
+                self.z_qubits.insert(i, q);
+            }
         }
     }
 
@@ -317,7 +392,7 @@ impl SparsePauli {
         // Commutes iff count is even.
         let c1 = sorted_intersection_count(&self.x_qubits, &other.z_qubits);
         let c2 = sorted_intersection_count(&self.z_qubits, &other.x_qubits);
-        (c1 + c2) % 2 == 0
+        (c1 + c2).is_multiple_of(2)
     }
 }
 
@@ -337,12 +412,16 @@ impl std::hash::Hash for SparsePauli {
 
 impl Ord for SparsePauli {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.x_qubits.as_slice().cmp(other.x_qubits.as_slice())
+        self.x_qubits
+            .as_slice()
+            .cmp(other.x_qubits.as_slice())
             .then(self.z_qubits.as_slice().cmp(other.z_qubits.as_slice()))
     }
 }
 impl PartialOrd for SparsePauli {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Count elements in the intersection of two sorted slices.
@@ -354,7 +433,11 @@ fn sorted_intersection_count(a: &[u16], b: &[u16]) -> u32 {
         match a[i].cmp(&b[j]) {
             std::cmp::Ordering::Less => i += 1,
             std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => { count += 1; i += 1; j += 1; }
+            std::cmp::Ordering::Equal => {
+                count += 1;
+                i += 1;
+                j += 1;
+            }
         }
     }
     count
@@ -380,16 +463,17 @@ impl SparsePauli {
         let cz = self.has_z(c);
         let tx = self.has_x(t);
         let tz = self.has_z(t);
-        if cx { self.toggle_x(t); }
-        if tz { self.toggle_z(c); }
+        if cx {
+            self.toggle_x(t);
+        }
+        if tz {
+            self.toggle_z(c);
+        }
         // Sign from phase table (same formula as the fixed conjugate_cx)
-        const PHASE: [[u8; 4]; 4] = [
-            [0, 0, 0, 0], [0, 0, 3, 1], [0, 1, 0, 3], [0, 3, 1, 0],
-        ];
-        let pc = (cx as u8) + 2 * (cz as u8);
-        let pt = (tx as u8) + 2 * (tz as u8);
-        let phase_c = if tz { PHASE[pc as usize][2] } else { 0 };
-        let phase_t = if cx { PHASE[1][pt as usize] } else { 0 };
+        let pc = u8::from(cx) + 2 * u8::from(cz);
+        let pt = u8::from(tx) + 2 * u8::from(tz);
+        let phase_c = if tz { CX_PHASE[pc as usize][2] } else { 0 };
+        let phase_t = if cx { CX_PHASE[1][pt as usize] } else { 0 };
         (phase_c + phase_t) % 4 == 2
     }
 
@@ -399,21 +483,33 @@ impl SparsePauli {
         let bx = self.has_x(b);
         let az = self.has_z(a);
         let bz = self.has_z(b);
-        if bx { self.toggle_z(a); }
-        if ax { self.toggle_z(b); }
+        if bx {
+            self.toggle_z(a);
+        }
+        if ax {
+            self.toggle_z(b);
+        }
         ax && bx && (az != bz)
     }
 
     /// Conjugate by Pauli X on qubit q.
-    fn conjugate_pauli_x(&self, q: u16) -> bool { self.has_z(q) }
+    fn conjugate_pauli_x(&self, q: u16) -> bool {
+        self.has_z(q)
+    }
     /// Conjugate by Pauli Y on qubit q.
-    fn conjugate_pauli_y(&self, q: u16) -> bool { self.has_x(q) != self.has_z(q) }
+    fn conjugate_pauli_y(&self, q: u16) -> bool {
+        self.has_x(q) != self.has_z(q)
+    }
     /// Conjugate by Pauli Z on qubit q.
-    fn conjugate_pauli_z(&self, q: u16) -> bool { self.has_x(q) }
+    fn conjugate_pauli_z(&self, q: u16) -> bool {
+        self.has_x(q)
+    }
 
     /// Conjugate by SZ on qubit q: X→Y, Y→-X, Z→Z.
     fn conjugate_sz(&mut self, q: u16) -> bool {
-        if !self.has_x(q) { return false; }
+        if !self.has_x(q) {
+            return false;
+        }
         let was_y = self.has_z(q);
         self.toggle_z(q);
         was_y
@@ -421,7 +517,9 @@ impl SparsePauli {
 
     /// Conjugate by SZdg on qubit q.
     fn conjugate_szdg(&mut self, q: u16) -> bool {
-        if !self.has_x(q) { return false; }
+        if !self.has_x(q) {
+            return false;
+        }
         let was_y = self.has_z(q);
         self.toggle_z(q);
         !was_y
@@ -431,7 +529,9 @@ impl SparsePauli {
     fn conjugate_sx(&mut self, q: u16) -> bool {
         let xq = self.has_x(q);
         let zq = self.has_z(q);
-        if zq { self.toggle_x(q); }
+        if zq {
+            self.toggle_x(q);
+        }
         !xq && zq
     }
 
@@ -439,7 +539,9 @@ impl SparsePauli {
     fn conjugate_sxdg(&mut self, q: u16) -> bool {
         let xq = self.has_x(q);
         let zq = self.has_z(q);
-        if zq { self.toggle_x(q); }
+        if zq {
+            self.toggle_x(q);
+        }
         xq && zq
     }
 
@@ -467,14 +569,36 @@ impl SparsePauli {
 
     /// Conjugate by SWAP(a, b).
     fn conjugate_swap(&mut self, a: u16, b: u16) {
-        let ax = self.has_x(a); let az = self.has_z(a);
-        let bx = self.has_x(b); let bz = self.has_z(b);
+        let ax = self.has_x(a);
+        let az = self.has_z(a);
+        let bx = self.has_x(b);
+        let bz = self.has_z(b);
         // Clear both
-        if ax { self.clear_x(a); } if az { self.clear_z(a); }
-        if bx { self.clear_x(b); } if bz { self.clear_z(b); }
+        if ax {
+            self.clear_x(a);
+        }
+        if az {
+            self.clear_z(a);
+        }
+        if bx {
+            self.clear_x(b);
+        }
+        if bz {
+            self.clear_z(b);
+        }
         // Set swapped
-        if bx { self.toggle_x(a); } if bz { self.toggle_z(a); }
-        if ax { self.toggle_x(b); } if az { self.toggle_z(b); }
+        if bx {
+            self.toggle_x(a);
+        }
+        if bz {
+            self.toggle_z(a);
+        }
+        if ax {
+            self.toggle_x(b);
+        }
+        if az {
+            self.toggle_z(b);
+        }
     }
 }
 
@@ -485,7 +609,9 @@ impl SparsePauli {
 /// to their adjoints: SZ↔SZdg, SX↔SXdg, SY↔SYdg, SZZ↔SZZdg, etc.
 /// Self-adjoint gates (H, X, Y, Z, CX, CZ, SWAP, CY) are unchanged.
 pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool> {
-    if gate.qubits.is_empty() { return None; }
+    if gate.qubits.is_empty() {
+        return None;
+    }
     let q0 = gate.qubits[0].index() as u16;
     match gate.gate_type {
         // Self-adjoint single-qubit gates
@@ -501,16 +627,26 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         GateType::SY => Some(p.conjugate_sydg(q0)),
         GateType::SYdg => Some(p.conjugate_sy(q0)),
         // Self-adjoint two-qubit gates
-        GateType::CX => { let q1 = gate.qubits[1].index() as u16; Some(p.conjugate_cx(q0, q1)) }
-        GateType::CZ => { let q1 = gate.qubits[1].index() as u16; Some(p.conjugate_cz(q0, q1)) }
-        GateType::SWAP => { let q1 = gate.qubits[1].index() as u16; p.conjugate_swap(q0, q1); Some(false) }
+        GateType::CX => {
+            let q1 = gate.qubits[1].index() as u16;
+            Some(p.conjugate_cx(q0, q1))
+        }
+        GateType::CZ => {
+            let q1 = gate.qubits[1].index() as u16;
+            Some(p.conjugate_cz(q0, q1))
+        }
+        GateType::SWAP => {
+            let q1 = gate.qubits[1].index() as u16;
+            p.conjugate_swap(q0, q1);
+            Some(false)
+        }
         // CY is self-adjoint: CY = SZdg(t) CX(c,t) SZ(t) — chain
         GateType::CY => {
             let q1 = gate.qubits[1].index() as u16;
             let s1 = p.conjugate_sz(q1);
             let s2 = p.conjugate_cx(q0, q1);
             let s3 = p.conjugate_szdg(q1);
-            Some((s1 as u8 + s2 as u8 + s3 as u8) % 2 == 1)
+            Some(sign_parity([s1, s2, s3]))
         }
         // Non-self-adjoint two-qubit: swap to adjoint for backward.
         // SZZ backward = SZZdg forward = CX(q0,q1) SZdg(q1) CX(q0,q1)
@@ -519,7 +655,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             let s1 = p.conjugate_cx(q0, q1);
             let s2 = p.conjugate_szdg(q1);
             let s3 = p.conjugate_cx(q0, q1);
-            Some((s1 as u8 + s2 as u8 + s3 as u8) % 2 == 1)
+            Some(sign_parity([s1, s2, s3]))
         }
         // SZZdg backward = SZZ forward = CX(q0,q1) SZ(q1) CX(q0,q1)
         GateType::SZZdg => {
@@ -527,7 +663,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             let s1 = p.conjugate_cx(q0, q1);
             let s2 = p.conjugate_sz(q1);
             let s3 = p.conjugate_cx(q0, q1);
-            Some((s1 as u8 + s2 as u8 + s3 as u8) % 2 == 1)
+            Some(sign_parity([s1, s2, s3]))
         }
         // SXX backward = SXXdg forward = H(q0) H(q1) SZZdg H(q0) H(q1)
         GateType::SXX => {
@@ -539,8 +675,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             let s5 = p.conjugate_cx(q0, q1);
             let s6 = p.conjugate_h(q0);
             let s7 = p.conjugate_h(q1);
-            let total = s1 as u8 + s2 as u8 + s3 as u8 + s4 as u8 + s5 as u8 + s6 as u8 + s7 as u8;
-            Some(total % 2 == 1)
+            Some(sign_parity([s1, s2, s3, s4, s5, s6, s7]))
         }
         // SXXdg backward = SXX forward
         GateType::SXXdg => {
@@ -552,8 +687,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             let s5 = p.conjugate_cx(q0, q1);
             let s6 = p.conjugate_h(q0);
             let s7 = p.conjugate_h(q1);
-            let total = s1 as u8 + s2 as u8 + s3 as u8 + s4 as u8 + s5 as u8 + s6 as u8 + s7 as u8;
-            Some(total % 2 == 1)
+            Some(sign_parity([s1, s2, s3, s4, s5, s6, s7]))
         }
         // SYY backward = SYYdg forward = SX(q0) SX(q1) SZZdg SXdg(q0) SXdg(q1)
         GateType::SYY => {
@@ -565,8 +699,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             let s5 = p.conjugate_cx(q0, q1);
             let s6 = p.conjugate_sx(q0);
             let s7 = p.conjugate_sx(q1);
-            let total = s1 as u8 + s2 as u8 + s3 as u8 + s4 as u8 + s5 as u8 + s6 as u8 + s7 as u8;
-            Some(total % 2 == 1)
+            Some(sign_parity([s1, s2, s3, s4, s5, s6, s7]))
         }
         // SYYdg backward = SYY forward
         GateType::SYYdg => {
@@ -578,13 +711,17 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             let s5 = p.conjugate_cx(q0, q1);
             let s6 = p.conjugate_sxdg(q0);
             let s7 = p.conjugate_sxdg(q1);
-            let total = s1 as u8 + s2 as u8 + s3 as u8 + s4 as u8 + s5 as u8 + s6 as u8 + s7 as u8;
-            Some(total % 2 == 1)
+            Some(sign_parity([s1, s2, s3, s4, s5, s6, s7]))
         }
         // Gates that don't conjugate Paulis
-        GateType::PZ | GateType::QAlloc | GateType::QFree
-        | GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        | GateType::I | GateType::Idle => None,
+        GateType::PZ
+        | GateType::QAlloc
+        | GateType::QFree
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureLeaked
+        | GateType::I
+        | GateType::Idle => None,
         other => panic!("EEG Heisenberg: unsupported gate type {other:?}"),
     }
 }
@@ -641,14 +778,23 @@ pub fn heisenberg_with_noise_map(
     }];
 
     // Conservative active-qubit bitmap
-    let max_qubit = gates.iter()
+    let max_qubit = gates
+        .iter()
         .flat_map(|g| g.qubits.iter())
-        .map(|q| q.index())
+        .map(pecos_core::QubitId::index)
         .max()
-        .unwrap_or(0) + 1;
+        .unwrap_or(0)
+        + 1;
     let mut active_qubits = vec![false; max_qubit];
-    for &q in terms[0].pauli.x_qubits.iter().chain(terms[0].pauli.z_qubits.iter()) {
-        if (q as usize) < active_qubits.len() { active_qubits[q as usize] = true; }
+    for &q in terms[0]
+        .pauli
+        .x_qubits
+        .iter()
+        .chain(terms[0].pauli.z_qubits.iter())
+    {
+        if (q as usize) < active_qubits.len() {
+            active_qubits[q as usize] = true;
+        }
     }
 
     let mut last_merge_count = 1usize;
@@ -656,14 +802,18 @@ pub fn heisenberg_with_noise_map(
 
     for i in (0..gates.len()).rev() {
         let gate = &gates[i];
-        let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter()
-            .map(|q| q.index() as u16).collect();
+        let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter().map(|q| q.index() as u16).collect();
 
-        let gate_touches_active = gate_qs.iter()
+        let gate_touches_active = gate_qs
+            .iter()
             .any(|&q| (q as usize) < active_qubits.len() && active_qubits[q as usize]);
 
         // Look up precomputed noise for this gate
-        let gate_noise = if gate_touches_active { noise_map.get(i).and_then(|n| n.as_ref()) } else { None };
+        let gate_noise = if gate_touches_active {
+            noise_map.get(i).and_then(|n| n.as_ref())
+        } else {
+            None
+        };
 
         if let Some(gn) = gate_noise {
             // H-type injections (branching)
@@ -671,47 +821,64 @@ pub fn heisenberg_with_noise_map(
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
-                        if h.abs() < 1e-20 { continue; }
+                        if h.abs() < 1e-20 {
+                            continue;
+                        }
                         let cos2h = (2.0 * h).cos();
                         let sin2h = (2.0 * h).sin();
 
                         let single_z_qubit: Option<u16> = if inj.label.x_bits.is_zero() {
                             inj.label.z_bits.highest_set_bit().map(|q| q as u16)
-                        } else { None };
+                        } else {
+                            None
+                        };
                         let noise_sparse = if single_z_qubit.is_none() {
                             Some(SparsePauli::from_bm(&inj.label))
-                        } else { None };
+                        } else {
+                            None
+                        };
 
                         sin_branches.clear();
                         let n = terms.len();
-                        for idx in 0..n {
+                        for term in terms.iter_mut().take(n) {
                             let anticommutes = if let Some(q) = single_z_qubit {
-                                terms[idx].pauli.has_x(q)
+                                term.pauli.has_x(q)
                             } else {
-                                !terms[idx].pauli.commutes_with(noise_sparse.as_ref().unwrap())
+                                !term.pauli.commutes_with(noise_sparse.as_ref().unwrap())
                             };
                             if anticommutes {
-                                let (sr, si) = (sin2h * terms[idx].coeff_re, sin2h * terms[idx].coeff_im);
+                                let (sr, si) = (sin2h * term.coeff_re, sin2h * term.coeff_im);
                                 let (dp, total_phase) = if let Some(q) = single_z_qubit {
-                                    let mut dp = terms[idx].pauli.clone();
+                                    let mut dp = term.pauli.clone();
                                     dp.toggle_z(q);
-                                    let has_x = terms[idx].pauli.has_x(q);
-                                    let has_z = terms[idx].pauli.has_z(q);
-                                    let phase = if has_x { if has_z { 3u8 } else { 1 } } else { 0 };
+                                    let has_x = term.pauli.has_x(q);
+                                    let has_z = term.pauli.has_z(q);
+                                    let phase = if has_x {
+                                        if has_z { 3u8 } else { 1 }
+                                    } else {
+                                        0
+                                    };
                                     (dp, (phase + 1) % 4)
                                 } else {
-                                    let term_bm = terms[idx].pauli.to_bm();
-                                    let (dp_bm, phase_exp) = inj.label.multiply_with_phase(&term_bm);
+                                    let term_bm = term.pauli.to_bm();
+                                    let (dp_bm, phase_exp) =
+                                        inj.label.multiply_with_phase(&term_bm);
                                     (SparsePauli::from_bm(&dp_bm), (phase_exp + 1) % 4)
                                 };
                                 let (new_re, new_im) = match total_phase {
-                                    0 => (sr, si), 1 => (-si, sr),
-                                    2 => (-sr, -si), 3 => (si, -sr),
+                                    0 => (sr, si),
+                                    1 => (-si, sr),
+                                    2 => (-sr, -si),
+                                    3 => (si, -sr),
                                     _ => unreachable!(),
                                 };
-                                sin_branches.push(HeisenbergTerm { pauli: dp, coeff_re: new_re, coeff_im: new_im });
-                                terms[idx].coeff_re *= cos2h;
-                                terms[idx].coeff_im *= cos2h;
+                                sin_branches.push(HeisenbergTerm {
+                                    pauli: dp,
+                                    coeff_re: new_re,
+                                    coeff_im: new_im,
+                                });
+                                term.coeff_re *= cos2h;
+                                term.coeff_im *= cos2h;
                             }
                         }
                         // Merge sin branches: try binary search merge if terms
@@ -719,16 +886,19 @@ pub fn heisenberg_with_noise_map(
                         for t in sin_branches.drain(..) {
                             for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
                                 let qu = q as usize;
-                                if qu < active_qubits.len() { active_qubits[qu] = true; }
+                                if qu < active_qubits.len() {
+                                    active_qubits[qu] = true;
+                                }
                             }
                             if last_merge_count == terms.len() {
                                 match terms.binary_search_by(|p| p.pauli.cmp(&t.pauli)) {
                                     Ok(idx) => {
                                         terms[idx].coeff_re += t.coeff_re;
                                         terms[idx].coeff_im += t.coeff_im;
-                                        continue;
                                     }
-                                    Err(_) => { terms.push(t); }
+                                    Err(_) => {
+                                        terms.push(t);
+                                    }
                                 }
                             } else {
                                 terms.push(t);
@@ -738,7 +908,9 @@ pub fn heisenberg_with_noise_map(
                     crate::eeg::EegType::S => {
                         // Non-batched S-type (fallback for non-uniform noise)
                         let s = inj.rate;
-                        if s.abs() < 1e-20 { continue; }
+                        if s.abs() < 1e-20 {
+                            continue;
+                        }
                         let p = -s;
                         let scale = 1.0 - 2.0 * p;
                         let single_q: Option<u16> = {
@@ -757,13 +929,17 @@ pub fn heisenberg_with_noise_map(
                             for term in &mut terms {
                                 let anti = (has_z_in_noise && term.pauli.has_x(q))
                                     || (has_x_in_noise && term.pauli.has_z(q));
-                                if anti { term.coeff_re *= scale; term.coeff_im *= scale; }
+                                if anti {
+                                    term.coeff_re *= scale;
+                                    term.coeff_im *= scale;
+                                }
                             }
                         } else {
                             let ns = SparsePauli::from_bm(&inj.label);
                             for term in &mut terms {
                                 if !term.pauli.commutes_with(&ns) {
-                                    term.coeff_re *= scale; term.coeff_im *= scale;
+                                    term.coeff_re *= scale;
+                                    term.coeff_im *= scale;
                                 }
                             }
                         }
@@ -803,13 +979,17 @@ pub fn heisenberg_with_noise_map(
         }
 
         // Step 2: Backward Clifford conjugation
-        if !gate_touches_active { continue; }
+        if !gate_touches_active {
+            continue;
+        }
 
         match gate.gate_type {
             GateType::PZ | GateType::QAlloc => {
                 terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
                 for t in &mut terms {
-                    for &qi in &gate_qs { t.pauli.clear_z(qi); }
+                    for &qi in &gate_qs {
+                        t.pauli.clear_z(qi);
+                    }
                 }
             }
             GateType::MZ => {
@@ -817,12 +997,17 @@ pub fn heisenberg_with_noise_map(
             }
             _ => {
                 for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate) {
-                        if sign_neg { t.coeff_re = -t.coeff_re; t.coeff_im = -t.coeff_im; }
+                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                        && sign_neg
+                    {
+                        t.coeff_re = -t.coeff_re;
+                        t.coeff_im = -t.coeff_im;
                     }
                     for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
                         let qu = q as usize;
-                        if qu < active_qubits.len() { active_qubits[qu] = true; }
+                        if qu < active_qubits.len() {
+                            active_qubits[qu] = true;
+                        }
                     }
                 }
             }
@@ -852,12 +1037,20 @@ pub fn heisenberg_with_noise_map(
                     if terms[write].coeff_re.abs() > 1e-30 || terms[write].coeff_im.abs() > 1e-30 {
                         write += 1;
                     }
-                    if write < read { terms.swap(write, read); }
+                    if write < read {
+                        terms.swap(write, read);
+                    }
                 }
             }
             let final_len = if !terms.is_empty()
                 && (terms[write].coeff_re.abs() > 1e-30 || terms[write].coeff_im.abs() > 1e-30)
-            { write + 1 } else if terms.is_empty() { 0 } else { write };
+            {
+                write + 1
+            } else if terms.is_empty() {
+                0
+            } else {
+                write
+            };
             terms.truncate(final_len);
             last_merge_count = terms.len().max(1);
         }
@@ -866,15 +1059,19 @@ pub fn heisenberg_with_noise_map(
     // Evaluate
     let mut expectation_re = 0.0;
     for term in &terms {
-        let eigenvalue = if term.pauli.is_identity() { 1.0 } else {
+        let eigenvalue = if term.pauli.is_identity() {
+            1.0
+        } else {
             let bm = term.pauli.to_bm();
             match initial_stab.is_stabilizer(&bm) {
-                Some(true) => 1.0, Some(false) => -1.0, None => 0.0,
+                Some(true) => 1.0,
+                Some(false) => -1.0,
+                None => 0.0,
             }
         };
         expectation_re += term.coeff_re * eigenvalue;
     }
-    (0.5 * (1.0 - expectation_re)).max(0.0).min(1.0)
+    (0.5 * (1.0 - expectation_re)).clamp(0.0, 1.0)
 }
 
 /// Backward Heisenberg with optional gate windowing.
@@ -900,16 +1097,22 @@ pub fn heisenberg_windowed(
     // Identify expansion gates (virtual, no physical noise).
     let expansion_gates = {
         let mut exp = vec![false; gates.len()];
-        if !gates.is_empty() && gates[0].gate_type == GateType::QAlloc { exp[0] = true; }
+        if !gates.is_empty() && gates[0].gate_type == GateType::QAlloc {
+            exp[0] = true;
+        }
         for i in 1..gates.len() {
-            if gates[i].gate_type == GateType::QAlloc { exp[i] = true; }
-            if gates[i].gate_type == GateType::CX && gates[i-1].gate_type == GateType::QAlloc {
-                let aq = gates[i-1].qubits[0].index();
+            if gates[i].gate_type == GateType::QAlloc {
+                exp[i] = true;
+            }
+            if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
+                let aq = gates[i - 1].qubits[0].index();
                 if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == aq {
                     exp[i] = true;
-                    if i+1 < gates.len() && gates[i+1].gate_type == GateType::PZ
-                        && gates[i+1].qubits[0].index() == gates[i].qubits[0].index() {
-                        exp[i+1] = true;
+                    if i + 1 < gates.len()
+                        && gates[i + 1].gate_type == GateType::PZ
+                        && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
+                    {
+                        exp[i + 1] = true;
                     }
                 }
             }
@@ -923,14 +1126,21 @@ pub fn heisenberg_windowed(
 
     // Conservative active-qubit bitmap: once a qubit is active, stays active.
     // This avoids the expensive per-term scan for gate relevance.
-    let max_qubit = gates.iter()
+    let max_qubit = gates
+        .iter()
         .flat_map(|g| g.qubits.iter())
-        .map(|q| q.index())
+        .map(pecos_core::QubitId::index)
         .max()
-        .unwrap_or(0) + 1;
+        .unwrap_or(0)
+        + 1;
     let mut active_qubits = vec![false; max_qubit];
     // Seed from detector
-    for &q in terms[0].pauli.x_qubits.iter().chain(terms[0].pauli.z_qubits.iter()) {
+    for &q in terms[0]
+        .pauli
+        .x_qubits
+        .iter()
+        .chain(terms[0].pauli.z_qubits.iter())
+    {
         if (q as usize) < active_qubits.len() {
             active_qubits[q as usize] = true;
         }
@@ -940,24 +1150,25 @@ pub fn heisenberg_windowed(
     let (walk_start, walk_end) = gate_window.unwrap_or((0, gates.len()));
     for i in (walk_start..walk_end).rev() {
         let gate = &gates[i];
-        let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter()
-            .map(|q| q.index() as u16).collect();
+        let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter().map(|q| q.index() as u16).collect();
 
         // O(1) gate relevance check via bitmap (conservative: may visit some extra gates)
-        let gate_touches_active = gate_qs.iter()
+        let gate_touches_active = gate_qs
+            .iter()
             .any(|&q| (q as usize) < active_qubits.len() && active_qubits[q as usize]);
 
         // Step 1: Apply noise adjoint (skip expansion gates).
         if !expansion_gates[i] && gate_touches_active {
-            let qubits_usize: SmallVec<[usize; 4]> = gate_qs.iter()
-                .map(|&q| q as usize).collect();
+            let qubits_usize: SmallVec<[usize; 4]> = gate_qs.iter().map(|&q| q as usize).collect();
             let injections = noise.noise_after_gate(i, gate.gate_type, &qubits_usize);
 
             for inj in &injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
-                        if h.abs() < 1e-20 { continue; }
+                        if h.abs() < 1e-20 {
+                            continue;
+                        }
 
                         let cos2h = (2.0 * h).cos();
                         let sin2h = (2.0 * h).sin();
@@ -977,26 +1188,29 @@ pub fn heisenberg_windowed(
                         sin_branches.clear();
                         let n = terms.len();
 
-                        for idx in 0..n {
+                        for term in terms.iter_mut().take(n) {
                             let anticommutes = if let Some(q) = single_z_qubit {
-                                terms[idx].pauli.has_x(q)
+                                term.pauli.has_x(q)
                             } else {
-                                !terms[idx].pauli.commutes_with(noise_sparse.as_ref().unwrap())
+                                !term.pauli.commutes_with(noise_sparse.as_ref().unwrap())
                             };
 
                             if anticommutes {
-                                let (sr, si) =
-                                    (sin2h * terms[idx].coeff_re, sin2h * terms[idx].coeff_im);
+                                let (sr, si) = (sin2h * term.coeff_re, sin2h * term.coeff_im);
 
                                 let (dp, total_phase) = if let Some(q) = single_z_qubit {
-                                    let mut dp = terms[idx].pauli.clone();
+                                    let mut dp = term.pauli.clone();
                                     dp.toggle_z(q);
-                                    let has_x = terms[idx].pauli.has_x(q);
-                                    let has_z = terms[idx].pauli.has_z(q);
-                                    let phase = if has_x { if has_z { 3u8 } else { 1 } } else { 0 };
+                                    let has_x = term.pauli.has_x(q);
+                                    let has_z = term.pauli.has_z(q);
+                                    let phase = if has_x {
+                                        if has_z { 3u8 } else { 1 }
+                                    } else {
+                                        0
+                                    };
                                     (dp, (phase + 1) % 4)
                                 } else {
-                                    let term_bm = terms[idx].pauli.to_bm();
+                                    let term_bm = term.pauli.to_bm();
                                     let (dp_bm, phase_exp) =
                                         inj.label.multiply_with_phase(&term_bm);
                                     (SparsePauli::from_bm(&dp_bm), (phase_exp + 1) % 4)
@@ -1010,10 +1224,12 @@ pub fn heisenberg_windowed(
                                     _ => unreachable!(),
                                 };
                                 sin_branches.push(HeisenbergTerm {
-                                    pauli: dp, coeff_re: new_re, coeff_im: new_im,
+                                    pauli: dp,
+                                    coeff_re: new_re,
+                                    coeff_im: new_im,
                                 });
-                                terms[idx].coeff_re *= cos2h;
-                                terms[idx].coeff_im *= cos2h;
+                                term.coeff_re *= cos2h;
+                                term.coeff_im *= cos2h;
                             }
                         }
 
@@ -1021,14 +1237,18 @@ pub fn heisenberg_windowed(
                         for t in &sin_branches {
                             for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
                                 let qu = q as usize;
-                                if qu < active_qubits.len() { active_qubits[qu] = true; }
+                                if qu < active_qubits.len() {
+                                    active_qubits[qu] = true;
+                                }
                             }
                         }
-                        terms.extend(sin_branches.drain(..));
+                        terms.append(&mut sin_branches);
                     }
                     crate::eeg::EegType::S => {
                         let s = inj.rate;
-                        if s.abs() < 1e-20 { continue; }
+                        if s.abs() < 1e-20 {
+                            continue;
+                        }
                         let p = -s;
                         let scale = 1.0 - 2.0 * p;
                         // For S-type, single-qubit specialization
@@ -1087,9 +1307,7 @@ pub fn heisenberg_windowed(
         match gate.gate_type {
             // #4: Batch PZ/QAlloc — single pass through terms for all qubits
             GateType::PZ | GateType::QAlloc => {
-                terms.retain(|t| {
-                    !gate_qs.iter().any(|&qi| t.pauli.has_x(qi))
-                });
+                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
                 for t in &mut terms {
                     for &qi in &gate_qs {
                         t.pauli.clear_z(qi);
@@ -1097,22 +1315,22 @@ pub fn heisenberg_windowed(
                 }
             }
             GateType::MZ => {
-                terms.retain(|t| {
-                    !gate_qs.iter().any(|&qi| t.pauli.has_x(qi))
-                });
+                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
             }
             _ => {
                 for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate) {
-                        if sign_neg {
-                            t.coeff_re = -t.coeff_re;
-                            t.coeff_im = -t.coeff_im;
-                        }
+                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                        && sign_neg
+                    {
+                        t.coeff_re = -t.coeff_re;
+                        t.coeff_im = -t.coeff_im;
                     }
                     // Update active bitmap (CX can spread support to new qubits)
                     for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
                         let qu = q as usize;
-                        if qu < active_qubits.len() { active_qubits[qu] = true; }
+                        if qu < active_qubits.len() {
+                            active_qubits[qu] = true;
+                        }
                     }
                 }
             }
@@ -1133,9 +1351,7 @@ pub fn heisenberg_windowed(
                     terms[write].coeff_re += re;
                     terms[write].coeff_im += im;
                 } else {
-                    if terms[write].coeff_re.abs() > 1e-30
-                        || terms[write].coeff_im.abs() > 1e-30
-                    {
+                    if terms[write].coeff_re.abs() > 1e-30 || terms[write].coeff_im.abs() > 1e-30 {
                         write += 1;
                     }
                     if write < read {
@@ -1143,13 +1359,12 @@ pub fn heisenberg_windowed(
                     }
                 }
             }
-            let final_len = if terms[write].coeff_re.abs() > 1e-30
-                || terms[write].coeff_im.abs() > 1e-30
-            {
-                write + 1
-            } else {
-                write
-            };
+            let final_len =
+                if terms[write].coeff_re.abs() > 1e-30 || terms[write].coeff_im.abs() > 1e-30 {
+                    write + 1
+                } else {
+                    write
+                };
             terms.truncate(final_len);
             last_merge_count = terms.len().max(1);
         }
@@ -1175,7 +1390,7 @@ pub fn heisenberg_windowed(
     }
 
     let prob = 0.5 * (1.0 - expectation_re);
-    prob.max(0.0).min(1.0)
+    prob.clamp(0.0, 1.0)
 }
 
 /// Backward Heisenberg with sparse gate traversal via precomputed index.
@@ -1198,8 +1413,6 @@ pub fn heisenberg_sparse(
     gate_index: &crate::expand::GateIndex,
     noise_map: Option<&[Option<PrecomputedGateNoise>]>,
 ) -> f64 {
-    use std::collections::BinaryHeap;
-
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
         coeff_re: 1.0,
@@ -1218,36 +1431,27 @@ pub fn heisenberg_sparse(
     // Max-heap: pops largest gate index first (backward traversal).
     let mut heap: BinaryHeap<u32> = BinaryHeap::new();
 
-    // Add gates on qubit q that are BEFORE `before_gate` (index < before_gate) to the heap.
-    // Gates at or after before_gate have already been passed in the backward walk.
-    fn activate_qubit(
-        q: u16,
-        before_gate: u32,
-        active: &mut [bool],
-        visited: &mut [bool],
-        heap: &mut BinaryHeap<u32>,
-        gate_index: &crate::expand::GateIndex,
-    ) {
-        let qu = q as usize;
-        if qu >= active.len() { return; }
-        active[qu] = true;
-        for gi in gate_index.gates_on_qubit_rev(qu) {
-            if gi >= before_gate { continue; } // already passed
-            let gi_usize = gi as usize;
-            if !visited[gi_usize] {
-                visited[gi_usize] = true;
-                heap.push(gi);
-            }
-        }
-    }
-
     // Seed from detector — all gates on detector qubits are candidates
     let total_gates = gates.len() as u32;
     for &q in &terms[0].pauli.x_qubits {
-        activate_qubit(q, total_gates, &mut active, &mut visited, &mut heap, gate_index);
+        activate_qubit(
+            q,
+            total_gates,
+            &mut active,
+            &mut visited,
+            &mut heap,
+            gate_index,
+        );
     }
     for &q in &terms[0].pauli.z_qubits {
-        activate_qubit(q, total_gates, &mut active, &mut visited, &mut heap, gate_index);
+        activate_qubit(
+            q,
+            total_gates,
+            &mut active,
+            &mut visited,
+            &mut heap,
+            gate_index,
+        );
     }
 
     let mut last_merge_count = 1usize;
@@ -1257,8 +1461,7 @@ pub fn heisenberg_sparse(
     while let Some(gate_idx) = heap.pop() {
         let i = gate_idx as usize;
         let gate = &gates[i];
-        let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter()
-            .map(|q| q.index() as u16).collect();
+        let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter().map(|q| q.index() as u16).collect();
 
         // Step 1: Apply noise adjoint (skip expansion gates).
         if !gate_index.is_expansion(i) {
@@ -1267,8 +1470,8 @@ pub fn heisenberg_sparse(
 
             // Get injections: from noise map or dynamic noise spec
             let dynamic_injections = if precomputed.is_none() {
-                let qubits_usize: SmallVec<[usize; 4]> = gate_qs.iter()
-                    .map(|&q| q as usize).collect();
+                let qubits_usize: SmallVec<[usize; 4]> =
+                    gate_qs.iter().map(|&q| q as usize).collect();
                 noise.noise_after_gate(i, gate.gate_type, &qubits_usize)
             } else {
                 Vec::new()
@@ -1283,7 +1486,9 @@ pub fn heisenberg_sparse(
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
-                        if h.abs() < 1e-20 { continue; }
+                        if h.abs() < 1e-20 {
+                            continue;
+                        }
 
                         let cos2h = (2.0 * h).cos();
                         let sin2h = (2.0 * h).sin();
@@ -1302,26 +1507,29 @@ pub fn heisenberg_sparse(
                         sin_branches.clear();
                         let n = terms.len();
 
-                        for idx in 0..n {
+                        for term in terms.iter_mut().take(n) {
                             let anticommutes = if let Some(q) = single_z_qubit {
-                                terms[idx].pauli.has_x(q)
+                                term.pauli.has_x(q)
                             } else {
-                                !terms[idx].pauli.commutes_with(noise_sparse.as_ref().unwrap())
+                                !term.pauli.commutes_with(noise_sparse.as_ref().unwrap())
                             };
 
                             if anticommutes {
-                                let (sr, si) =
-                                    (sin2h * terms[idx].coeff_re, sin2h * terms[idx].coeff_im);
+                                let (sr, si) = (sin2h * term.coeff_re, sin2h * term.coeff_im);
 
                                 let (dp, total_phase) = if let Some(q) = single_z_qubit {
-                                    let mut dp = terms[idx].pauli.clone();
+                                    let mut dp = term.pauli.clone();
                                     dp.toggle_z(q);
-                                    let has_x = terms[idx].pauli.has_x(q);
-                                    let has_z = terms[idx].pauli.has_z(q);
-                                    let phase = if has_x { if has_z { 3u8 } else { 1 } } else { 0 };
+                                    let has_x = term.pauli.has_x(q);
+                                    let has_z = term.pauli.has_z(q);
+                                    let phase = if has_x {
+                                        if has_z { 3u8 } else { 1 }
+                                    } else {
+                                        0
+                                    };
                                     (dp, (phase + 1) % 4)
                                 } else {
-                                    let term_bm = terms[idx].pauli.to_bm();
+                                    let term_bm = term.pauli.to_bm();
                                     let (dp_bm, phase_exp) =
                                         inj.label.multiply_with_phase(&term_bm);
                                     (SparsePauli::from_bm(&dp_bm), (phase_exp + 1) % 4)
@@ -1337,21 +1545,37 @@ pub fn heisenberg_sparse(
 
                                 // Check if new term activates new qubits
                                 for &q in &dp.x_qubits {
-                                    activate_qubit(q, gate_idx, &mut active, &mut visited, &mut heap, gate_index);
+                                    activate_qubit(
+                                        q,
+                                        gate_idx,
+                                        &mut active,
+                                        &mut visited,
+                                        &mut heap,
+                                        gate_index,
+                                    );
                                 }
                                 for &q in &dp.z_qubits {
-                                    activate_qubit(q, gate_idx, &mut active, &mut visited, &mut heap, gate_index);
+                                    activate_qubit(
+                                        q,
+                                        gate_idx,
+                                        &mut active,
+                                        &mut visited,
+                                        &mut heap,
+                                        gate_index,
+                                    );
                                 }
 
                                 sin_branches.push(HeisenbergTerm {
-                                    pauli: dp, coeff_re: new_re, coeff_im: new_im,
+                                    pauli: dp,
+                                    coeff_re: new_re,
+                                    coeff_im: new_im,
                                 });
-                                terms[idx].coeff_re *= cos2h;
-                                terms[idx].coeff_im *= cos2h;
+                                term.coeff_re *= cos2h;
+                                term.coeff_im *= cos2h;
                             }
                         }
 
-                        terms.extend(sin_branches.drain(..));
+                        terms.append(&mut sin_branches);
                     }
                     crate::eeg::EegType::S => {
                         // S-type: process individually. When using noise map,
@@ -1359,7 +1583,9 @@ pub fn heisenberg_sparse(
                         // but unbatchable S injections are placed in h_injections
                         // and must be processed here.
                         let s = inj.rate;
-                        if s.abs() < 1e-20 { continue; }
+                        if s.abs() < 1e-20 {
+                            continue;
+                        }
                         let p = -s;
                         let scale = 1.0 - 2.0 * p;
 
@@ -1434,9 +1660,7 @@ pub fn heisenberg_sparse(
         // Step 2: Backward Clifford conjugation.
         match gate.gate_type {
             GateType::PZ | GateType::QAlloc => {
-                terms.retain(|t| {
-                    !gate_qs.iter().any(|&qi| t.pauli.has_x(qi))
-                });
+                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
                 for t in &mut terms {
                     for &qi in &gate_qs {
                         t.pauli.clear_z(qi);
@@ -1444,22 +1668,27 @@ pub fn heisenberg_sparse(
                 }
             }
             GateType::MZ => {
-                terms.retain(|t| {
-                    !gate_qs.iter().any(|&qi| t.pauli.has_x(qi))
-                });
+                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
             }
             _ => {
                 for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate) {
-                        if sign_neg {
-                            t.coeff_re = -t.coeff_re;
-                            t.coeff_im = -t.coeff_im;
-                        }
+                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                        && sign_neg
+                    {
+                        t.coeff_re = -t.coeff_re;
+                        t.coeff_im = -t.coeff_im;
                     }
 
                     // Activate any NEW qubits from conjugation (e.g., CX spreads Z)
                     for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                        activate_qubit(q, gate_idx, &mut active, &mut visited, &mut heap, gate_index);
+                        activate_qubit(
+                            q,
+                            gate_idx,
+                            &mut active,
+                            &mut visited,
+                            &mut heap,
+                            gate_index,
+                        );
                     }
                 }
             }
@@ -1468,9 +1697,7 @@ pub fn heisenberg_sparse(
         // Prune
         if prune_threshold > 0.0 {
             let thresh_sq = prune_threshold * prune_threshold;
-            terms.retain(|t| {
-                t.coeff_re * t.coeff_re + t.coeff_im * t.coeff_im > thresh_sq
-            });
+            terms.retain(|t| t.coeff_re * t.coeff_re + t.coeff_im * t.coeff_im > thresh_sq);
         }
 
         // Merge duplicate Pauli terms.
@@ -1488,9 +1715,7 @@ pub fn heisenberg_sparse(
                     terms[write].coeff_re += re;
                     terms[write].coeff_im += im;
                 } else {
-                    if terms[write].coeff_re.abs() > 1e-30
-                        || terms[write].coeff_im.abs() > 1e-30
-                    {
+                    if terms[write].coeff_re.abs() > 1e-30 || terms[write].coeff_im.abs() > 1e-30 {
                         write += 1;
                     }
                     if write < read {
@@ -1529,7 +1754,7 @@ pub fn heisenberg_sparse(
     }
 
     let prob = 0.5 * (1.0 - expectation_re);
-    prob.max(0.0).min(1.0)
+    prob.clamp(0.0, 1.0)
 }
 
 /// Convenience: expand an original circuit and compute detection probability.
@@ -1572,9 +1797,10 @@ pub fn heisenberg_exact_from_circuit(
     let expanded = crate::expand::expand_circuit(original_gates);
     let n = expanded.num_qubits;
 
-    if n > 20 {
-        panic!("Matrix Heisenberg requires 2^n memory; {n} qubits is too large. Use the Pauli-tracking walk for approximate results.");
-    }
+    assert!(
+        n <= 20,
+        "Matrix Heisenberg requires 2^n memory; {n} qubits is too large. Use the Pauli-tracking walk for approximate results."
+    );
 
     let dim = 1usize << n;
 
@@ -1586,7 +1812,9 @@ pub fn heisenberg_exact_from_circuit(
         for &m in detector_meas_indices {
             if m < expanded.measurement_qubit.len() {
                 let aux = expanded.measurement_qubit[m];
-                if (i >> aux) & 1 == 1 { eigenvalue = -eigenvalue; }
+                if (i >> aux) & 1 == 1 {
+                    eigenvalue = -eigenvalue;
+                }
             }
         }
         obs_re[i * dim + i] = eigenvalue;
@@ -1599,14 +1827,18 @@ pub fn heisenberg_exact_from_circuit(
     let mut im = obs_im;
     for idx in (0..expanded.gates.len()).rev() {
         let g = &expanded.gates[idx];
-        let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+        let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
 
         // Noise adjoint (skip expansion gates)
         if !expansion_gates[idx] {
             let injections = noise.noise_after_gate(idx, g.gate_type, &qs);
             for inj in &injections {
-                if inj.eeg_type != crate::eeg::EegType::H { continue; }
-                if inj.rate.abs() < 1e-20 { continue; }
+                if inj.eeg_type != crate::eeg::EegType::H {
+                    continue;
+                }
+                if inj.rate.abs() < 1e-20 {
+                    continue;
+                }
                 // RZ(θ) on the noise qubit, where θ = 2*rate
                 let theta = 2.0 * inj.rate;
                 // Find which qubit the noise acts on
@@ -1632,10 +1864,8 @@ pub fn heisenberg_exact_from_circuit(
             GateType::H => {
                 matrix_h_adjoint(&mut obs_re, &mut im, qs[0], n);
             }
-            GateType::CX => {
-                if qs.len() >= 2 {
-                    matrix_cx_adjoint(&mut obs_re, &mut im, qs[0], qs[1], n);
-                }
+            GateType::CX if qs.len() >= 2 => {
+                matrix_cx_adjoint(&mut obs_re, &mut im, qs[0], qs[1], n);
             }
             _ => {}
         }
@@ -1644,7 +1874,7 @@ pub fn heisenberg_exact_from_circuit(
     // ⟨0...0|O_backward|0...0⟩ = obs_re[0]
     let expectation = obs_re[0];
     let prob = 0.5 * (1.0 - expectation);
-    prob.max(0.0).min(1.0)
+    prob.clamp(0.0, 1.0)
 }
 
 // --- Matrix helpers for exact Heisenberg ---
@@ -1656,7 +1886,9 @@ fn matrix_rz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, theta: f64, n: us
         for j in 0..dim {
             let bj = ((j >> q) & 1) as f64;
             let phase = (bi - bj) * theta;
-            if phase.abs() < 1e-20 { continue; }
+            if phase.abs() < 1e-20 {
+                continue;
+            }
             let (cp, sp) = (phase.cos(), phase.sin());
             let idx = i * dim + j;
             let (r, m) = (re[idx], im[idx]);
@@ -1674,15 +1906,15 @@ fn matrix_pz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, n: usize) {
         for j in 0..dim {
             let jq = (j >> q) & 1;
             let idx = i * dim + j;
-            if iq != jq {
-                re[idx] = 0.0;
-                im[idx] = 0.0;
-            } else {
+            if iq == jq {
                 let i0 = i & !mask;
                 let j0 = j & !mask;
                 let idx0 = i0 * dim + j0;
                 re[idx] = re[idx0];
                 im[idx] = im[idx0];
+            } else {
+                re[idx] = 0.0;
+                im[idx] = 0.0;
             }
         }
     }
@@ -1722,7 +1954,11 @@ fn matrix_h_adjoint(re: &mut [f64], im: &mut [f64], q: usize, n: usize) {
                 for b in 0..2usize {
                     let ia = if a == 0 { i0 } else { i1 };
                     let jb = if b == 0 { j0 } else { j1 };
-                    let sign = if (iq * a + b * jq) % 2 == 0 { 0.5 } else { -0.5 };
+                    let sign = if (iq * a + b * jq).is_multiple_of(2) {
+                        0.5
+                    } else {
+                        -0.5
+                    };
                     let idx = ia * dim + jb;
                     sr += sign * re[idx];
                     si += sign * im[idx];
@@ -1740,9 +1976,7 @@ fn matrix_cx_adjoint(re: &mut [f64], im: &mut [f64], control: usize, target: usi
     let dim = 1usize << n;
     let cmask = 1usize << control;
     let tmask = 1usize << target;
-    let cx_perm = |i: usize| -> usize {
-        if (i & cmask) != 0 { i ^ tmask } else { i }
-    };
+    let cx_perm = |i: usize| -> usize { if (i & cmask) != 0 { i ^ tmask } else { i } };
     let mut new_re = vec![0.0f64; dim * dim];
     let mut new_im = vec![0.0f64; dim * dim];
     for i in 0..dim {
@@ -1760,16 +1994,22 @@ fn matrix_cx_adjoint(re: &mut [f64], im: &mut [f64], control: usize, target: usi
 /// Identify expansion gate indices.
 fn find_expansion_gates(gates: &[Gate]) -> Vec<bool> {
     let mut exp = vec![false; gates.len()];
-    if !gates.is_empty() && gates[0].gate_type == GateType::QAlloc { exp[0] = true; }
+    if !gates.is_empty() && gates[0].gate_type == GateType::QAlloc {
+        exp[0] = true;
+    }
     for i in 1..gates.len() {
-        if gates[i].gate_type == GateType::QAlloc { exp[i] = true; }
-        if gates[i].gate_type == GateType::CX && gates[i-1].gate_type == GateType::QAlloc {
-            let aq = gates[i-1].qubits[0].index();
+        if gates[i].gate_type == GateType::QAlloc {
+            exp[i] = true;
+        }
+        if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
+            let aq = gates[i - 1].qubits[0].index();
             if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == aq {
                 exp[i] = true;
-                if i+1 < gates.len() && gates[i+1].gate_type == GateType::PZ
-                    && gates[i+1].qubits[0].index() == gates[i].qubits[0].index() {
-                    exp[i+1] = true;
+                if i + 1 < gates.len()
+                    && gates[i + 1].gate_type == GateType::PZ
+                    && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
+                {
+                    exp[i + 1] = true;
                 }
             }
         }
@@ -1780,9 +2020,9 @@ fn find_expansion_gates(gates: &[Gate]) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{GateAngles, GateParams, GateQubits, QubitId};
-    use crate::noise::UniformNoise;
     use crate::expand;
+    use crate::noise::UniformNoise;
+    use pecos_core::{GateAngles, GateParams, GateQubits, QubitId};
 
     fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         Gate {
@@ -1803,34 +2043,54 @@ mod tests {
         // X-check ancillas: 4, 5 (H, CX, CX, H, MZ)
         // Z-check ancilla: 6 (CX, CX, MZ)
         let gates_orig = vec![
-            gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]),
-            gate(GateType::PZ, &[2]), gate(GateType::PZ, &[3]),
-            gate(GateType::PZ, &[4]), gate(GateType::PZ, &[5]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::PZ, &[3]),
+            gate(GateType::PZ, &[4]),
+            gate(GateType::PZ, &[5]),
             gate(GateType::PZ, &[6]),
             // Round 1
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::CX, &[1, 6]), gate(GateType::CX, &[5, 3]),
-            gate(GateType::CX, &[3, 6]), gate(GateType::CX, &[5, 2]),
-            gate(GateType::CX, &[4, 1]), gate(GateType::CX, &[0, 6]),
-            gate(GateType::CX, &[4, 0]), gate(GateType::CX, &[2, 6]),
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::MZ, &[4]), gate(GateType::MZ, &[5]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::CX, &[1, 6]),
+            gate(GateType::CX, &[5, 3]),
+            gate(GateType::CX, &[3, 6]),
+            gate(GateType::CX, &[5, 2]),
+            gate(GateType::CX, &[4, 1]),
+            gate(GateType::CX, &[0, 6]),
+            gate(GateType::CX, &[4, 0]),
+            gate(GateType::CX, &[2, 6]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::MZ, &[4]),
+            gate(GateType::MZ, &[5]),
             gate(GateType::MZ, &[6]),
             // Reset
-            gate(GateType::PZ, &[4]), gate(GateType::PZ, &[5]),
+            gate(GateType::PZ, &[4]),
+            gate(GateType::PZ, &[5]),
             gate(GateType::PZ, &[6]),
             // Round 2
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::CX, &[1, 6]), gate(GateType::CX, &[5, 3]),
-            gate(GateType::CX, &[3, 6]), gate(GateType::CX, &[5, 2]),
-            gate(GateType::CX, &[4, 1]), gate(GateType::CX, &[0, 6]),
-            gate(GateType::CX, &[4, 0]), gate(GateType::CX, &[2, 6]),
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::MZ, &[4]), gate(GateType::MZ, &[5]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::CX, &[1, 6]),
+            gate(GateType::CX, &[5, 3]),
+            gate(GateType::CX, &[3, 6]),
+            gate(GateType::CX, &[5, 2]),
+            gate(GateType::CX, &[4, 1]),
+            gate(GateType::CX, &[0, 6]),
+            gate(GateType::CX, &[4, 0]),
+            gate(GateType::CX, &[2, 6]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::MZ, &[4]),
+            gate(GateType::MZ, &[5]),
             gate(GateType::MZ, &[6]),
             // Final data readout
-            gate(GateType::MZ, &[0]), gate(GateType::MZ, &[1]),
-            gate(GateType::MZ, &[2]), gate(GateType::MZ, &[3]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
+            gate(GateType::MZ, &[2]),
+            gate(GateType::MZ, &[3]),
         ];
 
         let expanded = expand::expand_circuit(&gates_orig);
@@ -1858,29 +2118,40 @@ mod tests {
         det2.z_bits.set_bit(aux_m4);
 
         // Run Heisenberg for both detectors
-        let p1_heis = heisenberg_detection_probability(
-            &expanded.gates, &det1, &noise, &stab, 1e-10,
-        );
-        let p2_heis = heisenberg_detection_probability(
-            &expanded.gates, &det2, &noise, &stab, 1e-10,
-        );
+        let p1_heis =
+            heisenberg_detection_probability(&expanded.gates, &det1, &noise, &stab, 1e-10);
+        let p2_heis =
+            heisenberg_detection_probability(&expanded.gates, &det2, &noise, &stab, 1e-10);
 
         // For comparison: forward EEG
         let eeg_result = crate::circuit::analyze_with_noise(&expanded.gates, &noise);
         let dets = vec![
-            crate::dem_mapping::Detector { id: 1, stabilizer: det1 },
-            crate::dem_mapping::Detector { id: 2, stabilizer: det2 },
+            crate::dem_mapping::Detector {
+                id: 1,
+                stabilizer: det1,
+            },
+            crate::dem_mapping::Detector {
+                id: 2,
+                stabilizer: det2,
+            },
         ];
         let entries = crate::dem_mapping::build_dem_configured(
-            &eeg_result.generators, &dets, &[],
-            Some(&stab), &crate::dem_mapping::EegConfig::default(),
+            &eeg_result.generators,
+            &dets,
+            &[],
+            Some(&stab),
+            &crate::dem_mapping::EegConfig::default(),
         );
         let mut eeg_d1 = 0.0;
         let mut eeg_d2 = 0.0;
         for e in &entries {
             for &d in &e.event.detectors {
-                if d == 1 { eeg_d1 += e.probability; }
-                if d == 2 { eeg_d2 += e.probability; }
+                if d == 1 {
+                    eeg_d1 += e.probability;
+                }
+                if d == 2 {
+                    eeg_d2 += e.probability;
+                }
             }
         }
 
@@ -1901,7 +2172,9 @@ mod tests {
         // Detector: Z on ancilla (qubit 2) — passes through both MZ(2) gates.
         // The round-comparison detector fires when the two MZ outcomes differ.
         let gates_orig = vec![
-            gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]), gate(GateType::PZ, &[2]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
             // Round 1
             gate(GateType::H, &[2]),
             gate(GateType::CX, &[2, 0]),
@@ -1927,9 +2200,7 @@ mod tests {
         // Detector: Z on ancilla qubit 2 (round-comparison)
         let det = Bm::z(2);
 
-        let p_heis = heisenberg_detection_probability(
-            &gates_orig, &det, &noise, &stab, 0.0,
-        );
+        let p_heis = heisenberg_detection_probability(&gates_orig, &det, &noise, &stab, 0.0);
 
         eprintln!("\nSimple X-check (original circuit), theta={theta}:");
         eprintln!("  Heisenberg: {p_heis:.6}");
@@ -1941,11 +2212,14 @@ mod tests {
         // Parity detector: Z_0 * Z_1 (on original qubits)
         // Exact answer: p = sin²(theta)
         let gates_orig = vec![
-            gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
             gate(GateType::H, &[0]),
             gate(GateType::CX, &[0, 1]),
-            gate(GateType::H, &[0]), gate(GateType::H, &[1]),
-            gate(GateType::MZ, &[0]), gate(GateType::MZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[1]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
         ];
 
         // Parity detector: Z on both measured qubits (original frame)
@@ -1960,18 +2234,21 @@ mod tests {
         for &theta in &[0.01, 0.05, 0.1, 0.2, 0.5] {
             let noise = UniformNoise::coherent_only(theta);
 
-            let p = heisenberg_detection_probability(
-                &gates_orig, &det, &noise, &stab, 0.0,
-            );
+            let p = heisenberg_detection_probability(&gates_orig, &det, &noise, &stab, 0.0);
 
             let exact = theta.sin().powi(2);
             let eeg_taylor = theta * theta; // leading-order EEG
 
-            eprintln!("theta={theta:.2}: Heisenberg={p:.6}, exact={exact:.6}, Taylor={eeg_taylor:.6}");
+            eprintln!(
+                "theta={theta:.2}: Heisenberg={p:.6}, exact={exact:.6}, Taylor={eeg_taylor:.6}"
+            );
 
             // Heisenberg should match exact much better than Taylor
-            assert!((p - exact).abs() < 0.01,
-                "theta={theta}: Heisenberg {p:.6} vs exact {exact:.6}, diff={:.6}", (p-exact).abs());
+            assert!(
+                (p - exact).abs() < 0.01,
+                "theta={theta}: Heisenberg {p:.6} vs exact {exact:.6}, diff={:.6}",
+                (p - exact).abs()
+            );
         }
     }
 
@@ -1979,19 +2256,24 @@ mod tests {
     fn test_exact_bell_parity() {
         // Matrix-based exact Heisenberg should match sin²(θ) perfectly.
         let gates = vec![
-            gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
             gate(GateType::H, &[0]),
             gate(GateType::CX, &[0, 1]),
-            gate(GateType::H, &[0]), gate(GateType::H, &[1]),
-            gate(GateType::MZ, &[0]), gate(GateType::MZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[1]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
         ];
 
         for &theta in &[0.01, 0.05, 0.1, 0.2, 0.5] {
             let noise = crate::noise::UniformNoise::coherent_only(theta);
             let p = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 2);
             let exact = theta.sin().powi(2);
-            assert!((p - exact).abs() < 1e-10,
-                "theta={theta}: exact_heisenberg {p:.10} vs sin²(θ) {exact:.10}");
+            assert!(
+                (p - exact).abs() < 1e-10,
+                "theta={theta}: exact_heisenberg {p:.10} vs sin²(θ) {exact:.10}"
+            );
         }
     }
 
@@ -2000,13 +2282,18 @@ mod tests {
         // Matrix Heisenberg on the simplest failing case: 2-round, 1 ancilla.
         // Exact analytical: P = [2 - cos(6θ) - cos(2θ)] / 4.
         let gates = vec![
-            gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]), gate(GateType::PZ, &[2]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
             gate(GateType::H, &[2]),
-            gate(GateType::CX, &[2, 0]), gate(GateType::CX, &[2, 1]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
             gate(GateType::H, &[2]),
-            gate(GateType::MZ, &[2]), gate(GateType::PZ, &[2]),
+            gate(GateType::MZ, &[2]),
+            gate(GateType::PZ, &[2]),
             gate(GateType::H, &[2]),
-            gate(GateType::CX, &[2, 0]), gate(GateType::CX, &[2, 1]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
             gate(GateType::H, &[2]),
             gate(GateType::MZ, &[2]),
         ];
@@ -2016,8 +2303,11 @@ mod tests {
             let p = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 3);
             let exact = (2.0 - (6.0 * theta).cos() - (2.0 * theta).cos()) / 4.0;
             eprintln!("theta={theta:.2}: exact_heisenberg={p:.10}, analytical={exact:.10}");
-            assert!((p - exact).abs() < 1e-8,
-                "theta={theta}: got {p:.10}, expected {exact:.10}, diff={:.2e}", (p-exact).abs());
+            assert!(
+                (p - exact).abs() < 1e-8,
+                "theta={theta}: got {p:.10}, expected {exact:.10}, diff={:.2e}",
+                (p - exact).abs()
+            );
         }
     }
 
@@ -2029,53 +2319,87 @@ mod tests {
 
         // Build a d=2 Z-basis surface code with 2 rounds (same as test above)
         let gates_orig = vec![
-            gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]),
-            gate(GateType::PZ, &[2]), gate(GateType::PZ, &[3]),
-            gate(GateType::PZ, &[4]), gate(GateType::PZ, &[5]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::PZ, &[3]),
+            gate(GateType::PZ, &[4]),
+            gate(GateType::PZ, &[5]),
             gate(GateType::PZ, &[6]),
             // Round 1
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::CX, &[1, 6]), gate(GateType::CX, &[5, 3]),
-            gate(GateType::CX, &[3, 6]), gate(GateType::CX, &[5, 2]),
-            gate(GateType::CX, &[4, 1]), gate(GateType::CX, &[0, 6]),
-            gate(GateType::CX, &[4, 0]), gate(GateType::CX, &[2, 6]),
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::MZ, &[4]), gate(GateType::MZ, &[5]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::CX, &[1, 6]),
+            gate(GateType::CX, &[5, 3]),
+            gate(GateType::CX, &[3, 6]),
+            gate(GateType::CX, &[5, 2]),
+            gate(GateType::CX, &[4, 1]),
+            gate(GateType::CX, &[0, 6]),
+            gate(GateType::CX, &[4, 0]),
+            gate(GateType::CX, &[2, 6]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::MZ, &[4]),
+            gate(GateType::MZ, &[5]),
             gate(GateType::MZ, &[6]),
             // Reset + Round 2
-            gate(GateType::PZ, &[4]), gate(GateType::PZ, &[5]),
+            gate(GateType::PZ, &[4]),
+            gate(GateType::PZ, &[5]),
             gate(GateType::PZ, &[6]),
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::CX, &[1, 6]), gate(GateType::CX, &[5, 3]),
-            gate(GateType::CX, &[3, 6]), gate(GateType::CX, &[5, 2]),
-            gate(GateType::CX, &[4, 1]), gate(GateType::CX, &[0, 6]),
-            gate(GateType::CX, &[4, 0]), gate(GateType::CX, &[2, 6]),
-            gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-            gate(GateType::MZ, &[4]), gate(GateType::MZ, &[5]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::CX, &[1, 6]),
+            gate(GateType::CX, &[5, 3]),
+            gate(GateType::CX, &[3, 6]),
+            gate(GateType::CX, &[5, 2]),
+            gate(GateType::CX, &[4, 1]),
+            gate(GateType::CX, &[0, 6]),
+            gate(GateType::CX, &[4, 0]),
+            gate(GateType::CX, &[2, 6]),
+            gate(GateType::H, &[4]),
+            gate(GateType::H, &[5]),
+            gate(GateType::MZ, &[4]),
+            gate(GateType::MZ, &[5]),
             gate(GateType::MZ, &[6]),
         ];
 
         let expanded = crate::expand::expand_circuit(&gates_orig);
         let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
 
-        let init_gates: Vec<Gate> = (0..7)
-            .map(|q| gate(GateType::PZ, &[q]))
-            .collect();
-        let stab = crate::stabilizer::StabilizerGroup::from_circuit(
-            &init_gates, expanded.num_qubits,
-        );
+        let init_gates: Vec<Gate> = (0..7).map(|q| gate(GateType::PZ, &[q])).collect();
+        let stab =
+            crate::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
         // Test both coherent-only and depolarizing noise
         let noise_configs: Vec<(&str, crate::noise::UniformNoise)> = vec![
-            ("coherent_only", crate::noise::UniformNoise::coherent_only(0.05)),
-            ("depolarizing", crate::noise::UniformNoise { idle_rz: 0.0, p1: 0.001, p2: 0.01, p_meas: 0.001, p_prep: 0.001 }),
-            ("combined", crate::noise::UniformNoise { idle_rz: 0.05, p1: 0.001, p2: 0.01, p_meas: 0.001, p_prep: 0.001 }),
+            (
+                "coherent_only",
+                crate::noise::UniformNoise::coherent_only(0.05),
+            ),
+            (
+                "depolarizing",
+                crate::noise::UniformNoise {
+                    idle_rz: 0.0,
+                    p1: 0.001,
+                    p2: 0.01,
+                    p_meas: 0.001,
+                    p_prep: 0.001,
+                },
+            ),
+            (
+                "combined",
+                crate::noise::UniformNoise {
+                    idle_rz: 0.05,
+                    p1: 0.001,
+                    p2: 0.01,
+                    p_meas: 0.001,
+                    p_prep: 0.001,
+                },
+            ),
         ];
 
         for (label, noise) in &noise_configs {
-            let noise_map = build_noise_map(
-                &expanded.gates, noise, &gate_index.expansion_gates,
-            );
+            let noise_map = build_noise_map(&expanded.gates, noise, &gate_index.expansion_gates);
 
             // Test all 3 detectors (auxiliary qubits in round 1: meas 0,1,2)
             for meas_idx in 0..3 {
@@ -2084,52 +2408,68 @@ mod tests {
 
                 // Windowed (old path)
                 let start = Instant::now();
-                let p_windowed = heisenberg_windowed(
-                    &expanded.gates, &det, noise, &stab, 1e-12, None,
-                );
+                let p_windowed =
+                    heisenberg_windowed(&expanded.gates, &det, noise, &stab, 1e-12, None);
                 let t_windowed = start.elapsed();
 
                 // Sparse without noise map
                 let start = Instant::now();
                 let p_sparse = heisenberg_sparse(
-                    &expanded.gates, &det, noise, &stab, 1e-12,
-                    &gate_index, None,
+                    &expanded.gates,
+                    &det,
+                    noise,
+                    &stab,
+                    1e-12,
+                    &gate_index,
+                    None,
                 );
                 let t_sparse = start.elapsed();
 
                 // Sparse with noise map
                 let start = Instant::now();
                 let p_sparse_nm = heisenberg_sparse(
-                    &expanded.gates, &det, noise, &stab, 1e-12,
-                    &gate_index, Some(&noise_map),
+                    &expanded.gates,
+                    &det,
+                    noise,
+                    &stab,
+                    1e-12,
+                    &gate_index,
+                    Some(&noise_map),
                 );
                 let t_sparse_nm = start.elapsed();
 
                 // With noise map (old path)
                 let start = Instant::now();
-                let p_nm = heisenberg_with_noise_map(
-                    &expanded.gates, &det, &noise_map, &stab, 1e-12,
-                );
+                let p_nm =
+                    heisenberg_with_noise_map(&expanded.gates, &det, &noise_map, &stab, 1e-12);
                 let t_nm = start.elapsed();
 
                 // Verify exact match
                 let tol = 1e-12;
-                assert!((p_windowed - p_sparse).abs() < tol,
+                assert!(
+                    (p_windowed - p_sparse).abs() < tol,
                     "{label} det{meas_idx}: windowed={p_windowed:.15} vs sparse={p_sparse:.15}, diff={:.2e}",
-                    (p_windowed - p_sparse).abs());
-                assert!((p_windowed - p_sparse_nm).abs() < tol,
+                    (p_windowed - p_sparse).abs()
+                );
+                assert!(
+                    (p_windowed - p_sparse_nm).abs() < tol,
                     "{label} det{meas_idx}: windowed={p_windowed:.15} vs sparse+nm={p_sparse_nm:.15}, diff={:.2e}",
-                    (p_windowed - p_sparse_nm).abs());
-                assert!((p_windowed - p_nm).abs() < tol,
+                    (p_windowed - p_sparse_nm).abs()
+                );
+                assert!(
+                    (p_windowed - p_nm).abs() < tol,
                     "{label} det{meas_idx}: windowed={p_windowed:.15} vs nm={p_nm:.15}, diff={:.2e}",
-                    (p_windowed - p_nm).abs());
+                    (p_windowed - p_nm).abs()
+                );
 
-                eprintln!("  {label} det{meas_idx}: p={p_windowed:.8} \
+                eprintln!(
+                    "  {label} det{meas_idx}: p={p_windowed:.8} \
                     windowed={:.1}us sparse={:.1}us sparse+nm={:.1}us nm={:.1}us",
                     t_windowed.as_secs_f64() * 1e6,
                     t_sparse.as_secs_f64() * 1e6,
                     t_sparse_nm.as_secs_f64() * 1e6,
-                    t_nm.as_secs_f64() * 1e6);
+                    t_nm.as_secs_f64() * 1e6
+                );
             }
         }
     }
@@ -2144,12 +2484,18 @@ mod tests {
         use std::time::Instant;
 
         let noise = crate::noise::UniformNoise {
-            idle_rz: 0.05, p1: 0.001, p2: 0.01, p_meas: 0.001, p_prep: 0.001,
+            idle_rz: 0.05,
+            p1: 0.001,
+            p2: 0.01,
+            p_meas: 0.001,
+            p_prep: 0.001,
         };
 
         eprintln!("\n=== Sparse vs Windowed scaling (combined noise) ===");
-        eprintln!("{:>4} {:>6} {:>8} {:>8} {:>6} {:>12} {:>12} {:>8}",
-            "d", "rnds", "gates", "exp_q", "n_det", "windowed_ms", "sparse_ms", "speedup");
+        eprintln!(
+            "{:>4} {:>6} {:>8} {:>8} {:>6} {:>12} {:>12} {:>8}",
+            "d", "rnds", "gates", "exp_q", "n_det", "windowed_ms", "sparse_ms", "speedup"
+        );
 
         // Test with increasing circuit sizes.
         // Repetition codes are 1D — detectors propagate through most gates.
@@ -2158,9 +2504,8 @@ mod tests {
 
         // --- Repetition codes (1D, low sparsity) ---
         eprintln!("\n--- Repetition codes (1D) ---");
-        let rep_configs: Vec<(usize, usize)> = vec![
-            (5, 3), (5, 10), (9, 3), (9, 10), (13, 3), (13, 10),
-        ];
+        let rep_configs: Vec<(usize, usize)> =
+            vec![(5, 3), (5, 10), (9, 3), (9, 10), (13, 3), (13, 10)];
 
         for &(d, num_rounds) in &rep_configs {
             let num_data = d;
@@ -2202,12 +2547,9 @@ mod tests {
             let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
             let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
 
-            let init_gates: Vec<Gate> = (0..num_qubits)
-                .map(|q| gate(GateType::PZ, &[q]))
-                .collect();
-            let stab = crate::stabilizer::StabilizerGroup::from_circuit(
-                &init_gates, expanded.num_qubits,
-            );
+            let init_gates: Vec<Gate> = (0..num_qubits).map(|q| gate(GateType::PZ, &[q])).collect();
+            let stab =
+                crate::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
             // Build detectors: round-to-round comparison
             let num_detectors = num_ancilla * (num_rounds - 1);
@@ -2228,7 +2570,11 @@ mod tests {
             let mut p_windowed = Vec::new();
             for det in &detectors {
                 p_windowed.push(heisenberg_with_noise_map(
-                    &expanded.gates, det, &noise_map, &stab, 1e-12,
+                    &expanded.gates,
+                    det,
+                    &noise_map,
+                    &stab,
+                    1e-12,
                 ));
             }
             let t_windowed = start.elapsed();
@@ -2238,24 +2584,34 @@ mod tests {
             let mut p_sparse = Vec::new();
             for det in &detectors {
                 p_sparse.push(heisenberg_sparse(
-                    &expanded.gates, det, &noise, &stab, 1e-12,
-                    &gate_index, Some(&noise_map),
+                    &expanded.gates,
+                    det,
+                    &noise,
+                    &stab,
+                    1e-12,
+                    &gate_index,
+                    Some(&noise_map),
                 ));
             }
             let t_sparse = start.elapsed();
 
             // Verify exact match
             for (i, (&pw, &ps)) in p_windowed.iter().zip(p_sparse.iter()).enumerate() {
-                assert!((pw - ps).abs() < 1e-12,
+                assert!(
+                    (pw - ps).abs() < 1e-12,
                     "d={d} det{i}: windowed={pw:.15} vs sparse={ps:.15}, diff={:.2e}",
-                    (pw - ps).abs());
+                    (pw - ps).abs()
+                );
             }
 
             let speedup = t_windowed.as_secs_f64() / t_sparse.as_secs_f64();
-            eprintln!("{d:>4} {num_rounds:>6} {:>8} {:>8} {num_detectors:>6} {:>12.2} {:>12.2} {speedup:>8.1}x",
-                expanded.gates.len(), expanded.num_qubits,
+            eprintln!(
+                "{d:>4} {num_rounds:>6} {:>8} {:>8} {num_detectors:>6} {:>12.2} {:>12.2} {speedup:>8.1}x",
+                expanded.gates.len(),
+                expanded.num_qubits,
                 t_windowed.as_secs_f64() * 1000.0,
-                t_sparse.as_secs_f64() * 1000.0);
+                t_sparse.as_secs_f64() * 1000.0
+            );
         }
 
         // --- 2D grid codes (high sparsity at large d) ---
@@ -2264,8 +2620,10 @@ mod tests {
         // At d=7: 49 data qubits, 24 Z-stab ancillas, ~500+ expanded gates.
         // A detector touches ~10 qubits out of ~100+ — high sparsity.
         eprintln!("\n--- 2D grid codes (surface-code-like) ---");
-        eprintln!("{:>4} {:>6} {:>8} {:>8} {:>6} {:>12} {:>12} {:>8}",
-            "d", "rnds", "gates", "exp_q", "n_det", "windowed_ms", "sparse_ms", "speedup");
+        eprintln!(
+            "{:>4} {:>6} {:>8} {:>8} {:>6} {:>12} {:>12} {:>8}",
+            "d", "rnds", "gates", "exp_q", "n_det", "windowed_ms", "sparse_ms", "speedup"
+        );
 
         for &(d, num_rounds) in &[(3, 2), (5, 2), (7, 2), (9, 2), (7, 5), (9, 5)] {
             // Build a d x d grid with Z-plaquette stabilizers.
@@ -2315,12 +2673,9 @@ mod tests {
             let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
             let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
 
-            let init_gates: Vec<Gate> = (0..num_qubits)
-                .map(|q| gate(GateType::PZ, &[q]))
-                .collect();
-            let stab = crate::stabilizer::StabilizerGroup::from_circuit(
-                &init_gates, expanded.num_qubits,
-            );
+            let init_gates: Vec<Gate> = (0..num_qubits).map(|q| gate(GateType::PZ, &[q])).collect();
+            let stab =
+                crate::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
             // Build detectors: round-to-round comparison of each ancilla
             let num_detectors = num_ancilla * (num_rounds - 1);
@@ -2341,7 +2696,11 @@ mod tests {
             let mut p_windowed = Vec::new();
             for det in &detectors {
                 p_windowed.push(heisenberg_with_noise_map(
-                    &expanded.gates, det, &noise_map, &stab, 1e-12,
+                    &expanded.gates,
+                    det,
+                    &noise_map,
+                    &stab,
+                    1e-12,
                 ));
             }
             let t_windowed = start.elapsed();
@@ -2351,24 +2710,34 @@ mod tests {
             let mut p_sparse = Vec::new();
             for det in &detectors {
                 p_sparse.push(heisenberg_sparse(
-                    &expanded.gates, det, &noise, &stab, 1e-12,
-                    &gate_index, Some(&noise_map),
+                    &expanded.gates,
+                    det,
+                    &noise,
+                    &stab,
+                    1e-12,
+                    &gate_index,
+                    Some(&noise_map),
                 ));
             }
             let t_sparse = start.elapsed();
 
             // Verify exact match
             for (i, (&pw, &ps)) in p_windowed.iter().zip(p_sparse.iter()).enumerate() {
-                assert!((pw - ps).abs() < 1e-12,
+                assert!(
+                    (pw - ps).abs() < 1e-12,
                     "grid d={d} det{i}: windowed={pw:.15} vs sparse={ps:.15}, diff={:.2e}",
-                    (pw - ps).abs());
+                    (pw - ps).abs()
+                );
             }
 
             let speedup = t_windowed.as_secs_f64() / t_sparse.as_secs_f64();
-            eprintln!("{d:>4} {num_rounds:>6} {:>8} {:>8} {num_detectors:>6} {:>12.2} {:>12.2} {speedup:>8.1}x",
-                expanded.gates.len(), expanded.num_qubits,
+            eprintln!(
+                "{d:>4} {num_rounds:>6} {:>8} {:>8} {num_detectors:>6} {:>12.2} {:>12.2} {speedup:>8.1}x",
+                expanded.gates.len(),
+                expanded.num_qubits,
                 t_windowed.as_secs_f64() * 1000.0,
-                t_sparse.as_secs_f64() * 1000.0);
+                t_sparse.as_secs_f64() * 1000.0
+            );
         }
     }
 }

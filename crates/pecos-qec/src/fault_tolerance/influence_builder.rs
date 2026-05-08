@@ -38,6 +38,13 @@ use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
 use std::collections::BinaryHeap;
 
+struct ObservablePropagationWork<'a> {
+    recorder: &'a mut CompoundRecorder,
+    visited: &'a mut [bool],
+    active_qubits: &'a mut [bool],
+    heap: &'a mut BinaryHeap<(usize, usize)>,
+}
+
 /// Builder for fault influence maps with proper detector definitions.
 ///
 /// This integrates forward symbolic simulation with backward propagation
@@ -186,7 +193,7 @@ impl<'a> InfluenceBuilder<'a> {
                     for &meas_node in measurement_nodes {
                         if let Some(gate) = circuit.gate(meas_node) {
                             let qubits: Vec<usize> =
-                                gate.qubits.iter().map(|q| q.index()).collect();
+                                gate.qubits.iter().map(pecos_core::QubitId::index).collect();
                             terms.push(PauliPropagationTerm {
                                 pauli: PauliString::zs(&qubits),
                                 start_node: Some(meas_node),
@@ -513,16 +520,16 @@ impl<'a> InfluenceBuilder<'a> {
                     _ => continue,
                 };
 
-                if !gate.meas_ids.is_empty() {
-                    for (i, qubit) in gate.qubits.iter().enumerate() {
-                        let mr = gate.meas_ids.get(i).copied();
-                        let sort_key = mr.map(|m| m.index()).unwrap_or(usize::MAX);
-                        entries.push((sort_key, node, qubit.index(), basis, mr));
-                    }
-                } else {
+                if gate.meas_ids.is_empty() {
                     let topo_pos = propagator.topo_position(node);
                     for qubit in &gate.qubits {
                         entries.push((topo_pos, node, qubit.index(), basis, None));
+                    }
+                } else {
+                    for (i, qubit) in gate.qubits.iter().enumerate() {
+                        let mr = gate.meas_ids.get(i).copied();
+                        let sort_key = mr.map_or(usize::MAX, pecos_core::MeasId::index);
+                        entries.push((sort_key, node, qubit.index(), basis, mr));
                     }
                 }
             }
@@ -561,6 +568,12 @@ impl<'a> InfluenceBuilder<'a> {
         let mut visited = vec![false; max_node + 1];
         let mut active_qubits = vec![false; max_qubit + 1];
         let mut heap = BinaryHeap::new();
+        let mut work = ObservablePropagationWork {
+            recorder,
+            visited: &mut visited,
+            active_qubits: &mut active_qubits,
+            heap: &mut heap,
+        };
 
         for (det_idx, detector) in detectors.iter().enumerate() {
             // Build combined Pauli from all measurements in the detector
@@ -587,10 +600,7 @@ impl<'a> InfluenceBuilder<'a> {
                 &combined_prop,
                 det_idx,
                 true, // is_detector
-                recorder,
-                &mut visited,
-                &mut active_qubits,
-                &mut heap,
+                &mut work,
                 None, // detectors: walk from circuit end
             );
         }
@@ -613,6 +623,12 @@ impl<'a> InfluenceBuilder<'a> {
         let mut visited = vec![false; max_node + 1];
         let mut active_qubits = vec![false; max_qubit + 1];
         let mut heap = BinaryHeap::new();
+        let mut work = ObservablePropagationWork {
+            recorder,
+            visited: &mut visited,
+            active_qubits: &mut active_qubits,
+            heap: &mut heap,
+        };
 
         for (dem_output_idx, output) in self.non_detector_outputs.iter().enumerate() {
             for term in &output.terms {
@@ -638,10 +654,7 @@ impl<'a> InfluenceBuilder<'a> {
                     &prop,
                     dem_output_idx,
                     false, // is_detector = false (this is a DEM output)
-                    recorder,
-                    &mut visited,
-                    &mut active_qubits,
-                    &mut heap,
+                    &mut work,
                     start_pos,
                 );
             }
@@ -653,27 +666,23 @@ impl<'a> InfluenceBuilder<'a> {
     /// When `start_topo_pos` is `Some(pos)`, only gates at or before that
     /// topological position are considered. This makes Pauli operator
     /// annotations positional: only faults before the meta-gate affect it.
-    #[allow(clippy::too_many_arguments)]
     fn propagate_observable(
         propagator: &DagPropagator<'_>,
         initial_prop: &PauliProp,
         target_idx: usize,
         is_detector: bool,
-        recorder: &mut CompoundRecorder,
-        visited: &mut [bool],
-        active_qubits: &mut [bool],
-        heap: &mut BinaryHeap<(usize, usize)>,
+        work: &mut ObservablePropagationWork<'_>,
         start_topo_pos: Option<usize>,
     ) {
         // Clear work arrays
-        visited.fill(false);
-        active_qubits.fill(false);
-        heap.clear();
+        work.visited.fill(false);
+        work.active_qubits.fill(false);
+        work.heap.clear();
 
         let mut prop = initial_prop.clone();
 
         // Initialize active qubits from the observable
-        for (q, is_active) in active_qubits.iter_mut().enumerate() {
+        for (q, is_active) in work.active_qubits.iter_mut().enumerate() {
             if prop.contains_x(q) || prop.contains_z(q) {
                 *is_active = true;
 
@@ -682,9 +691,9 @@ impl<'a> InfluenceBuilder<'a> {
                     if start_topo_pos.is_some_and(|max| topo_pos > max) {
                         continue;
                     }
-                    if !visited[node] {
-                        visited[node] = true;
-                        heap.push((topo_pos, node));
+                    if !work.visited[node] {
+                        work.visited[node] = true;
+                        work.heap.push((topo_pos, node));
                     }
                 }
             }
@@ -694,18 +703,24 @@ impl<'a> InfluenceBuilder<'a> {
         let loc_map = Self::build_location_map(propagator);
 
         // Process gates in reverse topological order
-        while let Some((_, node)) = heap.pop() {
+        while let Some((_, node)) = work.heap.pop() {
             if let Some(gate) = propagator.gate(node) {
                 // Record per-qubit influences at before=false location
                 if let Some(qubit_locs) = loc_map.get(&(node, false)) {
-                    Self::record_influence(&prop, qubit_locs, target_idx, is_detector, recorder);
+                    Self::record_influence(
+                        &prop,
+                        qubit_locs,
+                        target_idx,
+                        is_detector,
+                        &mut *work.recorder,
+                    );
                 }
 
                 // Track which qubits were active before the gate
                 let mut was_active = [false; 8];
                 for (j, q) in gate.qubits.iter().enumerate() {
-                    if j < was_active.len() && q.index() < active_qubits.len() {
-                        was_active[j] = active_qubits[q.index()];
+                    if j < was_active.len() && q.index() < work.active_qubits.len() {
+                        was_active[j] = work.active_qubits[q.index()];
                     }
                 }
 
@@ -726,8 +741,8 @@ impl<'a> InfluenceBuilder<'a> {
                         if prop.contains_z(qi) {
                             prop.track_z(&[qi]);
                         }
-                        if qi < active_qubits.len() {
-                            active_qubits[qi] = false;
+                        if qi < work.active_qubits.len() {
+                            work.active_qubits[qi] = false;
                         }
                     }
                     continue; // don't propagate further on these qubits
@@ -738,24 +753,30 @@ impl<'a> InfluenceBuilder<'a> {
 
                 // Record per-qubit influences at before=true location
                 if let Some(qubit_locs) = loc_map.get(&(node, true)) {
-                    Self::record_influence(&prop, qubit_locs, target_idx, is_detector, recorder);
+                    Self::record_influence(
+                        &prop,
+                        qubit_locs,
+                        target_idx,
+                        is_detector,
+                        &mut *work.recorder,
+                    );
                 }
 
                 // Check if Pauli spread to new qubits
                 let node_topo_pos = propagator.topo_position(node);
                 for (j, q) in gate.qubits.iter().enumerate() {
                     let idx = q.index();
-                    if idx < active_qubits.len() {
+                    if idx < work.active_qubits.len() {
                         let now_active = prop.contains_x(idx) || prop.contains_z(idx);
                         let was = j < was_active.len() && was_active[j];
 
                         if now_active && !was {
                             // Pauli spread to this qubit - add its gates
-                            active_qubits[idx] = true;
+                            work.active_qubits[idx] = true;
                             for (topo_pos, pred_node) in propagator.qubit_gates_backward(idx) {
-                                if topo_pos < node_topo_pos && !visited[pred_node] {
-                                    visited[pred_node] = true;
-                                    heap.push((topo_pos, pred_node));
+                                if topo_pos < node_topo_pos && !work.visited[pred_node] {
+                                    work.visited[pred_node] = true;
+                                    work.heap.push((topo_pos, pred_node));
                                 }
                             }
                         }

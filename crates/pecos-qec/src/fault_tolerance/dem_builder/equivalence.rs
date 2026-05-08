@@ -262,7 +262,7 @@ impl ParsedDem {
     /// Number of tracked operators.
     #[must_use]
     pub fn num_tracked_ops(&self) -> u32 {
-        self.tracked_ops.iter().flatten().count() as u32
+        u32::try_from(self.tracked_ops.iter().flatten().count()).unwrap_or(u32::MAX)
     }
 
     fn record_metadata(ops: &mut Vec<Option<DemOutput>>, op: DemOutput) {

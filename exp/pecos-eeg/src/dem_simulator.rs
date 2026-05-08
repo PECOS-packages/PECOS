@@ -27,10 +27,13 @@
 use crate::dem_generator::{DemContext, DemGenerator};
 use crate::expand::{ExpandedCircuit, GateIndex};
 use crate::noise::UniformNoise;
+use pecos_core::Gate;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::Gate;
 use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+use pecos_qec::fault_tolerance::fault_sampler::{
+    RawMeasurementPlan, StochasticNoiseParams, symbolic_measurement_history,
+};
 use pecos_quantum::TickCircuit;
 use pecos_random::PecosRng;
 
@@ -108,15 +111,10 @@ fn try_stochastic_path(
     }
 
     // Build TickCircuit using typed API (proper measurement record tracking)
-    let mut tc = build_tick_circuit(gates, meta)?;
+    let mut tc = build_tick_circuit(gates, meta);
 
     // Compact ticks to reduce DAG complexity (critical for performance)
     tc.compact_ticks();
-
-    // Build raw measurement plan via shared symbolic sim + fault table
-    use pecos_qec::fault_tolerance::fault_sampler::{
-        symbolic_measurement_history, RawMeasurementPlan, StochasticNoiseParams,
-    };
 
     let history = symbolic_measurement_history(&tc).ok()?;
 
@@ -152,7 +150,7 @@ fn try_stochastic_path(
 /// After building all gates, creates detector/observable annotations using
 /// the stored measurement references. This ensures the DagCircuit conversion
 /// and DagFaultAnalyzer see proper structured annotations.
-fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> Option<TickCircuit> {
+fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCircuit {
     use pecos_quantum::{Attribute, TickMeasRef};
 
     let mut tc = TickCircuit::default();
@@ -231,7 +229,7 @@ fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> Option<T
         tc.set_meta("observables", Attribute::String(obs_json));
     }
 
-    Some(tc)
+    tc
 }
 
 /// EEG path: DEM generation + ParsedDem sampling + measurement synthesis.
@@ -381,11 +379,12 @@ impl MeasurementSynthesisInfo {
         }
         // Also: measurements referenced as "other" by a detector but not assigned themselves
         for idx in 0..num_meas {
-            if let Some((_, other_idx)) = meas_info[idx] {
-                if other_idx != usize::MAX && other_idx < num_meas && meas_info[other_idx].is_none()
-                {
-                    is_non_det[other_idx] = true;
-                }
+            if let Some((_, other_idx)) = meas_info[idx]
+                && other_idx != usize::MAX
+                && other_idx < num_meas
+                && meas_info[other_idx].is_none()
+            {
+                is_non_det[other_idx] = true;
             }
         }
 
@@ -413,9 +412,9 @@ impl MeasurementSynthesisInfo {
         let mut meas = vec![0u8; self.num_meas];
 
         // Random coins for non-deterministic measurements
-        for idx in 0..self.num_meas {
+        for (idx, bit) in meas.iter_mut().enumerate().take(self.num_meas) {
             if self.is_non_det[idx] {
-                meas[idx] = if rng.random_bool(0.5) { 1 } else { 0 };
+                *bit = u8::from(rng.random_bool(0.5));
             }
         }
 

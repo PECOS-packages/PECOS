@@ -15,12 +15,13 @@
 //! Outputs use string labels ("D0", "D1", "L0") consistent with Stim format.
 //! Includes detector/observable definitions mapping to MeasIds.
 
-use crate::correlation_table::compute_correlation_table;
 use crate::coherent_dem::build_coherent_dem_exact;
+use crate::correlation_table::{CorrelationTableInput, compute_correlation_table};
 use crate::dem_mapping::{DemEntry, DemEvent, Detector, Observable, format_dem};
 use crate::noise::NoiseSpec;
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::Gate;
+use std::fmt::Write as _;
 
 /// A correlation entry with string labels.
 #[derive(Debug, Clone)]
@@ -70,6 +71,33 @@ pub struct NoiseCharacterization {
     pub num_walks: usize,
 }
 
+/// Inputs for building a complete EEG noise characterization.
+#[derive(Clone, Copy)]
+pub struct NoiseCharacterizationInput<'a> {
+    /// Circuit gates.
+    pub gates: &'a [Gate],
+    /// Noise model used for exact Heisenberg correlation targets.
+    pub noise: &'a dyn NoiseSpec,
+    /// Optional alternate noise model used for DEM mechanism structure.
+    pub structure_noise: Option<&'a dyn NoiseSpec>,
+    /// Detector definitions.
+    pub detectors: &'a [Detector],
+    /// Observable definitions.
+    pub observables: &'a [Observable],
+    /// Initial stabilizer group.
+    pub initial_stab: &'a StabilizerGroup,
+    /// Number of circuit qubits.
+    pub num_qubits: usize,
+    /// Maximum correlation order to compute.
+    pub max_order: usize,
+    /// Drop probabilities below this threshold.
+    pub prune_threshold: f64,
+    /// Detector measurement-record definitions.
+    pub detector_meas_ids: &'a [(usize, Vec<usize>, Vec<i32>)],
+    /// Observable measurement-record definitions.
+    pub observable_meas_ids: &'a [(usize, Vec<usize>, Vec<i32>)],
+}
+
 impl NoiseCharacterization {
     /// Build from circuit + noise model.
     ///
@@ -77,47 +105,69 @@ impl NoiseCharacterization {
     /// `structure_noise` (if provided) is used for DEM mechanism extraction —
     /// useful when passing compressed noise for structure while keeping
     /// original noise for exact targets. If `None`, uses `noise` for both.
-    pub fn build(
-        gates: &[Gate],
-        noise: &dyn NoiseSpec,
-        structure_noise: Option<&dyn NoiseSpec>,
-        detectors: &[Detector],
-        observables: &[Observable],
-        initial_stab: &StabilizerGroup,
-        num_qubits: usize,
-        max_order: usize,
-        prune_threshold: f64,
-        detector_meas_ids: &[(usize, Vec<usize>, Vec<i32>)],
-        observable_meas_ids: &[(usize, Vec<usize>, Vec<i32>)],
-    ) -> Self {
+    #[must_use]
+    pub fn build(input: NoiseCharacterizationInput<'_>) -> Self {
+        let NoiseCharacterizationInput {
+            gates,
+            noise,
+            structure_noise,
+            detectors,
+            observables,
+            initial_stab,
+            num_qubits,
+            max_order,
+            prune_threshold,
+            detector_meas_ids,
+            observable_meas_ids,
+        } = input;
         let mechanism_noise = structure_noise.unwrap_or(noise);
 
         // Correlation table (always uses exact noise)
-        let table = compute_correlation_table(
-            gates, noise, detectors, observables, initial_stab,
-            num_qubits, max_order, prune_threshold,
-        );
+        let table = compute_correlation_table(CorrelationTableInput {
+            gates,
+            noise,
+            detectors,
+            observables,
+            initial_stab,
+            num_qubits,
+            max_order,
+            prune_threshold,
+        });
 
         // DEM with fitted probabilities (uses mechanism noise for structure)
         let num_dets = detectors.len();
         let mut marginals = vec![0.0_f64; num_dets];
         for det in detectors {
-            if let Some(&p) = table.rates.get(&vec![det.id]) {
-                if det.id < num_dets { marginals[det.id] = p; }
+            if let Some(&p) = table.rates.get(&vec![det.id])
+                && det.id < num_dets
+            {
+                marginals[det.id] = p;
             }
         }
-        let pairwise: Vec<((usize, usize), f64)> = table.rates.iter()
+        let pairwise: Vec<((usize, usize), f64)> = table
+            .rates
+            .iter()
             .filter(|(k, _)| k.len() == 2)
             .map(|(k, &v)| ((k[0], k[1]), v))
             .collect();
         let gate_index = crate::expand::GateIndex::build(gates, num_qubits);
         let dem_entries = build_coherent_dem_exact(
-            gates, mechanism_noise, detectors, observables, &gate_index.expansion_gates,
-            &marginals, Some(&pairwise),
+            gates,
+            mechanism_noise,
+            detectors,
+            observables,
+            &gate_index.expansion_gates,
+            &marginals,
+            Some(&pairwise),
         );
         let decomposable_entries = crate::coherent_dem::build_coherent_dem_exact_decomposable(
-            gates, mechanism_noise, detectors, observables, &gate_index.expansion_gates,
-            &marginals, Some(&pairwise),
+            gates,
+            mechanism_noise,
+            detectors,
+            observables,
+            &gate_index.expansion_gates,
+            &marginals,
+            Some(&pairwise),
         );
 
         // Build definitions
@@ -142,7 +192,10 @@ impl NoiseCharacterization {
         for (key, &prob) in &table.rates {
             if prob > 1e-15 {
                 let labels: Vec<String> = key.iter().map(|&d| format!("D{d}")).collect();
-                correlations.push(LabeledCorrelation { labels, probability: prob });
+                correlations.push(LabeledCorrelation {
+                    labels,
+                    probability: prob,
+                });
             }
         }
         // Add observable correlations
@@ -150,16 +203,25 @@ impl NoiseCharacterization {
             if prob > 1e-15 {
                 let mut labels: Vec<String> = det_ids.iter().map(|&d| format!("D{d}")).collect();
                 labels.push(format!("L{obs_id}"));
-                correlations.push(LabeledCorrelation { labels, probability: prob });
+                correlations.push(LabeledCorrelation {
+                    labels,
+                    probability: prob,
+                });
             }
         }
 
         // Build labeled mechanisms
-        let mechanisms: Vec<LabeledMechanism> = dem_entries.iter()
+        let mechanisms: Vec<LabeledMechanism> = dem_entries
+            .iter()
             .filter(|e| e.probability > 1e-15)
             .map(|e| LabeledMechanism {
                 detectors: e.event.detectors.iter().map(|&d| format!("D{d}")).collect(),
-                observables: e.event.observables.iter().map(|&o| format!("L{o}")).collect(),
+                observables: e
+                    .event
+                    .observables
+                    .iter()
+                    .map(|&o| format!("L{o}"))
+                    .collect(),
                 probability: e.probability,
             })
             .collect();
@@ -177,12 +239,18 @@ impl NoiseCharacterization {
     /// Output as Stim DEM string.
     #[must_use]
     pub fn to_dem_string(&self) -> String {
-        let entries: Vec<DemEntry> = self.mechanisms.iter()
+        let entries: Vec<DemEntry> = self
+            .mechanisms
+            .iter()
             .map(|m| {
-                let dets: Vec<usize> = m.detectors.iter()
+                let dets: Vec<usize> = m
+                    .detectors
+                    .iter()
                     .map(|s| s[1..].parse().unwrap_or(0))
                     .collect();
-                let obs: Vec<usize> = m.observables.iter()
+                let obs: Vec<usize> = m
+                    .observables
+                    .iter()
                     .map(|s| s[1..].parse().unwrap_or(0))
                     .collect();
                 DemEntry {
@@ -211,17 +279,20 @@ impl NoiseCharacterization {
     pub fn to_json(&self) -> String {
         let mut j = String::from("{\n");
 
-        j.push_str(&format!("  \"max_order\": {},\n", self.max_order));
-        j.push_str(&format!("  \"num_walks\": {},\n", self.num_walks));
+        let _ = writeln!(j, "  \"max_order\": {},", self.max_order);
+        let _ = writeln!(j, "  \"num_walks\": {},", self.num_walks);
 
         // Definitions
         j.push_str("  \"definitions\": [\n");
         for (i, def) in self.definitions.iter().enumerate() {
-            j.push_str(&format!(
+            let _ = write!(
+                j,
                 "    {{\"label\": \"{}\", \"meas_ids\": {:?}, \"records\": {:?}}}",
                 def.label, def.meas_ids, def.records
-            ));
-            if i + 1 < self.definitions.len() { j.push(','); }
+            );
+            if i + 1 < self.definitions.len() {
+                j.push(',');
+            }
             j.push('\n');
         }
         j.push_str("  ],\n");
@@ -229,11 +300,14 @@ impl NoiseCharacterization {
         // Correlations
         j.push_str("  \"correlations\": [\n");
         for (i, c) in self.correlations.iter().enumerate() {
-            j.push_str(&format!(
+            let _ = write!(
+                j,
                 "    {{\"nodes\": {:?}, \"probability\": {:.10e}}}",
                 c.labels, c.probability
-            ));
-            if i + 1 < self.correlations.len() { j.push(','); }
+            );
+            if i + 1 < self.correlations.len() {
+                j.push(',');
+            }
             j.push('\n');
         }
         j.push_str("  ],\n");
@@ -241,13 +315,20 @@ impl NoiseCharacterization {
         // Mechanisms
         j.push_str("  \"mechanisms\": [\n");
         for (i, m) in self.mechanisms.iter().enumerate() {
-            let mut nodes: Vec<&str> = m.detectors.iter().map(|s| s.as_str()).collect();
-            nodes.extend(m.observables.iter().map(|s| s.as_str()));
-            j.push_str(&format!(
+            let mut nodes: Vec<&str> = m
+                .detectors
+                .iter()
+                .map(std::string::String::as_str)
+                .collect();
+            nodes.extend(m.observables.iter().map(std::string::String::as_str));
+            let _ = write!(
+                j,
                 "    {{\"nodes\": {:?}, \"probability\": {:.10e}}}",
                 nodes, m.probability
-            ));
-            if i + 1 < self.mechanisms.len() { j.push(','); }
+            );
+            if i + 1 < self.mechanisms.len() {
+                j.push(',');
+            }
             j.push('\n');
         }
         j.push_str("  ]\n");

@@ -10,8 +10,14 @@ use fusion_blossom::{
     util::{EdgeIndex, PartitionConfig, SolverInitializer, SyndromePattern, VertexIndex, Weight},
 };
 use ndarray::{Array2, ArrayView1};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+
+struct ParsedEdgeInfo {
+    obs: Vec<usize>,
+    prob: f64,
+    best_prob: f64,
+}
 
 /// Solver type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -362,8 +368,6 @@ impl FusionBlossomDecoder {
         parsed: &ParsedCorrelatedDem,
         weight_factors: Option<&[f64]>,
     ) -> Result<Self> {
-        use std::collections::BTreeMap;
-
         let config = FusionBlossomConfig {
             num_nodes: Some(parsed.num_detectors),
             num_observables: parsed.num_observables,
@@ -374,12 +378,7 @@ impl FusionBlossomDecoder {
         // Deduplicate edges: merge by independent-union probability,
         // first-observable-wins (stable under perturbation).
         // Key: (min_node, max_node, is_boundary). Value: (obs, prob, best_prob).
-        struct EdgeInfo {
-            obs: Vec<usize>,
-            prob: f64,
-            best_prob: f64,
-        }
-        let mut edge_map: BTreeMap<(usize, usize, bool), EdgeInfo> = BTreeMap::new();
+        let mut edge_map: BTreeMap<(usize, usize, bool), ParsedEdgeInfo> = BTreeMap::new();
 
         for (i, (detectors, obs, base_weight)) in parsed.mechanisms.iter().enumerate() {
             let weight = if let Some(factors) = weight_factors {
@@ -407,7 +406,7 @@ impl FusionBlossomDecoder {
                 _ => continue,
             };
 
-            let entry = edge_map.entry(key).or_insert_with(|| EdgeInfo {
+            let entry = edge_map.entry(key).or_insert_with(|| ParsedEdgeInfo {
                 obs: obs.clone(),
                 prob,
                 best_prob: prob,
@@ -415,7 +414,7 @@ impl FusionBlossomDecoder {
             // Independent union: P(A or B) = P(A) + P(B) - P(A)*P(B)
             entry.prob = entry.prob + prob - entry.prob * prob;
             if prob > entry.best_prob {
-                entry.obs = obs.clone();
+                entry.obs.clone_from(obs);
                 entry.best_prob = prob;
             }
         }
@@ -473,10 +472,11 @@ impl FusionBlossomDecoder {
             let mut weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
 
             if let Some(factors) = weight_factors
-                && m < factors.len() {
-                    weight *= factors[m];
-                    weight = weight.max(0.01);
-                }
+                && m < factors.len()
+            {
+                weight *= factors[m];
+                weight = weight.max(0.01);
+            }
 
             match detectors.len() {
                 1 => {
@@ -1107,6 +1107,11 @@ impl FusionBlossomDecoder {
     /// Fast decode: syndrome bytes -> observable bitmask.
     /// Uses reusable buffers and pre-computed observable masks.
     /// Handles padding for boundary node internally.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `FusionBlossomError` if the solver cannot decode the supplied
+    /// syndrome.
     pub fn decode_to_obs_mask(&mut self, syndrome: &[u8]) -> Result<u64> {
         // Build obs masks on first call
         if self.edge_obs_masks.is_empty() && !self.edge_observables.is_empty() {
@@ -1148,7 +1153,7 @@ impl FusionBlossomDecoder {
         };
 
         // Compute observable mask using pre-computed bitmasks
-        let edge_indices: Vec<usize> = matched_edges.iter().copied().collect();
+        let edge_indices: Vec<usize> = matched_edges.clone();
         let mask = self.obs_mask_from_edges(&edge_indices);
         Ok(mask)
     }

@@ -92,7 +92,7 @@ impl DemGenerator for CoherentApprox {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "coherent_approx"
     }
 }
@@ -195,7 +195,7 @@ impl DemGenerator for CoherentExact {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "coherent_exact"
     }
 }
@@ -212,21 +212,12 @@ impl DemGenerator for Perturbative {
         #[allow(unused_imports)]
         use crate::circuit::analyze_expanded;
         #[allow(unused_imports)]
-        use crate::dem_mapping::{build_dem_configured, build_dem_decomposable, EegConfig};
+        use crate::dem_mapping::{EegConfig, build_dem_configured, build_dem_decomposable};
         #[allow(unused_imports)]
         use crate::noise::UniformNoise;
 
-        // Forward EEG analysis (placeholder — currently falls back to coherent_dem)
-        let _noise_model = crate::circuit::NoiseModel {
-            idle_rz: 0.0, // extracted from noise spec indirectly
-            p1: 0.0,
-            p2: 0.0,
-            p_meas: 0.0,
-            p_prep: 0.0,
-        };
         // We need to extract params from the NoiseSpec — use a test gate to probe
-        let probe_noise = noise.noise_after_gate(0, pecos_core::gate_type::GateType::H, &[0]);
-        let _ = probe_noise; // The forward EEG path needs its own NoiseModel
+        let _ = noise.noise_after_gate(0, pecos_core::gate_type::GateType::H, &[0]);
 
         // For now, use the coherent_dem path as fallback since forward EEG
         // requires its own NoiseModel type (not the NoiseSpec trait)
@@ -254,24 +245,17 @@ impl DemGenerator for Perturbative {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "perturbative"
     }
 }
 
 /// Select a DEM generator by method name.
-pub fn select_generator(method: &str, idle_rz: f64) -> Box<dyn DemGenerator> {
+#[must_use]
+pub fn select_generator(method: &str, _idle_rz: f64) -> Box<dyn DemGenerator> {
     match method {
-        "auto" => {
-            if idle_rz.abs() > 1e-15 {
-                Box::new(CoherentApprox)
-            } else {
-                Box::new(CoherentApprox) // same for now; stochastic would be from_circuit
-            }
-        }
-        "coherent" | "coherent_approx" => Box::new(CoherentApprox),
         "coherent_exact" => Box::new(CoherentExact::default()),
         "perturbative" => Box::new(Perturbative),
-        _ => Box::new(CoherentApprox), // default fallback
+        _ => Box::new(CoherentApprox), // auto/coherent/default fallback
     }
 }

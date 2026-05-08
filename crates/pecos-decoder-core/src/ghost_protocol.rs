@@ -32,7 +32,6 @@
 //! - Cain et al. "Fast correlated decoding of transversal logical
 //!   algorithms" (arXiv:2505.13587)
 
-
 /// A ghost edge: fragment of a cross-qubit hyperedge.
 ///
 /// When a measurement error before a transversal CNOT creates a
@@ -152,9 +151,10 @@ pub fn extract_ghost_edges_from_dem(
     let mut det_qubit: BTreeMap<usize, usize> = BTreeMap::new();
     for (&d, coords) in &coord_map {
         if coords.len() >= 2
-            && let Some(group) = classify_detector(coords[0], coords[1], stab_coords) {
-                det_qubit.insert(d, group.qubit_idx);
-            }
+            && let Some(group) = classify_detector(coords[0], coords[1], stab_coords)
+        {
+            det_qubit.insert(d, group.qubit_idx);
+        }
     }
 
     let mut ghost_edges = Vec::new();
@@ -165,9 +165,8 @@ pub fn extract_ghost_edges_from_dem(
             continue;
         }
 
-        let close = match line.find(')') {
-            Some(i) => i,
-            None => continue,
+        let Some(close) = line.find(')') else {
+            continue;
         };
 
         let prob: f64 = match line[6..close].parse() {
@@ -178,9 +177,10 @@ pub fn extract_ghost_edges_from_dem(
         let mut dets = Vec::new();
         for token in line[close + 1..].split_whitespace() {
             if let Some(d_str) = token.strip_prefix('D')
-                && let Ok(d) = d_str.parse::<usize>() {
-                    dets.push(d);
-                }
+                && let Ok(d) = d_str.parse::<usize>()
+            {
+                dets.push(d);
+            }
         }
 
         if dets.len() != 3 {

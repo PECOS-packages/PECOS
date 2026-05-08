@@ -26,9 +26,9 @@
 //! - `measurement_indices`: Set of measurement indices whose outcomes XOR together
 //! - `flip`: Boolean indicating whether to flip the result (from unitary gate phases)
 
+use crate::QuantumSimulator;
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
 use crate::symbolic_gens::SymbolicGensVecSet;
-use crate::QuantumSimulator;
 use core::mem;
 use pecos_core::{BitSet, Set, VecSet};
 
@@ -614,7 +614,7 @@ impl SymbolicSparseStabVecSet {
     /// Project qubit onto +Z eigenstate without recording a measurement.
     ///
     /// Same Gaussian elimination as `nondeterministic_meas` but does not
-    /// record a measurement or increment the counter. The resulting Z_q
+    /// record a measurement or increment the counter. The resulting `Z` on `q`
     /// stabilizer gets an empty sign (eigenvalue +1).
     fn pz_nondeterministic(&mut self, q: usize) {
         let mut anticom_stabs_col = self.stabs.col_x[q].clone();

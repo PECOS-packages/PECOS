@@ -6,7 +6,7 @@
 
 use pecos_core::Gate;
 use pecos_eeg::Bm;
-use pecos_eeg::circuit::{analyze_expanded, NoiseModel};
+use pecos_eeg::circuit::{NoiseModel, analyze_expanded};
 use pecos_eeg::dem_mapping::*;
 use pecos_eeg::eeg::EegType;
 use pecos_eeg::expand;
@@ -73,7 +73,9 @@ fn test_repetition_code_coherent_noise() {
     let noise = NoiseModel::coherent_only(0.1);
     let result = analyze_expanded(&expanded.gates, &noise);
 
-    let h_count = result.generators.iter()
+    let h_count = result
+        .generators
+        .iter()
         .filter(|g| g.eeg_type == EegType::H)
         .count();
     assert!(h_count > 0, "Should have H generators from RZ noise");
@@ -90,7 +92,11 @@ fn test_repetition_code_coherent_noise() {
 
     for entry in &dem_entries {
         assert!(entry.probability > 0.0, "Probability must be positive");
-        assert!(entry.probability < 1.0, "Probability {:.6} too large", entry.probability);
+        assert!(
+            entry.probability < 1.0,
+            "Probability {:.6} too large",
+            entry.probability
+        );
     }
 }
 
@@ -101,7 +107,9 @@ fn test_repetition_code_depolarizing_noise() {
     let noise = NoiseModel::depolarizing(0.003);
     let result = analyze_expanded(&expanded.gates, &noise);
 
-    let s_count = result.generators.iter()
+    let s_count = result
+        .generators
+        .iter()
         .filter(|g| g.eeg_type == EegType::S)
         .count();
     assert!(s_count > 0);
@@ -125,10 +133,16 @@ fn test_repetition_code_combined_noise() {
     let noise = NoiseModel::depolarizing(0.003).with_idle_rz(0.1);
     let result = analyze_expanded(&expanded.gates, &noise);
 
-    let h_count = result.generators.iter()
-        .filter(|g| g.eeg_type == EegType::H).count();
-    let s_count = result.generators.iter()
-        .filter(|g| g.eeg_type == EegType::S).count();
+    let h_count = result
+        .generators
+        .iter()
+        .filter(|g| g.eeg_type == EegType::H)
+        .count();
+    let s_count = result
+        .generators
+        .iter()
+        .filter(|g| g.eeg_type == EegType::S)
+        .count();
     assert!(h_count > 0);
     assert!(s_count > 0);
 
@@ -159,8 +173,11 @@ fn test_eeg_generator_count_scales_linearly() {
         let noise = NoiseModel::coherent_only(0.1);
         let result = analyze_expanded(&expanded.gates, &noise);
 
-        let h_count = result.generators.iter()
-            .filter(|g| g.eeg_type == EegType::H).count();
+        let h_count = result
+            .generators
+            .iter()
+            .filter(|g| g.eeg_type == EegType::H)
+            .count();
         eprintln!("Rounds={num_rounds}: {h_count} H generators");
         assert!(h_count < 1000, "Generator count should be polynomial");
     }

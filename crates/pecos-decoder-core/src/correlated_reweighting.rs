@@ -173,9 +173,9 @@ impl EdgeCorrelationTracker {
     ) -> Vec<f64> {
         let mut adjusted = base_weights.to_vec();
 
-        for j in 0..self.num_edges {
+        for (j, adjusted_weight) in adjusted.iter_mut().enumerate().take(self.num_edges) {
             let mut adjustment = 0.0;
-            for i in 0..self.num_edges {
+            for (i, matched) in matched_edges.iter().enumerate().take(self.num_edges) {
                 if i == j {
                     continue;
                 }
@@ -191,7 +191,7 @@ impl EdgeCorrelationTracker {
                     continue;
                 }
 
-                if matched_edges[i] {
+                if *matched {
                     // Correlated edge is matched -> decrease weight (more likely).
                     // We only adjust for matched edges -- the unmatched term
                     // creates a large positive bias that dominates when most
@@ -199,10 +199,10 @@ impl EdgeCorrelationTracker {
                     adjustment -= conditional;
                 }
             }
-            adjusted[j] += adjustment;
+            *adjusted_weight += adjustment;
             // Clamp to prevent negative weights
-            if adjusted[j] < 0.0 {
-                adjusted[j] = 0.0;
+            if *adjusted_weight < 0.0 {
+                *adjusted_weight = 0.0;
             }
         }
 

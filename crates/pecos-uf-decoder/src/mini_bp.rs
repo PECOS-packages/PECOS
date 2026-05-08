@@ -83,11 +83,11 @@ impl BpGraph {
         let mut temp_var: Vec<Vec<(u32, u32)>> = vec![Vec::new(); num_vars];
         let mut msg_idx: u32 = 0;
 
-        for c in 0..num_checks {
-            for v in 0..num_vars {
+        for (c, check_entries) in temp_check.iter_mut().enumerate().take(num_checks) {
+            for (v, var_entries) in temp_var.iter_mut().enumerate().take(num_vars) {
                 if dcm.check_matrix[[c, v]] != 0 {
-                    temp_check[c].push((v as u32, msg_idx));
-                    temp_var[v].push((c as u32, msg_idx));
+                    check_entries.push((v as u32, msg_idx));
+                    var_entries.push((c as u32, msg_idx));
                     msg_idx += 1;
                 }
             }
@@ -133,6 +133,7 @@ impl BpGraph {
 /// - `serial`: if true, use serial schedule (better convergence, slower)
 /// - `c_to_v`, `v_to_c`: reusable message buffers (must be `graph.total_edges` long)
 /// - `posterior`: output buffer (must be `graph.num_vars` long)
+#[allow(clippy::too_many_arguments)] // Hot-path helper takes reusable buffers explicitly.
 pub fn min_sum_bp_into(
     graph: &BpGraph,
     syndrome: &[u8],
@@ -177,26 +178,26 @@ pub fn min_sum_bp_into(
         num_iterations
     };
 
-    for _outer in 0..outer_iterations {
+    for outer in 0..outer_iterations {
         // Re-initialize v→c with current EWA posteriors as priors.
-        if _outer > 0 {
-            for v in 0..num_vars {
+        if outer > 0 {
+            for (v, &prior) in ewa_posterior.iter().enumerate().take(num_vars) {
                 for &(_c, idx) in graph.var_entries(v) {
-                    v_to_c[idx as usize] = ewa_posterior[v];
+                    v_to_c[idx as usize] = prior;
                 }
             }
             c_to_v.fill(0.0);
         }
 
         for iter in 0..inner_iterations {
-            for c in 0..num_checks {
+            for (c, &syndrome_sign) in syn_sign.iter().enumerate().take(num_checks) {
                 let entries = graph.check_entries(c);
                 if entries.len() < 2 {
                     continue;
                 }
 
                 // Check-to-variable (normalized min-sum).
-                let mut total_sign = syn_sign[c];
+                let mut total_sign = syndrome_sign;
                 let mut min1 = f64::INFINITY;
                 let mut min2 = f64::INFINITY;
                 let mut min1_pos = usize::MAX;
@@ -244,12 +245,12 @@ pub fn min_sum_bp_into(
 
             if !serial {
                 // Flooding: batch update all variables after all checks.
-                for v in 0..num_vars {
+                for (v, &prior) in graph.prior_llr.iter().enumerate().take(num_vars) {
                     let gamma = damp;
                     let entries = graph.var_entries(v);
                     let total: f64 = entries.iter().map(|&(_c, idx)| c_to_v[idx as usize]).sum();
                     for &(_c, idx) in entries {
-                        let new_msg = graph.prior_llr[v] + total - c_to_v[idx as usize];
+                        let new_msg = prior + total - c_to_v[idx as usize];
                         v_to_c[idx as usize] =
                             (1.0 - gamma) * new_msg + gamma * v_to_c[idx as usize];
                     }
@@ -257,19 +258,19 @@ pub fn min_sum_bp_into(
             }
 
             // EWA: blend current iteration's posterior into the running average.
-            let w = if iter == 0 && _outer == 0 {
+            let w = if iter == 0 && outer == 0 {
                 1.0
             } else {
                 ewa_weight
             };
-            for v in 0..num_vars {
+            for (v, ewa) in ewa_posterior.iter_mut().enumerate().take(num_vars) {
                 let cur_posterior = graph.prior_llr[v]
                     + graph
                         .var_entries(v)
                         .iter()
                         .map(|&(_c, idx)| c_to_v[idx as usize])
                         .sum::<f64>();
-                ewa_posterior[v] = (1.0 - w) * ewa_posterior[v] + w * cur_posterior;
+                *ewa = (1.0 - w) * *ewa + w * cur_posterior;
             }
         } // end inner iteration loop
     } // end outer EWAInit loop
@@ -279,7 +280,7 @@ pub fn min_sum_bp_into(
     posterior.extend_from_slice(&ewa_posterior);
     // Also include final iteration's raw posterior for variables where
     // EWA and raw agree in sign (reinforcement).
-    for v in 0..num_vars {
+    for (v, post) in posterior.iter_mut().enumerate().take(num_vars) {
         let raw = graph.prior_llr[v]
             + graph
                 .var_entries(v)
@@ -287,10 +288,9 @@ pub fn min_sum_bp_into(
                 .map(|&(_c, idx)| c_to_v[idx as usize])
                 .sum::<f64>();
         // If EWA and raw agree, use the one with larger magnitude (more confident).
-        if (posterior[v] > 0.0) == (raw > 0.0)
-            && raw.abs() > posterior[v].abs() {
-                posterior[v] = raw;
-            }
+        if (*post > 0.0) == (raw > 0.0) && raw.abs() > post.abs() {
+            *post = raw;
+        }
         // If they disagree, keep EWA (it's more stable).
     }
 }
@@ -358,11 +358,7 @@ pub fn matching_graph_bp(
         .map(|n| {
             if n < syndrome.len() && syndrome[n] != 0 {
                 -1.0
-            } else if n == boundary {
-                1.0
-            }
-            // boundary always even
-            else {
+            } else {
                 1.0
             }
         })

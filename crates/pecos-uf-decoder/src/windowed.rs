@@ -29,6 +29,7 @@ use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::correlated_decoder::EdgeTrackingDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
+use std::fmt::Write as _;
 
 /// Configuration for the windowed decoder.
 #[derive(Debug, Clone, Copy, Default)]
@@ -366,6 +367,10 @@ impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
     ///
     /// Requires `D: Send` for thread safety. Phase-1 windows run on rayon's
     /// thread pool; Phase-2 residual runs sequentially after.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if any window decoder fails.
     pub fn decode_parallel(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError>
     where
         D: Send,
@@ -530,11 +535,7 @@ fn parse_dem_params(
     }
 
     let num_rounds = (max_time + 1.0) as usize;
-    let num_stab = if num_rounds > 0 {
-        num_detectors / num_rounds
-    } else {
-        num_detectors
-    };
+    let num_stab = num_detectors.checked_div(num_rounds).unwrap_or(num_detectors);
     let d_est = ((num_stab as f64).sqrt().ceil() as usize).max(3);
     let step_size = if config.step_size > 0 {
         config.step_size
@@ -579,9 +580,8 @@ fn extract_window_dem(
         }
 
         if trimmed.starts_with("error(") {
-            let close = match trimmed.find(')') {
-                Some(p) => p,
-                None => continue,
+            let Some(close) = trimmed.find(')') else {
+                continue;
             };
             let prob_str = &trimmed[6..close];
             let rest = &trimmed[close + 1..];
@@ -606,12 +606,14 @@ fn extract_window_dem(
                 for tok in seg {
                     if let Some(d_str) = tok.strip_prefix('D') {
                         if let Ok(d) = d_str.parse::<usize>()
-                            && d < num_det && in_window[d] {
-                                seg_any_in = true;
-                                if let Some(local) = global_to_local[d] {
-                                    seg_dets.push(format!("D{local}"));
-                                }
+                            && d < num_det
+                            && in_window[d]
+                        {
+                            seg_any_in = true;
+                            if let Some(local) = global_to_local[d] {
+                                seg_dets.push(format!("D{local}"));
                             }
+                        }
                     } else if tok.starts_with('L') {
                         seg_obs.push((*tok).to_string());
                     }
@@ -628,19 +630,21 @@ fn extract_window_dem(
             }
 
             if !remapped_segments.is_empty() {
-                out.push_str(&format!("error({prob_str}) "));
+                let _ = write!(out, "error({prob_str}) ");
                 out.push_str(&remapped_segments.join(" ^ "));
                 out.push('\n');
             }
         } else if trimmed.starts_with("detector(")
             && let Some(d_start) = trimmed.rfind('D')
-                && let Ok(d) = trimmed[d_start + 1..].trim().parse::<usize>()
-                    && d < num_det && in_window[d]
-                        && let Some(local) = global_to_local[d] {
-                            let coords_end = trimmed.find(')').unwrap_or(trimmed.len());
-                            out.push_str(&trimmed[..=coords_end]);
-                            out.push_str(&format!(" D{local}\n"));
-                        }
+            && let Ok(d) = trimmed[d_start + 1..].trim().parse::<usize>()
+            && d < num_det
+            && in_window[d]
+            && let Some(local) = global_to_local[d]
+        {
+            let coords_end = trimmed.find(')').unwrap_or(trimmed.len());
+            out.push_str(&trimmed[..=coords_end]);
+            let _ = writeln!(out, " D{local}");
+        }
     }
 
     (local_to_global, out)

@@ -1,4 +1,16 @@
-#![allow(clippy::needless_pass_by_value)] // PyO3 requires owned values from Python
+// PyO3 binding signatures are constrained by the Python ABI and generated
+// method wrappers. Python docstrings also contain Python snippets that Clippy's
+// Rust-doc Markdown lint misclassifies. Keep this list limited to binding/docs
+// shape lints.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::unnecessary_wraps,
+    clippy::unused_self
+)]
 #![doc(html_root_url = "https://docs.rs/pecos-rslib")]
 // Disable doctests since they don't work with our workspace setup
 #![cfg_attr(docsrs, feature(doc_cfg))]

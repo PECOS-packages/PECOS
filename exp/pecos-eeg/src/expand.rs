@@ -11,7 +11,7 @@
 use crate::Bm;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 
 /// Result of circuit expansion.
 pub struct ExpandedCircuit {
@@ -45,7 +45,7 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
     let max_qubit = gates
         .iter()
         .flat_map(|g| g.qubits.iter())
-        .map(|q| q.index())
+        .map(pecos_core::QubitId::index)
         .max()
         .unwrap_or(0);
     let num_original = max_qubit + 1;
@@ -156,6 +156,7 @@ impl ExpandedCircuit {
     ///
     /// Z on auxiliary qubits is dropped (doesn't correspond to original).
     /// Components on original qubits pass through unchanged.
+    #[must_use]
     pub fn map_to_original_frame(&self, p: &Bm) -> Bm {
         let mut result = Bm::default();
 
@@ -196,6 +197,7 @@ pub struct GateIndex {
 
 impl GateIndex {
     /// Build the index from a gate list (typically the expanded circuit).
+    #[must_use]
     pub fn build(gates: &[Gate], num_qubits: usize) -> Self {
         let mut qubit_gates = vec![Vec::new(); num_qubits];
 
@@ -227,25 +229,33 @@ impl GateIndex {
             }
         }
 
-        Self { qubit_gates, expansion_gates: expansion }
+        Self {
+            qubit_gates,
+            expansion_gates: expansion,
+        }
     }
 
     /// Gate indices touching qubit `q` in reverse order (for backward walk).
     pub fn gates_on_qubit_rev(&self, q: usize) -> impl Iterator<Item = u32> + '_ {
-        self.qubit_gates.get(q).into_iter().flat_map(|v| v.iter().copied().rev())
+        self.qubit_gates
+            .get(q)
+            .into_iter()
+            .flat_map(|v| v.iter().copied().rev())
     }
 
     /// Is this gate an expansion gate (no physical noise)?
     #[inline]
+    #[must_use]
     pub fn is_expansion(&self, gate_idx: usize) -> bool {
         self.expansion_gates.get(gate_idx).copied().unwrap_or(false)
     }
 }
 
+#[must_use]
 pub fn make_gate(gt: GateType, qubits: &[usize]) -> Gate {
     Gate {
         gate_type: gt,
-        qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
@@ -267,10 +277,10 @@ mod tests {
         let gates = vec![
             gate(GateType::PZ, &[0]),
             gate(GateType::H, &[0]),
-            gate(GateType::MZ, &[0]),  // → CX(0, aux0)
-            gate(GateType::PZ, &[0]),  // reset
+            gate(GateType::MZ, &[0]), // → CX(0, aux0)
+            gate(GateType::PZ, &[0]), // reset
             gate(GateType::H, &[0]),
-            gate(GateType::MZ, &[0]),  // → CX(0, aux1)
+            gate(GateType::MZ, &[0]), // → CX(0, aux1)
         ];
 
         let expanded = expand_circuit(&gates);
@@ -288,7 +298,9 @@ mod tests {
         assert_eq!(mid_mz, 0, "No mid-circuit MZ in expanded circuit");
 
         // Two MZ at the end (one per auxiliary)
-        let end_mz = expanded.gates.iter()
+        let end_mz = expanded
+            .gates
+            .iter()
             .rev()
             .take_while(|g| g.gate_type == GateType::MZ)
             .count();
@@ -318,8 +330,8 @@ mod tests {
             gate(GateType::PZ, &[0, 1]),
             gate(GateType::H, &[0]),
             gate(GateType::CX, &[0, 1]),
-            gate(GateType::MZ, &[0]),  // meas record 0 → aux 2
-            gate(GateType::MZ, &[1]),  // meas record 1 → aux 3
+            gate(GateType::MZ, &[0]), // meas record 0 → aux 2
+            gate(GateType::MZ, &[1]), // meas record 1 → aux 3
         ];
 
         let expanded = expand_circuit(&gates);
@@ -333,7 +345,7 @@ mod tests {
         // X on auxiliary → X on original measured qubit
         let gates = vec![
             gate(GateType::PZ, &[0]),
-            gate(GateType::MZ, &[0]),  // meas 0 → aux 1
+            gate(GateType::MZ, &[0]), // meas 0 → aux 1
         ];
         let expanded = expand_circuit(&gates);
 
@@ -346,10 +358,7 @@ mod tests {
     #[test]
     fn test_map_to_original_frame_z_on_aux_dropped() {
         // Z on auxiliary is dropped (measurement projection absorbs it)
-        let gates = vec![
-            gate(GateType::PZ, &[0]),
-            gate(GateType::MZ, &[0]),
-        ];
+        let gates = vec![gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
         let expanded = expand_circuit(&gates);
 
         let p = Bm::z(1); // Z on aux
@@ -360,10 +369,7 @@ mod tests {
     #[test]
     fn test_map_to_original_frame_original_passthrough() {
         // Components on original qubits pass through unchanged
-        let gates = vec![
-            gate(GateType::PZ, &[0, 1]),
-            gate(GateType::MZ, &[0]),
-        ];
+        let gates = vec![gate(GateType::PZ, &[0, 1]), gate(GateType::MZ, &[0])];
         let expanded = expand_circuit(&gates);
 
         let p = Bm::x(0).multiply(&Bm::z(1)); // X0 Z1
@@ -397,37 +403,51 @@ mod tests {
             gate(GateType::PZ, &[1]),
             gate(GateType::H, &[1]),
             gate(GateType::CX, &[1, 0]),
-            gate(GateType::MZ, &[1]),  // round 1 syndrome
-            gate(GateType::PZ, &[1]),  // reset
+            gate(GateType::MZ, &[1]), // round 1 syndrome
+            gate(GateType::PZ, &[1]), // reset
             gate(GateType::H, &[1]),
             gate(GateType::CX, &[1, 0]),
-            gate(GateType::MZ, &[1]),  // round 2 syndrome (last round, no PZ after)
-            gate(GateType::MZ, &[0]),  // data readout
+            gate(GateType::MZ, &[1]), // round 2 syndrome (last round, no PZ after)
+            gate(GateType::MZ, &[0]), // data readout
         ];
 
         let expanded = expand_circuit(&gates);
 
         // Count PZ/QAlloc gates on qubit 1 in the expanded circuit
-        let resets_on_1: Vec<_> = expanded.gates.iter()
-            .filter(|g| (g.gate_type == GateType::PZ || g.gate_type == GateType::QAlloc)
-                && g.qubits.iter().any(|q| q.index() == 1))
+        let resets_on_1: Vec<_> = expanded
+            .gates
+            .iter()
+            .filter(|g| {
+                (g.gate_type == GateType::PZ || g.gate_type == GateType::QAlloc)
+                    && g.qubits.iter().any(|q| q.index() == 1)
+            })
             .collect();
 
         // Should have: original PZ(1) init + expansion PZ(1) round 1 + circuit PZ(1) reset
         //            + expansion PZ(1) round 2 = 4 reset gates on qubit 1
         eprintln!("Resets on qubit 1: {} gates", resets_on_1.len());
-        assert!(resets_on_1.len() >= 4,
+        assert!(
+            resets_on_1.len() >= 4,
             "Should have expansion PZ for last-round MZ(1): got {} on q1",
-            resets_on_1.len());
+            resets_on_1.len()
+        );
 
         // Count resets on qubit 0 in expanded circuit
-        let resets_on_0: Vec<_> = expanded.gates.iter()
-            .filter(|g| (g.gate_type == GateType::PZ || g.gate_type == GateType::QAlloc)
-                && g.qubits.iter().any(|q| q.index() == 0))
+        let resets_on_0: Vec<_> = expanded
+            .gates
+            .iter()
+            .filter(|g| {
+                (g.gate_type == GateType::PZ || g.gate_type == GateType::QAlloc)
+                    && g.qubits.iter().any(|q| q.index() == 0)
+            })
             .collect();
         // Should have only: original PZ(0) init = 1
         eprintln!("Resets on qubit 0: {} gates", resets_on_0.len());
-        assert_eq!(resets_on_0.len(), 1, "Data qubit should NOT get expansion PZ");
+        assert_eq!(
+            resets_on_0.len(),
+            1,
+            "Data qubit should NOT get expansion PZ"
+        );
     }
 
     #[test]

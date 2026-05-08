@@ -20,6 +20,7 @@ pub struct StabilizerGroup {
 
 impl StabilizerGroup {
     /// Run the noiseless circuit on SparseStab.
+    #[must_use]
     pub fn from_circuit(gates: &[Gate], num_qubits: usize) -> Self {
         let mut sim = SparseStab::with_seed(num_qubits, 0);
 
@@ -31,37 +32,51 @@ impl StabilizerGroup {
 
             match gate.gate_type {
                 GateType::PZ | GateType::QAlloc => {
-                    for &q in &qubits { sim.pz(&[q]); }
-                }
-                GateType::H => { sim.h(&qubits); }
-                GateType::SZ => { sim.sz(&qubits); }
-                GateType::SZdg => { sim.szdg(&qubits); }
-                GateType::SX => { sim.sx(&qubits); }
-                GateType::SXdg => { sim.sxdg(&qubits); }
-                GateType::SY => { sim.sy(&qubits); }
-                GateType::SYdg => { sim.sydg(&qubits); }
-                GateType::X => { sim.x(&qubits); }
-                GateType::Y => { sim.y(&qubits); }
-                GateType::Z => { sim.z(&qubits); }
-                GateType::CX => {
-                    if qubits.len() >= 2 {
-                        sim.cx(&[(qubits[0], qubits[1])]);
+                    for &q in &qubits {
+                        sim.pz(&[q]);
                     }
                 }
-                GateType::CY => {
-                    if qubits.len() >= 2 {
-                        sim.cy(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::H => {
+                    sim.h(&qubits);
                 }
-                GateType::CZ => {
-                    if qubits.len() >= 2 {
-                        sim.cz(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::SZ => {
+                    sim.sz(&qubits);
                 }
-                GateType::SWAP => {
-                    if qubits.len() >= 2 {
-                        sim.swap(&[(qubits[0], qubits[1])]);
-                    }
+                GateType::SZdg => {
+                    sim.szdg(&qubits);
+                }
+                GateType::SX => {
+                    sim.sx(&qubits);
+                }
+                GateType::SXdg => {
+                    sim.sxdg(&qubits);
+                }
+                GateType::SY => {
+                    sim.sy(&qubits);
+                }
+                GateType::SYdg => {
+                    sim.sydg(&qubits);
+                }
+                GateType::X => {
+                    sim.x(&qubits);
+                }
+                GateType::Y => {
+                    sim.y(&qubits);
+                }
+                GateType::Z => {
+                    sim.z(&qubits);
+                }
+                GateType::CX if qubits.len() >= 2 => {
+                    sim.cx(&[(qubits[0], qubits[1])]);
+                }
+                GateType::CY if qubits.len() >= 2 => {
+                    sim.cy(&[(qubits[0], qubits[1])]);
+                }
+                GateType::CZ if qubits.len() >= 2 => {
+                    sim.cz(&[(qubits[0], qubits[1])]);
+                }
+                GateType::SWAP if qubits.len() >= 2 => {
+                    sim.swap(&[(qubits[0], qubits[1])]);
                 }
                 GateType::MZ => {
                     sim.mz(&qubits);
@@ -79,6 +94,7 @@ impl StabilizerGroup {
     /// - `Some(true)` if P is a +1 stabilizer
     /// - `Some(false)` if P is a -1 stabilizer (anti-stabilizer)
     /// - `None` if P is not in the stabilizer group
+    #[must_use]
     pub fn is_stabilizer(&self, p: &Bm) -> Option<bool> {
         if p.is_identity() {
             return Some(true);
@@ -97,9 +113,15 @@ impl StabilizerGroup {
         for q in 0..max_q {
             let has_x = p.has_x(q);
             let has_z = p.has_z(q);
-            if has_x { x_positions.push(q); }
-            if has_z { z_positions.push(q); }
-            if has_x && has_z { num_ys += 1; }
+            if has_x {
+                x_positions.push(q);
+            }
+            if has_z {
+                z_positions.push(q);
+            }
+            if has_x && has_z {
+                num_ys += 1;
+            }
         }
 
         let stabs = self.sim.stabs();
@@ -146,13 +168,16 @@ mod tests {
 
     #[test]
     fn test_bell_state() {
-        let gates = vec![
-            gate(GateType::H, &[0]),
-            gate(GateType::CX, &[0, 1]),
-        ];
+        let gates = vec![gate(GateType::H, &[0]), gate(GateType::CX, &[0, 1])];
         let stabs = StabilizerGroup::from_circuit(&gates, 2);
-        assert_eq!(stabs.is_stabilizer(&Bm::x(0).multiply(&Bm::x(1))), Some(true));
-        assert_eq!(stabs.is_stabilizer(&Bm::z(0).multiply(&Bm::z(1))), Some(true));
+        assert_eq!(
+            stabs.is_stabilizer(&Bm::x(0).multiply(&Bm::x(1))),
+            Some(true)
+        );
+        assert_eq!(
+            stabs.is_stabilizer(&Bm::z(0).multiply(&Bm::z(1))),
+            Some(true)
+        );
     }
 
     #[test]
@@ -171,8 +196,11 @@ mod tests {
         let stabs = StabilizerGroup::from_circuit(&gates, 5);
 
         let x0x1 = Bm::x(0).multiply(&Bm::x(1));
-        assert_eq!(stabs.is_stabilizer(&x0x1), Some(true),
-            "X0*X1 should be stabilizer after syndrome extraction with MZ projection");
+        assert_eq!(
+            stabs.is_stabilizer(&x0x1),
+            Some(true),
+            "X0*X1 should be stabilizer after syndrome extraction with MZ projection"
+        );
     }
 
     #[test]
@@ -184,8 +212,11 @@ mod tests {
         let stabs = StabilizerGroup::from_circuit(&gates, 1);
         // Initial state is |0>, X takes it to |1>.
         // Z|1> = -|1>, so Z is a -1 stabilizer.
-        assert_eq!(stabs.is_stabilizer(&Bm::z(0)), Some(false),
-            "Z should be -1 stabilizer for |1> state");
+        assert_eq!(
+            stabs.is_stabilizer(&Bm::z(0)),
+            Some(false),
+            "Z should be -1 stabilizer for |1> state"
+        );
     }
 
     #[test]
@@ -200,10 +231,16 @@ mod tests {
         ];
         let stabs = StabilizerGroup::from_circuit(&gates, 2);
         // XX should be -1 stabilizer (the minus Bell state)
-        assert_eq!(stabs.is_stabilizer(&Bm::x(0).multiply(&Bm::x(1))), Some(false),
-            "XX should be -1 stabilizer for |Phi->");
+        assert_eq!(
+            stabs.is_stabilizer(&Bm::x(0).multiply(&Bm::x(1))),
+            Some(false),
+            "XX should be -1 stabilizer for |Phi->"
+        );
         // ZZ should be +1 stabilizer
-        assert_eq!(stabs.is_stabilizer(&Bm::z(0).multiply(&Bm::z(1))), Some(true),
-            "ZZ should be +1 stabilizer for |Phi->");
+        assert_eq!(
+            stabs.is_stabilizer(&Bm::z(0).multiply(&Bm::z(1))),
+            Some(true),
+            "ZZ should be +1 stabilizer for |Phi->"
+        );
     }
 }

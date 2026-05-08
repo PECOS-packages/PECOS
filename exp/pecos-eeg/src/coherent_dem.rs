@@ -22,13 +22,15 @@
 
 use crate::Bm;
 use crate::dem_mapping::{DecomposableDemEntry, DemEntry, DemEvent, Detector, Observable};
-use crate::heisenberg::{SparsePauli, sparse_conjugate};
 use crate::eeg::EegType;
+use crate::heisenberg::{SparsePauli, sparse_conjugate};
 use crate::noise::NoiseSpec;
 use pecos_core::Gate;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
+
+type FittedEventKey = (SmallVec<[usize; 4]>, SmallVec<[usize; 2]>);
 
 /// A noise contribution at a specific gate.
 struct NoiseContribution {
@@ -63,15 +65,19 @@ pub fn build_coherent_dem(
         if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
             continue;
         }
-        let qubits: SmallVec<[usize; 4]> = gate.qubits.iter().map(|q| q.index()).collect();
+        let qubits: SmallVec<[usize; 4]> =
+            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
 
         for inj in injections {
-            noise_sources.push((gate_idx, NoiseContribution {
-                label: inj.label.clone(),
-                eeg_type: inj.eeg_type,
-                value: inj.rate,
-            }));
+            noise_sources.push((
+                gate_idx,
+                NoiseContribution {
+                    label: inj.label.clone(),
+                    eeg_type: inj.eeg_type,
+                    value: inj.rate,
+                },
+            ));
         }
     }
 
@@ -185,14 +191,20 @@ pub fn build_coherent_dem(
     for ((event, _label), total_h) in &h_groups {
         let prob = total_h.sin().powi(2);
         if prob > 1e-15 {
-            entries.push(DemEntry { event: event.clone(), probability: prob });
+            entries.push(DemEntry {
+                event: event.clone(),
+                probability: prob,
+            });
         }
     }
 
     for ((event, _label), total_s) in &s_groups {
         let prob = (1.0 - (2.0 * total_s).exp()) / 2.0;
         if prob.abs() > 1e-15 {
-            entries.push(DemEntry { event: event.clone(), probability: prob.abs() });
+            entries.push(DemEntry {
+                event: event.clone(),
+                probability: prob.abs(),
+            });
         }
     }
 
@@ -220,15 +232,19 @@ pub fn build_coherent_dem_decomposable(
         if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
             continue;
         }
-        let qubits: SmallVec<[usize; 4]> = gate.qubits.iter().map(|q| q.index()).collect();
+        let qubits: SmallVec<[usize; 4]> =
+            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
 
         for inj in injections {
-            noise_sources.push((gate_idx, NoiseContribution {
-                label: inj.label.clone(),
-                eeg_type: inj.eeg_type,
-                value: inj.rate,
-            }));
+            noise_sources.push((
+                gate_idx,
+                NoiseContribution {
+                    label: inj.label.clone(),
+                    eeg_type: inj.eeg_type,
+                    value: inj.rate,
+                },
+            ));
         }
     }
 
@@ -243,18 +259,20 @@ pub fn build_coherent_dem_decomposable(
     let mut noise_z_obs_sets: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); num_noise];
 
     // Precompute X-only and Z-only labels for each noise source
-    let noise_x_labels: Vec<Bm> = noise_sources.iter().map(|(_, c)| {
-        let mut x_only = Bm::default();
-        x_only.x_bits = c.label.x_bits.clone();
-        // z_bits stays zero
-        x_only
-    }).collect();
-    let noise_z_labels: Vec<Bm> = noise_sources.iter().map(|(_, c)| {
-        let mut z_only = Bm::default();
-        z_only.z_bits = c.label.z_bits.clone();
-        // x_bits stays zero
-        z_only
-    }).collect();
+    let noise_x_labels: Vec<Bm> = noise_sources
+        .iter()
+        .map(|(_, c)| Bm {
+            x_bits: c.label.x_bits.clone(),
+            ..Default::default()
+        })
+        .collect();
+    let noise_z_labels: Vec<Bm> = noise_sources
+        .iter()
+        .map(|(_, c)| Bm {
+            z_bits: c.label.z_bits.clone(),
+            ..Default::default()
+        })
+        .collect();
 
     // Build gate -> noise source index map
     let mut gate_to_noise: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -302,9 +320,15 @@ pub fn build_coherent_dem_decomposable(
     for det in detectors {
         let (hits_full, hits_x, hits_z) = backward_classify_xz(&det.stabilizer);
         for ns_idx in 0..num_noise {
-            if hits_full[ns_idx] { noise_det_sets[ns_idx].push(det.id); }
-            if hits_x[ns_idx] { noise_x_det_sets[ns_idx].push(det.id); }
-            if hits_z[ns_idx] { noise_z_det_sets[ns_idx].push(det.id); }
+            if hits_full[ns_idx] {
+                noise_det_sets[ns_idx].push(det.id);
+            }
+            if hits_x[ns_idx] {
+                noise_x_det_sets[ns_idx].push(det.id);
+            }
+            if hits_z[ns_idx] {
+                noise_z_det_sets[ns_idx].push(det.id);
+            }
         }
     }
 
@@ -312,9 +336,15 @@ pub fn build_coherent_dem_decomposable(
     for obs in observables {
         let (hits_full, hits_x, hits_z) = backward_classify_xz(&obs.pauli);
         for ns_idx in 0..num_noise {
-            if hits_full[ns_idx] { noise_obs_sets[ns_idx].push(obs.id); }
-            if hits_x[ns_idx] { noise_x_obs_sets[ns_idx].push(obs.id); }
-            if hits_z[ns_idx] { noise_z_obs_sets[ns_idx].push(obs.id); }
+            if hits_full[ns_idx] {
+                noise_obs_sets[ns_idx].push(obs.id);
+            }
+            if hits_x[ns_idx] {
+                noise_x_obs_sets[ns_idx].push(obs.id);
+            }
+            if hits_z[ns_idx] {
+                noise_z_obs_sets[ns_idx].push(obs.id);
+            }
         }
     }
 
@@ -349,7 +379,8 @@ pub fn build_coherent_dem_decomposable(
             EegType::S => &mut s_groups,
             _ => continue,
         };
-        groups.entry(key)
+        groups
+            .entry(key)
             .and_modify(|(val, _, _)| *val += contrib.value)
             .or_insert((contrib.value, x_event, z_event));
     }
@@ -389,14 +420,18 @@ pub fn build_coherent_dem_decomposable(
     merge_decomposable_dem_entries(entries)
 }
 
-fn merge_decomposable_dem_entries(mut entries: Vec<DecomposableDemEntry>) -> Vec<DecomposableDemEntry> {
+fn merge_decomposable_dem_entries(
+    mut entries: Vec<DecomposableDemEntry>,
+) -> Vec<DecomposableDemEntry> {
     if entries.len() <= 1 {
         return entries;
     }
 
     // Sort by combined event
     entries.sort_by(|a, b| {
-        a.event.detectors.cmp(&b.event.detectors)
+        a.event
+            .detectors
+            .cmp(&b.event.detectors)
             .then(a.event.observables.cmp(&b.event.observables))
     });
 
@@ -495,12 +530,13 @@ pub fn build_coherent_dem_exact(
     // Loss = sum_d (marginal_d - target_d)^2
     //      + sum_pairs (pairwise_ij - target_ij)^2
     let pairs: Vec<((usize, usize), f64)> = heisenberg_pairwise
-        .map(|p| p.to_vec())
+        .map(<[((usize, usize), f64)]>::to_vec)
         .unwrap_or_default();
     let has_pairwise = !pairs.is_empty();
 
     // Initialize x from q: x = logit(q / 0.499)
-    let mut x: Vec<f64> = q.iter()
+    let mut x: Vec<f64> = q
+        .iter()
         .map(|&qi| {
             let s = (qi / 0.499).clamp(1e-10, 1.0 - 1e-10);
             (s / (1.0 - s)).ln()
@@ -528,7 +564,9 @@ pub fn build_coherent_dem_exact(
             loss += residual * residual;
 
             let mut full_prod = 1.0;
-            for &m in &det_to_mechs[d] { full_prod *= 1.0 - 2.0 * q_local[m]; }
+            for &m in &det_to_mechs[d] {
+                full_prod *= 1.0 - 2.0 * q_local[m];
+            }
             for &m in &det_to_mechs[d] {
                 let factor = 1.0 - 2.0 * q_local[m];
                 if factor.abs() > 1e-30 {
@@ -542,13 +580,17 @@ pub fn build_coherent_dem_exact(
             let full_prods: Vec<f64> = (0..num_dets)
                 .map(|d| {
                     let mut p = 1.0;
-                    for &m in &det_to_mechs[d] { p *= 1.0 - 2.0 * q_local[m]; }
+                    for &m in &det_to_mechs[d] {
+                        p *= 1.0 - 2.0 * q_local[m];
+                    }
                     p
                 })
                 .collect();
 
             for &((di, dj), target_p) in &pairs {
-                if di >= num_dets || dj >= num_dets || target_p < 1e-10 { continue; }
+                if di >= num_dets || dj >= num_dets || target_p < 1e-10 {
+                    continue;
+                }
 
                 let prod_i = full_prods[di];
                 let prod_j = full_prods[dj];
@@ -558,7 +600,9 @@ pub fn build_coherent_dem_exact(
                 }
                 let prod_xor = if prod_both.abs() > 1e-30 {
                     prod_i * prod_j / (prod_both * prod_both)
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
 
                 let current_p = (1.0 - prod_i - prod_j + prod_xor) / 4.0;
                 let residual = current_p - target_p;
@@ -590,7 +634,9 @@ pub fn build_coherent_dem_exact(
         }
 
         // Chain rule: grad_x = grad_q * dq/dx
-        let grad_x: Vec<f64> = grad_q.iter().zip(dq_dx.iter())
+        let grad_x: Vec<f64> = grad_q
+            .iter()
+            .zip(dq_dx.iter())
             .map(|(&gq, &dx)| gq * dx)
             .collect();
 
@@ -606,7 +652,9 @@ pub fn build_coherent_dem_exact(
     let (mut loss, mut grad) = compute_loss_grad(&x);
 
     for _iter in 0..500 {
-        if loss < 1e-14 { break; }
+        if loss < 1e-14 {
+            break;
+        }
 
         // L-BFGS direction: H_k * grad
         let mut direction = grad.clone();
@@ -616,39 +664,57 @@ pub fn build_coherent_dem_exact(
         let mut alpha = vec![0.0; hist_len];
         for i in (0..hist_len).rev() {
             alpha[i] = rho_hist[i] * dot(&s_hist[i], &direction);
-            for j in 0..n_mech { direction[j] -= alpha[i] * y_hist[i][j]; }
+            for j in 0..n_mech {
+                direction[j] -= alpha[i] * y_hist[i][j];
+            }
         }
         // Scale by gamma = s'y / y'y from most recent pair
         if let (Some(s), Some(y)) = (s_hist.last(), y_hist.last()) {
             let yy = dot(y, y);
             if yy > 1e-30 {
                 let gamma = dot(s, y) / yy;
-                for d in &mut direction { *d *= gamma; }
+                for d in &mut direction {
+                    *d *= gamma;
+                }
             }
         }
         for i in 0..hist_len {
             let beta = rho_hist[i] * dot(&y_hist[i], &direction);
-            for j in 0..n_mech { direction[j] += (alpha[i] - beta) * s_hist[i][j]; }
+            for j in 0..n_mech {
+                direction[j] += (alpha[i] - beta) * s_hist[i][j];
+            }
         }
 
         // Negate for descent direction
-        for d in &mut direction { *d = -*d; }
+        for d in &mut direction {
+            *d = -*d;
+        }
 
         // Backtracking line search (Armijo condition)
         let dg = dot(&grad, &direction);
-        if dg >= 0.0 { break; } // not a descent direction
+        if dg >= 0.0 {
+            break;
+        } // not a descent direction
 
         let mut step = 1.0;
         let c1 = 1e-4;
-        let mut x_new: Vec<f64> = x.iter().zip(direction.iter())
-            .map(|(&xi, &di)| xi + step * di).collect();
+        let mut x_new: Vec<f64> = x
+            .iter()
+            .zip(direction.iter())
+            .map(|(&xi, &di)| xi + step * di)
+            .collect();
         let (mut loss_new, mut grad_new) = compute_loss_grad(&x_new);
 
         for _ in 0..20 {
-            if loss_new <= loss + c1 * step * dg { break; }
+            if loss_new <= loss + c1 * step * dg {
+                break;
+            }
             step *= 0.5;
-            x_new = x.iter().zip(direction.iter())
-                .map(|(&xi, &di)| xi + step * di).collect();
+            x_new = x
+                .iter()
+                .zip(direction.iter())
+                .map(|(&xi, &di)| xi + step * di)
+                .collect();
             let (ln, gn) = compute_loss_grad(&x_new);
             loss_new = ln;
             grad_new = gn;
@@ -656,7 +722,11 @@ pub fn build_coherent_dem_exact(
 
         // Update L-BFGS history
         let s_k: Vec<f64> = x_new.iter().zip(x.iter()).map(|(&a, &b)| a - b).collect();
-        let y_k: Vec<f64> = grad_new.iter().zip(grad.iter()).map(|(&a, &b)| a - b).collect();
+        let y_k: Vec<f64> = grad_new
+            .iter()
+            .zip(grad.iter())
+            .map(|(&a, &b)| a - b)
+            .collect();
         let sy = dot(&s_k, &y_k);
         if sy > 1e-30 {
             if s_hist.len() >= m_lbfgs {
@@ -680,9 +750,14 @@ pub fn build_coherent_dem_exact(
     }
 
     // Build fitted DEM entries
-    let fitted: Vec<DemEntry> = approx.iter().zip(q.iter())
+    let fitted: Vec<DemEntry> = approx
+        .iter()
+        .zip(q.iter())
         .filter(|(_, p)| **p > 1e-15)
-        .map(|(entry, p)| DemEntry { event: entry.event.clone(), probability: *p })
+        .map(|(entry, p)| DemEntry {
+            event: entry.event.clone(),
+            probability: *p,
+        })
         .collect();
 
     merge_dem_entries(fitted)
@@ -702,9 +777,8 @@ pub fn build_coherent_dem_exact_decomposable(
     heisenberg_pairwise: Option<&[((usize, usize), f64)]>,
 ) -> Vec<DecomposableDemEntry> {
     // Get X/Z component structure from decomposable builder
-    let decomposable = build_coherent_dem_decomposable(
-        gates, noise, detectors, observables, expansion_gates,
-    );
+    let decomposable =
+        build_coherent_dem_decomposable(gates, noise, detectors, observables, expansion_gates);
 
     if decomposable.is_empty() {
         return decomposable;
@@ -712,32 +786,46 @@ pub fn build_coherent_dem_exact_decomposable(
 
     // Get fitted probabilities from exact builder
     let fitted = build_coherent_dem_exact(
-        gates, noise, detectors, observables, expansion_gates,
-        heisenberg_marginals, heisenberg_pairwise,
+        gates,
+        noise,
+        detectors,
+        observables,
+        expansion_gates,
+        heisenberg_marginals,
+        heisenberg_pairwise,
     );
 
     // Build lookup: event → fitted probability
-    let mut prob_lookup: BTreeMap<(SmallVec<[usize; 4]>, SmallVec<[usize; 2]>), f64> = BTreeMap::new();
+    let mut prob_lookup: BTreeMap<FittedEventKey, f64> = BTreeMap::new();
     for entry in &fitted {
         prob_lookup.insert(
-            (entry.event.detectors.clone(), entry.event.observables.clone()),
+            (
+                entry.event.detectors.clone(),
+                entry.event.observables.clone(),
+            ),
             entry.probability,
         );
     }
 
     // Combine: X/Z structure from decomposable + fitted probabilities from exact
-    decomposable.into_iter().filter_map(|mut entry| {
-        let key = (entry.event.detectors.clone(), entry.event.observables.clone());
-        if let Some(&fitted_prob) = prob_lookup.get(&key) {
-            entry.probability = fitted_prob;
-            Some(entry)
-        } else if entry.probability > 1e-15 {
-            // Keep original probability if no fitted version (edge case)
-            Some(entry)
-        } else {
-            None
-        }
-    }).collect()
+    decomposable
+        .into_iter()
+        .filter_map(|mut entry| {
+            let key = (
+                entry.event.detectors.clone(),
+                entry.event.observables.clone(),
+            );
+            if let Some(&fitted_prob) = prob_lookup.get(&key) {
+                entry.probability = fitted_prob;
+                Some(entry)
+            } else if entry.probability > 1e-15 {
+                // Keep original probability if no fitted version (edge case)
+                Some(entry)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Merge DEM entries with the same event via independent combination.

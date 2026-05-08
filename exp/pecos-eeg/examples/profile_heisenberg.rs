@@ -14,7 +14,7 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
         angles: GateAngles::new(),
         params: GateParams::new(),
-            meas_ids: pecos_core::GateMeasIds::new(),
+        meas_ids: pecos_core::GateMeasIds::new(),
     }
 }
 
@@ -23,7 +23,9 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
 fn build_weight4_circuit(num_rounds: usize) -> Vec<Gate> {
     // Data: 0,1,2,3. Ancilla: 4.
     let mut gates = Vec::new();
-    for q in 0..5 { gates.push(gate(GateType::PZ, &[q])); }
+    for q in 0..5 {
+        gates.push(gate(GateType::PZ, &[q]));
+    }
     for round in 0..num_rounds {
         gates.push(gate(GateType::H, &[4]));
         gates.push(gate(GateType::CX, &[4, 0]));
@@ -36,7 +38,9 @@ fn build_weight4_circuit(num_rounds: usize) -> Vec<Gate> {
             gates.push(gate(GateType::PZ, &[4]));
         }
     }
-    for q in 0..4 { gates.push(gate(GateType::MZ, &[q])); }
+    for q in 0..4 {
+        gates.push(gate(GateType::MZ, &[q]));
+    }
     gates
 }
 
@@ -60,10 +64,14 @@ fn main() {
     let init_gates: Vec<Gate> = (0..5)
         .map(|q| pecos_eeg::expand::make_gate(GateType::PZ, &[q]))
         .collect();
-    let stab = pecos_eeg::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
+    let stab =
+        pecos_eeg::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
-    eprintln!("Weight-4 X-check, {num_rounds} rounds, {} expanded qubits, {} detectors",
-        expanded.num_qubits, detectors.len());
+    eprintln!(
+        "Weight-4 X-check, {num_rounds} rounds, {} expanded qubits, {} detectors",
+        expanded.num_qubits,
+        detectors.len()
+    );
 
     // Run 20 iterations to get enough samples for perf
     let iters = 20;
@@ -71,12 +79,21 @@ fn main() {
     for _ in 0..iters {
         for det in &detectors {
             let _p = pecos_eeg::heisenberg::heisenberg_detection_probability(
-                &expanded.gates, det, &noise, &stab, 0.0,
+                &expanded.gates,
+                det,
+                &noise,
+                &stab,
+                0.0,
             );
         }
     }
     let total = t.elapsed();
     let per_det = total.as_secs_f64() * 1000.0 / (detectors.len() * iters) as f64;
-    eprintln!("{iters} iterations x {} dets = {} calls in {:.2}s ({:.2}ms/det)",
-        detectors.len(), detectors.len() * iters, total.as_secs_f64(), per_det);
+    eprintln!(
+        "{iters} iterations x {} dets = {} calls in {:.2}s ({:.2}ms/det)",
+        detectors.len(),
+        detectors.len() * iters,
+        total.as_secs_f64(),
+        per_det
+    );
 }

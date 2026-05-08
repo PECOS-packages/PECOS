@@ -373,7 +373,7 @@ impl CommandBuilder {
         self
     }
 
-    /// Add SXXdg gates.
+    /// Add `SXXdg` gates.
     #[must_use]
     pub fn sxxdg(
         mut self,
@@ -400,7 +400,7 @@ impl CommandBuilder {
         self
     }
 
-    /// Add SYYdg gates.
+    /// Add `SYYdg` gates.
     #[must_use]
     pub fn syydg(
         mut self,
@@ -415,7 +415,7 @@ impl CommandBuilder {
         self
     }
 
-    /// Add SZZdg gates (inverse of SZZ).
+    /// Add `SZZdg` gates (inverse of `SZZ`).
     #[must_use]
     pub fn szzdg(
         mut self,

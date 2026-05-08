@@ -60,9 +60,7 @@ impl<'a> EegDemBuilder<'a> {
         let gates: Vec<pecos_core::Gate> = self.tc.iter_gates().cloned().collect();
         let expanded = expand::expand_circuit(&gates);
         let result = circuit::analyze_expanded(&expanded.gates, &self.noise);
-        let (detectors, observables) = build_detectors(
-            self.tc, &expanded,
-        );
+        let (detectors, observables) = build_detectors(self.tc, &expanded);
 
         // Compute stabilizer group from the EXPANDED circuit (pre-readout).
         // This includes auxiliary qubits, so beta function checks happen
@@ -72,8 +70,11 @@ impl<'a> EegDemBuilder<'a> {
         let stab_group = StabilizerGroup::from_circuit(&expanded_pre_readout, expanded.num_qubits);
 
         dem_mapping::build_dem_configured(
-            &result.generators, &detectors, &observables,
-            Some(&stab_group), &self.config,
+            &result.generators,
+            &detectors,
+            &observables,
+            Some(&stab_group),
+            &self.config,
         )
     }
 
@@ -92,14 +93,23 @@ impl<'a> EegDemBuilder<'a> {
         let expanded_pre = exclude_final_mz(&expanded.gates);
         let stab_group = StabilizerGroup::from_circuit(&expanded_pre, expanded.num_qubits);
         let entries = dem_mapping::build_dem_configured(
-            &result.generators, &detectors, &observables,
-            Some(&stab_group), &self.config,
+            &result.generators,
+            &detectors,
+            &observables,
+            Some(&stab_group),
+            &self.config,
         );
 
-        let h_count = result.generators.iter()
-            .filter(|g| g.eeg_type == crate::eeg::EegType::H).count();
-        let s_count = result.generators.iter()
-            .filter(|g| g.eeg_type == crate::eeg::EegType::S).count();
+        let h_count = result
+            .generators
+            .iter()
+            .filter(|g| g.eeg_type == crate::eeg::EegType::H)
+            .count();
+        let s_count = result
+            .generators
+            .iter()
+            .filter(|g| g.eeg_type == crate::eeg::EegType::S)
+            .count();
 
         EegSummary {
             num_original_gates: gates.len(),
@@ -134,9 +144,9 @@ pub struct EegSummary {
 /// The expanded circuit ends with deferred MZ(aux) gates. Stripping them
 /// gives the pre-readout expanded state for stabilizer group computation.
 fn exclude_final_mz(gates: &[pecos_core::Gate]) -> Vec<pecos_core::Gate> {
-    let last_non_mz = gates.iter().rposition(|g| {
-        g.gate_type != pecos_core::gate_type::GateType::MZ
-    });
+    let last_non_mz = gates
+        .iter()
+        .rposition(|g| g.gate_type != pecos_core::gate_type::GateType::MZ);
     match last_non_mz {
         Some(idx) => gates[..=idx].to_vec(),
         None => Vec::new(),
@@ -163,7 +173,9 @@ fn build_detectors(
 
     for annotation in tc.annotations() {
         match &annotation.kind {
-            AnnotationKind::Detector { measurement_nodes, .. } => {
+            AnnotationKind::Detector {
+                measurement_nodes, ..
+            } => {
                 // measurement_nodes are gate indices in the ORIGINAL circuit.
                 // We need to map these to measurement record indices, then
                 // to auxiliary qubits in the expanded circuit.
@@ -176,16 +188,22 @@ fn build_detectors(
                 // k-th qubit measured across all MZ gates in order. Each
                 // measurement_node is a gate index — we find which measurement
                 // records that gate produced.
-                let bitmask = measurement_nodes_to_aux_bitmask(
-                    measurement_nodes, tc, expanded, num_meas,
-                );
-                detectors.push(Detector { id: detectors.len(), stabilizer: bitmask });
+                let bitmask =
+                    measurement_nodes_to_aux_bitmask(measurement_nodes, tc, expanded, num_meas);
+                detectors.push(Detector {
+                    id: detectors.len(),
+                    stabilizer: bitmask,
+                });
             }
-            AnnotationKind::Observable { measurement_nodes, .. } => {
-                let bitmask = measurement_nodes_to_aux_bitmask(
-                    measurement_nodes, tc, expanded, num_meas,
-                );
-                observables.push(Observable { id: observables.len(), pauli: bitmask });
+            AnnotationKind::Observable {
+                measurement_nodes, ..
+            } => {
+                let bitmask =
+                    measurement_nodes_to_aux_bitmask(measurement_nodes, tc, expanded, num_meas);
+                observables.push(Observable {
+                    id: observables.len(),
+                    pauli: bitmask,
+                });
             }
             AnnotationKind::Operator => {}
         }
@@ -268,19 +286,22 @@ mod tests {
         let result = circuit::analyze_expanded(&expanded.gates, &noise);
 
         let expanded_pre = exclude_final_mz(&expanded.gates);
-        let stab_group = StabilizerGroup::from_circuit(
-            &expanded_pre, expanded.num_qubits,
-        );
+        let stab_group = StabilizerGroup::from_circuit(&expanded_pre, expanded.num_qubits);
 
         let (detectors, observables) = build_detectors(&tc, &expanded);
         let manual_entries = dem_mapping::build_dem_with_stabilizers(
-            &result.generators, &detectors, &observables,
+            &result.generators,
+            &detectors,
+            &observables,
             Some(&stab_group),
         );
 
         // Same number of entries
-        assert_eq!(builder_entries.len(), manual_entries.len(),
-            "Builder and manual should produce same number of DEM entries");
+        assert_eq!(
+            builder_entries.len(),
+            manual_entries.len(),
+            "Builder and manual should produce same number of DEM entries"
+        );
 
         // Same probabilities (order may differ, so sort)
         let mut bp: Vec<f64> = builder_entries.iter().map(|e| e.probability).collect();
@@ -288,8 +309,10 @@ mod tests {
         bp.sort_by(|a, b| a.partial_cmp(b).unwrap());
         mp.sort_by(|a, b| a.partial_cmp(b).unwrap());
         for (b, m) in bp.iter().zip(mp.iter()) {
-            assert!((b - m).abs() < 1e-15,
-                "Probability mismatch: builder={b}, manual={m}");
+            assert!(
+                (b - m).abs() < 1e-15,
+                "Probability mismatch: builder={b}, manual={m}"
+            );
         }
     }
 
@@ -305,8 +328,10 @@ mod tests {
             .noise(NoiseModel::depolarizing(0.01))
             .build();
 
-        assert!(entries.is_empty(),
-            "No annotations → no detectors → no DEM entries");
+        assert!(
+            entries.is_empty(),
+            "No annotations → no detectors → no DEM entries"
+        );
     }
 
     #[test]
@@ -336,8 +361,10 @@ mod tests {
             .noise(NoiseModel::depolarizing(0.01))
             .build();
 
-        assert!(!entries.is_empty(),
-            "Circuit with detector annotation should produce DEM entries");
+        assert!(
+            !entries.is_empty(),
+            "Circuit with detector annotation should produce DEM entries"
+        );
         for e in &entries {
             assert!(e.probability > 0.0);
             assert!(e.probability < 0.5);
@@ -356,8 +383,14 @@ mod tests {
             .noise(NoiseModel::depolarizing(0.01).with_idle_rz(0.05))
             .summary();
 
-        assert!(summary.num_h_generators > 0, "Should have H generators from idle RZ");
-        assert!(summary.num_s_generators > 0, "Should have S generators from depolarizing");
+        assert!(
+            summary.num_h_generators > 0,
+            "Should have H generators from idle RZ"
+        );
+        assert!(
+            summary.num_s_generators > 0,
+            "Should have S generators from depolarizing"
+        );
         assert_eq!(summary.num_expanded_qubits, 6, "3 original + 3 aux");
     }
 }

@@ -24,6 +24,7 @@
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use crate::mini_bp::{self, BpGraph};
+use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use pecos_decoder_core::dem::{DemCheckMatrix, DemMatchingGraph};
 use pecos_decoder_core::errors::DecoderError;
 
@@ -161,7 +162,11 @@ impl BpUfDecoder {
         // then find the matching edge connecting those detectors.
         let mut mechanism_to_edge = vec![None; dcm.num_mechanisms];
 
-        for m in 0..dcm.num_mechanisms {
+        for (m, mechanism_edge) in mechanism_to_edge
+            .iter_mut()
+            .enumerate()
+            .take(dcm.num_mechanisms)
+        {
             let mut detectors: Vec<u32> = Vec::new();
             for d in 0..dcm.num_detectors {
                 if dcm.check_matrix[[d, m]] != 0 {
@@ -176,7 +181,7 @@ impl BpUfDecoder {
                     let d0 = detectors[0];
                     for (idx, edge) in graph.edges.iter().enumerate() {
                         if edge.node1 == d0 && edge.node2.is_none() {
-                            mechanism_to_edge[m] = Some(idx);
+                            *mechanism_edge = Some(idx);
                             break;
                         }
                     }
@@ -188,7 +193,7 @@ impl BpUfDecoder {
                         if (edge.node1 == d0 && edge.node2 == Some(d1))
                             || (edge.node1 == d1 && edge.node2 == Some(d0))
                         {
-                            mechanism_to_edge[m] = Some(idx);
+                            *mechanism_edge = Some(idx);
                             break;
                         }
                     }
@@ -251,7 +256,11 @@ impl BpUfDecoder {
 
         // Map BP mechanisms (non-decomposed) → matching graph edges (decomposed).
         let mut mechanism_to_edge = vec![None; bp_dcm.num_mechanisms];
-        for m in 0..bp_dcm.num_mechanisms {
+        for (m, mechanism_edge) in mechanism_to_edge
+            .iter_mut()
+            .enumerate()
+            .take(bp_dcm.num_mechanisms)
+        {
             let mut detectors: Vec<u32> = Vec::new();
             for d in 0..bp_dcm.num_detectors {
                 if bp_dcm.check_matrix[[d, m]] != 0 {
@@ -263,7 +272,7 @@ impl BpUfDecoder {
                     let d0 = detectors[0];
                     for (idx, edge) in match_graph.edges.iter().enumerate() {
                         if edge.node1 == d0 && edge.node2.is_none() {
-                            mechanism_to_edge[m] = Some(idx);
+                            *mechanism_edge = Some(idx);
                             break;
                         }
                     }
@@ -274,7 +283,7 @@ impl BpUfDecoder {
                         if (edge.node1 == d0 && edge.node2 == Some(d1))
                             || (edge.node1 == d1 && edge.node2 == Some(d0))
                         {
-                            mechanism_to_edge[m] = Some(idx);
+                            *mechanism_edge = Some(idx);
                             break;
                         }
                     }
@@ -532,7 +541,6 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
         }
 
         // Stage 3: Use UF with BP-adjusted weights.
-        use pecos_decoder_core::correlated_decoder::MatchingDecoder;
         let (mask, matched_edges) = self
             .uf
             .decode_with_weights(syndrome, &self.adjusted_weights)?;
@@ -602,9 +610,7 @@ error(0.1) D1
         // Random syndromes shouldn't panic
         let mut rng = fastrand::Rng::with_seed(42);
         for _ in 0..100 {
-            let syn: Vec<u8> = (0..24)
-                .map(|_| u8::from(rng.f64() < 0.05))
-                .collect();
+            let syn: Vec<u8> = (0..24).map(|_| u8::from(rng.f64() < 0.05)).collect();
             let _ = dec.decode_to_observables(&syn).unwrap();
         }
     }

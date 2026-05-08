@@ -844,7 +844,6 @@ pub enum Sampling {
         /// Configuration for importance sampling.
         config: ImportanceSamplingBuilder,
     },
-
 }
 
 impl Default for Sampling {
@@ -866,7 +865,6 @@ impl Sampling {
         let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         Self::MonteCarlo { workers }
     }
-
 }
 
 /// Accumulated simulation results.
@@ -2546,7 +2544,6 @@ fn is_sim_post_shot(resources: &mut Resources) {
 
     resources.get_mut::<ISShotState>().shot_index += 1;
 }
-
 
 // --- Simulation Handle ---
 

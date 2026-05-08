@@ -30,11 +30,18 @@
 //! for order 3, triple correlations that test whether the DEM's
 //! independent error decomposition is adequate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+type CorrelationEntry<'a> = (&'a Vec<u32>, f64, f64);
+
+fn count_as_f64<T>(items: &[T]) -> f64 {
+    items.iter().fold(0.0, |count, _| count + 1.0)
+}
 
 /// Flat `n x n` detector flip frequency matrix.
 ///
 /// Stored row-major. Use `index(i, j, n) = i * n + j`.
+#[must_use]
 pub fn flip_matrix_from_fired(fired_per_shot: &[Vec<u32>], num_detectors: usize) -> Vec<f64> {
     let n = num_detectors;
     let shots = fired_per_shot.len();
@@ -42,7 +49,7 @@ pub fn flip_matrix_from_fired(fired_per_shot: &[Vec<u32>], num_detectors: usize)
         return vec![0.0; n * n];
     }
 
-    let inv = 1.0 / shots as f64;
+    let inv = 1.0 / count_as_f64(fired_per_shot);
     let half_inv = 0.5 * inv;
     let mut m = vec![0.0; n * n];
 
@@ -70,19 +77,20 @@ pub fn flip_matrix_from_fired(fired_per_shot: &[Vec<u32>], num_detectors: usize)
 /// Per-round flip frequency matrices.
 ///
 /// Returns one flat `k x k` matrix per round, where `k = dets_per_round`.
+#[must_use]
 pub fn flip_matrices_by_round(
     fired_per_shot: &[Vec<u32>],
     num_detectors: usize,
     dets_per_round: usize,
 ) -> Vec<Vec<f64>> {
     let k = dets_per_round;
-    let num_rounds = (num_detectors + k - 1) / k;
+    let num_rounds = num_detectors.div_ceil(k);
     let shots = fired_per_shot.len();
     if shots == 0 {
         return vec![vec![0.0; k * k]; num_rounds];
     }
 
-    let inv = 1.0 / shots as f64;
+    let inv = 1.0 / count_as_f64(fired_per_shot);
     let half_inv = 0.5 * inv;
     let mut matrices = vec![vec![0.0; k * k]; num_rounds];
 
@@ -92,8 +100,11 @@ pub fn flip_matrices_by_round(
         for &d in fired {
             let r = d as usize / k;
             let local = d as usize % k;
-            if r < num_rounds {
-                round_local[r].push(local as u32);
+            if r >= num_rounds {
+                continue;
+            }
+            if let Ok(local) = u32::try_from(local) {
+                round_local[r].push(local);
             }
         }
 
@@ -118,6 +129,7 @@ pub fn flip_matrices_by_round(
 ///
 /// Returns a map from sorted detector index tuples to joint firing
 /// probability. Keys are ordered ascending.
+#[must_use]
 pub fn k_body_rates(
     fired_per_shot: &[Vec<u32>],
     num_detectors: usize,
@@ -128,13 +140,18 @@ pub fn k_body_rates(
         return BTreeMap::new();
     }
 
-    let inv = 1.0 / shots as f64;
+    let inv = 1.0 / count_as_f64(fired_per_shot);
     let mut rates: BTreeMap<Vec<u32>, f64> = BTreeMap::new();
 
     for fired in fired_per_shot {
-        let n = fired.len().min(max_order);
+        let valid_fired: Vec<u32> = fired
+            .iter()
+            .copied()
+            .filter(|&d| (d as usize) < num_detectors)
+            .collect();
+        let n = valid_fired.len().min(max_order);
         for order in 1..=n {
-            for_each_combination(fired, order, num_detectors as u32, |combo| {
+            for_each_combination(&valid_fired, order, |combo| {
                 *rates.entry(combo.to_vec()).or_insert(0.0) += inv;
             });
         }
@@ -145,6 +162,7 @@ pub fn k_body_rates(
 
 /// Per-round k-body rates. Detector indices in the returned maps are
 /// round-local (0..dets_per_round-1).
+#[must_use]
 pub fn k_body_rates_by_round(
     fired_per_shot: &[Vec<u32>],
     num_detectors: usize,
@@ -152,13 +170,13 @@ pub fn k_body_rates_by_round(
     max_order: usize,
 ) -> Vec<BTreeMap<Vec<u32>, f64>> {
     let k = dets_per_round;
-    let num_rounds = (num_detectors + k - 1) / k;
+    let num_rounds = num_detectors.div_ceil(k);
     let shots = fired_per_shot.len();
     if shots == 0 {
         return vec![BTreeMap::new(); num_rounds];
     }
 
-    let inv = 1.0 / shots as f64;
+    let inv = 1.0 / count_as_f64(fired_per_shot);
     let mut round_rates: Vec<BTreeMap<Vec<u32>, f64>> = vec![BTreeMap::new(); num_rounds];
 
     for fired in fired_per_shot {
@@ -166,8 +184,11 @@ pub fn k_body_rates_by_round(
         for &d in fired {
             let r = d as usize / k;
             let local = d as usize % k;
-            if r < num_rounds {
-                round_local[r].push(local as u32);
+            if r >= num_rounds {
+                continue;
+            }
+            if let Ok(local) = u32::try_from(local) {
+                round_local[r].push(local);
             }
         }
 
@@ -175,7 +196,7 @@ pub fn k_body_rates_by_round(
             let n = local_ids.len().min(max_order);
             let rr = &mut round_rates[r];
             for order in 1..=n {
-                for_each_combination(local_ids, order, k as u32, |combo| {
+                for_each_combination(local_ids, order, |combo| {
                     *rr.entry(combo.to_vec()).or_insert(0.0) += inv;
                 });
             }
@@ -188,15 +209,16 @@ pub fn k_body_rates_by_round(
 /// Compare k-body rates between two sets, grouped by order.
 ///
 /// Returns a map from order to `(max_rel_error, rms_rel_error, worst_event)`.
+#[must_use]
 pub fn compare_k_body(
     sim: &BTreeMap<Vec<u32>, f64>,
     dem: &BTreeMap<Vec<u32>, f64>,
     min_rate: f64,
 ) -> BTreeMap<usize, (f64, f64, Vec<u32>)> {
-    let all_keys: BTreeMap<&Vec<u32>, ()> = sim.keys().chain(dem.keys()).map(|k| (k, ())).collect();
+    let all_keys: BTreeSet<&Vec<u32>> = sim.keys().chain(dem.keys()).collect();
 
-    let mut by_order: BTreeMap<usize, Vec<(&Vec<u32>, f64, f64)>> = BTreeMap::new();
-    for (&key, _) in &all_keys {
+    let mut by_order: BTreeMap<usize, Vec<CorrelationEntry<'_>>> = BTreeMap::new();
+    for &key in &all_keys {
         let s = sim.get(key).copied().unwrap_or(0.0);
         let d = dem.get(key).copied().unwrap_or(0.0);
         by_order.entry(key.len()).or_default().push((key, s, d));
@@ -207,22 +229,22 @@ pub fn compare_k_body(
         let mut max_err = 0.0_f64;
         let mut worst: Vec<u32> = Vec::new();
         let mut sum_sq = 0.0;
-        let mut count = 0u64;
+        let mut count = 0.0;
 
         for &(key, s, d) in entries {
             if s > min_rate {
                 let rel = (d / s - 1.0).abs();
                 if rel > max_err {
                     max_err = rel;
-                    worst = key.clone();
+                    worst.clone_from(key);
                 }
                 sum_sq += rel * rel;
-                count += 1;
+                count += 1.0;
             }
         }
 
-        let rms = if count > 0 {
-            (sum_sq / count as f64).sqrt()
+        let rms = if count > 0.0 {
+            (sum_sq / count).sqrt()
         } else {
             0.0
         };
@@ -233,6 +255,7 @@ pub fn compare_k_body(
 }
 
 /// Compare two flat flip matrices. Returns `(max_rel_err, frob_rel_err, worst_i, worst_j)`.
+#[must_use]
 pub fn compare_flip_matrices(
     sim: &[f64],
     dem: &[f64],
@@ -289,13 +312,16 @@ pub struct DemMechanism {
 ///
 /// Uses iterative proportional fitting on the exact DEM marginal equation:
 ///
-///   p_d = 1/2 - 1/2 * prod_{m: d in S_m} (1 - 2*q_m)
+/// ```text
+/// p_d = 1/2 - 1/2 * prod_{m: d in S_m} (1 - 2*q_m)
+/// ```
 ///
 /// Each iteration computes current marginals, then scales each mechanism
 /// by the geometric mean of (target/current) ratios for the detectors
 /// it affects. Mechanisms with no detector overlap are untouched.
 ///
 /// Returns the fitted mechanisms and per-detector residual errors.
+#[must_use]
 pub fn fit_dem_to_marginals(
     mechanisms: &[DemMechanism],
     target_marginals: &[f64],
@@ -356,7 +382,7 @@ pub fn fit_dem_to_marginals(
             if count == 0 {
                 continue;
             }
-            let scale = (log_ratio / count as f64).exp();
+            let scale = (log_ratio / f64::from(count)).exp();
             let new_q = (q[m] * scale).clamp(0.0, 0.499);
             max_change = max_change.max((new_q - q[m]).abs());
             q[m] = new_q;
@@ -392,6 +418,7 @@ pub fn fit_dem_to_marginals(
 }
 
 /// Format fitted mechanisms as a standard DEM string.
+#[must_use]
 pub fn mechanisms_to_dem_string(mechanisms: &[DemMechanism]) -> String {
     let mut lines = Vec::new();
     for mech in mechanisms {
@@ -417,9 +444,8 @@ pub fn mechanisms_to_dem_string(mechanisms: &[DemMechanism]) -> String {
 
 // --- Internal helpers ---
 
-/// Iterate over all k-combinations of `items` (assumed sorted, < `max_val`),
-/// calling `f` with each sorted combination.
-fn for_each_combination(items: &[u32], k: usize, _max_val: u32, mut f: impl FnMut(&[u32])) {
+/// Iterate over all k-combinations of `items`, calling `f` with each sorted combination.
+fn for_each_combination(items: &[u32], k: usize, mut f: impl FnMut(&[u32])) {
     if k == 0 || items.len() < k {
         return;
     }

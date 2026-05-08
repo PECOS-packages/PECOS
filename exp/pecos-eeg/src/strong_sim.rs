@@ -56,6 +56,7 @@ pub struct OutcomeProbability {
 /// # Limitations
 /// Currently computes first-order (S-type) corrections only. H-type
 /// corrections require second-order computation with phase tracking.
+#[must_use]
 pub fn outcome_probability(
     generators: &[PropagatedEeg],
     outcome: &[bool],
@@ -72,11 +73,19 @@ pub fn outcome_probability(
     // For a pure state: ζ = 0 (deterministic), p_x = 0 or 1.
     // For a projected state: ζ > 0, p_x = 1/2^ζ.
     let zeta = compute_zeta(n, stabilizers);
-    let noiseless = if x_in_support { 1.0 / (1u64 << zeta) as f64 } else { 0.0 };
+    let noiseless = if x_in_support {
+        1.0 / (1u64 << zeta) as f64
+    } else {
+        0.0
+    };
 
     // First-order S-type corrections: α(x, S_P, ψ) = [x⊕a ∈ support] - [x ∈ support]
     let mut s_correction = 0.0;
-    let scale = if zeta > 0 { 1.0 / (1u64 << zeta) as f64 } else { 1.0 };
+    let scale = if zeta > 0 {
+        1.0 / (1u64 << zeta) as f64
+    } else {
+        1.0
+    };
 
     for g in generators {
         if g.eeg_type != EegType::S {
@@ -86,8 +95,8 @@ pub fn outcome_probability(
         let x_flipped = flip_outcome(outcome, &g.label);
         let flipped_in_support = is_in_support(&x_flipped, stabilizers);
 
-        let alpha = (if flipped_in_support { 1.0 } else { 0.0 })
-            - (if x_in_support { 1.0 } else { 0.0 });
+        let alpha =
+            (if flipped_in_support { 1.0 } else { 0.0 }) - (if x_in_support { 1.0 } else { 0.0 });
 
         s_correction += scale * alpha * g.coeff;
     }
@@ -99,11 +108,13 @@ pub fn outcome_probability(
     // For anticommuting P,P': α(C) = 2 Re(Φ(P,P')) (since {P,P'}=0 → Φ(PP',I) cancels)
     //
     // Extract stabilizer phases for Φ computation.
-    let stab_phases: Vec<bool> = stabilizers.iter()
+    let stab_phases: Vec<bool> = stabilizers
+        .iter()
         .map(|_| false) // Default: all +1 stabilizers (sign info not available from Bm)
         .collect();
 
-    let h_gens: Vec<_> = generators.iter()
+    let h_gens: Vec<_> = generators
+        .iter()
         .filter(|g| g.eeg_type == EegType::H)
         .collect();
 
@@ -144,8 +155,10 @@ pub fn outcome_probability(
                     let phi_pq = compute_phi(&g.label, q_label, outcome, stabilizers, &stab_phases);
                     let pq = g.label.multiply(q_label);
                     let qp = q_label.multiply(&g.label);
-                    let phi_pq_i = compute_phi(&pq, &Bm::default(), outcome, stabilizers, &stab_phases);
-                    let phi_qp_i = compute_phi(&qp, &Bm::default(), outcome, stabilizers, &stab_phases);
+                    let phi_pq_i =
+                        compute_phi(&pq, &Bm::default(), outcome, stabilizers, &stab_phases);
+                    let phi_qp_i =
+                        compute_phi(&qp, &Bm::default(), outcome, stabilizers, &stab_phases);
                     let alpha = 2.0 * phi_pq.0 - (phi_pq_i.0 + phi_qp_i.0);
                     ca_correction += scale * g.coeff * alpha;
                 }
@@ -156,8 +169,10 @@ pub fn outcome_probability(
                     let phi_qp = compute_phi(q_label, &g.label, outcome, stabilizers, &stab_phases);
                     let qp = q_label.multiply(&g.label);
                     let pq = g.label.multiply(q_label);
-                    let phi_qp_i = compute_phi(&qp, &Bm::default(), outcome, stabilizers, &stab_phases);
-                    let phi_pq_i = compute_phi(&pq, &Bm::default(), outcome, stabilizers, &stab_phases);
+                    let phi_qp_i =
+                        compute_phi(&qp, &Bm::default(), outcome, stabilizers, &stab_phases);
+                    let phi_pq_i =
+                        compute_phi(&pq, &Bm::default(), outcome, stabilizers, &stab_phases);
                     let alpha = 2.0 * phi_qp.1 + (phi_qp_i.1 - phi_pq_i.1);
                     ca_correction += scale * g.coeff * alpha;
                 }
@@ -166,7 +181,7 @@ pub fn outcome_probability(
         }
     }
 
-    let total = (noiseless + s_correction + h_correction + ca_correction).max(0.0).min(1.0);
+    let total = (noiseless + s_correction + h_correction + ca_correction).clamp(0.0, 1.0);
 
     OutcomeProbability {
         noiseless,
@@ -208,29 +223,39 @@ fn compute_phi(
     let n = stabilizers.len();
 
     // Work with full Bm for GF2 ops (only X-part matters)
-    let mut row_x: Vec<Bm> = stabilizers.iter()
-        .map(|s| Bm { x_bits: s.x_bits.clone(), z_bits: Default::default() })
+    let mut row_x: Vec<Bm> = stabilizers
+        .iter()
+        .map(|s| Bm {
+            x_bits: s.x_bits.clone(),
+            z_bits: smallvec::SmallVec::default(),
+        })
         .collect();
 
     let mut selected = vec![false; n];
-    let mut target = Bm { x_bits: target_x.x_bits.clone(), z_bits: Default::default() };
+    let mut target = Bm {
+        x_bits: target_x.x_bits.clone(),
+        z_bits: smallvec::SmallVec::default(),
+    };
 
     // GF(2) greedy elimination
     for bit in 0..outcome.len() {
         if !target.x_bits.get_bit(bit) {
             continue;
         }
-        let found = row_x.iter().enumerate().find(|(_, r)| r.x_bits.get_bit(bit));
+        let found = row_x
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.x_bits.get_bit(bit));
         if let Some((row_idx, _)) = found {
             // Find the original stabilizer index for this row
             // (rows may have been XOR-modified but indices track the original)
             selected[row_idx] = true;
             let pivot = row_x[row_idx].clone();
             target = target.multiply(&pivot);
-            for r in 0..n {
-                if r != row_idx && row_x[r].x_bits.get_bit(bit) {
+            for (r, row) in row_x.iter_mut().enumerate().take(n) {
+                if r != row_idx && row.x_bits.get_bit(bit) {
                     let p_clone = pivot.clone();
-                    row_x[r] = row_x[r].multiply(&p_clone);
+                    *row = row.multiply(&p_clone);
                 }
             }
         } else {
@@ -276,7 +301,7 @@ fn compute_phi(
             dot += 1;
         }
     }
-    let z_sign: f64 = if dot % 2 == 0 { 1.0 } else { -1.0 };
+    let z_sign: f64 = if dot.is_multiple_of(2) { 1.0 } else { -1.0 };
 
     // Total sign from S_0 being a (-1)^{sign} stabilizer
     let stab_sign: f64 = if s0_sign_minus { -1.0 } else { 1.0 };
@@ -321,7 +346,7 @@ fn is_in_support(outcome: &[bool], stabilizers: &[Bm]) -> bool {
             }
         }
         // Stabilizer eigenvalue should be +1 on support states
-        if parity % 2 != 0 {
+        if !parity.is_multiple_of(2) {
             return false; // eigenvalue = -1, not in support
         }
     }
@@ -346,7 +371,10 @@ fn compute_zeta(n: usize, stabilizers: &[Bm]) -> usize {
     let z_stabs: Vec<Bm> = stabilizers
         .iter()
         .filter(|s| s.x_bits.is_zero())
-        .map(|s| Bm { x_bits: s.z_bits.clone(), z_bits: Default::default() })
+        .map(|s| Bm {
+            x_bits: s.z_bits.clone(),
+            z_bits: smallvec::SmallVec::default(),
+        })
         .collect();
 
     let rank = gf2_rank_bitmask(&z_stabs, n);
@@ -359,14 +387,21 @@ fn gf2_rank_bitmask(vectors: &[Bm], max_bits: usize) -> usize {
     let mut rank = 0;
 
     for bit in 0..max_bits {
-        if rank >= rows.len() { break; }
-        if rows[rank..].iter().all(|r| r.is_identity()) { break; }
+        if rank >= rows.len() {
+            break;
+        }
+        if rows[rank..]
+            .iter()
+            .all(pecos_core::PauliBitmaskGeneric::is_identity)
+        {
+            break;
+        }
         if let Some(pivot) = rows[rank..].iter().position(|r| r.x_bits.get_bit(bit)) {
             rows.swap(rank, rank + pivot);
             let pivot_val = rows[rank].clone();
-            for r in 0..rows.len() {
-                if r != rank && rows[r].x_bits.get_bit(bit) {
-                    rows[r] = rows[r].multiply(&pivot_val);
+            for (r, row) in rows.iter_mut().enumerate() {
+                if r != rank && row.x_bits.get_bit(bit) {
+                    *row = row.multiply(&pivot_val);
                 }
             }
             rank += 1;
@@ -380,15 +415,19 @@ fn gf2_rank_bitmask(vectors: &[Bm], max_bits: usize) -> usize {
 mod tests {
     use super::*;
 
-    fn xx() -> Bm { Bm::x(0).multiply(&Bm::x(1)) }
-    fn zz() -> Bm { Bm::z(0).multiply(&Bm::z(1)) }
+    fn xx() -> Bm {
+        Bm::x(0).multiply(&Bm::x(1))
+    }
+    fn zz() -> Bm {
+        Bm::z(0).multiply(&Bm::z(1))
+    }
 
     #[test]
     fn test_single_qubit_z_basis() {
         // |0⟩ state: stabilizer = +Z. Outcome 0 is deterministic.
         let stabs = vec![Bm::z(0)];
         let outcome_0 = vec![false]; // |0⟩
-        let outcome_1 = vec![true];  // |1⟩
+        let outcome_1 = vec![true]; // |1⟩
 
         assert!(is_in_support(&outcome_0, &stabs));
         assert!(!is_in_support(&outcome_1, &stabs));
@@ -496,9 +535,9 @@ mod tests {
 
         // Support: {00, 11} (Z-type stabilizer ZZ constrains parity)
         assert!(is_in_support(&[false, false], &stabs)); // 00: ZZ eigenvalue = (-1)^0 = +1
-        assert!(is_in_support(&[true, true], &stabs));   // 11: ZZ eigenvalue = (-1)^2 = +1
-        assert!(!is_in_support(&[false, true], &stabs));  // 01: ZZ eigenvalue = (-1)^1 = -1
-        assert!(!is_in_support(&[true, false], &stabs));  // 10: ZZ eigenvalue = (-1)^1 = -1
+        assert!(is_in_support(&[true, true], &stabs)); // 11: ZZ eigenvalue = (-1)^2 = +1
+        assert!(!is_in_support(&[false, true], &stabs)); // 01: ZZ eigenvalue = (-1)^1 = -1
+        assert!(!is_in_support(&[true, false], &stabs)); // 10: ZZ eigenvalue = (-1)^1 = -1
     }
 
     #[test]
@@ -521,41 +560,30 @@ mod tests {
         let phases = vec![false]; // +1 stabilizer
 
         // Φ(I,I) for outcome 0 (in support): should be 1
-        let phi = compute_phi(
-            &Bm::default(), &Bm::default(),
-            &[false], &stabs, &phases,
-        );
+        let phi = compute_phi(&Bm::default(), &Bm::default(), &[false], &stabs, &phases);
         assert!((phi.0 - 1.0).abs() < 1e-10);
         assert!(phi.1.abs() < 1e-10);
 
         // Φ(I,I) for outcome 1 (not in support): should be 0
-        let phi = compute_phi(
-            &Bm::default(), &Bm::default(),
-            &[true], &stabs, &phases,
-        );
+        let phi = compute_phi(&Bm::default(), &Bm::default(), &[true], &stabs, &phases);
         assert!(phi.0.abs() < 1e-10);
 
         // Φ(X,X) for outcome 0: ⟨0|X|0⟩² = 0 (X flips to |1⟩ which is not in support...
         // wait, x⊕a_X = 1, is |1⟩ in support? No. So Φ = 0.
-        let phi = compute_phi(
-            &Bm::x(0), &Bm::x(0),
-            &[false], &stabs, &phases,
-        );
+        let phi = compute_phi(&Bm::x(0), &Bm::x(0), &[false], &stabs, &phases);
         assert!(phi.0.abs() < 1e-10);
 
         // Φ(X,X) for outcome 1: ⟨1|X|0⟩·⟨0|X|1⟩ = ⟨1|1⟩·⟨0|0⟩ = 1
         // x⊕a_X = 0, which IS in support. So Φ should be 1.
-        let phi = compute_phi(
-            &Bm::x(0), &Bm::x(0),
-            &[true], &stabs, &phases,
+        let phi = compute_phi(&Bm::x(0), &Bm::x(0), &[true], &stabs, &phases);
+        assert!(
+            (phi.0 - 1.0).abs() < 1e-10,
+            "Phi(X,X) at |1> for |0> state: got {:?}",
+            phi
         );
-        assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(X,X) at |1> for |0> state: got {:?}", phi);
 
         // Φ(Z,I) for outcome 0: ⟨0|Z|0⟩·⟨0|0⟩ = 1·1 = 1
-        let phi = compute_phi(
-            &Bm::z(0), &Bm::default(),
-            &[false], &stabs, &phases,
-        );
+        let phi = compute_phi(&Bm::z(0), &Bm::default(), &[false], &stabs, &phases);
         assert!((phi.0 - 1.0).abs() < 1e-10);
     }
 
@@ -567,30 +595,30 @@ mod tests {
 
         // Φ(I,I) for outcome 00 (in support): 2^ζ · |⟨00|Φ+⟩|² = 2 · 1/2 = 1
         let phi = compute_phi(
-            &Bm::default(), &Bm::default(),
-            &[false, false], &stabs, &phases,
+            &Bm::default(),
+            &Bm::default(),
+            &[false, false],
+            &stabs,
+            &phases,
         );
         assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(I,I) at 00: {:?}", phi);
 
         // Φ(I,I) for outcome 01 (not in support): 0
         let phi = compute_phi(
-            &Bm::default(), &Bm::default(),
-            &[false, true], &stabs, &phases,
+            &Bm::default(),
+            &Bm::default(),
+            &[false, true],
+            &stabs,
+            &phases,
         );
         assert!(phi.0.abs() < 1e-10);
 
         // Φ(Z0,I) for outcome 00
-        let phi = compute_phi(
-            &Bm::z(0), &Bm::default(),
-            &[false, false], &stabs, &phases,
-        );
+        let phi = compute_phi(&Bm::z(0), &Bm::default(), &[false, false], &stabs, &phases);
         assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(Z0,I) at 00: {:?}", phi);
 
         // Φ(Z0,I) for outcome 11
-        let phi = compute_phi(
-            &Bm::z(0), &Bm::default(),
-            &[true, true], &stabs, &phases,
-        );
+        let phi = compute_phi(&Bm::z(0), &Bm::default(), &[true, true], &stabs, &phases);
         assert!((phi.0 + 1.0).abs() < 1e-10, "Phi(Z0,I) at 11: {:?}", phi);
     }
 
@@ -619,7 +647,10 @@ mod tests {
         assert!(p10.noiseless.abs() < 1e-10);
 
         // S_{Z₀} on |Φ+⟩: Z₀ maps |Φ+⟩ to |Φ-⟩. No Z-basis effect.
-        assert!(p00.s_correction.abs() < 1e-10, "Z error on Bell state: no Z-basis effect");
+        assert!(
+            p00.s_correction.abs() < 1e-10,
+            "Z error on Bell state: no Z-basis effect"
+        );
         assert!(p11.s_correction.abs() < 1e-10);
     }
 }

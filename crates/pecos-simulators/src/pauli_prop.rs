@@ -601,7 +601,7 @@ impl CliffordGateable for PauliProp {
 
     /// Applies the adjoint square root of Z gate.
     ///
-    /// Ignoring global phase, SZ and SZdg have the same binary Pauli action:
+    /// Ignoring global phase, `SZ` and `SZdg` have the same binary Pauli action:
     /// X <-> Y, Z -> Z.
     #[inline]
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -668,7 +668,7 @@ impl CliffordGateable for PauliProp {
 
     /// Applies the adjoint square root of X gate.
     ///
-    /// Ignoring global phase, SX and SXdg have the same binary Pauli action.
+    /// Ignoring global phase, `SX` and `SXdg` have the same binary Pauli action.
     #[inline]
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -696,7 +696,7 @@ impl CliffordGateable for PauliProp {
 
     /// Applies the adjoint square root of Y gate.
     ///
-    /// Ignoring global phase, SY and SYdg have the same binary Pauli action.
+    /// Ignoring global phase, `SY` and `SYdg` have the same binary Pauli action.
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -793,7 +793,7 @@ impl CliffordGateable for PauliProp {
 
     /// Applies the adjoint square root of XX gate.
     ///
-    /// Ignoring global phase, SXX and SXXdg have the same binary Pauli action.
+    /// Ignoring global phase, `SXX` and `SXXdg` have the same binary Pauli action.
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q1, q2) in pairs {
@@ -828,7 +828,7 @@ impl CliffordGateable for PauliProp {
 
     /// Applies the adjoint square root of YY gate.
     ///
-    /// Ignoring global phase, SYY and SYYdg have the same binary Pauli action.
+    /// Ignoring global phase, `SYY` and `SYYdg` have the same binary Pauli action.
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q1, q2) in pairs {
@@ -863,7 +863,7 @@ impl CliffordGateable for PauliProp {
 
     /// Applies the adjoint square root of ZZ gate.
     ///
-    /// Ignoring global phase, SZZ and SZZdg have the same binary Pauli action.
+    /// Ignoring global phase, `SZZ` and `SZZdg` have the same binary Pauli action.
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q1, q2) in pairs {

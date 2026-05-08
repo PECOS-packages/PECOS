@@ -18,11 +18,7 @@ fn profile_decoder(name: &str, dem: &str, num_shots: usize) {
     // Generate random syndromes
     let mut rng = fastrand::Rng::with_seed(42);
     let syndromes: Vec<Vec<u8>> = (0..num_shots)
-        .map(|_| {
-            (0..num_det)
-                .map(|_| u8::from(rng.f64() < 0.05))
-                .collect()
-        })
+        .map(|_| (0..num_det).map(|_| u8::from(rng.f64() < 0.05)).collect())
         .collect();
 
     // Warm up
@@ -54,11 +50,7 @@ fn profile_phases(name: &str, dem: &str, num_shots: usize) {
 
     let mut rng = fastrand::Rng::with_seed(42);
     let syndromes: Vec<Vec<u8>> = (0..num_shots)
-        .map(|_| {
-            (0..num_det)
-                .map(|_| u8::from(rng.f64() < 0.05))
-                .collect()
-        })
+        .map(|_| (0..num_det).map(|_| u8::from(rng.f64() < 0.05)).collect())
         .collect();
 
     // Phase 1: measure reset + syndrome loading only
@@ -133,11 +125,7 @@ fn main() {
 
     let mut rng = fastrand::Rng::with_seed(42);
     let syndromes: Vec<Vec<u8>> = (0..num_shots)
-        .map(|_| {
-            (0..num_det)
-                .map(|_| u8::from(rng.f64() < 0.05))
-                .collect()
-        })
+        .map(|_| (0..num_det).map(|_| u8::from(rng.f64() < 0.05)).collect())
         .collect();
 
     let t0 = Instant::now();

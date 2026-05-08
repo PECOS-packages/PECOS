@@ -177,22 +177,25 @@ pub(crate) enum PauliType {
     Z,
 }
 
-/// Build a fault table from a TickCircuit and noise parameters.
+/// Build a fault table from a `TickCircuit` and noise parameters.
 ///
 /// Each entry describes one possible fault mechanism: its probability and
 /// which measurements it would flip if it occurs. The table is used for
 /// independent per-shot Bernoulli sampling.
 ///
-/// Gate ordering follows the TickCircuit tick-by-tick structure, which must
+/// Gate ordering follows the `TickCircuit` tick-by-tick structure, which must
 /// match the measurement numbering used by detector/DEM-output record indices.
 ///
 /// # Supported gates
 ///
 /// **Fault injection** (noise applied after these gates):
-/// - Single-qubit Clifford: H, X, Y, Z, SZ, SZdg, SX, SXdg, SY, SYdg, F, Fdg → p=p1, 3 alternatives
-/// - Two-qubit Clifford: CX, CY, CZ, SXX, SXXdg, SYY, SYYdg, SZZ, SZZdg, SWAP → p=p2, 15 alts
-/// - State preparation: PZ, QAlloc → mechanism with p=p_prep, 1 alternative (X)
-/// - Measurement: MZ, MeasureFree, MeasureLeaked → mechanism with p=p_meas, 1 alternative (flip)
+/// - Single-qubit Clifford: `H`, `X`, `Y`, `Z`, `SZ`, `SZdg`, `SX`, `SXdg`,
+///   `SY`, `SYdg`, `F`, `Fdg` → `p=p1`, 3 alternatives
+/// - Two-qubit Clifford: `CX`, `CY`, `CZ`, `SXX`, `SXXdg`, `SYY`, `SYYdg`,
+///   `SZZ`, `SZZdg`, `SWAP` → `p=p2`, 15 alternatives
+/// - State preparation: `PZ`, `QAlloc` → mechanism with `p=p_prep`, 1 alternative (`X`)
+/// - Measurement: `MZ`, `MeasureFree`, `MeasureLeaked` → mechanism with
+///   `p=p_meas`, 1 alternative (flip)
 ///
 /// Each mechanism fires at most once per shot (Bernoulli with total probability p).
 /// When it fires, exactly one alternative is chosen uniformly at random. This
@@ -202,14 +205,19 @@ pub(crate) enum PauliType {
 /// **Propagation** (gates that transform a propagating Pauli):
 /// - All single-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - All two-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
-/// - PZ, QAlloc: absorbs all Pauli components on the reset qubit
-/// - MZ: records X-component flip, then absorbs all components (state collapse)
+/// - `PZ`, `QAlloc`: absorbs all Pauli components on the reset qubit
+/// - `MZ`: records `X`-component flip, then absorbs all components (state collapse)
 ///
 /// **No-op** (pass through without noise or transformation):
-/// - I, Idle, QFree, MeasCrosstalkGlobalPayload, MeasCrosstalkLocalPayload, PauliOperatorMeta
+/// - `I`, `Idle`, `QFree`, `MeasCrosstalkGlobalPayload`,
+///   `MeasCrosstalkLocalPayload`, `PauliOperatorMeta`
 ///
 /// Any gate not in the above lists returns [`UnsupportedGateError`].
 ///
+/// # Errors
+///
+/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
+/// the supported Clifford/prep/measurement/metadata set.
 pub fn build_fault_table(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
@@ -323,7 +331,7 @@ pub fn build_fault_table(
     Ok(mechanisms)
 }
 
-/// Validate that all gates in the TickCircuit are supported (before flattening).
+/// Validate that all gates in the `TickCircuit` are supported (before flattening).
 fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
     for (tick_idx, tick) in tc.ticks().iter().enumerate() {
         for (gate_idx, gate) in tick.gates().iter().enumerate() {
@@ -339,14 +347,14 @@ fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
                 gate_type: gate.gate_type,
                 tick: tick_idx,
                 gate_in_tick: gate_idx,
-                qubits: gate.qubits.iter().map(|q| q.index()).collect(),
+                qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
             });
         }
     }
     Ok(())
 }
 
-/// Flatten a TickCircuit into a gate list with measurement position tracking.
+/// Flatten a `TickCircuit` into a gate list with measurement position tracking.
 ///
 /// Multi-qubit gates are split into individual entries so each measurement/pair
 /// gets its own position for fault injection. Returns the gate list and a map
@@ -358,7 +366,7 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
 
     for tick in tc.ticks() {
         for gate in tick.gates() {
-            let qs: Vec<usize> = gate.qubits.iter().map(|q| q.index()).collect();
+            let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
             let is_mz = is_supported_measurement_gate(gate.gate_type);
             let is_2q = is_standard_2q_clifford_gate(gate.gate_type);
 
@@ -417,7 +425,7 @@ pub(crate) fn propagate_single(
         PauliType::X => prop.track_x(&[qubit]),
         PauliType::Y => prop.track_y(&[qubit]),
         PauliType::Z => prop.track_z(&[qubit]),
-    };
+    }
 
     propagate_forward(&mut prop, start, gates, meas_positions)
 }
@@ -435,7 +443,7 @@ fn propagate_single_effect(
         PauliType::X => prop.track_x(&[qubit]),
         PauliType::Y => prop.track_y(&[qubit]),
         PauliType::Z => prop.track_z(&[qubit]),
-    };
+    }
 
     let affected_measurements = propagate_forward(&mut prop, start, gates, meas_positions);
     let affected_tracked_ops = tracked_ops_flipped_by(&prop, tracked_ops);
@@ -460,37 +468,31 @@ fn propagate_pair(
         PauliType::X => prop.track_x(&[q1]),
         PauliType::Y => prop.track_y(&[q1]),
         PauliType::Z => prop.track_z(&[q1]),
-    };
+    }
     match p2 {
         PauliType::X => prop.track_x(&[q2]),
         PauliType::Y => prop.track_y(&[q2]),
         PauliType::Z => prop.track_z(&[q2]),
-    };
+    }
 
     propagate_forward(&mut prop, start, gates, meas_positions)
 }
 
 fn propagate_pair_effect(
-    p1: PauliType,
-    q1: usize,
-    p2: PauliType,
-    q2: usize,
+    faults: [(PauliType, usize); 2],
     start: usize,
     gates: &[GateLoc],
     meas_positions: &HashMap<usize, usize>,
     tracked_ops: &[PauliString],
 ) -> PropagatedFaultEffect {
     let mut prop = PauliProp::new();
-    match p1 {
-        PauliType::X => prop.track_x(&[q1]),
-        PauliType::Y => prop.track_y(&[q1]),
-        PauliType::Z => prop.track_z(&[q1]),
-    };
-    match p2 {
-        PauliType::X => prop.track_x(&[q2]),
-        PauliType::Y => prop.track_y(&[q2]),
-        PauliType::Z => prop.track_z(&[q2]),
-    };
+    for (pauli, qubit) in faults {
+        match pauli {
+            PauliType::X => prop.track_x(&[qubit]),
+            PauliType::Y => prop.track_y(&[qubit]),
+            PauliType::Z => prop.track_z(&[qubit]),
+        }
+    }
 
     let affected_measurements = propagate_forward(&mut prop, start, gates, meas_positions);
     let affected_tracked_ops = tracked_ops_flipped_by(&prop, tracked_ops);
@@ -592,10 +594,10 @@ fn propagate_forward(
                 if !loc.qubits.is_empty() =>
             {
                 let q = loc.qubits[0];
-                if prop.contains_x(q) {
-                    if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
-                        affected.insert(meas_idx);
-                    }
+                if prop.contains_x(q)
+                    && let Some(&meas_idx) = meas_positions.get(&loc_idx)
+                {
+                    affected.insert(meas_idx);
                 }
                 prop.clear_qubit(q);
             }
@@ -624,13 +626,13 @@ pub enum FaultKind {
 /// Which noise channel produced this fault location.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FaultChannel {
-    /// Single-qubit depolarizing (p1).
+    /// Single-qubit depolarizing (`p1`).
     P1,
-    /// Two-qubit depolarizing (p2).
+    /// Two-qubit depolarizing (`p2`).
     P2,
-    /// Measurement flip (p_meas).
+    /// Measurement flip (`p_meas`).
     PMeas,
-    /// State preparation flip (p_prep).
+    /// State preparation flip (`p_prep`).
     PPrep,
 }
 
@@ -649,20 +651,20 @@ pub struct FaultAlternative {
     pub affected_observables: Vec<usize>,
     /// Tracked-operator indices flipped.
     pub affected_tracked_ops: Vec<usize>,
-    /// Probability of this alternative conditioned on the mechanism firing (1/k).
+    /// Probability of this alternative conditioned on the mechanism firing (`1/k`).
     pub conditional_probability: f64,
-    /// Marginal probability of this specific alternative at this location: p_i / k_i.
+    /// Marginal probability of this specific alternative at this location: `p_i / k_i`.
     ///
     /// This is NOT "probability of this fault and no others." A full-circuit
-    /// configuration probability requires multiplying by (1 - p_j) for all
-    /// other locations j.
+    /// configuration probability requires multiplying by `(1 - p_j)` for all
+    /// other locations `j`.
     pub absolute_probability: f64,
 }
 
 /// A physical fault location in the circuit.
 #[derive(Clone, Debug)]
 pub struct FaultLocation {
-    /// Tick index in the TickCircuit.
+    /// Tick index in the `TickCircuit`.
     pub tick: usize,
     /// Gate index within the tick.
     pub gate_index: usize,
@@ -672,11 +674,11 @@ pub struct FaultLocation {
     pub qubits: Vec<usize>,
     /// Which noise channel this location belongs to.
     pub channel: FaultChannel,
-    /// Total probability that this mechanism fires: p_i.
+    /// Total probability that this mechanism fires: `p_i`.
     pub channel_probability: f64,
-    /// Probability that no fault occurs at this location: 1 - p_i.
+    /// Probability that no fault occurs at this location: `1 - p_i`.
     pub no_fault_probability: f64,
-    /// Number of fault alternatives at this location: k_i.
+    /// Number of fault alternatives at this location: `k_i`.
     pub num_alternatives: usize,
     /// All fault alternatives at this location.
     pub faults: Vec<FaultAlternative>,
@@ -690,15 +692,17 @@ pub struct FaultLocation {
 ///
 /// Probability model (independent mechanisms):
 ///
-/// For location i with k_i alternatives:
-/// - `channel_probability` = p_i (total probability mechanism fires)
-/// - `no_fault_probability` = 1 - p_i
-/// - `conditional_probability` = 1/k_i (uniform alternative choice)
-/// - `absolute_probability` = p_i / k_i (marginal alternative probability)
+/// For location `i` with `k_i` alternatives:
+/// - `channel_probability` = `p_i` (total probability mechanism fires)
+/// - `no_fault_probability` = `1 - p_i`
+/// - `conditional_probability` = `1/k_i` (uniform alternative choice)
+/// - `absolute_probability` = `p_i / k_i` (marginal alternative probability)
 ///
 /// Full-circuit configuration probability for "alternative j at location i,
 /// no fault at all other locations":
-///   P = (p_i / k_i) * product_{m != i} (1 - p_m)
+/// ```text
+/// P = (p_i / k_i) * product_{m != i} (1 - p_m)
+/// ```
 #[derive(Clone, Debug)]
 pub struct FaultCatalog {
     pub locations: Vec<FaultLocation>,
@@ -719,9 +723,9 @@ pub struct FaultConfiguration {
     pub affected_observables: Vec<usize>,
     /// Combined tracked-operator indices (XOR parity).
     pub affected_tracked_ops: Vec<usize>,
-    /// Product of selected alternatives' absolute_probability.
+    /// Product of selected alternatives' `absolute_probability`.
     pub selected_probability: f64,
-    /// selected_probability * product of unselected locations' no_fault_probability.
+    /// `selected_probability * product(unselected no_fault_probability)`.
     pub configuration_probability: f64,
 }
 
@@ -733,6 +737,7 @@ impl FaultCatalog {
     /// XOR parity. Probabilities follow the independent-mechanism model.
     ///
     /// For k=0: yields one no-fault event.
+    #[must_use]
     pub fn fault_configurations(&self, k: usize) -> FaultConfigurationIter<'_> {
         FaultConfigurationIter::new(self, k)
     }
@@ -805,7 +810,7 @@ impl FaultConfigCursor {
         false
     }
 
-    /// Build a FaultConfiguration from the current cursor state + catalog data.
+    /// Build a `FaultConfiguration` from the current cursor state + catalog data.
     fn build(&self, catalog: &FaultCatalog) -> FaultConfiguration {
         if self.k == 0 {
             let no_fault_prob: f64 = catalog
@@ -916,7 +921,7 @@ impl<'a> FaultConfigurationIter<'a> {
     }
 }
 
-impl<'a> Iterator for FaultConfigurationIter<'a> {
+impl Iterator for FaultConfigurationIter<'_> {
     type Item = FaultConfiguration;
     fn next(&mut self) -> Option<Self::Item> {
         self.cursor.next_config(self.catalog)
@@ -924,7 +929,7 @@ impl<'a> Iterator for FaultConfigurationIter<'a> {
 }
 
 /// Owned k-fault configuration iterator (no lifetime borrows).
-/// Suitable for FFI / PyO3 where lifetimes are not expressible.
+/// Suitable for FFI / `PyO3` where lifetimes are not expressible.
 pub struct OwnedFaultConfigIter {
     catalog: FaultCatalog,
     cursor: FaultConfigCursor,
@@ -932,6 +937,7 @@ pub struct OwnedFaultConfigIter {
 
 impl OwnedFaultConfigIter {
     /// Create from an owned catalog clone.
+    #[must_use]
     pub fn new(catalog: FaultCatalog, k: usize) -> Self {
         let cursor = FaultConfigCursor::new(catalog.locations.len(), k, |i| {
             catalog.locations[i].faults.len()
@@ -947,13 +953,18 @@ impl Iterator for OwnedFaultConfigIter {
     }
 }
 
-/// Build a fault catalog from a TickCircuit and noise parameters.
+/// Build a fault catalog from a `TickCircuit` and noise parameters.
 ///
 /// Returns per-location, per-alternative fault data including Pauli labels,
 /// affected detectors, observables, tracked operators, and probability fields.
 ///
 /// Reads detector/observable metadata and tracked-operator annotations
 /// from the circuit when present.
+///
+/// # Errors
+///
+/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
+/// the supported Clifford/prep/measurement/metadata set.
 pub fn build_fault_catalog(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
@@ -974,7 +985,7 @@ pub fn build_fault_catalog(
                 None
             }
         })
-        .unwrap_or_else(|| meas_positions.len());
+        .unwrap_or(meas_positions.len());
 
     let mut locations = Vec::new();
 
@@ -993,7 +1004,7 @@ pub fn build_fault_catalog(
         let mut orig_idx = 0;
         for tick in tc.ticks() {
             for gate in tick.gates() {
-                let qs: Vec<usize> = gate.qubits.iter().map(|q| q.index()).collect();
+                let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
                 let is_mz = is_supported_measurement_gate(gate.gate_type);
                 let is_2q = is_standard_2q_clifford_gate(gate.gate_type);
                 let (tick_idx, gate_idx) = tick_gate_map[orig_idx];
@@ -1036,6 +1047,8 @@ pub fn build_fault_catalog(
             {
                 let q = loc.qubits[0];
                 let num_alts = 3;
+                let conditional_probability = 1.0 / 3.0;
+                let absolute_probability = noise.p1 / 3.0;
                 let mut faults = Vec::with_capacity(num_alts);
                 for &pt in &pauli_types {
                     let effect = propagate_single_effect(
@@ -1056,8 +1069,8 @@ pub fn build_fault_catalog(
                         affected_detectors: dets,
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
-                        conditional_probability: 1.0 / num_alts as f64,
-                        absolute_probability: noise.p1 / num_alts as f64,
+                        conditional_probability,
+                        absolute_probability,
                     });
                 }
                 // Include all locations with nonzero channel probability (even no-effect ones)
@@ -1082,16 +1095,15 @@ pub fn build_fault_catalog(
             {
                 let (q1, q2) = (loc.qubits[0], loc.qubits[1]);
                 let num_alts = 15;
+                let conditional_probability = 1.0 / 15.0;
+                let absolute_probability = noise.p2 / 15.0;
                 let mut faults = Vec::with_capacity(num_alts);
 
                 // 9 two-qubit pairs
                 for &p1 in &pauli_types {
                     for &p2 in &pauli_types {
                         let effect = propagate_pair_effect(
-                            p1,
-                            q1,
-                            p2,
-                            q2,
+                            [(p1, q1), (p2, q2)],
                             loc_idx + 1,
                             &gates,
                             &meas_positions,
@@ -1107,8 +1119,8 @@ pub fn build_fault_catalog(
                             affected_detectors: dets,
                             affected_observables: obs,
                             affected_tracked_ops: tracked,
-                            conditional_probability: 1.0 / num_alts as f64,
-                            absolute_probability: noise.p2 / num_alts as f64,
+                            conditional_probability,
+                            absolute_probability,
                         });
                     }
                 }
@@ -1132,8 +1144,8 @@ pub fn build_fault_catalog(
                         affected_detectors: dets,
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
-                        conditional_probability: 1.0 / num_alts as f64,
-                        absolute_probability: noise.p2 / num_alts as f64,
+                        conditional_probability,
+                        absolute_probability,
                     });
 
                     let effect = propagate_single_effect(
@@ -1154,8 +1166,8 @@ pub fn build_fault_catalog(
                         affected_detectors: dets,
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
-                        conditional_probability: 1.0 / num_alts as f64,
-                        absolute_probability: noise.p2 / num_alts as f64,
+                        conditional_probability,
+                        absolute_probability,
                     });
                 }
                 let n_alts = faults.len();
@@ -1271,11 +1283,10 @@ fn pauli_pair_to_string(p1: PauliType, q1: usize, p2: PauliType, q2: usize) -> P
 }
 
 fn parse_records_from_meta(tc: &TickCircuit, key: &str) -> Vec<Vec<i32>> {
-    let json = match tc.get_meta(key) {
-        Some(pecos_quantum::Attribute::String(s)) => s,
-        _ => return Vec::new(),
+    let Some(pecos_quantum::Attribute::String(json)) = tc.get_meta(key) else {
+        return Vec::new();
     };
-    parse_records_array_list(&json)
+    parse_records_array_list(json)
 }
 
 fn parse_detector_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
@@ -1318,7 +1329,7 @@ fn tracked_ops_flipped_by(prop: &PauliProp, tracked_ops: &[PauliString]) -> Vec<
         .collect()
 }
 
-/// Simple parser for `[{"records": [...]}, ...]` JSON without serde_json.
+/// Simple parser for `[{"records": [...]}, ...]` JSON without `serde_json`.
 fn parse_records_array_list(json: &str) -> Vec<Vec<i32>> {
     let json = json.trim();
     if json.is_empty() || json == "[]" {
@@ -1349,6 +1360,12 @@ fn parse_records_array_list(json: &str) -> Vec<Vec<i32>> {
     results
 }
 
+fn record_absolute_index(num_meas: usize, rec: i32) -> Option<usize> {
+    let base = i64::try_from(num_meas).ok()?;
+    let abs_idx = base.checked_add(i64::from(rec))?;
+    usize::try_from(abs_idx).ok()
+}
+
 /// Map measurement effects to detector effects via record XOR.
 fn measurements_to_detectors(
     affected_meas: &[usize],
@@ -1359,8 +1376,9 @@ fn measurements_to_detectors(
     for (det_idx, records) in det_records.iter().enumerate() {
         let mut parity = 0u8;
         for &rec in records {
-            let abs_idx = (num_meas as i32 + rec) as usize;
-            if affected_meas.contains(&abs_idx) {
+            if let Some(abs_idx) = record_absolute_index(num_meas, rec)
+                && affected_meas.contains(&abs_idx)
+            {
                 parity ^= 1;
             }
         }
@@ -1381,8 +1399,9 @@ fn measurements_to_observables(
     for (obs_idx, records) in obs_records.iter().enumerate() {
         let mut parity = 0u8;
         for &rec in records {
-            let abs_idx = (num_meas as i32 + rec) as usize;
-            if affected_meas.contains(&abs_idx) {
+            if let Some(abs_idx) = record_absolute_index(num_meas, rec)
+                && affected_meas.contains(&abs_idx)
+            {
                 parity ^= 1;
             }
         }
@@ -1413,11 +1432,16 @@ fn catalog_effect_parts(
 /// semantics, returning the `MeasurementHistory` with correct cross-reset
 /// correlations.
 ///
-/// Iterates tick-by-tick to match the TickCircuit's measurement numbering
+/// Iterates tick-by-tick to match the `TickCircuit`'s measurement numbering
 /// (which detector/DEM-output record indices reference).
 ///
 /// Errors on unsupported gates with tick/gate/qubit context (same gate set
 /// as [`build_fault_table`]).
+///
+/// # Errors
+///
+/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
+/// the supported Clifford/prep/measurement/metadata set.
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
 ) -> Result<MeasurementHistory, UnsupportedGateError> {
@@ -1436,7 +1460,7 @@ pub fn symbolic_measurement_history(
 
     for (tick_idx, tick) in tc.ticks().iter().enumerate() {
         for (gate_idx, gate) in tick.gates().iter().enumerate() {
-            let qs: Vec<usize> = gate.qubits.iter().map(|q| q.index()).collect();
+            let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
             match gate.gate_type {
                 GateType::PZ | GateType::QAlloc => {
@@ -1600,6 +1624,7 @@ pub struct RawMeasurementPlan {
 
 impl RawMeasurementPlan {
     /// Build a plan from a measurement history and fault mechanisms.
+    #[must_use]
     pub fn new(history: &MeasurementHistory, mechanisms: Vec<FaultMechanism>) -> Self {
         let kinds = MeasurementKind::from_history(history);
         let inv_log_1_minus_p = mechanisms
@@ -1625,6 +1650,7 @@ impl RawMeasurementPlan {
     ///
     /// Returns a `SampleResult` for compatibility with existing code.
     /// For r-event access, use [`sample_raw`].
+    #[must_use]
     pub fn sample(&self, shots: usize, seed: u64) -> SampleResult {
         let raw = self.sample_raw(shots, seed);
         SampleResult::new(raw.columns, shots)
@@ -1635,6 +1661,7 @@ impl RawMeasurementPlan {
     /// Physical mechanisms use geometric skip: O(p * shots) RNG calls per
     /// mechanism, not O(shots). For typical QEC noise (p ~ 0.005, 20k shots),
     /// this is ~100 firings per mechanism vs 20000 iterations.
+    #[must_use]
     pub fn sample_raw(&self, shots: usize, seed: u64) -> RawSampleResult {
         if shots == 0 {
             let r_source_measurements = self.r_source_indices();
@@ -1686,7 +1713,7 @@ impl RawMeasurementPlan {
     }
 
     /// Sample base measurement values from r-sources and constants.
-    /// Returns (measurement_columns, r_source_columns).
+    /// Returns (`measurement_columns`, `r_source_columns`).
     fn sample_base(&self, num_words: usize, rng: &mut PecosRng) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
         let mut columns: Vec<Vec<u64>> = Vec::with_capacity(self.num_measurements);
         let mut r_columns: Vec<Vec<u64>> = Vec::new();

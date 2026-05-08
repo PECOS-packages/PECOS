@@ -12,10 +12,18 @@ use crate::Bm;
 use crate::circuit::PropagatedEeg;
 use crate::eeg::EegType;
 use crate::stabilizer::StabilizerGroup;
-use pecos_core::{Pauli, PauliString};
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
+use pecos_core::{Pauli, PauliString};
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
+
+type DetectorSet = SmallVec<[usize; 4]>;
+type ObservableSet = SmallVec<[usize; 2]>;
+type EventKey = (DetectorSet, ObservableSet);
+type XzComponents = (Option<DemEvent>, Option<DemEvent>);
+type GraphlikePieces = Vec<DetectorSet>;
+type DecompMemo = BTreeMap<DetectorSet, Option<GraphlikePieces>>;
 
 /// Controls the H-type probability formula.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -183,7 +191,10 @@ pub fn pauli_string_to_bitmask(ps: &PauliString) -> Bm {
         match pauli {
             Pauli::X => bm.x_bits.set_bit(q),
             Pauli::Z => bm.z_bits.set_bit(q),
-            Pauli::Y => { bm.x_bits.set_bit(q); bm.z_bits.set_bit(q); }
+            Pauli::Y => {
+                bm.x_bits.set_bit(q);
+                bm.z_bits.set_bit(q);
+            }
             Pauli::I => {}
         }
     }
@@ -204,7 +215,10 @@ fn classify(label: &Bm, detectors: &[Detector], observables: &[Observable]) -> D
             obs.push(o.id);
         }
     }
-    DemEvent { detectors: dets, observables: obs }
+    DemEvent {
+        detectors: dets,
+        observables: obs,
+    }
 }
 
 /// Classify with X/Z component decomposition.
@@ -224,16 +238,18 @@ fn classify_xz(
 
     // Build X-only and Z-only labels
     let x_only = if has_x {
-        let mut bm = Bm::default();
-        bm.x_bits = label.x_bits.clone();
-        Some(bm)
+        Some(Bm {
+            x_bits: label.x_bits.clone(),
+            ..Default::default()
+        })
     } else {
         None
     };
     let z_only = if has_z {
-        let mut bm = Bm::default();
-        bm.z_bits = label.z_bits.clone();
-        Some(bm)
+        Some(Bm {
+            z_bits: label.z_bits.clone(),
+            ..Default::default()
+        })
     } else {
         None
     };
@@ -264,6 +280,7 @@ fn classify_xz(
 /// and the exact formula for S. This gives correct results for stochastic
 /// noise and a Pauli-twirled approximation for coherent noise. The full
 /// coherent formula (with off-diagonal beta terms) is future work.
+#[must_use]
 pub fn build_dem(
     generators: &[PropagatedEeg],
     detectors: &[Detector],
@@ -273,16 +290,25 @@ pub fn build_dem(
 }
 
 /// Build DEM with stabilizer group for coherent interference.
+#[must_use]
 pub fn build_dem_with_stabilizers(
     generators: &[PropagatedEeg],
     detectors: &[Detector],
     observables: &[Observable],
     stabilizer_group: Option<&StabilizerGroup>,
 ) -> Vec<DemEntry> {
-    build_dem_inner(generators, detectors, observables, stabilizer_group, HFormula::Taylor, BchOrder::First)
+    build_dem_inner(
+        generators,
+        detectors,
+        observables,
+        stabilizer_group,
+        HFormula::Taylor,
+        BchOrder::First,
+    )
 }
 
 /// Build DEM with all options via config struct.
+#[must_use]
 pub fn build_dem_configured(
     generators: &[PropagatedEeg],
     detectors: &[Detector],
@@ -290,10 +316,18 @@ pub fn build_dem_configured(
     stabilizer_group: Option<&StabilizerGroup>,
     config: &EegConfig,
 ) -> Vec<DemEntry> {
-    build_dem_inner(generators, detectors, observables, stabilizer_group, config.h_formula, config.bch_order)
+    build_dem_inner(
+        generators,
+        detectors,
+        observables,
+        stabilizer_group,
+        config.h_formula,
+        config.bch_order,
+    )
 }
 
 /// Build DEM with individual options (convenience).
+#[must_use]
 pub fn build_dem_with_options(
     generators: &[PropagatedEeg],
     detectors: &[Detector],
@@ -302,9 +336,15 @@ pub fn build_dem_with_options(
     h_formula: HFormula,
     bch_order: BchOrder,
 ) -> Vec<DemEntry> {
-    build_dem_inner(generators, detectors, observables, stabilizer_group, h_formula, bch_order)
+    build_dem_inner(
+        generators,
+        detectors,
+        observables,
+        stabilizer_group,
+        h_formula,
+        bch_order,
+    )
 }
-
 
 fn build_dem_inner(
     generators: &[PropagatedEeg],
@@ -353,8 +393,7 @@ fn build_dem_inner(
     let mut h_imag_by_label: BTreeMap<Bm, f64> = BTreeMap::new();
 
     if bch_order == BchOrder::Second {
-        let h_entries: Vec<(Bm, f64)> = h_by_label.iter()
-            .map(|(l, &c)| (l.clone(), c)).collect();
+        let h_entries: Vec<(Bm, f64)> = h_by_label.iter().map(|(l, &c)| (l.clone(), c)).collect();
 
         for i in 0..h_entries.len() {
             for j in (i + 1)..h_entries.len() {
@@ -370,10 +409,10 @@ fn build_dem_inner(
                 let mag = h_i * h_j;
                 let phase = (phase_k + 3) % 4; // -i^{k+1} = i^{k+3}
                 let (re_coeff, im_coeff) = match phase {
-                    0 => (mag, 0.0),        // 1
-                    1 => (0.0, mag),         // i
-                    2 => (-mag, 0.0),        // -1
-                    3 => (0.0, -mag),        // -i
+                    0 => (mag, 0.0),  // 1
+                    1 => (0.0, mag),  // i
+                    2 => (-mag, 0.0), // -1
+                    3 => (0.0, -mag), // -i
                     _ => unreachable!(),
                 };
 
@@ -396,10 +435,8 @@ fn build_dem_inner(
     // detection: Re(i·h·s · β) = 0 for real β. The paper's O(ε^{3/2})
     // error bound accounts for this.
     if bch_order == BchOrder::Second {
-        let h_entries: Vec<(Bm, f64)> = h_by_label.iter()
-            .map(|(l, &c)| (l.clone(), c)).collect();
-        let s_entries: Vec<(Bm, f64)> = s_by_label.iter()
-            .map(|(l, &c)| (l.clone(), c)).collect();
+        let h_entries: Vec<(Bm, f64)> = h_by_label.iter().map(|(l, &c)| (l.clone(), c)).collect();
+        let s_entries: Vec<(Bm, f64)> = s_by_label.iter().map(|(l, &c)| (l.clone(), c)).collect();
 
         for (p, _h_coeff) in &h_entries {
             for (q, _s_coeff) in &s_entries {
@@ -425,7 +462,8 @@ fn build_dem_inner(
         *h_by_label.entry(label.clone()).or_insert(0.0) += re;
     }
 
-    let all_h_labels: std::collections::BTreeSet<Bm> = h_by_label.keys()
+    let all_h_labels: std::collections::BTreeSet<Bm> = h_by_label
+        .keys()
         .chain(h_imag_by_label.keys())
         .cloned()
         .collect();
@@ -447,7 +485,10 @@ fn build_dem_inner(
             continue;
         }
         h_events.entry(event.clone()).or_default().push((re, im));
-        event_pauli_labels.entry(event).or_default().push(label.clone());
+        event_pauli_labels
+            .entry(event)
+            .or_default()
+            .push(label.clone());
     }
 
     for (label, &coeff) in &s_by_label {
@@ -468,7 +509,10 @@ fn build_dem_inner(
         let sum_rate: f64 = rates.iter().sum();
         let prob = (1.0 - (2.0 * sum_rate).exp()) / 2.0;
         if prob.abs() > 1e-15 {
-            entries.push(DemEntry { event: event.clone(), probability: prob.abs() });
+            entries.push(DemEntry {
+                event: event.clone(),
+                probability: prob.abs(),
+            });
         }
     }
 
@@ -476,7 +520,7 @@ fn build_dem_inner(
     // β(ψ, C_{Q1,Q2}, P) = ±4 if [Q1,Q2]=0, [Q1,P]≠0, [Q2,P]≠0, Q1Q2|ψ⟩=∓|ψ⟩
     // β(ψ, A_{Q1,Q2}, P) = ±4 if [Q1,Q2]≠0, [Q1,P]≠0, [Q2,P]≠0, iQ1Q2|ψ⟩=±|ψ⟩
     // These contribute at first order (same as S).
-    if let Some(ref stab_group) = stabilizer_group {
+    if let Some(stab_group) = stabilizer_group {
         for &(ref q1, ref q2, coeff) in c_generators.iter().chain(a_generators.iter()) {
             // Classify: both Q1 and Q2 must anticommute with the same detectors
             let event1 = classify(q1, detectors, observables);
@@ -491,8 +535,12 @@ fn build_dem_inner(
             let is_c_type = c_generators.iter().any(|(a, b, _)| a == q1 && b == q2);
 
             // C requires [Q1,Q2]=0, A requires [Q1,Q2]≠0
-            if is_c_type && !q1_q2_commute { continue; }
-            if !is_c_type && q1_q2_commute { continue; }
+            if is_c_type && !q1_q2_commute {
+                continue;
+            }
+            if !is_c_type && q1_q2_commute {
+                continue;
+            }
 
             // Check product stabilizer status
             let product = q1.multiply(q2);
@@ -515,15 +563,21 @@ fn build_dem_inner(
                 // A-type only contributes when iQ1Q2 has eigenvalue ±1,
                 // which means Q1Q2 has eigenvalue ∓i. Skip for now since
                 // stabilizer eigenvalues are always ±1.
-                if !is_c_type { continue; }
+                if !is_c_type {
+                    continue;
+                }
 
                 let prob_contribution = -coeff * beta_val / 2.0;
                 if prob_contribution.abs() > 1e-15 {
                     if let Some(existing) = entries.iter_mut().find(|e| e.event == event) {
                         let p_s = existing.probability;
-                        existing.probability = p_s + prob_contribution.abs() - 2.0 * p_s * prob_contribution.abs();
+                        existing.probability =
+                            p_s + prob_contribution.abs() - 2.0 * p_s * prob_contribution.abs();
                     } else {
-                        entries.push(DemEntry { event: event.clone(), probability: prob_contribution.abs() });
+                        entries.push(DemEntry {
+                            event: event.clone(),
+                            probability: prob_contribution.abs(),
+                        });
                     }
                 }
             }
@@ -545,23 +599,29 @@ fn build_dem_inner(
     // If stabilizer_group is None, fall back to diagonal approximation.
     for (event, coeffs) in &h_events {
         // Collect the detector stabilizers for this event (for ExactCommuting)
-        let event_det_stab = if h_formula == HFormula::ExactCommuting || h_formula == HFormula::ExactSubset {
-            // XOR of all detector stabilizers in this event
-            let mut stab = Bm::default();
-            for &d_id in &event.detectors {
-                if let Some(det) = detectors.iter().find(|d| d.id == d_id) {
-                    stab = stab.multiply(&det.stabilizer);
+        let event_det_stab =
+            if h_formula == HFormula::ExactCommuting || h_formula == HFormula::ExactSubset {
+                // XOR of all detector stabilizers in this event
+                let mut stab = Bm::default();
+                for &d_id in &event.detectors {
+                    if let Some(det) = detectors.iter().find(|d| d.id == d_id) {
+                        stab = stab.multiply(&det.stabilizer);
+                    }
                 }
-            }
-            Some(stab)
-        } else {
-            None
-        };
+                Some(stab)
+            } else {
+                None
+            };
 
-        let prob = if let Some(ref stab_group) = stabilizer_group {
+        let prob = if let Some(stab_group) = stabilizer_group {
             compute_h_probability_full(
-                coeffs, generators, &event_pauli_labels, event,
-                stab_group, h_formula, event_det_stab.as_ref(),
+                coeffs,
+                generators,
+                &event_pauli_labels,
+                event,
+                stab_group,
+                h_formula,
+                event_det_stab.as_ref(),
             )
         } else {
             coeffs.iter().map(|&(re, im)| re * re + im * im).sum()
@@ -571,7 +631,10 @@ fn build_dem_inner(
                 let p_s = existing.probability;
                 existing.probability = p_s + prob - 2.0 * p_s * prob;
             } else {
-                entries.push(DemEntry { event: event.clone(), probability: prob });
+                entries.push(DemEntry {
+                    event: event.clone(),
+                    probability: prob,
+                });
             }
         }
     }
@@ -597,25 +660,24 @@ fn compute_h_probability_full(
     h_formula: HFormula,
     det_stabilizer: Option<&Bm>,
 ) -> f64 {
-    let labels = match event_labels.get(event) {
-        Some(l) => l,
-        None => return 0.0,
+    let Some(labels) = event_labels.get(event) else {
+        return 0.0;
     };
 
     let n = coeffs.len();
 
     // --- ExactCommuting: product formula for commuting generators ---
-    if h_formula == HFormula::ExactCommuting {
-        if let Some(det_stab) = det_stabilizer {
-            return compute_exact_commuting(coeffs, labels, stab_group, det_stab);
-        }
+    if h_formula == HFormula::ExactCommuting
+        && let Some(det_stab) = det_stabilizer
+    {
+        return compute_exact_commuting(coeffs, labels, stab_group, det_stab);
     }
 
     // --- ExactSubset: enumerate all even-size subsets ---
-    if h_formula == HFormula::ExactSubset {
-        if let Some(det_stab) = det_stabilizer {
-            return compute_exact_subset(coeffs, labels, stab_group, det_stab);
-        }
+    if h_formula == HFormula::ExactSubset
+        && let Some(det_stab) = det_stabilizer
+    {
+        return compute_exact_subset(coeffs, labels, stab_group, det_stab);
     }
 
     // --- Taylor or SinSquared: quadratic form with beta ---
@@ -645,8 +707,12 @@ fn compute_h_probability_full(
                 }
 
                 match stab_group.is_stabilizer(&product) {
-                    Some(true) => { total += re_product; }
-                    Some(false) => { total -= re_product; }
+                    Some(true) => {
+                        total += re_product;
+                    }
+                    Some(false) => {
+                        total -= re_product;
+                    }
                     None => {}
                 }
             }
@@ -656,12 +722,11 @@ fn compute_h_probability_full(
     let total = total.max(0.0);
 
     match h_formula {
-        HFormula::Taylor => total,
         HFormula::SinSquared => {
             let h_eff = total.sqrt();
             h_eff.sin().powi(2)
         }
-        HFormula::ExactCommuting | HFormula::ExactSubset => total, // fallback if no detector
+        HFormula::Taylor | HFormula::ExactCommuting | HFormula::ExactSubset => total,
     }
 }
 
@@ -688,7 +753,9 @@ fn compute_exact_commuting(
         let (h_re, h_im) = coeffs[j];
         // For simplicity, use magnitude of complex coefficient
         let h = (h_re * h_re + h_im * h_im).sqrt();
-        if h < 1e-20 { continue; }
+        if h < 1e-20 {
+            continue;
+        }
 
         let label = &labels[j];
 
@@ -760,8 +827,7 @@ fn compute_exact_subset(
     // Precompute sin(2h_j) and cos(2h_j) for each generator
     let mut sin2h = Vec::with_capacity(n);
     let mut cos2h = Vec::with_capacity(n);
-    for j in 0..n {
-        let (h_re, h_im) = coeffs[j];
+    for &(h_re, h_im) in coeffs.iter().take(n) {
         let h = (h_re * h_re + h_im * h_im).sqrt();
         sin2h.push((2.0 * h).sin());
         cos2h.push((2.0 * h).cos());
@@ -778,15 +844,15 @@ fn compute_exact_subset(
     let total_subsets = 1u64 << n;
     for mask in 1..total_subsets {
         let size = mask.count_ones() as usize;
-        if size % 2 != 0 {
+        if !size.is_multiple_of(2) {
             continue; // odd-size subsets have Im(i^|S|) only → Re = 0
         }
 
         // Compute product of labels in S, multiplied by det_stab (D)
         let mut product = det_stab.clone();
-        for j in 0..n {
+        for (j, label) in labels.iter().enumerate().take(n) {
             if mask & (1u64 << j) != 0 {
-                product = product.multiply(&labels[j]);
+                product = product.multiply(label);
             }
         }
 
@@ -804,14 +870,18 @@ fn compute_exact_subset(
         };
 
         // Coefficient: (-1)^{|S|/2} · Π_{j∈S} sin(2h_j) · Π_{j∉S} cos(2h_j)
-        let sign = if (size / 2) % 2 == 0 { 1.0 } else { -1.0 };
+        let sign = if (size / 2).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
 
         let mut coeff = sign;
-        for j in 0..n {
+        for (j, (&sin, &cos)) in sin2h.iter().zip(&cos2h).enumerate().take(n) {
             if mask & (1u64 << j) != 0 {
-                coeff *= sin2h[j];
+                coeff *= sin;
             } else {
-                coeff *= cos2h[j];
+                coeff *= cos;
             }
         }
 
@@ -838,14 +908,22 @@ pub fn sensitivity_matrix(
     detectors: &[Detector],
     observables: &[Observable],
     stabilizer_group: Option<&StabilizerGroup>,
-) -> BTreeMap<DemEvent, Vec<(crate::circuit::NoiseSource, crate::circuit::NoiseSource, f64)>> {
+) -> BTreeMap<
+    DemEvent,
+    Vec<(
+        crate::circuit::NoiseSource,
+        crate::circuit::NoiseSource,
+        f64,
+    )>,
+> {
     use crate::circuit::NoiseSource;
     use crate::eeg::EegType;
 
     let mut result = BTreeMap::new();
 
     // Collect H generators with their sources
-    let h_gens: Vec<_> = generators.iter()
+    let h_gens: Vec<_> = generators
+        .iter()
         .filter(|g| g.eeg_type == EegType::H && g.source.is_some())
         .collect();
 
@@ -875,23 +953,21 @@ pub fn sensitivity_matrix(
                 // Beta coefficient for pair (i,j)
                 let beta_val: f64 = if i == j {
                     1.0 // diagonal: beta = -4, but -(1/4)*(-4) = 1
-                } else {
-                    if !label_i.commutes_with(label_j) {
-                        0.0
-                    } else {
-                        let product = label_i.multiply(label_j);
-                        if product.is_identity() {
-                            1.0
-                        } else if let Some(stab) = stabilizer_group {
-                            match stab.is_stabilizer(&product) {
-                                Some(true) => 1.0,
-                                Some(false) => -1.0,
-                                None => 0.0,
-                            }
-                        } else {
-                            0.0
+                } else if label_i.commutes_with(label_j) {
+                    let product = label_i.multiply(label_j);
+                    if product.is_identity() {
+                        1.0
+                    } else if let Some(stab) = stabilizer_group {
+                        match stab.is_stabilizer(&product) {
+                            Some(true) => 1.0,
+                            Some(false) => -1.0,
+                            None => 0.0,
                         }
+                    } else {
+                        0.0
                     }
+                } else {
+                    0.0
                 };
 
                 if beta_val.abs() > 1e-15_f64 {
@@ -912,6 +988,7 @@ pub fn sensitivity_matrix(
 ///
 /// Same as `build_dem_configured` but includes X/Z component decomposition
 /// for each mechanism, enabling proper graphlike decomposition for MWPM decoders.
+#[must_use]
 pub fn build_dem_decomposable(
     generators: &[PropagatedEeg],
     detectors: &[Detector],
@@ -920,18 +997,14 @@ pub fn build_dem_decomposable(
     config: &EegConfig,
 ) -> Vec<DecomposableDemEntry> {
     // First, build the standard DEM entries with the requested config
-    let standard_entries = build_dem_configured(
-        generators, detectors, observables, stabilizer_group, config,
-    );
+    let standard_entries =
+        build_dem_configured(generators, detectors, observables, stabilizer_group, config);
 
     // Build a map from combined event → (x_component, z_component)
     // by classifying each unique label's X/Z components.
     // Multiple generators may contribute to the same event, but their
     // X/Z classification should be consistent (same combined effect = same decomposition).
-    let mut event_xz: BTreeMap<
-        (SmallVec<[usize; 4]>, SmallVec<[usize; 2]>),
-        (Option<DemEvent>, Option<DemEvent>),
-    > = BTreeMap::new();
+    let mut event_xz: BTreeMap<EventKey, XzComponents> = BTreeMap::new();
 
     for g in generators {
         let (combined, x_ev, z_ev) = classify_xz(&g.label, detectors, observables);
@@ -941,19 +1014,22 @@ pub fn build_dem_decomposable(
     }
 
     // Convert standard entries to decomposable entries
-    standard_entries.into_iter().map(|entry| {
-        let key = (entry.event.detectors.clone(), entry.event.observables.clone());
-        let (x_comp, z_comp) = event_xz
-            .get(&key)
-            .cloned()
-            .unwrap_or((None, None));
-        DecomposableDemEntry {
-            event: entry.event,
-            probability: entry.probability,
-            x_component: x_comp,
-            z_component: z_comp,
-        }
-    }).collect()
+    standard_entries
+        .into_iter()
+        .map(|entry| {
+            let key = (
+                entry.event.detectors.clone(),
+                entry.event.observables.clone(),
+            );
+            let (x_comp, z_comp) = event_xz.get(&key).cloned().unwrap_or((None, None));
+            DecomposableDemEntry {
+                event: entry.event,
+                probability: entry.probability,
+                x_component: x_comp,
+                z_component: z_comp,
+            }
+        })
+        .collect()
 }
 
 /// Format DEM entries as a Stim-compatible string.
@@ -969,7 +1045,11 @@ pub fn format_dem(entries: &[DemEntry]) -> String {
             parts.push(format!("L{o}"));
         }
         if !parts.is_empty() {
-            lines.push(format!("error({:.6e}) {}", entry.probability, parts.join(" ")));
+            lines.push(format!(
+                "error({:.6e}) {}",
+                entry.probability,
+                parts.join(" ")
+            ));
         }
     }
     lines.join("\n")
@@ -982,6 +1062,7 @@ pub fn format_dem(entries: &[DemEntry]) -> String {
 /// Single-component hyperedges (3+ detectors) are decomposed via a graphlike
 /// index: expressed as XOR of existing graphlike mechanisms. If no decomposition
 /// exists, the mechanism is dropped (cannot be used by MWPM decoders).
+#[must_use]
 pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -1000,46 +1081,13 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
         ev.detectors.len() <= 2
     }
 
-    // Step 1: Collect all graphlike mechanisms (building blocks for decomposition)
-    let mut graphlike_set: BTreeSet<SmallVec<[usize; 4]>> = BTreeSet::new();
-    for entry in entries {
-        if entry.probability <= 0.0 { continue; }
-        // Collect graphlike from X/Z components
-        if let Some(ref x) = entry.x_component {
-            if is_graphlike(x) && !x.detectors.is_empty() {
-                graphlike_set.insert(x.detectors.clone());
-            }
-        }
-        if let Some(ref z) = entry.z_component {
-            if is_graphlike(z) && !z.detectors.is_empty() {
-                graphlike_set.insert(z.detectors.clone());
-            }
-        }
-        // Also from combined event
-        if is_graphlike(&entry.event) && !entry.event.detectors.is_empty() {
-            graphlike_set.insert(entry.event.detectors.clone());
-        }
-    }
-
-    // Step 2: Build index for graphlike decomposition search
-    let max_det = graphlike_set.iter()
-        .flat_map(|d| d.iter().copied())
-        .max()
-        .unwrap_or(0);
-    let mut by_det: Vec<Vec<SmallVec<[usize; 4]>>> = vec![Vec::new(); max_det + 1];
-    for g in &graphlike_set {
-        for &d in g.iter() {
-            by_det[d].push(g.clone());
-        }
-    }
-
     // Search for decomposition of a hyperedge into XOR of graphlike pieces
     fn search_decomp(
-        remaining: &SmallVec<[usize; 4]>,
-        by_det: &[Vec<SmallVec<[usize; 4]>>],
-        graphlike_set: &BTreeSet<SmallVec<[usize; 4]>>,
-        memo: &mut BTreeMap<SmallVec<[usize; 4]>, Option<Vec<SmallVec<[usize; 4]>>>>,
-    ) -> Option<Vec<SmallVec<[usize; 4]>>> {
+        remaining: &DetectorSet,
+        by_det: &[Vec<DetectorSet>],
+        graphlike_set: &BTreeSet<DetectorSet>,
+        memo: &mut DecompMemo,
+    ) -> Option<GraphlikePieces> {
         if let Some(cached) = memo.get(remaining) {
             return cached.clone();
         }
@@ -1072,14 +1120,33 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
             let r = remaining;
             let c = candidate;
             while i < r.len() && j < c.len() {
-                if r[i] < c[j] { next.push(r[i]); i += 1; }
-                else if r[i] > c[j] { next.push(c[j]); j += 1; }
-                else { i += 1; j += 1; } // shared → cancel
+                match r[i].cmp(&c[j]) {
+                    std::cmp::Ordering::Less => {
+                        next.push(r[i]);
+                        i += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        next.push(c[j]);
+                        j += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        i += 1;
+                        j += 1;
+                    }
+                }
             }
-            while i < r.len() { next.push(r[i]); i += 1; }
-            while j < c.len() { next.push(c[j]); j += 1; }
+            while i < r.len() {
+                next.push(r[i]);
+                i += 1;
+            }
+            while j < c.len() {
+                next.push(c[j]);
+                j += 1;
+            }
 
-            if next.len() >= remaining.len() { continue; } // must make progress
+            if next.len() >= remaining.len() {
+                continue;
+            } // must make progress
 
             if let Some(suffix) = search_decomp(&next, by_det, graphlike_set, memo) {
                 let mut result = vec![candidate.clone()];
@@ -1095,9 +1162,47 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
         None
     }
 
+    // Step 1: Collect all graphlike mechanisms (building blocks for decomposition)
+    let mut graphlike_set: BTreeSet<SmallVec<[usize; 4]>> = BTreeSet::new();
+    for entry in entries {
+        if entry.probability <= 0.0 {
+            continue;
+        }
+        // Collect graphlike from X/Z components
+        if let Some(ref x) = entry.x_component
+            && is_graphlike(x)
+            && !x.detectors.is_empty()
+        {
+            graphlike_set.insert(x.detectors.clone());
+        }
+        if let Some(ref z) = entry.z_component
+            && is_graphlike(z)
+            && !z.detectors.is_empty()
+        {
+            graphlike_set.insert(z.detectors.clone());
+        }
+        // Also from combined event
+        if is_graphlike(&entry.event) && !entry.event.detectors.is_empty() {
+            graphlike_set.insert(entry.event.detectors.clone());
+        }
+    }
+
+    // Step 2: Build index for graphlike decomposition search
+    let max_det = graphlike_set
+        .iter()
+        .flat_map(|d| d.iter().copied())
+        .max()
+        .unwrap_or(0);
+    let mut by_det: Vec<Vec<SmallVec<[usize; 4]>>> = vec![Vec::new(); max_det + 1];
+    for g in &graphlike_set {
+        for &d in g {
+            by_det[d].push(g.clone());
+        }
+    }
+
     // Step 3: Format entries
     let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
-    let mut memo: BTreeMap<SmallVec<[usize; 4]>, Option<Vec<SmallVec<[usize; 4]>>>> = BTreeMap::new();
+    let mut memo: DecompMemo = BTreeMap::new();
 
     for entry in entries {
         if entry.probability <= 0.0 {
@@ -1122,13 +1227,19 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
                     // Hyperedge X-only: try graphlike decomposition
                     match search_decomp(&x.detectors, &by_det, &graphlike_set, &mut memo) {
                         Some(pieces) => {
-                            let mut parts: Vec<String> = pieces.iter().map(|p| {
-                                p.iter().map(|d| format!("D{d}")).collect::<Vec<_>>().join(" ")
-                            }).collect();
+                            let mut parts: Vec<String> = pieces
+                                .iter()
+                                .map(|p| {
+                                    p.iter()
+                                        .map(|d| format!("D{d}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .collect();
                             // Attach observables to first piece
                             if !x.observables.is_empty() && !parts.is_empty() {
                                 for &o in &x.observables {
-                                    parts[0].push_str(&format!(" L{o}"));
+                                    let _ = write!(&mut parts[0], " L{o}");
                                 }
                             }
                             parts.join(" ^ ")
@@ -1144,12 +1255,18 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
                     // Hyperedge Z-only: try graphlike decomposition
                     match search_decomp(&z.detectors, &by_det, &graphlike_set, &mut memo) {
                         Some(pieces) => {
-                            let mut parts: Vec<String> = pieces.iter().map(|p| {
-                                p.iter().map(|d| format!("D{d}")).collect::<Vec<_>>().join(" ")
-                            }).collect();
+                            let mut parts: Vec<String> = pieces
+                                .iter()
+                                .map(|p| {
+                                    p.iter()
+                                        .map(|d| format!("D{d}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .collect();
                             if !z.observables.is_empty() && !parts.is_empty() {
                                 for &o in &z.observables {
-                                    parts[0].push_str(&format!(" L{o}"));
+                                    let _ = write!(&mut parts[0], " L{o}");
                                 }
                             }
                             parts.join(" ^ ")
@@ -1163,14 +1280,21 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
                     format_event(&entry.event)
                 } else {
                     // Combined hyperedge without components: try graphlike decomposition
-                    match search_decomp(&entry.event.detectors, &by_det, &graphlike_set, &mut memo) {
+                    match search_decomp(&entry.event.detectors, &by_det, &graphlike_set, &mut memo)
+                    {
                         Some(pieces) => {
-                            let mut parts: Vec<String> = pieces.iter().map(|p| {
-                                p.iter().map(|d| format!("D{d}")).collect::<Vec<_>>().join(" ")
-                            }).collect();
+                            let mut parts: Vec<String> = pieces
+                                .iter()
+                                .map(|p| {
+                                    p.iter()
+                                        .map(|d| format!("D{d}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .collect();
                             if !entry.event.observables.is_empty() && !parts.is_empty() {
                                 for &o in &entry.event.observables {
-                                    parts[0].push_str(&format!(" L{o}"));
+                                    let _ = write!(&mut parts[0], " L{o}");
                                 }
                             }
                             parts.join(" ^ ")
@@ -1222,7 +1346,8 @@ mod tests {
             label: Bm::x(0),
             label2: None,
             coeff: -0.01,
-        source: None, }];
+            source: None,
+        }];
         let dets = vec![z_det(0, &[0])]; // Z0 anticommutes with X0
         let entries = build_dem(&gens, &dets, &[]);
 
@@ -1239,7 +1364,8 @@ mod tests {
             label: Bm::x(0),
             label2: None,
             coeff: 0.1,
-        source: None, }];
+            source: None,
+        }];
         let dets = vec![z_det(0, &[0])];
         let entries = build_dem(&gens, &dets, &[]);
 
@@ -1252,8 +1378,20 @@ mod tests {
         // Two H generators in same event class: rates don't add (diagonal approx)
         // p = h1^2 + h2^2 (NOT (h1+h2)^2 — that would be coherent accumulation)
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.1 , source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::y(0), label2: None, coeff: 0.05 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::y(0),
+                label2: None,
+                coeff: 0.05,
+                source: None,
+            },
         ];
         let dets = vec![z_det(0, &[0])]; // Both X0 and Y0 anticommute with Z0
         let entries = build_dem(&gens, &dets, &[]);
@@ -1271,7 +1409,8 @@ mod tests {
             label: Bm::z(0),
             label2: None,
             coeff: 0.1,
-        source: None, }];
+            source: None,
+        }];
         let dets = vec![z_det(0, &[0])];
         let entries = build_dem(&gens, &dets, &[]);
 
@@ -1283,16 +1422,31 @@ mod tests {
         // Two H generators with SAME Pauli label: BCH sums coefficients.
         // Two H_X(0) with rates 0.1 and 0.05 → combined rate 0.15 → p = 0.15^2
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.1 , source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.05 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.05,
+                source: None,
+            },
         ];
         let dets = vec![z_det(0, &[0])];
         let entries = build_dem(&gens, &dets, &[]);
 
         // BCH combines: single generator with rate 0.15, p = 0.15^2 = 0.0225
         assert_eq!(entries.len(), 1);
-        assert!((entries[0].probability - 0.0225).abs() < 1e-10,
-            "BCH should sum same-label rates: got {}", entries[0].probability);
+        assert!(
+            (entries[0].probability - 0.0225).abs() < 1e-10,
+            "BCH should sum same-label rates: got {}",
+            entries[0].probability
+        );
     }
 
     #[test]
@@ -1308,29 +1462,47 @@ mod tests {
             Gate {
                 gate_type: gt,
                 qubits: GateQubits::from_iter(qs.iter().map(|&q| QubitId(q))),
-                angles: GateAngles::new(), params: GateParams::new(),
-            meas_ids: pecos_core::GateMeasIds::new(),
+                angles: GateAngles::new(),
+                params: GateParams::new(),
+                meas_ids: pecos_core::GateMeasIds::new(),
             }
         }
 
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.1 , source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(1), label2: None, coeff: 0.05 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(1),
+                label2: None,
+                coeff: 0.05,
+                source: None,
+            },
         ];
         // Z0Z1 detector: X0 and X1 both anticommute with it
-        let dets = vec![Detector { id: 0, stabilizer: Bm::z(0).multiply(&Bm::z(1)) }];
+        let dets = vec![Detector {
+            id: 0,
+            stabilizer: Bm::z(0).multiply(&Bm::z(1)),
+        }];
 
         // |Phi+> = H CX |00> → stabilizers +X0X1, +Z0Z1
-        let stab_group = StabilizerGroup::from_circuit(
-            &[g(GateType::H, &[0]), g(GateType::CX, &[0, 1])], 2,
-        );
+        let stab_group =
+            StabilizerGroup::from_circuit(&[g(GateType::H, &[0]), g(GateType::CX, &[0, 1])], 2);
 
         let entries = build_dem_with_stabilizers(&gens, &dets, &[], Some(&stab_group));
 
         assert_eq!(entries.len(), 1);
         // X0*X1 is +1 stabilizer → constructive: (0.1+0.05)^2 = 0.0225
-        assert!((entries[0].probability - 0.0225).abs() < 1e-10,
-            "Constructive beta: got {}, expected 0.0225", entries[0].probability);
+        assert!(
+            (entries[0].probability - 0.0225).abs() < 1e-10,
+            "Constructive beta: got {}, expected 0.0225",
+            entries[0].probability
+        );
     }
 
     #[test]
@@ -1345,28 +1517,52 @@ mod tests {
             Gate {
                 gate_type: gt,
                 qubits: GateQubits::from_iter(qs.iter().map(|&q| QubitId(q))),
-                angles: GateAngles::new(), params: GateParams::new(),
-            meas_ids: pecos_core::GateMeasIds::new(),
+                angles: GateAngles::new(),
+                params: GateParams::new(),
+                meas_ids: pecos_core::GateMeasIds::new(),
             }
         }
 
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.1 , source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(1), label2: None, coeff: 0.05 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(1),
+                label2: None,
+                coeff: 0.05,
+                source: None,
+            },
         ];
-        let dets = vec![Detector { id: 0, stabilizer: Bm::z(0).multiply(&Bm::z(1)) }];
+        let dets = vec![Detector {
+            id: 0,
+            stabilizer: Bm::z(0).multiply(&Bm::z(1)),
+        }];
 
         // |Phi-> = CX H X |00> → stabilizers -X0X1, +Z0Z1
         let stab_group = StabilizerGroup::from_circuit(
-            &[g(GateType::X, &[0]), g(GateType::H, &[0]), g(GateType::CX, &[0, 1])], 2,
+            &[
+                g(GateType::X, &[0]),
+                g(GateType::H, &[0]),
+                g(GateType::CX, &[0, 1]),
+            ],
+            2,
         );
 
         let entries = build_dem_with_stabilizers(&gens, &dets, &[], Some(&stab_group));
 
         assert_eq!(entries.len(), 1);
         // X0*X1 is -1 stabilizer → destructive: (0.1-0.05)^2 = 0.0025
-        assert!((entries[0].probability - 0.0025).abs() < 1e-10,
-            "Destructive beta: got {}, expected 0.0025", entries[0].probability);
+        assert!(
+            (entries[0].probability - 0.0025).abs() < 1e-10,
+            "Destructive beta: got {}, expected 0.0025",
+            entries[0].probability
+        );
     }
 
     #[test]
@@ -1380,26 +1576,49 @@ mod tests {
             Gate {
                 gate_type: gt,
                 qubits: GateQubits::from_iter(qs.iter().map(|&q| QubitId(q))),
-                angles: GateAngles::new(), params: GateParams::new(),
-            meas_ids: pecos_core::GateMeasIds::new(),
+                angles: GateAngles::new(),
+                params: GateParams::new(),
+                meas_ids: pecos_core::GateMeasIds::new(),
             }
         }
 
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.1 , source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(1), label2: None, coeff: 0.1 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(1),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
         ];
-        let dets = vec![Detector { id: 0, stabilizer: Bm::z(0).multiply(&Bm::z(1)) }];
+        let dets = vec![Detector {
+            id: 0,
+            stabilizer: Bm::z(0).multiply(&Bm::z(1)),
+        }];
 
         let stab_group = StabilizerGroup::from_circuit(
-            &[g(GateType::X, &[0]), g(GateType::H, &[0]), g(GateType::CX, &[0, 1])], 2,
+            &[
+                g(GateType::X, &[0]),
+                g(GateType::H, &[0]),
+                g(GateType::CX, &[0, 1]),
+            ],
+            2,
         );
 
         let entries = build_dem_with_stabilizers(&gens, &dets, &[], Some(&stab_group));
 
         // Complete cancellation: p = 0
-        assert!(entries.is_empty(),
-            "Equal-rate destructive interference should cancel completely");
+        assert!(
+            entries.is_empty(),
+            "Equal-rate destructive interference should cancel completely"
+        );
     }
 
     #[test]
@@ -1410,10 +1629,25 @@ mod tests {
         use crate::stabilizer::StabilizerGroup;
 
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: 0.1 , source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(1), label2: None, coeff: 0.05 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: 0.1,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(1),
+                label2: None,
+                coeff: 0.05,
+                source: None,
+            },
         ];
-        let dets = vec![Detector { id: 0, stabilizer: Bm::z(0).multiply(&Bm::z(1)) }];
+        let dets = vec![Detector {
+            id: 0,
+            stabilizer: Bm::z(0).multiply(&Bm::z(1)),
+        }];
 
         let stab_group = StabilizerGroup::from_circuit(&[], 2);
 
@@ -1421,8 +1655,11 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         // p = h1^2 + h2^2 = 0.0125 (diagonal only)
-        assert!((entries[0].probability - 0.0125).abs() < 1e-10,
-            "Non-stabilizer product → diagonal: got {}", entries[0].probability);
+        assert!(
+            (entries[0].probability - 0.0125).abs() < 1e-10,
+            "Non-stabilizer product → diagonal: got {}",
+            entries[0].probability
+        );
     }
 
     #[test]
@@ -1430,8 +1667,20 @@ mod tests {
         // Multiple S generators in same event class: exact formula
         // p = (1/2)(1 - exp(2 * sum_rates))
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::S, label: Bm::x(0), label2: None, coeff: -0.01 , source: None },
-            PropagatedEeg { eeg_type: EegType::S, label: Bm::y(0), label2: None, coeff: -0.005 , source: None },
+            PropagatedEeg {
+                eeg_type: EegType::S,
+                label: Bm::x(0),
+                label2: None,
+                coeff: -0.01,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::S,
+                label: Bm::y(0),
+                label2: None,
+                coeff: -0.005,
+                source: None,
+            },
         ];
         let dets = vec![z_det(0, &[0])];
         let entries = build_dem(&gens, &dets, &[]);
@@ -1450,9 +1699,13 @@ mod tests {
             label: Bm::x(0),
             label2: None,
             coeff: 0.1,
-        source: None, }];
+            source: None,
+        }];
         let dets = vec![z_det(0, &[1])]; // Detector on qubit 1
-        let obs = vec![Observable { id: 0, pauli: Bm::z(0) }]; // Observable Z0
+        let obs = vec![Observable {
+            id: 0,
+            pauli: Bm::z(0),
+        }]; // Observable Z0
 
         let entries = build_dem(&gens, &dets, &obs);
 
@@ -1478,18 +1731,32 @@ mod tests {
         let h_z = 0.05;
 
         let gens = vec![
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::x(0), label2: None, coeff: h_x, source: None },
-            PropagatedEeg { eeg_type: EegType::H, label: Bm::z(0), label2: None, coeff: h_z, source: None },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::x(0),
+                label2: None,
+                coeff: h_x,
+                source: None,
+            },
+            PropagatedEeg {
+                eeg_type: EegType::H,
+                label: Bm::z(0),
+                label2: None,
+                coeff: h_z,
+                source: None,
+            },
         ];
         let dets = vec![z_det(0, &[0])]; // Z detector: X and Y anticommute, Z commutes
 
         // Without BCH2: only X flips detector. p = h_x² = 0.01
-        let entries_k1 = build_dem_with_options(
-            &gens, &dets, &[], None, HFormula::Taylor, BchOrder::First,
-        );
+        let entries_k1 =
+            build_dem_with_options(&gens, &dets, &[], None, HFormula::Taylor, BchOrder::First);
         let p_k1: f64 = entries_k1.iter().map(|e| e.probability).sum();
-        assert!((p_k1 - h_x * h_x).abs() < 1e-10,
-            "BCH1: p should be h_x² = {}, got {p_k1}", h_x * h_x);
+        assert!(
+            (p_k1 - h_x * h_x).abs() < 1e-10,
+            "BCH1: p should be h_x² = {}, got {p_k1}",
+            h_x * h_x
+        );
 
         // With BCH2: adds H_Y with imaginary coeff -i * h_x * h_z.
         // Y anticommutes with Z detector → flips it.
@@ -1499,13 +1766,14 @@ mod tests {
         // re_X = h_x, im_X = 0. re_Y = 0, im_Y = -h_x*h_z.
         // re_product = h_x * 0 - 0 * (-h_x*h_z) = 0. Cross-term is zero.
         // So BCH2 only adds the diagonal of the Y generator: |im_Y|² = (h_x * h_z)² = 0.000025.
-        let entries_k2 = build_dem_with_options(
-            &gens, &dets, &[], None, HFormula::Taylor, BchOrder::Second,
-        );
+        let entries_k2 =
+            build_dem_with_options(&gens, &dets, &[], None, HFormula::Taylor, BchOrder::Second);
         let p_k2: f64 = entries_k2.iter().map(|e| e.probability).sum();
         let expected_k2 = h_x * h_x + (h_x * h_z).powi(2);
-        assert!((p_k2 - expected_k2).abs() < 1e-10,
-            "BCH2: p should be h_x² + (h_x·h_z)² = {expected_k2}, got {p_k2}");
+        assert!(
+            (p_k2 - expected_k2).abs() < 1e-10,
+            "BCH2: p should be h_x² + (h_x·h_z)² = {expected_k2}, got {p_k2}"
+        );
 
         // BCH2 adds a small correction: 0.01 + 0.000025 = 0.010025
         assert!(p_k2 > p_k1, "BCH2 should add to probability");

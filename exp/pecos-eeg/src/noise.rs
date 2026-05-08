@@ -42,7 +42,12 @@ pub trait NoiseSpec: Send + Sync {
     /// idle coherent noise is typically injected on both qubits.
     ///
     /// Return an empty vec for no noise at this gate.
-    fn noise_after_gate(&self, gate_index: usize, gate_type: GateType, qubits: &[usize]) -> Vec<NoiseInjection>;
+    fn noise_after_gate(
+        &self,
+        gate_index: usize,
+        gate_type: GateType,
+        qubits: &[usize],
+    ) -> Vec<NoiseInjection>;
 }
 
 /// Uniform noise model: same rates for all gates of each type.
@@ -65,12 +70,24 @@ pub struct UniformNoise {
 impl UniformNoise {
     #[must_use]
     pub fn coherent_only(idle_rz: f64) -> Self {
-        Self { idle_rz, p1: 0.0, p2: 0.0, p_meas: 0.0, p_prep: 0.0 }
+        Self {
+            idle_rz,
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: 0.0,
+            p_prep: 0.0,
+        }
     }
 
     #[must_use]
     pub fn depolarizing(p: f64) -> Self {
-        Self { idle_rz: 0.0, p1: p, p2: p, p_meas: p, p_prep: p }
+        Self {
+            idle_rz: 0.0,
+            p1: p,
+            p2: p,
+            p_meas: p,
+            p_prep: p,
+        }
     }
 
     #[must_use]
@@ -81,15 +98,26 @@ impl UniformNoise {
 }
 
 impl NoiseSpec for UniformNoise {
-    fn noise_after_gate(&self, _gate_index: usize, gate_type: GateType, qubits: &[usize]) -> Vec<NoiseInjection> {
+    fn noise_after_gate(
+        &self,
+        _gate_index: usize,
+        gate_type: GateType,
+        qubits: &[usize],
+    ) -> Vec<NoiseInjection> {
         let mut injections = Vec::new();
 
         match gate_type {
             // Two-qubit gates: idle RZ + depolarizing
-            GateType::CX | GateType::CZ | GateType::CY | GateType::SWAP
-            | GateType::SZZ | GateType::SZZdg
-            | GateType::SXX | GateType::SXXdg
-            | GateType::SYY | GateType::SYYdg => {
+            GateType::CX
+            | GateType::CZ
+            | GateType::CY
+            | GateType::SWAP
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg => {
                 if self.idle_rz.abs() > 0.0 && qubits.len() >= 2 {
                     for &q in &qubits[..2] {
                         injections.push(NoiseInjection {
@@ -106,46 +134,43 @@ impl NoiseSpec for UniformNoise {
             }
 
             // Single-qubit Clifford: depolarizing
-            GateType::H | GateType::SZ | GateType::SZdg
-            | GateType::SX | GateType::SXdg | GateType::SY | GateType::SYdg
-            | GateType::X | GateType::Y | GateType::Z => {
-                if self.p1 > 0.0 && !qubits.is_empty() {
-                    inject_depol_1q(qubits[0], self.p1, &mut injections);
-                }
+            GateType::H
+            | GateType::SZ
+            | GateType::SZdg
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::X
+            | GateType::Y
+            | GateType::Z
+                if self.p1 > 0.0 && !qubits.is_empty() =>
+            {
+                inject_depol_1q(qubits[0], self.p1, &mut injections);
             }
 
             // Measurement error
-            GateType::MZ => {
-                if self.p_meas > 0.0 {
-                    for &q in qubits {
-                        injections.push(NoiseInjection {
-                            eeg_type: EegType::S,
-                            label: Bm::x(q),
-                            label2: None,
-                            rate: -self.p_meas,
-                        });
-                    }
+            GateType::MZ if self.p_meas > 0.0 => {
+                for &q in qubits {
+                    injections.push(NoiseInjection {
+                        eeg_type: EegType::S,
+                        label: Bm::x(q),
+                        label2: None,
+                        rate: -self.p_meas,
+                    });
                 }
             }
 
             // Preparation error
-            GateType::PZ => {
-                if self.p_prep > 0.0 {
-                    for &q in qubits {
-                        injections.push(NoiseInjection {
-                            eeg_type: EegType::S,
-                            label: Bm::x(q),
-                            label2: None,
-                            rate: -self.p_prep,
-                        });
-                    }
+            GateType::PZ if self.p_prep > 0.0 => {
+                for &q in qubits {
+                    injections.push(NoiseInjection {
+                        eeg_type: EegType::S,
+                        label: Bm::x(q),
+                        label2: None,
+                        rate: -self.p_prep,
+                    });
                 }
-            }
-
-            // Explicit RZ gate
-            GateType::RZ => {
-                // Note: RZ angle should be passed via gate.angles, not noise model.
-                // This case is handled separately in analyze_expanded.
             }
 
             _ => {}
@@ -171,8 +196,18 @@ fn inject_depol_2q(qa: usize, qb: usize, prob: f64, out: &mut Vec<NoiseInjection
     let rate = -prob / 15.0;
     let pfs = [Bm::x, Bm::y, Bm::z];
     for &pa in &pfs {
-        out.push(NoiseInjection { eeg_type: EegType::S, label: pa(qa), label2: None, rate });
-        out.push(NoiseInjection { eeg_type: EegType::S, label: pa(qb), label2: None, rate });
+        out.push(NoiseInjection {
+            eeg_type: EegType::S,
+            label: pa(qa),
+            label2: None,
+            rate,
+        });
+        out.push(NoiseInjection {
+            eeg_type: EegType::S,
+            label: pa(qb),
+            label2: None,
+            rate,
+        });
         for &pb in &pfs {
             out.push(NoiseInjection {
                 eeg_type: EegType::S,

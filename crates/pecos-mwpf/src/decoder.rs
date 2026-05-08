@@ -24,6 +24,7 @@ use mwpf::mwpf_solver::{
 };
 use mwpf::util::{HyperEdge, SolverInitializer, SyndromePattern};
 use pecos_decoder_core::dem::DemCheckMatrix;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Which MWPF solver variant to use.
@@ -110,11 +111,18 @@ pub struct MwpfDecodingResult {
 }
 
 /// Internal solver enum holding any MWPF solver variant.
+#[allow(clippy::large_enum_variant)] // Solver structs are owned to avoid extra solver indirection.
 enum Solver {
     UnionFind(SolverSerialUnionFind),
     SingleHair(SolverSerialSingleHair),
     JointSingleHair(SolverSerialJointSingleHair),
     BpHybrid(SolverBPWrapper),
+}
+
+struct EdgeInfo {
+    prob: f64,
+    obs_mask: u64,
+    best_prob: f64,
 }
 
 impl Solver {
@@ -181,12 +189,6 @@ impl MwpfDecoder {
         // Decomposed DEMs can have multiple mechanisms with the same detector set.
         // Merge by combining probabilities (independent union) and tracking the
         // observable from the highest-probability mechanism (first-observable-wins).
-        use std::collections::BTreeMap;
-        struct EdgeInfo {
-            prob: f64,
-            obs_mask: u64,
-            best_prob: f64,
-        }
         let mut edge_map: BTreeMap<Vec<usize>, EdgeInfo> = BTreeMap::new();
         for m in 0..dem.num_mechanisms {
             let p = dem.error_priors[m];

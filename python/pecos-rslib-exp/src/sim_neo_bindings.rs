@@ -32,6 +32,22 @@ use pecos_neo::tool::sim_neo;
 use pecos_simulators::measurement_sampler::SampleResult;
 use pyo3::prelude::*;
 
+#[derive(serde::Deserialize)]
+struct RecDef {
+    records: Vec<i32>,
+}
+
+fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usize> {
+    let idx = if record < 0 {
+        i32::try_from(num_measurements).ok()?.checked_add(record)?
+    } else {
+        record
+    };
+    usize::try_from(idx)
+        .ok()
+        .filter(|&idx| idx < num_measurements)
+}
+
 // ============================================================================
 // Columnar raw measurement result (stays in Rust memory)
 // ============================================================================
@@ -104,7 +120,9 @@ impl PyRawMeasurementResult {
                 "negative {name} index {idx}"
             )));
         }
-        let u = idx as usize;
+        let u = usize::try_from(idx).map_err(|_| {
+            pyo3::exceptions::PyIndexError::new_err(format!("invalid {name} index {idx}"))
+        })?;
         if u >= len {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
                 "{name} {u} out of range ({len})"
@@ -122,7 +140,7 @@ impl PyRawMeasurementResult {
 
     /// Construct from row-major data (stabilizer/statevec path).
     pub fn from_rows(rows: Vec<Vec<u8>>) -> Self {
-        let num_measurements = rows.first().map_or(0, |r| r.len());
+        let num_measurements = rows.first().map_or(0, Vec::len);
         Self {
             storage: RawMeasurementStorage::RowMajor {
                 rows,
@@ -736,11 +754,6 @@ impl PySimNeoBuilder {
             })
             .unwrap_or_else(|| "[]".to_string());
 
-        #[derive(serde::Deserialize)]
-        struct RecDef {
-            records: Vec<i32>,
-        }
-
         let det_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&det_json)
             .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
             .unwrap_or_default();
@@ -779,12 +792,12 @@ impl PySimNeoBuilder {
 
 /// Convert CommandQueue to Vec<Gate> for EEG analysis.
 fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_core::Gate> {
-    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams, GateQubits};
+    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
 
     commands
         .iter()
         .map(|cmd| {
-            let qubits = GateQubits::from_iter(cmd.qubits.iter().copied());
+            let qubits = cmd.qubits.iter().copied().collect();
             let mut angles = GateAngles::new();
             for &a in &cmd.angles {
                 angles.push(a);
@@ -844,11 +857,11 @@ fn build_rust_tick_circuit(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_quantum::
     // Fast path: try to access the inner TickCircuit directly.
     // The Python TickCircuit wraps `pub inner: TickCircuit` — access via
     // the `_inner_tick_circuit()` method if available, or via serialization.
-    if let Ok(tc_bytes) = py_tc.call_method0("_serialize_inner") {
-        if let Ok(bytes) = tc_bytes.extract::<Vec<u8>>() {
-            // Deserialize — but TickCircuit doesn't impl serde. Skip.
-            let _ = bytes;
-        }
+    if let Ok(tc_bytes) = py_tc.call_method0("_serialize_inner")
+        && let Ok(bytes) = tc_bytes.extract::<Vec<u8>>()
+    {
+        // Deserialize — but TickCircuit doesn't impl serde. Skip.
+        let _ = bytes;
     }
 
     // The only reliable fast path: call `to_dag_circuit()` on the Python TC,
@@ -887,10 +900,10 @@ fn build_rust_tick_circuit_from_gates(
 
         for gate in &gates {
             let gate_type_obj = gate.getattr("gate_type")?;
-            let gate_name: String = format!("{:?}", gate_type_obj);
+            let gate_name: String = format!("{gate_type_obj:?}");
             let gate_name = gate_name
                 .split('.')
-                .last()
+                .next_back()
                 .unwrap_or(&gate_name)
                 .to_string();
             let py_qubits = gate.getattr("qubits")?;
@@ -937,23 +950,23 @@ fn build_rust_tick_circuit_from_gates(
     }
 
     // Copy metadata from Python TickCircuit
-    if let Ok(num_meas) = py_tc.call_method1("get_meta", ("num_measurements",)) {
-        if let Ok(s) = num_meas.extract::<String>() {
-            tc.set_meta("num_measurements", Attribute::String(s));
-        }
+    if let Ok(num_meas) = py_tc.call_method1("get_meta", ("num_measurements",))
+        && let Ok(s) = num_meas.extract::<String>()
+    {
+        tc.set_meta("num_measurements", Attribute::String(s));
     }
-    if let Ok(det_json) = py_tc.call_method1("get_meta", ("detectors",)) {
-        if let Ok(s) = det_json.extract::<String>() {
-            // Create structured annotations from JSON
-            create_annotations_from_json(&mut tc, &s, &all_meas_refs, true);
-            tc.set_meta("detectors", Attribute::String(s));
-        }
+    if let Ok(det_json) = py_tc.call_method1("get_meta", ("detectors",))
+        && let Ok(s) = det_json.extract::<String>()
+    {
+        // Create structured annotations from JSON
+        create_annotations_from_json(&mut tc, &s, &all_meas_refs, true);
+        tc.set_meta("detectors", Attribute::String(s));
     }
-    if let Ok(obs_json) = py_tc.call_method1("get_meta", ("observables",)) {
-        if let Ok(s) = obs_json.extract::<String>() {
-            create_annotations_from_json(&mut tc, &s, &all_meas_refs, false);
-            tc.set_meta("observables", Attribute::String(s));
-        }
+    if let Ok(obs_json) = py_tc.call_method1("get_meta", ("observables",))
+        && let Ok(s) = obs_json.extract::<String>()
+    {
+        create_annotations_from_json(&mut tc, &s, &all_meas_refs, false);
+        tc.set_meta("observables", Attribute::String(s));
     }
     copy_operator_annotations_from_python(py_tc, &mut tc)?;
 
@@ -1035,11 +1048,6 @@ fn create_annotations_from_json(
     all_meas_refs: &[pecos_quantum::TickMeasRef],
     is_detector: bool,
 ) {
-    #[derive(serde::Deserialize)]
-    struct RecDef {
-        records: Vec<i32>,
-    }
-
     let num_meas = all_meas_refs.len();
     if let Ok(defs) = serde_json::from_str::<Vec<RecDef>>(json_str) {
         for def in &defs {
@@ -1047,7 +1055,7 @@ fn create_annotations_from_json(
                 .records
                 .iter()
                 .filter_map(|&rec| {
-                    let abs_idx = (num_meas as i32 + rec) as usize;
+                    let abs_idx = measurement_record_index(rec, num_meas)?;
                     all_meas_refs.get(abs_idx).copied()
                 })
                 .collect();
@@ -1069,7 +1077,7 @@ fn build_gate_from_python(
     qubit_ids: &[pecos_core::QubitId],
 ) -> PyResult<pecos_core::Gate> {
     use pecos_core::gate_type::GateType;
-    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams, GateQubits};
+    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
 
     let gate_type = match gate_name {
         "H" => GateType::H,
@@ -1112,22 +1120,22 @@ fn build_gate_from_python(
     };
 
     let mut angles = GateAngles::new();
-    if let Ok(py_angle) = gate.getattr("angle") {
-        if let Ok(a) = py_angle.extract::<f64>() {
-            angles.push(pecos_core::Angle64::from_radians(a));
-        }
+    if let Ok(py_angle) = gate.getattr("angle")
+        && let Ok(a) = py_angle.extract::<f64>()
+    {
+        angles.push(pecos_core::Angle64::from_radians(a));
     }
-    if let Ok(py_angles) = gate.getattr("angles") {
-        if let Ok(a_list) = py_angles.extract::<Vec<f64>>() {
-            for a in a_list {
-                angles.push(pecos_core::Angle64::from_radians(a));
-            }
+    if let Ok(py_angles) = gate.getattr("angles")
+        && let Ok(a_list) = py_angles.extract::<Vec<f64>>()
+    {
+        for a in a_list {
+            angles.push(pecos_core::Angle64::from_radians(a));
         }
     }
 
     Ok(Gate {
         gate_type,
-        qubits: GateQubits::from_iter(qubit_ids.iter().copied()),
+        qubits: qubit_ids.iter().copied().collect(),
         angles,
         params: GateParams::new(),
         meas_ids: GateMeasIds::new(),
@@ -1309,10 +1317,9 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                 }
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Unsupported gate type '{}' in extract_commands. \
+                        "Unsupported gate type '{name}' in extract_commands. \
                          Add support in sim_neo_bindings.rs or lower to supported gates \
-                         with tc.lower_clifford_rotations().",
-                        name
+                         with tc.lower_clifford_rotations()."
                     )));
                 }
             }
@@ -1496,14 +1503,19 @@ impl PyFaultCatalog {
     }
 
     fn __getitem__(&self, py: Python<'_>, index: isize) -> PyResult<Py<PyFaultLocation>> {
-        let len = self.locations.len() as isize;
+        let len = isize::try_from(self.locations.len()).map_err(|_| {
+            pyo3::exceptions::PyIndexError::new_err("fault catalog is too large to index")
+        })?;
         let index = if index < 0 { len + index } else { index };
         if index < 0 || index >= len {
             return Err(pyo3::exceptions::PyIndexError::new_err(
                 "fault catalog index out of range",
             ));
         }
-        Ok(self.locations[index as usize].clone_ref(py))
+        let index = usize::try_from(index).map_err(|_| {
+            pyo3::exceptions::PyIndexError::new_err("fault catalog index out of range")
+        })?;
+        Ok(self.locations[index].clone_ref(py))
     }
 
     fn __iter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {

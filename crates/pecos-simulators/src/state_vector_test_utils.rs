@@ -928,9 +928,11 @@ pub fn verify_mid_circuit_reset<S: StateVectorSimulator>(sim: &mut S) {
         s.cx(&qid2(0, 1));
         let r2 = s.mz(&qid(1));
         assert_eq!(
-            r1[0].outcome, r2[0].outcome,
+            r1[0].outcome,
+            r2[0].outcome,
             "seed {seed}: mid-circuit reset: r1={}, r2={} — should match",
-            r1[0].outcome as u8, r2[0].outcome as u8
+            u8::from(r1[0].outcome),
+            u8::from(r2[0].outcome)
         );
     }
 }

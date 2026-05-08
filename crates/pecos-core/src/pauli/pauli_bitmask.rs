@@ -17,9 +17,7 @@ use std::fmt;
 ///
 /// Enables `PauliBitmaskGeneric<B>` to work with different widths:
 /// `u64` (64 qubits), `u128` (128 qubits), or `Vec<u64>` (unlimited).
-pub trait BitmaskStorage:
-    Clone + PartialEq + Eq + std::hash::Hash + Default + fmt::Debug
-{
+pub trait BitmaskStorage: Clone + PartialEq + Eq + std::hash::Hash + Default + fmt::Debug {
     fn zero() -> Self;
     fn set_bit(&mut self, bit: usize);
     fn clear_bit(&mut self, bit: usize);
@@ -33,48 +31,84 @@ pub trait BitmaskStorage:
 }
 
 impl BitmaskStorage for u128 {
-    fn zero() -> Self { 0 }
-    fn set_bit(&mut self, bit: usize) { *self |= 1u128 << bit; }
-    fn clear_bit(&mut self, bit: usize) { *self &= !(1u128 << bit); }
-    fn get_bit(&self, bit: usize) -> bool { *self & (1u128 << bit) != 0 }
-    fn xor_assign(&mut self, other: &Self) { *self ^= other; }
-    fn xor_bit(&mut self, bit: usize) { *self ^= 1u128 << bit; }
+    fn zero() -> Self {
+        0
+    }
+    fn set_bit(&mut self, bit: usize) {
+        *self |= 1u128 << bit;
+    }
+    fn clear_bit(&mut self, bit: usize) {
+        *self &= !(1u128 << bit);
+    }
+    fn get_bit(&self, bit: usize) -> bool {
+        *self & (1u128 << bit) != 0
+    }
+    fn xor_assign(&mut self, other: &Self) {
+        *self ^= other;
+    }
+    fn xor_bit(&mut self, bit: usize) {
+        *self ^= 1u128 << bit;
+    }
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32 {
         ((*self & other_z) ^ (self_z & other_x)).count_ones()
     }
-    fn is_zero(&self) -> bool { *self == 0 }
-    fn or_count_ones(&self, other: &Self) -> u32 { (*self | other).count_ones() }
+    fn is_zero(&self) -> bool {
+        *self == 0
+    }
+    fn or_count_ones(&self, other: &Self) -> u32 {
+        (*self | other).count_ones()
+    }
     fn highest_set_bit(&self) -> Option<usize> {
-        if *self == 0 { None } else { Some(127 - self.leading_zeros() as usize) }
+        if *self == 0 {
+            None
+        } else {
+            Some(127 - self.leading_zeros() as usize)
+        }
     }
 }
 
 impl BitmaskStorage for Vec<u64> {
-    fn zero() -> Self { Vec::new() }
+    fn zero() -> Self {
+        Vec::new()
+    }
     fn set_bit(&mut self, bit: usize) {
         let word = bit / 64;
-        if word >= self.len() { self.resize(word + 1, 0); }
+        if word >= self.len() {
+            self.resize(word + 1, 0);
+        }
         self[word] |= 1u64 << (bit % 64);
     }
     fn clear_bit(&mut self, bit: usize) {
         let word = bit / 64;
-        if word < self.len() { self[word] &= !(1u64 << (bit % 64)); }
+        if word < self.len() {
+            self[word] &= !(1u64 << (bit % 64));
+        }
     }
     fn get_bit(&self, bit: usize) -> bool {
         let word = bit / 64;
         word < self.len() && self[word] & (1u64 << (bit % 64)) != 0
     }
     fn xor_assign(&mut self, other: &Self) {
-        if self.len() < other.len() { self.resize(other.len(), 0); }
-        for (a, b) in self.iter_mut().zip(other.iter()) { *a ^= b; }
+        if self.len() < other.len() {
+            self.resize(other.len(), 0);
+        }
+        for (a, b) in self.iter_mut().zip(other.iter()) {
+            *a ^= b;
+        }
     }
     fn xor_bit(&mut self, bit: usize) {
         let word = bit / 64;
-        if word >= self.len() { self.resize(word + 1, 0); }
+        if word >= self.len() {
+            self.resize(word + 1, 0);
+        }
         self[word] ^= 1u64 << (bit % 64);
     }
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32 {
-        let max = self.len().max(other_z.len()).max(self_z.len()).max(other_x.len());
+        let max = self
+            .len()
+            .max(other_z.len())
+            .max(self_z.len())
+            .max(other_x.len());
         let mut count = 0u32;
         for i in 0..max {
             let sx = self.get(i).copied().unwrap_or(0);
@@ -85,7 +119,9 @@ impl BitmaskStorage for Vec<u64> {
         }
         count
     }
-    fn is_zero(&self) -> bool { self.iter().all(|&w| w == 0) }
+    fn is_zero(&self) -> bool {
+        self.iter().all(|&w| w == 0)
+    }
     fn or_count_ones(&self, other: &Self) -> u32 {
         let max = self.len().max(other.len());
         let mut count = 0u32;
@@ -98,40 +134,58 @@ impl BitmaskStorage for Vec<u64> {
     }
     fn highest_set_bit(&self) -> Option<usize> {
         for (i, &w) in self.iter().enumerate().rev() {
-            if w != 0 { return Some(i * 64 + 63 - w.leading_zeros() as usize); }
+            if w != 0 {
+                return Some(i * 64 + 63 - w.leading_zeros() as usize);
+            }
         }
         None
     }
 }
 
-/// SmallVec<[u64; 8]> backend: 512 bits inline (covers d≤9 surface codes),
+/// `SmallVec<[u64; 8]>` backend: 512 bits inline (covers d≤9 surface codes),
 /// spills to heap for larger circuits. Zero allocation for typical QEC.
 impl BitmaskStorage for SmallVec<[u64; 8]> {
-    fn zero() -> Self { SmallVec::new() }
+    fn zero() -> Self {
+        SmallVec::new()
+    }
     fn set_bit(&mut self, bit: usize) {
         let word = bit / 64;
-        if word >= self.len() { self.resize(word + 1, 0); }
+        if word >= self.len() {
+            self.resize(word + 1, 0);
+        }
         self[word] |= 1u64 << (bit % 64);
     }
     fn clear_bit(&mut self, bit: usize) {
         let word = bit / 64;
-        if word < self.len() { self[word] &= !(1u64 << (bit % 64)); }
+        if word < self.len() {
+            self[word] &= !(1u64 << (bit % 64));
+        }
     }
     fn get_bit(&self, bit: usize) -> bool {
         let word = bit / 64;
         word < self.len() && self[word] & (1u64 << (bit % 64)) != 0
     }
     fn xor_assign(&mut self, other: &Self) {
-        if self.len() < other.len() { self.resize(other.len(), 0); }
-        for (a, b) in self.iter_mut().zip(other.iter()) { *a ^= b; }
+        if self.len() < other.len() {
+            self.resize(other.len(), 0);
+        }
+        for (a, b) in self.iter_mut().zip(other.iter()) {
+            *a ^= b;
+        }
     }
     fn xor_bit(&mut self, bit: usize) {
         let word = bit / 64;
-        if word >= self.len() { self.resize(word + 1, 0); }
+        if word >= self.len() {
+            self.resize(word + 1, 0);
+        }
         self[word] ^= 1u64 << (bit % 64);
     }
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32 {
-        let max = self.len().max(other_z.len()).max(self_z.len()).max(other_x.len());
+        let max = self
+            .len()
+            .max(other_z.len())
+            .max(self_z.len())
+            .max(other_x.len());
         let mut count = 0u32;
         for i in 0..max {
             let sx = self.get(i).copied().unwrap_or(0);
@@ -142,7 +196,9 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
         }
         count
     }
-    fn is_zero(&self) -> bool { self.iter().all(|&w| w == 0) }
+    fn is_zero(&self) -> bool {
+        self.iter().all(|&w| w == 0)
+    }
     fn or_count_ones(&self, other: &Self) -> u32 {
         let max = self.len().max(other.len());
         let mut count = 0u32;
@@ -155,7 +211,9 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
     }
     fn highest_set_bit(&self) -> Option<usize> {
         for (i, &w) in self.iter().enumerate().rev() {
-            if w != 0 { return Some(i * 64 + 63 - w.leading_zeros() as usize); }
+            if w != 0 {
+                return Some(i * 64 + 63 - w.leading_zeros() as usize);
+            }
         }
         None
     }
@@ -263,13 +321,19 @@ impl std::hash::Hash for PauliBitmaskSmall {
 }
 
 impl PartialOrd for PauliBitmaskSmall {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Ord for PauliBitmaskSmall {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let max_len = self.x_bits.len().max(other.x_bits.len())
-            .max(self.z_bits.len()).max(other.z_bits.len());
+        let max_len = self
+            .x_bits
+            .len()
+            .max(other.x_bits.len())
+            .max(self.z_bits.len())
+            .max(other.z_bits.len());
         for i in (0..max_len).rev() {
             let sx = self.x_bits.get(i).copied().unwrap_or(0);
             let ox = other.x_bits.get(i).copied().unwrap_or(0);
@@ -293,22 +357,32 @@ impl Ord for PauliBitmaskSmall {
 // Copy only for fixed-size backends
 impl Copy for PauliBitmask {}
 impl PartialOrd for PauliBitmask {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 impl Ord for PauliBitmask {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.x_bits.cmp(&other.x_bits).then(self.z_bits.cmp(&other.z_bits))
+        self.x_bits
+            .cmp(&other.x_bits)
+            .then(self.z_bits.cmp(&other.z_bits))
     }
 }
 
 impl PartialOrd for PauliBitmaskVec {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 impl Ord for PauliBitmaskVec {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Lexicographic comparison of the word vectors (most-significant word first)
-        let max_len = self.x_bits.len().max(other.x_bits.len())
-            .max(self.z_bits.len()).max(other.z_bits.len());
+        let max_len = self
+            .x_bits
+            .len()
+            .max(other.x_bits.len())
+            .max(self.z_bits.len())
+            .max(other.z_bits.len());
         for i in (0..max_len).rev() {
             let sx = self.x_bits.get(i).copied().unwrap_or(0);
             let ox = other.x_bits.get(i).copied().unwrap_or(0);
@@ -335,7 +409,10 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
     pub fn x(q: usize) -> Self {
         let mut x = B::zero();
         x.set_bit(q);
-        Self { x_bits: x, z_bits: B::zero() }
+        Self {
+            x_bits: x,
+            z_bits: B::zero(),
+        }
     }
 
     /// Single-qubit Z on qubit q.
@@ -343,7 +420,10 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
     pub fn z(q: usize) -> Self {
         let mut z = B::zero();
         z.set_bit(q);
-        Self { x_bits: B::zero(), z_bits: z }
+        Self {
+            x_bits: B::zero(),
+            z_bits: z,
+        }
     }
 
     /// Single-qubit Y on qubit q.
@@ -353,7 +433,10 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
         let mut z = B::zero();
         x.set_bit(q);
         z.set_bit(q);
-        Self { x_bits: x, z_bits: z }
+        Self {
+            x_bits: x,
+            z_bits: z,
+        }
     }
 
     /// Product of two Pauli labels (XOR of symplectic vectors, phase ignored).
@@ -363,17 +446,18 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
         x.xor_assign(&other.x_bits);
         let mut z = self.z_bits.clone();
         z.xor_assign(&other.z_bits);
-        Self { x_bits: x, z_bits: z }
+        Self {
+            x_bits: x,
+            z_bits: z,
+        }
     }
 
     /// Product of two Paulis with phase tracking.
     ///
-    /// Returns (product, phase_exponent) where the full product is i^phase · product.
+    /// Returns `(product, phase_exponent)` where the full product is i^phase · product.
     /// Phase exponent is in 0..4.
     #[must_use]
     pub fn multiply_with_phase(&self, other: &Self) -> (Self, u8) {
-        let product = self.multiply(other);
-
         // Per-qubit phase from Pauli multiplication.
         // Pauli types: I=0, X=1, Z=2, Y=3 (encoding: type = x + 2*z)
         // Phase lookup: A*B = i^{phase[A][B]} * C
@@ -389,37 +473,24 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
             [0, 3, 1, 0], // Y
         ];
 
+        let product = self.multiply(other);
         let mut total_phase = 0u32;
-        let max_q = match self.x_bits.highest_set_bit() {
-            Some(a) => {
-                let b = other.x_bits.highest_set_bit().unwrap_or(0);
-                let c = self.z_bits.highest_set_bit().unwrap_or(0);
-                let d = other.z_bits.highest_set_bit().unwrap_or(0);
-                a.max(b).max(c).max(d) + 1
-            }
-            None => match other.x_bits.highest_set_bit() {
-                Some(b) => {
-                    let c = self.z_bits.highest_set_bit().unwrap_or(0);
-                    let d = other.z_bits.highest_set_bit().unwrap_or(0);
-                    b.max(c).max(d) + 1
-                }
-                None => {
-                    let c = self.z_bits.highest_set_bit().unwrap_or(0);
-                    let d = other.z_bits.highest_set_bit().unwrap_or(0);
-                    if c == 0 && d == 0 && self.z_bits.is_zero() && other.z_bits.is_zero() {
-                        0
-                    } else {
-                        c.max(d) + 1
-                    }
-                }
-            },
-        };
+        let max_q = [
+            self.x_bits.highest_set_bit(),
+            other.x_bits.highest_set_bit(),
+            self.z_bits.highest_set_bit(),
+            other.z_bits.highest_set_bit(),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .map_or(0, |q| q + 1);
 
         for q in 0..max_q {
-            let xa = self.x_bits.get_bit(q) as usize;
-            let za = self.z_bits.get_bit(q) as usize;
-            let xb = other.x_bits.get_bit(q) as usize;
-            let zb = other.z_bits.get_bit(q) as usize;
+            let xa = usize::from(self.x_bits.get_bit(q));
+            let za = usize::from(self.z_bits.get_bit(q));
+            let xb = usize::from(other.x_bits.get_bit(q));
+            let zb = usize::from(other.z_bits.get_bit(q));
             let type_a = xa + 2 * za; // I=0, X=1, Z=2, Y=3
             let type_b = xb + 2 * zb;
             total_phase += u32::from(PHASE_TABLE[type_a][type_b]);
@@ -433,8 +504,7 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
     pub fn commutes_with(&self, other: &Self) -> bool {
         self.x_bits
             .and_count_ones_xor(&other.z_bits, &self.z_bits, &other.x_bits)
-            % 2
-            == 0
+            .is_multiple_of(2)
     }
 
     #[must_use]
@@ -460,44 +530,73 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
 }
 
 impl PauliBitmask {
-    pub const IDENTITY: Self = Self { x_bits: 0, z_bits: 0 };
+    pub const IDENTITY: Self = Self {
+        x_bits: 0,
+        z_bits: 0,
+    };
 }
 
 impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
     /// Identity Pauli (all qubits I).
     #[must_use]
     pub fn identity() -> Self {
-        Self { x_bits: B::zero(), z_bits: B::zero() }
+        Self {
+            x_bits: B::zero(),
+            z_bits: B::zero(),
+        }
     }
 }
 
 /// Convert from u128 (fixed-size) to Vec<u64> (unlimited) backend.
 impl From<PauliBitmask> for PauliBitmaskVec {
     fn from(p: PauliBitmask) -> Self {
-        let x_lo = p.x_bits as u64;
-        let x_hi = (p.x_bits >> 64) as u64;
-        let z_lo = p.z_bits as u64;
-        let z_hi = (p.z_bits >> 64) as u64;
+        let x_lo = u64::try_from(p.x_bits & u128::from(u64::MAX)).expect("masked low word fits");
+        let x_hi = u64::try_from(p.x_bits >> 64).expect("shifted high word fits");
+        let z_lo = u64::try_from(p.z_bits & u128::from(u64::MAX)).expect("masked low word fits");
+        let z_hi = u64::try_from(p.z_bits >> 64).expect("shifted high word fits");
         Self {
-            x_bits: if x_hi != 0 { vec![x_lo, x_hi] } else if x_lo != 0 { vec![x_lo] } else { vec![] },
-            z_bits: if z_hi != 0 { vec![z_lo, z_hi] } else if z_lo != 0 { vec![z_lo] } else { vec![] },
+            x_bits: if x_hi != 0 {
+                vec![x_lo, x_hi]
+            } else if x_lo != 0 {
+                vec![x_lo]
+            } else {
+                vec![]
+            },
+            z_bits: if z_hi != 0 {
+                vec![z_lo, z_hi]
+            } else if z_lo != 0 {
+                vec![z_lo]
+            } else {
+                vec![]
+            },
         }
     }
 }
 
 impl From<PauliBitmask> for PauliBitmaskSmall {
     fn from(p: PauliBitmask) -> Self {
-        let x_lo = p.x_bits as u64;
-        let x_hi = (p.x_bits >> 64) as u64;
-        let z_lo = p.z_bits as u64;
-        let z_hi = (p.z_bits >> 64) as u64;
+        let x_lo = u64::try_from(p.x_bits & u128::from(u64::MAX)).expect("masked low word fits");
+        let x_hi = u64::try_from(p.x_bits >> 64).expect("shifted high word fits");
+        let z_lo = u64::try_from(p.z_bits & u128::from(u64::MAX)).expect("masked low word fits");
+        let z_hi = u64::try_from(p.z_bits >> 64).expect("shifted high word fits");
         let mut x = SmallVec::new();
-        if x_hi != 0 { x.push(x_lo); x.push(x_hi); }
-        else if x_lo != 0 { x.push(x_lo); }
+        if x_hi != 0 {
+            x.push(x_lo);
+            x.push(x_hi);
+        } else if x_lo != 0 {
+            x.push(x_lo);
+        }
         let mut z = SmallVec::new();
-        if z_hi != 0 { z.push(z_lo); z.push(z_hi); }
-        else if z_lo != 0 { z.push(z_lo); }
-        Self { x_bits: x, z_bits: z }
+        if z_hi != 0 {
+            z.push(z_lo);
+            z.push(z_hi);
+        } else if z_lo != 0 {
+            z.push(z_lo);
+        }
+        Self {
+            x_bits: x,
+            z_bits: z,
+        }
     }
 }
 
@@ -552,31 +651,46 @@ pub fn conjugate_h<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> C
         label.x_bits.xor_bit(q);
         label.z_bits.xor_bit(q);
     }
-    Conjugated { label, sign_negative: has_x && has_z }
+    Conjugated {
+        label,
+        sign_negative: has_x && has_z,
+    }
 }
 
 /// SZ gate on qubit q: X→Y, Y→-X, Z→Z.
 #[must_use]
 pub fn conjugate_sz<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
     if !p.x_bits.get_bit(q) {
-        return Conjugated { label: p.clone(), sign_negative: false };
+        return Conjugated {
+            label: p.clone(),
+            sign_negative: false,
+        };
     }
     let was_y = p.z_bits.get_bit(q);
     let mut label = p.clone();
     label.z_bits.xor_bit(q);
-    Conjugated { label, sign_negative: was_y }
+    Conjugated {
+        label,
+        sign_negative: was_y,
+    }
 }
 
-/// SZdg gate on qubit q: X→-Y, Y→X, Z→Z.
+/// `SZdg` gate on qubit q: X→-Y, Y→X, Z→Z.
 #[must_use]
 pub fn conjugate_szdg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
     if !p.x_bits.get_bit(q) {
-        return Conjugated { label: p.clone(), sign_negative: false };
+        return Conjugated {
+            label: p.clone(),
+            sign_negative: false,
+        };
     }
     let was_y = p.z_bits.get_bit(q);
     let mut label = p.clone();
     label.z_bits.xor_bit(q);
-    Conjugated { label, sign_negative: !was_y }
+    Conjugated {
+        label,
+        sign_negative: !was_y,
+    }
 }
 
 /// CX (CNOT) with control c, target t: XI→XX, IZ→ZZ.
@@ -584,51 +698,77 @@ pub fn conjugate_szdg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -
 /// The sign comes from Pauli multiplication phases when the control's
 /// Pauli multiplies Z (from target Z spreading) and the target's Pauli
 /// multiplies X (from control X spreading):
-///   phase_c = phase(Pc · Z)  if target has Z, else 0
-///   phase_t = phase(X · Pt)  if control has X, else 0
-///   sign_negative = (phase_c + phase_t) % 4 == 2
+///   `phase_c` = phase(Pc · Z)  if target has Z, else 0
+///   `phase_t` = phase(X · Pt)  if control has X, else 0
+///   `sign_negative` = (`phase_c` + `phase_t`) % 4 == 2
 #[must_use]
-pub fn conjugate_cx<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, c: usize, t: usize) -> Conjugated<B> {
-    let cx = p.x_bits.get_bit(c);
-    let cz = p.z_bits.get_bit(c);
-    let tx = p.x_bits.get_bit(t);
-    let tz = p.z_bits.get_bit(t);
-    let mut label = p.clone();
-    if cx { label.x_bits.xor_bit(t); }
-    if tz { label.z_bits.xor_bit(c); }
-    // Pauli type encoding: I=0, X=1, Z=2, Y=3 (x + 2*z)
-    // Phase from Pauli multiplication table:
-    //   Pc·Z at control (if tz), X·Pt at target (if cx)
+pub fn conjugate_cx<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    c: usize,
+    t: usize,
+) -> Conjugated<B> {
     const PHASE: [[u8; 4]; 4] = [
         [0, 0, 0, 0], // I·{I,X,Z,Y}
         [0, 0, 3, 1], // X·{I,X,Z,Y}
         [0, 1, 0, 3], // Z·{I,X,Z,Y}
         [0, 3, 1, 0], // Y·{I,X,Z,Y}
     ];
-    let pc = (cx as u8) + 2 * (cz as u8);
-    let pt = (tx as u8) + 2 * (tz as u8);
+
+    let cx = p.x_bits.get_bit(c);
+    let cz = p.z_bits.get_bit(c);
+    let tx = p.x_bits.get_bit(t);
+    let tz = p.z_bits.get_bit(t);
+    let mut label = p.clone();
+    if cx {
+        label.x_bits.xor_bit(t);
+    }
+    if tz {
+        label.z_bits.xor_bit(c);
+    }
+    // Pauli type encoding: I=0, X=1, Z=2, Y=3 (x + 2*z)
+    // Phase from Pauli multiplication table:
+    //   Pc·Z at control (if tz), X·Pt at target (if cx)
+    let pc = u8::from(cx) + 2 * u8::from(cz);
+    let pt = u8::from(tx) + 2 * u8::from(tz);
     let phase_c = if tz { PHASE[pc as usize][2] } else { 0 };
     let phase_t = if cx { PHASE[1][pt as usize] } else { 0 };
-    Conjugated { label, sign_negative: (phase_c + phase_t) % 4 == 2 }
+    Conjugated {
+        label,
+        sign_negative: (phase_c + phase_t) % 4 == 2,
+    }
 }
 
 /// CZ on qubits a, b: XI→XZ, IX→ZX, ZI→ZI, IZ→IZ.
 #[must_use]
-pub fn conjugate_cz<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, a: usize, b: usize) -> Conjugated<B> {
+pub fn conjugate_cz<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    a: usize,
+    b: usize,
+) -> Conjugated<B> {
     let ax = p.x_bits.get_bit(a);
     let az = p.z_bits.get_bit(a);
     let bx = p.x_bits.get_bit(b);
     let bz = p.z_bits.get_bit(b);
     let mut label = p.clone();
-    if bx { label.z_bits.xor_bit(a); }
-    if ax { label.z_bits.xor_bit(b); }
-    Conjugated { label, sign_negative: ax && bx && (az != bz) }
+    if bx {
+        label.z_bits.xor_bit(a);
+    }
+    if ax {
+        label.z_bits.xor_bit(b);
+    }
+    Conjugated {
+        label,
+        sign_negative: ax && bx && (az != bz),
+    }
 }
 
 /// Pauli X gate on qubit q: Z→-Z, Y→-Y.
 #[must_use]
 pub fn conjugate_x<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    Conjugated { label: p.clone(), sign_negative: p.z_bits.get_bit(q) }
+    Conjugated {
+        label: p.clone(),
+        sign_negative: p.z_bits.get_bit(q),
+    }
 }
 
 /// Pauli Y gate on qubit q: X→-X, Z→-Z.
@@ -643,28 +783,50 @@ pub fn conjugate_y<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> C
 /// Pauli Z gate on qubit q: X→-X, Y→-Y.
 #[must_use]
 pub fn conjugate_z<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    Conjugated { label: p.clone(), sign_negative: p.x_bits.get_bit(q) }
+    Conjugated {
+        label: p.clone(),
+        sign_negative: p.x_bits.get_bit(q),
+    }
 }
 
 /// SWAP on qubits a, b: exchanges the Pauli at both sites.
 #[must_use]
-pub fn conjugate_swap<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, a: usize, b: usize) -> Conjugated<B> {
+pub fn conjugate_swap<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    a: usize,
+    b: usize,
+) -> Conjugated<B> {
     let ax = p.x_bits.get_bit(a);
     let az = p.z_bits.get_bit(a);
     let bx = p.x_bits.get_bit(b);
     let bz = p.z_bits.get_bit(b);
     let mut label = p.clone();
     // Clear both positions
-    if ax { label.x_bits.clear_bit(a); } else { label.x_bits.clear_bit(a); }
-    if bx { label.x_bits.clear_bit(b); } else { label.x_bits.clear_bit(b); }
-    if az { label.z_bits.clear_bit(a); }
-    if bz { label.z_bits.clear_bit(b); }
+    label.x_bits.clear_bit(a);
+    label.x_bits.clear_bit(b);
+    if az {
+        label.z_bits.clear_bit(a);
+    }
+    if bz {
+        label.z_bits.clear_bit(b);
+    }
     // Set swapped
-    if bx { label.x_bits.set_bit(a); }
-    if ax { label.x_bits.set_bit(b); }
-    if bz { label.z_bits.set_bit(a); }
-    if az { label.z_bits.set_bit(b); }
-    Conjugated { label, sign_negative: false }
+    if bx {
+        label.x_bits.set_bit(a);
+    }
+    if ax {
+        label.x_bits.set_bit(b);
+    }
+    if bz {
+        label.z_bits.set_bit(a);
+    }
+    if az {
+        label.z_bits.set_bit(b);
+    }
+    Conjugated {
+        label,
+        sign_negative: false,
+    }
 }
 
 /// SX gate on qubit q: X→X, Z→-Y, Y→Z.
@@ -673,18 +835,28 @@ pub fn conjugate_sx<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> 
     let xq = p.x_bits.get_bit(q);
     let zq = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if zq { label.x_bits.xor_bit(q); }
-    Conjugated { label, sign_negative: !xq && zq }
+    if zq {
+        label.x_bits.xor_bit(q);
+    }
+    Conjugated {
+        label,
+        sign_negative: !xq && zq,
+    }
 }
 
-/// SXdg gate on qubit q: X→X, Z→Y, Y→-Z.
+/// `SXdg` gate on qubit q: X→X, Z→Y, Y→-Z.
 #[must_use]
 pub fn conjugate_sxdg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
     let xq = p.x_bits.get_bit(q);
     let zq = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if zq { label.x_bits.xor_bit(q); }
-    Conjugated { label, sign_negative: xq && zq }
+    if zq {
+        label.x_bits.xor_bit(q);
+    }
+    Conjugated {
+        label,
+        sign_negative: xq && zq,
+    }
 }
 
 /// SY gate on qubit q: X→-Z, Y→Y, Z→X.
@@ -697,10 +869,13 @@ pub fn conjugate_sy<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> 
         label.x_bits.xor_bit(q);
         label.z_bits.xor_bit(q);
     }
-    Conjugated { label, sign_negative: xq && !zq }
+    Conjugated {
+        label,
+        sign_negative: xq && !zq,
+    }
 }
 
-/// SYdg gate on qubit q: X→Z, Y→Y, Z→-X.
+/// `SYdg` gate on qubit q: X→Z, Y→Y, Z→-X.
 #[must_use]
 pub fn conjugate_sydg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
     let xq = p.x_bits.get_bit(q);
@@ -710,17 +885,24 @@ pub fn conjugate_sydg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -
         label.x_bits.xor_bit(q);
         label.z_bits.xor_bit(q);
     }
-    Conjugated { label, sign_negative: !xq && zq }
+    Conjugated {
+        label,
+        sign_negative: !xq && zq,
+    }
 }
 
 /// CY (controlled-Y) with control c, target t.
 ///
 /// Decomposed as CY = (I⊗SZ) · CX · (I⊗SZdg), so conjugation is:
-/// 1. conjugate by SZdg on target
+/// 1. conjugate by `SZdg` on target
 /// 2. conjugate by CX
 /// 3. conjugate by SZ on target
 #[must_use]
-pub fn conjugate_cy<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, c: usize, t: usize) -> Conjugated<B> {
+pub fn conjugate_cy<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    c: usize,
+    t: usize,
+) -> Conjugated<B> {
     let r1 = conjugate_szdg(p, t);
     let r2 = conjugate_cx(&r1.label, c, t);
     let r3 = conjugate_sz(&r2.label, t);
@@ -742,14 +924,23 @@ mod tests {
         assert!(PauliBitmask::x(0).commutes_with(&PauliBitmask::x(1)));
         assert!(!PauliBitmask::x(0).commutes_with(&PauliBitmask::y(0)));
 
-        let a = PauliBitmask { x_bits: 1, z_bits: 2 };
-        let b = PauliBitmask { x_bits: 2, z_bits: 1 };
+        let a = PauliBitmask {
+            x_bits: 1,
+            z_bits: 2,
+        };
+        let b = PauliBitmask {
+            x_bits: 2,
+            z_bits: 1,
+        };
         assert!(a.commutes_with(&b));
     }
 
     #[test]
     fn test_multiply() {
-        assert_eq!(PauliBitmask::x(0).multiply(&PauliBitmask::z(0)), PauliBitmask::y(0));
+        assert_eq!(
+            PauliBitmask::x(0).multiply(&PauliBitmask::z(0)),
+            PauliBitmask::y(0)
+        );
     }
 
     #[test]
@@ -796,11 +987,23 @@ mod tests {
     #[test]
     fn test_cx() {
         let r = conjugate_cx(&PauliBitmask::x(0), 0, 1);
-        assert_eq!(r.label, PauliBitmask { x_bits: 0b11, z_bits: 0 });
+        assert_eq!(
+            r.label,
+            PauliBitmask {
+                x_bits: 0b11,
+                z_bits: 0
+            }
+        );
         assert!(!r.sign_negative);
 
         let r = conjugate_cx(&PauliBitmask::z(1), 0, 1);
-        assert_eq!(r.label, PauliBitmask { x_bits: 0, z_bits: 0b11 });
+        assert_eq!(
+            r.label,
+            PauliBitmask {
+                x_bits: 0,
+                z_bits: 0b11
+            }
+        );
         assert!(!r.sign_negative);
 
         let r = conjugate_cx(&PauliBitmask::x(1), 0, 1);
@@ -811,7 +1014,13 @@ mod tests {
     #[test]
     fn test_cz() {
         let r = conjugate_cz(&PauliBitmask::x(0), 0, 1);
-        assert_eq!(r.label, PauliBitmask { x_bits: 1, z_bits: 2 });
+        assert_eq!(
+            r.label,
+            PauliBitmask {
+                x_bits: 1,
+                z_bits: 2
+            }
+        );
         assert!(!r.sign_negative);
 
         let r = conjugate_cz(&PauliBitmask::z(0), 0, 1);
@@ -974,7 +1183,13 @@ mod tests {
     fn test_cy() {
         // X_c → X_c Y_t
         let r = conjugate_cy(&PauliBitmask::x(0), 0, 1);
-        assert_eq!(r.label, PauliBitmask { x_bits: 0b11, z_bits: 0b10 });
+        assert_eq!(
+            r.label,
+            PauliBitmask {
+                x_bits: 0b11,
+                z_bits: 0b10
+            }
+        );
         assert!(!r.sign_negative);
 
         // Z_c → Z_c
@@ -984,12 +1199,24 @@ mod tests {
 
         // X_t → Z_c X_t
         let r = conjugate_cy(&PauliBitmask::x(1), 0, 1);
-        assert_eq!(r.label, PauliBitmask { x_bits: 0b10, z_bits: 0b01 });
+        assert_eq!(
+            r.label,
+            PauliBitmask {
+                x_bits: 0b10,
+                z_bits: 0b01
+            }
+        );
         assert!(!r.sign_negative);
 
         // Z_t → Z_c Z_t
         let r = conjugate_cy(&PauliBitmask::z(1), 0, 1);
-        assert_eq!(r.label, PauliBitmask { x_bits: 0, z_bits: 0b11 });
+        assert_eq!(
+            r.label,
+            PauliBitmask {
+                x_bits: 0,
+                z_bits: 0b11
+            }
+        );
         assert!(!r.sign_negative);
     }
 
@@ -1016,17 +1243,34 @@ mod tests {
         assert_eq!(phase, 0);
 
         // Multi-qubit: (X⊗Z) * (Z⊗X) = (XZ)⊗(ZX) = (-iY)⊗(iY) = (-i·i)(Y⊗Y) = Y⊗Y
-        let a = PauliBitmask { x_bits: 0b01, z_bits: 0b10 }; // XZ
-        let b = PauliBitmask { x_bits: 0b10, z_bits: 0b01 }; // ZX
+        let a = PauliBitmask {
+            x_bits: 0b01,
+            z_bits: 0b10,
+        }; // XZ
+        let b = PauliBitmask {
+            x_bits: 0b10,
+            z_bits: 0b01,
+        }; // ZX
         let (prod, phase) = a.multiply_with_phase(&b);
-        assert_eq!(prod, PauliBitmask { x_bits: 0b11, z_bits: 0b11 }); // YY
+        assert_eq!(
+            prod,
+            PauliBitmask {
+                x_bits: 0b11,
+                z_bits: 0b11
+            }
+        ); // YY
         assert_eq!(phase, 0); // (-i)(i) = 1, phase = 3+1 = 4 mod 4 = 0
     }
 
     #[test]
     fn test_cy_involution() {
         // CY is hermitian (CY² = I), so double conjugation should be identity
-        for p in [PauliBitmask::x(0), PauliBitmask::z(0), PauliBitmask::x(1), PauliBitmask::z(1)] {
+        for p in [
+            PauliBitmask::x(0),
+            PauliBitmask::z(0),
+            PauliBitmask::x(1),
+            PauliBitmask::z(1),
+        ] {
             let r1 = conjugate_cy(&p, 0, 1);
             let r2 = conjugate_cy(&r1.label, 0, 1);
             assert_eq!(r2.label, p);

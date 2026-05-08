@@ -67,6 +67,23 @@ use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
 
+type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
+type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
+
+// Adapter for decoder factories that require `Send + Sync` trait objects.
+// Decoder implementations own their state; Python access remains GIL-mediated.
+struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
+unsafe impl Send for SendWrapper {}
+unsafe impl Sync for SendWrapper {}
+impl pecos_decoders::ObservableDecoder for SendWrapper {
+    fn decode_to_observables(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<u64, pecos_decoders::DecoderError> {
+        self.0.decode_to_observables(syndrome)
+    }
+}
+
 // =============================================================================
 // Fault Location Types
 // =============================================================================
@@ -537,7 +554,7 @@ impl PyDagFaultAnalyzer {
 /// dag = DagCircuit()
 /// # ... build circuit ...
 ///
-/// # Build influence map with tracked operator probes
+/// # Build influence map with tracked Pauli operators
 /// builder = InfluenceBuilder(dag)
 /// builder.with_tracked_z([0, 1, 2])  # Track a Z string on these qubits
 /// influence_map = builder.build()
@@ -2595,7 +2612,7 @@ impl PySampleBatch {
     /// Build from row-major data (from Python constructor).
     fn from_row_major(detection_events: Vec<Vec<u8>>, observable_masks: Vec<u64>) -> Self {
         let num_shots = detection_events.len();
-        let num_detectors = detection_events.first().map_or(0, |r| r.len());
+        let num_detectors = detection_events.first().map_or(0, Vec::len);
         let num_words = num_shots.div_ceil(64);
 
         // Convert row-major → columnar
@@ -2620,9 +2637,9 @@ impl PySampleBatch {
         for (shot, &mask) in observable_masks.iter().enumerate() {
             let word_idx = shot / 64;
             let bit_mask = 1u64 << (shot % 64);
-            for obs_idx in 0..max_obs {
+            for (obs_idx, obs_column) in obs_columns.iter_mut().enumerate().take(max_obs) {
                 if mask & (1u64 << obs_idx) != 0 {
-                    obs_columns[obs_idx][word_idx] |= bit_mask;
+                    obs_column[word_idx] |= bit_mask;
                 }
             }
         }
@@ -2653,7 +2670,7 @@ impl PySampleBatch {
                 observable_masks.len(),
             )));
         }
-        let expected_len = detection_events.first().map_or(0, |r| r.len());
+        let expected_len = detection_events.first().map_or(0, Vec::len);
         for (i, row) in detection_events.iter().enumerate() {
             if row.len() != expected_len {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -2806,9 +2823,7 @@ impl PySampleBatch {
             // Pad or truncate to decoder's num_detectors
             let take = syndrome.len().min(num_detectors);
             flat.extend_from_slice(&syndrome[..take]);
-            for _ in take..num_detectors {
-                flat.push(0);
-            }
+            flat.extend(std::iter::repeat_n(0, num_detectors - take));
         }
 
         let config = BatchConfig {
@@ -3111,13 +3126,13 @@ impl PyDemSampler {
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
-            let inner = RustNewDemSampler::from_circuit(&dag.inner, noise)
+            let inner = RustNewDemSampler::from_circuit(&dag.inner, &noise)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             Ok(Self { inner })
         } else if let Ok(tc) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyTickCircuit>>()
         {
-            let inner = RustNewDemSampler::from_tick_circuit(&tc.inner, noise)
+            let inner = RustNewDemSampler::from_tick_circuit(&tc.inner, &noise)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             Ok(Self { inner })
         } else {
@@ -3153,37 +3168,35 @@ impl PyDemSampler {
             }
 
             // Parse: error(prob) D0 D3 L0
-            if let Some(rest) = line.strip_prefix("error(") {
-                if let Some(paren_end) = rest.find(')') {
-                    let prob: f64 = rest[..paren_end].parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad probability: {e}"))
+            let Some(rest) = line.strip_prefix("error(") else {
+                continue;
+            };
+            let Some(paren_end) = rest.find(')') else {
+                continue;
+            };
+            let prob: f64 = rest[..paren_end].parse().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("bad probability: {e}"))
+            })?;
+            let tokens = rest[paren_end + 1..].split_whitespace();
+            let mut dets = Vec::new();
+            let mut obs = Vec::new();
+            for tok in tokens {
+                if let Some(d) = tok.strip_prefix('D') {
+                    let id: u32 = d.parse().map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
                     })?;
-                    let tokens = rest[paren_end + 1..].split_whitespace();
-                    let mut dets = Vec::new();
-                    let mut obs = Vec::new();
-                    for tok in tokens {
-                        if let Some(d) = tok.strip_prefix('D') {
-                            let id: u32 = d.parse().map_err(|e| {
-                                pyo3::exceptions::PyValueError::new_err(format!(
-                                    "bad detector: {e}"
-                                ))
-                            })?;
-                            dets.push(id);
-                            max_det = max_det.max(id + 1);
-                        } else if let Some(l) = tok.strip_prefix('L') {
-                            let id: u32 = l.parse().map_err(|e| {
-                                pyo3::exceptions::PyValueError::new_err(format!(
-                                    "bad observable: {e}"
-                                ))
-                            })?;
-                            obs.push(id);
-                            max_obs = max_obs.max(id + 1);
-                        }
-                    }
-                    if prob > 0.0 {
-                        mechanisms.push((prob, dets, obs));
-                    }
+                    dets.push(id);
+                    max_det = max_det.max(id + 1);
+                } else if let Some(l) = tok.strip_prefix('L') {
+                    let id: u32 = l.parse().map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
+                    })?;
+                    obs.push(id);
+                    max_obs = max_obs.max(id + 1);
                 }
+            }
+            if prob > 0.0 {
+                mechanisms.push((prob, dets, obs));
             }
         }
 
@@ -3421,7 +3434,9 @@ impl PyDemSampler {
             .filter_map(|&idx| stats.dem_output_counts().get(idx).copied())
             .collect();
         let logical_rates = stats.logical_rates(&observable_indices);
+        #[allow(clippy::cast_precision_loss)] // Counts are converted to rates for Python reporting.
         let n = stats.total_shots as f64;
+        #[allow(clippy::cast_precision_loss)] // Counts are converted to rates for Python reporting.
         let tracked_op_rates: Vec<f64> = per_tracked_op
             .iter()
             .map(|&count| count as f64 / n)
@@ -3928,7 +3943,7 @@ impl PyParsedDem {
     fn to_string_decomposed(&self) -> PyResult<String> {
         self.inner
             .to_string_decomposed()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Aggregate mechanisms by their effect.
@@ -4364,21 +4379,6 @@ impl PyObservableSubgraphDecoder {
             });
         }
 
-        // Wrapper to make any ObservableDecoder Send.
-        // All our decoder implementations own their data (no Rc/RefCell),
-        // so this is safe. The GIL prevents concurrent Python access.
-        struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
-        unsafe impl Send for SendWrapper {}
-        unsafe impl Sync for SendWrapper {}
-        impl pecos_decoders::ObservableDecoder for SendWrapper {
-            fn decode_to_observables(
-                &mut self,
-                syndrome: &[u8],
-            ) -> Result<u64, pecos_decoders::DecoderError> {
-                self.0.decode_to_observables(syndrome)
-            }
-        }
-
         let inner = ObservableSubgraphDecoder::from_dem_windowed(
             dem,
             &rust_stab_coords,
@@ -4506,18 +4506,6 @@ impl PyObservableSubgraphDecoder {
             .num_threads(num_workers.unwrap_or(0))
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
-        unsafe impl Send for SendWrapper {}
-        unsafe impl Sync for SendWrapper {}
-        impl pecos_decoders::ObservableDecoder for SendWrapper {
-            fn decode_to_observables(
-                &mut self,
-                syn: &[u8],
-            ) -> Result<u64, pecos_decoders::DecoderError> {
-                self.0.decode_to_observables(syn)
-            }
-        }
 
         let errors: usize = pool.install(|| {
             // Split into chunks, each chunk gets its own decoder + batch decode
@@ -4685,18 +4673,6 @@ impl PyWindowedOsdDecoder {
 
         let config = WindowedOsdConfig { step, buffer };
 
-        struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
-        unsafe impl Send for SendWrapper {}
-        unsafe impl Sync for SendWrapper {}
-        impl pecos_decoders::ObservableDecoder for SendWrapper {
-            fn decode_to_observables(
-                &mut self,
-                syndrome: &[u8],
-            ) -> Result<u64, pecos_decoders::DecoderError> {
-                self.0.decode_to_observables(syndrome)
-            }
-        }
-
         let inner = WindowedOsdDecoder::from_dem(dem, &sc, &config, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, inner_decoder)
@@ -4813,18 +4789,6 @@ impl PyLogicalAlgorithmDecoder {
             });
         }
 
-        struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
-        unsafe impl Send for SendWrapper {}
-        unsafe impl Sync for SendWrapper {}
-        impl pecos_decoders::ObservableDecoder for SendWrapper {
-            fn decode_to_observables(
-                &mut self,
-                syn: &[u8],
-            ) -> Result<u64, pecos_decoders::DecoderError> {
-                self.0.decode_to_observables(syn)
-            }
-        }
-
         let inner_str = inner_decoder.to_string();
 
         // Build full-circuit OSD from the full DEM
@@ -4913,9 +4877,8 @@ impl PyLogicalAlgorithmDecoder {
             num_observables: num_obs,
         };
 
-        use pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder;
         let algo_dec = LogicalAlgorithmDecoder::new(Box::new(full_osd), algo_desc);
-        let inner = StreamingLogicalDecoder::new(algo_dec);
+        let inner = pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder::new(algo_dec);
         Ok(Self { inner })
     }
 
@@ -5071,18 +5034,6 @@ impl PyLogicalCircuitDecoder {
         }
         let num_qubits = rust_sc.len();
 
-        struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
-        unsafe impl Send for SendWrapper {}
-        unsafe impl Sync for SendWrapper {}
-        impl pecos_decoders::ObservableDecoder for SendWrapper {
-            fn decode_to_observables(
-                &mut self,
-                syn: &[u8],
-            ) -> Result<u64, pecos_decoders::DecoderError> {
-                self.0.decode_to_observables(syn)
-            }
-        }
-
         let inner_str = inner_decoder.to_string();
         let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
@@ -5167,7 +5118,10 @@ impl PyLogicalCircuitDecoder {
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
         // bounded-latency, or a cycle time in microseconds like "1000us".
-        let distance = (num_qubits as f64).sqrt() as usize;
+        let mut distance = 0usize;
+        while distance.saturating_mul(distance) < num_qubits {
+            distance += 1;
+        }
         let decode_budget = match budget {
             "unlimited" | "offline" => DecodeBudget::unlimited(),
             "windowed" => {
@@ -5429,11 +5383,11 @@ fn compare_k_body_rates_rs(
 #[pyfunction]
 #[pyo3(signature = (mechanisms, target_marginals, max_iterations=200, tolerance=1e-12))]
 fn fit_dem_to_marginals(
-    mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
+    mechanisms: Vec<PyDemMechanismTuple>,
     target_marginals: Vec<f64>,
     max_iterations: usize,
     tolerance: f64,
-) -> (Vec<(f64, Vec<u32>, Vec<u32>)>, Vec<f64>) {
+) -> PyDemFitResult {
     use pecos_qec::fault_tolerance::correlation::{
         DemMechanism, fit_dem_to_marginals as fit_inner,
     };
@@ -5558,6 +5512,10 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add("PAULI_Z", 3u8)?;
 
     m.add_submodule(&qec)?;
+
+    // Keep the common DEM sampler import available at the package root for
+    // scripts that use `from pecos_rslib import DemSampler`.
+    m.add("DemSampler", qec.getattr("DemSampler")?)?;
 
     // Register in sys.modules so 'from pecos_rslib.qec import ...' works
     let sys = m.py().import("sys")?;

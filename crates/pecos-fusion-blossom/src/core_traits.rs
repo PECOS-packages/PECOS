@@ -78,7 +78,7 @@ impl pecos_decoder_core::erasure::ObservableErasureDecoder for FusionBlossomDeco
             .decode_with_options(syndrome_data, DecodingOptions::default())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
 
-        let edge_indices: Vec<usize> = result.matched_edges.iter().copied().collect();
+        let edge_indices: Vec<usize> = result.matched_edges.clone();
         Ok(self.obs_mask_from_edges(&edge_indices))
     }
 }
@@ -108,7 +108,7 @@ impl pecos_decoder_core::correlated_decoder::MatchingDecoder for FusionBlossomDe
             .decode_with_options(syndrome_data, DecodingOptions::default())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
 
-        let edge_indices: Vec<usize> = result.matched_edges.iter().copied().collect();
+        let edge_indices: Vec<usize> = result.matched_edges.clone();
         let mask = self.obs_mask_from_edges(&edge_indices);
 
         Ok((mask, edge_indices))
@@ -159,7 +159,7 @@ impl pecos_decoder_core::correlated_decoder::MatchingDecoder for FusionBlossomDe
             .decode_with_options(syndrome_data, DecodingOptions::default())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
 
-        let edge_indices: Vec<usize> = result.matched_edges.iter().copied().collect();
+        let edge_indices: Vec<usize> = result.matched_edges.clone();
         let mask = self.obs_mask_from_edges(&edge_indices);
 
         Ok((mask, edge_indices))

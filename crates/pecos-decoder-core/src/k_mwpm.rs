@@ -99,9 +99,8 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for KMwpmDecoder<D> {
         pq.push((Reverse(0), 0)); // Weight 0 for expansion priority (children will have real weights)
 
         while predictions.len() < k {
-            let (_, node_idx) = match pq.pop() {
-                Some(item) => item,
-                None => break, // No more candidates
+            let Some((_, node_idx)) = pq.pop() else {
+                break; // No more candidates
             };
 
             // Expand this node: for each matched edge from commit_idx onward,
@@ -120,8 +119,8 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for KMwpmDecoder<D> {
                 // Build modified weights: removed edges get infinite weight.
                 let mut weights = vec![0.0f64; self.num_edges];
                 // Start with original weights for all edges.
-                for e in 0..self.num_edges {
-                    weights[e] = self.decoder.edge_weight(e);
+                for (e, weight) in weights.iter_mut().enumerate().take(self.num_edges) {
+                    *weight = self.decoder.edge_weight(e);
                 }
                 // Remove previously removed edges.
                 for &re in &removed_edges {

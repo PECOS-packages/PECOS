@@ -113,6 +113,7 @@ impl<'a> DemBuilder<'a> {
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
     /// from circuit metadata.
+    #[must_use]
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         p1: f64,
@@ -126,6 +127,7 @@ impl<'a> DemBuilder<'a> {
     /// Build a `DetectorErrorModel` from a `TickCircuit` and noise.
     ///
     /// Converts to `DagCircuit` internally.
+    #[must_use]
     pub fn from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
         p1: f64,

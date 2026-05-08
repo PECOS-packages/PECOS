@@ -32,8 +32,18 @@ struct FaultEntry {
     detector_bits: BTreeSet<usize>,
     /// Observable/logical effect as a sorted set.
     logical_bits: BTreeSet<usize>,
-    /// Odds-space weight: absolute_probability / no_fault_probability.
+    /// Odds-space weight: `absolute_probability / no_fault_probability`.
     odds_weight: f64,
+}
+
+#[derive(Clone, Copy)]
+struct SearchState<'a> {
+    start_entry: usize,
+    needed: &'a BTreeSet<usize>,
+    used_locations: &'a BTreeSet<usize>,
+    logical_parity: &'a BTreeSet<usize>,
+    odds_product: f64,
+    depth: usize,
 }
 
 /// Result of decoding a single syndrome.
@@ -57,12 +67,13 @@ pub struct TargetedLookupDecoder {
     max_faults: usize,
     base_prob: f64,
     entries: Vec<FaultEntry>,
-    /// Index: detector_bits -> list of entry indices.
+    /// Index: `detector_bits` -> list of entry indices.
     by_detector: HashMap<BTreeSet<usize>, Vec<usize>>,
 }
 
 impl TargetedLookupDecoder {
     /// Build a decoder from a fault catalog.
+    #[must_use]
     pub fn new(catalog: &FaultCatalog) -> Self {
         let base_prob: f64 = catalog
             .locations
@@ -104,18 +115,21 @@ impl TargetedLookupDecoder {
     }
 
     /// Set the maximum number of simultaneous fault locations to consider.
+    #[must_use]
     pub fn max_faults(mut self, max_faults: usize) -> Self {
         self.max_faults = max_faults;
         self
     }
 
-    /// The all-no-fault probability: product of (1 - p_i) for all locations.
+    /// The all-no-fault probability: product of `(1 - p_i)` for all locations.
+    #[must_use]
     pub fn base_probability(&self) -> f64 {
         self.base_prob
     }
 
-    /// Decode a syndrome: find all explanations up to max_faults and accumulate
+    /// Decode a syndrome: find all explanations up to `max_faults` and accumulate
     /// odds-space weights by logical class.
+    #[must_use]
     pub fn decode(&self, syndrome: &[usize]) -> DecodeResult {
         let target: BTreeSet<usize> = syndrome.iter().copied().collect();
         let mut logical_weights: BTreeMap<Vec<usize>, f64> = BTreeMap::new();
@@ -126,13 +140,13 @@ impl TargetedLookupDecoder {
         }
 
         // k=1: direct lookup
-        if self.max_faults >= 1 {
-            if let Some(indices) = self.by_detector.get(&target) {
-                for &i in indices {
-                    let e = &self.entries[i];
-                    let logical: Vec<usize> = e.logical_bits.iter().copied().collect();
-                    *logical_weights.entry(logical).or_default() += e.odds_weight;
-                }
+        if self.max_faults >= 1
+            && let Some(indices) = self.by_detector.get(&target)
+        {
+            for &i in indices {
+                let e = &self.entries[i];
+                let logical: Vec<usize> = e.logical_bits.iter().copied().collect();
+                *logical_weights.entry(logical).or_default() += e.odds_weight;
             }
         }
 
@@ -161,7 +175,8 @@ impl TargetedLookupDecoder {
         }
     }
 
-    /// k=2 complement lookup: for each entry a, compute needed_b = target XOR a.detectors,
+    /// k=2 complement lookup: for each entry `a`, compute
+    /// `needed_b = target XOR a.detectors`,
     /// then look up entries with that detector effect.
     fn search_k2(&self, target: &BTreeSet<usize>, logical_weights: &mut BTreeMap<Vec<usize>, f64>) {
         for (i, a) in self.entries.iter().enumerate() {
@@ -191,40 +206,35 @@ impl TargetedLookupDecoder {
         target: &BTreeSet<usize>,
         logical_weights: &mut BTreeMap<Vec<usize>, f64>,
     ) {
-        self.search_recursive(
-            k,
-            0, // start_entry
-            target.clone(),
-            BTreeSet::new(), // used_locations
-            BTreeSet::new(), // logical_parity
-            1.0,             // odds_product
-            0,               // depth
-            logical_weights,
-        );
+        let used_locations = BTreeSet::new();
+        let logical_parity = BTreeSet::new();
+        let state = SearchState {
+            start_entry: 0,
+            needed: target,
+            used_locations: &used_locations,
+            logical_parity: &logical_parity,
+            odds_product: 1.0,
+            depth: 0,
+        };
+        self.search_recursive(k, state, logical_weights);
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn search_recursive(
         &self,
         k: usize,
-        start_entry: usize,
-        needed: BTreeSet<usize>,
-        used_locations: BTreeSet<usize>,
-        logical_parity: BTreeSet<usize>,
-        odds_product: f64,
-        depth: usize,
+        state: SearchState<'_>,
         logical_weights: &mut BTreeMap<Vec<usize>, f64>,
     ) {
-        if depth == k {
-            if needed.is_empty() {
-                let logical_vec: Vec<usize> = logical_parity.into_iter().collect();
-                *logical_weights.entry(logical_vec).or_default() += odds_product;
+        if state.depth == k {
+            if state.needed.is_empty() {
+                let logical_vec: Vec<usize> = state.logical_parity.iter().copied().collect();
+                *logical_weights.entry(logical_vec).or_default() += state.odds_product;
             }
             return;
         }
 
-        let remaining = k - depth;
-        for i in start_entry..self.entries.len() {
+        let remaining = k - state.depth;
+        for i in state.start_entry..self.entries.len() {
             // Check if enough entries remain
             if self.entries.len() - i < remaining {
                 break;
@@ -233,27 +243,26 @@ impl TargetedLookupDecoder {
             let entry = &self.entries[i];
 
             // Skip if this location is already used
-            if used_locations.contains(&entry.location_index) {
+            if state.used_locations.contains(&entry.location_index) {
                 continue;
             }
 
-            let new_needed = xor_sets(&needed, &entry.detector_bits);
-            let new_logical = xor_sets(&logical_parity, &entry.logical_bits);
-            let new_odds = odds_product * entry.odds_weight;
+            let new_needed = xor_sets(state.needed, &entry.detector_bits);
+            let new_logical = xor_sets(state.logical_parity, &entry.logical_bits);
+            let new_odds = state.odds_product * entry.odds_weight;
 
-            let mut new_used = used_locations.clone();
+            let mut new_used = state.used_locations.clone();
             new_used.insert(entry.location_index);
 
-            self.search_recursive(
-                k,
-                i + 1,
-                new_needed,
-                new_used,
-                new_logical,
-                new_odds,
-                depth + 1,
-                logical_weights,
-            );
+            let next_state = SearchState {
+                start_entry: i + 1,
+                needed: &new_needed,
+                used_locations: &new_used,
+                logical_parity: &new_logical,
+                odds_product: new_odds,
+                depth: state.depth + 1,
+            };
+            self.search_recursive(k, next_state, logical_weights);
         }
     }
 }

@@ -94,31 +94,31 @@ impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMat
         let bp_weights = self.bp.compute_weights(syndrome);
 
         if let Some(corr) = &self.correlation
-            && corr.has_correlations() {
-                // Two-pass correlated belief-matching.
+            && corr.has_correlations()
+        {
+            // Two-pass correlated belief-matching.
 
-                // First pass: decode with BP weights to get matched edges.
-                let (_, matched_edges) =
-                    self.matching.decode_with_weights(syndrome, &bp_weights)?;
+            // First pass: decode with BP weights to get matched edges.
+            let (_, matched_edges) = self.matching.decode_with_weights(syndrome, &bp_weights)?;
 
-                // Apply correlation adjustments to BP weights.
-                self.adjusted_weights.copy_from_slice(&bp_weights);
-                for &edge_idx in &matched_edges {
-                    if edge_idx < corr.implied_weights.len() {
-                        for iw in &corr.implied_weights[edge_idx] {
-                            if iw.conditional_weight < self.adjusted_weights[iw.target_edge_idx] {
-                                self.adjusted_weights[iw.target_edge_idx] = iw.conditional_weight;
-                            }
+            // Apply correlation adjustments to BP weights.
+            self.adjusted_weights.copy_from_slice(&bp_weights);
+            for &edge_idx in &matched_edges {
+                if edge_idx < corr.implied_weights.len() {
+                    for iw in &corr.implied_weights[edge_idx] {
+                        if iw.conditional_weight < self.adjusted_weights[iw.target_edge_idx] {
+                            self.adjusted_weights[iw.target_edge_idx] = iw.conditional_weight;
                         }
                     }
                 }
-
-                // Second pass: decode with correlation-adjusted weights.
-                let (obs, _) = self
-                    .matching
-                    .decode_with_weights(syndrome, &self.adjusted_weights)?;
-                return Ok(obs);
             }
+
+            // Second pass: decode with correlation-adjusted weights.
+            let (obs, _) = self
+                .matching
+                .decode_with_weights(syndrome, &self.adjusted_weights)?;
+            return Ok(obs);
+        }
 
         // Single-pass belief-matching.
         let (obs, _) = self.matching.decode_with_weights(syndrome, &bp_weights)?;

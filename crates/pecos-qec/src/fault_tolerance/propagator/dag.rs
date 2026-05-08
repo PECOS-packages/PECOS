@@ -88,6 +88,13 @@ pub struct PropagationBuffers {
     pub heap: BinaryHeap<(usize, usize)>,
 }
 
+struct Phase1Request {
+    meas_node: usize,
+    meas_qubit: usize,
+    basis: u8,
+    detector_idx: usize,
+}
+
 // ============================================================================
 // Fault Locations (SoA Layout)
 // ============================================================================
@@ -564,12 +571,12 @@ pub struct DagFaultInfluenceMap {
     pub detectors: Vec<DetectorId>,
 
     /// All measurements in the circuit (node, qubit, basis).
-    /// Ordered by MeasId when gates carry MeasId values.
+    /// Ordered by `MeasId` when gates carry `MeasId` values.
     pub measurements: Vec<(usize, usize, u8)>,
 
-    /// MeasId IDs for each measurement, in the same order as `measurements`.
+    /// `MeasId` IDs for each measurement, in the same order as `measurements`.
     /// When populated, `meas_ids[i]` is the stable identity of `measurements[i]`.
-    /// Empty for legacy circuits without MeasId on gates.
+    /// Empty for legacy circuits without `MeasId` on gates.
     pub meas_ids: Vec<pecos_core::MeasId>,
 
     /// Optional labels for non-detector parity outputs.
@@ -759,8 +766,9 @@ impl DagFaultInfluenceMap {
         self.influences.dem_outputs_x = other.influences.dem_outputs_x.clone();
         self.influences.dem_outputs_y = other.influences.dem_outputs_y.clone();
         self.influences.dem_outputs_z = other.influences.dem_outputs_z.clone();
-        self.dem_output_labels = other.dem_output_labels.clone();
-        self.dem_output_metadata = other.dem_output_metadata.clone();
+        self.dem_output_labels.clone_from(&other.dem_output_labels);
+        self.dem_output_metadata
+            .clone_from(&other.dem_output_metadata);
     }
 
     /// Returns the location at the given index.
@@ -1023,7 +1031,7 @@ impl FaultEffect {
     /// Compose two fault effects (as if both faults occurred).
     ///
     /// - Paulis are multiplied (handles same-qubit algebra + tensor product)
-    /// - Detectors/dem_outputs/measurements are XOR'd (symmetric difference)
+    /// - Detectors, `dem_outputs`, and measurements are XOR'd (symmetric difference)
     ///
     /// This is the building block for weight-w fault analysis:
     /// ```ignore
@@ -1116,7 +1124,7 @@ impl GateFaultLocation<'_> {
     /// All physically possible fault events, including those with no effect.
     ///
     /// Use this for probability-correct enumeration (e.g., ML decoder).
-    /// Events with empty detectors and dem_outputs are "trivial" faults that
+    /// Events with empty detectors and `dem_outputs` are "trivial" faults that
     /// happen with real probability but don't change any observable.
     #[must_use]
     pub fn all_events(&self) -> Vec<FaultEffect> {
@@ -1824,10 +1832,10 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// lower-indexed qubits appear first when they are in the same "layer" of
     /// the circuit.
     #[must_use]
-    /// Extract measurements with optional MeasId IDs.
+    /// Extract measurements with optional `MeasId` IDs.
     ///
     /// Returns `(measurements, meas_ids)` where:
-    /// - `measurements` is `Vec<(node, qubit, basis)>` in MeasId order
+    /// - `measurements` is `Vec<(node, qubit, basis)>` in `MeasId` order
     /// - `meas_ids` is `Vec<MeasId>` (empty for legacy circuits)
     pub fn extract_measurements(&self) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
         let mut entries = Vec::new(); // (sort_key, qubit, node, basis, Option<MeasId>)
@@ -1839,16 +1847,16 @@ impl<'a> DagFaultAnalyzer<'a> {
                     _ => continue,
                 };
 
-                if !gate.meas_ids.is_empty() {
-                    for (i, qubit) in gate.qubits.iter().enumerate() {
-                        let mr = gate.meas_ids.get(i).copied();
-                        let sort_key = mr.map(|m| m.index()).unwrap_or(usize::MAX);
-                        entries.push((sort_key, qubit.index(), node, basis, mr));
-                    }
-                } else {
+                if gate.meas_ids.is_empty() {
                     let topo_pos = self.propagator.topo_position(node);
                     for qubit in &gate.qubits {
                         entries.push((topo_pos, qubit.index(), node, basis, None));
+                    }
+                } else {
+                    for (i, qubit) in gate.qubits.iter().enumerate() {
+                        let mr = gate.meas_ids.get(i).copied();
+                        let sort_key = mr.map_or(usize::MAX, pecos_core::MeasId::index);
+                        entries.push((sort_key, qubit.index(), node, basis, mr));
                     }
                 }
             }
@@ -2035,7 +2043,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
     /// Captured influence entry from Phase 2 (shared tail below PZ).
     /// Stored with `topo_pos` for prefix slicing across measurements.
-
+    ///
     /// Phase 1: propagate from MZ backward through within-round gates,
     /// stopping at the ancilla's PZ. Records influences normally.
     /// Returns the PZ node's topo position, or None if no PZ was hit.
@@ -2044,10 +2052,7 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// the PZ — ready for Phase 2.
     fn propagate_phase1<R: InfluenceRecorder>(
         &self,
-        meas_node: usize,
-        meas_qubit: usize,
-        basis: u8,
-        detector_idx: usize,
+        request: &Phase1Request,
         recorder: &mut R,
         work: &mut PropagationBuffers,
         prop: &mut PauliProp,
@@ -2060,18 +2065,24 @@ impl<'a> DagFaultAnalyzer<'a> {
         heap.clear();
 
         *prop = PauliProp::new();
-        if basis == 0 {
-            prop.track_z(&[meas_qubit]);
+        if request.basis == 0 {
+            prop.track_z(&[request.meas_qubit]);
         } else {
-            prop.track_x(&[meas_qubit]);
+            prop.track_x(&[request.meas_qubit]);
         }
 
-        let meas_topo_pos = self.propagator.topo_position(meas_node);
-        self.record_at_node_generic(meas_node, prop, detector_idx, recorder, true);
+        let meas_topo_pos = self.propagator.topo_position(request.meas_node);
+        self.record_at_node_generic(
+            request.meas_node,
+            prop,
+            request.detector_idx,
+            recorder,
+            true,
+        );
 
-        if meas_qubit <= self.max_qubit() {
-            active_qubits[meas_qubit] = true;
-            for (topo_pos, node) in self.propagator.qubit_gates_backward(meas_qubit) {
+        if request.meas_qubit <= self.max_qubit() {
+            active_qubits[request.meas_qubit] = true;
+            for (topo_pos, node) in self.propagator.qubit_gates_backward(request.meas_qubit) {
                 if topo_pos < meas_topo_pos && !visited[node] {
                     visited[node] = true;
                     heap.push((topo_pos, node));
@@ -2088,7 +2099,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     }
                 }
 
-                self.record_at_node_generic(node, prop, detector_idx, recorder, false);
+                self.record_at_node_generic(node, prop, request.detector_idx, recorder, false);
 
                 if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
                     let pz_topo = self.propagator.topo_position(node);
@@ -2109,7 +2120,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 }
 
                 apply_gate(prop, gate, Direction::Backward);
-                self.record_at_node_generic(node, prop, detector_idx, recorder, true);
+                self.record_at_node_generic(node, prop, request.detector_idx, recorder, true);
 
                 let node_topo_pos = self.propagator.topo_position(node);
                 for (j, q) in gate.qubits.iter().enumerate() {
@@ -2281,20 +2292,21 @@ impl<'a> DagFaultAnalyzer<'a> {
                 sorted.sort_by_key(|&i| self.propagator.topo_position(measurements[i].0));
 
                 // Latest measurement: Phase 1 + Phase 2 with capture
-                let latest = *sorted.last().unwrap();
+                let Some(&latest) = sorted.last() else {
+                    return recorder;
+                };
                 let (l_node, l_qubit, l_basis) = measurements[latest];
 
                 let mut prop = PauliProp::new();
 
-                let _pz_topo = self.propagate_phase1(
-                    l_node,
-                    l_qubit,
-                    l_basis,
-                    latest,
-                    &mut recorder,
-                    &mut work,
-                    &mut prop,
-                );
+                let latest_request = Phase1Request {
+                    meas_node: l_node,
+                    meas_qubit: l_qubit,
+                    basis: l_basis,
+                    detector_idx: latest,
+                };
+                let _pz_topo =
+                    self.propagate_phase1(&latest_request, &mut recorder, &mut work, &mut prop);
                 let tail_capture =
                     self.propagate_phase2_capture(latest, &mut recorder, &mut work, &mut prop);
 
@@ -2302,15 +2314,14 @@ impl<'a> DagFaultAnalyzer<'a> {
                 for &det_idx in sorted[..sorted.len() - 1].iter().rev() {
                     let (m_node, m_qubit, m_basis) = measurements[det_idx];
 
-                    let pz_topo_i = self.propagate_phase1(
-                        m_node,
-                        m_qubit,
-                        m_basis,
-                        det_idx,
-                        &mut recorder,
-                        &mut work,
-                        &mut prop,
-                    );
+                    let request = Phase1Request {
+                        meas_node: m_node,
+                        meas_qubit: m_qubit,
+                        basis: m_basis,
+                        detector_idx: det_idx,
+                    };
+                    let pz_topo_i =
+                        self.propagate_phase1(&request, &mut recorder, &mut work, &mut prop);
 
                     // Replay cached node sequence with correct Pauli state
                     if let Some(pz_pos) = pz_topo_i {

@@ -18,7 +18,7 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
         angles: GateAngles::new(),
         params: GateParams::new(),
-            meas_ids: pecos_core::GateMeasIds::new(),
+        meas_ids: pecos_core::GateMeasIds::new(),
     }
 }
 
@@ -43,18 +43,46 @@ fn audit_stabilizer_group(label: &str, gates: &[Gate], num_qubits: usize) {
     let mut sim = SparseStab::with_seed(num_qubits, 0);
     for g in gates {
         let qs: Vec<QubitId> = g.qubits.iter().copied().collect();
-        if qs.is_empty() { continue; }
+        if qs.is_empty() {
+            continue;
+        }
         match g.gate_type {
-            GateType::PZ | GateType::QAlloc => { for &q in &qs { sim.pz(&[q]); } }
-            GateType::H => { sim.h(&qs); }
-            GateType::SZ => { sim.sz(&qs); }
-            GateType::SZdg => { sim.szdg(&qs); }
-            GateType::X => { sim.x(&qs); }
-            GateType::Y => { sim.y(&qs); }
-            GateType::Z => { sim.z(&qs); }
-            GateType::CX => { if qs.len() >= 2 { sim.cx(&[(qs[0], qs[1])]); } }
-            GateType::CZ => { if qs.len() >= 2 { sim.cz(&[(qs[0], qs[1])]); } }
-            GateType::MZ => { sim.mz(&qs); }
+            GateType::PZ | GateType::QAlloc => {
+                for &q in &qs {
+                    sim.pz(&[q]);
+                }
+            }
+            GateType::H => {
+                sim.h(&qs);
+            }
+            GateType::SZ => {
+                sim.sz(&qs);
+            }
+            GateType::SZdg => {
+                sim.szdg(&qs);
+            }
+            GateType::X => {
+                sim.x(&qs);
+            }
+            GateType::Y => {
+                sim.y(&qs);
+            }
+            GateType::Z => {
+                sim.z(&qs);
+            }
+            GateType::CX => {
+                if qs.len() >= 2 {
+                    sim.cx(&[(qs[0], qs[1])]);
+                }
+            }
+            GateType::CZ => {
+                if qs.len() >= 2 {
+                    sim.cz(&[(qs[0], qs[1])]);
+                }
+            }
+            GateType::MZ => {
+                sim.mz(&qs);
+            }
             _ => {}
         }
     }
@@ -95,9 +123,11 @@ fn audit_stabilizer_group(label: &str, gates: &[Gate], num_qubits: usize) {
         }
     }
 
-    assert!(failures.is_empty(),
+    assert!(
+        failures.is_empty(),
         "{label}: {}/{max_subsets} stabilizer products not found by is_stabilizer",
-        failures.len());
+        failures.len()
+    );
 }
 
 #[test]
@@ -109,65 +139,92 @@ fn audit_simple_states() {
     audit_stabilizer_group("|+>", &[gate(GateType::H, &[0])], 1);
 
     // Bell state
-    audit_stabilizer_group("|Phi+>", &[
-        gate(GateType::H, &[0]),
-        gate(GateType::CX, &[0, 1]),
-    ], 2);
+    audit_stabilizer_group(
+        "|Phi+>",
+        &[gate(GateType::H, &[0]), gate(GateType::CX, &[0, 1])],
+        2,
+    );
 }
 
 #[test]
 fn audit_syndrome_extraction() {
     // Simple 2-qubit Z-check with ancilla: PZ(0,1,2), CX(0,2), CX(1,2), MZ(2)
-    audit_stabilizer_group("Z-check 2q", &[
-        gate(GateType::PZ, &[0]),
-        gate(GateType::PZ, &[1]),
-        gate(GateType::PZ, &[2]),
-        gate(GateType::CX, &[0, 2]),
-        gate(GateType::CX, &[1, 2]),
-        gate(GateType::MZ, &[2]),
-    ], 3);
+    audit_stabilizer_group(
+        "Z-check 2q",
+        &[
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::CX, &[0, 2]),
+            gate(GateType::CX, &[1, 2]),
+            gate(GateType::MZ, &[2]),
+        ],
+        3,
+    );
 
     // X-check: H(2), CX(2,0), CX(2,1), H(2), MZ(2)
-    audit_stabilizer_group("X-check 2q", &[
-        gate(GateType::PZ, &[0]),
-        gate(GateType::PZ, &[1]),
-        gate(GateType::PZ, &[2]),
-        gate(GateType::H, &[2]),
-        gate(GateType::CX, &[2, 0]),
-        gate(GateType::CX, &[2, 1]),
-        gate(GateType::H, &[2]),
-        gate(GateType::MZ, &[2]),
-    ], 3);
+    audit_stabilizer_group(
+        "X-check 2q",
+        &[
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::H, &[2]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
+            gate(GateType::H, &[2]),
+            gate(GateType::MZ, &[2]),
+        ],
+        3,
+    );
 }
 
 #[test]
 fn audit_d2_zbasis_pre_readout() {
     // d=2 Z-basis surface code, 2 rounds, pre-readout circuit
     let gates = vec![
-        gate(GateType::PZ, &[0]), gate(GateType::PZ, &[1]),
-        gate(GateType::PZ, &[2]), gate(GateType::PZ, &[3]),
-        gate(GateType::PZ, &[4]), gate(GateType::PZ, &[5]),
+        gate(GateType::PZ, &[0]),
+        gate(GateType::PZ, &[1]),
+        gate(GateType::PZ, &[2]),
+        gate(GateType::PZ, &[3]),
+        gate(GateType::PZ, &[4]),
+        gate(GateType::PZ, &[5]),
         gate(GateType::PZ, &[6]),
         // Round 1
-        gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-        gate(GateType::CX, &[1, 6]), gate(GateType::CX, &[5, 3]),
-        gate(GateType::CX, &[3, 6]), gate(GateType::CX, &[5, 2]),
-        gate(GateType::CX, &[4, 1]), gate(GateType::CX, &[0, 6]),
-        gate(GateType::CX, &[4, 0]), gate(GateType::CX, &[2, 6]),
-        gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-        gate(GateType::MZ, &[4]), gate(GateType::MZ, &[5]),
+        gate(GateType::H, &[4]),
+        gate(GateType::H, &[5]),
+        gate(GateType::CX, &[1, 6]),
+        gate(GateType::CX, &[5, 3]),
+        gate(GateType::CX, &[3, 6]),
+        gate(GateType::CX, &[5, 2]),
+        gate(GateType::CX, &[4, 1]),
+        gate(GateType::CX, &[0, 6]),
+        gate(GateType::CX, &[4, 0]),
+        gate(GateType::CX, &[2, 6]),
+        gate(GateType::H, &[4]),
+        gate(GateType::H, &[5]),
+        gate(GateType::MZ, &[4]),
+        gate(GateType::MZ, &[5]),
         gate(GateType::MZ, &[6]),
         // Reset
-        gate(GateType::PZ, &[4]), gate(GateType::PZ, &[5]),
+        gate(GateType::PZ, &[4]),
+        gate(GateType::PZ, &[5]),
         gate(GateType::PZ, &[6]),
         // Round 2
-        gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-        gate(GateType::CX, &[1, 6]), gate(GateType::CX, &[5, 3]),
-        gate(GateType::CX, &[3, 6]), gate(GateType::CX, &[5, 2]),
-        gate(GateType::CX, &[4, 1]), gate(GateType::CX, &[0, 6]),
-        gate(GateType::CX, &[4, 0]), gate(GateType::CX, &[2, 6]),
-        gate(GateType::H, &[4]), gate(GateType::H, &[5]),
-        gate(GateType::MZ, &[4]), gate(GateType::MZ, &[5]),
+        gate(GateType::H, &[4]),
+        gate(GateType::H, &[5]),
+        gate(GateType::CX, &[1, 6]),
+        gate(GateType::CX, &[5, 3]),
+        gate(GateType::CX, &[3, 6]),
+        gate(GateType::CX, &[5, 2]),
+        gate(GateType::CX, &[4, 1]),
+        gate(GateType::CX, &[0, 6]),
+        gate(GateType::CX, &[4, 0]),
+        gate(GateType::CX, &[2, 6]),
+        gate(GateType::H, &[4]),
+        gate(GateType::H, &[5]),
+        gate(GateType::MZ, &[4]),
+        gate(GateType::MZ, &[5]),
         gate(GateType::MZ, &[6]),
     ];
     audit_stabilizer_group("d=2 Z-basis pre-readout", &gates, 7);

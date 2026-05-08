@@ -27,6 +27,7 @@
 
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -342,9 +343,10 @@ impl UfDecoder {
     pub fn decode_syndrome(&mut self, syndrome: &[u8]) -> u64 {
         // Try cluster-detection predecoder (if enabled).
         if self.config.predecoder
-            && let Some(obs) = self.predecode_clusters(syndrome) {
-                return obs;
-            }
+            && let Some(obs) = self.predecode_clusters(syndrome)
+        {
+            return obs;
+        }
 
         // Full decoder path for complex syndromes.
         self.reset();
@@ -460,8 +462,8 @@ impl UfDecoder {
             } else if comp_size[root] == 2 {
                 // Find the other defect in this component.
                 let mut ni = None;
-                for dj in (di + 1)..n {
-                    if component[dj] == root {
+                for (dj, &candidate_root) in component.iter().enumerate().take(n).skip(di + 1) {
+                    if candidate_root == root {
                         ni = Some(dj);
                         break;
                     }
@@ -977,6 +979,10 @@ impl UfDecoder {
 
     /// Decode with full UF (no predecoder) and return matched edges.
     /// Used by windowed decoder which needs complete edge tracking.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if decoding fails.
     pub fn decode_full_matching(
         &mut self,
         syndrome: &[u8],
@@ -1077,9 +1083,10 @@ impl pecos_decoder_core::correlated_decoder::MatchingDecoder for UfDecoder {
         // Cluster predecoder (if enabled). Skipped in windowed mode
         // because windowed decoding needs complete edge tracking.
         if self.config.predecoder
-            && let Some(obs) = self.predecode_clusters(syndrome) {
-                return Ok((obs, Vec::new()));
-            }
+            && let Some(obs) = self.predecode_clusters(syndrome)
+        {
+            return Ok((obs, Vec::new()));
+        }
 
         // Full decode path.
         self.reset();
@@ -1169,7 +1176,6 @@ impl pecos_decoder_core::erasure::ObservableErasureDecoder for UfDecoder {
             }
         }
 
-        use pecos_decoder_core::correlated_decoder::MatchingDecoder;
         let (obs, _) = self.decode_with_weights(syndrome, &modified_weights)?;
         Ok(obs)
     }

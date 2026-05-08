@@ -24,8 +24,8 @@
 use crate::Bm;
 use crate::eeg::EegType;
 use crate::noise::{NoiseInjection, NoiseSpec};
-use pecos_core::gate_type::GateType;
 use pecos_core::Gate;
+use pecos_core::gate_type::GateType;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
@@ -70,9 +70,10 @@ pub fn compress_noise_to_boundaries(
     expansion_gates: &[bool],
 ) -> CompressedNoise {
     let n_gates = gates.len();
-    let max_qubit = gates.iter()
+    let max_qubit = gates
+        .iter()
         .flat_map(|g| g.qubits.iter())
-        .map(|q| q.index())
+        .map(pecos_core::QubitId::index)
         .max()
         .unwrap_or(0);
 
@@ -82,7 +83,8 @@ pub fn compress_noise_to_boundaries(
         if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
             continue;
         }
-        let qubits: SmallVec<[usize; 4]> = gate.qubits.iter().map(|q| q.index()).collect();
+        let qubits: SmallVec<[usize; 4]> =
+            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
         for inj in injections {
             all_noise.push((gate_idx, inj));
@@ -129,8 +131,11 @@ pub fn compress_noise_to_boundaries(
             match gates[g].gate_type {
                 GateType::MZ | GateType::MeasureFree | GateType::PZ | GateType::QAlloc => {
                     let noise_qubits: Vec<usize> = label_qubits(&label, max_qubit);
-                    let boundary_qubits: Vec<usize> = gates[g].qubits.iter()
-                        .map(|q| q.index()).collect();
+                    let boundary_qubits: Vec<usize> = gates[g]
+                        .qubits
+                        .iter()
+                        .map(pecos_core::QubitId::index)
+                        .collect();
                     if noise_qubits.iter().any(|q| boundary_qubits.contains(q)) {
                         // Inject at the gate just before the boundary
                         // (inject_at was set to g-1 by the last non-boundary gate)
@@ -158,19 +163,16 @@ pub fn compress_noise_to_boundaries(
     let boundary_sources: Vec<BoundaryNoise> = boundary_groups
         .into_iter()
         .filter(|(_, value)| value.abs() > 1e-20)
-        .map(|((boundary_gate, label, eeg_type), value)| {
-            BoundaryNoise {
-                label,
-                eeg_type,
-                value,
-                boundary_gate,
-            }
+        .map(|((boundary_gate, label, eeg_type), value)| BoundaryNoise {
+            label,
+            eeg_type,
+            value,
+            boundary_gate,
         })
         .collect();
 
-    let compressed_count = boundary_sources.len()
-        + measurement_sources.len()
-        + preparation_sources.len();
+    let compressed_count =
+        boundary_sources.len() + measurement_sources.len() + preparation_sources.len();
 
     CompressedNoise {
         boundary_sources,
@@ -201,9 +203,14 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
     use crate::heisenberg::{SparsePauli, sparse_conjugate};
 
     match gate.gate_type {
-        GateType::PZ | GateType::QAlloc | GateType::QFree
-        | GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        | GateType::I | GateType::Idle => return,
+        GateType::PZ
+        | GateType::QAlloc
+        | GateType::QFree
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureLeaked
+        | GateType::I
+        | GateType::Idle => return,
         _ => {}
     }
 
@@ -272,12 +279,15 @@ impl CompressedNoiseSpec {
 
         // Boundary sources → noise at boundary gate
         for bn in &compressed.boundary_sources {
-            gate_noise.entry(bn.boundary_gate).or_default().push(NoiseInjection {
-                eeg_type: bn.eeg_type,
-                label: bn.label.clone(),
-                label2: None,
-                rate: bn.value,
-            });
+            gate_noise
+                .entry(bn.boundary_gate)
+                .or_default()
+                .push(NoiseInjection {
+                    eeg_type: bn.eeg_type,
+                    label: bn.label.clone(),
+                    label2: None,
+                    rate: bn.value,
+                });
         }
 
         // Measurement and prep sources stay at original positions
@@ -299,7 +309,10 @@ impl NoiseSpec for CompressedNoiseSpec {
         _gate_type: GateType,
         _qubits: &[usize],
     ) -> Vec<NoiseInjection> {
-        self.gate_noise.get(&gate_index).cloned().unwrap_or_default()
+        self.gate_noise
+            .get(&gate_index)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -320,11 +333,21 @@ mod tests {
             crate::expand::make_gate(GateType::MZ, &[0]),
             crate::expand::make_gate(GateType::MZ, &[1]),
         ];
-        let noise = UniformNoise { idle_rz: 0.0, p1: 0.001, p2: 0.01, p_meas: 0.01, p_prep: 0.01 };
+        let noise = UniformNoise {
+            idle_rz: 0.0,
+            p1: 0.001,
+            p2: 0.01,
+            p_meas: 0.01,
+            p_prep: 0.01,
+        };
         let expansion = vec![false; gates.len()];
 
         let result = compress_noise_to_boundaries(&gates, &noise, &expansion);
-        assert!(result.compressed_count < result.original_count,
-            "compressed {} should be < original {}", result.compressed_count, result.original_count);
+        assert!(
+            result.compressed_count < result.original_count,
+            "compressed {} should be < original {}",
+            result.compressed_count,
+            result.original_count
+        );
     }
 }

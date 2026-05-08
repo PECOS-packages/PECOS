@@ -209,12 +209,13 @@ fn parse_component_edge_key(component: &str) -> Option<EdgeKey> {
     let mut detectors: Vec<u32> = Vec::new();
     for token in component.split_whitespace() {
         if let Some(d_str) = token.strip_prefix('D')
-            && let Ok(d) = d_str.parse::<u32>() {
-                detectors.push(d);
-            }
+            && let Ok(d) = d_str.parse::<u32>()
+        {
+            detectors.push(d);
+        }
     }
+    // Pure observables and hyperedges do not define graph edges.
     match detectors.len() {
-        0 => None,                           // Pure observable, no edge
         1 => Some((detectors[0], u32::MAX)), // Boundary edge
         2 => {
             let (a, b) = if detectors[0] <= detectors[1] {
@@ -224,7 +225,7 @@ fn parse_component_edge_key(component: &str) -> Option<EdgeKey> {
             };
             Some((a, b))
         }
-        _ => None, // Hyperedge, skip
+        _ => None,
     }
 }
 

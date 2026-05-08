@@ -24,13 +24,21 @@
 use crate::ObservableDecoder;
 use crate::errors::DecoderError;
 
+type DecoderFactory = dyn FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>;
+
+fn fraction(numerator: usize, denominator: usize) -> f64 {
+    let numerator = u32::try_from(numerator).expect("monitoring count fits in u32");
+    let denominator = u32::try_from(denominator).expect("monitoring window fits in u32");
+    f64::from(numerator) / f64::from(denominator)
+}
+
 /// Adaptive decoder that rebuilds when noise changes.
 ///
 /// Holds a decoder factory and the current DEM. When `update_dem` is
 /// called with a new DEM string, the decoder is rebuilt transparently.
 pub struct AdaptiveDecoder {
     decoder: Box<dyn ObservableDecoder>,
-    factory: Box<dyn FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>>,
+    factory: Box<DecoderFactory>,
     current_dem: String,
     rebuild_count: usize,
     /// Calibration monitoring: recent outcomes (true = logical error).
@@ -109,7 +117,7 @@ impl AdaptiveDecoder {
             return false; // Not enough data
         }
         let errors = self.recent_outcomes.iter().filter(|&&e| e).count();
-        let rate = errors as f64 / self.recent_outcomes.len() as f64;
+        let rate = fraction(errors, self.recent_outcomes.len());
         rate > self.recalibration_threshold
     }
 
@@ -120,7 +128,7 @@ impl AdaptiveDecoder {
             return 0.0;
         }
         let errors = self.recent_outcomes.iter().filter(|&&e| e).count();
-        errors as f64 / self.recent_outcomes.len() as f64
+        fraction(errors, self.recent_outcomes.len())
     }
 
     /// Set the monitoring window size and recalibration threshold.

@@ -10,6 +10,20 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Experimental PyO3 binding signatures are constrained by Python-callable APIs
+// and generated method wrappers. Python docstrings also contain Python snippets
+// that Clippy's Rust-doc Markdown lint misclassifies. Keep this list limited to
+// binding/docs shape lints.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::unnecessary_wraps,
+    clippy::unused_self
+)]
+
 //! Python bindings for experimental PECOS simulators.
 //!
 //! Exposes `StabMps` (stabilizer + MPS hybrid) and `Mast` (magic state

@@ -298,8 +298,10 @@ impl<'de> Deserialize<'de> for Operation {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| D::Error::custom("missing variable"))?
                     .to_string();
-                let size: Option<usize> =
-                    obj.get("size").and_then(|v| v.as_u64().map(|n| n as usize));
+                let size: Option<usize> = obj
+                    .get("size")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok());
                 Ok(Operation::VariableDefinition {
                     data,
                     data_type,

@@ -111,10 +111,10 @@ pub fn compact_ticks(circuit: &mut TickCircuit) {
     CompactTicks.apply_tick(circuit);
 }
 
-/// Assign MeasId to measurement gates that don't have them.
+/// Assign `MeasId` to measurement gates that don't have them.
 ///
-/// Walks the circuit in tick order and assigns sequential MeasIds
-/// to any MZ/MeasureFree gate with empty `meas_ids`. Existing MeasIds
+/// Walks the circuit in tick order and assigns sequential `MeasId`s
+/// to any MZ/MeasureFree gate with empty `meas_ids`. Existing `MeasId`s
 /// are preserved. New IDs continue from the circuit's current counter.
 pub fn assign_missing_meas_ids(circuit: &mut TickCircuit) {
     AssignMissingMeasIds.apply_tick(circuit);
@@ -1191,7 +1191,7 @@ impl CircuitPass for CompactTicks {
 /// New IDs continue from the circuit's current measurement counter.
 ///
 /// Use this on circuits from external sources (QIS trace, Stim import)
-/// that don't assign MeasId during construction.
+/// that don't assign `MeasId` during construction.
 pub struct AssignMissingMeasIds;
 
 impl CircuitPass for AssignMissingMeasIds {
@@ -1201,7 +1201,7 @@ impl CircuitPass for AssignMissingMeasIds {
             for gate in tick.gates_mut() {
                 let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
                 if is_measurement && gate.meas_ids.is_empty() {
-                    for _ in gate.qubits.iter() {
+                    for _ in &gate.qubits {
                         gate.meas_ids.push(pecos_core::MeasId(next_id));
                         next_id += 1;
                     }

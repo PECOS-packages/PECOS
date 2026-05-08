@@ -11,6 +11,17 @@
 //! - `matrix` - Common matrix types and check matrix traits
 //! - `dem` - Detector error model traits and utilities
 
+// Decoder prototypes expose public traits while the API is still stabilizing,
+// and their metrics/index conversions intentionally cross integer and floating
+// domains. Keep this list narrow: mechanical style lints are fixed in code.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value
+)]
+
 pub mod adaptive;
 pub mod advanced;
 pub mod bp_matching;

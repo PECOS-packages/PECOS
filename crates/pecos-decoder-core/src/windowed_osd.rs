@@ -133,10 +133,12 @@ impl WindowedOsdDecoder {
 
             for d in 0..num_detectors {
                 if let Some(&t) = det_time.get(&d)
-                    && t >= win_start && t < win_end {
-                        local_to_global.push(d);
-                        is_core.push(t >= t_start && t < core_end);
-                    }
+                    && t >= win_start
+                    && t < win_end
+                {
+                    local_to_global.push(d);
+                    is_core.push(t >= t_start && t < core_end);
+                }
             }
 
             if local_to_global.is_empty() {

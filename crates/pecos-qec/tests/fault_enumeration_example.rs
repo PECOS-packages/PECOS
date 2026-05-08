@@ -380,7 +380,7 @@ fn repetition_code_ml_decoder() {
     println!("  Max weight:        {}", decoder.max_weight());
 
     // Build sampler for testing
-    let sampler = DemSampler::from_circuit(&dag, noise).unwrap();
+    let sampler = DemSampler::from_circuit(&dag, &noise).unwrap();
 
     // Sample and decode
     let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
@@ -722,7 +722,7 @@ fn code_422_ml_decoder() {
     println!("  Observables:       {}", decoder.num_observables());
 
     // Build sampler
-    let sampler = DemSampler::from_circuit(&dag, noise).unwrap();
+    let sampler = DemSampler::from_circuit(&dag, &noise).unwrap();
 
     // Sample and decode
     let mut rng = rand::rngs::SmallRng::seed_from_u64(42);

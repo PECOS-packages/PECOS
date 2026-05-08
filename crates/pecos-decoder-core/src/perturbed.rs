@@ -54,18 +54,18 @@ pub fn perturb_dem(dem: &str, sigma: f64, rng: &mut dyn FnMut() -> f64) -> Strin
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("error(")
             && let Some(close) = rest.find(')')
-                && let Ok(p) = rest[..close].parse::<f64>() {
-                    let u1 = rng().max(1e-10);
-                    let u2 = rng();
-                    let z =
-                        (-2.0_f64 * u1.ln()).sqrt() * (2.0_f64 * std::f64::consts::PI * u2).cos();
-                    let factor = (sigma * z).exp();
-                    let p_new = (p * factor).clamp(1e-15, 0.499);
-                    let _ = write!(out, "error({p_new})");
-                    out.push_str(&rest[close..]);
-                    out.push('\n');
-                    continue;
-                }
+            && let Ok(p) = rest[..close].parse::<f64>()
+        {
+            let u1 = rng().max(1e-10);
+            let u2 = rng();
+            let z = (-2.0_f64 * u1.ln()).sqrt() * (2.0_f64 * std::f64::consts::PI * u2).cos();
+            let factor = (sigma * z).exp();
+            let p_new = (p * factor).clamp(1e-15, 0.499);
+            let _ = write!(out, "error({p_new})");
+            out.push_str(&rest[close..]);
+            out.push('\n');
+            continue;
+        }
         out.push_str(trimmed);
         out.push('\n');
     }
@@ -179,10 +179,11 @@ mod tests {
         for line in perturbed.lines() {
             let trimmed = line.trim();
             if let Some(rest) = trimmed.strip_prefix("error(")
-                && let Some(close) = rest.find(')') {
-                    let p: f64 = rest[..close].parse().unwrap();
-                    assert!(p > 0.0 && p < 0.5, "p={p} out of bounds");
-                }
+                && let Some(close) = rest.find(')')
+            {
+                let p: f64 = rest[..close].parse().unwrap();
+                assert!(p > 0.0 && p < 0.5, "p={p} out of bounds");
+            }
         }
     }
 

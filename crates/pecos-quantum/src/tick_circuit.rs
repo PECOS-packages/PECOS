@@ -2197,18 +2197,18 @@ impl From<&TickCircuit> for DagCircuit {
                         .map(|(chunk_idx, qs)| {
                             // For measurement gates, distribute MeasId values
                             // to the split gates (one per qubit).
-                            let mr = if !gate.meas_ids.is_empty() {
+                            let mr = if gate.meas_ids.is_empty() {
+                                GateMeasIds::new()
+                            } else {
                                 let start = chunk_idx * chunk_size;
                                 gate.meas_ids
                                     .get(start..start + chunk_size)
-                                    .map(|s| GateMeasIds::from_iter(s.iter().copied()))
+                                    .map(|s| s.iter().copied().collect::<GateMeasIds>())
                                     .unwrap_or_default()
-                            } else {
-                                GateMeasIds::new()
                             };
                             Gate {
                                 gate_type: gate.gate_type,
-                                qubits: GateQubits::from_iter(qs.iter().copied()),
+                                qubits: qs.iter().copied().collect::<GateQubits>(),
                                 angles: gate.angles.clone(),
                                 params: gate.params.clone(),
                                 meas_ids: mr,

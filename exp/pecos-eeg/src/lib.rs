@@ -10,6 +10,19 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The EEG crate is experimental physics/math code. Its core routines use
+// numerical casts and dense index-based algebra, and the public API is still
+// stabilizing. Keep this list narrow and fix ordinary style lints in code.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
+
 //! Elementary Error Generator (EEG) analysis for coherent noise.
 //!
 //! Propagates error generators through Clifford circuits and produces
@@ -32,12 +45,12 @@ pub mod correlation_table;
 pub mod dem_generator;
 pub mod dem_mapping;
 pub mod dem_simulator;
-pub mod noise_characterization;
-pub mod noise_compression;
 pub mod eeg;
 pub mod expand;
 pub mod heisenberg;
 pub mod noise;
+pub mod noise_characterization;
+pub mod noise_compression;
 pub mod propagate;
 pub mod stabilizer;
 pub mod strong_sim;

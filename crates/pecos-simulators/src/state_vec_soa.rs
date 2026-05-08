@@ -4504,10 +4504,8 @@ where
                             let scaled_im: [f64; 4] = (norm_vec * im).into();
                             self.real[i + j..i + j + 4].copy_from_slice(&scaled_re);
                             self.imag[i + j..i + j + 4].copy_from_slice(&scaled_im);
-                            self.real[i + step + j..i + step + j + 4]
-                                .copy_from_slice(&[0.0; 4]);
-                            self.imag[i + step + j..i + step + j + 4]
-                                .copy_from_slice(&[0.0; 4]);
+                            self.real[i + step + j..i + step + j + 4].copy_from_slice(&[0.0; 4]);
+                            self.imag[i + step + j..i + step + j + 4].copy_from_slice(&[0.0; 4]);
                             j += 4;
                         }
                     } else {

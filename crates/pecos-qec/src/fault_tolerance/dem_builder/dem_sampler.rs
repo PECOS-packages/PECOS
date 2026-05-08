@@ -1798,6 +1798,12 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     num_tc_measurements: Option<usize>,
 }
 
+struct FaultMechanismContext<'a> {
+    im_to_tc: Option<&'a [usize]>,
+    influence_observable_ids: &'a BTreeSet<u32>,
+    num_tc_measurements: usize,
+}
+
 impl<'a> SamplingEngineBuilder<'a> {
     /// Create a new builder from an influence map.
     #[must_use]
@@ -1892,6 +1898,11 @@ impl<'a> SamplingEngineBuilder<'a> {
 
         // Build IM -> TC index mapping
         let im_to_tc = self.build_im_to_tc_mapping();
+        let mechanism_context = FaultMechanismContext {
+            im_to_tc: im_to_tc.as_deref(),
+            influence_observable_ids: &influence_observable_ids,
+            num_tc_measurements,
+        };
 
         // Aggregation map: mechanism -> probability
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
@@ -1909,9 +1920,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             loc_idx,
                             Pauli::X,
                             self.p_prep,
-                            im_to_tc.as_deref(),
-                            &influence_observable_ids,
-                            num_tc_measurements,
+                            &mechanism_context,
                             &mut aggregated,
                         );
                     }
@@ -1922,9 +1931,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             loc_idx,
                             Pauli::X,
                             self.p_meas,
-                            im_to_tc.as_deref(),
-                            &influence_observable_ids,
-                            num_tc_measurements,
+                            &mechanism_context,
                             &mut aggregated,
                         );
                     }
@@ -2109,17 +2116,15 @@ impl<'a> SamplingEngineBuilder<'a> {
         loc_idx: usize,
         pauli: Pauli,
         prob: f64,
-        im_to_tc: Option<&[usize]>,
-        influence_observable_ids: &BTreeSet<u32>,
-        num_tc_measurements: usize,
+        context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
         let mechanism = self.compute_mechanism(
             loc_idx,
             pauli,
-            im_to_tc,
-            influence_observable_ids,
-            num_tc_measurements,
+            context.im_to_tc,
+            context.influence_observable_ids,
+            context.num_tc_measurements,
         );
         if !mechanism.is_empty() {
             let entry = aggregated.entry(mechanism).or_insert(0.0);

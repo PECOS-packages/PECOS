@@ -143,14 +143,15 @@ impl SparseDem {
                                     }
                                 }
                             } else if let Some(l_str) = token.strip_prefix('L')
-                                && let Some(l) = parse_u32_fast(l_str.as_bytes()) {
-                                    if !obs_set.remove(&l) {
-                                        obs_set.insert(l);
-                                    }
-                                    if l > max_observable {
-                                        max_observable = l;
-                                    }
+                                && let Some(l) = parse_u32_fast(l_str.as_bytes())
+                            {
+                                if !obs_set.remove(&l) {
+                                    obs_set.insert(l);
                                 }
+                                if l > max_observable {
+                                    max_observable = l;
+                                }
+                            }
                         }
                     }
                     mechanisms.push((
@@ -373,7 +374,7 @@ pub struct ObservableSubgraph {
 ///
 /// Returns error if the DEM is malformed or detector coordinates don't
 /// match any stabilizer position.
-
+///
 /// Extra time padding around each boundary edge.
 /// `None` = exact boundary edge times only (default, matches lomatching).
 /// `Some(r)` = include detectors at times `t ± r` around each boundary
@@ -400,15 +401,16 @@ pub fn partition_dem_by_observable_windowed(
     let mut det_group: Vec<Option<DetectorGroup>> = vec![None; sdem.num_detectors];
     let mut group_detectors: BTreeMap<DetectorGroup, BTreeSet<usize>> = BTreeMap::new();
 
-    for d in 0..sdem.num_detectors {
+    for (d, group_slot) in det_group.iter_mut().enumerate().take(sdem.num_detectors) {
         if let Some(coords) = coord_map.get(&d)
-            && coords.len() >= 2 {
-                let (x, y) = (coords[0], coords[1]);
-                if let Some(group) = classify_detector(x, y, stab_coords) {
-                    det_group[d] = Some(group);
-                    group_detectors.entry(group).or_default().insert(d);
-                }
+            && coords.len() >= 2
+        {
+            let (x, y) = (coords[0], coords[1]);
+            if let Some(group) = classify_detector(x, y, stab_coords) {
+                *group_slot = Some(group);
+                group_detectors.entry(group).or_default().insert(d);
             }
+        }
     }
 
     // For each observable, find its observing region.

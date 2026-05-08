@@ -55,7 +55,7 @@ pub enum DetectorValidationError {
     LinearlyDependent { rank: usize, num_detectors: usize },
     /// Circuit contains gates not supported by the symbolic determinism analysis.
     /// Raw measurement mode requires all gates to be in the supported Clifford
-    /// subset (H, X, Y, Z, SZ, SZdg, CX, CZ, SWAP, MZ, PZ, I).
+    /// subset (`H`, `X`, `Y`, `Z`, `SZ`, `SZdg`, `CX`, `CZ`, `SWAP`, `MZ`, `PZ`, `I`).
     UnsupportedGateForDeterminismAnalysis { gate_type: String },
 }
 
@@ -276,7 +276,7 @@ pub struct DemSampler {
     inner: SamplingEngine,
 
     /// Which output indices are non-deterministic (true = coin flip, not from mechanisms).
-    /// Length = num_outputs (full measurement space in raw mode).
+    /// Length = `num_outputs` (full measurement space in raw mode).
     non_det_mask: Vec<bool>,
 
     /// Deterministic measurement dependencies for raw mode.
@@ -330,7 +330,8 @@ impl DemSampler {
     /// ```ignore
     /// let mut dag = DagCircuit::new();
     /// // ... build circuit, add detectors/observables ...
-    /// let sampler = DemSampler::from_circuit(&dag, NoiseConfig::uniform(0.01))?;
+    /// let noise = NoiseConfig::uniform(0.01);
+    /// let sampler = DemSampler::from_circuit(&dag, &noise)?;
     /// let (det, obs) = sampler.sample(&mut rng);
     /// ```
     /// Build a sampler from a `TickCircuit` and noise parameters.
@@ -338,16 +339,21 @@ impl DemSampler {
     /// Converts to `DagCircuit` internally. Returns detector-mode sampler.
     pub fn from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
-        noise: super::types::NoiseConfig,
+        noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
         let dag = pecos_quantum::DagCircuit::from(circuit);
         Self::from_circuit(&dag, noise)
     }
 
     /// Build a sampler from a `DagCircuit` and noise parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DetectorValidationError`] when detector metadata is invalid
+    /// for the circuit's measurement record.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
-        noise: super::types::NoiseConfig,
+        noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
         // Build the DetectorErrorModel via DemBuilder (single code path for
         // DEM computation), then convert to sampler.
@@ -536,7 +542,7 @@ impl DemSampler {
     /// Bit mask selecting observable outputs.
     ///
     /// Existing decoder APIs use `u64` observable masks, so outputs with index
-    /// >= 64 are not representable here and are ignored consistently with the
+    /// \>= 64 are not representable here and are ignored consistently with the
     /// existing mask-based paths.
     #[must_use]
     pub fn observable_dem_output_mask(&self) -> u64 {
@@ -966,22 +972,30 @@ impl<'a> DemSamplerBuilder<'a> {
         }
 
         if !observables.is_empty() && self.observable_records.is_none() {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-            let num_measurements = self.influence_map.measurements.len() as i32;
-            let records = observables
-                .iter()
-                .map(|ann| {
-                    if let AnnotationKind::Observable { measurement_nodes } = &ann.kind {
-                        measurement_nodes
-                            .iter()
-                            .filter_map(|node| node_to_meas_idx.get(node).copied())
-                            .map(|meas_idx| meas_idx as i32 - num_measurements)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
-                })
-                .collect();
+            let records = if let Ok(num_measurements) =
+                i32::try_from(self.influence_map.measurements.len())
+            {
+                observables
+                    .iter()
+                    .map(|ann| {
+                        if let AnnotationKind::Observable { measurement_nodes } = &ann.kind {
+                            measurement_nodes
+                                .iter()
+                                .filter_map(|node| node_to_meas_idx.get(node).copied())
+                                .filter_map(|meas_idx| {
+                                    i32::try_from(meas_idx)
+                                        .ok()
+                                        .map(|meas_idx| meas_idx - num_measurements)
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![Vec::new(); observables.len()]
+            };
             self.observable_records = Some(records);
         }
 
@@ -1259,10 +1273,10 @@ pub(crate) fn gate_location_prob_from_locations(
 
 /// Parse detector or observable definitions from JSON.
 ///
-/// Run noiseless symbolic simulation on a TickCircuit to identify non-deterministic measurements.
+/// Run noiseless symbolic simulation on a `TickCircuit` to identify non-deterministic measurements.
 ///
 /// Returns a Vec<bool> where true = non-deterministic (needs coin flip).
-/// Uses SymbolicSparseStab which tracks measurement determinism symbolically.
+/// Uses `SymbolicSparseStab` which tracks measurement determinism symbolically.
 /// Run noiseless symbolic simulation to identify non-deterministic measurements
 /// and their dependency structure.
 ///
@@ -1311,7 +1325,7 @@ fn parse_records_json(json: &str) -> Vec<Vec<i32>> {
 
 /// Extract measurement record indices from a JSON object string.
 ///
-/// Prefers `"meas_ids"` (absolute MeasId IDs) when available.
+/// Prefers `"meas_ids"` (absolute `MeasId` IDs) when available.
 /// Falls back to `"records"` (negative offsets) for legacy compatibility.
 fn extract_records_array(json: &str) -> Vec<i32> {
     // Prefer meas_ids (absolute, stable IDs from MeasId)
@@ -1511,8 +1525,8 @@ mod tests {
         circuit.h(&[0]);
         circuit.pauli_operator_labeled("x_check", X(0));
 
-        let sampler =
-            DemSampler::from_circuit(&circuit, NoiseConfig::new(0.03, 0.0, 0.0, 0.0)).unwrap();
+        let noise = NoiseConfig::new(0.03, 0.0, 0.0, 0.0);
+        let sampler = DemSampler::from_circuit(&circuit, &noise).unwrap();
 
         assert_eq!(sampler.num_tracked_ops(), 1);
         assert_eq!(sampler.num_observables(), 0);

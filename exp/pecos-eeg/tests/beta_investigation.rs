@@ -7,7 +7,7 @@
 use pecos_core::gate_type::GateType;
 use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
 use pecos_eeg::Bm;
-use pecos_eeg::circuit::{analyze_expanded, NoiseModel, PropagatedEeg};
+use pecos_eeg::circuit::{NoiseModel, PropagatedEeg, analyze_expanded};
 use pecos_eeg::eeg::EegType;
 use pecos_eeg::expand;
 use pecos_eeg::stabilizer::StabilizerGroup;
@@ -18,7 +18,7 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
         angles: GateAngles::new(),
         params: GateParams::new(),
-            meas_ids: pecos_core::GateMeasIds::new(),
+        meas_ids: pecos_core::GateMeasIds::new(),
     }
 }
 
@@ -53,12 +53,18 @@ fn test_zbasis_generator_labels() {
     let gates = build_minimal_zbasis();
     let expanded = expand::expand_circuit(&gates);
 
-    eprintln!("Expanded circuit: {} qubits ({} original + {} aux)",
-        expanded.num_qubits, expanded.num_original_qubits,
-        expanded.num_qubits - expanded.num_original_qubits);
+    eprintln!(
+        "Expanded circuit: {} qubits ({} original + {} aux)",
+        expanded.num_qubits,
+        expanded.num_original_qubits,
+        expanded.num_qubits - expanded.num_original_qubits
+    );
     eprintln!("Measurement mapping:");
-    for (i, (&aux, &orig)) in expanded.measurement_qubit.iter()
-        .zip(expanded.original_measured_qubit.iter()).enumerate()
+    for (i, (&aux, &orig)) in expanded
+        .measurement_qubit
+        .iter()
+        .zip(expanded.original_measured_qubit.iter())
+        .enumerate()
     {
         eprintln!("  meas {i}: aux={aux} orig={orig}");
     }
@@ -66,15 +72,19 @@ fn test_zbasis_generator_labels() {
     let noise = NoiseModel::coherent_only(0.001);
     let result = analyze_expanded(&expanded.gates, &noise);
 
-    let h_gens: Vec<&PropagatedEeg> = result.generators.iter()
+    let h_gens: Vec<&PropagatedEeg> = result
+        .generators
+        .iter()
         .filter(|g| g.eeg_type == EegType::H)
         .collect();
 
     eprintln!("\nH generators ({}):", h_gens.len());
     for (i, g) in h_gens.iter().enumerate() {
         let orig = expanded.map_to_original_frame(&g.label);
-        eprintln!("  [{i}] expanded={:?} coeff={:.6} original_frame={:?}",
-            g.label, g.coeff, orig);
+        eprintln!(
+            "  [{i}] expanded={:?} coeff={:.6} original_frame={:?}",
+            g.label, g.coeff, orig
+        );
     }
 
     // Check products of all pairs
@@ -82,7 +92,7 @@ fn test_zbasis_generator_labels() {
     let stab_group = StabilizerGroup::from_circuit(&gates, expanded.num_original_qubits);
 
     for j in 0..h_gens.len() {
-        for k in (j+1)..h_gens.len() {
+        for k in (j + 1)..h_gens.len() {
             let qj = &h_gens[j].label;
             let qk = &h_gens[k].label;
             if !qj.commutes_with(qk) {
@@ -93,8 +103,10 @@ fn test_zbasis_generator_labels() {
             let is_stab = stab_group.is_stabilizer(&orig_product);
 
             if is_stab.is_some() || !orig_product.is_identity() {
-                eprintln!("  [{j},{k}] commute=true product_orig={:?} is_stab={:?}",
-                    orig_product, is_stab);
+                eprintln!(
+                    "  [{j},{k}] commute=true product_orig={:?} is_stab={:?}",
+                    orig_product, is_stab
+                );
             }
         }
     }
@@ -104,7 +116,10 @@ fn test_zbasis_generator_labels() {
 fn test_zbasis_stabilizer_group() {
     let gates = build_minimal_zbasis();
     // Exclude final MZ readout — keep syndrome MZ
-    let last_non_mz = gates.iter().rposition(|g| g.gate_type != GateType::MZ).unwrap();
+    let last_non_mz = gates
+        .iter()
+        .rposition(|g| g.gate_type != GateType::MZ)
+        .unwrap();
     let gates_pre = &gates[..=last_non_mz];
     let stab_group = StabilizerGroup::from_circuit(gates_pre, 3);
 
@@ -116,10 +131,23 @@ fn test_zbasis_stabilizer_group() {
     for g in gates_pre {
         let qs: Vec<QubitId> = g.qubits.iter().copied().collect();
         match g.gate_type {
-            GateType::PZ => { for &q in &qs { sim.pz(&[q]); } }
-            GateType::H => { sim.h(&qs); }
-            GateType::CX => { if qs.len() >= 2 { sim.cx(&[(qs[0], qs[1])]); } }
-            GateType::MZ => { let _r = sim.mz(&qs); eprintln!("  MZ({:?})", qs); }
+            GateType::PZ => {
+                for &q in &qs {
+                    sim.pz(&[q]);
+                }
+            }
+            GateType::H => {
+                sim.h(&qs);
+            }
+            GateType::CX => {
+                if qs.len() >= 2 {
+                    sim.cx(&[(qs[0], qs[1])]);
+                }
+            }
+            GateType::MZ => {
+                let _r = sim.mz(&qs);
+                eprintln!("  MZ({:?})", qs);
+            }
             _ => {}
         }
     }

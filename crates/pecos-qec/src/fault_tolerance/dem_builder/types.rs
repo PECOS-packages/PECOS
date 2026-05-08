@@ -1466,7 +1466,7 @@ pub struct NoiseConfig {
     /// When set (> 0), idle gates contribute a coherent Z rotation in addition
     /// to any stochastic idle noise. Idle fault locations with the same
     /// detector set have their angles accumulated coherently (angles add),
-    /// giving probability sin²(total_angle/2) instead of independent combination.
+    /// giving probability `sin²(total_angle/2)` instead of independent combination.
     ///
     /// This is the EEG H-type noise model for idle gates. Default is 0.0.
     pub idle_rz: f64,
@@ -1849,31 +1849,25 @@ fn parse_pecos_metadata_dem_output(
         }
     }
 
-    if let Some(label_value) = object.get("label") {
-        if !label_value.is_null() {
-            let label = label_value.as_str().ok_or_else(|| {
-                PecosDemMetadataError::new(format!(
-                    "DEM output {idx} label is not a string or null"
-                ))
-            })?;
-            dem_output = dem_output.with_label(label);
-        }
+    if let Some(label_value) = object.get("label")
+        && !label_value.is_null()
+    {
+        let label = label_value.as_str().ok_or_else(|| {
+            PecosDemMetadataError::new(format!("DEM output {idx} label is not a string or null"))
+        })?;
+        dem_output = dem_output.with_label(label);
     }
 
-    if let Some(pauli_value) = object.get("pauli") {
-        if !pauli_value.is_null() {
-            let pauli = pauli_value.as_str().ok_or_else(|| {
-                PecosDemMetadataError::new(format!(
-                    "DEM output {idx} pauli is not a string or null"
-                ))
-            })?;
-            let pauli = pauli.parse::<PauliString>().map_err(|err| {
-                PecosDemMetadataError::new(format!(
-                    "DEM output {idx} has invalid PauliString: {err}"
-                ))
-            })?;
-            dem_output = dem_output.with_pauli(pauli);
-        }
+    if let Some(pauli_value) = object.get("pauli")
+        && !pauli_value.is_null()
+    {
+        let pauli = pauli_value.as_str().ok_or_else(|| {
+            PecosDemMetadataError::new(format!("DEM output {idx} pauli is not a string or null"))
+        })?;
+        let pauli = pauli.parse::<PauliString>().map_err(|err| {
+            PecosDemMetadataError::new(format!("DEM output {idx} has invalid PauliString: {err}"))
+        })?;
+        dem_output = dem_output.with_pauli(pauli);
     }
 
     let records = if let Some(records_value) = object.get("records") {
@@ -1970,6 +1964,12 @@ pub struct DetectorErrorModel {
     /// Used to determine output format: ≥2 → 3 forms, 1 → 2 forms, 0 → 1 form.
     graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
 }
+
+/// Structured DEM mechanism tuple: `(probability, detector_ids, observable_ids)`.
+pub type MechanismTuple = (f64, Vec<u32>, Vec<u32>);
+
+/// Detector-coordinate tuple: `(detector_id, coordinates)`.
+pub type DetectorCoordinateTuple = (u32, Vec<f64>);
 
 impl DetectorErrorModel {
     /// Creates a new empty DEM.
@@ -2083,6 +2083,10 @@ impl DetectorErrorModel {
     /// The standard DEM string remains decoder-compatible and uses ordinary
     /// `logical_observable L<n>` declarations. This JSON form preserves the
     /// richer PECOS DEM-output information, including tracked Pauli operators.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if serializing a JSON value constructed in this method fails.
     #[must_use]
     pub fn to_pecos_metadata_json(&self) -> String {
         let observables: Vec<serde_json::Value> = self
@@ -2144,6 +2148,10 @@ impl DetectorErrorModel {
     /// `pecos_observable {json}` and `pecos_tracked_op {json}` statements. This makes PECOS DEM text a
     /// strict superset: every Stim DEM remains valid PECOS DEM text, and PECOS
     /// adds statements for data Stim cannot represent.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if serializing JSON values constructed in this method fails.
     #[must_use]
     pub fn to_pecos_string(&self) -> String {
         let mut text = self.to_string();
@@ -2752,7 +2760,7 @@ impl DetectorErrorModel {
     /// Also returns detector coordinate map. This is the structured equivalent of
     /// `to_string()` — same data, no string intermediary.
     #[must_use]
-    pub fn to_mechanisms(&self) -> (Vec<(f64, Vec<u32>, Vec<u32>)>, Vec<(u32, Vec<f64>)>) {
+    pub fn to_mechanisms(&self) -> (Vec<MechanismTuple>, Vec<DetectorCoordinateTuple>) {
         // Group contributions by effect
         let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
         for contrib in &self.contributions {

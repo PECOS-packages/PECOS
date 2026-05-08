@@ -478,7 +478,7 @@ pub struct PySimNeoBuilder {
     noise_config: Option<PyNoiseModelBuilder>,
     backend: String,
     stabmps_config: Option<crate::stabmps_builder::StabMpsBuilder>,
-    dem_sampling_method: Option<String>,
+    meas_sampling_method: Option<String>,
 }
 
 #[pymethods]
@@ -499,21 +499,21 @@ impl PySimNeoBuilder {
         if builder.is_instance_of::<PyMeasSamplingBuilder>() {
             let b: PyRef<'_, PyMeasSamplingBuilder> = builder.extract()?;
             c.backend = "meas_sampling".to_string();
-            c.dem_sampling_method = Some(b.method.clone());
+            c.meas_sampling_method = Some(b.method.clone());
             c.stabmps_config = None;
         } else if builder.is_instance_of::<PyStabMpsBuilder>() {
             let b: PyRef<'_, PyStabMpsBuilder> = builder.extract()?;
             c.backend = "stabmps".to_string();
             c.stabmps_config = Some(b.inner.clone());
-            c.dem_sampling_method = None;
+            c.meas_sampling_method = None;
         } else if builder.is_instance_of::<PyStabilizerBuilder>() {
             c.backend = "stabilizer".to_string();
             c.stabmps_config = None;
-            c.dem_sampling_method = None;
+            c.meas_sampling_method = None;
         } else if builder.is_instance_of::<PyStateVecBuilder>() {
             c.backend = "statevec".to_string();
             c.stabmps_config = None;
-            c.dem_sampling_method = None;
+            c.meas_sampling_method = None;
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
                 "quantum() expects statevec(), stabilizer(), stab_mps(), or meas_sampling()",
@@ -604,7 +604,7 @@ impl PySimNeoBuilder {
             pyo3::exceptions::PyValueError::new_err("DEM sampling requires .noise() to be set")
         })?;
 
-        let method = self.dem_sampling_method.as_deref().unwrap_or("auto");
+        let method = self.meas_sampling_method.as_deref().unwrap_or("auto");
 
         let has_coherent = noise_config.idle_rz_angle.abs() > 1e-15;
 
@@ -803,7 +803,7 @@ pub fn py_sim_neo(tick_circuit: &Bound<'_, PyAny>) -> PyResult<PySimNeoBuilder> 
         noise_config: None,
         backend: "statevec".to_string(),
         stabmps_config: None,
-        dem_sampling_method: None,
+        meas_sampling_method: None,
     })
 }
 

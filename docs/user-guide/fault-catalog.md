@@ -464,6 +464,7 @@ for k > 0 yields nothing (all probabilities are zero).
 
 The structural catalog (no noise needed) lets you explore every fault event:
 
+<!--expect-output: D0 flipped by-->
 ```python
 catalog = fault_catalog(circuit)
 
@@ -488,6 +489,7 @@ measurement records -- they are detected by forward Pauli propagation.
 
 Add tracked operators to a circuit via `pauli_operator`:
 
+<!--expect-output: X_0 flips tracked ops-->
 ```python
 tc2 = TickCircuit()
 tc2.tick().h([0])

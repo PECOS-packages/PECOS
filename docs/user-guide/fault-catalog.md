@@ -11,7 +11,7 @@ from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_mode
 from pecos_rslib_exp import sim_neo, meas_sampling, depolarizing
 
 patch = SurfacePatch.create(distance=3)
-tc = _build_surface_tick_circuit_for_native_model(patch, rounds=6, basis="Z")
+tc = _build_surface_tick_circuit_for_native_model(patch, num_rounds=6, basis="Z")
 
 result = (
     sim_neo(tc)
@@ -295,7 +295,8 @@ For `k > 0`, each yielded `FaultConfiguration` has:
 | `selected_probability` | Product of selected `absolute_probability` values |
 | `configuration_probability` | Selected probability times no-fault probabilities for unselected locations |
 
-The iterator is lazy:
+The iterator is lazy -- it yields one configuration at a time without
+materializing all combinations up front:
 
 ```python
 it = catalog.fault_configurations(1)
@@ -303,8 +304,9 @@ first = next(it)
 
 print(first.location_indices)
 print(first.alternative_indices)
-print(first.locations[0] is catalog.locations[first.location_indices[0]])
-print(first.faults[0] is first.locations[0].faults[first.alternative_indices[0]])
+print(first.detectors)
+print(first.observables)
+print(first.configuration_probability)
 ```
 
 ## XOR Parity
@@ -324,6 +326,11 @@ It is also why low-weight decoder tests should apply the selected correction and
 check the residual logical by XOR.
 
 ## Building a Small Lookup Table
+
+This example builds a complete lookup table in Python by exhaustively
+enumerating fault configurations. This is useful for understanding the API
+and for small circuits. For larger codes, use the Rust `TargetedLookupDecoder`
+which searches on-demand without precomputing all syndromes.
 
 A lookup decoder table groups configuration probability by:
 
@@ -490,12 +497,13 @@ Add tracked operators to a circuit via `pauli_operator`:
 
 ```python
 tc2 = TickCircuit()
-tc2.tick().h([0, 1])
-tc2.tick().mz([0, 1])
-tc2.set_meta("num_measurements", "2")
+tc2.tick().h([0])
+tc2.tick().mz([0])
+tc2.set_meta("num_measurements", "1")
 tc2.set_meta("detectors", "[]")
 tc2.set_meta("observables", "[]")
-tc2.pauli_operator(PauliString.from_str("XX"), label="logical_X")
+# Track Z on qubit 0 -- X and Y faults after H anticommute with Z
+tc2.pauli_operator(PauliString.from_str("Z"), label="track_Z0")
 
 cat2 = fault_catalog(tc2, p1=0.01, p2=0.0, p_meas=0.01, p_prep=0.0)
 for loc in cat2:
@@ -547,16 +555,18 @@ the same measurement format as gate-by-gate stabilizer simulation.
   represent Pauli errors that commute with subsequent measurements. They
   must stay in the catalog for the correct uniform denominator.
 - `catalog.fault_configurations(k)` means exactly `k` distinct physical
-  locations fire, not at most `k`. On an unparameterized catalog, k > 0
-  yields nothing (zero probabilities).
+  locations fire, not at most `k`. Only alternatives with positive
+  `absolute_probability` are yielded. On an unparameterized catalog, k > 0
+  yields nothing. On a parameterized catalog with some channels zeroed,
+  locations from those channels are skipped.
 - Detector and observable metadata must be correct before building the catalog.
   Missing boundary detectors can make a correct decoder appear to fail.
 - `with_noise()` mutates the catalog in place. Previously held Python
   references to locations and faults update automatically. Decoders and
   samplers do NOT update -- they are snapshots.
 - The structural catalog includes ALL locations even when a channel
-  probability is zero. Use `to_mechanisms()` to get only the nonzero
-  mechanisms for raw sampling.
+  probability is zero. The `meas_sampling()` backend internally filters
+  zero-probability locations when building raw sampling mechanisms.
 
 ## Larger Example
 

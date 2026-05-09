@@ -489,7 +489,7 @@ measurement records -- they are detected by forward Pauli propagation.
 
 Add tracked operators to a circuit via `pauli_operator`:
 
-<!--expect-output: X_0 flips tracked ops-->
+<!--expect-output-block-->
 ```python
 tc2 = TickCircuit()
 tc2.tick().h([0])
@@ -504,9 +504,10 @@ for loc in cat2:
     for alt in loc.faults:
         if alt.tracked_ops:
             print(f"{alt.pauli} flips tracked ops {alt.tracked_ops}")
-# Output:
-#   X_0 flips tracked ops [0]
-#   Y_0 flips tracked ops [0]
+```
+```output
+X_0 flips tracked ops [0]
+Y_0 flips tracked ops [0]
 ```
 
 No measurement is needed -- the catalog detects that X and Y faults after H

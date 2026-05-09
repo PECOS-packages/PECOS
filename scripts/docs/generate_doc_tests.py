@@ -69,6 +69,8 @@ class CodeBlock:
     skip_if_no_cuda_rust: bool = False
     expect_error: str | None = None
     expect_output: str | None = None
+    expect_output_block: str | None = None
+    expect_output_mode: str = "exact"  # "exact" or "ellipsis"
     test_name: str | None = None
     marks: list[str] = field(default_factory=list)
     is_continuation: bool = False
@@ -196,6 +198,8 @@ def _parse_marker_comment(comment: str) -> dict:
         "skip_if_no_cuda_rust": False,
         "expect_error": None,
         "expect_output": None,
+        "expect_output_block": False,
+        "expect_output_mode": "exact",
         "test_name": None,
         "marks": [],
         "is_continuation": False,
@@ -239,8 +243,14 @@ def _parse_marker_comment(comment: str) -> dict:
             result["expect_error"] = match.group(1).strip()
             result["skip"] = False  # Don't skip, we want to test the error
 
-    # Check for expect-output
-    if "expect-output" in comment_lower:
+    # Check for expect-output-block (must check before expect-output substring match)
+    if "expect-output-block" in comment_lower:
+        result["expect_output_block"] = True
+        mode_match = re.search(r"expect-output-block:\s*(\w+)\s*-->", comment, re.IGNORECASE)
+        if mode_match:
+            result["expect_output_mode"] = mode_match.group(1).strip().lower()
+    # Check for expect-output (substring match)
+    elif "expect-output" in comment_lower:
         match = re.search(r"expect-output:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             result["expect_output"] = match.group(1).strip()
@@ -381,6 +391,21 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
         block_skip = attrs["skip"] or doc_skip
         block_skip_reason = attrs["skip_reason"] or doc_skip_reason
 
+        # If expect-output-block, look for a ```output fence after this code block
+        output_block_text = None
+        output_mode = attrs["expect_output_mode"]
+        if attrs["expect_output_block"]:
+            after_fence = content[match.end():]
+            output_match = re.match(r"\s*```output\n(.*?)```", after_fence, re.DOTALL)
+            if output_match:
+                output_block_text = output_match.group(1).rstrip("\n")
+            else:
+                msg = (
+                    f"{file_path}:{line_number}: expect-output-block marker "
+                    f"but no ```output fence found after code block"
+                )
+                raise ValueError(msg)
+
         block = CodeBlock(
             code=full_code,
             language=language,
@@ -393,6 +418,8 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             skip_if_no_cuda_rust=attrs["skip_if_no_cuda_rust"],
             expect_error=attrs["expect_error"],
             expect_output=attrs["expect_output"],
+            expect_output_block=output_block_text,
+            expect_output_mode=output_mode,
             test_name=attrs["test_name"],
             marks=attrs["marks"],
             is_continuation=attrs["is_continuation"],
@@ -450,6 +477,8 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
             lines.extend(_generate_rust_exec_body(block))
     elif block.expect_error:
         lines.extend(_generate_expect_error_body(block))
+    elif block.expect_output_block is not None:
+        lines.extend(_generate_expect_output_block_body(block))
     elif block.expect_output:
         lines.extend(_generate_expect_output_body(block))
     elif _uses_guppy_decorator(block.code):
@@ -748,6 +777,51 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             "    assert expected_output in result.stdout, \\",
             '        f"Expected output containing {expected_output!r}, got:\\n{result.stdout}"',
         ]
+    return lines
+
+
+def _generate_expect_output_block_body(block: CodeBlock) -> list[str]:
+    """Generate test body that checks stdout matches expected output exactly.
+
+    Uses Python's doctest.OutputChecker for matching. Supports exact mode
+    (default) and ellipsis mode (``...`` skips variable parts).
+    """
+    escaped_code = block.code.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    escaped_expected = block.expect_output_block.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    use_ellipsis = block.expect_output_mode == "ellipsis"
+
+    lines = [
+        "    import doctest",
+        "    import subprocess",
+        "    import sys",
+        "",
+        '    code = """',
+        *[line.rstrip() for line in escaped_code.split("\n")],
+        '"""',
+        '    expected = """',
+        *[line.rstrip() for line in escaped_expected.split("\n")],
+        '"""',
+        "",
+        "    result = subprocess.run(",
+        '        [sys.executable, "-c", code],',
+        "        capture_output=True,",
+        "        text=True,",
+        "        timeout=30,",
+        "        check=False,",
+        "    )",
+        "    if result.returncode != 0:",
+        '        pytest.fail(f"Code failed:\\n{result.stderr}")',
+        "",
+        "    checker = doctest.OutputChecker()",
+        f"    flags = doctest.ELLIPSIS if {use_ellipsis} else 0",
+        "    if not checker.check_output(expected.strip(), result.stdout.strip(), flags):",
+        "        diff = checker.output_difference(",
+        '            doctest.Example("", expected.strip()),',
+        "            result.stdout.strip(),",
+        "            flags,",
+        "        )",
+        '        pytest.fail(f"Output mismatch:\\n{diff}")',
+    ]
     return lines
 
 

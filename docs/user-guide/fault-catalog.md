@@ -491,23 +491,25 @@ Add tracked operators to a circuit via `pauli_operator`:
 ```python
 tc2 = TickCircuit()
 tc2.tick().h([0])
-tc2.tick().mz([0])
-tc2.set_meta("num_measurements", "1")
+tc2.set_meta("num_measurements", "0")
 tc2.set_meta("detectors", "[]")
 tc2.set_meta("observables", "[]")
 # Track Z on qubit 0 -- X and Y faults after H anticommute with Z
 tc2.pauli_operator(PauliString.from_str("Z"), label="track_Z0")
 
-cat2 = fault_catalog(tc2, p1=0.01, p2=0.0, p_meas=0.01, p_prep=0.0)
+cat2 = fault_catalog(tc2, p1=0.01, p2=0.0, p_meas=0.0, p_prep=0.0)
 for loc in cat2:
     for alt in loc.faults:
         if alt.tracked_ops:
             print(f"{alt.pauli} flips tracked ops {alt.tracked_ops}")
+# Output:
+#   X_0 flips tracked ops [0]
+#   Y_0 flips tracked ops [0]
 ```
 
-Each `FaultAlternative` then has a `tracked_ops` field listing which tracked
-operators are flipped by that fault. This is useful for studying logical
-operator propagation without requiring measurement.
+No measurement is needed -- the catalog detects that X and Y faults after H
+anticommute with the tracked Z operator. This is useful for studying logical
+operator propagation independently of measurement outcomes.
 
 ## Raw Measurement Sampling
 

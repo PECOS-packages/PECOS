@@ -2706,6 +2706,8 @@ version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
  "ndarray 0.17.2",
+ "pecos-random",
+ "rayon",
  "thiserror 2.0.18",
 ]
 
@@ -2908,12 +2910,14 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",
+ "pecos-num",
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
  "rand 0.10.1",
  "rand_core 0.10.0",
  "rayon",
+ "serde_json",
  "smallvec",
  "thiserror 2.0.18",
  "wide 1.2.0",

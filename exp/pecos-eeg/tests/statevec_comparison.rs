@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0
 
-//! Ground-truth comparison: EEG analytical DEM vs StateVec simulation.
+//! Ground-truth comparison: EEG analytical DEM vs `StateVec` simulation.
 //!
 //! Uses Bell-state parity circuit where idle RZ noise creates detectable
 //! parity violations. Without noise, MZ parity is always even.
@@ -11,7 +11,7 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Angle64, Gate, GateAngles, GateParams, GateQubits, QubitId};
+use pecos_core::{Angle64, Gate, GateAngles, GateParams, QubitId};
 use pecos_eeg::Bm;
 use pecos_eeg::circuit::{NoiseModel, analyze_expanded};
 use pecos_eeg::dem_mapping::{Detector, build_dem_with_stabilizers};
@@ -23,7 +23,7 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
 fn gate(gt: GateType, qubits: &[usize]) -> Gate {
     Gate {
         gate_type: gt,
-        qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
@@ -32,6 +32,18 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
 
 fn qid(q: usize) -> QubitId {
     QubitId(q)
+}
+
+fn u64_to_f64(value: u64) -> f64 {
+    f64::from(u32::try_from(value).expect("test sample count fits in u32"))
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    f64::from(u32::try_from(value).expect("test dimension fits in u32"))
+}
+
+fn bit_to_f64(value: usize) -> f64 {
+    f64::from(u8::try_from(value).expect("bit value fits in u8"))
 }
 
 // ============================================================
@@ -186,9 +198,9 @@ fn test_eeg_vs_statevec_bell_parity() {
         }
     }
 
-    let sv_rate = odd_parity_count as f64 / num_shots as f64;
-    let sv_stderr = (sv_rate * (1.0 - sv_rate) / num_shots as f64).sqrt();
-    let exact = (theta as f64).sin().powi(2);
+    let sv_rate = u64_to_f64(odd_parity_count) / f64::from(num_shots);
+    let sv_stderr = (sv_rate * (1.0 - sv_rate) / f64::from(num_shots)).sqrt();
+    let exact = theta.sin().powi(2);
 
     eprintln!("theta = {theta}");
     eprintln!("EEG:     {eeg_prob:.6}");
@@ -269,9 +281,9 @@ fn test_eeg_vs_statevec_larger_angle() {
         }
     }
 
-    let sv_rate = odd_parity_count as f64 / num_shots as f64;
-    let sv_stderr = (sv_rate * (1.0 - sv_rate) / num_shots as f64).sqrt();
-    let exact = (theta as f64).sin().powi(2);
+    let sv_rate = u64_to_f64(odd_parity_count) / f64::from(num_shots);
+    let sv_stderr = (sv_rate * (1.0 - sv_rate) / f64::from(num_shots)).sqrt();
+    let exact = theta.sin().powi(2);
 
     eprintln!("theta = {theta}");
     eprintln!("EEG:      {eeg_prob:.6}");
@@ -295,7 +307,7 @@ fn test_eeg_vs_statevec_larger_angle() {
 /// Sweep theta for the Bell parity circuit.
 /// Exact answer: sin²(θ). EEG leading-order: θ².
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_bell_parity_theta_sweep() {
     let num_shots = 200_000;
 
@@ -335,8 +347,8 @@ fn bench_bell_parity_theta_sweep() {
             }
         }
 
-        let sv = odd as f64 / num_shots as f64;
-        let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+        let sv = u64_to_f64(odd) / f64::from(num_shots);
+        let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
         let exact = theta.sin().powi(2);
         let ratio = if exact > 1e-10 {
             eeg_prob / exact
@@ -353,7 +365,7 @@ fn bench_bell_parity_theta_sweep() {
 /// Multi-round X-check: 2 data qubits, 1 ancilla, N rounds of X-check with reset.
 /// Data prepared in |++>, ancilla measures X0*X1 each round.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_x_check_multi_round() {
     let num_shots = 200_000;
 
@@ -392,7 +404,9 @@ fn bench_x_check_multi_round() {
                 sim.h(&[qid(0)]);
                 sim.h(&[qid(1)]);
 
-                for round in 0..num_rounds {
+                for (round, round_detection) in
+                    round_detections.iter_mut().enumerate().take(num_rounds)
+                {
                     sim.h(&[qid(2)]);
                     sim.cx(&[(qid(2), qid(0))]);
                     sim.rz(Angle64::from_radians(theta), &[qid(0)]);
@@ -403,7 +417,7 @@ fn bench_x_check_multi_round() {
                     sim.h(&[qid(2)]);
                     let r = sim.mz(&[qid(2)]);
                     if r[0].outcome {
-                        round_detections[round] += 1;
+                        *round_detection += 1;
                     }
                     if round < num_rounds - 1 {
                         sim.pz(&[qid(2)]);
@@ -413,12 +427,12 @@ fn bench_x_check_multi_round() {
 
             let sv_rates: Vec<f64> = round_detections
                 .iter()
-                .map(|&d| d as f64 / num_shots as f64)
+                .map(|&d| u64_to_f64(d) / f64::from(num_shots))
                 .collect();
 
             eprintln!("\nrounds={num_rounds}, theta={theta}:");
             for r in 0..num_rounds {
-                let se = (sv_rates[r] * (1.0 - sv_rates[r]) / num_shots as f64).sqrt();
+                let se = (sv_rates[r] * (1.0 - sv_rates[r]) / f64::from(num_shots)).sqrt();
                 let ratio = if sv_rates[r] > 1e-10 {
                     eeg_probs[r] / sv_rates[r]
                 } else {
@@ -436,7 +450,7 @@ fn bench_x_check_multi_round() {
 /// Z-basis: data in |00>, Z-check measures Z0*Z1. Coherent RZ noise.
 /// Z errors commute with Z measurements, so the X-propagated components matter.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_z_basis_check() {
     let num_shots = 200_000;
 
@@ -492,8 +506,8 @@ fn bench_z_basis_check() {
             }
         }
 
-        let sv = det_count as f64 / num_shots as f64;
-        let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+        let sv = u64_to_f64(det_count) / f64::from(num_shots);
+        let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
         let ratio = if sv > 1e-10 { eeg_prob / sv } else { f64::NAN };
 
         eprintln!("{theta:>8.3} {eeg_prob:>10.6} {sv:>10.6} {se:>10.6} {ratio:>10.4}");
@@ -506,10 +520,10 @@ fn bench_z_basis_check() {
 
 /// Build an X-check repetition code circuit.
 ///
-/// d data qubits, d-1 ancillas measuring X_i * X_{i+1} using
+/// d data qubits, d-1 ancillas measuring `X_i` * X_{i+1} using
 /// H-CX-CX-H on ancilla (sensitive to Z errors from coherent RZ noise).
 /// `num_rounds` syndrome extraction rounds with reset.
-/// Returns (gates, num_qubits, ancilla indices).
+/// Returns (gates, `num_qubits`, ancilla indices).
 fn build_repetition_code(d: usize, num_rounds: usize) -> (Vec<Gate>, usize, Vec<usize>) {
     let num_data = d;
     let num_ancilla = d - 1;
@@ -564,9 +578,9 @@ fn build_repetition_code(d: usize, num_rounds: usize) -> (Vec<Gate>, usize, Vec<
     (gates, num_qubits, ancillas)
 }
 
-/// Repetition code: compare EEG (forward), Heisenberg (backward), and StateVec.
+/// Repetition code: compare EEG (forward), Heisenberg (backward), and `StateVec`.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_repetition_code_comparison() {
     use pecos_eeg::dem_mapping::EegConfig;
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
@@ -673,14 +687,12 @@ fn bench_repetition_code_comparison() {
                     let anc_qubits: Vec<_> = ancillas.iter().map(|&a| qid(a)).collect();
                     sim.h(&anc_qubits);
 
-                    for i in 0..num_ancilla {
-                        let anc = ancillas[i];
+                    for (i, &anc) in ancillas.iter().enumerate().take(num_ancilla) {
                         sim.cx(&[(qid(anc), qid(i))]);
                         sim.rz(Angle64::from_radians(theta), &[qid(anc)]);
                         sim.rz(Angle64::from_radians(theta), &[qid(i)]);
                     }
-                    for i in 0..num_ancilla {
-                        let anc = ancillas[i];
+                    for (i, &anc) in ancillas.iter().enumerate().take(num_ancilla) {
                         sim.cx(&[(qid(anc), qid(i + 1))]);
                         sim.rz(Angle64::from_radians(theta), &[qid(anc)]);
                         sim.rz(Angle64::from_radians(theta), &[qid(i + 1)]);
@@ -689,8 +701,8 @@ fn bench_repetition_code_comparison() {
                     sim.h(&anc_qubits);
 
                     // Measure ancillas
-                    for i in 0..num_ancilla {
-                        let r = sim.mz(&[qid(ancillas[i])]);
+                    for &anc in ancillas.iter().take(num_ancilla) {
+                        let r = sim.mz(&[qid(anc)]);
                         meas_outcomes.push(r[0].outcome);
                     }
 
@@ -718,8 +730,8 @@ fn bench_repetition_code_comparison() {
                 "Det", "EEG", "Heisen", "StateVec", "SV_err", "H/SV"
             );
             for det_idx in 0..num_detectors {
-                let sv_rate = sv_counts[det_idx] as f64 / num_shots as f64;
-                let sv_err = (sv_rate * (1.0 - sv_rate) / num_shots as f64).sqrt();
+                let sv_rate = u64_to_f64(sv_counts[det_idx]) / f64::from(num_shots);
+                let sv_err = (sv_rate * (1.0 - sv_rate) / f64::from(num_shots)).sqrt();
                 let ratio = if sv_rate > 1e-10 {
                     heis_probs[det_idx] / sv_rate
                 } else {
@@ -736,13 +748,13 @@ fn bench_repetition_code_comparison() {
     }
 }
 
-/// KEY DIAGNOSTIC: Compare original-circuit StateVec, expanded-circuit StateVec,
+/// KEY DIAGNOSTIC: Compare original-circuit `StateVec`, expanded-circuit `StateVec`,
 /// and Heisenberg for the simplest failing case (weight-2, 2 rounds, 3 qubits).
 ///
 /// If expanded SV matches original SV: expansion is correct, Heisenberg has a bug.
 /// If expanded SV differs: expansion is wrong.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_expansion_equivalence() {
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
 
@@ -778,7 +790,7 @@ fn bench_expansion_equivalence() {
     );
     eprintln!("Measurement map: {:?}", expanded.measurement_qubit);
     for (i, g) in expanded.gates.iter().enumerate() {
-        let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+        let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
         eprintln!("  [{i:2}] {:?}({qs:?})", g.gate_type);
     }
 
@@ -793,7 +805,7 @@ fn bench_expansion_equivalence() {
         for _ in 0..num_shots {
             sim.pz(&[qid(0), qid(1), qid(2)]);
             let mut outs = [false; 2];
-            for r in 0..2 {
+            for (r, out) in outs.iter_mut().enumerate() {
                 sim.h(&[qid(2)]);
                 sim.cx(&[(qid(2), qid(0))]);
                 sim.rz(Angle64::from_radians(theta), &[qid(2)]);
@@ -802,7 +814,7 @@ fn bench_expansion_equivalence() {
                 sim.rz(Angle64::from_radians(theta), &[qid(1)]);
                 sim.rz(Angle64::from_radians(theta), &[qid(2)]);
                 sim.h(&[qid(2)]);
-                outs[r] = sim.mz(&[qid(2)])[0].outcome;
+                *out = sim.mz(&[qid(2)])[0].outcome;
                 if r == 0 {
                     sim.pz(&[qid(2)]);
                 }
@@ -812,7 +824,7 @@ fn bench_expansion_equivalence() {
             }
         }
     }
-    let sv_orig = orig_det as f64 / num_shots as f64;
+    let sv_orig = u64_to_f64(orig_det) / f64::from(num_shots);
 
     // --- StateVec on EXPANDED circuit (no mid-circuit measurements) ---
     let mut exp_det = 0u64;
@@ -825,7 +837,7 @@ fn bench_expansion_equivalence() {
             sim.pz(&all_q);
 
             for (i, g) in expanded.gates.iter().enumerate() {
-                let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+                let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
 
                 // Skip expansion gates for noise (same logic as Heisenberg)
                 let is_exp_gate = {
@@ -856,23 +868,19 @@ fn bench_expansion_equivalence() {
                             sim.h(&[qid(q)]);
                         }
                     }
-                    pecos_core::gate_type::GateType::CX => {
-                        if qs.len() >= 2 {
-                            sim.cx(&[(qid(qs[0]), qid(qs[1]))]);
-                        }
-                    }
-                    pecos_core::gate_type::GateType::MZ => {
-                        // Final measurement — handled below
+                    pecos_core::gate_type::GateType::CX if qs.len() >= 2 => {
+                        sim.cx(&[(qid(qs[0]), qid(qs[1]))]);
                     }
                     _ => {}
                 }
 
                 // Add noise after non-expansion CX gates
-                if !is_exp_gate && (g.gate_type == pecos_core::gate_type::GateType::CX) {
-                    if qs.len() >= 2 {
-                        sim.rz(Angle64::from_radians(theta), &[qid(qs[0])]);
-                        sim.rz(Angle64::from_radians(theta), &[qid(qs[1])]);
-                    }
+                if !is_exp_gate
+                    && (g.gate_type == pecos_core::gate_type::GateType::CX)
+                    && qs.len() >= 2
+                {
+                    sim.rz(Angle64::from_radians(theta), &[qid(qs[0])]);
+                    sim.rz(Angle64::from_radians(theta), &[qid(qs[1])]);
                 }
             }
 
@@ -886,13 +894,13 @@ fn bench_expansion_equivalence() {
             }
         }
     }
-    let sv_exp = exp_det as f64 / num_shots as f64;
+    let sv_exp = u64_to_f64(exp_det) / f64::from(num_shots);
 
     // Exact analytical
     let exact = (2.0 - (6.0 * theta).cos() - (2.0 * theta).cos()) / 4.0;
 
-    let se_orig = (sv_orig * (1.0 - sv_orig) / num_shots as f64).sqrt();
-    let se_exp = (sv_exp * (1.0 - sv_exp) / num_shots as f64).sqrt();
+    let se_orig = (sv_orig * (1.0 - sv_orig) / f64::from(num_shots)).sqrt();
+    let se_exp = (sv_exp * (1.0 - sv_exp) / f64::from(num_shots)).sqrt();
 
     eprintln!("\nResults:");
     eprintln!("  Exact analytical:    {exact:.6}");
@@ -907,13 +915,13 @@ fn bench_expansion_equivalence() {
 /// on the expanded circuit. This bypasses the Pauli-tracking backward walk entirely.
 ///
 /// The detection probability is:
-///   p = (1 - <0...0| O_backward |0...0>) / 2
-/// where O_backward = E_1† ... E_n†(D)
+///   p = (1 - <0...0| `O_backward` |0...0>) / 2
+/// where `O_backward` = `E_1`† ... `E_n†(D)`
 ///
-/// We compute O_backward as a 2^n × 2^n matrix by multiplying the adjoint
+/// We compute `O_backward` as a 2^n × 2^n matrix by multiplying the adjoint
 /// of each gate/noise channel, then evaluate the diagonal element.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_matrix_heisenberg() {
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
 
@@ -997,18 +1005,13 @@ fn bench_matrix_heisenberg() {
 
     for idx in (0..expanded.gates.len()).rev() {
         let g = &expanded.gates[idx];
-        let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+        let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
 
         // Apply noise adjoint (if not expansion gate)
-        if !exp_gates_set.contains(&idx) {
-            match g.gate_type {
-                pecos_core::gate_type::GateType::CX => {
-                    // idle_rz on both qubits
-                    for &q in &qs {
-                        apply_rz_adjoint(&mut obs_re, &mut obs_im, q, theta, n);
-                    }
-                }
-                _ => {}
+        if !exp_gates_set.contains(&idx) && g.gate_type == pecos_core::gate_type::GateType::CX {
+            // idle_rz on both qubits
+            for &q in &qs {
+                apply_rz_adjoint(&mut obs_re, &mut obs_im, q, theta, n);
             }
         }
 
@@ -1057,14 +1060,12 @@ fn bench_matrix_heisenberg() {
 
         for idx in (0..expanded.gates.len()).rev() {
             let g = &expanded.gates[idx];
-            let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+            let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
             let is_exp = exp_gates_set.contains(&idx);
 
-            if !is_exp {
-                if g.gate_type == pecos_core::gate_type::GateType::CX && qs.len() >= 2 {
-                    for &q in &qs {
-                        apply_rz_adjoint(&mut tr_re, &mut tr_im, q, theta, n);
-                    }
+            if !is_exp && g.gate_type == pecos_core::gate_type::GateType::CX && qs.len() >= 2 {
+                for &q in &qs {
+                    apply_rz_adjoint(&mut tr_re, &mut tr_im, q, theta, n);
                 }
             }
 
@@ -1112,9 +1113,9 @@ fn apply_rz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, theta: f64, n: usi
     // New O[i,j] = e^{i(b_i - b_j)θ/2} · O[i,j]
     // where b_i = bit q of i (0 → phase -θ/2, 1 → phase +θ/2)
     for i in 0..dim {
-        let bi = ((i >> q) & 1) as f64; // 0 or 1
+        let bi = bit_to_f64((i >> q) & 1); // 0 or 1
         for j in 0..dim {
-            let bj = ((j >> q) & 1) as f64;
+            let bj = bit_to_f64((j >> q) & 1);
             let phase = (bi - bj) * theta; // phase angle
             if phase.abs() < 1e-20 {
                 continue;
@@ -1141,15 +1142,15 @@ fn apply_pz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, n: usize) {
         for j in 0..dim {
             let jq = (j >> q) & 1;
             let idx = i * dim + j;
-            if iq != jq {
-                re[idx] = 0.0;
-                im[idx] = 0.0;
-            } else {
+            if iq == jq {
                 let i0 = i & !mask;
                 let j0 = j & !mask;
                 let idx0 = i0 * dim + j0;
                 re[idx] = re[idx0];
                 im[idx] = im[idx0];
+            } else {
+                re[idx] = 0.0;
+                im[idx] = 0.0;
             }
         }
     }
@@ -1199,7 +1200,7 @@ fn apply_h_adjoint(re: &mut [f64], im: &mut [f64], q: usize, n: usize) {
                     let ia = if a == 0 { i0 } else { i1 };
                     let jb = if b == 0 { j0 } else { j1 };
                     let idx = ia * dim + jb;
-                    let sign = if (iq * a + b * jq) % 2 == 0 {
+                    let sign = if (iq * a + b * jq).is_multiple_of(2) {
                         1.0
                     } else {
                         -1.0
@@ -1244,7 +1245,7 @@ fn apply_cx_adjoint(re: &mut [f64], im: &mut [f64], control: usize, target: usiz
 ///
 /// Enable one noise source at a time and compare matrix vs backward walk.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_per_noise_attribution() {
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
 
@@ -1305,7 +1306,7 @@ fn bench_per_noise_attribution() {
         // Process gates in reverse, only applying noise for the specified source
         for idx in (0..expanded.gates.len()).rev() {
             let g = &expanded.gates[idx];
-            let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+            let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
 
             // Noise: only the specified source
             if idx == gate_idx {
@@ -1347,7 +1348,7 @@ fn bench_per_noise_attribution() {
     }
     for idx in (0..expanded.gates.len()).rev() {
         let g = &expanded.gates[idx];
-        let qs: Vec<usize> = g.qubits.iter().map(|q| q.index()).collect();
+        let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
         if g.gate_type == pecos_core::gate_type::GateType::CX && qs.len() >= 2 {
             // Check if expansion gate
             let is_exp = idx > 0
@@ -1389,7 +1390,7 @@ fn bench_per_noise_attribution() {
 
 /// Isolate weight-2 vs weight-4 X-check, single vs multi-round.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_weight_isolation() {
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
 
@@ -1430,8 +1431,8 @@ fn bench_weight_isolation() {
                 det += 1;
             }
         }
-        let sv = det as f64 / num_shots as f64;
-        let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+        let sv = u64_to_f64(det) / f64::from(num_shots);
+        let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
         eprintln!(
             "Wt-2 1rnd:  H={h_p:.6}  SV={sv:.6}+/-{se:.6}  H/SV={:.4}",
             if sv > 1e-10 { h_p / sv } else { f64::NAN }
@@ -1464,7 +1465,7 @@ fn bench_weight_isolation() {
         for _ in 0..num_shots {
             sim.pz(&[qid(0), qid(1), qid(2)]);
             let mut outs = [false; 2];
-            for r in 0..2 {
+            for (r, out) in outs.iter_mut().enumerate() {
                 sim.h(&[qid(2)]);
                 sim.cx(&[(qid(2), qid(0))]);
                 sim.rz(Angle64::from_radians(theta), &[qid(2)]);
@@ -1473,7 +1474,7 @@ fn bench_weight_isolation() {
                 sim.rz(Angle64::from_radians(theta), &[qid(1)]);
                 sim.rz(Angle64::from_radians(theta), &[qid(2)]);
                 sim.h(&[qid(2)]);
-                outs[r] = sim.mz(&[qid(2)])[0].outcome;
+                *out = sim.mz(&[qid(2)])[0].outcome;
                 if r == 0 {
                     sim.pz(&[qid(2)]);
                 }
@@ -1482,8 +1483,8 @@ fn bench_weight_isolation() {
                 det += 1;
             }
         }
-        let sv = det as f64 / num_shots as f64;
-        let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+        let sv = u64_to_f64(det) / f64::from(num_shots);
+        let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
         eprintln!(
             "Wt-2 2rnd:  H={h_p:.6}  SV={sv:.6}+/-{se:.6}  H/SV={:.4}",
             if sv > 1e-10 { h_p / sv } else { f64::NAN }
@@ -1524,8 +1525,8 @@ fn bench_weight_isolation() {
                 det += 1;
             }
         }
-        let sv = det as f64 / num_shots as f64;
-        let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+        let sv = u64_to_f64(det) / f64::from(num_shots);
+        let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
         eprintln!(
             "Wt-4 1rnd:  H={h_p:.6}  SV={sv:.6}+/-{se:.6}  H/SV={:.4}",
             if sv > 1e-10 { h_p / sv } else { f64::NAN }
@@ -1564,7 +1565,7 @@ fn bench_weight_isolation() {
         for _ in 0..num_shots {
             sim.pz(&[qid(0), qid(1), qid(2), qid(3), qid(4)]);
             let mut outs = [false; 2];
-            for r in 0..2 {
+            for (r, out) in outs.iter_mut().enumerate() {
                 sim.h(&[qid(4)]);
                 for &d in &[0usize, 1, 2, 3] {
                     sim.cx(&[(qid(4), qid(d))]);
@@ -1572,7 +1573,7 @@ fn bench_weight_isolation() {
                     sim.rz(Angle64::from_radians(theta), &[qid(d)]);
                 }
                 sim.h(&[qid(4)]);
-                outs[r] = sim.mz(&[qid(4)])[0].outcome;
+                *out = sim.mz(&[qid(4)])[0].outcome;
                 if r == 0 {
                     sim.pz(&[qid(4)]);
                 }
@@ -1581,8 +1582,8 @@ fn bench_weight_isolation() {
                 det += 1;
             }
         }
-        let sv = det as f64 / num_shots as f64;
-        let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+        let sv = u64_to_f64(det) / f64::from(num_shots);
+        let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
         eprintln!(
             "Wt-4 2rnd:  H={h_p:.6}  SV={sv:.6}+/-{se:.6}  H/SV={:.4}",
             if sv > 1e-10 { h_p / sv } else { f64::NAN }
@@ -1633,7 +1634,7 @@ fn bench_weight_isolation() {
         for _ in 0..num_shots {
             sim.pz(&[qid(0), qid(1), qid(2), qid(3), qid(4)]);
             let mut outs = [false; 4]; // [r0a0, r0a1, r1a0, r1a1]
-            for r in 0..2 {
+            for (r, out_pair) in outs.chunks_mut(2).enumerate() {
                 sim.h(&[qid(3), qid(4)]);
                 sim.cx(&[(qid(3), qid(0))]);
                 sim.rz(Angle64::from_radians(theta), &[qid(3)]);
@@ -1648,8 +1649,8 @@ fn bench_weight_isolation() {
                 sim.rz(Angle64::from_radians(theta), &[qid(4)]);
                 sim.rz(Angle64::from_radians(theta), &[qid(2)]);
                 sim.h(&[qid(3), qid(4)]);
-                outs[r * 2] = sim.mz(&[qid(3)])[0].outcome;
-                outs[r * 2 + 1] = sim.mz(&[qid(4)])[0].outcome;
+                out_pair[0] = sim.mz(&[qid(3)])[0].outcome;
+                out_pair[1] = sim.mz(&[qid(4)])[0].outcome;
                 if r == 0 {
                     sim.pz(&[qid(3), qid(4)]);
                 }
@@ -1661,10 +1662,10 @@ fn bench_weight_isolation() {
                 a1 += 1;
             }
         }
-        let sv0 = a0 as f64 / num_shots as f64;
-        let sv1 = a1 as f64 / num_shots as f64;
-        let se0 = (sv0 * (1.0 - sv0) / num_shots as f64).sqrt();
-        let se1 = (sv1 * (1.0 - sv1) / num_shots as f64).sqrt();
+        let sv0 = u64_to_f64(a0) / f64::from(num_shots);
+        let sv1 = u64_to_f64(a1) / f64::from(num_shots);
+        let se0 = (sv0 * (1.0 - sv0) / f64::from(num_shots)).sqrt();
+        let se1 = (sv1 * (1.0 - sv1) / f64::from(num_shots)).sqrt();
         eprintln!(
             "Shared A0:  H={h_a0:.6}  SV={sv0:.6}+/-{se0:.6}  H/SV={:.4}",
             if sv0 > 1e-10 { h_a0 / sv0 } else { f64::NAN }
@@ -1686,7 +1687,7 @@ fn bench_weight_isolation() {
 /// since boundary detectors (ancilla 0/last) only couple to 2 CX gates while
 /// bulk detectors (middle ancillas) couple to 4, seeing more noise sources.
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_heisenberg_scaling() {
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
     use std::time::Instant;
@@ -1731,14 +1732,14 @@ fn bench_heisenberg_scaling() {
             );
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-            eprintln!("    {:>6} {prob:>18.10} {elapsed_ms:>12.2}", i);
+            eprintln!("    {i:>6} {prob:>18.10} {elapsed_ms:>12.2}");
 
             max_prob = max_prob.max(prob);
             max_ms = max_ms.max(elapsed_ms);
             total_ms += elapsed_ms;
         }
 
-        let per_det = total_ms / num_detectors as f64;
+        let per_det = total_ms / usize_to_f64(num_detectors);
         eprintln!(
             "{d:>4} {num_qubits:>10} {:>14} {num_detectors:>6} {max_prob:>18.10} {max_ms:>12.2} {total_ms:>12.2} {per_det:>12.2}",
             expanded.num_qubits
@@ -1791,7 +1792,7 @@ fn bench_heisenberg_scaling() {
                 );
                 let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-                eprintln!("    R{}A{} {prob:>18.10} {elapsed_ms:>12.2}", round, i);
+                eprintln!("    R{round}A{i} {prob:>18.10} {elapsed_ms:>12.2}");
 
                 max_prob = max_prob.max(prob);
                 max_ms = max_ms.max(elapsed_ms);
@@ -1799,7 +1800,7 @@ fn bench_heisenberg_scaling() {
             }
         }
 
-        let per_det = total_ms / num_detectors as f64;
+        let per_det = total_ms / usize_to_f64(num_detectors);
         eprintln!(
             "{num_rounds:>6} {num_qubits:>10} {:>14} {num_detectors:>6} {max_prob:>18.10} {max_ms:>12.2} {total_ms:>12.2} {per_det:>12.2}",
             expanded.num_qubits
@@ -1813,12 +1814,12 @@ fn bench_heisenberg_scaling() {
 /// (measurement bit-flip). The Heisenberg walk handles both H-type and
 /// S-type generators in a single backward pass.
 ///
-/// StateVec applies identical noise: RZ(theta) on both qubits after each
-/// CX, and flips the MZ outcome with probability p_meas.
+/// `StateVec` applies identical noise: RZ(theta) on both qubits after each
+/// CX, and flips the MZ outcome with probability `p_meas`.
 ///
 /// Detector: round-comparison (meas[0] XOR meas[1]).
 #[test]
-#[ignore]
+#[ignore = "benchmark sweep; run manually with --ignored --nocapture"]
 fn bench_combined_noise() {
     use pecos_eeg::heisenberg::heisenberg_detection_probability_from_circuit;
     use pecos_random::PecosRng;
@@ -1885,7 +1886,7 @@ fn bench_combined_noise() {
     for _ in 0..num_shots {
         sim.pz(&[qid(0), qid(1), qid(2)]);
         let mut outs = [false; 2];
-        for r in 0..2 {
+        for (r, out_slot) in outs.iter_mut().enumerate() {
             sim.h(&[qid(2)]);
             // CX(2,0) + idle RZ noise
             sim.cx(&[(qid(2), qid(0))]);
@@ -1901,7 +1902,7 @@ fn bench_combined_noise() {
             if rng.check_probability(meas_threshold) {
                 outcome = !outcome;
             }
-            outs[r] = outcome;
+            *out_slot = outcome;
             if r == 0 {
                 sim.pz(&[qid(2)]);
             }
@@ -1910,8 +1911,8 @@ fn bench_combined_noise() {
             det += 1;
         }
     }
-    let sv = det as f64 / num_shots as f64;
-    let se = (sv * (1.0 - sv) / num_shots as f64).sqrt();
+    let sv = u64_to_f64(det) / f64::from(num_shots);
+    let se = (sv * (1.0 - sv) / f64::from(num_shots)).sqrt();
     let ratio = if sv > 1e-10 { h_p / sv } else { f64::NAN };
 
     eprintln!("Heisenberg (combined): {h_p:.6}");
@@ -1942,7 +1943,7 @@ fn bench_combined_noise() {
         for _ in 0..num_shots {
             sim.pz(&[qid(0), qid(1), qid(2)]);
             let mut os = [false; 2];
-            for r in 0..2 {
+            for (r, out_slot) in os.iter_mut().enumerate() {
                 sim.h(&[qid(2)]);
                 sim.cx(&[(qid(2), qid(0))]);
                 sim.rz(Angle64::from_radians(idle_rz), &[qid(2)]);
@@ -1955,7 +1956,7 @@ fn bench_combined_noise() {
                 if rng.check_probability(pm_threshold) {
                     out = !out;
                 }
-                os[r] = out;
+                *out_slot = out;
                 if r == 0 {
                     sim.pz(&[qid(2)]);
                 }
@@ -1964,8 +1965,8 @@ fn bench_combined_noise() {
                 d += 1;
             }
         }
-        let s = d as f64 / num_shots as f64;
-        let e = (s * (1.0 - s) / num_shots as f64).sqrt();
+        let s = u64_to_f64(d) / f64::from(num_shots);
+        let e = (s * (1.0 - s) / f64::from(num_shots)).sqrt();
         let r = if s > 1e-10 { hp / s } else { f64::NAN };
         eprintln!("{pm:>8.4} {hp:>10.6} {s:>10.6} {e:>10.6} {r:>10.4}");
     }

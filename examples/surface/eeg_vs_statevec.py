@@ -38,7 +38,15 @@ def run_comparison(
     dem_sample: bool,
 ):
     from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-    from pecos_rslib_exp import perturbative_dem, perturbative_dem_events, exact_detection_rates, sim_neo, statevec, depolarizing
+    from pecos_rslib_exp import (
+        coherent_dem_exact,
+        depolarizing,
+        exact_detection_rates,
+        perturbative_dem,
+        perturbative_dem_events,
+        sim_neo,
+        statevec,
+    )
 
     patch = SurfacePatch.create(distance=distance)
     b = LogicalCircuitBuilder()
@@ -90,7 +98,7 @@ def run_comparison(
 
             # Heisenberg DEM → sampler
             t0 = time.perf_counter()
-            dem_heis_str = coherent_dem(tc, idle_rz=theta)
+            dem_heis_str = coherent_dem_exact(tc, idle_rz=theta)
             sampler_heis = DemSampler.from_dem_string(dem_heis_str)
             batch_heis = sampler_heis.generate_samples(num_shots=shots, seed=seed)
             heis_sample_time = time.perf_counter() - t0
@@ -133,12 +141,16 @@ def run_comparison(
         sv_det_rate = [c / shots for c in sv_det_count]
 
         # --- Compare ---
-        print(f"  EEG: {eeg_time*1000:.1f}ms, Heisenberg: {heis_time*1000:.1f}ms, StateVec: {sv_time:.1f}s ({shots} shots)")
+        print(f"  EEG: {eeg_time*1000:.1f}ms, Heisenberg: {heis_time*1000:.1f}ms")
+        print(f"  StateVec: {sv_time:.1f}s ({shots} shots)")
         if dem_sample:
             print(f"  DEM sample: Taylor {taylor_sample_time:.2f}s, Heisenberg {heis_sample_time:.2f}s ({shots} shots)")
 
         if dem_sample:
-            print(f"  {'Det':>4} {'Taylor':>10} {'Heisen':>10} {'T(DEM)':>10} {'H(DEM)':>10} {'StateVec':>10} {'SV_se':>8} {'T/SV':>7} {'H/SV':>7}")
+            print(
+                f"  {'Det':>4} {'Taylor':>10} {'Heisen':>10} {'T(DEM)':>10} "
+                f"{'H(DEM)':>10} {'StateVec':>10} {'SV_se':>8} {'T/SV':>7} {'H/SV':>7}",
+            )
         else:
             print(f"  {'Det':>4} {'Taylor':>10} {'Heisen':>10} {'StateVec':>10} {'SV_se':>8} {'T/SV':>7} {'H/SV':>7}")
 
@@ -162,9 +174,15 @@ def run_comparison(
             if dem_sample:
                 td = taylor_dem_rates[d] if taylor_dem_rates else 0
                 hd = heis_dem_rates[d] if heis_dem_rates else 0
-                print(f"  D{d:>3} {tp:>10.6f} {hp:>10.6f} {td:>10.6f} {hd:>10.6f} {sv_r:>10.6f} {sv_se:>8.6f} {t_ratio:>7.3f} {h_ratio:>7.3f}")
+                print(
+                    f"  D{d:>3} {tp:>10.6f} {hp:>10.6f} {td:>10.6f} {hd:>10.6f} "
+                    f"{sv_r:>10.6f} {sv_se:>8.6f} {t_ratio:>7.3f} {h_ratio:>7.3f}",
+                )
             else:
-                print(f"  D{d:>3} {tp:>10.6f} {hp:>10.6f} {sv_r:>10.6f} {sv_se:>8.6f} {t_ratio:>7.3f} {h_ratio:>7.3f}")
+                print(
+                    f"  D{d:>3} {tp:>10.6f} {hp:>10.6f} {sv_r:>10.6f} "
+                    f"{sv_se:>8.6f} {t_ratio:>7.3f} {h_ratio:>7.3f}",
+                )
 
         print(f"  Max rel err: Taylor={max_rel_taylor*100:.1f}%, Heisenberg={max_rel_heis*100:.1f}%")
 
@@ -180,8 +198,7 @@ def main():
     parser.add_argument("--theta", type=float, nargs="+", default=[0.01, 0.03, 0.05, 0.1])
     parser.add_argument("--shots", type=int, default=20000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--dem-sample", action="store_true",
-                        help="Also sample from both DEMs and compare rates")
+    parser.add_argument("--dem-sample", action="store_true", help="Also sample from both DEMs and compare rates")
     args = parser.parse_args()
 
     for dist in args.distance:

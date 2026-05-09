@@ -4,7 +4,10 @@
 use num_complex::Complex64;
 use std::f64::consts::FRAC_1_SQRT_2;
 
+const MATRIX_EPS: f64 = 1e-9;
+
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) enum CliffordMatrixGate {
     SZdg,
     F,
@@ -109,11 +112,10 @@ impl Matrix {
 
     fn approx_eq(&self, other: &Self) -> bool {
         assert_eq!(self.n, other.n);
-        const EPS: f64 = 1e-9;
         self.data
             .iter()
             .zip(other.data.iter())
-            .all(|(a, b)| (*a - *b).norm() < EPS)
+            .all(|(a, b)| (*a - *b).norm() < MATRIX_EPS)
     }
 }
 

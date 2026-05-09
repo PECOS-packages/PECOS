@@ -10,9 +10,8 @@ on minimal hand-built circuits — not surface-code-specific.
 import json
 
 import pytest
-
 from pecos.quantum import TickCircuit
-from pecos_rslib_exp import meas_sampling, depolarizing, sim_neo, stabilizer, statevec
+from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer, statevec
 
 
 def build_two_round_x_check():
@@ -51,10 +50,15 @@ def build_three_round_z_check():
         tick.mz([0])
 
     tc.set_meta("num_measurements", "3")
-    tc.set_meta("detectors", json.dumps([
-        {"records": [-2, -3]},  # m0 XOR m1
-        {"records": [-1, -2]},  # m1 XOR m2
-    ]))
+    tc.set_meta(
+        "detectors",
+        json.dumps(
+            [
+                {"records": [-2, -3]},  # m0 XOR m1
+                {"records": [-1, -2]},  # m1 XOR m2
+            ],
+        ),
+    )
     tc.set_meta("observables", "[]")
     return tc
 
@@ -64,7 +68,8 @@ class TestMeasurementFaultIndependence:
 
     def test_two_round_meas_fault_both_fire(self):
         """A detector comparing two Copy-linked measurements should see
-        faults from BOTH measurements independently."""
+        faults from BOTH measurements independently.
+        """
         tc = build_two_round_x_check()
         # Measurement-only noise: each meas flips with p=0.01
         depol = depolarizing().p1(0).p2(0).p_meas(0.01).p_prep(0)
@@ -81,9 +86,9 @@ class TestMeasurementFaultIndependence:
         stab_rate = det_rate(stab_r)
 
         # Expected: ~2*p_meas = 0.02 (two independent flips)
-        assert abs(meas_rate - stab_rate) / max(stab_rate, 1e-10) < 0.15, (
-            f"Meas fault rate mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
-        )
+        assert (
+            abs(meas_rate - stab_rate) / max(stab_rate, 1e-10) < 0.15
+        ), f"Meas fault rate mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
 
 
 class TestPrepFaultAbsorption:
@@ -107,9 +112,9 @@ class TestPrepFaultAbsorption:
 
         # Prep faults fire the detector (X error → detected at MZ)
         assert stab_rate > 0.005, f"Stabilizer should see prep faults: {stab_rate}"
-        assert abs(meas_rate - stab_rate) / stab_rate < 0.15, (
-            f"Prep fault rate mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
-        )
+        assert (
+            abs(meas_rate - stab_rate) / stab_rate < 0.15
+        ), f"Prep fault rate mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
 
     def test_prep_fault_does_not_cross_reset(self):
         """A prep fault should NOT propagate past a subsequent PZ on the same qubit."""
@@ -124,16 +129,15 @@ class TestPrepFaultAbsorption:
         def det_rate(results, d):
             num_meas = 3
             recs = [{"records": [-2, -3]}, {"records": [-1, -2]}][d]["records"]
-            fired = sum(1 for s in results
-                        if sum(s[num_meas + r] for r in recs) % 2 == 1)
+            fired = sum(1 for s in results if sum(s[num_meas + r] for r in recs) % 2 == 1)
             return fired / len(results)
 
         for d in [0, 1]:
             meas_rate = det_rate(meas_r, d)
             stab_rate = det_rate(stab_r, d)
-            assert abs(meas_rate - stab_rate) / max(stab_rate, 1e-10) < 0.20, (
-                f"Det {d} prep fault mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
-            )
+            assert (
+                abs(meas_rate - stab_rate) / max(stab_rate, 1e-10) < 0.20
+            ), f"Det {d} prep fault mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
 
 
 class TestMultiRoundNonSurface:
@@ -151,16 +155,15 @@ class TestMultiRoundNonSurface:
         def det_rate(results, d):
             num_meas = 3
             recs = [{"records": [-2, -3]}, {"records": [-1, -2]}][d]["records"]
-            fired = sum(1 for s in results
-                        if sum(s[num_meas + r] for r in recs) % 2 == 1)
+            fired = sum(1 for s in results if sum(s[num_meas + r] for r in recs) % 2 == 1)
             return fired / len(results)
 
         for d in [0, 1]:
             meas_rate = det_rate(meas_r, d)
             stab_rate = det_rate(stab_r, d)
-            assert abs(meas_rate - stab_rate) / max(stab_rate, 1e-10) < 0.15, (
-                f"Det {d} mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
-            )
+            assert (
+                abs(meas_rate - stab_rate) / max(stab_rate, 1e-10) < 0.15
+            ), f"Det {d} mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
 
 
 class TestZeroNoise:

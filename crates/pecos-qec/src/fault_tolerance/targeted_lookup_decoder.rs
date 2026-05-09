@@ -320,7 +320,7 @@ mod tests {
         build_fault_catalog(&tc, &noise).unwrap()
     }
 
-    /// Brute-force reference: enumerate all configurations up to max_faults,
+    /// Brute-force reference: enumerate all configurations up to `max_faults`,
     /// accumulate odds weights by (syndrome, logical).
     fn brute_force_weights(
         catalog: &FaultCatalog,
@@ -365,7 +365,7 @@ mod tests {
 
         let empty = decoder.decode(&[]);
         assert_eq!(empty.logical_weights.len(), 1);
-        assert_eq!(empty.logical_weights[&vec![]], 1.0);
+        assert!((empty.logical_weights[&vec![]] - 1.0).abs() < 1e-12);
 
         let non_empty = decoder.decode(&[0]);
         assert!(

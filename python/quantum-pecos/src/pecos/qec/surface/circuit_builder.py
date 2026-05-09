@@ -2323,8 +2323,8 @@ def generate_dem_from_tick_circuit_via_autodetection(
         tracked operators are represented with PECOS `pecos_tracked_op`
         metadata lines.
     """
-    from collections import defaultdict
     import json
+    from collections import defaultdict
 
     from pecos.qec import PAULI_X, PAULI_Y, PAULI_Z, InfluenceBuilder
 
@@ -2409,7 +2409,7 @@ def generate_dem_from_tick_circuit_via_autodetection(
                 "kind": "tracked_operator",
                 "label": "tracked_x",
                 "pauli": _pauli_string("X", tracked_x_qubits),
-            }
+            },
         )
     if tracked_z_qubits:
         tracked_op_metadata.append(
@@ -2418,12 +2418,9 @@ def generate_dem_from_tick_circuit_via_autodetection(
                 "kind": "tracked_operator",
                 "label": "tracked_z",
                 "pauli": _pauli_string("Z", tracked_z_qubits),
-            }
+            },
         )
-    lines.extend(
-        f"pecos_tracked_op {json.dumps(metadata, separators=(',', ':'))}"
-        for metadata in tracked_op_metadata
-    )
+    lines.extend(f"pecos_tracked_op {json.dumps(metadata, separators=(',', ':'))}" for metadata in tracked_op_metadata)
 
     # Add error mechanisms
     for (dets, dem_outputs), prob in sorted(

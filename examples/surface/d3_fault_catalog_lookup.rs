@@ -5,7 +5,7 @@
 //!
 //! This example keeps the expensive loop in Rust:
 //! - build a d=3 rotated surface-code Z-memory experiment,
-//! - enumerate all k-fault configurations for k <= max_faults,
+//! - enumerate all k-fault configurations for k <= `max_faults`,
 //! - XOR detector / observable effects via `fault_configurations(k)`,
 //! - aggregate `configuration_probability` into a lookup table.
 //!
@@ -234,33 +234,29 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
     // Z-check round is deterministic. Without these, an initial data X fault can
     // flip every repeated Z-check round and the final data parity, cancelling all
     // later detectors.
-    for stab_idx in 0..code.num_z_stabilizers() {
-        detectors.push(relative_records(
-            num_measurements,
-            &[z_round_measurements[0][stab_idx]],
-        ));
+    for &meas_ref in z_round_measurements[0]
+        .iter()
+        .take(code.num_z_stabilizers())
+    {
+        detectors.push(relative_records(num_measurements, &[meas_ref]));
     }
 
     // Repeated syndrome detectors: current stabilizer measurement XOR previous
     // stabilizer measurement. These are deterministic after the first round.
     for round in 1..rounds {
-        for stab_idx in 0..code.num_x_stabilizers() {
-            detectors.push(relative_records(
-                num_measurements,
-                &[
-                    x_round_measurements[round][stab_idx],
-                    x_round_measurements[round - 1][stab_idx],
-                ],
-            ));
+        for (&current, &previous) in x_round_measurements[round]
+            .iter()
+            .zip(x_round_measurements[round - 1].iter())
+            .take(code.num_x_stabilizers())
+        {
+            detectors.push(relative_records(num_measurements, &[current, previous]));
         }
-        for stab_idx in 0..code.num_z_stabilizers() {
-            detectors.push(relative_records(
-                num_measurements,
-                &[
-                    z_round_measurements[round][stab_idx],
-                    z_round_measurements[round - 1][stab_idx],
-                ],
-            ));
+        for (&current, &previous) in z_round_measurements[round]
+            .iter()
+            .zip(z_round_measurements[round - 1].iter())
+            .take(code.num_z_stabilizers())
+        {
+            detectors.push(relative_records(num_measurements, &[current, previous]));
         }
     }
 
@@ -301,8 +297,12 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
 }
 
 fn relative_records(num_measurements: usize, refs: &[TickMeasRef]) -> Vec<i32> {
+    let num_measurements = i32::try_from(num_measurements).expect("measurement count fits in i32");
     refs.iter()
-        .map(|m| m.record_idx as i32 - num_measurements as i32)
+        .map(|m| {
+            i32::try_from(m.record_idx).expect("measurement record index fits in i32")
+                - num_measurements
+        })
         .collect()
 }
 

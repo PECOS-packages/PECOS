@@ -27,13 +27,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python" / "quantum
 
 def run(*, distance, rounds, basis, p, shots, seed, run_statevec):
     from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-    from pecos_rslib.qec import DemBuilder, DagFaultAnalyzer, DemSampler
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder, DemSampler
     from pecos_rslib_exp import (
+        depolarizing,
         exact_detection_rates,
         sim_neo,
         stabilizer,
         statevec,
-        depolarizing,
     )
 
     patch = SurfacePatch.create(distance=distance)
@@ -130,7 +130,7 @@ def run(*, distance, rounds, basis, p, shots, seed, run_statevec):
     print(
         f"  DemBuilder: {dem_build_time*1000:.0f}ms, FromCircuit: {fc_time:.2f}s,"
         f" Heisenberg: {heis_time*1000:.0f}ms, Stabilizer: {stab_time:.2f}s"
-        + (f", StateVec: {sv_time:.1f}s" if sv else "")
+        + (f", StateVec: {sv_time:.1f}s" if sv else ""),
     )
 
     # Header
@@ -148,7 +148,7 @@ def run(*, distance, rounds, basis, p, shots, seed, run_statevec):
         if s < 0.001:
             continue
 
-        se = math.sqrt(s * (1 - s) / shots)
+        math.sqrt(s * (1 - s) / shots)
         r_db = dem_analytical[dd] / s
         r_fc = dem_fc[dd] / s
         r_h = heis[dd] / s

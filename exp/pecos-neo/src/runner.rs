@@ -3153,14 +3153,13 @@ mod tests {
             .iter()
             .zip(expected.iter())
             .find(|(a, e)| a.norm() > TOLERANCE || e.norm() > TOLERANCE)
-            .map(|(a, e)| {
+            .map_or(Complex64::new(1.0, 0.0), |(a, e)| {
                 assert!(
                     a.norm() > TOLERANCE && e.norm() > TOLERANCE,
                     "{label}: support differs, actual={a:?}, expected={e:?}"
                 );
                 *a / *e
-            })
-            .unwrap_or(Complex64::new(1.0, 0.0));
+            });
 
         for (idx, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
             let diff = (*a - phase * *e).norm();

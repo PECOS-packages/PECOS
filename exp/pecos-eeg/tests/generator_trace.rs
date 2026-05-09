@@ -4,10 +4,12 @@
 
 //! Trace generator propagation for d=2 Z-basis surface code.
 //! Diagnose why D1 and D2 have identical EEG probabilities
-//! when StateVec shows they should differ.
+//! when `StateVec` shows they should differ.
+
+use std::collections::BTreeMap;
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 use pecos_eeg::Bm;
 use pecos_eeg::circuit::{NoiseModel, analyze_expanded};
 use pecos_eeg::dem_mapping::*;
@@ -18,7 +20,7 @@ use pecos_eeg::stabilizer::StabilizerGroup;
 fn gate(gt: GateType, qubits: &[usize]) -> Gate {
     Gate {
         gate_type: gt,
-        qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
@@ -26,7 +28,7 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
 }
 
 /// Build the d=2 Z-basis surface code circuit (2 rounds).
-/// Matches what LogicalCircuitBuilder produces.
+/// Matches what `LogicalCircuitBuilder` produces.
 fn build_d2_zbasis() -> Vec<Gate> {
     vec![
         // Init
@@ -119,7 +121,7 @@ fn trace_d2_zbasis_generators() {
     eprintln!("\nD1 stabilizer: Z on aux q{aux_m0} and q{aux_m3} (ancilla 4 rounds 1&2)");
     eprintln!("D2 stabilizer: Z on aux q{aux_m1} and q{aux_m4} (ancilla 5 rounds 1&2)");
 
-    let _dets = vec![
+    let _dets = [
         Detector {
             id: 1,
             stabilizer: d1_stab.clone(),
@@ -164,16 +166,15 @@ fn trace_d2_zbasis_generators() {
 
     eprintln!("\nD1 generators: {} (ancilla 4)", d1_gens.len());
     for (label, coeff) in &d1_gens {
-        eprintln!("  {:?} coeff={:.6}", label, coeff);
+        eprintln!("  {label:?} coeff={coeff:.6}");
     }
 
     eprintln!("\nD2 generators: {} (ancilla 5)", d2_gens.len());
     for (label, coeff) in &d2_gens {
-        eprintln!("  {:?} coeff={:.6}", label, coeff);
+        eprintln!("  {label:?} coeff={coeff:.6}");
     }
 
     // After BCH combination (same label → sum coefficients)
-    use std::collections::BTreeMap;
     let mut d1_bch: BTreeMap<Bm, f64> = BTreeMap::new();
     let mut d2_bch: BTreeMap<Bm, f64> = BTreeMap::new();
     for (l, c) in &d1_gens {
@@ -185,12 +186,12 @@ fn trace_d2_zbasis_generators() {
 
     eprintln!("\nD1 after BCH: {} distinct labels", d1_bch.len());
     for (l, c) in &d1_bch {
-        eprintln!("  {:?} rate={:.6}", l, c);
+        eprintln!("  {l:?} rate={c:.6}");
     }
 
     eprintln!("\nD2 after BCH: {} distinct labels", d2_bch.len());
     for (l, c) in &d2_bch {
-        eprintln!("  {:?} rate={:.6}", l, c);
+        eprintln!("  {l:?} rate={c:.6}");
     }
 
     // Verify asymmetry in generator counts
@@ -241,10 +242,8 @@ fn trace_d2_zbasis_generators() {
                 GateType::H => {
                     sim.h(&qs);
                 }
-                GateType::CX => {
-                    if qs.len() >= 2 {
-                        sim.cx(&[(qs[0], qs[1])]);
-                    }
+                GateType::CX if qs.len() >= 2 => {
+                    sim.cx(&[(qs[0], qs[1])]);
                 }
                 GateType::MZ => {
                     let _ = sim.mz(&qs);
@@ -268,7 +267,7 @@ fn trace_d2_zbasis_generators() {
             std::iter::once(0usize),
             0,
         );
-        eprintln!("\nfind_pauli_sign(Z0) WITH MZ = {:?}", result);
+        eprintln!("\nfind_pauli_sign(Z0) WITH MZ = {result:?}");
 
         // Try without MZ: skip measurements in stabilizer computation
         let mut sim2 = SparseStab::with_seed(7, 0);
@@ -286,12 +285,9 @@ fn trace_d2_zbasis_generators() {
                 GateType::H => {
                     sim2.h(&qs);
                 }
-                GateType::CX => {
-                    if qs.len() >= 2 {
-                        sim2.cx(&[(qs[0], qs[1])]);
-                    }
+                GateType::CX if qs.len() >= 2 => {
+                    sim2.cx(&[(qs[0], qs[1])]);
                 }
-                GateType::MZ => { /* skip */ }
                 _ => {}
             }
         }
@@ -302,16 +298,12 @@ fn trace_d2_zbasis_generators() {
             std::iter::once(0usize),
             0,
         );
-        eprintln!("find_pauli_sign(Z0) WITHOUT MZ = {:?}", result2);
+        eprintln!("find_pauli_sign(Z0) WITHOUT MZ = {result2:?}");
 
         // Check X0X1 without MZ
-        let result3 = stabs2.find_pauli_sign(
-            sim2.destabs(),
-            [0usize, 1].into_iter(),
-            std::iter::empty::<usize>(),
-            0,
-        );
-        eprintln!("find_pauli_sign(X0X1) WITHOUT MZ = {:?}", result3);
+        let result3 =
+            stabs2.find_pauli_sign(sim2.destabs(), [0usize, 1], std::iter::empty::<usize>(), 0);
+        eprintln!("find_pauli_sign(X0X1) WITHOUT MZ = {result3:?}");
     }
 
     // Check: how many qubits in the stabilizer group? And test Z0Z1Z2Z3

@@ -139,12 +139,12 @@ impl StabilizerGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{GateAngles, GateParams, GateQubits};
+    use pecos_core::{GateAngles, GateParams};
 
     fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         Gate {
             gate_type: gt,
-            qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+            qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
             angles: GateAngles::new(),
             params: GateParams::new(),
             meas_ids: pecos_core::GateMeasIds::new(),

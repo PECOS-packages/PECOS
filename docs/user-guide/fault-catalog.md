@@ -245,8 +245,10 @@ For a truncated table:
 ```python
 from collections import defaultdict
 
+
 def add_weight(table, syndrome, logical, probability):
     table[tuple(syndrome)][tuple(logical)] += probability
+
 
 table = defaultdict(lambda: defaultdict(float))
 
@@ -277,6 +279,7 @@ def xor_sorted(a, b):
         else:
             out.add(item)
     return tuple(sorted(out))
+
 
 for event in catalog.fault_configurations(1):
     correction = decoder[tuple(event.detectors)]
@@ -385,4 +388,3 @@ Run it from the repository root:
 ```bash
 cargo run -p pecos-qec --example surface_d3_fault_catalog_lookup
 ```
-

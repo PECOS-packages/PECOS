@@ -224,9 +224,7 @@ def test_explicit_python_gate_names_map_to_rust_clifford_gates():
     catalog = fault_catalog(tc, noise)
     # Structural catalog includes all locations (including p_meas=0 and p_prep=0).
     # Count only alternatives at locations with nonzero channel probability.
-    nonzero_alts = sum(
-        len(loc.faults) for loc in catalog if loc.channel_probability > 0.0
-    )
+    nonzero_alts = sum(len(loc.faults) for loc in catalog if loc.channel_probability > 0.0)
     assert nonzero_alts == 156
 
 

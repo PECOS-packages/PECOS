@@ -542,7 +542,7 @@ class TestXBasisMemory:
         builder.with_noise(**noise)
         builder.with_detectors_json(tc.get_meta("detectors") or "[]")
         builder.with_observables_json(
-            tc.get_meta("observables") or "[]"
+            tc.get_meta("observables") or "[]",
         )
         builder.with_measurement_order(extract_measurement_order(tc))
         pecos_sampler = builder.build()

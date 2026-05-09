@@ -9,10 +9,9 @@ Tests the d=3 surface code 57/48 regression and method dispatch.
 import json
 
 import pytest
-
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
-from pecos_rslib_exp import meas_sampling, depolarizing, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
 
 
 @pytest.fixture
@@ -76,15 +75,14 @@ class TestD3SurfaceCode57vs48:
 
         # Z-type detectors (deterministic measurements) should match.
         close_count = sum(
-            1 for d, s in zip(meas_rates, stab_rates)
-            if s > 0.001 and abs(d - s) / s < 0.15
+            1 for d, s in zip(meas_rates, stab_rates, strict=False) if s > 0.001 and abs(d - s) / s < 0.15
         )
         total_active = sum(1 for s in stab_rates if s > 0.001)
 
         # At least half the detectors should match (Z-type ones)
-        assert close_count >= total_active // 2, (
-            f"Only {close_count}/{total_active} detectors within 15% of stabilizer."
-        )
+        assert (
+            close_count >= total_active // 2
+        ), f"Only {close_count}/{total_active} detectors within 15% of stabilizer."
 
     def test_all_detection_rates_match_stabilizer(self, d3_tc, depol):
         """ALL detector rates should match stabilizer (target correctness)."""
@@ -112,11 +110,7 @@ class TestD3SurfaceCode57vs48:
         meas_rates = rates(meas_r)
         stab_rates = rates(stab_r)
 
-        max_diff = max(
-            abs(d - s) / max(s, 1e-10)
-            for d, s in zip(meas_rates, stab_rates)
-            if s > 0.001
-        )
+        max_diff = max(abs(d - s) / max(s, 1e-10) for d, s in zip(meas_rates, stab_rates, strict=False) if s > 0.001)
         assert max_diff < 0.15, f"Max relative det rate diff: {max_diff:.1%}"
 
     def test_observable_flip_rates_match_stabilizer(self, d3_tc):
@@ -145,13 +139,12 @@ class TestD3SurfaceCode57vs48:
 
         meas_rates = rates(meas_r)
         stab_rates = rates(stab_r)
-        for i, (meas_rate, stab_rate) in enumerate(zip(meas_rates, stab_rates)):
+        for i, (meas_rate, stab_rate) in enumerate(zip(meas_rates, stab_rates, strict=False)):
             abs_diff = abs(meas_rate - stab_rate)
             rel_diff = abs_diff / max(stab_rate, 1e-12)
-            assert abs_diff < 0.03 or rel_diff < 0.5, (
-                f"Observable L{i} rate mismatch: "
-                f"meas_sampling={meas_rate:.4f}, stabilizer={stab_rate:.4f}"
-            )
+            assert (
+                abs_diff < 0.03 or rel_diff < 0.5
+            ), f"Observable L{i} rate mismatch: meas_sampling={meas_rate:.4f}, stabilizer={stab_rate:.4f}"
 
 
 class TestMethodDispatch:
@@ -182,5 +175,3 @@ class TestMethodDispatch:
     def test_no_noise_errors(self, d3_tc):
         with pytest.raises(Exception, match="noise"):
             sim_neo(d3_tc).quantum(meas_sampling()).shots(10).seed(42).run()
-
-

@@ -10,6 +10,10 @@ const D3_DEM: &str =
 const D5_DEM: &str =
     include_str!("../../../examples/surface_code_circuits/surface_code_d5_z_stim.dem");
 
+fn shots_as_f64(num_shots: usize) -> f64 {
+    f64::from(u32::try_from(num_shots).expect("profile shot count fits in u32"))
+}
+
 fn profile_decoder(name: &str, dem: &str, num_shots: usize) {
     let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
     let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::fast());
@@ -35,8 +39,9 @@ fn profile_decoder(name: &str, dem: &str, num_shots: usize) {
     }
     let elapsed = t0.elapsed();
 
-    let per_shot_ns = elapsed.as_nanos() as f64 / num_shots as f64;
-    let throughput = num_shots as f64 / elapsed.as_secs_f64();
+    let shots = shots_as_f64(num_shots);
+    let per_shot_ns = elapsed.as_secs_f64() * 1.0e9 / shots;
+    let throughput = shots / elapsed.as_secs_f64();
     println!(
         "{name:8}: {num_det:3} det, {per_shot_ns:8.0} ns/shot ({:.0} kshots/s), errors={errors}",
         throughput / 1000.0
@@ -68,8 +73,9 @@ fn profile_phases(name: &str, dem: &str, num_shots: usize) {
     }
     let total_time = t0.elapsed();
 
-    let grow_ns = grow_time.as_nanos() as f64 / num_shots as f64;
-    let total_ns = total_time.as_nanos() as f64 / num_shots as f64;
+    let shots = shots_as_f64(num_shots);
+    let grow_ns = grow_time.as_secs_f64() * 1.0e9 / shots;
+    let total_ns = total_time.as_secs_f64() * 1.0e9 / shots;
     let peel_ns = total_ns - grow_ns;
 
     println!(
@@ -88,7 +94,7 @@ fn profile_phases(name: &str, dem: &str, num_shots: usize) {
             let _ = bp_dec.decode_to_observables(syn);
         }
         let bp_total = t0.elapsed();
-        let bp_ns = bp_total.as_nanos() as f64 / num_shots as f64;
+        let bp_ns = bp_total.as_secs_f64() * 1.0e9 / shots;
         let bp_only = bp_ns - total_ns; // approximate BP overhead
         println!(
             "  BP+UF: {bp_ns:.0} ns/shot total (BP overhead ~{bp_only:.0} ns = {:.0}%)",
@@ -133,6 +139,6 @@ fn main() {
         let _ = dec.decode_syndrome(syn);
     }
     let elapsed = t0.elapsed();
-    let per_shot_ns = elapsed.as_nanos() as f64 / num_shots as f64;
+    let per_shot_ns = elapsed.as_secs_f64() * 1.0e9 / shots_as_f64(num_shots);
     println!("d5-bal : {num_det:3} det, {per_shot_ns:8.0} ns/shot");
 }

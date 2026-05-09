@@ -95,7 +95,7 @@ def build_mirrored_brickwork(width, depth, seed, patch, rounds=2):
                 b.add_transversal_h(label)
                 eff[label] = "X" if eff[label] == "Z" else "Z"
                 layer_ops.append(("H", label))
-        b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+        b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
 
         offset = layer % 2
         cx_applied = []
@@ -105,7 +105,7 @@ def build_mirrored_brickwork(width, depth, seed, patch, rounds=2):
                 b.add_transversal_cx(ctrl, tgt)
                 cx_applied.append((ctrl, tgt))
         if cx_applied:
-            b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+            b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
             layer_ops.append(("CX", cx_applied))
         ops_forward.append(layer_ops)
 
@@ -116,18 +116,18 @@ def build_mirrored_brickwork(width, depth, seed, patch, rounds=2):
                 for ctrl, tgt in reversed(args[0]):
                     if eff[ctrl] == eff[tgt]:
                         b.add_transversal_cx(ctrl, tgt)
-                b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+                b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
         for op_type, *args in reversed(layer_ops):
             if op_type == "H":
                 label = args[0]
                 b.add_transversal_h(label)
                 eff[label] = "X" if eff[label] == "Z" else "Z"
-        b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+        b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
 
     return b
 
 
-def build_t_injection_circuit(distance, seed, patch, rounds_per_layer):
+def build_t_injection_circuit(distance, _seed, patch, rounds_per_layer):
     """Build a T-gate injection circuit: memory + T injection + memory."""
     from pecos.qec.surface import LogicalCircuitBuilder
 
@@ -256,7 +256,7 @@ def run_sweep(
                                 num_errors=errors,
                                 logical_error_rate=ler,
                                 decode_seconds=dec_sec,
-                            )
+                            ),
                         )
 
                     shard.points.append(point)
@@ -387,7 +387,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
     meta_cards = []
     if distances:
         meta_cards.append(
-            f'<div class="meta-card"><strong>Distances</strong>{", ".join(str(d) for d in distances)}</div>'
+            f'<div class="meta-card"><strong>Distances</strong>{", ".join(str(d) for d in distances)}</div>',
         )
     if decoders_used:
         meta_cards.append(f'<div class="meta-card"><strong>Decoders</strong>{len(decoders_used)}</div>')
@@ -428,7 +428,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         "effectively unlimited.</p>",
         "",
         "<h4>Budget strategies</h4>",
-        "<p>The decoder framework selects a strategy based on the user-specified reaction " "time budget:</p>",
+        "<p>The decoder framework selects a strategy based on the user-specified reaction time budget:</p>",
         "<ul>",
         "<li><code>unlimited</code> &mdash; Full-circuit OSD. Maximum accuracy. "
         "Appropriate for Clifford circuits or offline analysis.</li>",
@@ -471,7 +471,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         html_parts.append("<h2>Brickwork Circuits (Clifford)</h2>")
         html_parts.append(
             "<p>Mirrored random gate sequences (identity operation). "
-            "LER from stochastic depolarizing noise only.</p>"
+            "LER from stochastic depolarizing noise only.</p>",
         )
 
     for (d, p), points in sorted(brickwork_tables.items()):
@@ -479,8 +479,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
 
         decoders = sorted({r.decoder for pt in points for r in pt.decoder_results})
         html_parts.append("<table><tr><th>Width</th><th>Depth</th>")
-        for dec in decoders:
-            html_parts.append(f"<th>{dec}</th>")
+        html_parts.extend(f"<th>{dec}</th>" for dec in decoders)
         html_parts.append("</tr>")
 
         for pt in sorted(points, key=lambda x: (x.width, x.depth)):
@@ -490,7 +489,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
                 if r:
                     cls = "good" if r.logical_error_rate < 0.01 else "warn" if r.logical_error_rate < 0.05 else "bad"
                     html_parts.append(
-                        f'<td class="{cls}">{r.logical_error_rate:.5f} ' f"({r.decode_seconds:.2f}s)</td>",
+                        f'<td class="{cls}">{r.logical_error_rate:.5f} ({r.decode_seconds:.2f}s)</td>',
                     )
                 else:
                     html_parts.append("<td>-</td>")
@@ -506,15 +505,14 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         html_parts.append(
             "<p>T gate via magic state teleportation: "
             "|T&rang; ancilla + CX + measure + conditional S. "
-            "Feed-forward decision point for the decoder.</p>"
+            "Feed-forward decision point for the decoder.</p>",
         )
 
     for (d, p), points in sorted(t_injection_tables.items()):
         decoders = sorted({r.decoder for pt in points for r in pt.decoder_results})
         html_parts.append(f"<h3>d={d}, p={p}</h3>")
         html_parts.append("<table><tr><th>Circuit</th>")
-        for dec in decoders:
-            html_parts.append(f"<th>{dec}</th>")
+        html_parts.extend(f"<th>{dec}</th>" for dec in decoders)
         html_parts.append("</tr>")
 
         for pt in points:
@@ -524,7 +522,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
                 if r:
                     cls = "good" if r.logical_error_rate < 0.01 else "warn" if r.logical_error_rate < 0.05 else "bad"
                     html_parts.append(
-                        f'<td class="{cls}">{r.logical_error_rate:.5f} ' f"({r.decode_seconds:.2f}s)</td>",
+                        f'<td class="{cls}">{r.logical_error_rate:.5f} ({r.decode_seconds:.2f}s)</td>',
                     )
                 else:
                     html_parts.append("<td>-</td>")
@@ -543,7 +541,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
             "uncompensated phase accumulation during idle time. Unlike stochastic "
             "Z errors, coherent rotations accumulate constructively &mdash; the LER "
             "far exceeds the Pauli-twirled equivalent sin&sup2;(&theta;/2). "
-            "Decoder uses a stochastic-only DEM. Simulated with StateVec.</p>"
+            "Decoder uses a stochastic-only DEM. Simulated with StateVec.</p>",
         )
 
         for (d, p), result in sorted(coherent_results.items()):
@@ -556,7 +554,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
                 "<th>&plusmn; SE</th>"
                 "<th>Errors</th>"
                 "<th>vs baseline</th>"
-                "</tr>"
+                "</tr>",
             )
             for pt in result.points:
                 cls = "good" if pt.ler < 0.02 else "warn" if pt.ler < 0.05 else "bad"
@@ -589,7 +587,9 @@ def main():
     parser.add_argument("--widths", type=int, nargs="+", default=[2, 3, 4])
     parser.add_argument("--depths", type=int, nargs="+", default=[1, 2, 3])
     parser.add_argument(
-        "--scaled-depth", action="store_true", help="Override --depths: set depth=2^((d+1)/2) per distance"
+        "--scaled-depth",
+        action="store_true",
+        help="Override --depths: set depth=2^((d+1)/2) per distance",
     )
     parser.add_argument("--error-rates", type=float, nargs="+", default=[0.001])
     parser.add_argument("--decoders", nargs="+", default=["observable_subgraph:pymatching"])
@@ -597,13 +597,19 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--rounds-per-layer", type=int, default=2)
     parser.add_argument(
-        "--include-t-injection", action="store_true", help="Include T-gate injection circuits (non-Clifford)"
+        "--include-t-injection",
+        action="store_true",
+        help="Include T-gate injection circuits (non-Clifford)",
     )
     parser.add_argument(
-        "--t-injection-only", action="store_true", help="Only T-gate injection circuits (skip brickwork)"
+        "--t-injection-only",
+        action="store_true",
+        help="Only T-gate injection circuits (skip brickwork)",
     )
     parser.add_argument(
-        "--include-coherent-noise", action="store_true", help="Include coherent idle noise sweep (RZ after CX)"
+        "--include-coherent-noise",
+        action="store_true",
+        help="Include coherent idle noise sweep (RZ after CX)",
     )
     parser.add_argument(
         "--coherent-p-idle",
@@ -633,10 +639,10 @@ def main():
         # Per-distance depth: 2^((d+1)/2) — challenges the decoder proportionally
         # d=3→4, d=5→8, d=7→16, d=9→32
         depths = [int(2 ** ((d + 1) / 2)) for d in args.distances]
-        print(f"Scaled depths: {dict(zip(args.distances, depths))}")
+        print(f"Scaled depths: {dict(zip(args.distances, depths, strict=False))}")
 
         all_points = []
-        for d, depth in zip(args.distances, depths):
+        for d, depth in zip(args.distances, depths, strict=False):
             partial = run_sweep(
                 distances=[d],
                 widths=args.widths,
@@ -652,7 +658,7 @@ def main():
             config={
                 "distances": args.distances,
                 "widths": args.widths,
-                "scaled_depths": dict(zip(args.distances, depths)),
+                "scaled_depths": dict(zip(args.distances, depths, strict=False)),
                 "error_rates": args.error_rates,
                 "decoders": args.decoders,
                 "shots": args.shots,
@@ -737,7 +743,7 @@ def main():
                             num_errors=errors,
                             logical_error_rate=ler,
                             decode_seconds=dec_sec,
-                        )
+                        ),
                     )
 
                 shard.points.append(point)

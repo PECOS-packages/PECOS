@@ -32,7 +32,10 @@ def build_circuit(distance, rounds, basis, circuit_source):
         from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
         tc = _build_surface_tick_circuit_for_native_model(
-            patch, rounds, basis, circuit_source="traced_qis",
+            patch,
+            rounds,
+            basis,
+            circuit_source="traced_qis",
         )
         tc.lower_clifford_rotations()
         tc.assign_missing_meas_ids()
@@ -106,8 +109,19 @@ def format_matrix(matrix, width=8, precision=5):
     return "\n".join(lines)
 
 
-def run_validation(*, distances, bases, rounds_per_d, shots, seed, circuit_sources,
-                   noise_configs, threshold, show_matrices, max_order):
+def run_validation(
+    *,
+    distances,
+    bases,
+    rounds_per_d,
+    shots,
+    seed,
+    circuit_sources,
+    noise_configs,
+    threshold,
+    show_matrices,
+    max_order,
+):
     from pecos.qec.analysis import (
         compare_flip_matrices,
         compare_k_body_rates,
@@ -129,8 +143,10 @@ def run_validation(*, distances, bases, rounds_per_d, shots, seed, circuit_sourc
 
                 src_label = f" [{source}]" if len(circuit_sources) > 1 else ""
                 print(f"\n{'=' * 72}")
-                print(f"d={distance} {basis}-basis{src_label}, {num_dets} detectors, "
-                      f"{n_ancilla} per round, {rounds} rounds")
+                print(
+                    f"d={distance} {basis}-basis{src_label}, {num_dets} detectors, "
+                    f"{n_ancilla} per round, {rounds} rounds",
+                )
                 print(f"{'=' * 72}")
 
                 for noise_label, noise_kw in noise_configs:
@@ -146,7 +162,7 @@ def run_validation(*, distances, bases, rounds_per_d, shots, seed, circuit_sourc
 
                     all_pass = True
                     round_results = []
-                    for r_idx, (sm, dm) in enumerate(zip(sim_mats, dem_mats)):
+                    for r_idx, (sm, dm) in enumerate(zip(sim_mats, dem_mats, strict=False)):
                         max_err, frob_err, worst = compare_flip_matrices(sm, dm)
                         ok = max_err <= threshold
                         if not ok:
@@ -155,14 +171,20 @@ def run_validation(*, distances, bases, rounds_per_d, shots, seed, circuit_sourc
 
                     # --- Higher-order correlations ---
                     sim_kbody = detector_k_body_rates_by_round(
-                        sim_events, nd, n_ancilla, max_order=max_order,
+                        sim_events,
+                        nd,
+                        n_ancilla,
+                        max_order=max_order,
                     )
                     dem_kbody = detector_k_body_rates_by_round(
-                        dem_events, nd, n_ancilla, max_order=max_order,
+                        dem_events,
+                        nd,
+                        n_ancilla,
+                        max_order=max_order,
                     )
 
                     kbody_results = []  # (round, order, max_err, rms_err, worst, ok)
-                    for r_idx, (sr, dr) in enumerate(zip(sim_kbody, dem_kbody)):
+                    for r_idx, (sr, dr) in enumerate(zip(sim_kbody, dem_kbody, strict=False)):
                         order_stats = compare_k_body_rates(sr, dr, max_order=max_order)
                         for order, (me, rms, worst_ev) in order_stats.items():
                             ok = me <= threshold
@@ -177,8 +199,9 @@ def run_validation(*, distances, bases, rounds_per_d, shots, seed, circuit_sourc
                         total_pass += 1
                     else:
                         total_fail += 1
-                        failures.append(f"d={distance} {basis} {source} {noise_label}: "
-                                        f"{worst_round_err * 100:.0f}%")
+                        failures.append(
+                            f"d={distance} {basis} {source} {noise_label}: {worst_round_err * 100:.0f}%",
+                        )
 
                     print(f"\n  {noise_label} (sim: {sim_time:.2f}s)  {status}")
 
@@ -186,45 +209,46 @@ def run_validation(*, distances, bases, rounds_per_d, shots, seed, circuit_sourc
                     print("    Pairwise (flip matrices):")
                     for r_idx, max_err, frob_err, worst, ok in round_results:
                         flag = "" if ok else " <-- FAIL"
-                        print(f"      Round {r_idx}: max_rel={max_err * 100:5.1f}%  "
-                              f"frob_rel={frob_err * 100:5.1f}%  "
-                              f"worst={worst}{flag}")
+                        print(
+                            f"      Round {r_idx}: max_rel={max_err * 100:5.1f}%  "
+                            f"frob_rel={frob_err * 100:5.1f}%  "
+                            f"worst={worst}{flag}",
+                        )
 
                     # Higher-order per-round summary
                     for order in range(1, max_order + 1):
-                        order_entries = [(r, me, rms, w, ok)
-                                         for r, o, me, rms, w, ok in kbody_results
-                                         if o == order]
+                        order_entries = [(r, me, rms, w, ok) for r, o, me, rms, w, ok in kbody_results if o == order]
                         if not order_entries:
                             continue
                         worst_me = max(e[1] for e in order_entries)
                         avg_rms = sum(e[2] for e in order_entries) / len(order_entries)
-                        label = {1: "1-body (marginals)", 2: "2-body (pairs)",
-                                 3: "3-body (triples)", 4: "4-body (quads)"}.get(
-                            order, f"{order}-body")
+                        label = {
+                            1: "1-body (marginals)",
+                            2: "2-body (pairs)",
+                            3: "3-body (triples)",
+                            4: "4-body (quads)",
+                        }.get(order, f"{order}-body")
                         any_fail = any(not e[4] for e in order_entries)
                         flag = " <-- FAIL" if any_fail else ""
-                        print(f"    {label}: worst_max_rel={worst_me * 100:5.1f}%  "
-                              f"avg_rms_rel={avg_rms * 100:5.1f}%{flag}")
+                        print(
+                            f"    {label}: worst_max_rel={worst_me * 100:5.1f}%  "
+                            f"avg_rms_rel={avg_rms * 100:5.1f}%{flag}",
+                        )
                         if any_fail:
-                            for r, me, rms, w, ok in order_entries:
+                            for r, me, _rms, w, ok in order_entries:
                                 if not ok:
-                                    print(f"      Round {r}: max_rel={me * 100:.1f}% "
-                                          f"worst={w}")
+                                    print(f"      Round {r}: max_rel={me * 100:.1f}% worst={w}")
 
                     if show_matrices and not all_pass:
-                        for r_idx, max_err, _, _, ok in round_results:
+                        for r_idx, _max_err, _, _, ok in round_results:
                             if not ok:
                                 print(f"\n    Round {r_idx} sim:")
-                                print("    " + format_matrix(
-                                    sim_mats[r_idx]).replace("\n", "\n    "))
+                                print("    " + format_matrix(sim_mats[r_idx]).replace("\n", "\n    "))
                                 print(f"    Round {r_idx} dem:")
-                                print("    " + format_matrix(
-                                    dem_mats[r_idx]).replace("\n", "\n    "))
+                                print("    " + format_matrix(dem_mats[r_idx]).replace("\n", "\n    "))
 
     print(f"\n{'=' * 72}")
-    print(f"SUMMARY: {total_pass}/{total_pass + total_fail} passed "
-          f"(threshold: {threshold * 100:.0f}%)")
+    print(f"SUMMARY: {total_pass}/{total_pass + total_fail} passed (threshold: {threshold * 100:.0f}%)")
     if failures:
         print("Failures:")
         for f in failures:
@@ -238,33 +262,29 @@ def main():
     parser = argparse.ArgumentParser(
         description="Validate DEM detector correlations against simulation.",
     )
-    parser.add_argument("--distance", "-d", type=int, nargs="+", default=[2, 3],
-                        help="Code distances (default: 2 3)")
-    parser.add_argument("--basis", type=str, nargs="+", default=["Z"],
-                        choices=["Z", "X"], help="Bases (default: Z)")
-    parser.add_argument("--rounds", type=int, default=None,
-                        help="Syndrome rounds (default: same as distance)")
-    parser.add_argument("--shots", type=int, default=100000,
-                        help="Shots per test (default: 100000)")
+    parser.add_argument("--distance", "-d", type=int, nargs="+", default=[2, 3], help="Code distances (default: 2 3)")
+    parser.add_argument("--basis", type=str, nargs="+", default=["Z"], choices=["Z", "X"], help="Bases (default: Z)")
+    parser.add_argument("--rounds", type=int, default=None, help="Syndrome rounds (default: same as distance)")
+    parser.add_argument("--shots", type=int, default=100000, help="Shots per test (default: 100000)")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--circuit-source", choices=["abstract", "traced_qis", "both"],
-                        default="both", help="Circuit pipeline (default: both)")
-    parser.add_argument("--threshold", type=float, default=0.20,
-                        help="Max relative error threshold (default: 0.20)")
-    parser.add_argument("--max-order", type=int, default=3,
-                        help="Max correlation order (default: 3)")
-    parser.add_argument("--show-matrices", action="store_true",
-                        help="Print matrices for failing rounds")
+    parser.add_argument(
+        "--circuit-source",
+        choices=["abstract", "traced_qis", "both"],
+        default="both",
+        help="Circuit pipeline (default: both)",
+    )
+    parser.add_argument("--threshold", type=float, default=0.20, help="Max relative error threshold (default: 0.20)")
+    parser.add_argument("--max-order", type=int, default=3, help="Max correlation order (default: 3)")
+    parser.add_argument("--show-matrices", action="store_true", help="Print matrices for failing rounds")
 
     args = parser.parse_args()
 
-    sources = (["abstract", "traced_qis"] if args.circuit_source == "both"
-               else [args.circuit_source])
+    sources = ["abstract", "traced_qis"] if args.circuit_source == "both" else [args.circuit_source]
 
     noise_configs = [
-        ("p_meas=0.01",  {"p1": 0.0,   "p2": 0.0,  "p_meas": 0.01, "p_prep": 0.0}),
-        ("p2=0.01",      {"p1": 0.0,   "p2": 0.01, "p_meas": 0.0,  "p_prep": 0.0}),
-        ("depol",        {"p1": 0.001, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}),
+        ("p_meas=0.01", {"p1": 0.0, "p2": 0.0, "p_meas": 0.01, "p_prep": 0.0}),
+        ("p2=0.01", {"p1": 0.0, "p2": 0.01, "p_meas": 0.0, "p_prep": 0.0}),
+        ("depol", {"p1": 0.001, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}),
         ("strong_depol", {"p1": 0.005, "p2": 0.05, "p_meas": 0.05, "p_prep": 0.05}),
     ]
 

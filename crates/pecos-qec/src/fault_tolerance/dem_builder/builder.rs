@@ -1607,10 +1607,12 @@ mod tests {
                 if location.num_alternatives == 0 {
                     continue;
                 }
-                let per_channel_probability = 1.0
-                    - location
-                        .no_fault_probability
-                        .powf(1.0 / location.num_alternatives as f64);
+                let num_alternatives = f64::from(
+                    u32::try_from(location.num_alternatives)
+                        .expect("fault alternative count fits in u32"),
+                );
+                let per_channel_probability =
+                    1.0 - location.no_fault_probability.powf(1.0 / num_alternatives);
                 for fault in &location.faults {
                     if fault.affected_detectors.is_empty() && fault.affected_observables.is_empty()
                     {

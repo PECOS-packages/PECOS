@@ -4,7 +4,6 @@
 """Tests for SampleBatch columnar storage and validation."""
 
 import pytest
-
 from pecos_rslib.qec import DemSampler, SampleBatch
 
 
@@ -24,11 +23,11 @@ class TestSampleBatchConstruction:
         assert batch.num_shots == 3
 
     def test_ragged_rows_longer_rejected(self):
-        with pytest.raises(ValueError, match="row 1.*length 3.*expected 2"):
+        with pytest.raises(ValueError, match=r"row 1.*length 3.*expected 2"):
             SampleBatch([[1, 0], [0, 1, 1]], [0, 0])
 
     def test_ragged_rows_shorter_rejected(self):
-        with pytest.raises(ValueError, match="row 2.*length 1.*expected 2"):
+        with pytest.raises(ValueError, match=r"row 2.*length 1.*expected 2"):
             SampleBatch([[1, 0], [0, 1], [0]], [0, 0, 0])
 
     def test_length_mismatch_rejected(self):
@@ -48,10 +47,17 @@ class TestGeneratedSampleBatch:
 
         patch = SurfacePatch.create(distance=3)
         tc = _build_surface_tick_circuit_for_native_model(
-            patch, 6, "Z", circuit_source="abstract"
+            patch,
+            6,
+            "Z",
+            circuit_source="abstract",
         )
         sampler = DemSampler.from_circuit(
-            tc, p1=0.005, p2=0.005, p_meas=0.005, p_prep=0.005
+            tc,
+            p1=0.005,
+            p2=0.005,
+            p_meas=0.005,
+            p_prep=0.005,
         )
         return sampler, tc
 
@@ -77,10 +83,10 @@ class TestGeneratedSampleBatch:
         from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 
         sampler, tc = d3_setup
-        noise = dict(p1=0.005, p2=0.005, p_meas=0.005, p_prep=0.005)
+        noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
         stim_str = tick_circuit_to_stim(tc, **noise)
         dem_str = str(
-            stim.Circuit(stim_str).detector_error_model(decompose_errors=True)
+            stim.Circuit(stim_str).detector_error_model(decompose_errors=True),
         )
 
         batch = sampler.generate_samples(1000, seed=42)

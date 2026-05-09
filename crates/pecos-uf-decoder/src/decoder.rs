@@ -25,9 +25,9 @@
 //!
 //! All data structures are flat arrays. Zero per-shot allocation after init.
 
+use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
-use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 

@@ -578,8 +578,7 @@ mod tests {
         let phi = compute_phi(&Bm::x(0), &Bm::x(0), &[true], &stabs, &phases);
         assert!(
             (phi.0 - 1.0).abs() < 1e-10,
-            "Phi(X,X) at |1> for |0> state: got {:?}",
-            phi
+            "Phi(X,X) at |1> for |0> state: got {phi:?}"
         );
 
         // Φ(Z,I) for outcome 0: ⟨0|Z|0⟩·⟨0|0⟩ = 1·1 = 1
@@ -601,7 +600,7 @@ mod tests {
             &stabs,
             &phases,
         );
-        assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(I,I) at 00: {:?}", phi);
+        assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(I,I) at 00: {phi:?}");
 
         // Φ(I,I) for outcome 01 (not in support): 0
         let phi = compute_phi(
@@ -615,11 +614,11 @@ mod tests {
 
         // Φ(Z0,I) for outcome 00
         let phi = compute_phi(&Bm::z(0), &Bm::default(), &[false, false], &stabs, &phases);
-        assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(Z0,I) at 00: {:?}", phi);
+        assert!((phi.0 - 1.0).abs() < 1e-10, "Phi(Z0,I) at 00: {phi:?}");
 
         // Φ(Z0,I) for outcome 11
         let phi = compute_phi(&Bm::z(0), &Bm::default(), &[true, true], &stabs, &phases);
-        assert!((phi.0 + 1.0).abs() < 1e-10, "Phi(Z0,I) at 11: {:?}", phi);
+        assert!((phi.0 + 1.0).abs() < 1e-10, "Phi(Z0,I) at 11: {phi:?}");
     }
 
     #[test]

@@ -17,7 +17,7 @@ import time
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos_rslib.qec import DemSampler
-from pecos_rslib_exp import meas_sampling, depolarizing, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
 
 FULL = "--full" in sys.argv
 
@@ -28,7 +28,7 @@ def build(d):
 
 
 def main():
-    noise_args = dict(p1=0.005, p2=0.005, p_meas=0.005, p_prep=0.005)
+    noise_args = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
     mode = "full" if FULL else "quick"
 
@@ -72,17 +72,12 @@ def main():
 
             label = f"d={d}" if shots == shot_list[0] else ""
             print(
-                f"{label:>3} {shots:>10,} | {t_det * 1000:>8.1f}ms | "
-                f"{t_raw * 1000:>8.1f}ms | {stab_s} | {ratio_s}"
+                f"{label:>3} {shots:>10,} | {t_det * 1000:>8.1f}ms | {t_raw * 1000:>8.1f}ms | {stab_s} | {ratio_s}",
             )
         print()
 
     # ---- Section 2: Generate + decode end-to-end ----
-    dec_configs = (
-        [(3, [10_000, 100_000]), (5, [10_000, 100_000])]
-        if FULL
-        else [(3, [1_000, 10_000]), (5, [1_000])]
-    )
+    dec_configs = [(3, [10_000, 100_000]), (5, [10_000, 100_000])] if FULL else [(3, [1_000, 10_000]), (5, [1_000])]
 
     print("2. Detector DEM generate + pymatching decode:")
     print(f"{'d':>3} {'shots':>10} | {'generate':>9} | {'decode':>9} | {'total':>9} | {'gen%':>6}")
@@ -112,7 +107,7 @@ def main():
             label = f"d={d}" if shots == shot_list[0] else ""
             print(
                 f"{label:>3} {shots:>10,} | {t_gen * 1000:>8.1f}ms | "
-                f"{t_dec * 1000:>8.1f}ms | {t_total * 1000:>8.1f}ms | {gen_pct:>5.1f}%"
+                f"{t_dec * 1000:>8.1f}ms | {t_total * 1000:>8.1f}ms | {gen_pct:>5.1f}%",
             )
         print()
 

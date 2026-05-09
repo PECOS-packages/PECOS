@@ -20,7 +20,6 @@ import time
 import numpy as np
 import pymatching
 import stim
-
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -32,7 +31,10 @@ def build_circuit(distance, rounds, basis="Z"):
     """Build a traced-QIS surface-code TickCircuit, lowered to Clifford gates."""
     patch = SurfacePatch.create(distance=distance)
     tc = _build_surface_tick_circuit_for_native_model(
-        patch, rounds, basis, circuit_source="traced_qis"
+        patch,
+        rounds,
+        basis,
+        circuit_source="traced_qis",
     )
     # Lower R1XY/RZ rotations to standard Clifford gates (H, SZ, SZdg, etc.)
     tc.lower_clifford_rotations()
@@ -48,9 +50,15 @@ def get_pymatching_decoder(tc, noise_args):
 
 def run_meas_sampling(tc, noise_args, shots, seed):
     """Sample raw measurements via meas_sampling."""
-    depol = depolarizing().p1(noise_args["p1"]).p2(noise_args["p2"]).p_meas(
-        noise_args["p_meas"]
-    ).p_prep(noise_args["p_prep"])
+    depol = (
+        depolarizing()
+        .p1(noise_args["p1"])
+        .p2(noise_args["p2"])
+        .p_meas(
+            noise_args["p_meas"],
+        )
+        .p_prep(noise_args["p_prep"])
+    )
 
     t0 = time.perf_counter()
     result = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(seed).run()
@@ -155,7 +163,7 @@ def main():
     print(f"  shots={args.shots}, p={p}")
     print(
         f"  noise: p1={noise_args['p1']:.1e} p2={noise_args['p2']:.1e} "
-        f"p_meas={noise_args['p_meas']:.1e} p_prep={noise_args['p_prep']:.1e}"
+        f"p_meas={noise_args['p_meas']:.1e} p_prep={noise_args['p_prep']:.1e}",
     )
     print("  circuit: Guppy -> traced QIS -> lower_clifford_rotations()")
     print()
@@ -182,12 +190,16 @@ def main():
         print(
             f"d={d:>1} {rounds:>6} | {'meas_sampling':>15} | {t_sample_ms*1000:>7.0f}ms | "
             f"{t_decode_ms*1000:>7.0f}ms | {t_total_ms*1000:>7.0f}ms | "
-            f"{ler_ms:>7.4f} | {errors_ms:>5}/{args.shots}"
+            f"{ler_ms:>7.4f} | {errors_ms:>5}/{args.shots}",
         )
 
         # --- native DEM sampler ---
         errors_ns, t_sample_ns, t_decode_ns = run_native_sampler(
-            tc, noise_args, matching, args.shots, args.seed
+            tc,
+            noise_args,
+            matching,
+            args.shots,
+            args.seed,
         )
         ler_ns = errors_ns / args.shots
         t_total_ns = t_sample_ns + t_decode_ns
@@ -195,7 +207,7 @@ def main():
         print(
             f"    {' ':>6} | {'native_sampler':>15} | {t_sample_ns*1000:>7.0f}ms | "
             f"{t_decode_ns*1000:>7.0f}ms | {t_total_ns*1000:>7.0f}ms | "
-            f"{ler_ns:>7.4f} | {errors_ns:>5}/{args.shots}"
+            f"{ler_ns:>7.4f} | {errors_ns:>5}/{args.shots}",
         )
         print()
 

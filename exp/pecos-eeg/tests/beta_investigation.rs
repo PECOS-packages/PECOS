@@ -5,17 +5,18 @@
 //! Investigation: why off-diagonal beta terms don't fire for Z-basis.
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 use pecos_eeg::Bm;
 use pecos_eeg::circuit::{NoiseModel, PropagatedEeg, analyze_expanded};
 use pecos_eeg::eeg::EegType;
 use pecos_eeg::expand;
 use pecos_eeg::stabilizer::StabilizerGroup;
+use pecos_simulators::{CliffordGateable, SparseStab};
 
 fn gate(gt: GateType, qubits: &[usize]) -> Gate {
     Gate {
         gate_type: gt,
-        qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
@@ -104,8 +105,7 @@ fn test_zbasis_generator_labels() {
 
             if is_stab.is_some() || !orig_product.is_identity() {
                 eprintln!(
-                    "  [{j},{k}] commute=true product_orig={:?} is_stab={:?}",
-                    orig_product, is_stab
+                    "  [{j},{k}] commute=true product_orig={orig_product:?} is_stab={is_stab:?}"
                 );
             }
         }
@@ -126,7 +126,6 @@ fn test_zbasis_stabilizer_group() {
     // Dump actual generators
     eprintln!("Stabilizer generators:");
     // Run SparseStab manually to see generators
-    use pecos_simulators::{CliffordGateable, SparseStab};
     let mut sim = SparseStab::with_seed(3, 0);
     for g in gates_pre {
         let qs: Vec<QubitId> = g.qubits.iter().copied().collect();
@@ -139,14 +138,12 @@ fn test_zbasis_stabilizer_group() {
             GateType::H => {
                 sim.h(&qs);
             }
-            GateType::CX => {
-                if qs.len() >= 2 {
-                    sim.cx(&[(qs[0], qs[1])]);
-                }
+            GateType::CX if qs.len() >= 2 => {
+                sim.cx(&[(qs[0], qs[1])]);
             }
             GateType::MZ => {
                 let _r = sim.mz(&qs);
-                eprintln!("  MZ({:?})", qs);
+                eprintln!("  MZ({qs:?})");
             }
             _ => {}
         }

@@ -178,7 +178,7 @@ def _build_threshold_svg(
     # X-axis tick labels (log-spaced)
     # Show ticks at 1, 2, 5 * 10^n (standard log-scale subdivisions)
     x_ticks = set()
-    for exp in range(int(math.floor(log_p_min)) - 1, int(math.ceil(log_p_max)) + 1):
+    for exp in range(math.floor(log_p_min) - 1, math.ceil(log_p_max) + 1):
         for mult in [1.0, 2.0, 5.0]:
             x_ticks.add(mult * 10.0**exp)
     # Filter to visible range and limit density
@@ -834,10 +834,7 @@ def _build_html(analysis: dict) -> str:
             for est in sorted(estimates.values(), key=lambda e: e.get("estimated_p_th", 0), reverse=True):
                 p_th = est["estimated_p_th"]
                 se = est.get("std_error")
-                if se:
-                    th_str = f"{_sci(p_th)} +/- {_sci(se)}"
-                else:
-                    th_str = f"{_sci(p_th)}"
+                th_str = f"{_sci(p_th)} +/- {_sci(se)}" if se else f"{_sci(p_th)}"
                 lines.append(
                     f"      <tr><td>{html_mod.escape(est['decoder'])}</td>"
                     f"<td>{th_str}</td>"

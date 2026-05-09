@@ -70,27 +70,34 @@ def main():
     parser.add_argument("--p2", type=float, default=0.005)
     parser.add_argument("--idle-rz", type=float, default=0.0)
     parser.add_argument(
-        "--sample-backend", default="stabilizer",
+        "--sample-backend",
+        default="stabilizer",
         choices=["stabilizer", "statevec", "native"],
     )
     args = parser.parse_args()
 
     import json
+
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
     patch = SurfacePatch.create(distance=args.distance)
     num_rounds = 2 * args.distance
     tc = _build_surface_tick_circuit_for_native_model(
-        patch, num_rounds, args.basis, circuit_source="abstract",
+        patch,
+        num_rounds,
+        args.basis,
+        circuit_source="abstract",
     )
 
     num_dets = len(json.loads(tc.get_meta("detectors")))
     print(f"d={args.distance}, {num_rounds} rounds, {num_dets} detectors, {2**num_dets} possible syndromes")
 
     noise_params = {
-        "p1": args.p2 / 10, "p2": args.p2,
-        "p_meas": args.p2, "p_prep": args.p2,
+        "p1": args.p2 / 10,
+        "p2": args.p2,
+        "p_meas": args.p2,
+        "p_prep": args.p2,
         "idle_rz": args.idle_rz,
     }
 
@@ -99,11 +106,16 @@ def main():
     t0 = time.perf_counter()
 
     if args.sample_backend in ("stabilizer", "statevec"):
-        from pecos_rslib_exp import depolarizing, sim_neo, stabilizer, statevec
         from pecos_rslib.qec import SampleBatch
+        from pecos_rslib_exp import depolarizing, sim_neo, stabilizer, statevec
 
-        noise = depolarizing().p1(noise_params["p1"]).p2(noise_params["p2"]) \
-            .p_meas(noise_params["p_meas"]).p_prep(noise_params["p_prep"])
+        noise = (
+            depolarizing()
+            .p1(noise_params["p1"])
+            .p2(noise_params["p2"])
+            .p_meas(noise_params["p_meas"])
+            .p_prep(noise_params["p_prep"])
+        )
         if args.idle_rz > 0:
             noise = noise.idle_rz(args.idle_rz)
 
@@ -141,6 +153,7 @@ def main():
         train_batch = SampleBatch(detection_events, observable_masks)
     else:
         from pecos_rslib.qec import DemSampler
+
         sampler_params = {k: v for k, v in noise_params.items() if k in ("p1", "p2", "p_meas", "p_prep")}
         sampler = DemSampler.from_circuit(tc, **sampler_params)
         train_batch = sampler.generate_samples(args.shots, seed=args.seed)
@@ -192,24 +205,34 @@ def main():
     ler_lookup = errors_lookup / n
 
     # Compare with pymatching
-    from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
     from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
+
     noise_obj = NoiseModel(
-        p1=noise_params["p1"], p2=noise_params["p2"],
-        p_meas=noise_params["p_meas"], p_prep=noise_params["p_prep"],
+        p1=noise_params["p1"],
+        p2=noise_params["p2"],
+        p_meas=noise_params["p_meas"],
+        p_prep=noise_params["p_prep"],
     )
     dem_decomp = generate_circuit_level_dem_from_builder(
-        patch, num_rounds, noise_obj, basis=args.basis,
-        decompose_errors=True, circuit_source="abstract",
+        patch,
+        num_rounds,
+        noise_obj,
+        basis=args.basis,
+        decompose_errors=True,
+        circuit_source="abstract",
     )
-    dem_clean = "\n".join(l for l in dem_decomp.split("\n") if not l.startswith("logical_observable"))
+    dem_clean = "\n".join(line for line in dem_decomp.split("\n") if not line.startswith("logical_observable"))
     stats_pm = test_batch.decode_stats(dem_clean, "pymatching")
 
     # Compare with coherent_dem_decomposed if available
     try:
         from pecos_rslib_exp import coherent_dem_decomposed
+
         _, coherent_decomp = coherent_dem_decomposed(tc, **noise_params)
-        coherent_clean = "\n".join(l for l in coherent_decomp.split("\n") if not l.startswith("logical_observable"))
+        coherent_clean = "\n".join(
+            line for line in coherent_decomp.split("\n") if not line.startswith("logical_observable")
+        )
         stats_coherent = test_batch.decode_stats(coherent_clean, "pymatching")
         ler_coherent = stats_coherent.logical_error_rate
     except Exception:

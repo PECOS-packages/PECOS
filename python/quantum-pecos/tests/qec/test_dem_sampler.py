@@ -186,7 +186,11 @@ def test_dem_events_split_observables_and_tracked_ops() -> None:
     dag.set_attr("observables", '[{"id": 0, "records": [-1]}]')
 
     dem = DetectorErrorModel.from_circuit(
-        dag, p1=0.03, p2=0.0, p_meas=0.02, p_prep=0.0
+        dag,
+        p1=0.03,
+        p2=0.0,
+        p_meas=0.02,
+        p_prep=0.0,
     )
     sampler = dem.to_sampler()
 
@@ -226,10 +230,18 @@ def test_sample_decode_count_ignores_tracked_ops() -> None:
     dag.set_attr("observables", '[{"id": 0, "records": [-1]}]')
 
     sampler = DemSampler.from_circuit(
-        dag, p1=0.4, p2=0.0, p_meas=0.15, p_prep=0.0
+        dag,
+        p1=0.4,
+        p2=0.0,
+        p_meas=0.15,
+        p_prep=0.0,
     )
     dem = DetectorErrorModel.from_circuit(
-        dag, p1=0.4, p2=0.0, p_meas=0.15, p_prep=0.0
+        dag,
+        p1=0.4,
+        p2=0.0,
+        p_meas=0.15,
+        p_prep=0.0,
     )
 
     assert sampler.num_dem_outputs == 1

@@ -69,7 +69,7 @@ def run_sweep(
     """Run a coherent noise sweep using sim_neo."""
     from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
     from pecos_rslib.qec import ObservableSubgraphDecoder
-    from pecos_rslib_exp import sim_neo, stab_mps, statevec, depolarizing
+    from pecos_rslib_exp import depolarizing, sim_neo, stab_mps, statevec
 
     patch = SurfacePatch.create(distance=distance)
     b = LogicalCircuitBuilder()
@@ -96,14 +96,8 @@ def run_sweep(
     for p_idle in p_idle_values:
         # Simulate
         t0 = time.perf_counter()
-        noise = (depolarizing()
-            .p1(p_depol).p2(p_depol)
-            .p_meas(p_depol).p_prep(p_depol)
-            .idle_rz(p_idle))
-        builder = (sim_neo(tc)
-            .noise(noise)
-            .shots(shots)
-            .seed(seed))
+        noise = depolarizing().p1(p_depol).p2(p_depol).p_meas(p_depol).p_prep(p_depol).idle_rz(p_idle)
+        builder = sim_neo(tc).noise(noise).shots(shots).seed(seed)
         if backend == "stabmps":
             builder = builder.quantum(
                 (
@@ -187,7 +181,7 @@ def write_html_report(sweep: CoherentNoiseSweep, path: Path) -> None:
         "details .content { padding: 0.5em 0; line-height: 1.6; }",
         "</style></head><body>",
         f"<h1>Coherent Idle Noise: {sweep.basis}-basis Memory d={sweep.distance}</h1>",
-        f"<p>Depolarizing: p={sweep.p_depol}, rounds={sweep.rounds}, " f"backend={sweep.backend}</p>",
+        f"<p>Depolarizing: p={sweep.p_depol}, rounds={sweep.rounds}, backend={sweep.backend}</p>",
         f"<p>Total time: {sweep.total_seconds:.1f}s</p>",
         "",
         "<details><summary>About Coherent Idle Noise</summary>",
@@ -230,12 +224,12 @@ def write_html_report(sweep: CoherentNoiseSweep, path: Path) -> None:
     if len(sweep.points) >= 2 and sweep.points[0].ler > 0:
         baseline = sweep.points[0].ler
         html_parts.append("<h2>Coherent Amplification</h2>")
-        html_parts.append("<table><tr><th>&theta;</th><th>LER / baseline</th>" "<th>LER / twirled</th></tr>")
+        html_parts.append("<table><tr><th>&theta;</th><th>LER / baseline</th><th>LER / twirled</th></tr>")
         for pt in sweep.points[1:]:
             ratio = pt.ler / baseline
             twirl_ratio = pt.ler / pt.p_twirled if pt.p_twirled > 0 else 0
             html_parts.append(
-                f"<tr><td>{pt.p_idle:.3f}</td>" f"<td>{ratio:.1f}x</td>" f"<td>{twirl_ratio:.0f}x</td></tr>",
+                f"<tr><td>{pt.p_idle:.3f}</td><td>{ratio:.1f}x</td><td>{twirl_ratio:.0f}x</td></tr>",
             )
         html_parts.append("</table>")
 
@@ -252,7 +246,10 @@ def main():
     parser.add_argument("--distance", "-d", type=int, default=3)
     parser.add_argument("--rounds", type=int, default=None, help="Syndrome rounds (default: distance)")
     parser.add_argument(
-        "--basis", choices=["X", "Z"], default="X", help="Memory basis (default: X, where RZ noise is visible)"
+        "--basis",
+        choices=["X", "Z"],
+        default="X",
+        help="Memory basis (default: X, where RZ noise is visible)",
     )
     parser.add_argument("--p-depol", type=float, default=0.003)
     parser.add_argument("--p-idle", type=float, nargs="+", default=[0.0, 0.01, 0.02, 0.03, 0.05, 0.07, 0.1])

@@ -1822,7 +1822,14 @@ impl RawMeasurementPlan {
 mod tests {
     use super::*;
 
-    /// Build a minimal TickCircuit: PZ(0) H(0) CX(0,1) H(0) MZ(0) PZ(0) H(0) CX(0,1) H(0) MZ(0)
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    /// Build a minimal `TickCircuit`: PZ(0) H(0) CX(0,1) H(0) MZ(0) PZ(0) H(0) CX(0,1) H(0) MZ(0)
     fn two_round_x_check() -> TickCircuit {
         let mut tc = TickCircuit::new();
         // Round 1
@@ -1893,8 +1900,7 @@ mod tests {
             for alt in &m.alternatives {
                 assert!(
                     !(alt.contains(&0) && alt.contains(&1)),
-                    "Fault alternative crosses PZ boundary: {:?}",
-                    alt
+                    "Fault alternative crosses PZ boundary: {alt:?}"
                 );
             }
         }
@@ -2721,20 +2727,20 @@ mod tests {
             catalog
                 .locations
                 .iter()
-                .all(|loc| loc.channel_probability == 0.0)
+                .all(|loc| loc.channel_probability.abs() < 1e-12)
         );
         assert!(
             catalog
                 .locations
                 .iter()
-                .all(|loc| loc.no_fault_probability == 1.0)
+                .all(|loc| (loc.no_fault_probability - 1.0).abs() < 1e-12)
         );
         assert!(
             catalog
                 .locations
                 .iter()
                 .flat_map(|loc| &loc.faults)
-                .all(|fault| fault.absolute_probability == 0.0)
+                .all(|fault| fault.absolute_probability.abs() < 1e-12)
         );
         assert!(
             catalog
@@ -2786,8 +2792,8 @@ mod tests {
             assert_eq!(a.gate_type, b.gate_type);
             assert_eq!(a.qubits, b.qubits);
             assert_eq!(a.channel, b.channel);
-            assert_eq!(a.channel_probability, b.channel_probability);
-            assert_eq!(a.no_fault_probability, b.no_fault_probability);
+            assert_close(a.channel_probability, b.channel_probability);
+            assert_close(a.no_fault_probability, b.no_fault_probability);
             assert_eq!(a.num_alternatives, b.num_alternatives);
             assert_eq!(a.faults.len(), b.faults.len());
             for (af, bf) in a.faults.iter().zip(&b.faults) {
@@ -2797,8 +2803,8 @@ mod tests {
                 assert_eq!(af.affected_detectors, bf.affected_detectors);
                 assert_eq!(af.affected_observables, bf.affected_observables);
                 assert_eq!(af.affected_tracked_ops, bf.affected_tracked_ops);
-                assert_eq!(af.conditional_probability, bf.conditional_probability);
-                assert_eq!(af.absolute_probability, bf.absolute_probability);
+                assert_close(af.conditional_probability, bf.conditional_probability);
+                assert_close(af.absolute_probability, bf.absolute_probability);
             }
         }
     }
@@ -2832,8 +2838,8 @@ mod tests {
             .iter()
             .find(|loc| loc.channel == FaultChannel::P1)
             .unwrap();
-        assert_eq!(h_loc.channel_probability, 0.09);
-        assert_eq!(h_loc.no_fault_probability, 0.91);
+        assert_close(h_loc.channel_probability, 0.09);
+        assert_close(h_loc.no_fault_probability, 0.91);
         assert!(
             h_loc
                 .faults
@@ -2846,8 +2852,8 @@ mod tests {
             .iter()
             .find(|loc| loc.channel == FaultChannel::PMeas)
             .unwrap();
-        assert_eq!(meas_loc.channel_probability, 0.02);
-        assert_eq!(meas_loc.faults[0].absolute_probability, 0.02);
+        assert_close(meas_loc.channel_probability, 0.02);
+        assert_close(meas_loc.faults[0].absolute_probability, 0.02);
     }
 
     #[test]
@@ -2872,12 +2878,12 @@ mod tests {
             catalog
                 .locations
                 .iter()
-                .any(|loc| loc.channel == FaultChannel::P1 && loc.channel_probability == 0.0)
+                .any(|loc| loc.channel == FaultChannel::P1 && loc.channel_probability.abs() < 1e-12)
         );
 
         let mechanisms = catalog.to_mechanisms();
         assert_eq!(mechanisms.len(), 1);
-        assert_eq!(mechanisms[0].probability, 0.02);
+        assert_close(mechanisms[0].probability, 0.02);
         assert_eq!(mechanisms[0].alternatives, vec![vec![0]]);
         assert_eq!(mechanisms, build_fault_table(&tc, &noise).unwrap());
     }
@@ -2950,7 +2956,7 @@ mod tests {
             "mechanism count must match"
         );
         for (old, new) in old_mechanisms.iter().zip(&new_mechanisms) {
-            assert_eq!(old.probability, new.probability, "probability must match");
+            assert_close(old.probability, new.probability);
             assert_eq!(
                 old.alternatives.len(),
                 new.alternatives.len(),
@@ -3121,7 +3127,7 @@ mod tests {
         assert!(c.alternative_indices.is_empty());
         assert!(c.affected_measurements.is_empty());
         assert!(c.affected_detectors.is_empty());
-        assert_eq!(c.selected_probability, 1.0);
+        assert_close(c.selected_probability, 1.0);
         // config_prob = product of all no_fault_probability
         let expected: f64 = catalog
             .locations
@@ -3196,7 +3202,7 @@ mod tests {
             .iter()
             .position(|loc| loc.gate_type == GateType::MZ)
             .unwrap();
-        assert_eq!(catalog.locations[mz_idx].channel_probability, 0.0);
+        assert_close(catalog.locations[mz_idx].channel_probability, 0.0);
 
         let configs: Vec<_> = catalog.fault_configurations(1).collect();
         assert_eq!(configs.len(), 3);
@@ -3235,7 +3241,7 @@ mod tests {
 
         let k0: Vec<_> = catalog.fault_configurations(0).collect();
         assert_eq!(k0.len(), 1);
-        assert_eq!(k0[0].configuration_probability, 1.0);
+        assert_close(k0[0].configuration_probability, 1.0);
         assert_eq!(catalog.fault_configurations(1).count(), 0);
         assert_eq!(catalog.fault_configurations(2).count(), 0);
     }
@@ -3304,7 +3310,7 @@ mod tests {
         let configs: Vec<_> = catalog.fault_configurations(1).collect();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].location_indices, vec![mz_idx]);
-        assert_eq!(configs[0].selected_probability, 0.02);
+        assert_close(configs[0].selected_probability, 0.02);
     }
 
     #[test]
@@ -3510,7 +3516,7 @@ mod tests {
 
         // base=0, fault flips with prob 2/3 → mean should be ~2/3.
         let ones: usize = (0..9000).filter(|&s| result.get(s, 0).0).count();
-        let mean = ones as f64 / 9000.0;
+        let mean = f64::from(u32::try_from(ones).expect("sample count fits in u32")) / 9000.0;
         assert!(
             (mean - 2.0 / 3.0).abs() < 0.03,
             "Expected ~2/3 flip rate from grouped alternatives, got {mean:.4}"

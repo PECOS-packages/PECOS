@@ -37,7 +37,8 @@ SLOW_DECODERS = {"tesseract", "bp_osd"}
 def _decoder_requires_graphlike(decoder: str) -> bool:
     """Check if a decoder requires graphlike (decomposed) DEMs."""
     from pecos_rslib.qec import decoder_dem_requirement
-    base = decoder.split(":")[0]
+
+    base = decoder.split(":", maxsplit=1)[0]
     return decoder_dem_requirement(base) == "graphlike"
 
 
@@ -48,12 +49,13 @@ def sim_results_to_sample_batch(results, det_json, obs_json, num_meas):
     and observable flips from observable record XOR definitions.
     """
     import json
+
     from pecos_rslib.qec import SampleBatch
 
     dets = det_json if isinstance(det_json, list) else json.loads(det_json)
     obs = obs_json if isinstance(obs_json, list) else json.loads(obs_json)
     num_dets = len(dets)
-    num_obs = len(obs)
+    len(obs)
 
     detection_events = []
     observable_masks = []
@@ -99,16 +101,27 @@ def build_tick_circuits(distance: int, num_rounds: int, basis: str):
 
     patch = SurfacePatch.create(distance=distance)
     abstract_tc = _build_surface_tick_circuit_for_native_model(
-        patch, num_rounds, basis, circuit_source="abstract",
+        patch,
+        num_rounds,
+        basis,
+        circuit_source="abstract",
     )
     traced_tc = _build_surface_tick_circuit_for_native_model(
-        patch, num_rounds, basis, circuit_source="traced_qis",
+        patch,
+        num_rounds,
+        basis,
+        circuit_source="traced_qis",
     )
     return patch, abstract_tc, traced_tc
 
 
 def generate_dems(
-    abstract_tc, traced_tc, patch, num_rounds, noise_params: dict, basis: str,
+    abstract_tc,
+    _traced_tc,
+    patch,
+    num_rounds,
+    noise_params: dict,
+    basis: str,
 ) -> list[tuple[str, str, str | None]]:
     """Generate DEM strings from all methods.
 
@@ -133,12 +146,20 @@ def generate_dems(
     # 1. from_circuit on traced (non-EEG, stochastic, physical gates)
     try:
         raw = generate_circuit_level_dem_from_builder(
-            patch, num_rounds, noise, basis=basis,
-            decompose_errors=False, circuit_source="traced_qis",
+            patch,
+            num_rounds,
+            noise,
+            basis=basis,
+            decompose_errors=False,
+            circuit_source="traced_qis",
         )
         decomp = generate_circuit_level_dem_from_builder(
-            patch, num_rounds, noise, basis=basis,
-            decompose_errors=True, circuit_source="traced_qis",
+            patch,
+            num_rounds,
+            noise,
+            basis=basis,
+            decompose_errors=True,
+            circuit_source="traced_qis",
         )
         results.append(("from_circuit_traced", raw, decomp))
     except Exception as e:
@@ -147,12 +168,20 @@ def generate_dems(
     # 1b. from_circuit on abstract (non-EEG, stochastic, logical gates)
     try:
         raw = generate_circuit_level_dem_from_builder(
-            patch, num_rounds, noise, basis=basis,
-            decompose_errors=False, circuit_source="abstract",
+            patch,
+            num_rounds,
+            noise,
+            basis=basis,
+            decompose_errors=False,
+            circuit_source="abstract",
         )
         decomp = generate_circuit_level_dem_from_builder(
-            patch, num_rounds, noise, basis=basis,
-            decompose_errors=True, circuit_source="abstract",
+            patch,
+            num_rounds,
+            noise,
+            basis=basis,
+            decompose_errors=True,
+            circuit_source="abstract",
         )
         results.append(("from_circuit_abstract", raw, decomp))
     except Exception as e:
@@ -200,7 +229,8 @@ def _sample_from_sim(tc, noise_params, shots, seed, backend="statevec"):
              "stab_mps" (handles coherent noise, any distance, approximate).
     """
     import json
-    from pecos_rslib_exp import depolarizing, sim_neo, stabilizer, statevec, stab_mps
+
+    from pecos_rslib_exp import depolarizing, sim_neo, stab_mps, stabilizer, statevec
 
     p1 = noise_params.get("p1", 0.0)
     p2 = noise_params.get("p2", 0.0)
@@ -230,9 +260,7 @@ def _sample_from_sim(tc, noise_params, shots, seed, backend="statevec"):
 
 def strip_logical_observable_lines(dem_str: str) -> str:
     """Remove logical_observable lines that some decoders choke on."""
-    return "\n".join(
-        line for line in dem_str.split("\n") if not line.startswith("logical_observable")
-    )
+    return "\n".join(line for line in dem_str.split("\n") if not line.startswith("logical_observable"))
 
 
 def run_comparison(
@@ -262,9 +290,7 @@ def run_comparison(
             t_circuit = time.perf_counter() - t0
             print(f"  Circuits built in {t_circuit:.2f}s")
 
-            sampler_params = {
-                k: v for k, v in noise_params.items() if k in ("p1", "p2", "p_meas", "p_prep")
-            }
+            sampler_params = {k: v for k, v in noise_params.items() if k in ("p1", "p2", "p_meas", "p_prep")}
             idle_rz = noise_params.get("idle_rz", 0.0)
 
             # Generate samples
@@ -272,14 +298,20 @@ def run_comparison(
             if sample_backend in ("statevec", "stabilizer", "stab_mps"):
                 # Simulator-based sampling
                 batch = _sample_from_sim(
-                    abstract_tc, noise_params, shots, seed,
+                    abstract_tc,
+                    noise_params,
+                    shots,
+                    seed,
                     backend=sample_backend,
                 )
             else:
                 # DemSampler: fast, stochastic-only sampling
                 from pecos_rslib.qec import DemSampler
+
                 sampler = DemSampler.from_circuit(
-                    traced_tc, **sampler_params, idle_rz=idle_rz if idle_rz > 0 else None,
+                    traced_tc,
+                    **sampler_params,
+                    idle_rz=idle_rz if idle_rz > 0 else None,
                 )
                 batch = sampler.generate_samples(shots, seed=seed)
             t_sample = time.perf_counter() - t0
@@ -291,7 +323,7 @@ def run_comparison(
             t_dems = time.perf_counter() - t0
             print(f"  Generated {len(dems)} DEMs in {t_dems:.2f}s")
             for name, dem_str, _decomp in dems:
-                n_lines = len([l for l in dem_str.strip().split("\n") if l.strip()])
+                n_lines = len([line for line in dem_str.strip().split("\n") if line.strip()])
                 print(f"    {name}: {n_lines} lines")
 
             # Build column headers: for raw-capable decoders, show both raw and decomposed
@@ -316,9 +348,7 @@ def run_comparison(
 
             for dem_name, dem_raw, dem_decomp in dems:
                 dem_raw_clean = strip_logical_observable_lines(dem_raw)
-                dem_decomp_clean = (
-                    strip_logical_observable_lines(dem_decomp) if dem_decomp else None
-                )
+                dem_decomp_clean = strip_logical_observable_lines(dem_decomp) if dem_decomp else None
                 print(f"  {dem_name:<22s}", end="", flush=True)
 
                 for decoder, dem_type in columns:
@@ -338,17 +368,19 @@ def run_comparison(
                             stats = batch.decode_stats(dem, decoder)
                         ler = stats.logical_error_rate
                         print(f" | {ler:>16.4f}", end="")
-                        all_results.append({
-                            "distance": distance,
-                            "noise": noise_label,
-                            "dem_method": dem_name,
-                            "decoder": decoder,
-                            "dem_type": dem_type,
-                            "num_shots": shots,
-                            "num_errors": stats.num_errors,
-                            "ler": ler,
-                            "decode_s": stats.total_seconds,
-                        })
+                        all_results.append(
+                            {
+                                "distance": distance,
+                                "noise": noise_label,
+                                "dem_method": dem_name,
+                                "decoder": decoder,
+                                "dem_type": dem_type,
+                                "num_shots": shots,
+                                "num_errors": stats.num_errors,
+                                "ler": ler,
+                                "decode_s": stats.total_seconds,
+                            },
+                        )
                     except Exception:
                         # Decoder can't handle this DEM (e.g., hyperedges in graphlike DEM)
                         print(f" | {'N/A':>16s}", end="")
@@ -384,24 +416,28 @@ def main():
         default="native",
         choices=["native", "statevec", "stabilizer", "stab_mps"],
         help="'native' uses DemSampler (fast, stochastic). "
-             "'statevec' uses exact state vector sim (slow, captures coherent). "
-             "'stabilizer' uses stabilizer sim (fast, exact for depolarizing). "
-             "'stab_mps' uses tensor network sim (handles coherent, any distance).",
+        "'statevec' uses exact state vector sim (slow, captures coherent). "
+        "'stabilizer' uses stabilizer sim (fast, exact for depolarizing). "
+        "'stab_mps' uses tensor network sim (handles coherent, any distance).",
     )
     args = parser.parse_args()
 
     p2 = args.p2
     noise_configs = []
     if "depol" in args.noise:
-        noise_configs.append((
-            f"depol(p2={p2})",
-            {"p1": p2 / 10, "p2": p2, "p_meas": p2, "p_prep": p2, "idle_rz": 0.0},
-        ))
+        noise_configs.append(
+            (
+                f"depol(p2={p2})",
+                {"p1": p2 / 10, "p2": p2, "p_meas": p2, "p_prep": p2, "idle_rz": 0.0},
+            ),
+        )
     if "depol+irz" in args.noise:
-        noise_configs.append((
-            f"depol+irz(p2={p2},irz={args.idle_rz})",
-            {"p1": p2 / 10, "p2": p2, "p_meas": p2, "p_prep": p2, "idle_rz": args.idle_rz},
-        ))
+        noise_configs.append(
+            (
+                f"depol+irz(p2={p2},irz={args.idle_rz})",
+                {"p1": p2 / 10, "p2": p2, "p_meas": p2, "p_prep": p2, "idle_rz": args.idle_rz},
+            ),
+        )
 
     results = run_comparison(
         distances=args.distances,

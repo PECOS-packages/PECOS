@@ -16,7 +16,6 @@ import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
-
 # ============================================================
 # Code parameters: n, k, d
 # ============================================================
@@ -174,10 +173,16 @@ def test_logical_z_is_top_edge():
 @pytest.mark.parametrize(
     ("dx", "dz"),
     [
-        (1, 3), (3, 1),
-        (2, 2), (2, 3), (3, 2),
-        (3, 3), (3, 5), (5, 3),
-        (4, 4), (5, 5),
+        (1, 3),
+        (3, 1),
+        (2, 2),
+        (2, 3),
+        (3, 2),
+        (3, 3),
+        (3, 5),
+        (5, 3),
+        (4, 4),
+        (5, 5),
     ],
 )
 def test_cnot_schedule_no_conflicts(dx, dz):
@@ -186,9 +191,9 @@ def test_cnot_schedule_no_conflicts(dx, dz):
     schedule = compute_cnot_schedule(patch)
     for rnd_idx, rnd in enumerate(schedule):
         data_qubits = [dq for _, _, dq in rnd]
-        assert len(data_qubits) == len(set(data_qubits)), (
-            f"{dx}x{dz} round {rnd_idx}: data qubit collision {data_qubits}"
-        )
+        assert len(data_qubits) == len(
+            set(data_qubits),
+        ), f"{dx}x{dz} round {rnd_idx}: data qubit collision {data_qubits}"
 
 
 # ============================================================
@@ -198,7 +203,8 @@ def test_cnot_schedule_no_conflicts(dx, dz):
 
 def test_square_odd_codes_match_original():
     """The generalized generators should produce identical results to the
-    original single-d generators for square odd codes."""
+    original single-d generators for square odd codes.
+    """
     from pecos.qec.surface.layouts.rotated_lattice import (
         compute_rotated_x_stabilizers,
         compute_rotated_z_stabilizers,
@@ -215,11 +221,11 @@ def test_square_odd_codes_match_original():
         assert len(x_single) == len(x_pair)
         assert len(z_single) == len(z_pair)
 
-        for a, b in zip(x_single, x_pair):
+        for a, b in zip(x_single, x_pair, strict=False):
             assert a.data_qubits == b.data_qubits
             assert a.is_boundary == b.is_boundary
 
-        for a, b in zip(z_single, z_pair):
+        for a, b in zip(z_single, z_pair, strict=False):
             assert a.data_qubits == b.data_qubits
             assert a.is_boundary == b.is_boundary
 
@@ -249,8 +255,12 @@ def test_transpose_swaps_x_and_z_counts():
 @pytest.mark.parametrize(
     ("dx", "dz"),
     [
-        (1, 1), (1, 3), (3, 1),
-        (2, 2), (2, 3), (3, 2),
+        (1, 1),
+        (1, 3),
+        (3, 1),
+        (2, 2),
+        (2, 3),
+        (3, 2),
         (3, 3),
     ],
 )
@@ -305,11 +315,11 @@ def test_transversal_h_accepts_square():
 
 def test_distance_zero_rejected():
     """Distance 0 should raise ValueError."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Distance must be >= 1"):
         SurfacePatch.create(distance=0)
 
 
 def test_negative_distance_rejected():
     """Negative distance should raise ValueError."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"dx must be >= 1"):
         SurfacePatch.create(dx=-1, dz=3)

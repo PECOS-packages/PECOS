@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -48,7 +47,7 @@ def marginals_from_events(events, num_dets):
 
 def run(*, distance, rounds, basis, theta_values, shots, seed, run_statevec):
     from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-    from pecos_rslib_exp import perturbative_dem_events, exact_detection_rates, eeg_per_detector
+    from pecos_rslib_exp import eeg_per_detector, exact_detection_rates, perturbative_dem_events
 
     patch = SurfacePatch.create(distance=distance)
     b = LogicalCircuitBuilder()
@@ -77,7 +76,11 @@ def run(*, distance, rounds, basis, theta_values, shots, seed, run_statevec):
 
         # Per-detector computation (cross-event beta)
         per_det_marginals = {}
-        for name, h_formula, _ in [("PD-Taylor", "taylor", 0), ("PD-SinSq", "sin_squared", 0), ("PD-ExCom", "exact_commuting", 0)]:
+        for name, h_formula, _ in [
+            ("PD-Taylor", "taylor", 0),
+            ("PD-SinSq", "sin_squared", 0),
+            ("PD-ExCom", "exact_commuting", 0),
+        ]:
             t0 = time.perf_counter()
             pd_results = eeg_per_detector(tc, idle_rz=theta, h_formula=h_formula)
             dt = time.perf_counter() - t0
@@ -99,7 +102,8 @@ def run(*, distance, rounds, basis, theta_values, shots, seed, run_statevec):
         # StateVec (optional ground truth)
         sv_rate = None
         if run_statevec:
-            from pecos_rslib_exp import sim_neo, statevec, depolarizing
+            from pecos_rslib_exp import depolarizing, sim_neo, statevec
+
             t0 = time.perf_counter()
             noise = depolarizing().idle_rz(theta)
             results = sim_neo(tc).quantum(statevec()).noise(noise).shots(shots).seed(seed).run()
@@ -154,9 +158,9 @@ def run(*, distance, rounds, basis, theta_values, shots, seed, run_statevec):
         if num_dets <= 40:
             # Show: Heisenberg, Taylor (DEM), PD-Taylor, PD-ExCom, SV
             show_configs = [
-                ("Taylor", lambda: fwd_marginals["Taylor"]),
-                ("ExSubset", lambda: fwd_marginals["ExSubset"]),
-                ("PD-Tayl", lambda: per_det_marginals["PD-Taylor"]),
+                ("Taylor", lambda fwd_marginals=fwd_marginals: fwd_marginals["Taylor"]),
+                ("ExSubset", lambda fwd_marginals=fwd_marginals: fwd_marginals["ExSubset"]),
+                ("PD-Tayl", lambda per_det_marginals=per_det_marginals: per_det_marginals["PD-Taylor"]),
             ]
             cols = ["Det", "Heisen"] + [n for n, _ in show_configs]
             if sv_rate is not None:

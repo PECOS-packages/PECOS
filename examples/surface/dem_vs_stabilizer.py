@@ -26,8 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python" / "quantum
 
 def run_comparison(*, distance, rounds, basis, p, shots, seed):
     from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-    from pecos_rslib.qec import DemBuilder, DagFaultAnalyzer, DemSampler
-    from pecos_rslib_exp import sim_neo, stabilizer, depolarizing
+    from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder, DemSampler
+    from pecos_rslib_exp import depolarizing, sim_neo, stabilizer
 
     patch = SurfacePatch.create(distance=distance)
     b = LogicalCircuitBuilder()
@@ -98,7 +98,7 @@ def run_comparison(*, distance, rounds, basis, p, shots, seed):
     print(f"  DEM sample: {fc_time:.2f}s, Stabilizer: {sim_time:.2f}s ({shots} shots)")
     print(
         f"  {'Det':>4} {'Analytical':>11} {'FromCirc':>10} {'Stabiliz':>10}"
-        f" {'SV_se':>8} {'A/Sim':>7} {'FC/Sim':>7}"
+        f" {'SV_se':>8} {'A/Sim':>7} {'FC/Sim':>7}",
     )
 
     max_a_err = 0.0
@@ -124,12 +124,11 @@ def run_comparison(*, distance, rounds, basis, p, shots, seed):
 
         print(
             f"  D{dd:>2} {analytical[dd]:>11.6f} {dem_fc[dd]:>10.6f} {sv_r:>10.6f}"
-            f" {se:>8.5f} {ra:>7.3f} {rf:>7.3f}{flag}"
+            f" {se:>8.5f} {ra:>7.3f} {rf:>7.3f}{flag}",
         )
 
     print(
-        f"  Max deviation: Analytical={max_a_err*100:.1f}%,"
-        f" FromCircuit={max_fc_err*100:.1f}%, flagged={flagged}"
+        f"  Max deviation: Analytical={max_a_err*100:.1f}%, FromCircuit={max_fc_err*100:.1f}%, flagged={flagged}",
     )
 
 

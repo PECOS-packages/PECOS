@@ -58,8 +58,8 @@ Use `decoder_dem_requirement(decoder_type)` to query what a decoder needs:
 ```python
 from pecos_rslib.qec import decoder_dem_requirement
 
-decoder_dem_requirement("pymatching")   # "graphlike"
-decoder_dem_requirement("tesseract")    # "any"
+decoder_dem_requirement("pymatching")  # "graphlike"
+decoder_dem_requirement("tesseract")  # "any"
 ```
 
 ## Layer 2: Observable Subgraph Decoder (OSD)
@@ -155,9 +155,10 @@ The `WindowedOsdDecoder` implements windowed OSD:
 from pecos_rslib.qec import WindowedOsdDecoder
 
 decoder = WindowedOsdDecoder(
-    dem_string, stab_coords,
+    dem_string,
+    stab_coords,
     inner_decoder="pymatching",
-    step=8,    # core window size in time steps
+    step=8,  # core window size in time steps
     buffer=4,  # buffer on each side
 )
 ```

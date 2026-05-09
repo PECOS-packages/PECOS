@@ -535,7 +535,9 @@ fn parse_dem_params(
     }
 
     let num_rounds = (max_time + 1.0) as usize;
-    let num_stab = num_detectors.checked_div(num_rounds).unwrap_or(num_detectors);
+    let num_stab = num_detectors
+        .checked_div(num_rounds)
+        .unwrap_or(num_detectors);
     let d_est = ((num_stab as f64).sqrt().ceil() as usize).max(3);
     let step_size = if config.step_size > 0 {
         config.step_size

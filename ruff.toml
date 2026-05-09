@@ -179,7 +179,13 @@ ignore = [
     "PLC0415",  # Import inside function - lazy loading of guppy, stim, json
     "SLF001",   # Private member access - accessing patch and circuit internals
 ]
+"python/quantum-pecos/src/pecos/qec/surface/logical_circuit.py" = [
+    "PLC0415",  # Lazy imports keep optional decoder/stim/Rust bindings out of import time
+]
 # QEC analysis modules
+"python/quantum-pecos/src/pecos/qec/analysis.py" = [
+    "PLC0415",  # Lazy imports keep optional Rust/Python analysis dependencies out of import time
+]
 "python/quantum-pecos/src/pecos/qec/analysis/dem_builder.py" = [
     "SLF001",   # Private member access - accessing internal circuit/tick data
 ]
@@ -197,6 +203,8 @@ ignore = [
 
 # Test files
 "python/*/tests/**/*.py" = [
+    "ANN",      # Test functions and fixtures are clearer without exhaustive type annotations
+    "D",        # Test names describe behavior; per-test docstrings add noise
     "F401",     # Imported but unused - OK in tests for import availability checks
     "INP001",   # File is part of an implicit namespace package - OK for test directories
     "S101",     # Use of `assert` detected - Assert is standard practice in test files
@@ -240,8 +248,24 @@ ignore = [
 ]
 
 # Scripts and examples - not packages
-"scripts/**/*.py" = ["INP001", "S603", "PLC0415", "S301", "BLE001"]  # Script files: no __init__.py, subprocess calls, lazy imports, pickle, broad except
-"examples/**/*.py" = ["INP001", "BLE001"]  # Example files don't need __init__.py and can use broad exception handling
+"scripts/**/*.py" = [
+    "ANN",      # Command-line scripts do not need library-level annotations
+    "D",        # Top-level module docstrings document scripts
+    "EXE001",   # Scripts are commonly invoked through `python path/to/script.py`
+    "INP001",   # Script files are not import packages
+    "S603",     # Scripts may call trusted local tools
+    "PLC0415",  # Lazy imports keep optional dependencies out of import time
+    "S301",     # Scripts may read trusted local data artifacts
+    "BLE001",   # CLI/report scripts often convert broad failures into user-facing output
+]
+"examples/**/*.py" = [
+    "ANN",      # Examples favor readable demonstration code over exhaustive annotations
+    "D",        # Module/function names and surrounding text document examples
+    "INP001",   # Example files are not packages
+    "BLE001",   # Examples may catch broad optional-dependency/runtime failures
+    "S108",     # Examples commonly default to /tmp output paths
+    "S311",     # Example sweeps use deterministic pseudo-random circuits, not crypto
+]
 
 
 # Jupyter notebooks - exploratory code, less strict than library code

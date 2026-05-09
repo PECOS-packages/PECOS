@@ -1559,6 +1559,7 @@ mod tests {
                 angles: vec![].into(),
                 qubits: vec![QubitId(qubit)].into(),
                 params: vec![].into(),
+                meas_ids: vec![].into(),
             });
         }
         let measurement_request = request_builder.build();
@@ -1640,6 +1641,7 @@ mod tests {
             angles: vec![].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
+            meas_ids: vec![].into(),
         };
 
         // Create a builder and apply noise
@@ -1829,6 +1831,7 @@ mod tests {
             angles: vec![].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
+            meas_ids: vec![].into(),
         };
         noise.apply_prep_faults(&prep_gate, &mut builder);
 
@@ -2746,6 +2749,7 @@ mod tests {
             angles: vec![].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![1.0].into(), // 1 second duration
+            meas_ids: vec![].into(),
         };
 
         // Apply idle faults - should use coherent dephasing (RZ gates)
@@ -2769,6 +2773,7 @@ mod tests {
             angles: vec![].into(),
             qubits: vec![QubitId(0), QubitId(1), QubitId(2)].into(), // 3 qubits
             params: vec![1.0].into(),                                // 1 second duration
+            meas_ids: vec![].into(),
         };
 
         model.apply_idle_faults(
@@ -2905,6 +2910,7 @@ mod tests {
             angles: vec![Angle64::from_radians(0.1)].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
+            meas_ids: vec![].into(),
         };
 
         // Create an X gate (not noiseless - should have noise applied)
@@ -2913,6 +2919,7 @@ mod tests {
             angles: vec![].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
+            meas_ids: vec![].into(),
         };
 
         // Make sure RZ is recognized as noiseless

@@ -2266,7 +2266,7 @@ class SurfaceDecoder:
 
         return is_logical_error, result
 
-    def _get_css_uf_decoder(self):
+    def _get_css_uf_decoder(self) -> Any:
         """Get or create the UIUF CSS UF decoder."""
         if not hasattr(self, "_css_uf_decoder") or self._css_uf_decoder is None:
             from pecos_rslib.qec import CssUfDecoder
@@ -2283,7 +2283,7 @@ class SurfaceDecoder:
         self,
         synx_list: list,
         synz_list: list,
-        final,
+        final: NDArray[np.uint8] | list[int],
     ) -> tuple[bool, DecodingResult]:
         """Decode Z-basis memory using UIUF (joint X/Z intersection).
 

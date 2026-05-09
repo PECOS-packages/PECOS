@@ -9,7 +9,7 @@ use pecos_eeg::circuit::PropagatedEeg;
 use pecos_eeg::eeg::EegType;
 use pecos_eeg::strong_sim::outcome_probability;
 
-/// H-type correction: |0⟩ with H_X gives p(1) = h² at leading order.
+/// H-type correction: |0⟩ with `H_X` gives p(1) = h² at leading order.
 /// Cross-check: exact p(1) = sin²(h).
 #[test]
 fn test_h_correction_matches_exact() {

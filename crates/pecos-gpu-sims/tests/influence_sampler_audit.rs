@@ -210,10 +210,7 @@ fn determinism_with_same_seed() {
     };
     let ra = a.sample_uniform(64, 0.1);
     let rb = b.sample_uniform(64, 0.1);
-    assert_eq!(
-        ra.count_logical_errors(),
-        rb.count_logical_errors()
-    );
+    assert_eq!(ra.count_logical_errors(), rb.count_logical_errors());
     for shot in 0..64 {
         assert_eq!(
             ra.has_logical_error(shot),

@@ -129,14 +129,16 @@ class TestGateCorrectness:
         b.add_patch(patch, "A")
         b.add_memory("A", 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_memory_x(self, patch):
         b = LogicalCircuitBuilder()
         b.add_patch(patch, "A")
         b.add_memory("A", 2, "X")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_h_z_to_x(self, patch):
         b = LogicalCircuitBuilder()
@@ -145,7 +147,8 @@ class TestGateCorrectness:
         b.add_transversal_h("A")
         b.add_memory("A", 2, "X")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_h_x_to_z(self, patch):
         b = LogicalCircuitBuilder()
@@ -154,7 +157,8 @@ class TestGateCorrectness:
         b.add_transversal_h("A")
         b.add_memory("A", 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_hh_identity(self, patch):
         b = LogicalCircuitBuilder()
@@ -165,7 +169,8 @@ class TestGateCorrectness:
         b.add_transversal_h("A")
         b.add_memory("A", 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_cx_00_zz(self, patch, nq):
         b = LogicalCircuitBuilder()
@@ -175,7 +180,9 @@ class TestGateCorrectness:
         b.add_transversal_cx("C", "T")
         b.add_memory(["C", "T"], 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0 and obs[1] == 0
+        assert det == 0
+        assert obs[0] == 0
+        assert obs[1] == 0
 
     def test_cx_pp_xx(self, patch, nq):
         b = LogicalCircuitBuilder()
@@ -185,7 +192,9 @@ class TestGateCorrectness:
         b.add_transversal_cx("C", "T")
         b.add_memory(["C", "T"], 2, "X")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0 and obs[1] == 0
+        assert det == 0
+        assert obs[0] == 0
+        assert obs[1] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +262,8 @@ class TestFuzzH:
             b.add_memory("A", 2, cur)
 
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == expected
+        assert det == 0
+        assert obs[0] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +369,8 @@ class TestDistanceScaling:
         b.add_patch(patch5, "A")
         b.add_memory("A", 3, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_d5_h(self, patch5):
         b = LogicalCircuitBuilder()
@@ -368,7 +379,8 @@ class TestDistanceScaling:
         b.add_transversal_h("A")
         b.add_memory("A", 2, "X")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     @pytest.mark.parametrize("seed", range(5))
     def test_d5_cx(self, patch5, nq5, seed):
@@ -379,14 +391,16 @@ class TestDistanceScaling:
         b.add_transversal_cx("C", "T")
         b.add_memory(["C", "T"], 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit(), seed)
-        assert det == 0 and obs[0] == 0 and obs[1] == 0
+        assert det == 0
+        assert obs[0] == 0
+        assert obs[1] == 0
 
     def test_d5_pecos_dem(self, patch5):
         b = LogicalCircuitBuilder()
         b.add_patch(patch5, "A")
         b.add_memory("A", 2, "Z")
         dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
-        errors = [l for l in dem_str.split("\n") if l.startswith("error(")]
+        errors = [line for line in dem_str.split("\n") if line.startswith("error(")]
         assert len(errors) > 0
 
 
@@ -450,7 +464,8 @@ class TestReliableObservables:
 
         _, det, obs_vals = simulate_tick_circuit(tc)
         assert det == 0
-        assert obs_vals[0] == 0 and obs_vals[1] == 0
+        assert obs_vals[0] == 0
+        assert obs_vals[1] == 0
 
 
 class TestSZTeleportation:
@@ -463,7 +478,8 @@ class TestSZTeleportation:
         b.add_sz_via_teleportation("D", "Y", 2, 2)
         b.add_memory("D", 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
     def test_sz_phase_single_qubit(self):
         """Verify SZ teleportation protocol at the single-qubit level.
@@ -501,9 +517,9 @@ class TestSZTeleportation:
 
         # Corrected observable: data_X XOR m1 XOR m2
         corrected = data_val ^ m1 ^ m2
-        assert corrected == 1, (
-            f"SZ^2|+> should give |-> (corrected=1), " f"got data={data_val} m1={m1} m2={m2} corrected={corrected}"
-        )
+        assert (
+            corrected == 1
+        ), f"SZ^2|+> should give |-> (corrected=1), got data={data_val} m1={m1} m2={m2} corrected={corrected}"
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +543,9 @@ class TestGateComposition:
         b.add_transversal_h("B")
         b.add_memory(["A", "B"], 2, "Z")
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0 and obs[1] == 0
+        assert det == 0
+        assert obs[0] == 0
+        assert obs[1] == 0
 
     def test_triple_h(self, patch):
         """HHH = H: |0> -> |+>."""
@@ -539,7 +557,8 @@ class TestGateComposition:
             cur = "X" if i % 2 == 0 else "Z"
             b.add_memory("A", 2, cur)
         _, det, obs = simulate_tick_circuit(b.to_tick_circuit())
-        assert det == 0 and obs[0] == 0
+        assert det == 0
+        assert obs[0] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +651,7 @@ class TestThreshold:
     be well below threshold.
     """
 
-    def _run_threshold(self, builder, d, decoder_type="pecos_uf:fast"):
+    def _run_threshold(self, builder, _d, decoder_type="pecos_uf:fast"):
         import stim
         from pecos_rslib.qec import ParsedDem
 
@@ -863,7 +882,7 @@ class TestPecosDemWithOSD:
         dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
 
         # Verify DEM has content
-        errors = [l for l in dem_str.split("\n") if l.startswith("error(")]
+        errors = [line for line in dem_str.split("\n") if line.startswith("error(")]
         assert len(errors) > 0
 
         # Build OSD decoder from PECOS DEM
@@ -916,7 +935,7 @@ def _build_mirrored_brickwork(num_qubits, depth, seed, patch, rounds=2):
                 b.add_transversal_h(label)
                 eff[label] = "X" if eff[label] == "Z" else "Z"
                 layer_ops.append(("H", label))
-        b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+        b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
 
         offset = layer % 2
         cx_applied = []
@@ -926,7 +945,7 @@ def _build_mirrored_brickwork(num_qubits, depth, seed, patch, rounds=2):
                 b.add_transversal_cx(ctrl, tgt)
                 cx_applied.append((ctrl, tgt))
         if cx_applied:
-            b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+            b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
             layer_ops.append(("CX", cx_applied))
         ops_forward.append(layer_ops)
 
@@ -936,13 +955,13 @@ def _build_mirrored_brickwork(num_qubits, depth, seed, patch, rounds=2):
                 for ctrl, tgt in reversed(args[0]):
                     if eff[ctrl] == eff[tgt]:
                         b.add_transversal_cx(ctrl, tgt)
-                b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+                b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
         for op_type, *args in reversed(layer_ops):
             if op_type == "H":
                 label = args[0]
                 b.add_transversal_h(label)
                 eff[label] = "X" if eff[label] == "Z" else "Z"
-        b.add_memory(labels, rounds, basis={l: eff[l] for l in labels})
+        b.add_memory(labels, rounds, basis={label: eff[label] for label in labels})
 
     return b
 
@@ -974,7 +993,7 @@ class TestMirroredBrickwork:
         tc = b.to_tick_circuit()
         det_fired, obs_vals = simulate_tick_circuit(tc, seed)[-2:]
         assert det_fired == 0
-        for obs_id, val in obs_vals.items():
+        for val in obs_vals.values():
             assert val == 0
 
 

@@ -62,18 +62,27 @@ pub fn build() -> Result<()> {
     // PyMatching headers and compiled objects come from pecos-pymatching via cargo metadata.
     // This avoids compiling a second copy of PyMatching sources which would cause
     // duplicate symbol errors at link time.
-    let pymatching_include = env::var("DEP_PYMATCHING_PECOS_PYMATCHING_INCLUDE").map_or_else(|_| {
+    let pymatching_include = env::var("DEP_PYMATCHING_PECOS_PYMATCHING_INCLUDE").map_or_else(
+        |_| {
             // Fallback: download and use directly (for standalone builds)
             ensure_dep_ready("pymatching", &manifest)
                 .expect("pymatching dependency")
                 .join("src")
-        }, PathBuf::from);
-    let stim_include = env::var("DEP_PYMATCHING_PECOS_STIM_INCLUDE").map_or_else(|_| {
+        },
+        PathBuf::from,
+    );
+    let stim_include = env::var("DEP_PYMATCHING_PECOS_STIM_INCLUDE").map_or_else(
+        |_| {
             ensure_dep_ready("stim", &manifest)
                 .expect("stim dependency")
                 .join("src")
-        }, PathBuf::from);
-    let stim_dir_for_header = env::var("DEP_PYMATCHING_PECOS_STIM_DIR").map_or_else(|_| ensure_dep_ready("stim", &manifest).expect("stim dependency"), PathBuf::from);
+        },
+        PathBuf::from,
+    );
+    let stim_dir_for_header = env::var("DEP_PYMATCHING_PECOS_STIM_DIR").map_or_else(
+        |_| ensure_dep_ready("stim", &manifest).expect("stim dependency"),
+        PathBuf::from,
+    );
     let pymatching_lib_dir = env::var("DEP_PYMATCHING_PECOS_LIB_DIR")
         .ok()
         .map(PathBuf::from);

@@ -4,7 +4,6 @@
 """Tests for the fault_catalog() public API."""
 
 import pytest
-
 from pecos.quantum import PauliString, TickCircuit
 from pecos_rslib_exp import (
     FaultAlternative,
@@ -106,9 +105,7 @@ class TestPauliStringOutput:
         for loc in catalog:
             for fault in loc.faults:
                 if fault.kind == "pauli":
-                    assert isinstance(fault.pauli, PauliString), (
-                        f"Expected PauliString, got {type(fault.pauli)}"
-                    )
+                    assert isinstance(fault.pauli, PauliString), f"Expected PauliString, got {type(fault.pauli)}"
 
     def test_meas_prep_faults_have_none_pauli(self):
         tc = TickCircuit()
@@ -132,11 +129,9 @@ class TestPauliStringOutput:
         noise = depolarizing().p1(0).p2(0.15).p_meas(0).p_prep(0)
         catalog = fault_catalog(tc, noise)
 
-        cx_loc = [l for l in catalog if l.gate_type == "CX"][0]
+        cx_loc = next(loc for loc in catalog if loc.gate_type == "CX")
         # At least some alternatives should have two Pauli terms (XX, XY, etc.)
-        two_term = [
-            f for f in cx_loc.faults if len(f.pauli.get_paulis()) == 2
-        ]
+        two_term = [f for f in cx_loc.faults if len(f.pauli.get_paulis()) == 2]
         assert len(two_term) == 9, f"Expected 9 two-qubit Paulis, got {len(two_term)}"
 
     def test_new_gate_pauli_labels_and_measurement_effects(self):
@@ -153,7 +148,7 @@ class TestPauliStringOutput:
         noise = depolarizing().p1(0.03).p2(0.15).p_meas(0).p_prep(0)
         catalog = fault_catalog(tc, noise)
 
-        sx_loc = [l for l in catalog if l.gate_type == "SX"][0]
+        sx_loc = next(loc for loc in catalog if loc.gate_type == "SX")
         assert [pauli_terms(f.pauli) for f in sx_loc.faults] == [
             {0: "X"},
             {0: "Y"},
@@ -161,12 +156,9 @@ class TestPauliStringOutput:
         ]
         assert any(f.measurements for f in sx_loc.faults)
 
-        szz_loc = [l for l in catalog if l.gate_type == "SZZ"][0]
+        szz_loc = next(loc for loc in catalog if loc.gate_type == "SZZ")
         assert len(szz_loc.faults) == 15
-        observed = {
-            (terms.get(0, "I"), terms.get(1, "I"))
-            for terms in (pauli_terms(f.pauli) for f in szz_loc.faults)
-        }
+        observed = {(terms.get(0, "I"), terms.get(1, "I")) for terms in (pauli_terms(f.pauli) for f in szz_loc.faults)}
         expected = {
             ("X", "I"),
             ("Y", "I"),
@@ -200,7 +192,7 @@ class TestNoEffectLocationsIncluded:
         noise = depolarizing().p1(0.01).p2(0).p_meas(0).p_prep(0)
         catalog = fault_catalog(tc, noise)
 
-        h_locs = [l for l in catalog if l.gate_type == "H"]
+        h_locs = [loc for loc in catalog if loc.gate_type == "H"]
         assert len(h_locs) == 1, "H with no downstream MZ should still appear"
         assert len(h_locs[0].faults) == 3
         # All alternatives should have empty effects
@@ -224,7 +216,7 @@ class TestNoEffectLocationsIncluded:
         noise = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0.005)
         catalog = fault_catalog(tc, noise)
 
-        prep_locs = [l for l in catalog if any(f.kind == "prep_flip" for f in l.faults)]
+        prep_locs = [loc for loc in catalog if any(f.kind == "prep_flip" for f in loc.faults)]
         assert len(prep_locs) == 1
         fault = prep_locs[0].faults[0]
         assert fault.kind == "prep_flip"
@@ -242,18 +234,14 @@ class TestProbabilities:
         assert {loc.channel for loc in catalog.locations} == {"p1", "p_meas"}
         assert all(loc.channel_probability == 0.0 for loc in catalog.locations)
         assert all(loc.no_fault_probability == 1.0 for loc in catalog.locations)
-        assert all(
-            fault.absolute_probability == 0.0
-            for loc in catalog.locations
-            for fault in loc.faults
-        )
+        assert all(fault.absolute_probability == 0.0 for loc in catalog.locations for fault in loc.faults)
 
     def test_with_noise_updates_existing_python_references(self):
         tc = build_h_mz()
         catalog = fault_catalog(tc)
-        h_loc = [loc for loc in catalog if loc.channel == "p1"][0]
+        h_loc = next(loc for loc in catalog if loc.channel == "p1")
         h_fault = h_loc.faults[0]
-        mz_loc = [loc for loc in catalog if loc.channel == "p_meas"][0]
+        mz_loc = next(loc for loc in catalog if loc.channel == "p_meas")
 
         catalog.with_noise(p1=0.06, p_meas=0.02)
 
@@ -269,8 +257,8 @@ class TestProbabilities:
         catalog = fault_catalog(tc, p1=0.03, p_meas=0.01)
         clone = catalog.parameterized(p1=0.09, p_meas=0.04)
 
-        original_h = [loc for loc in catalog if loc.channel == "p1"][0]
-        clone_h = [loc for loc in clone if loc.channel == "p1"][0]
+        original_h = next(loc for loc in catalog if loc.channel == "p1")
+        clone_h = next(loc for loc in clone if loc.channel == "p1")
         assert abs(original_h.channel_probability - 0.03) < 1e-12
         assert abs(clone_h.channel_probability - 0.09) < 1e-12
         assert original_h is not clone_h
@@ -279,8 +267,8 @@ class TestProbabilities:
         tc = build_h_mz()
         catalog = fault_catalog(tc, p1=0.0, p_meas=0.02)
 
-        h_loc = [loc for loc in catalog if loc.channel == "p1"][0]
-        mz_loc = [loc for loc in catalog if loc.channel == "p_meas"][0]
+        h_loc = next(loc for loc in catalog if loc.channel == "p1")
+        mz_loc = next(loc for loc in catalog if loc.channel == "p_meas")
         assert h_loc.channel_probability == 0.0
         assert all(f.absolute_probability == 0.0 for f in h_loc.faults)
         assert abs(mz_loc.channel_probability - 0.02) < 1e-12
@@ -291,7 +279,7 @@ class TestProbabilities:
         noise = depolarizing().p1(0.03).p2(0).p_meas(0).p_prep(0)
         catalog = fault_catalog(tc, noise)
 
-        h_loc = [l for l in catalog if l.gate_type == "H"][0]
+        h_loc = next(loc for loc in catalog if loc.gate_type == "H")
         assert h_loc.channel == "p1"
         assert abs(h_loc.channel_probability - 0.03) < 1e-10
         assert abs(h_loc.no_fault_probability - 0.97) < 1e-10
@@ -305,7 +293,7 @@ class TestProbabilities:
         noise = depolarizing().p1(0).p2(0.15).p_meas(0).p_prep(0)
         catalog = fault_catalog(tc, noise)
 
-        cx_loc = [l for l in catalog if l.gate_type == "CX"][0]
+        cx_loc = next(loc for loc in catalog if loc.gate_type == "CX")
         assert cx_loc.channel == "p2"
         assert abs(cx_loc.channel_probability - 0.15) < 1e-10
         assert abs(cx_loc.no_fault_probability - 0.85) < 1e-10
@@ -321,8 +309,8 @@ class TestProbabilities:
         catalog = fault_catalog(tc, noise)
 
         # Pick first alternative at H location, no fault at MZ location
-        h_loc = [l for l in catalog if l.channel == "p1"][0]
-        mz_loc = [l for l in catalog if l.channel == "p_meas"][0]
+        h_loc = next(loc for loc in catalog if loc.channel == "p1")
+        mz_loc = next(loc for loc in catalog if loc.channel == "p_meas")
 
         # P(alt 0 at H, no fault at MZ) = (p1/3) * (1 - p_meas)
         config_prob = h_loc.faults[0].absolute_probability * mz_loc.no_fault_probability
@@ -474,7 +462,7 @@ class TestFaultConfigurations:
         # config = 0.0001 (no unselected locations)
 
         configs = list(catalog.fault_configurations(2))
-        assert len(configs) == 3  # 3 H alternatives × 1 MZ alternative
+        assert len(configs) == 3  # 3 H alternatives x 1 MZ alternative
         for c in configs:
             assert abs(c.selected_probability - 0.0001) < 1e-12
             assert abs(c.configuration_probability - 0.0001) < 1e-12
@@ -517,7 +505,7 @@ class TestFaultConfigurations:
         noise = depolarizing().p1(0.03).p2(0).p_meas(0).p_prep(0)
         catalog = fault_catalog(tc, noise)
 
-        h_loc = [loc for loc in catalog if loc.gate_type == "H"][0]
+        h_loc = next(loc for loc in catalog if loc.gate_type == "H")
         tracked = [fault.tracked_ops for fault in h_loc.faults]
         assert tracked.count([0]) == 2
         assert tracked.count([]) == 1

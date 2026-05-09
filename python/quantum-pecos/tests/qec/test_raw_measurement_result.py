@@ -9,10 +9,9 @@ the output contract is identical for stabilizer and meas_sampling.
 """
 
 import pytest
-
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
-from pecos_rslib_exp import meas_sampling, depolarizing, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
 
 
 @pytest.fixture

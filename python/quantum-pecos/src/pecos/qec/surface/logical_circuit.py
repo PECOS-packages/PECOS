@@ -27,12 +27,15 @@ References:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.qec.surface.patch import SurfacePatch
+    from pecos.qec.surface.patch import Stabilizer, SurfacePatch
+
+PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
 
 
 class LogicalGateType(Enum):
@@ -71,14 +74,14 @@ class PatchState:
     z_entangled_with: list[str] = field(default_factory=list)
 
     @property
-    def current_x_stabilizers(self):
+    def current_x_stabilizers(self) -> list[Stabilizer]:
         """Stabilizers currently measuring X-type checks."""
         if self.x_z_swapped:
             return self.patch.geometry.z_stabilizers
         return self.patch.geometry.x_stabilizers
 
     @property
-    def current_z_stabilizers(self):
+    def current_z_stabilizers(self) -> list[Stabilizer]:
         """Stabilizers currently measuring Z-type checks."""
         if self.x_z_swapped:
             return self.patch.geometry.x_stabilizers
@@ -120,6 +123,7 @@ class LogicalCircuitBuilder:
     """
 
     def __init__(self) -> None:
+        """Initialize an empty logical circuit builder."""
         self._patches: dict[str, PatchState] = {}
         self._operations: list[LogicalOp] = []
 
@@ -198,17 +202,14 @@ class LogicalCircuitBuilder:
                 rounds=rounds,
                 basis=default_basis,
                 per_patch_basis=per_patch,
-            )
+            ),
         )
 
     def _require_square(self, patch_label: str, gate_name: str) -> None:
         """Check that a patch is square (dx=dz), required for transversal gates."""
         patch = self._patches[patch_label].patch
         if patch.geometry.dx != patch.geometry.dz:
-            msg = (
-                f"{gate_name} requires a square patch (dx=dz), "
-                f"got dx={patch.geometry.dx}, dz={patch.geometry.dz}"
-            )
+            msg = f"{gate_name} requires a square patch (dx=dz), got dx={patch.geometry.dx}, dz={patch.geometry.dz}"
             raise ValueError(msg)
 
     def add_transversal_h(self, patch_label: str) -> None:
@@ -232,7 +233,7 @@ class LogicalCircuitBuilder:
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_H,
                 patches=[patch_label],
-            )
+            ),
         )
 
     def add_transversal_sz(self, patch_label: str) -> None:
@@ -263,7 +264,7 @@ class LogicalCircuitBuilder:
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_SZ,
                 patches=[patch_label],
-            )
+            ),
         )
 
     def add_transversal_szdg(self, patch_label: str) -> None:
@@ -280,7 +281,7 @@ class LogicalCircuitBuilder:
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_SZdg,
                 patches=[patch_label],
-            )
+            ),
         )
 
     def add_sz_via_teleportation(
@@ -327,7 +328,7 @@ class LogicalCircuitBuilder:
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
                 patches=[data_label, ancilla_label],
                 teleportation=True,
-            )
+            ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis at final round.
         # If ancilla measures logical -1, apply Z correction (Pauli frame update).
@@ -385,7 +386,7 @@ class LogicalCircuitBuilder:
                 patches=[data_label, ancilla_label],
                 teleportation=True,
                 injection_type="T",
-            )
+            ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis.
         # If ancilla measures logical -1 (corrected by frame), apply S.
@@ -429,10 +430,10 @@ class LogicalCircuitBuilder:
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
                 patches=[control_label, target_label],
-            )
+            ),
         )
 
-    def _snapshot_and_reset(self):
+    def _snapshot_and_reset(self) -> PatchSnapshot:
         """Snapshot patch states and reset for generation."""
         saved = {
             label: (
@@ -452,7 +453,7 @@ class LogicalCircuitBuilder:
             ps.z_entangled_with = []
         return saved
 
-    def _restore(self, saved):
+    def _restore(self, saved: PatchSnapshot) -> None:
         """Restore patch states from snapshot."""
         for label, (swapped, z_obs, x_obs, x_ent, z_ent) in saved.items():
             ps = self._patches[label]
@@ -462,7 +463,7 @@ class LogicalCircuitBuilder:
             ps.x_entangled_with = x_ent
             ps.z_entangled_with = z_ent
 
-    def to_tick_circuit(self):
+    def to_tick_circuit(self) -> object:
         """Generate a PECOS TickCircuit with detector and observable annotations.
 
         This is the primary output — the TickCircuit is the source of truth.
@@ -481,7 +482,7 @@ class LogicalCircuitBuilder:
         self._restore(saved)
         return tc
 
-    def to_dag_circuit(self):
+    def to_dag_circuit(self) -> object:
         """Generate a PECOS DagCircuit for fault analysis.
 
         Converts the TickCircuit to a DagCircuit, which can be used
@@ -585,8 +586,7 @@ class LogicalCircuitBuilder:
             tick = tc.get_tick(tick_idx)
             for gate in tick.gates():
                 if gate.gate_type.name == "MZ":
-                    for q in gate.qubits:
-                        meas_order.append(int(q))
+                    meas_order.extend(int(q) for q in gate.qubits)
 
         dem_builder = DemBuilder(influence_map)
         dem_builder = dem_builder.with_noise(p1, p2, p_meas, p_prep)
@@ -605,7 +605,7 @@ class LogicalCircuitBuilder:
         p_meas: float = 0.001,
         p_prep: float = 0.0,
         inner_decoder: str = "pymatching",
-    ):
+    ) -> tuple[object, object, str]:
         """Build a DemSampler and OSD decoder without any string round-trip.
 
         Returns:
@@ -628,8 +628,7 @@ class LogicalCircuitBuilder:
             tick = tc.get_tick(tick_idx)
             for gate in tick.gates():
                 if gate.gate_type.name == "MZ":
-                    for q in gate.qubits:
-                        meas_order.append(int(q))
+                    meas_order.extend(int(q) for q in gate.qubits)
 
         dem_builder = DemBuilder(influence_map)
         dem_builder = dem_builder.with_noise(p1, p2, p_meas, p_prep)
@@ -671,8 +670,8 @@ class LogicalCircuitBuilder:
 
         # Parse detector time coordinates from full DEM
         det_times = {}
-        for line in full_dem.split("\n"):
-            line = line.strip()
+        for raw_line in full_dem.split("\n"):
+            line = raw_line.strip()
             if line.startswith("detector("):
                 paren = line.index(")")
                 coords = [float(x) for x in line[len("detector(") : paren].split(",")]
@@ -743,7 +742,7 @@ class LogicalCircuitBuilder:
                         "time_start": seg_start,
                         "time_end": seg_end,
                         "stab_coords": seg_sc,
-                    }
+                    },
                 )
 
             elif op.gate_type == LogicalGateType.TRANSVERSAL_H:
@@ -754,7 +753,7 @@ class LogicalCircuitBuilder:
                         "type": "Hadamard",
                         "x_obs_bit": idx * 2,
                         "z_obs_bit": idx * 2 + 1,
-                    }
+                    },
                 )
                 x_z_swapped[label] = not x_z_swapped[label]
 
@@ -768,7 +767,7 @@ class LogicalCircuitBuilder:
                             "type": "TGateInjection",
                             "z_obs_bit": ctrl_idx * 2 + 1,
                             "ancilla_z_bit": tgt_idx * 2 + 1,
-                        }
+                        },
                     )
                 else:
                     pending_gates.append(
@@ -778,7 +777,7 @@ class LogicalCircuitBuilder:
                             "ctrl_z_bit": ctrl_idx * 2 + 1,
                             "tgt_x_bit": tgt_idx * 2,
                             "tgt_z_bit": tgt_idx * 2 + 1,
-                        }
+                        },
                     )
 
             elif op.gate_type in (LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg):
@@ -789,21 +788,21 @@ class LogicalCircuitBuilder:
                         "type": "SGate",
                         "x_obs_bit": idx * 2,
                         "z_obs_bit": idx * 2 + 1,
-                    }
+                    },
                 )
 
         # Build per-segment sub-DEMs by filtering the full DEM.
         # Each segment gets only the mechanisms involving its detectors.
         seg_dems = []
         for seg in segments:
-            det_set = set(seg["det_ids"])
+            set(seg["det_ids"])
             # Build local detector index mapping
-            global_to_local = {g: l for l, g in enumerate(seg["det_ids"])}
+            global_to_local = {g: local_id for local_id, g in enumerate(seg["det_ids"])}
 
             lines = []
             # Add detector coordinate declarations
-            for line in full_dem.split("\n"):
-                line = line.strip()
+            for raw_line in full_dem.split("\n"):
+                line = raw_line.strip()
                 if line.startswith("detector("):
                     paren = line.index(")")
                     tokens = line[paren + 1 :].split()
@@ -816,8 +815,8 @@ class LogicalCircuitBuilder:
                                 lines.append(f"detector({coords}) D{local}")
 
             # Add error mechanisms (remap detector IDs)
-            for line in full_dem.split("\n"):
-                line = line.strip()
+            for raw_line in full_dem.split("\n"):
+                line = raw_line.strip()
                 if not line.startswith("error("):
                     continue
                 tokens = line.split()
@@ -860,7 +859,7 @@ class LogicalCircuitBuilder:
         p_prep: float = 0.0,
         inner_decoder: str = "fusion_blossom_serial",
         use_stim_dem: bool = True,
-    ):
+    ) -> tuple[object, object]:
         """Build an ObservableSubgraphDecoder for this circuit.
 
         Args:
@@ -925,16 +924,16 @@ class _CircuitGenerator:
         self._det_json: list[dict] = []
         self._obs_json: list[dict] = []
 
-    def _new_tick(self):
+    def _new_tick(self) -> object:
         self._current_tick = self.tc.tick()
         return self._current_tick
 
-    def _tick(self):
+    def _tick(self) -> object:
         if self._current_tick is None:
             return self._new_tick()
         return self._current_tick
 
-    def _end_tick(self):
+    def _end_tick(self) -> None:
         self._current_tick = None
 
     def _emit_qalloc_or_reset(self, qubits: list[int]) -> None:
@@ -947,10 +946,8 @@ class _CircuitGenerator:
         if old_qs:
             t.pz(old_qs)
 
-    def generate(self):
+    def generate(self) -> object:
         """Generate the TickCircuit with detector/observable metadata."""
-        import json
-
         is_first = True
         # Per-patch last memory index: for each patch, the last MEMORY
         # operation that includes it. This ensures each patch gets its
@@ -1101,7 +1098,7 @@ class _CircuitGenerator:
                     "current_x_stabs": current_x_stabs,
                     "current_z_stabs": current_z_stabs,
                     "schedule": compute_cnot_schedule(patch),
-                }
+                },
             )
 
         # Initialization — per-patch basis
@@ -1279,7 +1276,7 @@ class _CircuitGenerator:
         compares the current measurement with the last measurement of the
         *conjugated* type from the previous segment.
         """
-        ps = self.patches[patch_label]
+        self.patches[patch_label]
         prev_seg = self.segment_idx - 1
 
         # Find the gate that affects this specific patch at this boundary
@@ -1448,7 +1445,7 @@ class _CircuitGenerator:
                 "id": len(self._det_json),
                 "coords": [anc_x, anc_y, self.round_time],
                 "abs_records": list(meas_indices),
-            }
+            },
         )
 
     def _emit_transversal_h(self, op: LogicalOp) -> None:
@@ -1481,7 +1478,7 @@ class _CircuitGenerator:
             )
             raise ValueError(msg)
 
-        pairs = list(zip(self._data_qubits(ctrl_label), self._data_qubits(tgt_label)))
+        pairs = list(zip(self._data_qubits(ctrl_label), self._data_qubits(tgt_label), strict=False))
         t = self._new_tick()
         t.cx(pairs)
         self._end_tick()
@@ -1537,14 +1534,14 @@ class _CircuitGenerator:
                 syn_key = (patch_label, lookup_type, s.index, seg, last_rnd)
                 syn_idx = self.stab_meas.get(syn_key)
                 if syn_idx is not None:
-                    all_idx = data_rec + [syn_idx]
+                    all_idx = [*data_rec, syn_idx]
                     anc_x, anc_y = self._ancilla_spatial_coords(patch_label, lookup_type, s.index)
                     self._det_json.append(
                         {
                             "id": len(self._det_json),
                             "coords": [anc_x, anc_y, self.round_time],
                             "abs_records": list(all_idx),
-                        }
+                        },
                     )
 
         if logical_op is not None:
@@ -1586,5 +1583,5 @@ class _CircuitGenerator:
                 {
                     "id": obs_idx,
                     "abs_records": list(obs_indices),
-                }
+                },
             )

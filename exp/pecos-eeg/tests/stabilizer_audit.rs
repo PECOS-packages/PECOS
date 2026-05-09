@@ -2,12 +2,12 @@
 //
 // Licensed under the Apache License, Version 2.0
 
-//! Audit: does the StabilizerGroup correctly identify all stabilizers?
+//! Audit: does the `StabilizerGroup` correctly identify all stabilizers?
 //! Test by generating all 2^n products of n generators and checking
-//! that is_stabilizer returns Some for each.
+//! that `is_stabilizer` returns Some for each.
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 use pecos_eeg::Bm;
 use pecos_eeg::stabilizer::StabilizerGroup;
 use pecos_simulators::{CliffordGateable, SparseStab};
@@ -15,14 +15,14 @@ use pecos_simulators::{CliffordGateable, SparseStab};
 fn gate(gt: GateType, qubits: &[usize]) -> Gate {
     Gate {
         gate_type: gt,
-        qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
     }
 }
 
-/// Extract generators as Bm from SparseStab.
+/// Extract generators as Bm from `SparseStab`.
 fn extract_generators(sim: &SparseStab) -> Vec<Bm> {
     let stabs = sim.stabs();
     let n = stabs.num_generators();
@@ -34,8 +34,8 @@ fn extract_generators(sim: &SparseStab) -> Vec<Bm> {
     gens
 }
 
-/// Check that StabilizerGroup.is_stabilizer returns Some for ALL products
-/// of the SparseStab generators (which are by definition in the group).
+/// Check that `StabilizerGroup.is_stabilizer` returns Some for ALL products
+/// of the `SparseStab` generators (which are by definition in the group).
 fn audit_stabilizer_group(label: &str, gates: &[Gate], num_qubits: usize) {
     let stab_group = StabilizerGroup::from_circuit(gates, num_qubits);
 
@@ -70,15 +70,11 @@ fn audit_stabilizer_group(label: &str, gates: &[Gate], num_qubits: usize) {
             GateType::Z => {
                 sim.z(&qs);
             }
-            GateType::CX => {
-                if qs.len() >= 2 {
-                    sim.cx(&[(qs[0], qs[1])]);
-                }
+            GateType::CX if qs.len() >= 2 => {
+                sim.cx(&[(qs[0], qs[1])]);
             }
-            GateType::CZ => {
-                if qs.len() >= 2 {
-                    sim.cz(&[(qs[0], qs[1])]);
-                }
+            GateType::CZ if qs.len() >= 2 => {
+                sim.cz(&[(qs[0], qs[1])]);
             }
             GateType::MZ => {
                 sim.mz(&qs);
@@ -101,9 +97,9 @@ fn audit_stabilizer_group(label: &str, gates: &[Gate], num_qubits: usize) {
 
     for mask in 0..max_subsets {
         let mut product = Bm::default();
-        for i in 0..n {
+        for (i, generator) in generators.iter().enumerate().take(n) {
             if mask & (1 << i) != 0 {
-                product = product.multiply(&generators[i]);
+                product = product.multiply(generator);
             }
         }
 

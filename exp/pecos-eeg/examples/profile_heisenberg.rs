@@ -1,17 +1,17 @@
 //! Profile the Heisenberg DEM build.
-//! Usage: cargo run -p pecos-eeg --example profile_heisenberg --profile profiling
-//! Perf:  perf record -g -F 4999 -- target/profiling/examples/profile_heisenberg
+//! Usage: cargo run -p pecos-eeg --example `profile_heisenberg` --profile profiling
+//! Perf:  perf record -g -F 4999 -- `target/profiling/examples/profile_heisenberg`
 
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 use pecos_eeg::Bm;
 use std::time::Instant;
 
 fn gate(gt: GateType, qubits: &[usize]) -> Gate {
     Gate {
         gate_type: gt,
-        qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
@@ -88,7 +88,8 @@ fn main() {
         }
     }
     let total = t.elapsed();
-    let per_det = total.as_secs_f64() * 1000.0 / (detectors.len() * iters) as f64;
+    let calls = u32::try_from(detectors.len() * iters).expect("profile call count fits in u32");
+    let per_det = total.as_secs_f64() * 1000.0 / f64::from(calls);
     eprintln!(
         "{iters} iterations x {} dets = {} calls in {:.2}s ({:.2}ms/det)",
         detectors.len(),

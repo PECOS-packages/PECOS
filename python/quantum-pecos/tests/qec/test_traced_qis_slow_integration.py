@@ -8,7 +8,6 @@ import math
 
 import numpy as np
 import pytest
-
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model

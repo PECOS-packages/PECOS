@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python" / "quantum-pecos" / "src"))
 
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-from pecos_rslib.qec import DemSampler, DetectorErrorModel, DemBuilder, DagFaultAnalyzer
-from pecos_rslib_exp import sim_neo, stabilizer, depolarizing
+from pecos_rslib.qec import DemSampler, DetectorErrorModel
+from pecos_rslib_exp import depolarizing, sim_neo, stabilizer
 
 
 def main():
@@ -31,8 +31,10 @@ def main():
     tc = b.to_tick_circuit()
 
     print(f"Surface code d={distance}, {tc.num_ticks()} ticks")
-    print(f"  {int(tc.get_meta('num_measurements'))} measurements, "
-          f"{len(json.loads(tc.get_meta('detectors')))} detectors")
+    print(
+        f"  {int(tc.get_meta('num_measurements'))} measurements, "
+        f"{len(json.loads(tc.get_meta('detectors')))} detectors",
+    )
 
     # ================================================================
     # 2. Inspect measurement IDs on gates
@@ -65,11 +67,10 @@ def main():
     # ================================================================
     p = 0.005
     dem = DetectorErrorModel.from_circuit(tc, p1=p, p2=p, p_meas=p, p_prep=p)
-    print(f"\nDetectorErrorModel: {dem.num_detectors} detectors, "
-          f"{dem.num_observables} observables")
+    print(f"\nDetectorErrorModel: {dem.num_detectors} detectors, {dem.num_observables} observables")
 
     dem_str = dem.to_string()
-    error_lines = [l for l in dem_str.split("\n") if l.startswith("error(")]
+    error_lines = [line for line in dem_str.split("\n") if line.startswith("error(")]
     print(f"  {len(error_lines)} DEM events")
     print("  First 3 events:")
     for line in error_lines[:3]:

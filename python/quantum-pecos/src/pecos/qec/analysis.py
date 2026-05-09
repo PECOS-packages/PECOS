@@ -10,7 +10,9 @@ and syndrome processing.
 
 from __future__ import annotations
 
+import json
 import math
+from itertools import combinations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -260,12 +262,7 @@ def detector_flip_matrix(
 
     for events in detector_events:
         # Determine which detectors fired
-        if len(events) == n:
-            # Full binary vector
-            fired = [i for i in range(n) if events[i]]
-        else:
-            # Sparse list of detector indices
-            fired = list(events)
+        fired = [i for i in range(n) if events[i]] if len(events) == n else list(events)
 
         for a in fired:
             m[a * n + a] += inv_shots  # diagonal
@@ -300,10 +297,7 @@ def detector_flip_matrices_by_round(
     num_rounds = (num_detectors + detectors_per_round - 1) // detectors_per_round
     shots = len(detector_events)
     if shots == 0:
-        return [
-            [[0.0] * detectors_per_round for _ in range(detectors_per_round)]
-            for _ in range(num_rounds)
-        ]
+        return [[[0.0] * detectors_per_round for _ in range(detectors_per_round)] for _ in range(num_rounds)]
 
     inv_shots = 1.0 / shots
     half_inv = 0.5 * inv_shots
@@ -313,10 +307,7 @@ def detector_flip_matrices_by_round(
     matrices = [[0.0] * (k * k) for _ in range(num_rounds)]
 
     for events in detector_events:
-        if len(events) == num_detectors:
-            fired = [i for i in range(num_detectors) if events[i]]
-        else:
-            fired = list(events)
+        fired = [i for i in range(num_detectors) if events[i]] if len(events) == num_detectors else list(events)
 
         # Bin by round
         round_fired: dict[int, list[int]] = {}
@@ -336,10 +327,7 @@ def detector_flip_matrices_by_round(
                         mat[a * k + b] += half_inv
                         mat[b * k + a] += half_inv
 
-    return [
-        [matrices[r][i * k : (i + 1) * k] for i in range(k)]
-        for r in range(num_rounds)
-    ]
+    return [[matrices[r][i * k : (i + 1) * k] for i in range(k)] for r in range(num_rounds)]
 
 
 def compare_flip_matrices(
@@ -414,8 +402,6 @@ def detector_k_body_rates(
     Returns:
         Dict mapping detector index tuples to joint firing rates.
     """
-    from itertools import combinations
-
     shots = len(detector_events)
     if shots == 0:
         return {}
@@ -424,10 +410,7 @@ def detector_k_body_rates(
     rates: dict[tuple[int, ...], float] = {}
 
     for events in detector_events:
-        if len(events) == num_detectors:
-            fired = [i for i in range(num_detectors) if events[i]]
-        else:
-            fired = sorted(events)
+        fired = [i for i in range(num_detectors) if events[i]] if len(events) == num_detectors else sorted(events)
 
         for k in range(1, min(max_order, len(fired)) + 1):
             for combo in combinations(fired, k):
@@ -461,8 +444,6 @@ def detector_k_body_rates_by_round(
         List of dicts, one per round, mapping local detector index
         tuples to joint firing rates.
     """
-    from itertools import combinations
-
     k = detectors_per_round
     num_rounds = (num_detectors + k - 1) // k
     shots = len(detector_events)
@@ -473,10 +454,7 @@ def detector_k_body_rates_by_round(
     round_rates: list[dict[tuple[int, ...], float]] = [{} for _ in range(num_rounds)]
 
     for events in detector_events:
-        if len(events) == num_detectors:
-            fired = [i for i in range(num_detectors) if events[i]]
-        else:
-            fired = sorted(events)
+        fired = [i for i in range(num_detectors) if events[i]] if len(events) == num_detectors else sorted(events)
 
         # Bin fired detectors by round
         round_fired: dict[int, list[int]] = {}
@@ -600,8 +578,6 @@ def empirical_correlation_table(
         for indices, prob in table:
             print(f"P({indices}) = {prob:.6f}")
     """
-    import json
-
     from pecos_rslib_exp import (
         meas_sampling,
         sim_neo,
@@ -610,35 +586,22 @@ def empirical_correlation_table(
     )
 
     if backend == "meas_sampling":
-        results = (
-            sim_neo(tick_circuit)
-            .quantum(meas_sampling())
-            .noise(noise_builder)
-            .shots(shots)
-            .seed(seed)
-            .run()
-        )
+        results = sim_neo(tick_circuit).quantum(meas_sampling()).noise(noise_builder).shots(shots).seed(seed).run()
     elif backend in ("stabilizer", "statevec"):
         backend_obj = stabilizer() if backend == "stabilizer" else statevec()
-        results = (
-            sim_neo(tick_circuit)
-            .quantum(backend_obj)
-            .noise(noise_builder)
-            .shots(shots)
-            .seed(seed)
-            .run()
-        )
+        results = sim_neo(tick_circuit).quantum(backend_obj).noise(noise_builder).shots(shots).seed(seed).run()
     else:
         supported = "'stabilizer', 'statevec', 'meas_sampling'"
+        msg = f"Unknown backend {backend!r}. Supported: {supported}."
         raise ValueError(
-            f"Unknown backend {backend!r}. Supported: {supported}."
+            msg,
         )
 
     det_json = json.loads(tick_circuit.get_meta("detectors"))
     obs_json_str = tick_circuit.get_meta("observables")
     obs_json = json.loads(obs_json_str) if obs_json_str else []
     num_meas = int(tick_circuit.get_meta("num_measurements"))
-    num_dets = len(det_json)
+    len(det_json)
 
     # Extract fired detectors and observables per shot
     fired_per_shot: list[list[int]] = []
@@ -668,8 +631,6 @@ def empirical_correlation_table(
         obs_per_shot.append(obs_fired)
 
     # Compute detector k-body rates with string labels
-    from itertools import combinations
-
     inv_shots = 1.0 / shots
     rates: dict[tuple[str, ...], float] = {}
 
@@ -686,7 +647,7 @@ def empirical_correlation_table(
             rates[key] = rates.get(key, 0.0) + inv_shots
 
     # Detector-observable pairwise: P(Di AND Lj)
-    for fired, obs_fired in zip(fired_per_shot, obs_per_shot):
+    for fired, obs_fired in zip(fired_per_shot, obs_per_shot, strict=False):
         for d in fired:
             for o in obs_fired:
                 key = (f"D{d}", f"L{o}")
@@ -726,12 +687,13 @@ def fit_dem_from_simulation(
     Returns:
         Stim-format DEM string with simulation-fitted probabilities.
     """
-    import json
-    from itertools import combinations
+    if max_correlation_order < 1:
+        msg = "max_correlation_order must be at least 1"
+        raise ValueError(msg)
 
     from pecos_rslib.qec import (
-        DemBuilder,
         DagFaultAnalyzer,
+        DemBuilder,
         fit_dem_to_marginals,
         mechanisms_to_dem_string,
     )
@@ -752,14 +714,14 @@ def fit_dem_from_simulation(
     builder = builder.with_detectors_json(tick_circuit.get_meta("detectors"))
     builder = builder.with_observables_json(tick_circuit.get_meta("observables"))
     builder = builder.with_num_measurements(
-        int(tick_circuit.get_meta("num_measurements"))
+        int(tick_circuit.get_meta("num_measurements")),
     )
     dem = builder.build()
     dem_str = dem.to_string()
 
     mechs: list[tuple[float, list[int], list[int]]] = []
-    for line in dem_str.strip().split("\n"):
-        line = line.strip()
+    for raw_line in dem_str.strip().split("\n"):
+        line = raw_line.strip()
         if line.startswith("error("):
             pe = line.index(")")
             prob = float(line[6:pe])
@@ -774,27 +736,14 @@ def fit_dem_from_simulation(
     num_dets = len(det_json)
 
     if backend == "meas_sampling":
-        results = (
-            sim_neo(tick_circuit)
-            .quantum(meas_sampling())
-            .noise(noise_builder)
-            .shots(shots)
-            .seed(seed)
-            .run()
-        )
+        results = sim_neo(tick_circuit).quantum(meas_sampling()).noise(noise_builder).shots(shots).seed(seed).run()
     elif backend in ("stabilizer", "statevec"):
         backend_obj = stabilizer() if backend == "stabilizer" else statevec()
-        results = (
-            sim_neo(tick_circuit)
-            .quantum(backend_obj)
-            .noise(noise_builder)
-            .shots(shots)
-            .seed(seed)
-            .run()
-        )
+        results = sim_neo(tick_circuit).quantum(backend_obj).noise(noise_builder).shots(shots).seed(seed).run()
     else:
         supported = "'stabilizer', 'statevec', 'meas_sampling'"
-        raise ValueError(f"Unknown backend {backend!r}. Supported: {supported}.")
+        msg = f"Unknown backend {backend!r}. Supported: {supported}."
+        raise ValueError(msg)
 
     inv_shots = 1.0 / shots
     emp_marginals = [0.0] * num_dets
@@ -844,7 +793,7 @@ def build_adaptive_dem(
         # Pure stochastic: from_circuit is best
         from pecos_rslib.qec import DemSampler
 
-        sampler = DemSampler.from_circuit(
+        DemSampler.from_circuit(
             tick_circuit,
             p1=noise_params.get("p1", 0.0),
             p2=noise_params.get("p2", 0.0),
@@ -856,18 +805,16 @@ def build_adaptive_dem(
 
         table = exact_correlation_table(tick_circuit, **noise_params, max_order=max_order)
         # Return a minimal JSON with correlations
-        import json as _json
-
-        json_out = _json.dumps({
-            "correlations": [
-                {"nodes": list(labels), "probability": prob}
-                for labels, prob in table
-            ],
-        }, indent=2)
+        json_out = json.dumps(
+            {
+                "correlations": [{"nodes": list(labels), "probability": prob} for labels, prob in table],
+            },
+            indent=2,
+        )
         # Get DEM string from the sampler's internal DEM
         dem_str = ""  # from_circuit doesn't expose DEM string directly
         # Rebuild via DemBuilder
-        from pecos_rslib.qec import DemBuilder, DagFaultAnalyzer
+        from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
 
         dag = tick_circuit.to_dag_circuit()
         analyzer = DagFaultAnalyzer(dag)
@@ -882,7 +829,7 @@ def build_adaptive_dem(
         builder = builder.with_detectors_json(tick_circuit.get_meta("detectors"))
         builder = builder.with_observables_json(tick_circuit.get_meta("observables"))
         builder = builder.with_num_measurements(
-            int(tick_circuit.get_meta("num_measurements"))
+            int(tick_circuit.get_meta("num_measurements")),
         )
         dem = builder.build()
         dem_str = dem.to_string()
@@ -893,5 +840,8 @@ def build_adaptive_dem(
     from pecos_rslib_exp import noise_characterization
 
     return noise_characterization(
-        tick_circuit, **noise_params, max_order=max_order, prune=prune,
+        tick_circuit,
+        **noise_params,
+        max_order=max_order,
+        prune=prune,
     )

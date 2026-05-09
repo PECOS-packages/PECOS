@@ -1879,12 +1879,16 @@ pub fn heisenberg_exact_from_circuit(
 
 // --- Matrix helpers for exact Heisenberg ---
 
+fn bit_to_f64(value: usize) -> f64 {
+    f64::from(u8::try_from(value).expect("bit value fits in u8"))
+}
+
 fn matrix_rz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, theta: f64, n: usize) {
     let dim = 1usize << n;
     for i in 0..dim {
-        let bi = ((i >> q) & 1) as f64;
+        let bi = bit_to_f64((i >> q) & 1);
         for j in 0..dim {
-            let bj = ((j >> q) & 1) as f64;
+            let bj = bit_to_f64((j >> q) & 1);
             let phase = (bi - bj) * theta;
             if phase.abs() < 1e-20 {
                 continue;
@@ -2022,12 +2026,12 @@ mod tests {
     use super::*;
     use crate::expand;
     use crate::noise::UniformNoise;
-    use pecos_core::{GateAngles, GateParams, GateQubits, QubitId};
+    use pecos_core::{GateAngles, GateParams, QubitId};
 
     fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         Gate {
             gate_type: gt,
-            qubits: GateQubits::from_iter(qubits.iter().map(|&q| QubitId(q))),
+            qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
             angles: GateAngles::new(),
             params: GateParams::new(),
             meas_ids: pecos_core::GateMeasIds::new(),
@@ -2479,7 +2483,7 @@ mod tests {
     /// Builds larger circuits and measures per-detector walk time with both
     /// implementations. Verifies results match exactly.
     #[test]
-    #[ignore] // run with: cargo test -p pecos-eeg -- bench_sparse_scaling --ignored --nocapture
+    #[ignore = "benchmark; run manually with --ignored --nocapture"]
     fn bench_sparse_scaling() {
         use std::time::Instant;
 

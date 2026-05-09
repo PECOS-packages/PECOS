@@ -1456,12 +1456,12 @@ mod tests {
         // Constructive: p = (h1+h2)^2
         use crate::stabilizer::StabilizerGroup;
         use pecos_core::gate_type::GateType;
-        use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+        use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 
         fn g(gt: GateType, qs: &[usize]) -> Gate {
             Gate {
                 gate_type: gt,
-                qubits: GateQubits::from_iter(qs.iter().map(|&q| QubitId(q))),
+                qubits: qs.iter().map(|&q| QubitId(q)).collect(),
                 angles: GateAngles::new(),
                 params: GateParams::new(),
                 meas_ids: pecos_core::GateMeasIds::new(),
@@ -1511,12 +1511,12 @@ mod tests {
         // Destructive: p = (h1-h2)^2
         use crate::stabilizer::StabilizerGroup;
         use pecos_core::gate_type::GateType;
-        use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+        use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 
         fn g(gt: GateType, qs: &[usize]) -> Gate {
             Gate {
                 gate_type: gt,
-                qubits: GateQubits::from_iter(qs.iter().map(|&q| QubitId(q))),
+                qubits: qs.iter().map(|&q| QubitId(q)).collect(),
                 angles: GateAngles::new(),
                 params: GateParams::new(),
                 meas_ids: pecos_core::GateMeasIds::new(),
@@ -1570,12 +1570,12 @@ mod tests {
         // h1 = h2 = 0.1, -1 stabilizer product → p = (h1-h2)^2 = 0
         use crate::stabilizer::StabilizerGroup;
         use pecos_core::gate_type::GateType;
-        use pecos_core::{Gate, GateAngles, GateParams, GateQubits, QubitId};
+        use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 
         fn g(gt: GateType, qs: &[usize]) -> Gate {
             Gate {
                 gate_type: gt,
-                qubits: GateQubits::from_iter(qs.iter().map(|&q| QubitId(q))),
+                qubits: qs.iter().map(|&q| QubitId(q)).collect(),
                 angles: GateAngles::new(),
                 params: GateParams::new(),
                 meas_ids: pecos_core::GateMeasIds::new(),

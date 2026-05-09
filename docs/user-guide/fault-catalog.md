@@ -1,38 +1,39 @@
-# Fault Catalog Tutorial
+# Fault Catalog and Measurement Sampling
 
-The fault catalog API exposes the physical fault mechanisms in a `TickCircuit`.
-It is useful when you want to inspect fault locations, build lookup tables,
-debug detector/observable metadata, or lazily enumerate low-weight fault
-configurations.
+The fault catalog exposes every possible physical fault event in a
+`TickCircuit`: what Pauli error occurs at each gate, which measurements flip,
+which detectors fire, which observables flip, and which tracked operators are
+affected.
+
+It serves two purposes:
+
+1. **Research tool** -- explore fault anatomy, build custom decoders, analyze
+   noise sensitivity, find undetectable errors, all without committing to a
+   noise model.
+2. **Sampling infrastructure** -- parameterize with noise, then sample raw
+   measurements or enumerate fault configurations for decoding.
 
 The core model is:
 
 - each `FaultLocation` is an independent physical fault mechanism
 - each location has one or more `FaultAlternative`s
 - exactly one alternative is chosen when the location fires
-- detector, measurement, and observable effects combine by XOR parity
+- measurement, detector, observable, and tracked-operator effects combine by
+  XOR parity
 
-## Inputs
+## Structural vs Parameterized Catalogs
 
-A fault catalog needs two inputs:
+A fault catalog can be built in two ways:
 
-1. a `TickCircuit`
-2. stochastic noise parameters
+**Structural (no noise):** includes all fault locations for all gate types.
+Probabilities are zero. Use this for topology queries, fault anatomy
+exploration, or as a reusable base for parameter sweeps.
 
-The circuit must already have detector and observable metadata:
-
-- `num_measurements`
-- `detectors`
-- `observables`
-
-The catalog does not infer detector definitions from the gate sequence. It uses
-the metadata on the circuit to map raw measurement flips into detector and
-observable flips.
-
-## Python: Build a Small Catalog
+**Parameterized (with noise):** fills in probabilities based on a stochastic
+noise model. Use this for sampling, decoding, and probability-weighted queries.
 
 ```python
-from pecos.quantum import PauliString, TickCircuit
+from pecos.quantum import TickCircuit
 from pecos_rslib_exp import depolarizing, fault_catalog
 
 circuit = TickCircuit()
@@ -43,9 +44,43 @@ circuit.set_meta("num_measurements", "1")
 circuit.set_meta("detectors", '[{"records":[-1]}]')
 circuit.set_meta("observables", '[{"records":[-1]}]')
 
-noise = depolarizing().p1(0.03).p2(0.0).p_meas(0.01).p_prep(0.0)
-catalog = fault_catalog(circuit, noise)
+# Structural -- all locations, zero probabilities:
+catalog = fault_catalog(circuit)
+
+# Parameterize with noise:
+catalog.with_noise(p1=0.03, p2=0.0, p_meas=0.01, p_prep=0.0)
+
+# Or one-shot (structural + parameterize in one call):
+catalog = fault_catalog(circuit, p1=0.03, p2=0.0, p_meas=0.01, p_prep=0.0)
 ```
+
+The circuit must have detector and observable metadata (`num_measurements`,
+`detectors`, `observables`). The catalog uses this metadata to map raw
+measurement flips into detector and observable flips. Without metadata,
+structural fields like `affected_detectors` will be empty, but
+`affected_measurements` are still computed from Pauli propagation.
+
+## Re-parameterization
+
+The expensive work (Pauli propagation, detector mapping) is done once during
+construction. Changing noise is cheap -- it just updates probability fields:
+
+```python
+catalog = fault_catalog(circuit)
+
+# Sweep noise parameters without rebuilding the catalog:
+for p in [0.001, 0.005, 0.01, 0.05]:
+    catalog.with_noise(p1=p * 0.1, p2=p, p_meas=p * 0.5, p_prep=p * 0.5)
+    # ... decode, sample, analyze ...
+
+# Independent copy for parallel comparison:
+catalog_a = catalog.parameterized(p1=0.001, p2=0.01, p_meas=0.005, p_prep=0.005)
+catalog_b = catalog.parameterized(p1=0.01, p2=0.1, p_meas=0.05, p_prep=0.05)
+```
+
+Note: decoders and samplers built from a catalog are snapshots. They read
+probabilities at construction time. Re-parameterizing the catalog does NOT
+update existing decoders or plans.
 
 The returned object is sequence-like:
 
@@ -66,8 +101,7 @@ locations = catalog.locations
 
 ## Location Fields
 
-Each `FaultLocation` represents one physical mechanism with nonzero channel
-probability.
+Each `FaultLocation` represents one physical fault mechanism.
 
 | Field | Meaning |
 |---|---|
@@ -76,8 +110,8 @@ probability.
 | `gate_type` | Gate name, such as `"H"`, `"CX"`, or `"MZ"` |
 | `qubits` | Qubits acted on by this gate |
 | `channel` | `"p1"`, `"p2"`, `"p_meas"`, or `"p_prep"` |
-| `channel_probability` | Total probability that the mechanism fires, `p_i` |
-| `no_fault_probability` | Probability the mechanism does not fire, `1 - p_i` |
+| `channel_probability` | Total probability the mechanism fires (0 if unparameterized) |
+| `no_fault_probability` | `1 - channel_probability` |
 | `num_alternatives` | Number of alternatives at this location, `k_i` |
 | `faults` | List of `FaultAlternative` objects |
 
@@ -106,29 +140,36 @@ Each `FaultAlternative` is one possible outcome when its parent location fires.
 | Field | Meaning |
 |---|---|
 | `kind` | `"pauli"`, `"measurement_flip"`, or `"prep_flip"` |
-| `pauli` | A real PECOS `PauliString` for Pauli faults, or `None` |
-| `measurements` | Raw measurement indices flipped by the alternative |
-| `detectors` | Detector indices flipped by the alternative |
-| `observables` | Observable indices flipped by the alternative |
-| `conditional_probability` | `1 / k_i` |
-| `absolute_probability` | Marginal alternative probability at the location, `p_i / k_i` |
+| `pauli` | A PECOS `PauliString` for Pauli faults, or `None` |
+| `measurements` | Raw measurement indices flipped |
+| `detectors` | Detector indices flipped |
+| `observables` | Observable indices flipped |
+| `tracked_ops` | Tracked operator indices flipped |
+| `conditional_probability` | `1 / k_i` (structural, does not depend on noise) |
+| `absolute_probability` | `p_i / k_i` (0 if unparameterized) |
 | `channel_probability` | Same `p_i` as the parent location |
+
+The four effect fields (`measurements`, `detectors`, `observables`,
+`tracked_ops`) are structural -- they depend on the circuit topology, not the
+noise model. They are populated during construction and never change when
+noise is re-parameterized.
 
 Example:
 
 ```python
+from pecos.quantum import PauliString
+
 for loc in catalog:
     for fault in loc.faults:
-        if fault.kind == "pauli":
-            assert isinstance(fault.pauli, PauliString)
-        else:
-            assert fault.pauli is None
-
-        print(fault.kind, fault.detectors, fault.observables)
+        print(f"  {fault.kind}: {fault.pauli}")
+        print(f"    measurements: {fault.measurements}")
+        print(f"    detectors:    {fault.detectors}")
+        print(f"    observables:  {fault.observables}")
+        print(f"    tracked_ops:  {fault.tracked_ops}")
 ```
 
-`fault.absolute_probability` is intentionally local to one fault location. It is
-not the probability of "this alternative and no other faults in the circuit."
+`fault.absolute_probability` is local to one fault location. It is not the
+probability of "this alternative and no other faults in the circuit."
 
 ## Probability Semantics
 
@@ -293,7 +334,7 @@ The Rust API lives in `pecos-qec`:
 
 ```rust
 use pecos_qec::fault_tolerance::fault_sampler::{
-    build_fault_catalog, StochasticNoiseParams,
+    FaultCatalog, StochasticNoiseParams,
 };
 use pecos_quantum::{Attribute, TickCircuit};
 
@@ -311,14 +352,20 @@ circuit.set_meta(
     Attribute::String(r#"[{"records":[-1]}]"#.into()),
 );
 
+// Structural catalog (no noise):
+let mut catalog = FaultCatalog::from_circuit(&circuit).unwrap();
+
+// Parameterize:
 let noise = StochasticNoiseParams {
     p1: 0.03,
     p2: 0.0,
     p_meas: 0.01,
     p_prep: 0.0,
 };
+catalog.with_noise(&noise);
 
-let catalog = build_fault_catalog(&circuit, &noise).unwrap();
+// Or one-shot convenience:
+// let catalog = build_fault_catalog(&circuit, &noise).unwrap();
 ```
 
 Iterate locations and alternatives:
@@ -336,10 +383,11 @@ for loc in &catalog.locations {
 
     for fault in &loc.faults {
         println!(
-            "  {:?} dets={:?} obs={:?} p_alt={}",
+            "  {:?} dets={:?} obs={:?} tracked={:?} p_alt={}",
             fault.kind,
             fault.affected_detectors,
             fault.affected_observables,
+            fault.affected_tracked_ops,
             fault.absolute_probability
         );
     }
@@ -362,20 +410,96 @@ for event in catalog.fault_configurations(2) {
 ```
 
 The Rust iterator borrows the catalog and does not materialize all
-configurations up front.
+configurations up front. On an unparameterized catalog, `fault_configurations(k)`
+for k > 0 yields nothing (all probabilities are zero).
+
+## Fault Anatomy Exploration
+
+The structural catalog (no noise needed) lets you explore every fault event:
+
+```python
+catalog = fault_catalog(circuit)
+
+# What faults can flip detector D3?
+for loc in catalog:
+    for alt in loc.faults:
+        if 3 in alt.detectors:
+            print(f"D3 flipped by {alt.pauli} at {loc.gate_type}({loc.qubits})")
+
+# Find undetectable weight-2 logical errors:
+catalog.with_noise(p1=0.01, p2=0.05, p_meas=0.01, p_prep=0.01)
+for config in catalog.fault_configurations(2):
+    if config.observables and not config.detectors:
+        print(f"Undetectable: locations {config.location_indices}")
+```
+
+## Tracked Operators
+
+Tracked operators are Pauli operators that the catalog monitors for
+anticommutation with fault events. Unlike observables, they have no
+measurement records -- they are detected by forward Pauli propagation.
+
+Add tracked operators to a circuit via `pauli_operator`:
+
+```python
+from pecos.quantum import PauliString
+
+circuit.pauli_operator(PauliString.from_str("X0 X1 X2"), label="logical_X")
+```
+
+Each `FaultAlternative` then has a `tracked_ops` field listing which tracked
+operators are flipped by that fault. This is useful for studying logical
+operator propagation without requiring measurement.
+
+## Raw Measurement Sampling
+
+The `meas_sampling()` backend in `sim_neo` uses the fault catalog internally
+to produce raw measurement bitstrings:
+
+```python
+from pecos_rslib_exp import sim_neo, meas_sampling, depolarizing
+
+result = (
+    sim_neo(circuit)
+    .quantum(meas_sampling())
+    .noise(depolarizing().p1(0.001).p2(0.01).p_meas(0.005).p_prep(0.005))
+    .shots(10000)
+    .seed(42)
+    .run()
+)
+
+# result[shot] gives measurement outcomes for each shot
+for shot in range(len(result)):
+    measurements = list(result[shot])
+```
+
+The sampling architecture:
+- **Ideal values** from symbolic stabilizer simulation (respects measurement
+  correlations across resets)
+- **Physical faults** from geometric skip sampling (O(fired events) per shot)
+- Raw measurement = ideal XOR faults
+
+This is fast (millions of shots per second at small distances) and produces
+the same measurement format as gate-by-gate stabilizer simulation.
 
 ## Common Pitfalls
 
 - `fault.absolute_probability` is `p_i / k_i`, not a full-circuit event
   probability.
-- Empty-effect locations are real physical mechanisms and must remain in the
-  catalog for normalization.
+- Empty-effect alternatives (no measurements flipped) are real -- they
+  represent Pauli errors that commute with subsequent measurements. They
+  must stay in the catalog for the correct uniform denominator.
 - `catalog.fault_configurations(k)` means exactly `k` distinct physical
-  locations fire, not at most `k`.
+  locations fire, not at most `k`. On an unparameterized catalog, k > 0
+  yields nothing (zero probabilities).
 - Detector and observable metadata must be correct before building the catalog.
   Missing boundary detectors can make a correct decoder appear to fail.
-- The current catalog models the supported stochastic channels in
-  `StochasticNoiseParams`: `p1`, `p2`, `p_meas`, and `p_prep`.
+- `with_noise()` mutates the catalog in place. Previously held Python
+  references to locations and faults update automatically. Decoders and
+  samplers do NOT update -- they are snapshots.
+- The structural catalog includes ALL locations even when a channel
+  probability is zero. Use `to_mechanisms()` to get only the nonzero
+  mechanisms for raw sampling.
 
 ## Larger Example
 

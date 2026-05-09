@@ -1008,7 +1008,7 @@ impl<'a> DemSamplerBuilder<'a> {
         let tracked_op_labels: Vec<Option<String>> = circuit
             .annotations()
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::Operator))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedOperator))
             .map(|a| a.label.clone())
             .collect();
         if !tracked_op_labels.is_empty() {
@@ -1516,14 +1516,14 @@ mod tests {
     }
 
     #[test]
-    fn from_circuit_preserves_pauli_operator_tracked_ops() {
+    fn from_circuit_preserves_tracked_operator_ops() {
         use crate::fault_tolerance::dem_builder::NoiseConfig;
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.pauli_operator_labeled("x_check", X(0));
+        circuit.tracked_operator_labeled("x_check", X(0));
 
         let noise = NoiseConfig::new(0.03, 0.0, 0.0, 0.0);
         let sampler = DemSampler::from_circuit(&circuit, &noise).unwrap();
@@ -1544,13 +1544,13 @@ mod tests {
     }
 
     #[test]
-    fn detector_mode_keeps_observables_unshifted_with_pauli_operators() {
-        use pecos_core::pauli::constructors::X;
+    fn detector_mode_keeps_observables_unshifted_with_tracked_operators() {
+        use pecos_core::pauli::X;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.pauli_operator_labeled("x_check", X(0));
+        circuit.tracked_operator_labeled("x_check", X(0));
         circuit.mz(&[0]);
 
         let im = InfluenceBuilder::new(&circuit)
@@ -1622,13 +1622,13 @@ mod tests {
     #[test]
     fn from_detector_error_model_preserves_observable_and_tracked_operator_split() {
         use super::super::builder::DemBuilder;
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
         use pecos_quantum::Attribute;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.pauli_operator_labeled("x_check", X(0));
+        circuit.tracked_operator_labeled("x_check", X(0));
         circuit.mz(&[0]);
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(
@@ -1675,13 +1675,13 @@ mod tests {
     #[test]
     fn observable_mask_ignores_tracked_operator_outputs() {
         use super::super::builder::DemBuilder;
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
         use pecos_quantum::Attribute;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.pauli_operator_labeled("x_check", X(0));
+        circuit.tracked_operator_labeled("x_check", X(0));
         circuit.mz(&[0]);
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(

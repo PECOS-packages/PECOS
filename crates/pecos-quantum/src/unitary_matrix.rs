@@ -23,7 +23,7 @@
 //!
 //! ```
 //! use pecos_quantum::unitary_matrix::ToMatrix;
-//! use pecos_core::unitary_rep::X;
+//! use pecos_core::unitary::X;
 //!
 //! let x = X(0);
 //! let matrix = x.to_matrix();  // Method style
@@ -56,7 +56,7 @@ use pecos_core::{Angle64, Op, Pauli, PauliString, Phase};
 ///
 /// ```
 /// use pecos_quantum::unitary_matrix::{UnitaryMatrix, ToMatrix};
-/// use pecos_core::unitary_rep::{X, Z};
+/// use pecos_core::unitary::{X, Z};
 ///
 /// let mx = X(0).to_matrix();
 /// let mz = Z(0).to_matrix();
@@ -1048,7 +1048,7 @@ impl fmt::Display for UnitaryMatrix {
 ///
 /// ```
 /// use pecos_quantum::unitary_matrix::ToMatrix;
-/// use pecos_core::unitary_rep::{X, H, CX, Is};
+/// use pecos_core::unitary::{X, H, CX, Is};
 ///
 /// // Single qubit gate
 /// let x_matrix = X(0).to_matrix();
@@ -1123,13 +1123,17 @@ impl ToMatrix for Unitary {
 }
 
 impl ToMatrix for Op {
-    /// Converts to a matrix. Returns the zero matrix for channels (non-unitary ops).
+    /// Converts to a matrix.
+    ///
+    /// # Panics
+    ///
+    /// Panics for Gate-level or Channel-level operations, which do not have a
+    /// unitary matrix representation.
     fn to_matrix(&self) -> UnitaryMatrix {
         match self.clone().into_unitary() {
             Some(ur) => to_matrix(&ur),
             None => {
-                // Channel ops don't have a unitary matrix
-                panic!("Cannot convert non-unitary Op (Channel) to a matrix")
+                panic!("Cannot convert non-unitary Op (Gate/Channel) to a matrix")
             }
         }
     }
@@ -1144,7 +1148,7 @@ impl ToMatrix for Op {
 ///
 /// ```
 /// use pecos_quantum::unitary_matrix::to_matrix;
-/// use pecos_core::unitary_rep::X;
+/// use pecos_core::unitary::X;
 /// use num_complex::Complex64;
 ///
 /// let x = X(0);
@@ -1252,7 +1256,7 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
 ///
 /// ```
 /// use pecos_quantum::unitary_matrix::unitary_exp;
-/// use pecos_core::unitary_rep::Z;
+/// use pecos_core::unitary::Z;
 /// use num_complex::Complex64;
 /// use std::f64::consts::PI;
 ///
@@ -1277,7 +1281,7 @@ pub fn unitary_exp(op: &UnitaryRep, theta: f64) -> UnitaryMatrix {
 ///
 /// ```
 /// use pecos_quantum::unitary_matrix::{unitary_log, to_matrix};
-/// use pecos_core::unitary_rep::X;
+/// use pecos_core::unitary::X;
 ///
 /// let x = X(0);
 /// if let Some(log_x) = unitary_log(&x) {
@@ -1300,7 +1304,7 @@ pub fn unitary_log(op: &UnitaryRep) -> Option<DMatrix<Complex64>> {
 ///
 /// ```
 /// use pecos_quantum::unitary_matrix::unitaries_equiv;
-/// use pecos_core::unitary_rep::{X, Y, Z};
+/// use pecos_core::unitary::{X, Y, Z};
 ///
 /// let x = X(0);
 /// let x2 = X(0);

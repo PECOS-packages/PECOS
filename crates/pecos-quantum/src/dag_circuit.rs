@@ -390,9 +390,9 @@ pub enum AnnotationKind {
     /// Logical observable: the Pauli's flip determines a logical outcome.
     /// Stores measurement node indices for classical readout via XOR.
     Observable { measurement_nodes: Vec<usize> },
-    /// Tracked Pauli operator: no measurement readout.
+    /// Tracked operator: no measurement readout.
     /// Position is determined by a `PauliOperatorMeta` node in the DAG.
-    Operator,
+    TrackedOperator,
 }
 
 /// A unified Pauli annotation: detectors, observables, and tracked operators
@@ -402,7 +402,7 @@ pub enum AnnotationKind {
 ///   Their Pauli is Z on the measured qubits.
 /// - **Observables** are logical operators read out via measurements.
 ///   Their Pauli is Z on the measured qubits.
-/// - **Operators** are arbitrary Pauli strings with no measurement readout.
+/// - **Tracked operators** are arbitrary Pauli strings with no measurement readout.
 ///   Their Pauli is user-specified and their position comes from a meta-gate node.
 #[derive(Debug, Clone)]
 pub struct PauliAnnotation {
@@ -1718,10 +1718,10 @@ impl DagCircuit {
         pecos_core::PauliString::zs(&qubits)
     }
 
-    /// Place a Pauli operator meta-gate at this point in the circuit.
+    /// Place a tracked-operator meta-gate at this point in the circuit.
     ///
     /// This is a **positional** annotation: only faults BEFORE this node
-    /// can flip the operator. The meta-gate does not affect quantum state
+    /// can flip the tracked operator. The meta-gate does not affect quantum state
     /// -- simulators ignore it.
     ///
     /// Accepts a [`PauliString`](pecos_core::PauliString), which supports
@@ -1732,30 +1732,30 @@ impl DagCircuit {
     /// # Example
     /// ```
     /// use pecos_quantum::DagCircuit;
-    /// use pecos_core::pauli::constructors::{X, Z};
+    /// use pecos_core::pauli::{X, Z};
     ///
     /// let mut c = DagCircuit::new();
     /// c.pz(&[0, 1, 2]);
     /// c.cx(&[(0, 1)]);
     /// // Place X_0 & Z_1 & Z_2 check HERE -- only faults above can flip it
-    /// c.pauli_operator(X(0) & Z(1) & Z(2));
+    /// c.tracked_operator(X(0) & Z(1) & Z(2));
     /// c.cx(&[(1, 2)]);  // faults here don't affect the check
     /// ```
-    pub fn pauli_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
+    pub fn tracked_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
         // Phase is irrelevant for flip tracking -- normalize to +1
         pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
         let idx = self.annotations.len();
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::Operator,
+            kind: AnnotationKind::TrackedOperator,
             label: None,
         });
         idx
     }
 
-    /// Place a labeled Pauli operator meta-gate.
-    pub fn pauli_operator_labeled(
+    /// Place a labeled tracked-operator meta-gate.
+    pub fn tracked_operator_labeled(
         &mut self,
         label: &str,
         mut pauli: pecos_core::PauliString,
@@ -1765,7 +1765,7 @@ impl DagCircuit {
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::Operator,
+            kind: AnnotationKind::TrackedOperator,
             label: Some(label.to_string()),
         });
         idx
@@ -1786,8 +1786,8 @@ impl DagCircuit {
 
     /// Add a pre-built annotation (used for conversion from `TickCircuit`).
     pub fn add_annotation(&mut self, ann: PauliAnnotation) {
-        // For Operator annotations, insert the meta-gate node
-        if matches!(ann.kind, AnnotationKind::Operator) {
+        // For tracked-operator annotations, insert the meta-gate node.
+        if matches!(ann.kind, AnnotationKind::TrackedOperator) {
             self.insert_pauli_meta_gate(&ann.pauli);
         }
         self.annotations.push(ann);
@@ -1807,11 +1807,11 @@ impl DagCircuit {
             .filter(|a| matches!(a.kind, AnnotationKind::Observable { .. }))
     }
 
-    /// Get tracked Pauli operator annotations.
-    pub fn pauli_operators(&self) -> impl Iterator<Item = &PauliAnnotation> {
+    /// Get tracked-operator annotations.
+    pub fn tracked_operators(&self) -> impl Iterator<Item = &PauliAnnotation> {
         self.annotations
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::Operator))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedOperator))
     }
 
     // ========================================================================

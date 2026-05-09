@@ -90,22 +90,28 @@ pub use circuit_diagram::{
     DiagramStyleBuilder, FamilyPalette, FillPattern, GraphStyle, GraphStyleBuilder, blend_hex,
 };
 
-// UnitaryRep algebra
+// --- Algebraic-level namespaces ---
+//
+// Each level is a module whose glob import gives the user the constructors and
+// types for that algebraic level:
+//
+//   use pecos_core::pauli::*;     // I, X, Y, Z, Xs, Ys, Zs -> PauliString
+//   use pecos_core::clifford::*;  // H, CX, CZ, SWAP, ... -> CliffordRep
+//   use pecos_core::unitary::*;   // T, RZ, CCX, ... -> UnitaryRep
+//   use pecos_core::op::*;        // MZ, PZ, Depolarizing, ... -> Op (promoted)
+
+pub mod unitary;
 pub use unitary_rep::{Is, Unitary, UnitaryRep};
 
-// PauliString constructors (primary user-facing API for Pauli algebra)
 pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
 
-// Clifford base type (single-qubit Clifford group element)
 pub mod clifford;
 pub use clifford::Clifford;
 
-// Cross-type algebraic operators (Pauli * Clifford -> CliffordRep, etc.)
 pub mod gate_algebra;
 
-// Unified gate algebra with automatic type promotion
 pub mod op;
-pub use op::{Basis, ChannelExpr, Level, Op};
+pub use op::{Basis, ChannelExpr, GateExpr, Level, Op};
 
 // Signals
 pub use signal::Signal;

@@ -119,7 +119,7 @@ The `phase!` and `phase_turn!` macros wrap angles into `PhaseValue` for use with
 
 ```rust
 use pecos_core::{phase, phase_turn};
-use pecos_core::unitary_rep::X;
+use pecos_core::unitary::X;
 
 // Global phase applied to a gate
 let op = phase!(pi / 4) * X(0);      // e^{i*pi/4} * X

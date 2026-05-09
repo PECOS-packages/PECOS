@@ -39,7 +39,7 @@
 //!
 //! ```
 //! use pecos_quantum::PauliGroup;
-//! use pecos_core::pauli::constructors::*;
+//! use pecos_core::pauli::*;
 //! use pecos_core::pauli::algebra::i;
 //!
 //! // Generators with imaginary phases are allowed
@@ -105,7 +105,7 @@ fn generator_order(phase: QuarterPhase) -> u32 {
 ///
 /// ```
 /// use pecos_quantum::PauliGroup;
-/// use pecos_core::pauli::constructors::*;
+/// use pecos_core::pauli::*;
 /// use pecos_core::pauli::algebra::i;
 ///
 /// // A group with an imaginary-phase generator
@@ -682,7 +682,7 @@ impl fmt::Display for PauliGroup {
 mod tests {
     use super::*;
     use pecos_core::pauli::algebra::i;
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
 
     // --- Construction and basic properties ---
 

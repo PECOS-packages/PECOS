@@ -938,10 +938,7 @@ impl StabilizerCodeSpecBuilder {
         self
     }
 
-    /// Adds a stabilizer from an `UnitaryRep`.
-    ///
-    /// The operator must be convertible to a `PauliString` (i.e., a Pauli operator
-    /// or tensor product of Pauli operators).
+    /// Adds a stabilizer Pauli operator.
     ///
     /// # Example
     ///
@@ -956,18 +953,9 @@ impl StabilizerCodeSpecBuilder {
     ///     .unwrap();
     /// ```
     ///
-    /// Accepts both `PauliString` and `UnitaryRep` (via `Into<UnitaryRep>`).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the operator cannot be converted to a `PauliString`.
     #[must_use]
-    pub fn check(mut self, op: impl Into<pecos_core::UnitaryRep>) -> Self {
-        let ps = op
-            .into()
-            .try_to_pauli_string()
-            .expect("UnitaryRep must be convertible to PauliString");
-        self.stabilizers.push(ps);
+    pub fn check(mut self, op: impl Into<PauliString>) -> Self {
+        self.stabilizers.push(op.into());
         self
     }
 
@@ -978,20 +966,10 @@ impl StabilizerCodeSpecBuilder {
         self
     }
 
-    /// Adds a logical Z operator.
-    ///
-    /// Accepts both `PauliString` and `UnitaryRep` (via `Into<UnitaryRep>`).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the operator cannot be converted to a `PauliString`.
+    /// Adds a logical Z Pauli operator.
     #[must_use]
-    pub fn logical_z(mut self, op: impl Into<pecos_core::UnitaryRep>) -> Self {
-        let ps = op
-            .into()
-            .try_to_pauli_string()
-            .expect("UnitaryRep must be convertible to PauliString");
-        self.logical_zs.push(ps);
+    pub fn logical_z(mut self, op: impl Into<PauliString>) -> Self {
+        self.logical_zs.push(op.into());
         self
     }
 
@@ -1002,20 +980,10 @@ impl StabilizerCodeSpecBuilder {
         self
     }
 
-    /// Adds a logical X operator.
-    ///
-    /// Accepts both `PauliString` and `UnitaryRep` (via `Into<UnitaryRep>`).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the operator cannot be converted to a `PauliString`.
+    /// Adds a logical X Pauli operator.
     #[must_use]
-    pub fn logical_x(mut self, op: impl Into<pecos_core::UnitaryRep>) -> Self {
-        let ps = op
-            .into()
-            .try_to_pauli_string()
-            .expect("UnitaryRep must be convertible to PauliString");
-        self.logical_xs.push(ps);
+    pub fn logical_x(mut self, op: impl Into<PauliString>) -> Self {
+        self.logical_xs.push(op.into());
         self
     }
 
@@ -1695,7 +1663,7 @@ mod tests {
 
     #[test]
     fn test_stabilizer_group_algebraic_analysis() {
-        use pecos_core::pauli::constructors::*;
+        use pecos_core::pauli::*;
 
         // Use SurfaceCode and convert for algebraic analysis
         let surface = crate::SurfaceCode::rotated(3).unwrap();
@@ -1808,7 +1776,7 @@ mod tests {
 
     #[test]
     fn test_from_stabilizer_code_preserves_explicit_num_qubits() {
-        use pecos_core::pauli::constructors::Z;
+        use pecos_core::pauli::Z;
         use pecos_quantum::PauliStabilizerGroup;
 
         // StabilizerCode with explicit num_qubits > group touches

@@ -7,7 +7,8 @@
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_1() {
-    use pecos_core::{PauliString, QuarterPhase, Xs, Zs};
+    use pecos_core::{PauliString, QuarterPhase};
+    use pecos_core::pauli::{Xs, Zs};
     use pecos_qec::{ErrorClass, StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1]))
@@ -24,8 +25,7 @@ fn test_user_guide_fault_tolerance_rust_1() {
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_2() {
-    use pecos_core::pauli::constructors::*;
-    use pecos_core::{Xs, Zs};
+    use pecos_core::pauli::*;
     use pecos_qec::{ErrorClass, StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1]))
@@ -51,8 +51,7 @@ fn test_user_guide_fault_tolerance_rust_2() {
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_3() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_core::pauli::constructors::*;
-    use pecos_core::{Xs, Zs};
+    use pecos_core::pauli::*;
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1])).check(Zs([1, 2]))
@@ -72,7 +71,7 @@ fn test_user_guide_fault_tolerance_rust_3() -> Result<(), Box<dyn std::error::Er
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_4() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_core::{Xs, Zs};
+    use pecos_core::pauli::{Xs, Zs};
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1])).check(Zs([1, 2]))
@@ -98,7 +97,7 @@ fn test_user_guide_fault_tolerance_rust_4() -> Result<(), Box<dyn std::error::Er
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_5() {
-    use pecos_core::{Xs, Zs};
+    use pecos_core::pauli::{Xs, Zs};
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1])).check(Zs([1, 2]))
@@ -209,7 +208,7 @@ println!("DEM has {} detectors, {} contributions",
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_9() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_core::{Xs, Zs};
+    use pecos_core::pauli::{Xs, Zs};
     use pecos_qec::{DemBuilder, DistanceSearchConfig, StabilizerCodeSpec, calculate_distance};
     use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_quantum::DagCircuit;
@@ -259,7 +258,7 @@ let result = calculate_distance(&code, &DistanceSearchConfig::with_max_weight(5)
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_10() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_core::{Xs, Zs};
+    use pecos_core::pauli::{Xs, Zs};
     use pecos_qec::{DemBuilder, DistanceSearchConfig, StabilizerCodeSpec, find_min_weight_logicals_with_info};
     use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_quantum::DagCircuit;
@@ -302,7 +301,7 @@ for op in &logicals {
 
 #[test]
 fn test_user_guide_fault_tolerance_rust_11() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_core::pauli::constructors::Zs;
+    use pecos_core::pauli::Zs;
     use pecos_qec::{DemBuilder, discover_logical_operators};
     use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_quantum::DagCircuit;

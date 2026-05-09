@@ -128,7 +128,7 @@ impl StabilizerCode {
     ///
     /// ```
     /// use pecos_qec::StabilizerCode;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// // Repetition code [[3,1]]: logicals are X_L = XXX, Z_L = Z on any qubit
     /// let code = StabilizerCode::repetition(3);
@@ -215,7 +215,7 @@ impl StabilizerCode {
     ///
     /// ```
     /// use pecos_qec::StabilizerCode;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// // Repetition code [[3,1,1]]: distance 1 (logical Z = Z on any single qubit)
     /// let code = StabilizerCode::repetition(3);
@@ -283,7 +283,7 @@ impl StabilizerCode {
     ///
     /// ```
     /// use pecos_qec::StabilizerCode;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// // Repetition code: ZZI, IZZ on 3 qubits
     /// let code = StabilizerCode::repetition(3);
@@ -347,7 +347,7 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn repetition(n: usize) -> Self {
-        use pecos_core::pauli::constructors::Zs;
+        use pecos_core::pauli::Zs;
         assert!(
             n >= 2,
             "repetition code requires at least 2 qubits, got {n}"
@@ -377,7 +377,7 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn steane() -> Self {
-        use pecos_core::pauli::constructors::{Xs, Zs};
+        use pecos_core::pauli::{Xs, Zs};
         let generators = vec![
             Xs([0, 2, 4, 6]),
             Xs([1, 2, 5, 6]),
@@ -411,7 +411,7 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn five_qubit() -> Self {
-        use pecos_core::pauli::constructors::{X, Z};
+        use pecos_core::pauli::{X, Z};
         let generators = vec![
             X(0) & Z(1) & Z(2) & X(3), // XZZXI
             X(1) & Z(2) & Z(3) & X(4), // IXZZX
@@ -441,7 +441,7 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn shor() -> Self {
-        use pecos_core::pauli::constructors::{Xs, Zs};
+        use pecos_core::pauli::{Xs, Zs};
         let generators = vec![
             Xs([0, 1]),
             Xs([1, 2]),
@@ -477,7 +477,7 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn four_two_two() -> Self {
-        use pecos_core::pauli::constructors::{Xs, Zs};
+        use pecos_core::pauli::{Xs, Zs};
         let generators = vec![Xs([0, 1, 2, 3]), Zs([0, 1, 2, 3])];
         Self {
             group: PauliStabilizerGroup::from_generators_unchecked(generators),
@@ -506,7 +506,7 @@ impl StabilizerCode {
     /// ```
     #[must_use]
     pub fn toric(l: usize) -> Self {
-        use pecos_core::pauli::constructors::{Xs, Zs};
+        use pecos_core::pauli::{Xs, Zs};
         assert!(l >= 2, "toric code requires L >= 2, got {l}");
 
         let n = 2 * l * l;
@@ -557,7 +557,7 @@ impl StabilizerCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
 
     // ========================================================================
     // Basic code parameter tests

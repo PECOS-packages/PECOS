@@ -205,7 +205,7 @@ fn build_detectors(
                     pauli: bitmask,
                 });
             }
-            AnnotationKind::Operator => {}
+            AnnotationKind::TrackedOperator => {}
         }
     }
 

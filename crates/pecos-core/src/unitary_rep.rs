@@ -29,7 +29,7 @@
 //! # Examples
 //!
 //! ```
-//! use pecos_core::unitary_rep::*;
+//! use pecos_core::unitary::*;
 //! use pecos_core::Angle64;
 //!
 //! // Build a circuit: H on q0, then CX(0,1), then T on q1
@@ -68,7 +68,7 @@ use std::str::FromStr;
 ///
 /// ```
 /// use pecos_core::{phase, Angle64};
-/// use pecos_core::unitary_rep::X;
+/// use pecos_core::unitary::X;
 ///
 /// // e^{iπ/4} * X - exact, no floating point
 /// let op = phase!(pi / 4) * X(0);
@@ -95,7 +95,7 @@ macro_rules! phase {
 ///
 /// ```
 /// use pecos_core::phase_turn;
-/// use pecos_core::unitary_rep::X;
+/// use pecos_core::unitary::X;
 ///
 /// // T gate phase: e^{i * 2π/8} = e^{iπ/4}
 /// let op = phase_turn!(1 / 8) * X(0);
@@ -386,7 +386,7 @@ pub enum Commutativity {
 ///
 /// Enables pluralized gate functions to accept various qubit collections:
 /// ```
-/// use pecos_core::unitary_rep::*;
+/// use pecos_core::unitary::*;
 /// use pecos_core::QubitId;
 ///
 /// // Multiple qubits via Xs - equivalent to X(0) & X(2) & X(5)
@@ -498,7 +498,7 @@ impl Qubits {
 /// Wrapper for qubit pairs used by pluralized two-qubit gates.
 ///
 /// ```
-/// use pecos_core::unitary_rep::*;
+/// use pecos_core::unitary::*;
 /// use pecos_core::QubitId;
 ///
 /// // Multiple CX gates via CXs
@@ -1251,7 +1251,7 @@ impl Mul<&UnitaryRep> for NegImaginaryUnit {
 ///
 /// # Example
 /// ```
-/// use pecos_core::unitary_rep::{phase, X};
+/// use pecos_core::unitary::{phase, X};
 /// use pecos_core::Angle64;
 ///
 /// // Create a phase of e^{iπ/4}
@@ -1267,7 +1267,7 @@ pub struct PhaseValue(pub Angle64);
 ///
 /// # Example
 /// ```
-/// use pecos_core::unitary_rep::{phase, X, Z};
+/// use pecos_core::unitary::{phase, X, Z};
 /// use pecos_core::Angle64;
 ///
 /// // e^{iπ/4} * X
@@ -1384,7 +1384,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{Xs, Zs};
+    /// use pecos_core::unitary::{Xs, Zs};
     /// use pecos_core::PauliOperator;
     ///
     /// // Tensor of Paulis on disjoint qubits
@@ -1643,7 +1643,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, Z, H, T};
+    /// use pecos_core::unitary::{X, Z, H, T};
     ///
     /// // Stabilizer update: applying H to qubit 0
     /// let stabilizer = X(0) & Z(1);
@@ -1668,7 +1668,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, H};
+    /// use pecos_core::unitary::{X, H};
     ///
     /// // Heisenberg evolution: how X evolves under H
     /// let evolved = X(0).conjdg(&H(0));  // H† X H
@@ -1683,7 +1683,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, Y};
+    /// use pecos_core::unitary::{X, Y};
     /// use pecos_core::{GlobalPhase, QuarterPhase};
     ///
     /// let op = X(0);
@@ -1708,7 +1708,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, Z, CX};
+    /// use pecos_core::unitary::{X, Z, CX};
     ///
     /// assert_eq!(X(0).weight(), 1);
     /// assert_eq!((X(0) & Z(2)).weight(), 2);
@@ -1724,7 +1724,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::I;
+    /// use pecos_core::unitary::I;
     ///
     /// assert!(I(0).is_identity());
     /// ```
@@ -1744,7 +1744,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, Y, Z, H, T};
+    /// use pecos_core::unitary::{X, Y, Z, H, T};
     ///
     /// // Paulis are Hermitian
     /// assert!(X(0).is_hermitian());
@@ -1806,7 +1806,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, H};
+    /// use pecos_core::unitary::{X, H};
     ///
     /// let x = X(0);
     /// let x2 = x.pow(2);  // X * X = I
@@ -1843,7 +1843,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, Z, Commutativity};
+    /// use pecos_core::unitary::{X, Z, Commutativity};
     ///
     /// let a = X(0);
     /// let b = Z(0);
@@ -1876,7 +1876,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{X, H, RZ};
+    /// use pecos_core::unitary::{X, H, RZ};
     /// use pecos_core::Angle64;
     ///
     /// assert!(X(0).is_unitary());
@@ -1896,7 +1896,7 @@ impl UnitaryRep {
     /// # Example
     ///
     /// ```
-    /// use pecos_core::unitary_rep::{H, CX};
+    /// use pecos_core::unitary::{H, CX};
     ///
     /// let circuit = CX(0, 1) * H(0);  // H then CX
     /// let gates = circuit.decompose();

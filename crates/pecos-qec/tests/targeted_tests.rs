@@ -12,7 +12,7 @@
 
 //! Targeted tests for specific features and bug fixes from the annotation/decoder session.
 
-use pecos_core::pauli::constructors::{X, Y, Z};
+use pecos_core::pauli::{X, Y, Z};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
 use pecos_qec::fault_tolerance::dem_builder::{NoiseConfig, PauliWeights};
 use pecos_qec::fault_tolerance::lookup_decoder::LookupDecoder;
@@ -283,9 +283,9 @@ fn detector_derives_pauli_from_measurements() {
     assert_eq!(paulis[1].0, pecos_core::Pauli::Z);
 }
 
-/// Verify `pauli_operator` normalizes phase to +1.
+/// Verify `tracked_operator` normalizes phase to +1.
 #[test]
-fn pauli_operator_normalizes_phase() {
+fn tracked_operator_normalizes_phase() {
     let mut dag = DagCircuit::new();
     dag.pz(&[0]);
 
@@ -293,7 +293,7 @@ fn pauli_operator_normalizes_phase() {
     let neg_x = -X(0);
     assert_ne!(neg_x.get_phase(), pecos_core::QuarterPhase::PlusOne);
 
-    dag.pauli_operator(neg_x);
+    dag.tracked_operator(neg_x);
 
     // After storage, phase should be normalized to +1
     let ann = &dag.annotations()[0];

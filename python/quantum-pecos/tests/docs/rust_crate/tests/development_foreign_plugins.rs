@@ -12,16 +12,3 @@ fn test_development_foreign_plugins_rust_3() {
             plugin.name, plugin.decoder.is_some(), plugin.simulator.is_some());
     }
 }
-
-
-
-#[test]
-fn test_development_foreign_plugins_rust_4() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_foreign::gate_support::configure_runner_for_foreign;
-    let sim = ForeignSimulator::new(handle, vtable);
-    let mut runner = configure_runner_for_foreign(&sim);
-    // If sim supports rotations: runner uses RX, RZ, RZZ natively
-    // Otherwise: Clifford-only, everything decomposes into {SZ, H, CX}
-    let outcomes = runner.apply_circuit(&mut sim, &commands)?;
-    Ok(())
-}

@@ -92,7 +92,7 @@ fn test_user_guide_gate_angle_types_rust_5() {
 #[test]
 fn test_user_guide_gate_angle_types_rust_6() {
     use pecos_core::{phase, phase_turn};
-    use pecos_core::unitary_rep::X;
+    use pecos_core::unitary::X;
     let op = phase!(pi / 4) * X(0);      // e^{i*pi/4} * X
     let op = phase_turn!(1 / 8) * X(0);  // same thing
 }

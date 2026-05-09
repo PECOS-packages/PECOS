@@ -5,7 +5,7 @@
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_1() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
 
 // Single-qubit Paulis
@@ -31,7 +31,7 @@ assert!(!X(0).commutes_with(&Z(0)));
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_2() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
@@ -51,7 +51,7 @@ let code = StabilizerCode::repetition(3);
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_3() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
@@ -66,7 +66,7 @@ println!("{}", code.code_parameters());           // [[7, 1]]
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_4() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
@@ -84,7 +84,7 @@ for (i, op) in logicals.iter().enumerate() {
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_5() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
@@ -103,7 +103,7 @@ assert_eq!(trivial.distance(), Some(1));
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_6() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
@@ -122,7 +122,7 @@ assert_eq!(code.syndrome(&Z(0)), vec![false, false]);
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_7() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
@@ -135,7 +135,7 @@ assert_eq!(toric.distance(), Some(2));
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_8() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
     use pecos_quantum::PauliStabilizerGroup;
@@ -154,8 +154,8 @@ assert_eq!(code.num_logical_qubits(), 3);
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_9() {
-    use pecos_core::pauli::constructors::*;
-    use pecos_core::{PauliOperator, Xs, Zs};
+    use pecos_core::pauli::*;
+    use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCodeSpec;
 
 // Build a 3-qubit bit-flip code with explicit logicals
@@ -177,7 +177,7 @@ assert_eq!(code.num_logical_qubits(), 1);
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_10() {
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::{StabilizerCode, StabilizerCodeSpec};
 
@@ -195,8 +195,8 @@ spec.verify().unwrap();
 
 #[test]
 fn test_user_guide_stabilizer_codes_rust_11() {
-    use pecos_core::pauli::constructors::*;
-    use pecos_core::{PauliOperator, Xs, Zs};
+    use pecos_core::pauli::*;
+    use pecos_core::PauliOperator;
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
 
 let code = StabilizerCodeSpec::builder(7)

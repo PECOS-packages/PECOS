@@ -1289,7 +1289,7 @@ fn parse_observable_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
 fn parse_tracked_operator_annotations(tc: &TickCircuit) -> Vec<PauliString> {
     tc.annotations()
         .iter()
-        .filter(|ann| matches!(ann.kind, AnnotationKind::Operator))
+        .filter(|ann| matches!(ann.kind, AnnotationKind::TrackedOperator))
         .map(|ann| {
             let mut pauli = ann.pauli.clone();
             pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
@@ -2647,7 +2647,7 @@ mod tests {
     fn test_catalog_keeps_observables_and_tracked_ops_distinct() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
-        tc.pauli_operator_labeled("tracked_z0", PauliString::z(0));
+        tc.tracked_operator_labeled("tracked_z0", PauliString::z(0));
         tc.set_meta(
             "detectors",
             pecos_quantum::Attribute::String("[]".to_string()),
@@ -2892,7 +2892,7 @@ mod tests {
     fn test_tracked_only_effect_stays_in_catalog_but_not_raw_mechanisms() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
-        tc.pauli_operator_labeled("tracked_z0", PauliString::z(0));
+        tc.tracked_operator_labeled("tracked_z0", PauliString::z(0));
 
         let mut catalog = FaultCatalog::from_circuit(&tc).unwrap();
         catalog.with_noise(&StochasticNoiseParams {

@@ -17,6 +17,7 @@ pecos-num = { path = "../../../../../crates/pecos-num" }
 pecos-qec = { path = "../../../../../crates/pecos-qec" }
 pecos-decoders = { path = "../../../../../crates/pecos-decoders", features = ["ldpc"] }
 pecos-decoder-core = { path = "../../../../../crates/pecos-decoder-core" }
+pecos-foreign = { path = "../../../../../crates/pecos-foreign" }
 pecos-random = { path = "../../../../../crates/pecos-random" }
 pecos-qasm = { path = "../../../../../crates/pecos-qasm" }
 pecos-programs = { path = "../../../../../crates/pecos-programs" }

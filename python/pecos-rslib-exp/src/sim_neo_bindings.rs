@@ -925,7 +925,7 @@ fn build_rust_tick_circuit_from_gates(
         create_annotations_from_json(&mut tc, &s, &all_meas_refs, false);
         tc.set_meta("observables", Attribute::String(s));
     }
-    copy_operator_annotations_from_python(py_tc, &mut tc)?;
+    copy_tracked_operator_annotations_from_python(py_tc, &mut tc)?;
 
     // Compact for performance
     tc.compact_ticks();
@@ -933,7 +933,7 @@ fn build_rust_tick_circuit_from_gates(
     Ok(tc)
 }
 
-fn copy_operator_annotations_from_python(
+fn copy_tracked_operator_annotations_from_python(
     py_tc: &pyo3::Bound<'_, pyo3::PyAny>,
     tc: &mut pecos_quantum::TickCircuit,
 ) -> PyResult<()> {
@@ -944,21 +944,21 @@ fn copy_operator_annotations_from_python(
     for ann in annotations.try_iter()? {
         let ann = ann?;
         let kind: String = ann.get_item("kind")?.extract()?;
-        if kind != "operator" {
+        if kind != "tracked_operator" {
             continue;
         }
         let pauli_obj = ann.get_item("pauli")?;
         let pauli_text = pauli_obj.str()?.to_string();
         let pauli = parse_python_pauli_string(&pauli_text).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!(
-                "Could not parse Pauli operator annotation: {pauli_text}"
+                "Could not parse tracked operator annotation: {pauli_text}"
             ))
         })?;
         let label: Option<String> = ann.get_item("label")?.extract()?;
         if let Some(label) = label {
-            tc.pauli_operator_labeled(&label, pauli);
+            tc.tracked_operator_labeled(&label, pauli);
         } else {
-            tc.pauli_operator(pauli);
+            tc.tracked_operator(pauli);
         }
     }
 

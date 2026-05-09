@@ -1329,7 +1329,7 @@ impl std::error::Error for PecosDemMetadataError {}
 /// # Examples
 ///
 /// ```ignore
-/// use pecos_core::pauli::constructors::{X, Y, Z};
+/// use pecos_core::pauli::{X, Y, Z};
 ///
 /// // Single-qubit: biased toward dephasing
 /// let w = PauliWeights::from([(Z(0), 0.8), (X(0), 0.1), (Y(0), 0.1)]);
@@ -1367,7 +1367,7 @@ impl PauliWeights {
     /// Uniform weights for single-qubit gates: X, Y, Z each with 1/3.
     #[must_use]
     pub fn uniform_1q() -> Self {
-        use pecos_core::pauli::constructors::{X, Y, Z};
+        use pecos_core::pauli::{X, Y, Z};
         Self {
             entries: vec![(X(0), 1.0 / 3.0), (Y(0), 1.0 / 3.0), (Z(0), 1.0 / 3.0)],
         }
@@ -1376,7 +1376,7 @@ impl PauliWeights {
     /// Uniform weights for two-qubit gates: all 15 non-identity Paulis at 1/15.
     #[must_use]
     pub fn uniform_2q() -> Self {
-        use pecos_core::pauli::constructors::{X, Y, Z};
+        use pecos_core::pauli::{X, Y, Z};
         let w = 1.0 / 15.0;
         Self {
             entries: vec![
@@ -1626,7 +1626,7 @@ impl NoiseConfig {
     /// Sets custom per-Pauli weights for single-qubit gates.
     ///
     /// ```ignore
-    /// use pecos_core::pauli::constructors::{X, Y, Z};
+    /// use pecos_core::pauli::{X, Y, Z};
     /// noise.set_p1_weights(PauliWeights::from([
     ///     (X(0), 0.1), (Y(0), 0.1), (Z(0), 0.8),
     /// ]));
@@ -3466,8 +3466,8 @@ mod tests {
     }
 
     #[test]
-    fn test_pecos_metadata_json_preserves_pauli_operator_ops() {
-        use pecos_core::pauli::constructors::{X, Z};
+    fn test_pecos_metadata_json_preserves_tracked_operator_ops() {
+        use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_dem_output(
@@ -3496,7 +3496,7 @@ mod tests {
 
     #[test]
     fn test_dem_counts_keep_detectors_observables_and_tracked_operators_distinct() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0).with_records([-1]));
@@ -3520,7 +3520,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_observable_definitions_merge_records_by_parity() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let mut dem = DetectorErrorModel::new();
         dem.add_observable(
@@ -3564,7 +3564,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "conflicting Pauli metadata for observable L0")]
     fn test_duplicate_observable_definitions_reject_conflicting_paulis() {
-        use pecos_core::pauli::constructors::{X, Z};
+        use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_observable(DemOutput::new(0).with_pauli(X(0)));
@@ -3573,7 +3573,7 @@ mod tests {
 
     #[test]
     fn test_dem_output_kind_predicates_are_mutually_exclusive() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let observable = DemOutput::new(0)
             .with_kind(DemOutputKind::Observable)
@@ -3621,7 +3621,7 @@ mod tests {
 
     #[test]
     fn test_pecos_metadata_json_round_trips_tracked_operator_metadata() {
-        use pecos_core::pauli::constructors::{X, Z};
+        use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_dem_output(DemOutput::new(0));
@@ -3749,7 +3749,7 @@ mod tests {
 
     #[test]
     fn test_pecos_dem_text_is_stim_superset_with_dem_output_metadata() {
-        use pecos_core::pauli::constructors::{X, Z};
+        use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0));
@@ -3796,7 +3796,7 @@ mod tests {
 
     #[test]
     fn test_pecos_dem_text_round_trips_observables_and_tracked_ops() {
-        use pecos_core::pauli::constructors::Z;
+        use pecos_core::pauli::Z;
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0));

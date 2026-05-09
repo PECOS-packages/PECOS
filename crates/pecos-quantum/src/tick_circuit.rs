@@ -1184,21 +1184,25 @@ impl TickCircuit {
         idx
     }
 
-    /// Place a Pauli operator annotation.
-    pub fn pauli_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
+    /// Place a tracked-operator annotation.
+    pub fn tracked_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
         pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::Operator,
+            kind: AnnotationKind::TrackedOperator,
             label: None,
         });
         idx
     }
 
-    /// Place a labeled Pauli operator annotation.
-    pub fn pauli_operator_labeled(&mut self, label: &str, pauli: pecos_core::PauliString) -> usize {
-        let idx = self.pauli_operator(pauli);
+    /// Place a labeled tracked-operator annotation.
+    pub fn tracked_operator_labeled(
+        &mut self,
+        label: &str,
+        pauli: pecos_core::PauliString,
+    ) -> usize {
+        let idx = self.tracked_operator(pauli);
         self.annotations[idx].label = Some(label.to_string());
         idx
     }
@@ -2286,7 +2290,7 @@ impl From<&TickCircuit> for DagCircuit {
                         measurement_nodes: dag_nodes,
                     }
                 }
-                AnnotationKind::Operator => AnnotationKind::Operator,
+                AnnotationKind::TrackedOperator => AnnotationKind::TrackedOperator,
             };
             dag.add_annotation(PauliAnnotation {
                 pauli: ann.pauli.clone(),
@@ -3299,7 +3303,7 @@ mod tests {
 
     #[test]
     fn test_tick_circuit_annotations() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1, 2]);
@@ -3311,7 +3315,7 @@ mod tests {
 
         tc.detector_labeled("Z_check", &ms);
         tc.observable_labeled("logical_Z", &ms);
-        tc.pauli_operator_labeled("logical_X", X(0) & X(1));
+        tc.tracked_operator_labeled("logical_X", X(0) & X(1));
 
         assert_eq!(tc.annotations().len(), 3);
         assert_eq!(tc.annotations()[0].label.as_deref(), Some("Z_check"));
@@ -3321,7 +3325,7 @@ mod tests {
 
     #[test]
     fn test_tick_to_dag_annotation_transfer() {
-        use pecos_core::pauli::constructors::Z;
+        use pecos_core::pauli::Z;
 
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1, 2]);
@@ -3329,7 +3333,7 @@ mod tests {
         let ms = tc.tick().mz(&[2]);
         tc.detector_labeled("det0", &ms);
         tc.observable_labeled("obs0", &ms);
-        tc.pauli_operator_labeled("op0", Z(0) & Z(1));
+        tc.tracked_operator_labeled("op0", Z(0) & Z(1));
 
         let dag = DagCircuit::from(&tc);
 
@@ -3350,13 +3354,13 @@ mod tests {
         ));
         assert!(matches!(
             dag.annotations()[2].kind,
-            crate::dag_circuit::AnnotationKind::Operator
+            crate::dag_circuit::AnnotationKind::TrackedOperator
         ));
     }
 
     #[test]
     fn test_dag_to_tick_annotation_transfer() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1]);
@@ -3364,7 +3368,7 @@ mod tests {
         let ms = dag.mz(&[0, 1]);
         dag.detector_labeled("d0", &[ms[0]]);
         dag.observable_labeled("o0", &[ms[0], ms[1]]);
-        dag.pauli_operator_labeled("p0", X(0) & X(1));
+        dag.tracked_operator_labeled("p0", X(0) & X(1));
 
         let tc = TickCircuit::from(&dag);
 
@@ -3376,7 +3380,7 @@ mod tests {
 
     #[test]
     fn test_annotation_round_trip() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         // Build TickCircuit with annotations
         let mut tc1 = TickCircuit::new();
@@ -3387,7 +3391,7 @@ mod tests {
         tc1.detector_labeled("syndr", &ms);
         let ms_data = tc1.tick().mz(&[0, 1]);
         tc1.observable_labeled("log_Z", &ms_data);
-        tc1.pauli_operator_labeled("log_X", X(0) & X(1));
+        tc1.tracked_operator_labeled("log_X", X(0) & X(1));
 
         // TickCircuit -> DagCircuit -> TickCircuit
         let dag = DagCircuit::from(&tc1);

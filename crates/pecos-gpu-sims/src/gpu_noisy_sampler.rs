@@ -326,9 +326,9 @@ impl NoiseSampler for BiasedDepolarizingNoiseSampler {
     }
 }
 
-/// Operations that can be added to a circuit.
+/// Ideal gates that can be added to a noisy sampler circuit.
 #[derive(Debug, Clone)]
-pub enum CircuitOp {
+pub enum Gate {
     // Single-qubit gates
     H(usize),
     S(usize),
@@ -344,29 +344,39 @@ pub enum CircuitOp {
 
     // Measurements
     Mz(usize),
+}
 
-    // Noise injection points
-    Noise1Q(usize),
-    Noise2Q(usize, usize),
+/// Explicit noise injection point in a noisy sampler circuit.
+#[derive(Debug, Clone)]
+pub enum NoiseInjection {
+    OneQ(usize),
+    TwoQ(usize, usize),
+}
+
+/// A circuit step for the noisy sampler.
+#[derive(Debug, Clone)]
+pub enum NoisyCircuitStep {
+    Gate(Gate),
+    Noise(NoiseInjection),
 }
 
 /// Builder for constructing circuits with noise injection points.
 #[derive(Default)]
 pub struct CircuitBuilder {
-    ops: Vec<CircuitOp>,
+    steps: Vec<NoisyCircuitStep>,
 }
 
 impl CircuitBuilder {
     /// Create a new empty circuit builder.
     #[must_use]
     pub fn new() -> Self {
-        Self { ops: Vec::new() }
+        Self { steps: Vec::new() }
     }
 
     /// Hadamard gate.
     pub fn h(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::H(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::H(q)));
         }
         self
     }
@@ -374,7 +384,7 @@ impl CircuitBuilder {
     /// S gate (sqrt Z).
     pub fn s(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::S(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::S(q)));
         }
         self
     }
@@ -382,7 +392,7 @@ impl CircuitBuilder {
     /// S-dagger gate.
     pub fn sdg(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::Sdg(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::Sdg(q)));
         }
         self
     }
@@ -390,7 +400,7 @@ impl CircuitBuilder {
     /// Pauli X gate.
     pub fn x(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::X(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::X(q)));
         }
         self
     }
@@ -398,7 +408,7 @@ impl CircuitBuilder {
     /// Pauli Y gate.
     pub fn y(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::Y(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::Y(q)));
         }
         self
     }
@@ -406,7 +416,7 @@ impl CircuitBuilder {
     /// Pauli Z gate.
     pub fn z(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::Z(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::Z(q)));
         }
         self
     }
@@ -414,7 +424,8 @@ impl CircuitBuilder {
     /// CNOT gate.
     pub fn cx(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         for &(control, target) in pairs {
-            self.ops.push(CircuitOp::Cx(control, target));
+            self.steps
+                .push(NoisyCircuitStep::Gate(Gate::Cx(control, target)));
         }
         self
     }
@@ -422,7 +433,7 @@ impl CircuitBuilder {
     /// CZ gate.
     pub fn cz(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         for &(a, b) in pairs {
-            self.ops.push(CircuitOp::Cz(a, b));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::Cz(a, b)));
         }
         self
     }
@@ -430,7 +441,7 @@ impl CircuitBuilder {
     /// SWAP gate.
     pub fn swap(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         for &(a, b) in pairs {
-            self.ops.push(CircuitOp::Swap(a, b));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::Swap(a, b)));
         }
         self
     }
@@ -438,7 +449,7 @@ impl CircuitBuilder {
     /// Measure qubit(s) in Z basis.
     pub fn mz(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::Mz(q));
+            self.steps.push(NoisyCircuitStep::Gate(Gate::Mz(q)));
         }
         self
     }
@@ -446,7 +457,8 @@ impl CircuitBuilder {
     /// Mark a noise injection point for single-qubit noise.
     pub fn noise_1q(&mut self, qubits: &[usize]) -> &mut Self {
         for &q in qubits {
-            self.ops.push(CircuitOp::Noise1Q(q));
+            self.steps
+                .push(NoisyCircuitStep::Noise(NoiseInjection::OneQ(q)));
         }
         self
     }
@@ -454,20 +466,21 @@ impl CircuitBuilder {
     /// Mark a noise injection point for two-qubit noise.
     pub fn noise_2q(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
         for &(a, b) in pairs {
-            self.ops.push(CircuitOp::Noise2Q(a, b));
+            self.steps
+                .push(NoisyCircuitStep::Noise(NoiseInjection::TwoQ(a, b)));
         }
         self
     }
 
-    /// Get the operations in this circuit.
+    /// Get the steps in this noisy sampler circuit.
     #[must_use]
-    pub fn ops(&self) -> &[CircuitOp] {
-        &self.ops
+    pub fn steps(&self) -> &[NoisyCircuitStep] {
+        &self.steps
     }
 
     /// Clear the circuit for reuse.
     pub fn clear(&mut self) {
-        self.ops.clear();
+        self.steps.clear();
     }
 }
 
@@ -522,7 +535,7 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
         // Build the circuit once
         let mut builder = CircuitBuilder::new();
         circuit_fn(&mut builder);
-        let ops = builder.ops().to_vec();
+        let steps = builder.steps().to_vec();
 
         let mut results = Vec::with_capacity(shots);
 
@@ -542,36 +555,36 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
             let mut outcomes = Vec::new();
 
             // Execute the circuit with noise injection
-            for op in &ops {
-                match op {
-                    CircuitOp::H(q) => {
+            for step in &steps {
+                match step {
+                    NoisyCircuitStep::Gate(Gate::H(q)) => {
                         sim.h(&[QubitId(*q)]);
                     }
-                    CircuitOp::S(q) => {
+                    NoisyCircuitStep::Gate(Gate::S(q)) => {
                         sim.sz(&[QubitId(*q)]);
                     }
-                    CircuitOp::Sdg(q) => {
+                    NoisyCircuitStep::Gate(Gate::Sdg(q)) => {
                         sim.szdg(&[QubitId(*q)]);
                     }
-                    CircuitOp::X(q) => {
+                    NoisyCircuitStep::Gate(Gate::X(q)) => {
                         sim.x(&[QubitId(*q)]);
                     }
-                    CircuitOp::Y(q) => {
+                    NoisyCircuitStep::Gate(Gate::Y(q)) => {
                         sim.y(&[QubitId(*q)]);
                     }
-                    CircuitOp::Z(q) => {
+                    NoisyCircuitStep::Gate(Gate::Z(q)) => {
                         sim.z(&[QubitId(*q)]);
                     }
-                    CircuitOp::Cx(ctrl, tgt) => {
+                    NoisyCircuitStep::Gate(Gate::Cx(ctrl, tgt)) => {
                         sim.cx(&[(QubitId(*ctrl), QubitId(*tgt))]);
                     }
-                    CircuitOp::Cz(a, b) => {
+                    NoisyCircuitStep::Gate(Gate::Cz(a, b)) => {
                         sim.cz(&[(QubitId(*a), QubitId(*b))]);
                     }
-                    CircuitOp::Swap(a, b) => {
+                    NoisyCircuitStep::Gate(Gate::Swap(a, b)) => {
                         sim.swap(&[(QubitId(*a), QubitId(*b))]);
                     }
-                    CircuitOp::Mz(q) => {
+                    NoisyCircuitStep::Gate(Gate::Mz(q)) => {
                         let results = sim.mz(&[QubitId(*q)]);
                         let mut outcome = results[0].outcome;
 
@@ -585,7 +598,7 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
 
                         outcomes.push(outcome);
                     }
-                    CircuitOp::Noise1Q(q) => {
+                    NoisyCircuitStep::Noise(NoiseInjection::OneQ(q)) => {
                         // Sample and apply single-qubit noise
                         match self.noise_sampler.sample_1q(*q) {
                             Pauli::I => {}
@@ -600,7 +613,7 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
                             }
                         }
                     }
-                    CircuitOp::Noise2Q(a, b) => {
+                    NoisyCircuitStep::Noise(NoiseInjection::TwoQ(a, b)) => {
                         // Sample and apply two-qubit noise
                         let (pa, pb) = self.noise_sampler.sample_2q(*a, *b);
                         match pa {
@@ -688,13 +701,31 @@ mod tests {
             .noise_2q(&[(0, 1)])
             .mz(&[0, 1]);
 
-        assert_eq!(builder.ops().len(), 6);
-        assert!(matches!(builder.ops()[0], CircuitOp::H(0)));
-        assert!(matches!(builder.ops()[1], CircuitOp::Noise1Q(0)));
-        assert!(matches!(builder.ops()[2], CircuitOp::Cx(0, 1)));
-        assert!(matches!(builder.ops()[3], CircuitOp::Noise2Q(0, 1)));
-        assert!(matches!(builder.ops()[4], CircuitOp::Mz(0)));
-        assert!(matches!(builder.ops()[5], CircuitOp::Mz(1)));
+        assert_eq!(builder.steps().len(), 6);
+        assert!(matches!(
+            builder.steps()[0],
+            NoisyCircuitStep::Gate(Gate::H(0))
+        ));
+        assert!(matches!(
+            builder.steps()[1],
+            NoisyCircuitStep::Noise(NoiseInjection::OneQ(0))
+        ));
+        assert!(matches!(
+            builder.steps()[2],
+            NoisyCircuitStep::Gate(Gate::Cx(0, 1))
+        ));
+        assert!(matches!(
+            builder.steps()[3],
+            NoisyCircuitStep::Noise(NoiseInjection::TwoQ(0, 1))
+        ));
+        assert!(matches!(
+            builder.steps()[4],
+            NoisyCircuitStep::Gate(Gate::Mz(0))
+        ));
+        assert!(matches!(
+            builder.steps()[5],
+            NoisyCircuitStep::Gate(Gate::Mz(1))
+        ));
     }
 
     #[test]
@@ -715,23 +746,59 @@ mod tests {
             .noise_2q(&[(0, 1)])
             .mz(&[0]);
 
-        assert_eq!(builder.ops().len(), 12);
-        assert!(matches!(builder.ops()[0], CircuitOp::H(0)));
-        assert!(matches!(builder.ops()[1], CircuitOp::S(0)));
-        assert!(matches!(builder.ops()[2], CircuitOp::Sdg(0)));
-        assert!(matches!(builder.ops()[3], CircuitOp::X(0)));
-        assert!(matches!(builder.ops()[4], CircuitOp::Y(0)));
-        assert!(matches!(builder.ops()[5], CircuitOp::Z(0)));
-        assert!(matches!(builder.ops()[6], CircuitOp::Cx(0, 1)));
-        assert!(matches!(builder.ops()[7], CircuitOp::Cz(0, 1)));
-        assert!(matches!(builder.ops()[8], CircuitOp::Swap(0, 1)));
-        assert!(matches!(builder.ops()[9], CircuitOp::Noise1Q(0)));
-        assert!(matches!(builder.ops()[10], CircuitOp::Noise2Q(0, 1)));
-        assert!(matches!(builder.ops()[11], CircuitOp::Mz(0)));
+        assert_eq!(builder.steps().len(), 12);
+        assert!(matches!(
+            builder.steps()[0],
+            NoisyCircuitStep::Gate(Gate::H(0))
+        ));
+        assert!(matches!(
+            builder.steps()[1],
+            NoisyCircuitStep::Gate(Gate::S(0))
+        ));
+        assert!(matches!(
+            builder.steps()[2],
+            NoisyCircuitStep::Gate(Gate::Sdg(0))
+        ));
+        assert!(matches!(
+            builder.steps()[3],
+            NoisyCircuitStep::Gate(Gate::X(0))
+        ));
+        assert!(matches!(
+            builder.steps()[4],
+            NoisyCircuitStep::Gate(Gate::Y(0))
+        ));
+        assert!(matches!(
+            builder.steps()[5],
+            NoisyCircuitStep::Gate(Gate::Z(0))
+        ));
+        assert!(matches!(
+            builder.steps()[6],
+            NoisyCircuitStep::Gate(Gate::Cx(0, 1))
+        ));
+        assert!(matches!(
+            builder.steps()[7],
+            NoisyCircuitStep::Gate(Gate::Cz(0, 1))
+        ));
+        assert!(matches!(
+            builder.steps()[8],
+            NoisyCircuitStep::Gate(Gate::Swap(0, 1))
+        ));
+        assert!(matches!(
+            builder.steps()[9],
+            NoisyCircuitStep::Noise(NoiseInjection::OneQ(0))
+        ));
+        assert!(matches!(
+            builder.steps()[10],
+            NoisyCircuitStep::Noise(NoiseInjection::TwoQ(0, 1))
+        ));
+        assert!(matches!(
+            builder.steps()[11],
+            NoisyCircuitStep::Gate(Gate::Mz(0))
+        ));
 
         // Test clear
         builder.clear();
-        assert_eq!(builder.ops().len(), 0);
+        assert_eq!(builder.steps().len(), 0);
     }
 
     #[test]

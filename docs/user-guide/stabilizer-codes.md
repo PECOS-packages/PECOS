@@ -12,7 +12,7 @@ This guide covers working with Pauli strings and stabilizer codes in PECOS's Rus
 - Converting between code types
 
 ```hidden-rust
-use pecos_core::pauli::constructors::*;
+use pecos_core::pauli::*;
 use pecos_core::PauliOperator;
 
 fn main() {
@@ -27,7 +27,7 @@ Pauli strings are the fundamental building block. PECOS provides a concise const
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
 
     // Single-qubit Paulis
     let x0 = X(0);       // X on qubit 0
@@ -69,7 +69,7 @@ A `StabilizerCode` is defined by its stabilizer generators and a qubit count:
 
     ```rust
     use pecos_qec::StabilizerCode;
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
 
     // 3-qubit bit-flip repetition code: generators ZZI, IZZ
     let group = pecos_quantum::PauliStabilizerGroup::new(vec![
@@ -165,7 +165,7 @@ Check which stabilizers an error anticommutes with:
 
 ```rust
 use pecos_qec::StabilizerCode;
-use pecos_core::pauli::constructors::*;
+use pecos_core::pauli::*;
 
 let code = StabilizerCode::repetition(3);
 
@@ -208,7 +208,7 @@ When stabilizer generators don't touch all qubits, the explicit `num_qubits` mat
 ```rust
 use pecos_qec::StabilizerCode;
 use pecos_quantum::PauliStabilizerGroup;
-use pecos_core::pauli::constructors::Zs;
+use pecos_core::pauli::Zs;
 
 // ZZ on qubits 0,1 -- but we declare 4 physical qubits
 let group = PauliStabilizerGroup::new(vec![
@@ -227,7 +227,7 @@ For fault tolerance analysis, use `StabilizerCodeSpec`. This stores explicit pai
 
 ```rust
 use pecos_qec::StabilizerCodeSpec;
-use pecos_core::{Xs, Zs};
+use pecos_core::pauli::{Xs, Zs};
 
 // Build a 3-qubit bit-flip code with explicit logicals
 let code = StabilizerCodeSpec::builder(3)
@@ -269,7 +269,7 @@ spec.verify().unwrap();
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
-use pecos_core::{Xs, Zs};
+use pecos_core::pauli::{Xs, Zs};
 
 let code = StabilizerCodeSpec::builder(7)
     .check(Xs([0, 2, 4, 6]))

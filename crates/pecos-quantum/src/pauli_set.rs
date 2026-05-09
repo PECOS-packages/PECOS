@@ -34,7 +34,7 @@
 //!
 //! ```
 //! use pecos_quantum::PauliSet;
-//! use pecos_core::pauli::constructors::*;
+//! use pecos_core::pauli::*;
 //!
 //! let mut set = PauliSet::new();
 //! set.insert(&X(0));
@@ -112,7 +112,7 @@ impl PauliKey {
 ///
 /// ```
 /// use pecos_quantum::PauliSet;
-/// use pecos_core::pauli::constructors::*;
+/// use pecos_core::pauli::*;
 ///
 /// let a = PauliSet::from_iter([X(0), Z(1), X(0) & Z(1)]);
 /// let b = PauliSet::from_iter([Z(1), Y(2)]);
@@ -233,7 +233,7 @@ impl PauliSet {
     ///
     /// ```
     /// use pecos_quantum::PauliSet;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// let commuting = PauliSet::from_iter([Zs(&[0, 1]), Zs(&[1, 2])]);
     /// assert!(commuting.is_abelian());
@@ -262,7 +262,7 @@ impl PauliSet {
     ///
     /// ```
     /// use pecos_quantum::PauliSet;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// let set = PauliSet::from_iter([X(0), Z(1)]);
     /// let s = set.to_sparse_str();
@@ -283,7 +283,7 @@ impl PauliSet {
     ///
     /// ```
     /// use pecos_quantum::PauliSet;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// let set = PauliSet::from_iter([X(0), Z(1)]);
     /// let s = set.to_dense_str();
@@ -308,7 +308,7 @@ impl FromStr for PauliSet {
     ///
     /// ```
     /// use pecos_quantum::PauliSet;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     /// use std::str::FromStr;
     ///
     /// let set: PauliSet = "{X0, Z1}".parse().unwrap();
@@ -415,7 +415,7 @@ impl fmt::Display for PauliSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
 
     #[test]
     fn test_new_empty() {

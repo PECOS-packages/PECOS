@@ -33,7 +33,8 @@ A code is **fault-tolerant at weight t** if no weight-t error is an undetectable
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker, ErrorClass};
-use pecos_core::{Xs, Zs, PauliString, QuarterPhase};
+use pecos_core::{PauliString, QuarterPhase};
+use pecos_core::pauli::{Xs, Zs};
 
 // Define a 3-qubit bit-flip code
 let code = StabilizerCodeSpec::builder(3)
@@ -51,8 +52,7 @@ let checker = StabilizerFlipChecker::new(&code);
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker, ErrorClass};
-use pecos_core::{Xs, Zs};
-use pecos_core::pauli::constructors::*;
+use pecos_core::pauli::*;
 
 let code = StabilizerCodeSpec::builder(3)
     .check(Zs([0, 1]))
@@ -80,8 +80,7 @@ For detailed information about which stabilizers and logicals are affected:
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
-use pecos_core::{Xs, Zs};
-use pecos_core::pauli::constructors::*;
+use pecos_core::pauli::*;
 
 let code = StabilizerCodeSpec::builder(3)
     .check(Zs([0, 1])).check(Zs([1, 2]))
@@ -102,7 +101,7 @@ Enumerate all weight-t Pauli errors and classify each:
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
-use pecos_core::{Xs, Zs};
+use pecos_core::pauli::{Xs, Zs};
 
 let code = StabilizerCodeSpec::builder(3)
     .check(Zs([0, 1])).check(Zs([1, 2]))
@@ -129,7 +128,7 @@ For CSS codes, you can analyze X, Y, and Z errors separately:
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
-use pecos_core::{Xs, Zs};
+use pecos_core::pauli::{Xs, Zs};
 
 let code = StabilizerCodeSpec::builder(3)
     .check(Zs([0, 1])).check(Zs([1, 2]))
@@ -296,7 +295,7 @@ The `distance` module provides configurable distance search:
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, calculate_distance, DistanceSearchConfig};
-use pecos_core::{Xs, Zs};
+use pecos_core::pauli::{Xs, Zs};
 
 let code = StabilizerCodeSpec::builder(7)
     .check(Xs([0, 2, 4, 6]))
@@ -328,7 +327,7 @@ let result = calculate_distance(&code, &DistanceSearchConfig::with_max_weight(5)
 
 ```rust
 use pecos_qec::{StabilizerCodeSpec, find_min_weight_logicals_with_info, DistanceSearchConfig};
-use pecos_core::{Xs, Zs};
+use pecos_core::pauli::{Xs, Zs};
 
 let code = StabilizerCodeSpec::builder(7)
     .check(Xs([0, 2, 4, 6]))
@@ -357,7 +356,7 @@ When you have stabilizer generators but don't know the logical operators, `disco
 
 ```rust
 use pecos_qec::discover_logical_operators;
-use pecos_core::pauli::constructors::Zs;
+use pecos_core::pauli::Zs;
 
 // Define stabilizers for the 3-qubit bit-flip code
 let stabilizers = vec![Zs([0, 1]), Zs([1, 2])];

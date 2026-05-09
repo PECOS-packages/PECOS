@@ -10,35 +10,36 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Named Clifford gate primitives.
+//! Clifford gate namespace.
 //!
-//! The base Clifford gates (single-qubit and two-qubit), analogous to [`Pauli`]
-//! for the Pauli group. The 24 single-qubit elements form a closed group with
-//! fast composition via lookup. Two-qubit gates are the standard entangling primitives.
-//!
-//! # Example
+//! This module provides the [`Clifford`] enum (named gate primitives) and
+//! re-exports [`CliffordRep`] with free constructors for the Heisenberg-picture
+//! representation. Use `use pecos_core::clifford::*` for Clifford-level work:
 //!
 //! ```
-//! use pecos_core::clifford::Clifford;
-//! use pecos_core::Pauli;
-//! use pecos_core::Sign;
+//! use pecos_core::clifford::*;
 //!
+//! // Constructors return CliffordRep (composable Heisenberg-picture gates)
+//! let layer = CX(0, 1) * H(0);
+//!
+//! // The Clifford enum provides named gate primitives with Pauli conjugation
 //! let h = Clifford::H;
-//! let (sign, p) = h.conjugate(Pauli::X);
-//! assert_eq!(p, Pauli::Z);
-//! assert_eq!(sign, Sign::PlusOne);
-//!
-//! // Two-qubit gates
-//! let cx_rep = Clifford::CX.on_qubits(0, 1);
-//! assert!(cx_rep.is_valid());
+//! let (sign, p) = h.conjugate(pecos_core::Pauli::X);
+//! assert_eq!(p, pecos_core::Pauli::Z);
 //! ```
 
-use crate::clifford_rep::CliffordRep;
 use crate::gate_type::GateType;
 use crate::unitary_rep::UnitaryRep;
 use crate::{Angle64, Pauli, QubitId, Sign};
 use std::fmt;
 use std::ops::Mul;
+
+// Re-export CliffordRep and its constructors so `use pecos_core::clifford::*` works.
+pub use crate::clifford_rep::CliffordRep;
+pub use crate::clifford_rep::constructors::{
+    CX, CY, CZ, F, F2, F2dg, F3, F3dg, F4, F4dg, Fdg, G, Gdg, H, H2, H3, H4, H5, H6, ISWAP,
+    ISWAPdg, Id, SWAP, SX, SXX, SXXdg, SXdg, SY, SYY, SYYdg, SYdg, SZ, SZZ, SZZdg, SZdg,
+};
 
 /// Named Clifford gate primitive.
 ///

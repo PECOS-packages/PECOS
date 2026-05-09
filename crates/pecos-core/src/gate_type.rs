@@ -108,10 +108,10 @@ pub enum GateType {
     /// Free/deallocate a qubit
     QFree = 136,
     Idle = 200,
-    /// Meta-gate: Pauli operator annotation for fault tracking.
+    /// Meta-gate: tracked-operator annotation for fault tracking.
     ///
     /// This gate carries a Pauli string but has no effect on quantum state.
-    /// Its position in the circuit determines which faults can flip the operator
+    /// Its position in the circuit determines which faults can flip the tracked operator
     /// (only faults before this node are relevant). The propagator uses it as a
     /// backward propagation start point.
     ///

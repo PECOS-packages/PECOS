@@ -473,14 +473,14 @@ fn observable_ids(map: &DagFaultInfluenceMap) -> Vec<u32> {
 mod tests {
     use super::*;
     use crate::fault_tolerance::InfluenceBuilder;
-    use pecos_core::pauli::constructors::X;
+    use pecos_core::pauli::X;
     use pecos_quantum::DagCircuit;
 
     #[test]
     fn observable_indices_use_compact_l_namespace_with_tracked_ops() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
-        dag.pauli_operator_labeled("track_x", X(0));
+        dag.tracked_operator_labeled("track_x", X(0));
         let meas = dag.mz(&[0]);
         dag.observable_labeled("obs0", &[meas[0]]);
 

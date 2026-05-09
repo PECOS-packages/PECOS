@@ -492,7 +492,7 @@ Tracked operators are Pauli operators that the catalog monitors for
 anticommutation with fault events. Unlike observables, they have no
 measurement records -- they are detected by forward Pauli propagation.
 
-Add tracked operators to a circuit via `pauli_operator`:
+Add tracked operators to a circuit via `tracked_operator`:
 
 <!--expect-output-block-->
 ```python
@@ -502,7 +502,7 @@ tc2.set_meta("num_measurements", "0")
 tc2.set_meta("detectors", "[]")
 tc2.set_meta("observables", "[]")
 # Track Z on qubit 0 -- X and Y faults after H anticommute with Z
-tc2.pauli_operator(PauliString.from_str("Z"), label="track_Z0")
+tc2.tracked_operator(PauliString.from_str("Z"), label="track_Z0")
 
 cat2 = fault_catalog(tc2, p1=0.01, p2=0.0, p_meas=0.0, p_prep=0.0)
 for loc in cat2:

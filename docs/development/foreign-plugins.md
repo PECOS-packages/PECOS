@@ -389,7 +389,7 @@ printf("Passed %u/%u tests\n", report.tests_passed, report.tests_run);
 
 ### From Rust
 
-```rust
+```rust,ignore
 let report = pecos_foreign::conformance::run_conformance_tests(&mut sim);
 assert!(report.all_passed());
 ```
@@ -439,10 +439,11 @@ When using foreign simulators with pecos-neo, the `gate_support` module (behind 
 `neo` feature flag) automatically configures the `CircuitRunner` decomposition based
 on what the foreign simulator supports:
 
-```rust
+```rust,ignore
 use pecos_foreign::gate_support::configure_runner_for_foreign;
 
-let sim = ForeignSimulator::new(handle, vtable);
+let sim = unsafe { ForeignSimulator::new(handle, vtable, num_qubits) }
+    .expect("foreign simulator vtable must match PECOS");
 let mut runner = configure_runner_for_foreign(&sim);
 // If sim supports rotations: runner uses RX, RZ, RZZ natively
 // Otherwise: Clifford-only, everything decomposes into {SZ, H, CX}

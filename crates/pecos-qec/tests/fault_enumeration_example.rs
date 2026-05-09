@@ -21,7 +21,7 @@
 //! 3. Enumerate fault combinations up to weight 3
 //! 4. Classify errors (detectable, undetectable, logical)
 
-use pecos_core::pauli::constructors::X;
+use pecos_core::pauli::X;
 use pecos_qec::fault_tolerance::InfluenceBuilder;
 use pecos_quantum::DagCircuit;
 
@@ -99,7 +99,7 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
     dag.observable_labeled("logical_Z", &[ms_data[0]]);
 
     // Pauli operator: track logical X = X_0 X_1 X_2
-    dag.pauli_operator_labeled("logical_X", X(0) & X(1) & X(2));
+    dag.tracked_operator_labeled("logical_X", X(0) & X(1) & X(2));
 
     dag
 }
@@ -114,7 +114,7 @@ fn repetition_code_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::Operator => "operator",
+            pecos_quantum::AnnotationKind::TrackedOperator => "tracked_operator",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
         println!("  {kind:10} {label:15} {}", ann.pauli);
@@ -610,9 +610,9 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
 
     // Pauli operators: logical X operators
     // Logical X_1 = X_0 X_2
-    dag.pauli_operator_labeled("logical_X1", X(0) & X(2));
+    dag.tracked_operator_labeled("logical_X1", X(0) & X(2));
     // Logical X_2 = X_0 X_1
-    dag.pauli_operator_labeled("logical_X2", X(0) & X(1));
+    dag.tracked_operator_labeled("logical_X2", X(0) & X(1));
 
     dag
 }
@@ -628,7 +628,7 @@ fn code_422_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::Operator => "operator",
+            pecos_quantum::AnnotationKind::TrackedOperator => "tracked_operator",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
         println!("  {kind:10} {label:15} {}", ann.pauli);

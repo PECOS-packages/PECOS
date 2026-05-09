@@ -19,12 +19,12 @@ Functions:
 
 # Circuit generation from geometry (unified abstraction)
 from pecos.qec.surface.circuit_builder import (
-    CircuitOp,
     DagCircuitRenderer,
     GuppyRenderer,
     OpType,
     QubitAllocation,
     StimRenderer,
+    SurfaceCircuitStep,
     TickCircuitRenderer,
     build_surface_code_circuit,
     classify_stabilizer_boundary,
@@ -152,7 +152,7 @@ __all__ = [
     "plot_patch",
     "plot_surface_code",
     # Circuit generation (unified abstraction)
-    "CircuitOp",
+    "SurfaceCircuitStep",
     "DagCircuitRenderer",
     "GuppyRenderer",
     "OpType",

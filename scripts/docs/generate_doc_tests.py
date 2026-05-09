@@ -395,7 +395,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
         output_block_text = None
         output_mode = attrs["expect_output_mode"]
         if attrs["expect_output_block"]:
-            after_fence = content[match.end():]
+            after_fence = content[match.end() :]
             output_match = re.match(r"\s*```output\n(.*?)```", after_fence, re.DOTALL)
             if output_match:
                 output_block_text = output_match.group(1).rstrip("\n")
@@ -522,7 +522,7 @@ def _generate_guppy_body(block: CodeBlock) -> list[str]:
         "    # Guppy needs file-based execution for inspect.getsourcelines()",
         "    # Run in temp directory to avoid polluting project root with generated files",
         "    with tempfile.TemporaryDirectory() as tmpdir:",
-        "        temp_path = Path(tmpdir) / 'test_code.py'",
+        '        temp_path = Path(tmpdir) / "test_code.py"',
         "        temp_path.write_text(code)",
         "",
         "        result = subprocess.run(",
@@ -548,10 +548,10 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
         # Guppy code needs subprocess execution
         # Run in temp directory to avoid polluting project root with generated files
         lines = [
+            "    import re",
             "    import subprocess",
             "    import sys",
             "    import tempfile",
-            "    import re",
             "    from pathlib import Path",
             "",
             '    code = """',
@@ -560,7 +560,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             f'    expected_pattern = r"{escaped_pattern}"',
             "",
             "    with tempfile.TemporaryDirectory() as tmpdir:",
-            "        temp_path = Path(tmpdir) / 'test_code.py'",
+            '        temp_path = Path(tmpdir) / "test_code.py"',
             "        temp_path.write_text(code)",
             "",
             "        result = subprocess.run(",
@@ -571,16 +571,16 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             "            check=False,",
             "            cwd=tmpdir,",
             "        )",
-            "        assert result.returncode != 0, 'Expected code to fail but it succeeded'",
+            '        assert result.returncode != 0, "Expected code to fail but it succeeded"',
             "        assert re.search(expected_pattern, result.stderr), \\",
             '            f"Error did not match pattern {expected_pattern!r}:\\n{result.stderr}"',
         ]
     else:
         # Regular code can use subprocess with -c
         lines = [
+            "    import re",
             "    import subprocess",
             "    import sys",
-            "    import re",
             "",
             '    code = """',
             *[line.rstrip() for line in escaped_code.split("\n")],
@@ -594,7 +594,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             "        timeout=30,",
             "        check=False,",
             "    )",
-            "    assert result.returncode != 0, 'Expected code to fail but it succeeded'",
+            '    assert result.returncode != 0, "Expected code to fail but it succeeded"',
             "    assert re.search(expected_pattern, result.stderr), \\",
             '        f"Error did not match pattern {expected_pattern!r}:\\n{result.stderr}"',
         ]
@@ -619,9 +619,9 @@ def _generate_rust_rustc_body(block: CodeBlock) -> list[str]:
     has_main = "fn main()" in block.code
 
     lines = [
+        "    import os",
         "    import subprocess",
         "    import tempfile",
-        "    import os",
         "    from pathlib import Path",
         "",
         '    code = """',
@@ -688,9 +688,9 @@ def _generate_rust_expect_error_body(block: CodeBlock) -> list[str]:
     escaped_pattern = block.expect_error.replace('"', '\\"') if block.expect_error else ""
 
     return [
+        "    import re",
         "    import subprocess",
         "    import tempfile",
-        "    import re",
         "    from pathlib import Path",
         "",
         '    code = """',
@@ -738,7 +738,7 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             f'    expected_output = "{escaped_output}"',
             "",
             "    with tempfile.TemporaryDirectory() as tmpdir:",
-            "        temp_path = Path(tmpdir) / 'test_code.py'",
+            '        temp_path = Path(tmpdir) / "test_code.py"',
             "        temp_path.write_text(code)",
             "",
             "        result = subprocess.run(",
@@ -790,7 +790,7 @@ def _generate_expect_output_block_body(block: CodeBlock) -> list[str]:
     escaped_expected = block.expect_output_block.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
     use_ellipsis = block.expect_output_mode == "ellipsis"
 
-    lines = [
+    return [
         "    import doctest",
         "    import subprocess",
         "    import sys",
@@ -822,7 +822,6 @@ def _generate_expect_output_block_body(block: CodeBlock) -> list[str]:
         "        )",
         '        pytest.fail(f"Output mismatch:\\n{diff}")',
     ]
-    return lines
 
 
 def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
@@ -845,7 +844,6 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
     if needs_cuda_check:
         lines.extend(
             [
-                "",
                 "",
                 "def _check_cuda() -> bool:",
                 '    """Return True if CUDA toolkit and cupy are available."""',
@@ -887,7 +885,6 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
     if needs_cuda_rust_check:
         lines.extend(
             [
-                "",
                 "",
                 "def _check_cuda_rust() -> bool:",
                 '    """Return True if CUDA Rust bindings (pecos_rslib_cuda) are available."""',
@@ -990,7 +987,7 @@ def cuda_check() -> bool:
 
 
 @pytest.fixture(autouse=True)
-def restore_cwd():  # noqa: ANN201
+def restore_cwd():
     """Restore the current working directory after each test.
 
     Some tests (e.g., WASM examples) change the working directory,

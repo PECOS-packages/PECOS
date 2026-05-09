@@ -31,7 +31,7 @@
 //!
 //! ```
 //! use pecos_quantum::PauliStabilizerGroup;
-//! use pecos_core::pauli::constructors::*;
+//! use pecos_core::pauli::*;
 //!
 //! // Repetition code stabilizers
 //! let stab = PauliStabilizerGroup::new(vec![
@@ -94,7 +94,7 @@ impl std::error::Error for PauliStabilizerGroupError {}
 ///
 /// ```
 /// use pecos_quantum::PauliStabilizerGroup;
-/// use pecos_core::pauli::constructors::*;
+/// use pecos_core::pauli::*;
 ///
 /// // 5-qubit code stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ
 /// let stab = PauliStabilizerGroup::new(vec![
@@ -245,7 +245,7 @@ impl PauliStabilizerGroup {
     ///
     /// ```
     /// use pecos_quantum::PauliStabilizerGroup;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     /// use pecos_core::PauliOperator;
     ///
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
@@ -284,7 +284,7 @@ impl PauliStabilizerGroup {
     ///
     /// ```
     /// use pecos_quantum::PauliStabilizerGroup;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     /// use pecos_core::PauliOperator;
     ///
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
@@ -315,7 +315,7 @@ impl PauliStabilizerGroup {
     ///
     /// ```
     /// use pecos_quantum::PauliStabilizerGroup;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
     /// let elements: Vec<_> = stab.elements().collect();
@@ -375,7 +375,7 @@ impl PauliStabilizerGroup {
     ///
     /// ```
     /// use pecos_quantum::PauliStabilizerGroup;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     /// use pecos_core::clifford_rep::CliffordRep;
     ///
     /// // Repetition code stabilizers: ZZ_, _ZZ
@@ -497,7 +497,7 @@ impl fmt::Display for PauliStabilizerGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
     use pecos_core::{Pauli, PauliOperator};
 
     #[test]

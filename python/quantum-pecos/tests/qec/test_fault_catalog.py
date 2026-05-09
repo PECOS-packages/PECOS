@@ -498,7 +498,7 @@ class TestFaultConfigurations:
     def test_tracked_ops_are_distinct_from_observables(self):
         tc = TickCircuit()
         tc.tick().h([0])
-        tc.pauli_operator(PauliString.from_str("Z"), label="tracked_z")
+        tc.tracked_operator(PauliString.from_str("Z"), label="tracked_z")
         tc.set_meta("detectors", "[]")
         tc.set_meta("observables", "[]")
 

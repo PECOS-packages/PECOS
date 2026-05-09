@@ -1360,7 +1360,7 @@ impl PyDagCircuit {
         })
     }
 
-    /// Place a Pauli operator annotation at this point in the circuit.
+    /// Place a tracked-operator annotation at this point in the circuit.
     ///
     /// Only faults BEFORE this annotation can flip the operator.
     /// Accepts a `PauliString`, which supports `PauliString.X(0) & PauliString.Z(1)`.
@@ -1373,18 +1373,18 @@ impl PyDagCircuit {
     ///     The annotation index.
     ///
     /// Example:
-    ///     >>> from pecos import `PauliString`
-    ///     >>> `dag.pauli_operator(PauliString.Z(0)` & PauliString.Z(1))
+    ///     >>> from pecos import PauliString
+    ///     >>> dag.tracked_operator(PauliString.Z(0) & PauliString.Z(1))
     #[pyo3(signature = (pauli, label=None))]
-    fn pauli_operator(
+    fn tracked_operator(
         &mut self,
         pauli: &crate::pauli_bindings::PauliString,
         label: Option<String>,
     ) -> usize {
         if let Some(l) = label {
-            self.inner.pauli_operator_labeled(&l, pauli.inner.clone())
+            self.inner.tracked_operator_labeled(&l, pauli.inner.clone())
         } else {
-            self.inner.pauli_operator(pauli.inner.clone())
+            self.inner.tracked_operator(pauli.inner.clone())
         }
     }
 
@@ -1403,7 +1403,7 @@ impl PyDagCircuit {
             let kind_str = match &ann.kind {
                 pecos_quantum::AnnotationKind::Detector { .. } => "detector",
                 pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-                pecos_quantum::AnnotationKind::Operator => "operator",
+                pecos_quantum::AnnotationKind::TrackedOperator => "tracked_operator",
             };
             dict.set_item("kind", kind_str)?;
             dict.set_item("label", &ann.label)?;
@@ -2554,17 +2554,17 @@ impl PyTickCircuit {
         Ok(idx)
     }
 
-    /// Place a Pauli operator annotation.
+    /// Place a tracked-operator annotation.
     #[pyo3(signature = (pauli, label=None))]
-    fn pauli_operator(
+    fn tracked_operator(
         &mut self,
         pauli: &crate::pauli_bindings::PauliString,
         label: Option<String>,
     ) -> usize {
         if let Some(l) = label {
-            self.inner.pauli_operator_labeled(&l, pauli.inner.clone())
+            self.inner.tracked_operator_labeled(&l, pauli.inner.clone())
         } else {
-            self.inner.pauli_operator(pauli.inner.clone())
+            self.inner.tracked_operator(pauli.inner.clone())
         }
     }
 
@@ -2580,7 +2580,7 @@ impl PyTickCircuit {
             let kind_str = match &ann.kind {
                 pecos_quantum::AnnotationKind::Detector { .. } => "detector",
                 pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-                pecos_quantum::AnnotationKind::Operator => "operator",
+                pecos_quantum::AnnotationKind::TrackedOperator => "tracked_operator",
             };
             dict.set_item("kind", kind_str)?;
             dict.set_item("label", &ann.label)?;

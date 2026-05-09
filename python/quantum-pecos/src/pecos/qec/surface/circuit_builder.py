@@ -107,8 +107,8 @@ class OpType(Enum):
 
 
 @dataclass
-class CircuitOp:
-    """A circuit operation."""
+class SurfaceCircuitStep:
+    """A surface-code circuit builder step."""
 
     op_type: OpType
     qubits: list[int] = field(default_factory=list)
@@ -167,7 +167,7 @@ def build_surface_code_circuit(
     num_rounds: int,
     basis: str = "Z",
     ancilla_budget: int | None = None,
-) -> tuple[list[CircuitOp], QubitAllocation]:
+) -> tuple[list[SurfaceCircuitStep], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
     This generates the circuit structure matching the Guppy implementation:
@@ -235,44 +235,44 @@ def build_surface_code_circuit(
     # Get CNOT schedule
     cnot_rounds = compute_cnot_schedule(patch)
 
-    ops: list[CircuitOp] = []
+    ops: list[SurfaceCircuitStep] = []
 
     # =========================================================================
     # prep_z_basis / prep_x_basis
     # =========================================================================
-    ops.append(CircuitOp(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
 
     # Allocate and reset data qubits
-    ops.extend(CircuitOp(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data))
+    ops.extend(SurfaceCircuitStep(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data))
 
     # For X-basis: H on each data qubit
     if basis.upper() == "X":
-        ops.extend(CircuitOp(OpType.H, [data_q(i)]) for i in range(num_data))
+        ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
 
-    ops.append(CircuitOp(OpType.TICK))
+    ops.append(SurfaceCircuitStep(OpType.TICK))
 
     # =========================================================================
     # syndrome_extraction (called num_rounds times)
     # =========================================================================
     for rnd in range(num_rounds):
         ops.append(
-            CircuitOp(OpType.COMMENT, label=f"syndrome_extraction round {rnd + 1}"),
+            SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {rnd + 1}"),
         )
         if effective_ancilla_budget == total_ancilla:
-            ops.extend(CircuitOp(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
-            ops.extend(CircuitOp(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
+            ops.extend(SurfaceCircuitStep(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.extend(SurfaceCircuitStep(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
 
-            ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-            ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
-            ops.append(CircuitOp(OpType.TICK))
+            ops.append(SurfaceCircuitStep(OpType.TICK))
 
             for rnd_idx, cx_round in enumerate(cnot_rounds):
-                ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
                 for stab_type, stab_idx, data_idx in cx_round:
                     if stab_type == "X":
                         ops.append(
-                            CircuitOp(
+                            SurfaceCircuitStep(
                                 OpType.CX,
                                 [x_anc_q(stab_idx), data_q(data_idx)],
                                 f"X{stab_idx}",
@@ -280,26 +280,30 @@ def build_surface_code_circuit(
                         )
                     else:
                         ops.append(
-                            CircuitOp(
+                            SurfaceCircuitStep(
                                 OpType.CX,
                                 [data_q(data_idx), z_anc_q(stab_idx)],
                                 f"Z{stab_idx}",
                             ),
                         )
-                ops.append(CircuitOp(OpType.TICK))
+                ops.append(SurfaceCircuitStep(OpType.TICK))
 
-            ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
-            ops.extend(CircuitOp(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
 
-            ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
-            ops.extend(CircuitOp(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
-            ops.extend(CircuitOp(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+            ops.extend(
+                SurfaceCircuitStep(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers
+            )
+            ops.extend(
+                SurfaceCircuitStep(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers
+            )
 
-            ops.append(CircuitOp(OpType.TICK))
+            ops.append(SurfaceCircuitStep(OpType.TICK))
         else:
             stabilizer_batches = _batched_stabilizers(patch, effective_ancilla_budget)
             for batch in stabilizer_batches:
-                ops.append(CircuitOp(OpType.COMMENT, label="Prepare ancillas"))
+                ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Prepare ancillas"))
                 batch_ancillas = {
                     (stab_type, stab_idx): x_anc_q(stab_idx) if stab_type == "X" else z_anc_q(stab_idx)
                     for stab_type, stab_idx in batch
@@ -307,7 +311,7 @@ def build_surface_code_circuit(
 
                 for stab_type, stab_idx in batch:
                     ops.append(
-                        CircuitOp(
+                        SurfaceCircuitStep(
                             OpType.ALLOC,
                             [batch_ancillas[(stab_type, stab_idx)]],
                             f"a{stab_type.lower()}{stab_idx}",
@@ -316,23 +320,23 @@ def build_surface_code_circuit(
 
                 x_stabilizers_in_batch = [stab_idx for stab_type, stab_idx in batch if stab_type == "X"]
                 if x_stabilizers_in_batch:
-                    ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+                    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
                     ops.extend(
-                        CircuitOp(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                        SurfaceCircuitStep(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
                         for stab_idx in x_stabilizers_in_batch
                     )
 
-                ops.append(CircuitOp(OpType.TICK))
+                ops.append(SurfaceCircuitStep(OpType.TICK))
 
                 for rnd_idx, cx_round in enumerate(cnot_rounds):
-                    ops.append(CircuitOp(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                    ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
                     for stab_type, stab_idx, data_idx in cx_round:
                         ancilla_q = batch_ancillas.get((stab_type, stab_idx))
                         if ancilla_q is None:
                             continue
                         if stab_type == "X":
                             ops.append(
-                                CircuitOp(
+                                SurfaceCircuitStep(
                                     OpType.CX,
                                     [ancilla_q, data_q(data_idx)],
                                     f"X{stab_idx}",
@@ -340,45 +344,45 @@ def build_surface_code_circuit(
                             )
                         else:
                             ops.append(
-                                CircuitOp(
+                                SurfaceCircuitStep(
                                     OpType.CX,
                                     [data_q(data_idx), ancilla_q],
                                     f"Z{stab_idx}",
                                 ),
                             )
-                    ops.append(CircuitOp(OpType.TICK))
+                    ops.append(SurfaceCircuitStep(OpType.TICK))
 
                 if x_stabilizers_in_batch:
-                    ops.append(CircuitOp(OpType.COMMENT, label="Hadamard on X ancillas"))
+                    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
                     ops.extend(
-                        CircuitOp(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                        SurfaceCircuitStep(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
                         for stab_idx in x_stabilizers_in_batch
                     )
 
-                ops.append(CircuitOp(OpType.COMMENT, label="Measure ancillas"))
+                ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
                 for stab_type, stab_idx in batch:
                     measure_label = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
                     ops.append(
-                        CircuitOp(
+                        SurfaceCircuitStep(
                             OpType.MEASURE,
                             [batch_ancillas[(stab_type, stab_idx)]],
                             measure_label,
                         ),
                     )
 
-                ops.append(CircuitOp(OpType.TICK))
+                ops.append(SurfaceCircuitStep(OpType.TICK))
 
     # =========================================================================
     # measure_z_basis / measure_x_basis
     # =========================================================================
-    ops.append(CircuitOp(OpType.COMMENT, label=f"measure_{basis.lower()}_basis"))
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"measure_{basis.lower()}_basis"))
 
     # For X-basis: H on each data qubit first
     if basis.upper() == "X":
-        ops.extend(CircuitOp(OpType.H, [data_q(i)]) for i in range(num_data))
+        ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
 
     # Measure all data qubits
-    ops.extend(CircuitOp(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
+    ops.extend(SurfaceCircuitStep(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
 
     return ops, allocation
 
@@ -531,7 +535,7 @@ class CircuitRenderer(ABC):
     @abstractmethod
     def render(
         self,
-        ops: list[CircuitOp],
+        ops: list[SurfaceCircuitStep],
         allocation: QubitAllocation,
         patch: SurfacePatch,
         num_rounds: int,
@@ -569,7 +573,7 @@ class StimRenderer(CircuitRenderer):
 
     def render(
         self,
-        ops: list[CircuitOp],
+        ops: list[SurfaceCircuitStep],
         allocation: QubitAllocation,
         patch: SurfacePatch,
         num_rounds: int,
@@ -731,7 +735,7 @@ class GuppyRenderer(CircuitRenderer):
 
     def render(
         self,
-        _ops: list[CircuitOp],
+        _ops: list[SurfaceCircuitStep],
         _allocation: QubitAllocation,
         patch: SurfacePatch,
         _num_rounds: int,
@@ -758,7 +762,7 @@ class DagCircuitRenderer(CircuitRenderer):
 
     def render(
         self,
-        ops: list[CircuitOp],
+        ops: list[SurfaceCircuitStep],
         _allocation: QubitAllocation,
         _patch: SurfacePatch,
         _num_rounds: int,
@@ -831,7 +835,7 @@ class TickCircuitRenderer(CircuitRenderer):
 
     def render(
         self,
-        ops: list[CircuitOp],
+        ops: list[SurfaceCircuitStep],
         allocation: QubitAllocation,
         patch: SurfacePatch,
         num_rounds: int,
@@ -1988,7 +1992,6 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
 
     # Process each gate as a potential error location
     for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
-
         if gate_name in ("QAlloc", "PZ") and p_prep > 0:
             # Initialization error: X error after prep
             q = qubits[0]

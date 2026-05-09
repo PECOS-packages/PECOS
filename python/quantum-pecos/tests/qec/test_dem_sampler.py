@@ -151,7 +151,7 @@ def test_dem_sampler_tracked_op_labels() -> None:
     dag = DagCircuit()
     dag.pz([0])
     dag.h([0])
-    dag.pauli_operator(PauliString.from_str("X"), label="x_check")
+    dag.tracked_operator(PauliString.from_str("X"), label="x_check")
 
     sampler = DemSampler.from_circuit(dag, p1=0.03, p2=0.0, p_meas=0.0, p_prep=0.0)
 
@@ -180,7 +180,7 @@ def test_dem_events_split_observables_and_tracked_ops() -> None:
     dag = DagCircuit()
     dag.pz([0])
     dag.h([0])
-    dag.pauli_operator(PauliString.from_str("X"), label="x_check")
+    dag.tracked_operator(PauliString.from_str("X"), label="x_check")
     dag.mz([0])
     dag.set_attr("num_measurements", "1")
     dag.set_attr("observables", '[{"id": 0, "records": [-1]}]')
@@ -223,7 +223,7 @@ def test_sample_decode_count_ignores_tracked_ops() -> None:
     dag.pz([0])
     dag.pz([1])
     dag.h([1])
-    dag.pauli_operator(PauliString.from_str("IZ"), label="tracked_z")
+    dag.tracked_operator(PauliString.from_str("IZ"), label="tracked_z")
     dag.mz([0])
     dag.set_attr("num_measurements", "1")
     dag.set_attr("detectors", '[{"id": 0, "records": [-1]}]')
@@ -264,7 +264,7 @@ def test_influence_map_tracks_dem_outputs_and_tracked_ops_separately() -> None:
     dag.h([0])
 
     builder = InfluenceBuilder(dag)
-    builder.with_pauli_operator([(0, "X")])
+    builder.with_tracked_operator([(0, "X")])
     influence_map = builder.build()
 
     assert influence_map.num_tracked_ops > 0

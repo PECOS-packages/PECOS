@@ -30,7 +30,7 @@
 //!
 //! ```
 //! use pecos_quantum::PauliSequence;
-//! use pecos_core::pauli::constructors::*;
+//! use pecos_core::pauli::*;
 //!
 //! let paulis = PauliSequence::new(vec![
 //!     Zs(&[0, 1]),
@@ -374,7 +374,7 @@ impl fmt::Display for F2Matrix {
 ///
 /// ```
 /// use pecos_quantum::PauliSequence;
-/// use pecos_core::pauli::constructors::*;
+/// use pecos_core::pauli::*;
 /// use pecos_core::PauliOperator;
 ///
 /// let gens = PauliSequence::new(vec![
@@ -519,7 +519,7 @@ impl PauliSequence {
     ///
     /// ```
     /// use pecos_quantum::PauliSequence;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// // Two independent generators
     /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
@@ -545,7 +545,7 @@ impl PauliSequence {
     ///
     /// ```
     /// use pecos_quantum::PauliSequence;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     ///
@@ -663,7 +663,7 @@ impl PauliSequence {
     ///
     /// ```
     /// use pecos_quantum::PauliSequence;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// // Commuting generators
     /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
@@ -760,7 +760,7 @@ impl PauliSequence {
     ///
     /// ```
     /// use pecos_quantum::PauliSequence;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// // Repetition code: ZZI, IZZ on 3 qubits
     /// // Centralizer dimension = 2n - rank = 6 - 2 = 4
@@ -840,7 +840,7 @@ impl PauliSequence {
     ///
     /// ```
     /// use pecos_quantum::PauliSequence;
-    /// use pecos_core::pauli::constructors::*;
+    /// use pecos_core::pauli::*;
     ///
     /// let seq = PauliSequence::new(vec![X(0) & Z(2), Z(1)]);
     /// assert_eq!(seq.to_sparse_str(), "+X0 Z2\n+Z1");
@@ -911,7 +911,7 @@ impl fmt::Display for PauliSequence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::pauli::constructors::*;
+    use pecos_core::pauli::*;
 
     #[test]
     fn test_new() {

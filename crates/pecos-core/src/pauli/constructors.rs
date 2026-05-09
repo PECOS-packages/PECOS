@@ -18,7 +18,7 @@
 //! # Examples
 //!
 //! ```
-//! use pecos_core::pauli::constructors::*;
+//! use pecos_core::pauli::*;
 //! use pecos_core::PauliOperator;
 //!
 //! // Single-qubit Paulis
@@ -88,7 +88,7 @@ impl QubitArgs for std::ops::RangeInclusive<usize> {
 /// # Examples
 ///
 /// ```
-/// use pecos_core::pauli::constructors::X;
+/// use pecos_core::pauli::X;
 /// use pecos_core::{Pauli, PauliOperator};
 ///
 /// let p = X(0);
@@ -131,7 +131,7 @@ pub fn I() -> PauliString {
 /// # Examples
 ///
 /// ```
-/// use pecos_core::pauli::constructors::Xs;
+/// use pecos_core::pauli::Xs;
 /// use pecos_core::PauliOperator;
 ///
 /// let p = Xs([0, 1, 2]);
@@ -166,7 +166,7 @@ pub fn Ys(qubits: impl QubitArgs) -> PauliString {
 /// # Examples
 ///
 /// ```
-/// use pecos_core::pauli::constructors::Zs;
+/// use pecos_core::pauli::Zs;
 /// use pecos_core::PauliOperator;
 ///
 /// let stab = Zs([0, 1]);

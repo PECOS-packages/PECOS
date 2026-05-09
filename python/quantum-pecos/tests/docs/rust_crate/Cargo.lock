@@ -2729,6 +2729,7 @@ dependencies = [
  "pecos-decoder-core",
  "pecos-decoders",
  "pecos-engines",
+ "pecos-foreign",
  "pecos-hugr",
  "pecos-neo",
  "pecos-num",
@@ -2759,6 +2760,21 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pecos-foreign"
+version = "0.2.0-dev.0"
+dependencies = [
+ "dirs",
+ "libloading 0.9.0",
+ "log",
+ "ndarray 0.17.2",
+ "pecos-core",
+ "pecos-decoder-core",
+ "pecos-engines",
+ "pecos-random",
+ "pecos-simulators",
 ]
 
 [[package]]

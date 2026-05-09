@@ -564,8 +564,8 @@ pub struct PyInfluenceBuilder {
     dag: DagCircuit,
     tracked_x_qubits: Vec<usize>,
     tracked_z_qubits: Vec<usize>,
-    pauli_operators: Vec<pecos_core::PauliString>,
-    use_circuit_pauli_operators: bool,
+    tracked_operators: Vec<pecos_core::PauliString>,
+    use_circuit_tracked_operators: bool,
 }
 
 #[pymethods]
@@ -580,8 +580,8 @@ impl PyInfluenceBuilder {
             dag: dag.inner.clone(),
             tracked_x_qubits: Vec::new(),
             tracked_z_qubits: Vec::new(),
-            pauli_operators: Vec::new(),
-            use_circuit_pauli_operators: false,
+            tracked_operators: Vec::new(),
+            use_circuit_tracked_operators: false,
         }
     }
 
@@ -622,7 +622,7 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_pauli_operator(
+    fn with_tracked_operator(
         mut slf: PyRefMut<'_, Self>,
         entries: Vec<(usize, String)>,
     ) -> PyResult<PyRefMut<'_, Self>> {
@@ -640,7 +640,7 @@ impl PyInfluenceBuilder {
                 Ok((pauli, pecos_core::QubitId::from(*qubit)))
             })
             .collect::<PyResult<_>>()?;
-        slf.pauli_operators
+        slf.tracked_operators
             .push(pecos_core::PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::PlusOne,
                 paulis,
@@ -650,14 +650,14 @@ impl PyInfluenceBuilder {
 
     /// Use annotations from the circuit (observables and Pauli operators).
     ///
-    /// Extracts observable and `pauli_operator()` annotations from the
+    /// Extracts observable and `tracked_operator()` annotations from the
     /// circuit. Pauli operators are tracked with positional awareness
     /// (only faults before each annotation's position affect it).
     ///
     /// Returns:
     ///     Self for method chaining.
     fn with_circuit_annotations(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.use_circuit_pauli_operators = true;
+        slf.use_circuit_tracked_operators = true;
         slf
     }
 
@@ -680,11 +680,11 @@ impl PyInfluenceBuilder {
             builder = builder.with_z(&self.tracked_z_qubits);
         }
 
-        if self.use_circuit_pauli_operators {
+        if self.use_circuit_tracked_operators {
             builder = builder.with_circuit_annotations(&self.dag);
         }
-        for pauli in &self.pauli_operators {
-            builder = builder.with_pauli_operator(pauli.clone());
+        for pauli in &self.tracked_operators {
+            builder = builder.with_tracked_operator(pauli.clone());
         }
 
         let inner = builder.build();
@@ -693,11 +693,11 @@ impl PyInfluenceBuilder {
 
     fn __repr__(&self) -> String {
         format!(
-            "InfluenceBuilder(tracked_x={:?}, tracked_z={:?}, pauli_operators={}, circuit_annotations={})",
+            "InfluenceBuilder(tracked_x={:?}, tracked_z={:?}, tracked_operators={}, circuit_annotations={})",
             self.tracked_x_qubits,
             self.tracked_z_qubits,
-            self.pauli_operators.len(),
-            self.use_circuit_pauli_operators,
+            self.tracked_operators.len(),
+            self.use_circuit_tracked_operators,
         )
     }
 }

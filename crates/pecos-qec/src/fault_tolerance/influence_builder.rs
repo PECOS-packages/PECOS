@@ -59,7 +59,7 @@ struct ObservablePropagationWork<'a> {
 /// |------|---------|---------|-----|
 /// | Detector | Syndrome parity from measurements | measurement XOR = 0 | `dag.detector(&[...])` |
 /// | Observable | Standard `L<n>` output from measurements | measurement XOR | `dag.observable(&[...])` |
-/// | Tracked operator | User Pauli operator annotated at a circuit point | fault anticommutes with operator | `dag.pauli_operator(&[...])` |
+/// | Tracked operator | User Pauli operator annotated at a circuit point | fault anticommutes with operator | `dag.tracked_operator(&[...])` |
 ///
 /// Observables and tracked operators both use backward Pauli propagation, but
 /// they are not the same concept. Observables are values observed through
@@ -144,10 +144,10 @@ impl<'a> InfluenceBuilder<'a> {
     ///
     /// ```ignore
     /// // Check if Y = X_0 * Z_1 * Z_2 flips
-    /// builder.with_pauli_operator(PauliString::from_paulis(vec![(0, 1), (1, 3), (2, 3)]))
+    /// builder.with_tracked_operator(PauliString::from_paulis(vec![(0, 1), (1, 3), (2, 3)]))
     /// ```
     #[must_use]
-    pub fn with_pauli_operator(mut self, pauli: PauliString) -> Self {
+    pub fn with_tracked_operator(mut self, pauli: PauliString) -> Self {
         self.push_single_term_output(DemOutputMetadata::tracked_operator(pauli), None);
         self
     }
@@ -169,7 +169,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// own Z-type propagation term starting at that measurement node. The terms
     /// accumulate into the same observable `L<n>` output.
     ///
-    /// Operator annotations have a corresponding `PauliOperatorMeta` node
+    /// Tracked-operator annotations have a corresponding `PauliOperatorMeta` node
     /// that marks their time position.
     ///
     /// Detector annotations are NOT handled here -- they are processed
@@ -206,7 +206,7 @@ impl<'a> InfluenceBuilder<'a> {
                         terms,
                     });
                 }
-                pecos_quantum::AnnotationKind::Operator => {
+                pecos_quantum::AnnotationKind::TrackedOperator => {
                     let meta_node = meta_nodes.get(operator_idx).copied();
                     operator_idx += 1;
                     self.push_single_term_output(
@@ -1047,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_pauli_operator() {
+    fn test_with_tracked_operator() {
         let mut dag = DagCircuit::new();
         dag.pz(&[2]);
         dag.cx(&[(0, 2)]);
@@ -1077,14 +1077,14 @@ mod tests {
 
     #[test]
     fn test_circuit_annotation_dem_output_metadata_tracks_observables_and_operators() {
-        use pecos_core::pauli::constructors::X;
+        use pecos_core::pauli::X;
 
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
         dag.h(&[0]);
         let meas = dag.mz(&[0]);
         dag.observable_labeled("record_obs", &[meas[0]]);
-        dag.pauli_operator_labeled("track_x", X(0));
+        dag.tracked_operator_labeled("track_x", X(0));
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations(&dag)

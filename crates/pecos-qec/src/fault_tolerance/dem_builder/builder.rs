@@ -523,7 +523,7 @@ impl<'a> DemBuilder<'a> {
     ) {
         // Per-Pauli probabilities: custom weights or uniform p/3
         let (px, py, pz) = if let Some(ref weights) = self.noise.p1_weights {
-            use pecos_core::pauli::constructors::{X, Y, Z};
+            use pecos_core::pauli::{X, Y, Z};
             (
                 self.noise.p1 * weights.weight_for(&X(0)),
                 self.noise.p1 * weights.weight_for(&Y(0)),
@@ -1360,14 +1360,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_from_circuit_tracks_pauli_operator_as_tracked_op() {
-        use pecos_core::pauli::constructors::X;
+    fn test_from_circuit_tracks_tracked_operator() {
+        use pecos_core::pauli::X;
         use pecos_quantum::DagCircuit;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.pauli_operator_labeled("x_check", X(0));
+        circuit.tracked_operator_labeled("x_check", X(0));
 
         let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.0, 0.0);
 
@@ -1388,13 +1388,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pauli_operator_and_observable_use_distinct_tracked_ops() {
-        use pecos_core::pauli::constructors::Z;
+    fn test_tracked_operator_and_observable_use_distinct_tracked_ops() {
+        use pecos_core::pauli::Z;
         use pecos_quantum::{Attribute, DagCircuit};
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
-        circuit.pauli_operator_labeled("z_check", Z(0));
+        circuit.tracked_operator_labeled("z_check", Z(0));
         circuit.mz(&[0]);
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(

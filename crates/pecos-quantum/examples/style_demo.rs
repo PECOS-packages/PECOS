@@ -482,7 +482,7 @@ fn main() {
     // -- UnitaryRep example --
     html.push_str("<h2>UnitaryRep Algebra</h2>\n");
     {
-        use pecos_core::unitary_rep::{CX, H, T};
+        use pecos_core::unitary::{CX, H, T};
         let circuit = T(1) * CX(0, 1) * H(0);
         let op_renderer = circuit.render_with(2, &default_style);
         write!(

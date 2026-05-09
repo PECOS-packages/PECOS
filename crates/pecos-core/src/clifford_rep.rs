@@ -19,7 +19,7 @@
 //!
 //! ```
 //! use pecos_core::clifford_rep::CliffordRep;
-//! use pecos_core::unitary_rep::{X, Z};
+//! use pecos_core::unitary::{X, Z};
 //!
 //! // Hadamard swaps X <-> Z
 //! let h = CliffordRep::h(0);
@@ -186,7 +186,7 @@ impl CliffordRep {
     ///
     /// ```
     /// use pecos_core::clifford_rep::CliffordRep;
-    /// use pecos_core::unitary_rep::{X, Z};
+    /// use pecos_core::unitary::{X, Z};
     ///
     /// let h = CliffordRep::h(0);
     /// let stabilizer = X(0) & Z(1);
@@ -981,13 +981,13 @@ impl From<&PauliString> for CliffordRep {
 
 /// Free-standing constructor functions for Clifford gates.
 ///
-/// These mirror the `pecos_core::pauli::constructors` module, providing
-/// ergonomic gate creation and composition via the `*` operator.
+/// These are re-exported through `pecos_core::clifford`, providing ergonomic
+/// gate creation and composition via the `*` operator.
 ///
 /// # Examples
 ///
 /// ```
-/// use pecos_core::clifford_rep::constructors::*;
+/// use pecos_core::clifford::*;
 ///
 /// // H * SZ * H = SX (sqrt-X)
 /// let sx = H(0) * SZ(0) * H(0);

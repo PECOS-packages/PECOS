@@ -68,8 +68,8 @@ pub use gpu64::GpuStateVec64;
 pub type GpuStateVec = GpuStateVec64;
 pub use gpu_influence_sampler::{GpuInfluenceMapData, GpuInfluenceSampler, GpuSamplingResult};
 pub use gpu_noisy_sampler::{
-    BiasedDepolarizingNoiseSampler, CircuitBuilder, CircuitOp, DepolarizingNoiseSampler,
-    GpuNoisySampler, NoiseSampler, Pauli, ShotResult,
+    BiasedDepolarizingNoiseSampler, CircuitBuilder, DepolarizingNoiseSampler, Gate,
+    GpuNoisySampler, NoiseInjection, NoiseSampler, NoisyCircuitStep, Pauli, ShotResult,
 };
 pub use gpu_pauli_prop::GpuPauliProp;
 pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};

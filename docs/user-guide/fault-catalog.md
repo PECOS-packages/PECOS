@@ -1,8 +1,54 @@
 # Fault Catalog and Measurement Sampling
 
-The fault catalog exposes every possible physical fault event in a
-`TickCircuit`: what Pauli error occurs at each gate, which measurements flip,
-which detectors fire, which observables flip, and which tracked operators are
+## Quick start
+
+If you have a surface code and want to simulate noisy measurements:
+
+<!--skip: requires pecos surface code infrastructure-->
+```python
+from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+from pecos_rslib_exp import sim_neo, meas_sampling, depolarizing
+
+patch = SurfacePatch.create(distance=3)
+tc = _build_surface_tick_circuit_for_native_model(patch, rounds=6, basis="Z")
+
+result = (
+    sim_neo(tc)
+    .quantum(meas_sampling())
+    .noise(depolarizing().p1(0.001).p2(0.01).p_meas(0.005).p_prep(0.005))
+    .shots(10000)
+    .seed(42)
+    .run()
+)
+
+# result[shot] gives measurement outcomes for each shot
+print(f"{len(result)} shots, {len(result[0])} measurements each")
+```
+
+If you want to inspect what faults are possible in that circuit:
+
+<!--skip: requires pecos surface code infrastructure-->
+```python
+from pecos_rslib_exp import fault_catalog
+
+# Build structural catalog (no noise commitment):
+catalog = fault_catalog(tc)
+print(f"{len(catalog)} fault locations")
+
+# Parameterize to get probabilities:
+catalog.with_noise(p1=0.001, p2=0.01, p_meas=0.005, p_prep=0.005)
+```
+
+The rest of this tutorial uses a small hand-built circuit to explain the
+concepts. Everything works the same way with surface codes or any other
+`TickCircuit`.
+
+## What is the fault catalog?
+
+The fault catalog exposes every possible physical fault event in a circuit:
+what Pauli error occurs at each gate, which measurements flip, which
+detectors fire, which observables flip, and which tracked operators are
 affected.
 
 It serves two purposes:
@@ -174,6 +220,9 @@ probability of "this alternative and no other faults in the circuit."
 
 ## Probability Semantics
 
+Understanding probabilities matters when you are building decoders, computing
+thresholds, or verifying that a noise model produces the expected error rates.
+
 For location `i`:
 
 ```text
@@ -205,9 +254,10 @@ for j, loc in enumerate(catalog.locations):
 
 ## Lazy k-Fault Configurations
 
-Use `catalog.fault_configurations(k)` to lazily iterate every configuration
-where exactly `k` distinct locations fire and one alternative is chosen from
-each selected location.
+Use `catalog.fault_configurations(k)` to enumerate every way exactly `k`
+faults can occur simultaneously. This is the foundation for building lookup
+decoders, computing truncated ML tables, and analyzing multi-fault error
+patterns.
 
 For `k = 0`, the iterator yields exactly one no-fault configuration. Its
 probability is the product of every location's `no_fault_probability`:
@@ -259,9 +309,10 @@ print(first.faults[0] is first.locations[0].faults[first.alternative_indices[0]]
 
 ## XOR Parity
 
-When multiple alternatives are selected, effects combine by XOR parity. If two
-faults flip the same detector, that detector cancels from the combined
-configuration.
+When multiple faults occur simultaneously, their effects combine by XOR parity.
+If two faults flip the same detector, that detector cancels. This is fundamental
+to QEC -- it's why weight-2 errors can be undetectable even when each individual
+fault triggers detectors.
 
 ```python
 for event in catalog.fault_configurations(2):

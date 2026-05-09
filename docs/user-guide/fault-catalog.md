@@ -464,7 +464,7 @@ for k > 0 yields nothing (all probabilities are zero).
 
 The structural catalog (no noise needed) lets you explore every fault event:
 
-<!--expect-output: D0 flipped by-->
+<!--expect-output-block-->
 ```python
 catalog = fault_catalog(circuit)
 
@@ -479,6 +479,11 @@ catalog.with_noise(p1=0.01, p2=0.05, p_meas=0.01, p_prep=0.01)
 for config in catalog.fault_configurations(2):
     if config.observables and not config.detectors:
         print(f"Undetectable: locations {config.location_indices}")
+```
+```output
+D0 flipped by X_0 at H([0])
+D0 flipped by Y_0 at H([0])
+D0 flipped by None at MZ([0])
 ```
 
 ## Tracked Operators

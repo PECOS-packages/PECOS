@@ -234,6 +234,58 @@ class TestNoEffectLocationsIncluded:
 
 
 class TestProbabilities:
+    def test_structural_catalog_without_noise(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc)
+
+        assert len(catalog.locations) == 2
+        assert {loc.channel for loc in catalog.locations} == {"p1", "p_meas"}
+        assert all(loc.channel_probability == 0.0 for loc in catalog.locations)
+        assert all(loc.no_fault_probability == 1.0 for loc in catalog.locations)
+        assert all(
+            fault.absolute_probability == 0.0
+            for loc in catalog.locations
+            for fault in loc.faults
+        )
+
+    def test_with_noise_updates_existing_python_references(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc)
+        h_loc = [loc for loc in catalog if loc.channel == "p1"][0]
+        h_fault = h_loc.faults[0]
+        mz_loc = [loc for loc in catalog if loc.channel == "p_meas"][0]
+
+        catalog.with_noise(p1=0.06, p_meas=0.02)
+
+        assert abs(h_loc.channel_probability - 0.06) < 1e-12
+        assert abs(h_loc.no_fault_probability - 0.94) < 1e-12
+        assert abs(h_fault.absolute_probability - 0.02) < 1e-12
+        assert abs(h_fault.channel_probability - 0.06) < 1e-12
+        assert abs(mz_loc.channel_probability - 0.02) < 1e-12
+        assert abs(mz_loc.faults[0].absolute_probability - 0.02) < 1e-12
+
+    def test_parameterized_returns_independent_catalog(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc, p1=0.03, p_meas=0.01)
+        clone = catalog.parameterized(p1=0.09, p_meas=0.04)
+
+        original_h = [loc for loc in catalog if loc.channel == "p1"][0]
+        clone_h = [loc for loc in clone if loc.channel == "p1"][0]
+        assert abs(original_h.channel_probability - 0.03) < 1e-12
+        assert abs(clone_h.channel_probability - 0.09) < 1e-12
+        assert original_h is not clone_h
+
+    def test_sparse_channel_keeps_zero_probability_structure(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc, p1=0.0, p_meas=0.02)
+
+        h_loc = [loc for loc in catalog if loc.channel == "p1"][0]
+        mz_loc = [loc for loc in catalog if loc.channel == "p_meas"][0]
+        assert h_loc.channel_probability == 0.0
+        assert all(f.absolute_probability == 0.0 for f in h_loc.faults)
+        assert abs(mz_loc.channel_probability - 0.02) < 1e-12
+        assert abs(mz_loc.faults[0].absolute_probability - 0.02) < 1e-12
+
     def test_single_qubit_location_fields(self):
         tc = build_h_mz()
         noise = depolarizing().p1(0.03).p2(0).p_meas(0).p_prep(0)
@@ -340,6 +392,59 @@ class TestFaultConfigurations:
         assert c.location_indices == [0]
         assert c.alternative_indices == [0]
         assert c.selected_probability > 0
+
+    def test_k1_skips_zero_probability_structural_locations(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc, p1=0.03, p_meas=0.0)
+
+        assert len(catalog.locations) == 2
+        h_idx = next(i for i, loc in enumerate(catalog) if loc.gate_type == "H")
+        mz_idx = next(i for i, loc in enumerate(catalog) if loc.gate_type == "MZ")
+        assert catalog.locations[mz_idx].channel_probability == 0.0
+
+        configs = list(catalog.fault_configurations(1))
+        assert len(configs) == 3
+        assert all(c.location_indices == [h_idx] for c in configs)
+        assert all(c.selected_probability > 0 for c in configs)
+        assert all(mz_idx not in c.location_indices for c in configs)
+        assert list(catalog.fault_configurations(2)) == []
+
+    def test_all_zero_noise_only_yields_k0(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc, p1=0.0, p_meas=0.0)
+
+        k0 = list(catalog.fault_configurations(0))
+        assert len(k0) == 1
+        assert k0[0].configuration_probability == 1.0
+        assert list(catalog.fault_configurations(1)) == []
+
+    def test_nonzero_silent_faults_are_yielded(self):
+        tc = TickCircuit()
+        tc.tick().h([0])
+        tc.set_meta("num_measurements", "0")
+        tc.set_meta("detectors", "[]")
+        tc.set_meta("observables", "[]")
+
+        catalog = fault_catalog(tc, p1=0.03, p_meas=0.0)
+        configs = list(catalog.fault_configurations(1))
+
+        assert len(configs) == 3
+        assert all(c.measurements == [] for c in configs)
+        assert all(c.detectors == [] for c in configs)
+        assert all(c.observables == [] for c in configs)
+        assert all(c.selected_probability > 0 for c in configs)
+
+    def test_with_noise_zeroes_channel_for_new_iterators(self):
+        tc = build_h_mz()
+        catalog = fault_catalog(tc, p1=0.03, p_meas=0.01)
+
+        catalog.with_noise(p1=0.0, p_meas=0.02)
+
+        mz_idx = next(i for i, loc in enumerate(catalog) if loc.gate_type == "MZ")
+        configs = list(catalog.fault_configurations(1))
+        assert len(configs) == 1
+        assert configs[0].location_indices == [mz_idx]
+        assert configs[0].selected_probability == pytest.approx(0.02)
 
     def test_k2_xor_cancels_effects(self):
         """Two faults flipping the same detector XOR-cancel."""

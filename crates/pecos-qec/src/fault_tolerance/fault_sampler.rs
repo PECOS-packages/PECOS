@@ -141,7 +141,7 @@ fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
 /// probability p: the mechanism fires with probability p, then each of the
 /// k alternatives is chosen with probability 1/k. This matches the stabilizer
 /// sim's "exactly one Pauli error per gate event" semantics.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FaultMechanism {
     /// Total probability that this mechanism fires (one Bernoulli per shot).
     pub probability: f64,
@@ -222,113 +222,9 @@ pub fn build_fault_table(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
 ) -> Result<Vec<FaultMechanism>, UnsupportedGateError> {
-    validate_tick_circuit(tc)?;
-    let (gates, meas_positions) = flatten_tick_circuit(tc);
-
-    if noise.p1 == 0.0 && noise.p2 == 0.0 && noise.p_meas == 0.0 && noise.p_prep == 0.0 {
-        return Ok(Vec::new());
-    }
-    let mut mechanisms = Vec::new();
-
-    for (loc_idx, loc) in gates.iter().enumerate() {
-        match loc.gate_type {
-            // Single-qubit Clifford: one mechanism with 3 alternatives (X/Y/Z)
-            gate_type
-                if is_standard_1q_clifford_gate(gate_type)
-                    && noise.p1 > 0.0
-                    && !loc.qubits.is_empty() =>
-            {
-                let q = loc.qubits[0];
-                let alts: Vec<Vec<usize>> = [PauliType::X, PauliType::Y, PauliType::Z]
-                    .iter()
-                    .map(|&p| {
-                        propagate_single(p, q, loc_idx + 1, &gates, &meas_positions)
-                            .into_iter()
-                            .collect()
-                    })
-                    .collect();
-                // Only include if at least one alternative has an effect
-                if alts.iter().any(|a| !a.is_empty()) {
-                    mechanisms.push(FaultMechanism {
-                        probability: noise.p1,
-                        alternatives: alts,
-                    });
-                }
-            }
-
-            // Two-qubit Clifford: one mechanism with 15 alternatives
-            gate_type
-                if is_standard_2q_clifford_gate(gate_type)
-                    && noise.p2 > 0.0
-                    && loc.qubits.len() >= 2 =>
-            {
-                let (q1, q2) = (loc.qubits[0], loc.qubits[1]);
-                let paulis = [PauliType::X, PauliType::Y, PauliType::Z];
-                let mut alts: Vec<Vec<usize>> = Vec::new();
-
-                // 9 two-qubit pairs
-                for &p1 in &paulis {
-                    for &p2 in &paulis {
-                        let a: Vec<usize> =
-                            propagate_pair(p1, q1, p2, q2, loc_idx + 1, &gates, &meas_positions)
-                                .into_iter()
-                                .collect();
-                        alts.push(a);
-                    }
-                }
-                // 6 single-qubit (PI and IP)
-                for &p in &paulis {
-                    let a: Vec<usize> =
-                        propagate_single(p, q1, loc_idx + 1, &gates, &meas_positions)
-                            .into_iter()
-                            .collect();
-                    alts.push(a);
-                    let a: Vec<usize> =
-                        propagate_single(p, q2, loc_idx + 1, &gates, &meas_positions)
-                            .into_iter()
-                            .collect();
-                    alts.push(a);
-                }
-                if alts.iter().any(|a| !a.is_empty()) {
-                    mechanisms.push(FaultMechanism {
-                        probability: noise.p2,
-                        alternatives: alts,
-                    });
-                }
-            }
-
-            // State preparation: single alternative (X error)
-            GateType::PZ | GateType::QAlloc if noise.p_prep > 0.0 && !loc.qubits.is_empty() => {
-                let q = loc.qubits[0];
-                let a: Vec<usize> =
-                    propagate_single(PauliType::X, q, loc_idx + 1, &gates, &meas_positions)
-                        .into_iter()
-                        .collect();
-                if !a.is_empty() {
-                    mechanisms.push(FaultMechanism {
-                        probability: noise.p_prep,
-                        alternatives: vec![a],
-                    });
-                }
-            }
-
-            // Measurement fault: single alternative (flip this measurement)
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-                if noise.p_meas > 0.0 =>
-            {
-                if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
-                    mechanisms.push(FaultMechanism {
-                        probability: noise.p_meas,
-                        alternatives: vec![vec![meas_idx]],
-                    });
-                }
-            }
-
-            _ => {}
-        }
-    }
-
-    Ok(mechanisms)
+    let mut catalog = FaultCatalog::from_circuit(tc)?;
+    catalog.with_noise(noise);
+    Ok(catalog.to_mechanisms())
 }
 
 /// Validate that all gates in the `TickCircuit` are supported (before flattening).
@@ -413,6 +309,7 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
 ///
 /// Returns the set of measurement indices whose outcomes would be flipped
 /// by this Pauli error at this position.
+#[cfg(test)]
 pub(crate) fn propagate_single(
     pauli: PauliType,
     qubit: usize,
@@ -451,31 +348,6 @@ fn propagate_single_effect(
         affected_measurements,
         affected_tracked_ops,
     }
-}
-
-/// Propagate a two-qubit Pauli fault forward through the gate list.
-fn propagate_pair(
-    p1: PauliType,
-    q1: usize,
-    p2: PauliType,
-    q2: usize,
-    start: usize,
-    gates: &[GateLoc],
-    meas_positions: &HashMap<usize, usize>,
-) -> BTreeSet<usize> {
-    let mut prop = PauliProp::new();
-    match p1 {
-        PauliType::X => prop.track_x(&[q1]),
-        PauliType::Y => prop.track_y(&[q1]),
-        PauliType::Z => prop.track_z(&[q1]),
-    }
-    match p2 {
-        PauliType::X => prop.track_x(&[q2]),
-        PauliType::Y => prop.track_y(&[q2]),
-        PauliType::Z => prop.track_z(&[q2]),
-    }
-
-    propagate_forward(&mut prop, start, gates, meas_positions)
 }
 
 fn propagate_pair_effect(
@@ -624,7 +496,7 @@ pub enum FaultKind {
 }
 
 /// Which noise channel produced this fault location.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultChannel {
     /// Single-qubit depolarizing (`p1`).
     P1,
@@ -730,11 +602,98 @@ pub struct FaultConfiguration {
 }
 
 impl FaultCatalog {
+    /// Build a structural fault catalog from a circuit.
+    ///
+    /// The returned catalog includes all structurally supported noisy locations,
+    /// independent of any concrete noise point. All channel and alternative
+    /// probabilities are initialized to zero except `no_fault_probability`, which
+    /// is initialized to one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
+    /// the supported Clifford/prep/measurement/metadata set.
+    pub fn from_circuit(tc: &TickCircuit) -> Result<Self, UnsupportedGateError> {
+        build_structural_fault_catalog(tc)
+    }
+
+    /// Recompute noise-dependent probability fields for this catalog.
+    ///
+    /// This updates only `channel_probability`, `no_fault_probability`, and
+    /// `absolute_probability`. Structural fields such as `num_alternatives`,
+    /// `conditional_probability`, Pauli labels, and effect lists are unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a malformed catalog contains more than `u32::MAX` alternatives
+    /// at one location. Catalogs produced by [`FaultCatalog::from_circuit`] have
+    /// at most 15 alternatives per location.
+    pub fn with_noise(&mut self, noise: &StochasticNoiseParams) -> &mut Self {
+        for loc in &mut self.locations {
+            let p = match loc.channel {
+                FaultChannel::P1 => noise.p1,
+                FaultChannel::P2 => noise.p2,
+                FaultChannel::PMeas => noise.p_meas,
+                FaultChannel::PPrep => noise.p_prep,
+            };
+            let k = loc.num_alternatives;
+            debug_assert!(k > 0, "fault location has no alternatives");
+            debug_assert_eq!(k, loc.faults.len(), "num_alternatives out of sync");
+            let k_f64 = f64::from(u32::try_from(k).expect("fault alternative count exceeds u32"));
+
+            loc.channel_probability = p;
+            loc.no_fault_probability = 1.0 - p;
+            for alt in &mut loc.faults {
+                alt.absolute_probability = p / k_f64;
+            }
+        }
+        self
+    }
+
+    /// Clone this catalog and apply a concrete noise point to the clone.
+    #[must_use]
+    pub fn parameterized(&self, noise: &StochasticNoiseParams) -> Self {
+        let mut copy = self.clone();
+        copy.with_noise(noise);
+        copy
+    }
+
+    /// Convert this catalog into raw-measurement sampling mechanisms.
+    ///
+    /// This is a materialization step for raw measurement sampling only. It
+    /// drops zero-probability locations and locations where every alternative has
+    /// empty `affected_measurements`, while preserving empty alternatives inside
+    /// any kept mechanism to maintain the correct uniform denominator.
+    #[must_use]
+    pub fn to_mechanisms(&self) -> Vec<FaultMechanism> {
+        self.locations
+            .iter()
+            .filter(|loc| loc.channel_probability > 0.0)
+            .filter(|loc| {
+                loc.faults
+                    .iter()
+                    .any(|alt| !alt.affected_measurements.is_empty())
+            })
+            .map(|loc| FaultMechanism {
+                probability: loc.channel_probability,
+                alternatives: loc
+                    .faults
+                    .iter()
+                    .map(|alt| alt.affected_measurements.clone())
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// Lazily iterate all k-fault configurations.
     ///
     /// Each yielded `FaultConfiguration` represents exactly k distinct locations
     /// firing, with one alternative chosen per location. Effects are combined by
     /// XOR parity. Probabilities follow the independent-mechanism model.
+    ///
+    /// Zero-probability alternatives are skipped. A structural location with
+    /// `channel_probability == 0` remains in [`FaultCatalog::locations`] but is
+    /// not yielded as a selected fault configuration.
     ///
     /// For k=0: yields one no-fault event.
     #[must_use]
@@ -747,8 +706,12 @@ impl FaultCatalog {
 ///
 /// Holds the combination/alternative state machine. Shared by both
 /// `FaultConfigurationIter` (borrowed) and `OwnedFaultConfigIter` (owned).
+/// Combinations range over nonzero-probability fault alternatives only; the
+/// full structural catalog remains available through `FaultCatalog::locations`.
 struct FaultConfigCursor {
     k: usize,
+    location_indices: Vec<usize>,
+    alternative_indices: Vec<Vec<usize>>,
     combo: Vec<usize>,
     alt_indices: Vec<usize>,
     alt_counts: Vec<usize>,
@@ -757,22 +720,45 @@ struct FaultConfigCursor {
 }
 
 impl FaultConfigCursor {
-    fn new(num_locations: usize, k: usize, alt_count_fn: impl Fn(usize) -> usize) -> Self {
-        if k == 0 || k > num_locations {
+    fn new(catalog: &FaultCatalog, k: usize) -> Self {
+        let mut location_indices = Vec::new();
+        let mut alternative_indices = Vec::new();
+        for (loc_idx, loc) in catalog.locations.iter().enumerate() {
+            let alts: Vec<usize> = loc
+                .faults
+                .iter()
+                .enumerate()
+                .filter_map(|(alt_idx, alt)| (alt.absolute_probability > 0.0).then_some(alt_idx))
+                .collect();
+            if !alts.is_empty() {
+                location_indices.push(loc_idx);
+                alternative_indices.push(alts);
+            }
+        }
+
+        let num_active_locations = location_indices.len();
+        if k == 0 || k > num_active_locations {
             return Self {
                 k,
+                location_indices,
+                alternative_indices,
                 combo: Vec::new(),
                 alt_indices: Vec::new(),
                 alt_counts: Vec::new(),
                 started: false,
-                done: k > num_locations && k > 0,
+                done: k > num_active_locations && k > 0,
             };
         }
         let combo: Vec<usize> = (0..k).collect();
-        let alt_counts: Vec<usize> = combo.iter().map(|&i| alt_count_fn(i)).collect();
+        let alt_counts: Vec<usize> = combo
+            .iter()
+            .map(|&i| alternative_indices[i].len())
+            .collect();
         let alt_indices = vec![0usize; k];
         Self {
             k,
+            location_indices,
+            alternative_indices,
             combo,
             alt_indices,
             alt_counts,
@@ -782,7 +768,7 @@ impl FaultConfigCursor {
     }
 
     /// Advance to the next state. Returns true if a new valid state exists.
-    fn advance(&mut self, num_locations: usize, alt_count_fn: impl Fn(usize) -> usize) -> bool {
+    fn advance(&mut self) -> bool {
         // Try advancing alternatives (mixed-radix counter)
         for i in (0..self.k).rev() {
             self.alt_indices[i] += 1;
@@ -796,12 +782,12 @@ impl FaultConfigCursor {
         while i > 0 {
             i -= 1;
             self.combo[i] += 1;
-            if self.combo[i] <= num_locations - self.k + i {
+            if self.combo[i] <= self.location_indices.len() - self.k + i {
                 for j in (i + 1)..self.k {
                     self.combo[j] = self.combo[j - 1] + 1;
                 }
                 for j in 0..self.k {
-                    self.alt_counts[j] = alt_count_fn(self.combo[j]);
+                    self.alt_counts[j] = self.alternative_indices[self.combo[j]].len();
                     self.alt_indices[j] = 0;
                 }
                 return true;
@@ -837,8 +823,10 @@ impl FaultConfigCursor {
         let mut selected_prob = 1.0;
 
         for i in 0..self.k {
-            let loc = &catalog.locations[self.combo[i]];
-            let alt = &loc.faults[self.alt_indices[i]];
+            let location_index = self.location_indices[self.combo[i]];
+            let alternative_index = self.alternative_indices[self.combo[i]][self.alt_indices[i]];
+            let loc = &catalog.locations[location_index];
+            let alt = &loc.faults[alternative_index];
             selected_prob *= alt.absolute_probability;
             for &m in &alt.affected_measurements {
                 if !meas_set.remove(&m) {
@@ -862,7 +850,11 @@ impl FaultConfigCursor {
             }
         }
 
-        let selected_set: std::collections::BTreeSet<usize> = self.combo.iter().copied().collect();
+        let selected_set: std::collections::BTreeSet<usize> = self
+            .combo
+            .iter()
+            .map(|&i| self.location_indices[i])
+            .collect();
         let unselected_no_fault: f64 = catalog
             .locations
             .iter()
@@ -872,8 +864,17 @@ impl FaultConfigCursor {
             .product();
 
         FaultConfiguration {
-            location_indices: self.combo.clone(),
-            alternative_indices: self.alt_indices.clone(),
+            location_indices: self
+                .combo
+                .iter()
+                .map(|&i| self.location_indices[i])
+                .collect(),
+            alternative_indices: self
+                .combo
+                .iter()
+                .zip(self.alt_indices.iter())
+                .map(|(&loc_pos, &alt_pos)| self.alternative_indices[loc_pos][alt_pos])
+                .collect(),
             affected_measurements: meas_set.into_iter().collect(),
             affected_detectors: det_set.into_iter().collect(),
             affected_observables: obs_set.into_iter().collect(),
@@ -896,8 +897,7 @@ impl FaultConfigCursor {
             self.started = true;
             return Some(self.build(catalog));
         }
-        let n = catalog.locations.len();
-        if self.advance(n, |i| catalog.locations[i].faults.len()) {
+        if self.advance() {
             Some(self.build(catalog))
         } else {
             self.done = true;
@@ -914,9 +914,7 @@ pub struct FaultConfigurationIter<'a> {
 
 impl<'a> FaultConfigurationIter<'a> {
     fn new(catalog: &'a FaultCatalog, k: usize) -> Self {
-        let cursor = FaultConfigCursor::new(catalog.locations.len(), k, |i| {
-            catalog.locations[i].faults.len()
-        });
+        let cursor = FaultConfigCursor::new(catalog, k);
         Self { catalog, cursor }
     }
 }
@@ -939,9 +937,7 @@ impl OwnedFaultConfigIter {
     /// Create from an owned catalog clone.
     #[must_use]
     pub fn new(catalog: FaultCatalog, k: usize) -> Self {
-        let cursor = FaultConfigCursor::new(catalog.locations.len(), k, |i| {
-            catalog.locations[i].faults.len()
-        });
+        let cursor = FaultConfigCursor::new(&catalog, k);
         Self { catalog, cursor }
     }
 }
@@ -969,6 +965,12 @@ pub fn build_fault_catalog(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
 ) -> Result<FaultCatalog, UnsupportedGateError> {
+    let mut catalog = FaultCatalog::from_circuit(tc)?;
+    catalog.with_noise(noise);
+    Ok(catalog)
+}
+
+fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, UnsupportedGateError> {
     validate_tick_circuit(tc)?;
     let (gates, meas_positions) = flatten_tick_circuit(tc);
 
@@ -1040,15 +1042,10 @@ pub fn build_fault_catalog(
         let (tick_idx, gate_idx, gate_type, ref qubits) = flat_idx_to_tick_gate[loc_idx];
 
         match loc.gate_type {
-            gate_type
-                if is_standard_1q_clifford_gate(gate_type)
-                    && noise.p1 > 0.0
-                    && !loc.qubits.is_empty() =>
-            {
+            gate_type if is_standard_1q_clifford_gate(gate_type) && !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
                 let num_alts = 3;
                 let conditional_probability = 1.0 / 3.0;
-                let absolute_probability = noise.p1 / 3.0;
                 let mut faults = Vec::with_capacity(num_alts);
                 for &pt in &pauli_types {
                     let effect = propagate_single_effect(
@@ -1070,10 +1067,9 @@ pub fn build_fault_catalog(
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
                         conditional_probability,
-                        absolute_probability,
+                        absolute_probability: 0.0,
                     });
                 }
-                // Include all locations with nonzero channel probability (even no-effect ones)
                 let num_alts = faults.len();
                 locations.push(FaultLocation {
                     tick: tick_idx,
@@ -1081,22 +1077,17 @@ pub fn build_fault_catalog(
                     gate_type,
                     qubits: qubits.clone(),
                     channel: FaultChannel::P1,
-                    channel_probability: noise.p1,
-                    no_fault_probability: 1.0 - noise.p1,
+                    channel_probability: 0.0,
+                    no_fault_probability: 1.0,
                     num_alternatives: num_alts,
                     faults,
                 });
             }
 
-            gate_type
-                if is_standard_2q_clifford_gate(gate_type)
-                    && noise.p2 > 0.0
-                    && loc.qubits.len() >= 2 =>
-            {
+            gate_type if is_standard_2q_clifford_gate(gate_type) && loc.qubits.len() >= 2 => {
                 let (q1, q2) = (loc.qubits[0], loc.qubits[1]);
                 let num_alts = 15;
                 let conditional_probability = 1.0 / 15.0;
-                let absolute_probability = noise.p2 / 15.0;
                 let mut faults = Vec::with_capacity(num_alts);
 
                 // 9 two-qubit pairs
@@ -1120,7 +1111,7 @@ pub fn build_fault_catalog(
                             affected_observables: obs,
                             affected_tracked_ops: tracked,
                             conditional_probability,
-                            absolute_probability,
+                            absolute_probability: 0.0,
                         });
                     }
                 }
@@ -1145,7 +1136,7 @@ pub fn build_fault_catalog(
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
                         conditional_probability,
-                        absolute_probability,
+                        absolute_probability: 0.0,
                     });
 
                     let effect = propagate_single_effect(
@@ -1167,7 +1158,7 @@ pub fn build_fault_catalog(
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
                         conditional_probability,
-                        absolute_probability,
+                        absolute_probability: 0.0,
                     });
                 }
                 let n_alts = faults.len();
@@ -1177,14 +1168,14 @@ pub fn build_fault_catalog(
                     gate_type,
                     qubits: qubits.clone(),
                     channel: FaultChannel::P2,
-                    channel_probability: noise.p2,
-                    no_fault_probability: 1.0 - noise.p2,
+                    channel_probability: 0.0,
+                    no_fault_probability: 1.0,
                     num_alternatives: n_alts,
                     faults,
                 });
             }
 
-            GateType::PZ | GateType::QAlloc if noise.p_prep > 0.0 && !loc.qubits.is_empty() => {
+            GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
                 let effect = propagate_single_effect(
                     PauliType::X,
@@ -1202,8 +1193,8 @@ pub fn build_fault_catalog(
                     gate_type,
                     qubits: qubits.clone(),
                     channel: FaultChannel::PPrep,
-                    channel_probability: noise.p_prep,
-                    no_fault_probability: 1.0 - noise.p_prep,
+                    channel_probability: 0.0,
+                    no_fault_probability: 1.0,
                     num_alternatives: 1,
                     faults: vec![FaultAlternative {
                         kind: FaultKind::PrepFlip,
@@ -1213,14 +1204,12 @@ pub fn build_fault_catalog(
                         affected_observables: obs,
                         affected_tracked_ops: tracked,
                         conditional_probability: 1.0,
-                        absolute_probability: noise.p_prep,
+                        absolute_probability: 0.0,
                     }],
                 });
             }
 
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-                if noise.p_meas > 0.0 =>
-            {
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                 if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     let affected = vec![meas_idx];
                     let dets = measurements_to_detectors(&affected, &det_records, num_meas);
@@ -1231,8 +1220,8 @@ pub fn build_fault_catalog(
                         gate_type,
                         qubits: qubits.clone(),
                         channel: FaultChannel::PMeas,
-                        channel_probability: noise.p_meas,
-                        no_fault_probability: 1.0 - noise.p_meas,
+                        channel_probability: 0.0,
+                        no_fault_probability: 1.0,
                         num_alternatives: 1,
                         faults: vec![FaultAlternative {
                             kind: FaultKind::MeasurementFlip,
@@ -1242,7 +1231,7 @@ pub fn build_fault_catalog(
                             affected_observables: obs,
                             affected_tracked_ops: Vec::new(),
                             conditional_probability: 1.0,
-                            absolute_probability: noise.p_meas,
+                            absolute_probability: 0.0,
                         }],
                     });
                 }
@@ -2709,6 +2698,271 @@ mod tests {
     }
 
     #[test]
+    fn test_structural_catalog_includes_zero_probability_locations() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".to_string()),
+        );
+        tc.set_meta(
+            "detectors",
+            pecos_quantum::Attribute::String("[]".to_string()),
+        );
+        tc.set_meta(
+            "observables",
+            pecos_quantum::Attribute::String("[]".to_string()),
+        );
+
+        let catalog = FaultCatalog::from_circuit(&tc).unwrap();
+        assert_eq!(catalog.locations.len(), 2);
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .all(|loc| loc.channel_probability == 0.0)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .all(|loc| loc.no_fault_probability == 1.0)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .flat_map(|loc| &loc.faults)
+                .all(|fault| fault.absolute_probability == 0.0)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.channel == FaultChannel::P1)
+        );
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.channel == FaultChannel::PMeas)
+        );
+    }
+
+    #[test]
+    fn test_parameterized_matches_direct_for_fully_nonzero_noise() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[QubitId(0)]);
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".to_string()),
+        );
+        tc.set_meta(
+            "detectors",
+            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+        );
+        tc.set_meta(
+            "observables",
+            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+        );
+
+        let noise = StochasticNoiseParams {
+            p1: 0.03,
+            p2: 0.02,
+            p_meas: 0.01,
+            p_prep: 0.004,
+        };
+        let direct = build_fault_catalog(&tc, &noise).unwrap();
+        let mut split = FaultCatalog::from_circuit(&tc).unwrap();
+        split.with_noise(&noise);
+
+        assert_eq!(direct.locations.len(), split.locations.len());
+        for (a, b) in direct.locations.iter().zip(&split.locations) {
+            assert_eq!(a.tick, b.tick);
+            assert_eq!(a.gate_index, b.gate_index);
+            assert_eq!(a.gate_type, b.gate_type);
+            assert_eq!(a.qubits, b.qubits);
+            assert_eq!(a.channel, b.channel);
+            assert_eq!(a.channel_probability, b.channel_probability);
+            assert_eq!(a.no_fault_probability, b.no_fault_probability);
+            assert_eq!(a.num_alternatives, b.num_alternatives);
+            assert_eq!(a.faults.len(), b.faults.len());
+            for (af, bf) in a.faults.iter().zip(&b.faults) {
+                assert_eq!(af.kind, bf.kind);
+                assert_eq!(af.pauli, bf.pauli);
+                assert_eq!(af.affected_measurements, bf.affected_measurements);
+                assert_eq!(af.affected_detectors, bf.affected_detectors);
+                assert_eq!(af.affected_observables, bf.affected_observables);
+                assert_eq!(af.affected_tracked_ops, bf.affected_tracked_ops);
+                assert_eq!(af.conditional_probability, bf.conditional_probability);
+                assert_eq!(af.absolute_probability, bf.absolute_probability);
+            }
+        }
+    }
+
+    #[test]
+    fn test_with_noise_overwrites_previous_probabilities() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".to_string()),
+        );
+
+        let mut catalog = FaultCatalog::from_circuit(&tc).unwrap();
+        catalog.with_noise(&StochasticNoiseParams {
+            p1: 0.03,
+            p2: 0.0,
+            p_meas: 0.01,
+            p_prep: 0.0,
+        });
+        catalog.with_noise(&StochasticNoiseParams {
+            p1: 0.09,
+            p2: 0.0,
+            p_meas: 0.02,
+            p_prep: 0.0,
+        });
+
+        let h_loc = catalog
+            .locations
+            .iter()
+            .find(|loc| loc.channel == FaultChannel::P1)
+            .unwrap();
+        assert_eq!(h_loc.channel_probability, 0.09);
+        assert_eq!(h_loc.no_fault_probability, 0.91);
+        assert!(
+            h_loc
+                .faults
+                .iter()
+                .all(|fault| (fault.absolute_probability - 0.03).abs() < 1e-12)
+        );
+
+        let meas_loc = catalog
+            .locations
+            .iter()
+            .find(|loc| loc.channel == FaultChannel::PMeas)
+            .unwrap();
+        assert_eq!(meas_loc.channel_probability, 0.02);
+        assert_eq!(meas_loc.faults[0].absolute_probability, 0.02);
+    }
+
+    #[test]
+    fn test_sparse_channel_keeps_structure_but_filters_raw_mechanisms() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".to_string()),
+        );
+
+        let noise = StochasticNoiseParams {
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: 0.02,
+            p_prep: 0.0,
+        };
+        let catalog = build_fault_catalog(&tc, &noise).unwrap();
+        assert_eq!(catalog.locations.len(), 2);
+        assert!(
+            catalog
+                .locations
+                .iter()
+                .any(|loc| loc.channel == FaultChannel::P1 && loc.channel_probability == 0.0)
+        );
+
+        let mechanisms = catalog.to_mechanisms();
+        assert_eq!(mechanisms.len(), 1);
+        assert_eq!(mechanisms[0].probability, 0.02);
+        assert_eq!(mechanisms[0].alternatives, vec![vec![0]]);
+        assert_eq!(mechanisms, build_fault_table(&tc, &noise).unwrap());
+    }
+
+    #[test]
+    fn test_tracked_only_effect_stays_in_catalog_but_not_raw_mechanisms() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.pauli_operator_labeled("tracked_z0", PauliString::z(0));
+
+        let mut catalog = FaultCatalog::from_circuit(&tc).unwrap();
+        catalog.with_noise(&StochasticNoiseParams {
+            p1: 0.03,
+            p2: 0.0,
+            p_meas: 0.0,
+            p_prep: 0.0,
+        });
+
+        let h_loc = catalog
+            .locations
+            .iter()
+            .find(|loc| loc.channel == FaultChannel::P1)
+            .unwrap();
+        assert!(h_loc.faults.iter().any(|fault| {
+            fault.affected_measurements.is_empty() && !fault.affected_tracked_ops.is_empty()
+        }));
+        assert!(catalog.to_mechanisms().is_empty());
+    }
+
+    #[test]
+    fn test_to_mechanisms_matches_old_build_fault_table() {
+        // The key invariant: catalog.to_mechanisms() must produce the same
+        // mechanisms as the old build_fault_table path for nonzero noise.
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[QubitId(0), QubitId(1)]);
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().cx(&[(QubitId(0), QubitId(1))]);
+        tc.tick().mz(&[QubitId(0), QubitId(1)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("2".to_string()),
+        );
+        tc.set_meta(
+            "detectors",
+            pecos_quantum::Attribute::String("[]".to_string()),
+        );
+        tc.set_meta(
+            "observables",
+            pecos_quantum::Attribute::String("[]".to_string()),
+        );
+
+        let noise = StochasticNoiseParams {
+            p1: 0.01,
+            p2: 0.05,
+            p_meas: 0.02,
+            p_prep: 0.01,
+        };
+
+        // Old path (now a wrapper, but the output must match):
+        let old_mechanisms = build_fault_table(&tc, &noise).unwrap();
+
+        // New path:
+        let mut catalog = FaultCatalog::from_circuit(&tc).unwrap();
+        catalog.with_noise(&noise);
+        let new_mechanisms = catalog.to_mechanisms();
+
+        assert_eq!(
+            old_mechanisms.len(),
+            new_mechanisms.len(),
+            "mechanism count must match"
+        );
+        for (old, new) in old_mechanisms.iter().zip(&new_mechanisms) {
+            assert_eq!(old.probability, new.probability, "probability must match");
+            assert_eq!(
+                old.alternatives.len(),
+                new.alternatives.len(),
+                "alternative count must match"
+            );
+            for (old_alt, new_alt) in old.alternatives.iter().zip(&new.alternatives) {
+                assert_eq!(old_alt, new_alt, "measurement effects must match");
+            }
+        }
+    }
+
+    #[test]
     fn test_catalog_meas_prep_probabilities() {
         // PZ(0) MZ(0): prep X fault goes directly to MZ (flips it)
         let mut tc = TickCircuit::new();
@@ -2912,6 +3166,148 @@ mod tests {
     }
 
     #[test]
+    fn test_configurations_skip_zero_probability_structural_locations() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".into()),
+        );
+        tc.set_meta("detectors", pecos_quantum::Attribute::String("[]".into()));
+        tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
+
+        let noise = StochasticNoiseParams {
+            p1: 0.03,
+            p2: 0.0,
+            p_meas: 0.0,
+            p_prep: 0.0,
+        };
+        let catalog = build_fault_catalog(&tc, &noise).unwrap();
+        assert_eq!(catalog.locations.len(), 2);
+
+        let h_idx = catalog
+            .locations
+            .iter()
+            .position(|loc| loc.gate_type == GateType::H)
+            .unwrap();
+        let mz_idx = catalog
+            .locations
+            .iter()
+            .position(|loc| loc.gate_type == GateType::MZ)
+            .unwrap();
+        assert_eq!(catalog.locations[mz_idx].channel_probability, 0.0);
+
+        let configs: Vec<_> = catalog.fault_configurations(1).collect();
+        assert_eq!(configs.len(), 3);
+        assert!(configs.iter().all(|c| c.location_indices == vec![h_idx]));
+        assert!(configs.iter().all(|c| c.selected_probability > 0.0));
+        assert!(
+            configs
+                .iter()
+                .all(|c| !c.location_indices.contains(&mz_idx))
+        );
+        assert_eq!(catalog.fault_configurations(2).count(), 0);
+    }
+
+    #[test]
+    fn test_configurations_all_zero_noise_only_yields_k0() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".into()),
+        );
+        tc.set_meta("detectors", pecos_quantum::Attribute::String("[]".into()));
+        tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
+
+        let catalog = build_fault_catalog(
+            &tc,
+            &StochasticNoiseParams {
+                p1: 0.0,
+                p2: 0.0,
+                p_meas: 0.0,
+                p_prep: 0.0,
+            },
+        )
+        .unwrap();
+
+        let k0: Vec<_> = catalog.fault_configurations(0).collect();
+        assert_eq!(k0.len(), 1);
+        assert_eq!(k0[0].configuration_probability, 1.0);
+        assert_eq!(catalog.fault_configurations(1).count(), 0);
+        assert_eq!(catalog.fault_configurations(2).count(), 0);
+    }
+
+    #[test]
+    fn test_configurations_include_nonzero_silent_faults() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("0".into()),
+        );
+        tc.set_meta("detectors", pecos_quantum::Attribute::String("[]".into()));
+        tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
+
+        let catalog = build_fault_catalog(
+            &tc,
+            &StochasticNoiseParams {
+                p1: 0.03,
+                p2: 0.0,
+                p_meas: 0.0,
+                p_prep: 0.0,
+            },
+        )
+        .unwrap();
+
+        let configs: Vec<_> = catalog.fault_configurations(1).collect();
+        assert_eq!(configs.len(), 3);
+        assert!(configs.iter().all(|c| c.affected_measurements.is_empty()));
+        assert!(configs.iter().all(|c| c.affected_detectors.is_empty()));
+        assert!(configs.iter().all(|c| c.affected_observables.is_empty()));
+        assert!(configs.iter().all(|c| c.selected_probability > 0.0));
+    }
+
+    #[test]
+    fn test_configurations_with_noise_zeroes_previous_channel() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".into()),
+        );
+        tc.set_meta("detectors", pecos_quantum::Attribute::String("[]".into()));
+        tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
+
+        let mut catalog = FaultCatalog::from_circuit(&tc).unwrap();
+        catalog.with_noise(&StochasticNoiseParams {
+            p1: 0.03,
+            p2: 0.0,
+            p_meas: 0.01,
+            p_prep: 0.0,
+        });
+        catalog.with_noise(&StochasticNoiseParams {
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: 0.02,
+            p_prep: 0.0,
+        });
+
+        let mz_idx = catalog
+            .locations
+            .iter()
+            .position(|loc| loc.gate_type == GateType::MZ)
+            .unwrap();
+        let configs: Vec<_> = catalog.fault_configurations(1).collect();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].location_indices, vec![mz_idx]);
+        assert_eq!(configs[0].selected_probability, 0.02);
+    }
+
+    #[test]
     fn test_configurations_k2_xor_cancels_duplicate_effects() {
         // Two H gates both flipping measurement 0 → XOR cancels
         let mut tc = TickCircuit::new();
@@ -2935,7 +3331,7 @@ mod tests {
             p_prep: 0.0,
         };
         let catalog = build_fault_catalog(&tc, &noise).unwrap();
-        assert_eq!(catalog.locations.len(), 2);
+        assert_eq!(catalog.locations.len(), 3); // two H locations + structural MZ location
 
         // Find a k=2 config where both locations fire with Z alternative (flips MZ)
         // Z after first H → X at second H → X at MZ → flips meas 0

@@ -460,7 +460,6 @@ pub fn meas_sampling(method: &str) -> PyMeasSamplingBuilder {
     PyMeasSamplingBuilder::new(method)
 }
 
-
 /// Builder for sim_neo simulations. Mirrors the Rust-side `SimNeoBuilder`.
 #[pyclass(
     name = "SimNeoBuilder",
@@ -1447,100 +1446,55 @@ impl PyFaultConfigurationIter {
 /// Complete fault catalog for a circuit and noise model.
 #[pyclass(name = "FaultCatalog", module = "pecos_rslib_exp")]
 pub struct PyFaultCatalog {
-    /// Physical fault locations with nonzero channel probability.
+    /// Physical fault locations in the structural catalog.
     #[pyo3(get)]
     locations: Vec<Py<PyFaultLocation>>,
     /// Rust-side catalog for iterator support.
     rust_catalog: pecos_qec::fault_tolerance::fault_sampler::FaultCatalog,
 }
 
-#[pymethods]
-impl PyFaultCatalog {
-    fn __len__(&self) -> usize {
-        self.locations.len()
+fn stochastic_params_from_inputs(
+    noise: Option<&PyNoiseModelBuilder>,
+    p1: Option<f64>,
+    p2: Option<f64>,
+    p_meas: Option<f64>,
+    p_prep: Option<f64>,
+) -> pecos_qec::fault_tolerance::fault_sampler::StochasticNoiseParams {
+    let mut params = noise.map_or(
+        pecos_qec::fault_tolerance::fault_sampler::StochasticNoiseParams {
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: 0.0,
+            p_prep: 0.0,
+        },
+        |noise| pecos_qec::fault_tolerance::fault_sampler::StochasticNoiseParams {
+            p1: noise.p1,
+            p2: noise.p2,
+            p_meas: noise.p_meas,
+            p_prep: noise.p_prep,
+        },
+    );
+    if let Some(p) = p1 {
+        params.p1 = p;
     }
-
-    fn __getitem__(&self, py: Python<'_>, index: isize) -> PyResult<Py<PyFaultLocation>> {
-        let len = isize::try_from(self.locations.len()).map_err(|_| {
-            pyo3::exceptions::PyIndexError::new_err("fault catalog is too large to index")
-        })?;
-        let index = if index < 0 { len + index } else { index };
-        if index < 0 || index >= len {
-            return Err(pyo3::exceptions::PyIndexError::new_err(
-                "fault catalog index out of range",
-            ));
-        }
-        let index = usize::try_from(index).map_err(|_| {
-            pyo3::exceptions::PyIndexError::new_err("fault catalog index out of range")
-        })?;
-        Ok(self.locations[index].clone_ref(py))
+    if let Some(p) = p2 {
+        params.p2 = p;
     }
-
-    fn __iter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let locations = pyo3::types::PyList::new(py, slf.locations.iter().map(|loc| loc.bind(py)))?;
-        Ok(locations.call_method0("__iter__")?.unbind())
+    if let Some(p) = p_meas {
+        params.p_meas = p;
     }
-
-    /// Lazily iterate all k-fault configurations.
-    ///
-    /// Returns an iterator yielding `FaultConfiguration` objects one at a time.
-    fn fault_configurations(
-        &self,
-        py: Python<'_>,
-        k: usize,
-    ) -> PyResult<Py<PyFaultConfigurationIter>> {
-        use pecos_qec::fault_tolerance::fault_sampler::OwnedFaultConfigIter;
-        let inner = OwnedFaultConfigIter::new(self.rust_catalog.clone(), k);
-        let py_locations: Vec<Py<PyFaultLocation>> =
-            self.locations.iter().map(|l| l.clone_ref(py)).collect();
-        Py::new(
-            py,
-            PyFaultConfigurationIter {
-                inner,
-                py_locations,
-            },
-        )
+    if let Some(p) = p_prep {
+        params.p_prep = p;
     }
+    params
 }
 
-/// Build a fault catalog for a circuit and noise model.
-///
-/// Returns a ``FaultCatalog`` object with ``catalog.locations``. The catalog
-/// also supports direct iteration, indexing, and ``len(catalog)``.
-///
-/// Each location has attribute access: ``loc.tick``, ``loc.gate_type``,
-/// ``loc.qubits``, ``loc.faults``.
-///
-/// Each ``FaultAlternative`` has: ``fault.kind``, ``fault.pauli`` (a real
-/// PECOS ``PauliString`` or ``None``), ``fault.detectors``, ``fault.observables``,
-/// ``fault.tracked_ops``, ``fault.measurements``, ``fault.conditional_probability``,
-/// ``fault.absolute_probability``, ``fault.channel_probability``.
-///
-/// Includes all physical locations with nonzero channel probability, even
-/// those with no downstream effect (needed for normalization/accounting).
-#[pyfunction]
-#[pyo3(signature = (tick_circuit, noise))]
-pub fn fault_catalog(
-    tick_circuit: &Bound<'_, PyAny>,
-    noise: &PyNoiseModelBuilder,
+fn py_locations_from_catalog(
     py: Python<'_>,
-) -> PyResult<PyFaultCatalog> {
-    use pecos_qec::fault_tolerance::fault_sampler::{
-        FaultKind, StochasticNoiseParams, build_fault_catalog,
-    };
+    catalog: &pecos_qec::fault_tolerance::fault_sampler::FaultCatalog,
+) -> PyResult<Vec<Py<PyFaultLocation>>> {
+    use pecos_qec::fault_tolerance::fault_sampler::{FaultChannel, FaultKind};
 
-    let tc = build_rust_tick_circuit(tick_circuit)?;
-    let noise_params = StochasticNoiseParams {
-        p1: noise.p1,
-        p2: noise.p2,
-        p_meas: noise.p_meas,
-        p_prep: noise.p_prep,
-    };
-
-    let catalog = build_fault_catalog(&tc, &noise_params)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-
-    // Import PauliString and Pauli from pecos.quantum
     let quantum_mod = py.import("pecos.quantum")?;
     let ps_class = quantum_mod.getattr("PauliString")?;
     let pauli_enum = quantum_mod.getattr("Pauli")?;
@@ -1601,10 +1555,10 @@ pub fn fault_catalog(
                 gate_type: format!("{:?}", loc.gate_type),
                 qubits: loc.qubits.clone(),
                 channel: match loc.channel {
-                    pecos_qec::fault_tolerance::fault_sampler::FaultChannel::P1 => "p1",
-                    pecos_qec::fault_tolerance::fault_sampler::FaultChannel::P2 => "p2",
-                    pecos_qec::fault_tolerance::fault_sampler::FaultChannel::PMeas => "p_meas",
-                    pecos_qec::fault_tolerance::fault_sampler::FaultChannel::PPrep => "p_prep",
+                    FaultChannel::P1 => "p1",
+                    FaultChannel::P2 => "p2",
+                    FaultChannel::PMeas => "p_meas",
+                    FaultChannel::PPrep => "p_prep",
                 }
                 .to_string(),
                 channel_probability: loc.channel_probability,
@@ -1614,9 +1568,169 @@ pub fn fault_catalog(
             },
         )?);
     }
+    Ok(locations)
+}
 
+fn sync_py_catalog_probabilities(py: Python<'_>, catalog: &mut PyFaultCatalog) -> PyResult<()> {
+    if catalog.locations.len() != catalog.rust_catalog.locations.len() {
+        catalog.locations = py_locations_from_catalog(py, &catalog.rust_catalog)?;
+        return Ok(());
+    }
+
+    let fault_lengths_match = catalog
+        .locations
+        .iter()
+        .zip(&catalog.rust_catalog.locations)
+        .all(|(py_loc, rust_loc)| py_loc.borrow(py).faults.len() == rust_loc.faults.len());
+    if !fault_lengths_match {
+        catalog.locations = py_locations_from_catalog(py, &catalog.rust_catalog)?;
+        return Ok(());
+    }
+
+    for (py_loc, rust_loc) in catalog
+        .locations
+        .iter()
+        .zip(&catalog.rust_catalog.locations)
+    {
+        let mut loc = py_loc.borrow_mut(py);
+        loc.channel_probability = rust_loc.channel_probability;
+        loc.no_fault_probability = rust_loc.no_fault_probability;
+        loc.num_alternatives = rust_loc.num_alternatives;
+        for (py_fault, rust_fault) in loc.faults.iter().zip(&rust_loc.faults) {
+            let mut fault = py_fault.borrow_mut(py);
+            fault.conditional_probability = rust_fault.conditional_probability;
+            fault.absolute_probability = rust_fault.absolute_probability;
+            fault.channel_probability = rust_loc.channel_probability;
+        }
+    }
+    Ok(())
+}
+
+fn py_fault_catalog_from_rust(
+    py: Python<'_>,
+    catalog: pecos_qec::fault_tolerance::fault_sampler::FaultCatalog,
+) -> PyResult<PyFaultCatalog> {
+    let locations = py_locations_from_catalog(py, &catalog)?;
     Ok(PyFaultCatalog {
         locations,
         rust_catalog: catalog,
     })
+}
+
+#[pymethods]
+impl PyFaultCatalog {
+    fn __len__(&self) -> usize {
+        self.locations.len()
+    }
+
+    fn __getitem__(&self, py: Python<'_>, index: isize) -> PyResult<Py<PyFaultLocation>> {
+        let len = isize::try_from(self.locations.len()).map_err(|_| {
+            pyo3::exceptions::PyIndexError::new_err("fault catalog is too large to index")
+        })?;
+        let index = if index < 0 { len + index } else { index };
+        if index < 0 || index >= len {
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "fault catalog index out of range",
+            ));
+        }
+        let index = usize::try_from(index).map_err(|_| {
+            pyo3::exceptions::PyIndexError::new_err("fault catalog index out of range")
+        })?;
+        Ok(self.locations[index].clone_ref(py))
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let locations = pyo3::types::PyList::new(py, slf.locations.iter().map(|loc| loc.bind(py)))?;
+        Ok(locations.call_method0("__iter__")?.unbind())
+    }
+
+    /// Recompute catalog probabilities for a new stochastic noise point.
+    #[pyo3(signature = (noise=None, *, p1=None, p2=None, p_meas=None, p_prep=None))]
+    fn with_noise(
+        &mut self,
+        py: Python<'_>,
+        noise: Option<&PyNoiseModelBuilder>,
+        p1: Option<f64>,
+        p2: Option<f64>,
+        p_meas: Option<f64>,
+        p_prep: Option<f64>,
+    ) -> PyResult<()> {
+        let params = stochastic_params_from_inputs(noise, p1, p2, p_meas, p_prep);
+        self.rust_catalog.with_noise(&params);
+        sync_py_catalog_probabilities(py, self)
+    }
+
+    /// Return a cloned catalog parameterized at a new stochastic noise point.
+    #[pyo3(signature = (noise=None, *, p1=None, p2=None, p_meas=None, p_prep=None))]
+    fn parameterized(
+        &self,
+        py: Python<'_>,
+        noise: Option<&PyNoiseModelBuilder>,
+        p1: Option<f64>,
+        p2: Option<f64>,
+        p_meas: Option<f64>,
+        p_prep: Option<f64>,
+    ) -> PyResult<PyFaultCatalog> {
+        let params = stochastic_params_from_inputs(noise, p1, p2, p_meas, p_prep);
+        py_fault_catalog_from_rust(py, self.rust_catalog.parameterized(&params))
+    }
+
+    /// Lazily iterate all k-fault configurations.
+    ///
+    /// Returns an iterator yielding `FaultConfiguration` objects one at a time.
+    fn fault_configurations(
+        &self,
+        py: Python<'_>,
+        k: usize,
+    ) -> PyResult<Py<PyFaultConfigurationIter>> {
+        use pecos_qec::fault_tolerance::fault_sampler::OwnedFaultConfigIter;
+        let inner = OwnedFaultConfigIter::new(self.rust_catalog.clone(), k);
+        let py_locations: Vec<Py<PyFaultLocation>> =
+            self.locations.iter().map(|l| l.clone_ref(py)).collect();
+        Py::new(
+            py,
+            PyFaultConfigurationIter {
+                inner,
+                py_locations,
+            },
+        )
+    }
+}
+
+/// Build a fault catalog for a circuit, optionally parameterized by a noise model.
+///
+/// Returns a ``FaultCatalog`` object with ``catalog.locations``. The catalog
+/// also supports direct iteration, indexing, and ``len(catalog)``.
+///
+/// Each location has attribute access: ``loc.tick``, ``loc.gate_type``,
+/// ``loc.qubits``, ``loc.faults``.
+///
+/// Each ``FaultAlternative`` has: ``fault.kind``, ``fault.pauli`` (a real
+/// PECOS ``PauliString`` or ``None``), ``fault.detectors``, ``fault.observables``,
+/// ``fault.tracked_ops``, ``fault.measurements``, ``fault.conditional_probability``,
+/// ``fault.absolute_probability``, ``fault.channel_probability``.
+///
+/// When noise is omitted, returns a structural catalog with zero probabilities.
+/// The catalog includes all structurally supported physical fault locations.
+#[pyfunction]
+#[pyo3(signature = (tick_circuit, noise=None, *, p1=None, p2=None, p_meas=None, p_prep=None))]
+pub fn fault_catalog(
+    tick_circuit: &Bound<'_, PyAny>,
+    noise: Option<&PyNoiseModelBuilder>,
+    py: Python<'_>,
+    p1: Option<f64>,
+    p2: Option<f64>,
+    p_meas: Option<f64>,
+    p_prep: Option<f64>,
+) -> PyResult<PyFaultCatalog> {
+    use pecos_qec::fault_tolerance::fault_sampler::FaultCatalog;
+
+    let tc = build_rust_tick_circuit(tick_circuit)?;
+    let mut catalog = FaultCatalog::from_circuit(&tc)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    if noise.is_some() || p1.is_some() || p2.is_some() || p_meas.is_some() || p_prep.is_some() {
+        let noise_params = stochastic_params_from_inputs(noise, p1, p2, p_meas, p_prep);
+        catalog.with_noise(&noise_params);
+    }
+    py_fault_catalog_from_rust(py, catalog)
 }

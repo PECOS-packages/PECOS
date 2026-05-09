@@ -89,6 +89,9 @@ impl TargetedLookupDecoder {
                 } else {
                     f64::INFINITY
                 };
+                if odds == 0.0 {
+                    continue;
+                }
                 entries.push(FaultEntry {
                     location_index: loc_idx,
                     detector_bits: alt.affected_detectors.iter().copied().collect(),
@@ -276,7 +279,8 @@ fn xor_sets(a: &BTreeSet<usize>, b: &BTreeSet<usize>) -> BTreeSet<usize> {
 mod tests {
     use super::*;
     use crate::fault_tolerance::fault_sampler::{
-        FaultCatalog, StochasticNoiseParams, build_fault_catalog,
+        FaultAlternative, FaultCatalog, FaultKind, FaultLocation, StochasticNoiseParams,
+        build_fault_catalog,
     };
     use pecos_core::{QubitId, gate_type::GateType};
     use pecos_quantum::TickCircuit;
@@ -352,6 +356,78 @@ mod tests {
         let result = decoder.decode(&[]);
         assert_eq!(result.best_logical, Vec::<usize>::new());
         assert!((result.logical_weights[&vec![]] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_unparameterized_catalog_has_no_positive_fault_weights() {
+        let catalog = FaultCatalog::from_circuit(&tiny_circuit()).unwrap();
+        let decoder = TargetedLookupDecoder::new(&catalog).max_faults(2);
+
+        let empty = decoder.decode(&[]);
+        assert_eq!(empty.logical_weights.len(), 1);
+        assert_eq!(empty.logical_weights[&vec![]], 1.0);
+
+        let non_empty = decoder.decode(&[0]);
+        assert!(
+            non_empty.logical_weights.is_empty(),
+            "zero-probability structural faults must not create zero-weight classes"
+        );
+    }
+
+    #[test]
+    fn test_zero_probability_alternatives_are_ignored() {
+        let catalog = FaultCatalog {
+            locations: vec![
+                FaultLocation {
+                    tick: 0,
+                    gate_index: 0,
+                    gate_type: GateType::H,
+                    qubits: vec![0],
+                    channel: crate::fault_tolerance::fault_sampler::FaultChannel::P1,
+                    channel_probability: 0.0,
+                    no_fault_probability: 1.0,
+                    num_alternatives: 1,
+                    faults: vec![FaultAlternative {
+                        kind: FaultKind::Pauli,
+                        pauli: None,
+                        affected_measurements: Vec::new(),
+                        affected_detectors: vec![0],
+                        affected_observables: vec![9],
+                        affected_tracked_ops: Vec::new(),
+                        conditional_probability: 1.0,
+                        absolute_probability: 0.0,
+                    }],
+                },
+                FaultLocation {
+                    tick: 1,
+                    gate_index: 0,
+                    gate_type: GateType::MZ,
+                    qubits: vec![0],
+                    channel: crate::fault_tolerance::fault_sampler::FaultChannel::PMeas,
+                    channel_probability: 0.1,
+                    no_fault_probability: 0.9,
+                    num_alternatives: 1,
+                    faults: vec![FaultAlternative {
+                        kind: FaultKind::MeasurementFlip,
+                        pauli: None,
+                        affected_measurements: vec![0],
+                        affected_detectors: vec![0],
+                        affected_observables: Vec::new(),
+                        affected_tracked_ops: Vec::new(),
+                        conditional_probability: 1.0,
+                        absolute_probability: 0.1,
+                    }],
+                },
+            ],
+        };
+
+        let result = TargetedLookupDecoder::new(&catalog)
+            .max_faults(1)
+            .decode(&[0]);
+
+        assert!(!result.logical_weights.contains_key(&vec![9]));
+        assert_eq!(result.logical_weights.len(), 1);
+        assert!((result.logical_weights[&vec![]] - (0.1 / 0.9)).abs() < 1e-12);
     }
 
     #[test]

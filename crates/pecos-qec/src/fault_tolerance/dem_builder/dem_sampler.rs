@@ -71,7 +71,7 @@ use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
-use super::types::combine_probabilities;
+use super::types::{PerGateTypeNoise, combine_probabilities};
 
 // ============================================================================
 // DEM Mechanism (used during building)
@@ -197,7 +197,7 @@ impl PackedBits {
 ///
 /// For mechanism i:
 /// - Detector indices: `detector_data[detector_offsets[i]..detector_offsets[i+1]]`
-/// - Tracked-op indices: `dem_output_data[dem_output_offsets[i]..dem_output_offsets[i+1]]`
+/// - `L<n>` target indices: `dem_output_data[dem_output_offsets[i]..dem_output_offsets[i+1]]`
 #[derive(Debug, Clone)]
 pub struct SamplingEngine {
     // SoA layout for cache efficiency
@@ -251,6 +251,37 @@ impl SamplingEngine {
     #[must_use]
     pub fn num_dem_outputs(&self) -> usize {
         self.num_dem_outputs
+    }
+
+    /// Reconstruct a [`DetectorErrorModel`] from the aggregated SoA
+    /// mechanism state for text output (e.g. Stim-format via
+    /// [`DetectorErrorModel::to_string`]).
+    ///
+    /// Each stored mechanism becomes a `direct` contribution with its
+    /// approximate probability (recovered from the `u64` threshold).
+    /// Detector / observable declarations are NOT emitted -- those
+    /// require the original `DetectorDef` / observable metadata
+    /// definitions held by higher-level wrappers such as
+    /// [`crate::dem_stab::DemStabSim`]. Callers who need full metadata
+    /// should populate those on the returned DEM.
+    #[must_use]
+    pub fn to_detector_error_model(&self) -> super::types::DetectorErrorModel {
+        use super::types::{DetectorErrorModel, FaultMechanism};
+        let mut dem = DetectorErrorModel::with_capacity(self.num_detectors, self.num_dem_outputs);
+        let inv_max = 1.0_f64 / u64::MAX as f64;
+        for i in 0..self.thresholds.len() {
+            let prob = self.thresholds[i] as f64 * inv_max;
+            let det_start = self.detector_offsets[i] as usize;
+            let det_end = self.detector_offsets[i + 1] as usize;
+            let obs_start = self.dem_output_offsets[i] as usize;
+            let obs_end = self.dem_output_offsets[i + 1] as usize;
+            let mechanism = FaultMechanism::from_unsorted(
+                self.detector_data[det_start..det_end].iter().copied(),
+                self.dem_output_data[obs_start..obs_end].iter().copied(),
+            );
+            dem.add_direct_contribution(mechanism, prob);
+        }
+        dem
     }
 
     /// Create a [`SamplingEngine`] from raw mechanism data.
@@ -1786,6 +1817,11 @@ impl SamplingStatistics {
 /// Constructs a [`SamplingEngine`] from a fault influence map, noise parameters,
 /// and explicit detector/standard observable `L<n>` definitions.
 pub(crate) struct SamplingEngineBuilder<'a> {
+    /// Optional per-gate-type noise specification. If set, overrides the
+    /// uniform scalar `p1, p2` for any gate type present in its maps.
+    /// Measurement / prep errors come from the scalar `p_meas` / `p_prep`
+    /// or the per-qubit overrides in the per-gate spec.
+    per_gate: Option<PerGateTypeNoise>,
     influence_map: &'a DagFaultInfluenceMap,
     p1: f64,
     p2: f64,
@@ -1815,6 +1851,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             p_meas: 0.01,
             p_prep: 0.01,
             p_idle: None,
+            per_gate: None,
             detector_records: Vec::new(),
             observable_records: Vec::new(),
             measurement_order: None,
@@ -1822,7 +1859,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
     }
 
-    /// Set noise parameters.
+    /// Set uniform-depolarizing noise parameters.
     #[must_use]
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         self.p1 = p1;
@@ -1836,6 +1873,21 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn with_idle_noise(mut self, p_idle: f64) -> Self {
         self.p_idle = Some(p_idle);
+        self
+    }
+
+    /// Set per-gate-type per-Pauli noise specification. When provided,
+    /// overrides the uniform `p1, p2` for any gate type present in the
+    /// spec's maps. Measurement / prep fault rates come from
+    /// `p_meas, p_init` on the [`PerGateTypeNoise`] struct.
+    ///
+    /// Intended consumer: `pecos-lindblad::PauliLindbladModel` via
+    /// per-gate-type adapter helpers.
+    #[must_use]
+    pub fn with_per_gate_noise(mut self, cfg: PerGateTypeNoise) -> Self {
+        self.p_meas = cfg.p_meas;
+        self.p_prep = cfg.p_init;
+        self.per_gate = Some(cfg);
         self
     }
 
@@ -1915,26 +1967,34 @@ impl<'a> SamplingEngineBuilder<'a> {
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc
                     // Prep errors: only "after" locations (X error for Z-basis prep)
-                    if self.p_prep > 0.0 && !loc.before => {
+                    if !loc.before =>
+                {
+                    let p = self.init_rate_for_location(loc);
+                    if p > 0.0 {
                         self.process_single_pauli_fault(
                             loc_idx,
                             Pauli::X,
-                            self.p_prep,
+                            p,
                             &mechanism_context,
                             &mut aggregated,
                         );
                     }
+                }
                 GateType::MZ | GateType::MeasureFree
                     // Measurement errors: only "before" locations (X error = bit flip)
-                    if self.p_meas > 0.0 && loc.before => {
+                    if loc.before =>
+                {
+                    let p = self.measurement_rate_for_location(loc);
+                    if p > 0.0 {
                         self.process_single_pauli_fault(
                             loc_idx,
                             Pauli::X,
-                            self.p_meas,
+                            p,
                             &mechanism_context,
                             &mut aggregated,
                         );
                     }
+                }
                 GateType::CX
                 | GateType::CZ
                 | GateType::CY
@@ -1972,52 +2032,78 @@ impl<'a> SamplingEngineBuilder<'a> {
                 | GateType::U
                 | GateType::R1XY
                     // Single-qubit gate errors: only "after" locations, depolarizing
-                    if self.p1 > 0.0 && !loc.before => {
-                        self.process_depolarizing_fault(
+                    if !loc.before =>
+                {
+                    let rates = self.rates_1q(loc.gate_type, &loc.qubits);
+                    if rates.iter().any(|r| *r > 0.0) {
+                        self.process_depolarizing_fault_rates(
                             loc_idx,
-                            self.p1,
-                            im_to_tc.as_deref(),
-                            &influence_observable_ids,
-                            num_tc_measurements,
+                            rates,
+                            &mechanism_context,
                             &mut aggregated,
                         );
                     }
+                }
                 GateType::Idle
                     // Idle gate errors: only "after" locations, depolarizing.
                     // Probability scales with duration: p = p_idle_rate * duration,
                     // clamped to [0, 1].
-                    if self.p_idle.is_some_and(|p| p > 0.0) && !loc.before => {
+                    if !loc.before =>
+                {
+                    let rates = if self.per_gate.is_some() {
+                        self.rates_1q(loc.gate_type, &loc.qubits)
+                    } else if self.p_idle.is_some_and(|p| p > 0.0) {
                         // Duration values are small integers; precision loss is not a concern.
                         #[allow(clippy::cast_precision_loss)]
                         let duration = loc.idle_duration.max(1) as f64;
                         let p = (self.p_idle.unwrap() * duration).min(1.0);
-                        if p > 0.0 {
-                            self.process_depolarizing_fault(
-                                loc_idx,
-                                p,
-                                im_to_tc.as_deref(),
-                                &influence_observable_ids,
-                                num_tc_measurements,
-                                &mut aggregated,
-                            );
-                        }
+                        [p / 3.0; 3]
+                    } else {
+                        self.rates_1q(loc.gate_type, &loc.qubits)
+                    };
+                    if rates.iter().any(|r| *r > 0.0) {
+                        self.process_depolarizing_fault_rates(
+                            loc_idx,
+                            rates,
+                            &mechanism_context,
+                            &mut aggregated,
+                        );
                     }
+                }
                 _ => {}
             }
         }
 
         // Process two-qubit gates as pairs
-        if self.p2 > 0.0 {
+        let has_any_2q_noise = self.per_gate.is_some() || self.p2 > 0.0;
+        if has_any_2q_noise {
             for loc_indices in cx_groups.values() {
-                if loc_indices.len() == 2 {
-                    self.process_two_qubit_fault(
-                        loc_indices[0],
-                        loc_indices[1],
-                        im_to_tc.as_deref(),
-                        &influence_observable_ids,
-                        num_tc_measurements,
-                        &mut aggregated,
-                    );
+                for pair in loc_indices.chunks(2) {
+                    if pair.len() != 2 {
+                        continue;
+                    }
+                    // For 2Q gates, each fault location covers exactly one
+                    // qubit; combine the two locations' qubits into an
+                    // ordered (control, target) pair.
+                    let loc0 = &self.influence_map.locations[pair[0]];
+                    let loc1 = &self.influence_map.locations[pair[1]];
+                    let gate_type = loc0.gate_type;
+                    let pair_qubits: Vec<_> = loc0
+                        .qubits
+                        .iter()
+                        .chain(loc1.qubits.iter())
+                        .copied()
+                        .collect();
+                    let rates = self.rates_2q(gate_type, &pair_qubits);
+                    if rates.iter().any(|r| *r > 0.0) {
+                        self.process_two_qubit_fault_rates(
+                            pair[0],
+                            pair[1],
+                            rates,
+                            &mechanism_context,
+                            &mut aggregated,
+                        );
+                    }
                 }
             }
         }
@@ -2132,24 +2218,91 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
     }
 
-    /// Process a depolarizing fault (X, Y, Z each with prob/3).
-    fn process_depolarizing_fault(
+    /// Resolve the X-error rate for a prep location. Uses `per_gate`'s
+    /// per-qubit `init_rates` if set, otherwise the scalar `self.p_prep`.
+    fn init_rate_for_location(
+        &self,
+        loc: &super::super::propagator::dag::DagSpacetimeLocation,
+    ) -> f64 {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return pg.init_rate_on(*q);
+            }
+        }
+        self.p_prep
+    }
+
+    /// Resolve the X-flip rate for a measurement location. Uses
+    /// `per_gate`'s per-qubit `measurement_rates` if set, otherwise the
+    /// scalar `self.p_meas`.
+    fn measurement_rate_for_location(
+        &self,
+        loc: &super::super::propagator::dag::DagSpacetimeLocation,
+    ) -> f64 {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return pg.measurement_rate_on(*q);
+            }
+        }
+        self.p_meas
+    }
+
+    /// Resolve per-Pauli rates for a 1Q gate on a specific qubit. Uses
+    /// `per_gate`'s per-qubit map if set, falling back to per-gate-type,
+    /// then uniform `p1 / 3`.
+    fn rates_1q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 3] {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = qubits.first() {
+                [
+                    pg.rate_1q_on(gate, *q, 0),
+                    pg.rate_1q_on(gate, *q, 1),
+                    pg.rate_1q_on(gate, *q, 2),
+                ]
+            } else {
+                [
+                    pg.rate_1q(gate, 0),
+                    pg.rate_1q(gate, 1),
+                    pg.rate_1q(gate, 2),
+                ]
+            }
+        } else {
+            [self.p1 / 3.0; 3]
+        }
+    }
+
+    /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a
+    /// specific ordered qubit pair.
+    fn rates_2q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 15] {
+        if let Some(pg) = &self.per_gate {
+            if qubits.len() >= 2 {
+                let (qc, qt) = (qubits[0], qubits[1]);
+                std::array::from_fn(|i| pg.rate_2q_on(gate, qc, qt, i))
+            } else {
+                std::array::from_fn(|i| pg.rate_2q(gate, i))
+            }
+        } else {
+            [self.p2 / 15.0; 15]
+        }
+    }
+
+    /// Process a 1Q depolarizing-family fault with explicit per-Pauli rates.
+    fn process_depolarizing_fault_rates(
         &self,
         loc_idx: usize,
-        prob: f64,
-        im_to_tc: Option<&[usize]>,
-        influence_observable_ids: &BTreeSet<u32>,
-        num_tc_measurements: usize,
+        rates: [f64; 3],
+        context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
-        let per_pauli_prob = prob / 3.0;
-        for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
+        for (pauli, &per_pauli_prob) in [Pauli::X, Pauli::Y, Pauli::Z].iter().zip(rates.iter()) {
+            if per_pauli_prob == 0.0 {
+                continue;
+            }
             let mechanism = self.compute_mechanism(
                 loc_idx,
-                pauli,
-                im_to_tc,
-                influence_observable_ids,
-                num_tc_measurements,
+                *pauli,
+                context.im_to_tc,
+                context.influence_observable_ids,
+                context.num_tc_measurements,
             );
             if !mechanism.is_empty() {
                 let entry = aggregated.entry(mechanism).or_insert(0.0);
@@ -2158,20 +2311,18 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
     }
 
-    /// Process a two-qubit gate fault (15 non-identity Pauli combinations with p2/15 each).
-    fn process_two_qubit_fault(
+    /// Process a two-qubit gate fault with explicit per-Pauli-pair rates.
+    /// `rates[i]` corresponds to [`PAULI_2Q_ORDER[i]`] ordering.
+    fn process_two_qubit_fault_rates(
         &self,
         loc1: usize,
         loc2: usize,
-        im_to_tc: Option<&[usize]>,
-        influence_observable_ids: &BTreeSet<u32>,
-        num_tc_measurements: usize,
+        rates: [f64; 15],
+        context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
     ) {
-        let prob = self.p2 / 15.0;
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
-        // Cache single-qubit mechanisms for each Pauli on each location
         let mut effects1: [Option<DemMechanism>; 4] = [None, None, None, None];
         let mut effects2: [Option<DemMechanism>; 4] = [None, None, None, None];
 
@@ -2179,33 +2330,35 @@ impl<'a> SamplingEngineBuilder<'a> {
             effects1[p as usize] = Some(self.compute_mechanism(
                 loc1,
                 p,
-                im_to_tc,
-                influence_observable_ids,
-                num_tc_measurements,
+                context.im_to_tc,
+                context.influence_observable_ids,
+                context.num_tc_measurements,
             ));
             effects2[p as usize] = Some(self.compute_mechanism(
                 loc2,
                 p,
-                im_to_tc,
-                influence_observable_ids,
-                num_tc_measurements,
+                context.im_to_tc,
+                context.influence_observable_ids,
+                context.num_tc_measurements,
             ));
         }
 
-        // Process all 15 non-trivial Pauli combinations
+        // Iterate (p1, p2) with global index = 4*p1 + p2 (skipping II at idx 0).
         for &p1 in &paulis {
             for &p2 in &paulis {
                 if p1 == Pauli::I && p2 == Pauli::I {
-                    continue; // Skip II
+                    continue;
                 }
-
+                let flat = 4 * (p1 as usize) + (p2 as usize);
+                let prob = rates[flat - 1];
+                if prob == 0.0 {
+                    continue;
+                }
                 let mechanism = if p1 == Pauli::I {
-                    // IX, IY, IZ - only second qubit
                     effects2[p2 as usize]
                         .clone()
                         .unwrap_or_else(DemMechanism::empty)
                 } else if p2 == Pauli::I {
-                    // XI, YI, ZI - only first qubit
                     effects1[p1 as usize]
                         .clone()
                         .unwrap_or_else(DemMechanism::empty)
@@ -2215,7 +2368,6 @@ impl<'a> SamplingEngineBuilder<'a> {
                     let e2 = effects2[p2 as usize].as_ref();
                     xor_mechanisms(e1, e2)
                 };
-
                 if !mechanism.is_empty() {
                     let entry = aggregated.entry(mechanism).or_insert(0.0);
                     *entry = combine_probabilities(*entry, prob);

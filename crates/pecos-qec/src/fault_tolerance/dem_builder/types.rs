@@ -55,6 +55,7 @@
 
 use pecos_core::PauliString;
 use pecos_core::gate_type::GateType;
+use rand::RngExt;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1662,7 +1663,7 @@ impl NoiseConfig {
         // Use T1/T2 model: T1=infinity (no amplitude damping), T2 chosen to match pz.
         // From the T1/T2 model: pz = (1 - exp(-t/T2))/2 for T1=inf, t=1.
         // Solve: T2 = -1/ln(1 - 2*pz)
-        // This provides the stochastic fallback for non-coherent code paths.
+        // This provides a stochastic representation for non-coherent code paths.
         if pz > 0.0 && pz < 0.5 {
             let t2 = -1.0 / (1.0 - 2.0 * pz).ln();
             let t1 = 1e15; // effectively infinity
@@ -1684,6 +1685,15 @@ impl NoiseConfig {
         } else {
             PauliProbs::depolarizing((self.p_idle * duration).min(1.0))
         }
+    }
+
+    /// Returns true when idle locations use the dedicated idle-noise model.
+    ///
+    /// Otherwise `Idle` is modeled as an ordinary one-qubit gate and receives
+    /// the same Pauli error model as other one-qubit gates.
+    #[must_use]
+    pub fn uses_dedicated_idle_noise(&self) -> bool {
+        self.p_idle > 0.0 || matches!((self.t1, self.t2), (Some(_), Some(_)))
     }
 }
 
@@ -1911,6 +1921,480 @@ fn parse_pecos_metadata_dem_output(
     }
 
     Ok(dem_output)
+}
+
+// ============================================================================
+// Per-gate-type noise configuration
+// ============================================================================
+
+use pecos_core::QubitId;
+use std::collections::HashMap;
+
+/// Ordered indices for the 3 non-identity 1Q Paulis: `[X, Y, Z]`.
+pub const PAULI_1Q_ORDER: [&str; 3] = ["X", "Y", "Z"];
+
+/// Ordered indices for the 15 non-identity 2Q Pauli pairs. Row/col order:
+/// `I=0, X=1, Y=2, Z=3`; pair `p1 ⊗ p2` index is `4*p1 + p2 - 1` (skip II).
+/// Concretely: `["IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX",
+/// "YY", "YZ", "ZI", "ZX", "ZY", "ZZ"]`.
+pub const PAULI_2Q_ORDER: [&str; 15] = [
+    "IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZI", "ZX", "ZY", "ZZ",
+];
+
+/// Per-gate-type, optionally per-qubit noise specification. Replaces the
+/// uniform scalar `NoiseConfig` with per-`GateType` per-Pauli rates, with
+/// an optional per-qubit override layer for devices where `T_1`/`T_2`
+/// varies qubit-to-qubit.
+///
+/// # Layered lookup
+///
+/// Rate resolution uses the most specific configured entry:
+///
+/// ```text
+/// 1. rates_1q_per_qubit[(gate, qubit)]         // most specific
+/// 2. rates_1q[gate]                            // per-gate-type default
+/// 3. base.p1 / 3.0                             // base noise model
+/// ```
+///
+/// (And analogously for 2Q with `(gate, (q_control, q_target))`.)
+///
+/// This lets users specify "H on qubit 0 has these rates (high T_1), H on
+/// qubit 1 has these (low T_1), every other H uses the per-gate default".
+///
+/// # Integration with `pecos-lindblad`
+///
+/// The intended workflow is:
+///   1. Synthesize a `PauliLindbladModel` for each gate type *and* per
+///      qubit if needed via `pecos_lindblad::synthesize_superop(...)`.
+///   2. Convert to `[f64; 3]` / `[f64; 15]` arrays.
+///   3. Register with [`Self::with_1q_rates_for_qubit`] /
+///      [`Self::with_2q_rates_for_qubits`] for heterogeneous devices, or
+///      [`Self::with_1q_rates`] / [`Self::with_2q_rates`] for homogeneous
+///      models.
+#[derive(Debug, Clone, Default)]
+pub struct PerGateTypeNoise {
+    pub rates_1q: HashMap<GateType, [f64; 3]>,
+    pub rates_2q: HashMap<GateType, [f64; 15]>,
+    pub rates_1q_per_qubit: HashMap<(GateType, QubitId), [f64; 3]>,
+    pub rates_2q_per_qubits: HashMap<(GateType, QubitId, QubitId), [f64; 15]>,
+    /// Per-qubit readout (MZ) X-flip probabilities. Qubits not in this map use
+    /// [`Self::p_meas`].
+    pub measurement_rates: HashMap<QubitId, f64>,
+    /// Per-qubit preparation (PZ) X-error probabilities. Qubits not in this map
+    /// use [`Self::p_init`].
+    pub init_rates: HashMap<QubitId, f64>,
+    pub p_meas: f64,
+    pub p_init: f64,
+    pub base: NoiseConfig,
+}
+
+impl PerGateTypeNoise {
+    /// Construct with empty gate maps; unspecified gates use `base`.
+    #[must_use]
+    pub fn from_base_noise(base: NoiseConfig) -> Self {
+        Self {
+            rates_1q: HashMap::new(),
+            rates_2q: HashMap::new(),
+            rates_1q_per_qubit: HashMap::new(),
+            rates_2q_per_qubits: HashMap::new(),
+            measurement_rates: HashMap::new(),
+            init_rates: HashMap::new(),
+            p_meas: base.p_meas,
+            p_init: base.p_prep,
+            base,
+        }
+    }
+
+    /// Attach measurement X-flip probability for a specific qubit.
+    /// Overrides [`Self::p_meas`] when set. Use for devices with
+    /// heterogeneous readout fidelity.
+    #[must_use]
+    pub fn with_measurement_rate(mut self, q: QubitId, p: f64) -> Self {
+        self.measurement_rates.insert(q, p);
+        self
+    }
+
+    /// Attach preparation X-error probability for a specific qubit.
+    /// Overrides [`Self::p_init`] when set.
+    #[must_use]
+    pub fn with_init_rate(mut self, q: QubitId, p: f64) -> Self {
+        self.init_rates.insert(q, p);
+        self
+    }
+
+    /// Lookup measurement X-flip rate for a qubit. Unspecified qubits use
+    /// [`Self::p_meas`], which is seeded from the base `NoiseConfig::p_meas`.
+    #[must_use]
+    pub fn measurement_rate_on(&self, q: QubitId) -> f64 {
+        *self.measurement_rates.get(&q).unwrap_or(&self.p_meas)
+    }
+
+    /// Lookup preparation X-error rate for a qubit. Unspecified qubits use
+    /// [`Self::p_init`].
+    #[must_use]
+    pub fn init_rate_on(&self, q: QubitId) -> f64 {
+        *self.init_rates.get(&q).unwrap_or(&self.p_init)
+    }
+
+    /// Attach rates for a 1Q gate type applied to any qubit.
+    #[must_use]
+    pub fn with_1q_rates(mut self, g: GateType, rates: [f64; 3]) -> Self {
+        self.rates_1q.insert(g, rates);
+        self
+    }
+
+    /// Attach rates for a 2Q gate type applied to any qubit pair.
+    #[must_use]
+    pub fn with_2q_rates(mut self, g: GateType, rates: [f64; 15]) -> Self {
+        self.rates_2q.insert(g, rates);
+        self
+    }
+
+    /// Attach rates for a 1Q gate on a specific qubit. Takes precedence
+    /// over [`Self::with_1q_rates`] for that `(gate, qubit)` combination.
+    #[must_use]
+    pub fn with_1q_rates_for_qubit(mut self, g: GateType, q: QubitId, rates: [f64; 3]) -> Self {
+        self.rates_1q_per_qubit.insert((g, q), rates);
+        self
+    }
+
+    /// Attach rates for a 2Q gate on a specific ordered qubit pair.
+    /// Takes precedence over [`Self::with_2q_rates`] for that
+    /// `(gate, q_control, q_target)` combination.
+    #[must_use]
+    pub fn with_2q_rates_for_qubits(
+        mut self,
+        g: GateType,
+        q_control: QubitId,
+        q_target: QubitId,
+        rates: [f64; 15],
+    ) -> Self {
+        self.rates_2q_per_qubits
+            .insert((g, q_control, q_target), rates);
+        self
+    }
+
+    /// Lookup 1Q Pauli rate for a gate. Returns `base.p1 / 3.0` if the
+    /// gate type is not in the map. `pauli_idx` is 0=X, 1=Y, 2=Z.
+    #[must_use]
+    pub fn rate_1q(&self, gate: GateType, pauli_idx: usize) -> f64 {
+        self.rates_1q
+            .get(&gate)
+            .map(|r| r[pauli_idx])
+            .unwrap_or(self.base.p1 / 3.0)
+    }
+
+    /// Lookup 1Q Pauli rate for a gate on a specific qubit. Tries the
+    /// per-qubit map first, then the per-gate-type map, then `base.p1 / 3.0`.
+    /// `pauli_idx` is 0=X, 1=Y, 2=Z.
+    #[must_use]
+    pub fn rate_1q_on(&self, gate: GateType, qubit: QubitId, pauli_idx: usize) -> f64 {
+        if let Some(rates) = self.rates_1q_per_qubit.get(&(gate, qubit)) {
+            return rates[pauli_idx];
+        }
+        self.rate_1q(gate, pauli_idx)
+    }
+
+    /// Lookup 2Q Pauli pair rate for a gate. Returns `base.p2 / 15.0`
+    /// if the gate type is not in the map. `pair_idx` follows [`PAULI_2Q_ORDER`].
+    #[must_use]
+    pub fn rate_2q(&self, gate: GateType, pair_idx: usize) -> f64 {
+        self.rates_2q
+            .get(&gate)
+            .map(|r| r[pair_idx])
+            .unwrap_or(self.base.p2 / 15.0)
+    }
+
+    /// Lookup 2Q Pauli pair rate for a gate on a specific ordered
+    /// qubit pair. Tries `(gate, q_control, q_target)` in the per-qubits
+    /// map first, then the per-gate-type map, then `base.p2 / 15.0`.
+    #[must_use]
+    pub fn rate_2q_on(
+        &self,
+        gate: GateType,
+        q_control: QubitId,
+        q_target: QubitId,
+        pair_idx: usize,
+    ) -> f64 {
+        if let Some(rates) = self.rates_2q_per_qubits.get(&(gate, q_control, q_target)) {
+            return rates[pair_idx];
+        }
+        self.rate_2q(gate, pair_idx)
+    }
+}
+
+// ============================================================================
+// Measurement Noise Model (MNM)
+// ============================================================================
+
+/// A measurement fault mechanism: a set of measurements that flip together.
+///
+/// Unlike [`FaultMechanism`], this operates directly on raw measurement
+/// indices. This is useful for sampling measurement outcomes without needing
+/// detector definitions.
+#[derive(Clone, Default)]
+pub struct MeasurementMechanism {
+    /// Measurement indices that flip together, sorted canonically.
+    pub measurements: SmallVec<[u32; 4]>,
+}
+
+impl MeasurementMechanism {
+    /// Creates a new empty measurement mechanism.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a mechanism from unsorted measurement indices.
+    #[must_use]
+    pub fn from_unsorted(measurements: impl IntoIterator<Item = u32>) -> Self {
+        let mut measurements: SmallVec<[u32; 4]> = measurements.into_iter().collect();
+        measurements.sort_unstable();
+        Self { measurements }
+    }
+
+    /// Creates a mechanism from pre-sorted measurement indices.
+    #[must_use]
+    pub fn from_sorted(measurements: SmallVec<[u32; 4]>) -> Self {
+        debug_assert!(
+            measurements.windows(2).all(|w| w[0] <= w[1]),
+            "measurements must be sorted"
+        );
+        Self { measurements }
+    }
+
+    /// Returns true if this mechanism has no effect.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.measurements.is_empty()
+    }
+
+    /// Returns the number of measurements in this mechanism.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.measurements.len()
+    }
+}
+
+impl PartialEq for MeasurementMechanism {
+    fn eq(&self, other: &Self) -> bool {
+        self.measurements == other.measurements
+    }
+}
+
+impl Eq for MeasurementMechanism {}
+
+impl Hash for MeasurementMechanism {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.measurements.hash(state);
+    }
+}
+
+impl PartialOrd for MeasurementMechanism {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MeasurementMechanism {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.measurements.cmp(&other.measurements)
+    }
+}
+
+impl fmt::Debug for MeasurementMechanism {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MeasurementMechanism({:?})",
+            self.measurements.as_slice()
+        )
+    }
+}
+
+/// A measurement noise model for fast approximate raw-measurement sampling.
+#[derive(Debug, Clone, Default)]
+pub struct MeasurementNoiseModel {
+    /// Fault mechanisms mapped to their probabilities.
+    pub mechanisms: BTreeMap<MeasurementMechanism, f64>,
+    /// Total number of measurements in the circuit.
+    pub num_measurements: usize,
+    /// Optional mapping from influence-map index to original circuit order.
+    pub im_to_tc_order: Option<Vec<usize>>,
+}
+
+impl MeasurementNoiseModel {
+    /// Creates a new empty measurement noise model.
+    #[must_use]
+    pub fn new(num_measurements: usize) -> Self {
+        Self {
+            mechanisms: BTreeMap::new(),
+            num_measurements,
+            im_to_tc_order: None,
+        }
+    }
+
+    /// Sets the measurement order mapping from influence-map order to circuit order.
+    #[must_use]
+    pub fn with_measurement_order(mut self, im_to_tc: Vec<usize>) -> Self {
+        self.im_to_tc_order = Some(im_to_tc);
+        self
+    }
+
+    /// Sets the measurement order mapping in place.
+    pub fn set_measurement_order(&mut self, im_to_tc: Vec<usize>) {
+        self.im_to_tc_order = Some(im_to_tc);
+    }
+
+    /// Returns the number of distinct mechanisms.
+    #[inline]
+    #[must_use]
+    pub fn num_mechanisms(&self) -> usize {
+        self.mechanisms.len()
+    }
+
+    /// Adds a mechanism with probability, combining with any existing identical mechanism.
+    pub fn add_mechanism(&mut self, mechanism: MeasurementMechanism, probability: f64) {
+        if mechanism.is_empty() || probability <= 0.0 {
+            return;
+        }
+
+        self.mechanisms
+            .entry(mechanism)
+            .and_modify(|p| *p = combine_probabilities(*p, probability))
+            .or_insert(probability);
+    }
+
+    /// Samples measurement outcomes into a pre-sized buffer.
+    pub fn sample_into<R: rand::Rng>(&self, outcomes: &mut [bool], rng: &mut R) {
+        outcomes.fill(false);
+
+        for (mechanism, &prob) in &self.mechanisms {
+            if rng.random_bool(prob.clamp(0.0, 1.0)) {
+                for &meas_idx in &mechanism.measurements {
+                    if (meas_idx as usize) < outcomes.len() {
+                        outcomes[meas_idx as usize] ^= true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Samples and returns measurement outcomes.
+    #[must_use]
+    pub fn sample<R: rand::Rng>(&self, rng: &mut R) -> Vec<bool> {
+        let mut outcomes = vec![false; self.num_measurements];
+        self.sample_into(&mut outcomes, rng);
+        outcomes
+    }
+
+    /// Iterates over all mechanisms and their probabilities.
+    pub fn iter(&self) -> impl Iterator<Item = (&MeasurementMechanism, &f64)> {
+        self.mechanisms.iter()
+    }
+
+    /// Computes detector events from raw measurement outcomes and detector records.
+    #[must_use]
+    pub fn compute_detection_events(
+        &self,
+        outcomes: &[bool],
+        detector_records: &[Vec<i32>],
+    ) -> Vec<bool> {
+        let tc_outcomes: Vec<bool> = if let Some(ref im_to_tc) = self.im_to_tc_order {
+            let mut reordered = vec![false; outcomes.len()];
+            for (im_idx, &tc_idx) in im_to_tc.iter().enumerate() {
+                if im_idx < outcomes.len() && tc_idx < reordered.len() {
+                    reordered[tc_idx] = outcomes[im_idx];
+                }
+            }
+            reordered
+        } else {
+            outcomes.to_vec()
+        };
+
+        Self::to_detection_events_internal(&tc_outcomes, detector_records)
+    }
+
+    fn to_detection_events_internal(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {
+        let num_measurements = outcomes.len();
+        detector_records
+            .iter()
+            .map(|records| {
+                records.iter().fold(false, |fired, &offset| {
+                    if let Some(abs_idx) = record_offset_to_absolute_index(num_measurements, offset)
+                        && abs_idx < num_measurements
+                        && outcomes[abs_idx]
+                    {
+                        return !fired;
+                    }
+                    fired
+                })
+            })
+            .collect()
+    }
+
+    /// Static detector-event conversion without reordering.
+    #[must_use]
+    pub fn to_detection_events(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {
+        Self::to_detection_events_internal(outcomes, detector_records)
+    }
+
+    /// Samples and converts to detection events in one step.
+    pub fn sample_with_detectors<R: rand::Rng>(
+        &self,
+        detector_records: &[Vec<i32>],
+        rng: &mut R,
+    ) -> (Vec<bool>, Vec<bool>) {
+        let outcomes = self.sample(rng);
+        let detection_events = self.compute_detection_events(&outcomes, detector_records);
+        (outcomes, detection_events)
+    }
+
+    /// Computes observable flips from measurement outcomes.
+    #[must_use]
+    pub fn compute_observable_flips(
+        &self,
+        outcomes: &[bool],
+        observable_records: &[Vec<i32>],
+    ) -> Vec<bool> {
+        self.compute_detection_events(outcomes, observable_records)
+    }
+
+    /// Samples detector events and observable flips in one step.
+    pub fn sample_for_decoding<R: rand::Rng>(
+        &self,
+        detector_records: &[Vec<i32>],
+        observable_records: &[Vec<i32>],
+        rng: &mut R,
+    ) -> (Vec<bool>, Vec<bool>) {
+        let outcomes = self.sample(rng);
+        let detection_events = self.compute_detection_events(&outcomes, detector_records);
+        let observable_flips = self.compute_detection_events(&outcomes, observable_records);
+        (detection_events, observable_flips)
+    }
+
+    /// Batch samples detector events and observable flips.
+    pub fn sample_batch_for_decoding<R: rand::Rng>(
+        &self,
+        num_shots: usize,
+        detector_records: &[Vec<i32>],
+        observable_records: &[Vec<i32>],
+        rng: &mut R,
+    ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
+        let mut all_detection_events = Vec::with_capacity(num_shots);
+        let mut all_observable_flips = Vec::with_capacity(num_shots);
+
+        for _ in 0..num_shots {
+            let (det_events, obs_flips) =
+                self.sample_for_decoding(detector_records, observable_records, rng);
+            all_detection_events.push(det_events);
+            all_observable_flips.push(obs_flips);
+        }
+
+        (all_detection_events, all_observable_flips)
+    }
 }
 
 // ============================================================================

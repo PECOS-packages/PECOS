@@ -17,8 +17,9 @@
 
 use super::types::{
     DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, FaultMechanism,
-    NoiseConfig, SourceMetadata, record_offset_to_absolute_index,
+    NoiseConfig, PerGateTypeNoise, SourceMetadata, record_offset_to_absolute_index,
 };
+use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
 use smallvec::SmallVec;
@@ -85,8 +86,14 @@ struct ParsedObservable {
 pub struct DemBuilder<'a> {
     /// Reference to the fault influence map.
     influence_map: &'a DagFaultInfluenceMap,
-    /// Noise configuration.
+    /// Uniform-depolarizing noise configuration. When `per_gate` is also
+    /// set, its per-qubit / per-Pauli overrides take precedence; this
+    /// `NoiseConfig` still seeds measurement/prep scalars.
     noise: NoiseConfig,
+    /// Optional per-gate-type per-Pauli noise spec. Mirrors the
+    /// `DemSamplerBuilder` path so DEM text export reflects the same
+    /// asymmetric noise structure that the sampler does.
+    per_gate: Option<PerGateTypeNoise>,
     /// Parsed detector definitions.
     detectors: Vec<ParsedDetector>,
     /// Parsed observable definitions.
@@ -145,6 +152,7 @@ impl<'a> DemBuilder<'a> {
         Self {
             influence_map,
             noise: NoiseConfig::default(),
+            per_gate: None,
             detectors: Vec::new(),
             observables: Vec::new(),
             num_measurements: influence_map.measurements.len(),
@@ -164,6 +172,97 @@ impl<'a> DemBuilder<'a> {
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.noise = noise;
         self
+    }
+
+    /// Attach per-gate-type per-Pauli noise. When present, overrides
+    /// [`Self::with_noise`] scalars for gate types in the spec's maps.
+    /// Mirrors
+    /// [`crate::fault_tolerance::dem_builder::DemSamplerBuilder::with_per_gate_noise`]
+    /// so the DEM text output reflects the same noise structure.
+    #[must_use]
+    pub fn with_per_gate_noise(mut self, cfg: PerGateTypeNoise) -> Self {
+        self.noise.p_meas = cfg.p_meas;
+        self.noise.p_prep = cfg.p_init;
+        self.per_gate = Some(cfg);
+        self
+    }
+
+    /// Resolve preparation X-error rate at a specific location.
+    fn init_rate_for_loc(&self, loc: &DagSpacetimeLocation) -> f64 {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return pg.init_rate_on(*q);
+            }
+        }
+        self.noise.p_prep
+    }
+
+    /// Resolve measurement X-flip rate at a specific location.
+    fn measurement_rate_for_loc(&self, loc: &DagSpacetimeLocation) -> f64 {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return pg.measurement_rate_on(*q);
+            }
+        }
+        self.noise.p_meas
+    }
+
+    /// Resolve `[rate_X, rate_Y, rate_Z]` for a 1Q gate location.
+    fn rates_1q_for_loc(&self, loc: &DagSpacetimeLocation) -> [f64; 3] {
+        if let Some(pg) = &self.per_gate {
+            if let Some(q) = loc.qubits.first() {
+                return [
+                    pg.rate_1q_on(loc.gate_type, *q, 0),
+                    pg.rate_1q_on(loc.gate_type, *q, 1),
+                    pg.rate_1q_on(loc.gate_type, *q, 2),
+                ];
+            }
+            return [
+                pg.rate_1q(loc.gate_type, 0),
+                pg.rate_1q(loc.gate_type, 1),
+                pg.rate_1q(loc.gate_type, 2),
+            ];
+        }
+        if let Some(weights) = &self.noise.p1_weights {
+            use pecos_core::pauli::{X, Y, Z};
+            return [
+                self.noise.p1 * weights.weight_for(&X(0)),
+                self.noise.p1 * weights.weight_for(&Y(0)),
+                self.noise.p1 * weights.weight_for(&Z(0)),
+            ];
+        }
+        let per = per_channel_probability(self.noise.p1, 3);
+        [per, per, per]
+    }
+
+    /// Resolve the 15-entry 2Q per-Pauli-pair rate array for a gate
+    /// spanning two fault locations.
+    fn rates_2q_for_locs(
+        &self,
+        loc1: &DagSpacetimeLocation,
+        loc2: &DagSpacetimeLocation,
+    ) -> [f64; 15] {
+        if let Some(pg) = &self.per_gate {
+            let gate = loc1.gate_type;
+            let mut qubits = loc1
+                .qubits
+                .iter()
+                .copied()
+                .chain(loc2.qubits.iter().copied());
+            if let (Some(qc), Some(qt)) = (qubits.next(), qubits.next()) {
+                return std::array::from_fn(|i| pg.rate_2q_on(gate, qc, qt, i));
+            }
+            return std::array::from_fn(|i| pg.rate_2q(gate, i));
+        }
+        if let Some(weights) = &self.noise.p2_weights {
+            return std::array::from_fn(|idx| {
+                let flat = idx + 1;
+                let p1 = flat / 4;
+                let p2 = flat % 4;
+                self.noise.p2 * weights.weight_for(&pauli_pair_for_weight(p1, p2))
+            });
+        }
+        [per_channel_probability(self.noise.p2, 15); 15]
     }
 
     /// Sets the number of measurements (used for record offset calculation).
@@ -343,21 +442,25 @@ impl<'a> DemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PZ | GateType::QAlloc if self.noise.p_prep > 0.0 && !loc.before => {
-                    self.process_prep_fault_source_tracked(
-                        loc_idx,
-                        dem,
-                        meas_to_detectors,
-                        meas_to_observables,
-                    );
+                GateType::PZ | GateType::QAlloc => {
+                    if !loc.before && self.init_rate_for_loc(loc) > 0.0 {
+                        self.process_prep_fault_source_tracked(
+                            loc_idx,
+                            dem,
+                            meas_to_detectors,
+                            meas_to_observables,
+                        );
+                    }
                 }
-                GateType::MZ | GateType::MeasureFree if self.noise.p_meas > 0.0 && loc.before => {
-                    self.process_meas_fault_source_tracked(
-                        loc_idx,
-                        dem,
-                        meas_to_detectors,
-                        meas_to_observables,
-                    );
+                GateType::MZ | GateType::MeasureFree => {
+                    if loc.before && self.measurement_rate_for_loc(loc) > 0.0 {
+                        self.process_meas_fault_source_tracked(
+                            loc_idx,
+                            dem,
+                            meas_to_detectors,
+                            meas_to_observables,
+                        );
+                    }
                 }
                 GateType::CX
                 | GateType::CZ
@@ -395,24 +498,35 @@ impl<'a> DemBuilder<'a> {
                 | GateType::RZ
                 | GateType::U
                 | GateType::R1XY
-                    if self.noise.p1 > 0.0 && !loc.before =>
+                    if !loc.before =>
                 {
-                    self.process_single_qubit_fault_source_tracked(
-                        loc_idx,
-                        dem,
-                        meas_to_detectors,
-                        meas_to_observables,
-                    );
+                    let rates = self.rates_1q_for_loc(loc);
+                    if rates.iter().any(|r| *r > 0.0) {
+                        self.process_single_qubit_fault_source_tracked(
+                            loc_idx,
+                            rates,
+                            dem,
+                            meas_to_detectors,
+                            meas_to_observables,
+                        );
+                    }
                 }
                 GateType::Idle if !loc.before => {
-                    // Duration values are small integers; precision loss is not a concern.
-                    #[allow(clippy::cast_precision_loss)]
-                    let duration = loc.idle_duration.max(1) as f64;
-                    let pauli_probs = self.noise.idle_pauli_probs(duration);
-                    if pauli_probs.total() > 0.0 {
-                        self.process_idle_fault_source_tracked(
+                    let rates = if self.per_gate.is_some() {
+                        self.rates_1q_for_loc(loc)
+                    } else if self.noise.uses_dedicated_idle_noise() {
+                        // Duration values are small integers; precision loss is not a concern.
+                        #[allow(clippy::cast_precision_loss)]
+                        let duration = loc.idle_duration.max(1) as f64;
+                        let pauli_probs = self.noise.idle_pauli_probs(duration);
+                        [pauli_probs.px, pauli_probs.py, pauli_probs.pz]
+                    } else {
+                        self.rates_1q_for_loc(loc)
+                    };
+                    if rates.iter().any(|r| *r > 0.0) {
+                        self.process_single_qubit_fault_source_tracked(
                             loc_idx,
-                            &pauli_probs,
+                            rates,
                             dem,
                             meas_to_detectors,
                             meas_to_observables,
@@ -423,42 +537,25 @@ impl<'a> DemBuilder<'a> {
             }
         }
 
-        // Process two-qubit gates in parallel.
-        // Collect all CX pairs, process with rayon, merge results.
-        if self.noise.p2 > 0.0 {
-            use rayon::prelude::*;
-
-            let mut all_pairs: Vec<(usize, usize)> = Vec::new();
-            for (_, loc_indices) in cx_groups {
-                for pair in loc_indices.chunks(2) {
-                    if pair.len() == 2 {
-                        all_pairs.push((pair[0], pair[1]));
-                    }
+        // Process two-qubit gates.
+        for (_, loc_indices) in cx_groups {
+            for pair in loc_indices.chunks(2) {
+                if pair.len() != 2 {
+                    continue;
                 }
-            }
-
-            let chunk_size = all_pairs.len().div_ceil(rayon::current_num_threads());
-
-            let thread_results: Vec<DetectorErrorModel> = all_pairs
-                .par_chunks(chunk_size.max(1))
-                .map(|chunk| {
-                    let mut local_dem = DetectorErrorModel::with_capacity(0, 0);
-                    for &(loc1, loc2) in chunk {
-                        self.process_two_qubit_fault_source_tracked(
-                            loc1,
-                            loc2,
-                            &mut local_dem,
-                            meas_to_detectors,
-                            meas_to_observables,
-                        );
-                    }
-                    local_dem
-                })
-                .collect();
-
-            // Merge contributions from all threads
-            for local_dem in thread_results {
-                dem.merge_contributions_from(local_dem);
+                let loc1 = &locations[pair[0]];
+                let loc2 = &locations[pair[1]];
+                let rates = self.rates_2q_for_locs(loc1, loc2);
+                if rates.iter().any(|r| *r > 0.0) {
+                    self.process_two_qubit_fault_source_tracked(
+                        pair[0],
+                        pair[1],
+                        rates,
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
+                }
             }
         }
     }
@@ -471,19 +568,16 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
+        let loc = &self.influence_map.locations[loc_idx];
+        let p = self.init_rate_for_loc(loc);
         // For Z-basis prep, X error matters - this is a direct source
         let mechanism =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
             dem.add_direct_contribution_with_source(
                 mechanism,
-                self.noise.p_prep,
-                SourceMetadata::new(
-                    &[loc_idx],
-                    &[Pauli::X],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
-                ),
+                p,
+                SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before]),
             );
         }
     }
@@ -496,43 +590,31 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
+        let loc = &self.influence_map.locations[loc_idx];
+        let p = self.measurement_rate_for_loc(loc);
         // Measurement error is a bit flip (X error) - this is a direct source
         let mechanism =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
             dem.add_direct_contribution_with_source(
                 mechanism,
-                self.noise.p_meas,
-                SourceMetadata::new(
-                    &[loc_idx],
-                    &[Pauli::X],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
-                ),
+                p,
+                SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before]),
             );
         }
     }
 
     /// Processes a single-qubit gate fault with source tracking.
+    /// `rates` is `[rate_X, rate_Y, rate_Z]` -- zero entries are skipped.
     fn process_single_qubit_fault_source_tracked(
         &self,
         loc_idx: usize,
+        rates: [f64; 3],
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        // Per-Pauli probabilities: custom weights or uniform p/3
-        let (px, py, pz) = if let Some(ref weights) = self.noise.p1_weights {
-            use pecos_core::pauli::{X, Y, Z};
-            (
-                self.noise.p1 * weights.weight_for(&X(0)),
-                self.noise.p1 * weights.weight_for(&Y(0)),
-                self.noise.p1 * weights.weight_for(&Z(0)),
-            )
-        } else {
-            let p = per_channel_probability(self.noise.p1, 3);
-            (p, p, p)
-        };
+        let [rate_x, rate_y, rate_z] = rates;
 
         let x_effect =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
@@ -540,10 +622,10 @@ impl<'a> DemBuilder<'a> {
             self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
 
         // X error: direct source
-        if !x_effect.is_empty() {
+        if rate_x > 0.0 && !x_effect.is_empty() {
             dem.add_direct_contribution_with_source(
                 x_effect.clone(),
-                px,
+                rate_x,
                 SourceMetadata::new(
                     &[loc_idx],
                     &[Pauli::X],
@@ -554,10 +636,10 @@ impl<'a> DemBuilder<'a> {
         }
 
         // Z error: direct source
-        if !z_effect.is_empty() {
+        if rate_z > 0.0 && !z_effect.is_empty() {
             dem.add_direct_contribution_with_source(
                 z_effect.clone(),
-                pz,
+                rate_z,
                 SourceMetadata::new(
                     &[loc_idx],
                     &[Pauli::Z],
@@ -569,12 +651,12 @@ impl<'a> DemBuilder<'a> {
 
         // Y error: Y = XZ, so effect is XOR of X and Z effects
         let y_effect = x_effect.xor(&z_effect);
-        if !y_effect.is_empty() {
+        if rate_y > 0.0 && !y_effect.is_empty() {
             if !x_effect.is_empty() && !z_effect.is_empty() {
                 dem.add_y_decomposed_contribution_with_source(
                     &x_effect,
                     &z_effect,
-                    py,
+                    rate_y,
                     SourceMetadata::new(
                         &[loc_idx],
                         &[Pauli::Y],
@@ -586,76 +668,7 @@ impl<'a> DemBuilder<'a> {
                 // One is empty, so Y has same effect as the non-empty one (direct source)
                 dem.add_direct_contribution_with_source(
                     y_effect,
-                    py,
-                    SourceMetadata::new(
-                        &[loc_idx],
-                        &[Pauli::Y],
-                        &[self.influence_map.locations[loc_idx].gate_type],
-                        &[self.influence_map.locations[loc_idx].before],
-                    ),
-                );
-            }
-        }
-    }
-
-    /// Processes an idle gate fault with per-Pauli probabilities.
-    fn process_idle_fault_source_tracked(
-        &self,
-        loc_idx: usize,
-        pauli_probs: &super::PauliProbs,
-        dem: &mut DetectorErrorModel,
-        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
-        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
-        let x_effect =
-            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
-        let z_effect =
-            self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
-
-        if !x_effect.is_empty() {
-            dem.add_direct_contribution_with_source(
-                x_effect.clone(),
-                pauli_probs.px,
-                SourceMetadata::new(
-                    &[loc_idx],
-                    &[Pauli::X],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
-                ),
-            );
-        }
-
-        if !z_effect.is_empty() {
-            dem.add_direct_contribution_with_source(
-                z_effect.clone(),
-                pauli_probs.pz,
-                SourceMetadata::new(
-                    &[loc_idx],
-                    &[Pauli::Z],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
-                ),
-            );
-        }
-
-        let y_effect = x_effect.xor(&z_effect);
-        if !y_effect.is_empty() {
-            if !x_effect.is_empty() && !z_effect.is_empty() {
-                dem.add_y_decomposed_contribution_with_source(
-                    &x_effect,
-                    &z_effect,
-                    pauli_probs.py,
-                    SourceMetadata::new(
-                        &[loc_idx],
-                        &[Pauli::Y],
-                        &[self.influence_map.locations[loc_idx].gate_type],
-                        &[self.influence_map.locations[loc_idx].before],
-                    ),
-                );
-            } else {
-                dem.add_direct_contribution_with_source(
-                    y_effect,
-                    pauli_probs.py,
+                    rate_y,
                     SourceMetadata::new(
                         &[loc_idx],
                         &[Pauli::Y],
@@ -668,15 +681,17 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Processes a two-qubit gate fault with source tracking and intra-channel decomposition.
+    /// `rates` is the 15-entry array in `PAULI_2Q_ORDER` order -- zero entries
+    /// are skipped.
     fn process_two_qubit_fault_source_tracked(
         &self,
         loc1: usize,
         loc2: usize,
+        rates: [f64; 15],
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        let uniform_prob = per_channel_probability(self.noise.p2, 15);
         let loc1_meta = &self.influence_map.locations[loc1];
         let loc2_meta = &self.influence_map.locations[loc2];
 
@@ -706,17 +721,6 @@ impl<'a> DemBuilder<'a> {
             }
         }
 
-        // Helper to build PauliString from (p1, p2) indices for weight lookup
-        let pauli_from_index = |idx: u8| -> pecos_core::Pauli {
-            match idx {
-                0 => pecos_core::Pauli::I,
-                1 => pecos_core::Pauli::X,
-                2 => pecos_core::Pauli::Y,
-                3 => pecos_core::Pauli::Z,
-                _ => unreachable!(),
-            }
-        };
-
         // Process all 15 non-trivial Pauli combinations
         for p1 in 0u8..4 {
             for p2 in 0u8..4 {
@@ -729,25 +733,12 @@ impl<'a> DemBuilder<'a> {
                     continue;
                 }
 
-                // Per-event probability: custom weights or uniform
-                let prob = if let Some(ref weights) = self.noise.p2_weights {
-                    let mut paulis = Vec::new();
-                    let pa1 = pauli_from_index(p1);
-                    let pa2 = pauli_from_index(p2);
-                    if pa1 != pecos_core::Pauli::I {
-                        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
-                    }
-                    if pa2 != pecos_core::Pauli::I {
-                        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
-                    }
-                    let ps = pecos_core::PauliString::with_phase_and_paulis(
-                        pecos_core::QuarterPhase::PlusOne,
-                        paulis,
-                    );
-                    self.noise.p2 * weights.weight_for(&ps)
-                } else {
-                    uniform_prob
-                };
+                // Per-pair rate: index = 4*p1 + p2 - 1 (skipping II at idx 0).
+                let flat = 4 * (p1 as usize) + (p2 as usize);
+                let prob = rates[flat - 1];
+                if prob == 0.0 {
+                    continue;
+                }
 
                 // Get component effects (P1I and IP2)
                 let e1 = &effects[p1 as usize][0]; // P1 on qubit 1, I on qubit 2
@@ -968,6 +959,26 @@ fn xor_toggle_2(vec: &mut SmallVec<[u32; 2]>, value: u32) {
     } else {
         vec.push(value);
     }
+}
+
+fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
+    let mut paulis = Vec::new();
+    let pauli_from_index = |idx| match idx {
+        0 => pecos_core::Pauli::I,
+        1 => pecos_core::Pauli::X,
+        2 => pecos_core::Pauli::Y,
+        3 => pecos_core::Pauli::Z,
+        _ => unreachable!("Pauli index must be 0-3"),
+    };
+    let pa1 = pauli_from_index(p1);
+    let pa2 = pauli_from_index(p2);
+    if pa1 != pecos_core::Pauli::I {
+        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
+    }
+    if pa2 != pecos_core::Pauli::I {
+        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
+    }
+    pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
 }
 
 /// Computes the per-error probability for independent error channels.

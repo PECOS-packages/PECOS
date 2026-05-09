@@ -36,7 +36,7 @@
 //!   validated at build time.
 
 use super::dem_sampler::SamplingEngine;
-use super::types::{DemOutput, NoiseConfig};
+use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise};
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, DemOutputKind};
 use pecos_core::prelude::GateType;
 use pecos_num::z2_linalg::z2_rank_from_records;
@@ -467,6 +467,16 @@ impl DemSampler {
         sampler
     }
 
+    /// Reconstruct a detector error model from the compiled mechanism table.
+    ///
+    /// The returned model contains mechanism probabilities and effects. Higher
+    /// level wrappers that own detector / observable definitions should add
+    /// those declarations to preserve metadata in serialized text.
+    #[must_use]
+    pub fn to_detector_error_model(&self) -> super::types::DetectorErrorModel {
+        self.inner.to_detector_error_model()
+    }
+
     /// Create a `DemSampler` directly from an influence map with per-location
     /// probabilities (raw measurement mode).
     #[must_use]
@@ -569,6 +579,18 @@ impl DemSampler {
     #[must_use]
     pub fn num_mechanisms(&self) -> usize {
         self.inner.num_mechanisms()
+    }
+
+    /// Average mechanism firing probability.
+    #[must_use]
+    pub fn average_error_probability(&self) -> f64 {
+        self.inner.average_error_probability()
+    }
+
+    /// Maximum mechanism firing probability.
+    #[must_use]
+    pub fn max_error_probability(&self) -> f64 {
+        self.inner.max_error_probability()
     }
 
     /// Get the labels for this sampler's output channels.
@@ -769,6 +791,7 @@ impl DemSampler {
 pub struct DemSamplerBuilder<'a> {
     influence_map: &'a DagFaultInfluenceMap,
     noise: NoiseConfig,
+    per_gate: Option<PerGateTypeNoise>,
     output_mode: OutputMode,
     detector_records: Option<Vec<Vec<i32>>>,
     observable_records: Option<Vec<Vec<i32>>>,
@@ -784,6 +807,7 @@ impl<'a> DemSamplerBuilder<'a> {
         Self {
             influence_map,
             noise: NoiseConfig::default(),
+            per_gate: None,
             output_mode: OutputMode::RawMeasurements,
             detector_records: None,
             observable_records: None,
@@ -804,6 +828,14 @@ impl<'a> DemSamplerBuilder<'a> {
     #[must_use]
     pub fn with_noise_config(mut self, config: NoiseConfig) -> Self {
         self.noise = config;
+        self
+    }
+
+    /// Set per-gate-type and optional per-qubit Pauli rates.
+    #[must_use]
+    pub fn with_per_gate_noise(mut self, config: PerGateTypeNoise) -> Self {
+        self.noise = config.base.clone();
+        self.per_gate = Some(config);
         self
     }
 
@@ -1162,6 +1194,12 @@ impl<'a> DemSamplerBuilder<'a> {
             .with_detector_records(detector_records)
             .with_observable_records(observable_records.clone());
 
+        if let Some(per_gate) = self.per_gate {
+            builder = builder.with_per_gate_noise(per_gate);
+        } else if self.noise.p_idle > 0.0 {
+            builder = builder.with_idle_noise(self.noise.p_idle);
+        }
+
         if let Some(order) = self.measurement_order {
             builder = builder.with_measurement_order(order);
         }
@@ -1246,10 +1284,14 @@ pub(crate) fn compute_location_probs_from_noise(
                 | GateType::RYY
                 | GateType::RZZ => noise.p2,
                 GateType::Idle => {
-                    // Duration values are small integers; precision loss is not a concern.
-                    #[allow(clippy::cast_precision_loss)]
-                    let duration = loc.idle_duration.max(1) as f64;
-                    noise.idle_pauli_probs(duration).total()
+                    if noise.uses_dedicated_idle_noise() {
+                        // Duration values are small integers; precision loss is not a concern.
+                        #[allow(clippy::cast_precision_loss)]
+                        let duration = loc.idle_duration.max(1) as f64;
+                        noise.idle_pauli_probs(duration).total()
+                    } else {
+                        noise.p1
+                    }
                 }
                 _ => noise.p1,
             }
@@ -1326,7 +1368,7 @@ fn parse_records_json(json: &str) -> Vec<Vec<i32>> {
 /// Extract measurement record indices from a JSON object string.
 ///
 /// Prefers `"meas_ids"` (absolute `MeasId` IDs) when available.
-/// Falls back to `"records"` (negative offsets) for legacy compatibility.
+/// Also accepts `"records"` for DEM-style negative offsets.
 fn extract_records_array(json: &str) -> Vec<i32> {
     // Prefer meas_ids (absolute, stable IDs from MeasId)
     if let Some(pos) = json.find("\"meas_ids\"") {

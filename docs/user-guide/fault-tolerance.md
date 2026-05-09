@@ -278,7 +278,7 @@ use pecos_qec::DemBuilder;
 
 // Build DEM from a fault influence map
 let dem = DemBuilder::new(&influence_map)
-    .with_noise(0.01, 0.01, 0.01, 0.01)  // p1, p2, p_meas, p_init
+    .with_noise(0.01, 0.01, 0.01, 0.01)  // p1, p2, p_meas, p_prep
     .with_detectors_json(detectors_json)?
     .with_observables_json(observables_json)?
     .build();

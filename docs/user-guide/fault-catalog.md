@@ -32,8 +32,9 @@ exploration, or as a reusable base for parameter sweeps.
 **Parameterized (with noise):** fills in probabilities based on a stochastic
 noise model. Use this for sampling, decoding, and probability-weighted queries.
 
+<!--setup-->
 ```python
-from pecos.quantum import TickCircuit
+from pecos.quantum import PauliString, TickCircuit
 from pecos_rslib_exp import depolarizing, fault_catalog
 
 circuit = TickCircuit()
@@ -65,6 +66,7 @@ structural fields like `affected_detectors` will be empty, but
 The expensive work (Pauli propagation, detector mapping) is done once during
 construction. Changing noise is cheap -- it just updates probability fields:
 
+<!--continuation-->
 ```python
 catalog = fault_catalog(circuit)
 
@@ -84,6 +86,7 @@ update existing decoders or plans.
 
 The returned object is sequence-like:
 
+<!--continuation-->
 ```python
 print(len(catalog))
 print(catalog[0])
@@ -157,8 +160,6 @@ noise is re-parameterized.
 Example:
 
 ```python
-from pecos.quantum import PauliString
-
 for loc in catalog:
     for fault in loc.faults:
         print(f"  {fault.kind}: {fault.pauli}")
@@ -193,8 +194,10 @@ configuration_probability
 For a single selected alternative at location `i`, the full event probability is:
 
 ```python
-event_probability = fault.absolute_probability
+selected_location_index = 0
+fault = catalog[selected_location_index].faults[0]
 
+event_probability = fault.absolute_probability
 for j, loc in enumerate(catalog.locations):
     if j != selected_location_index:
         event_probability *= loc.no_fault_probability
@@ -206,7 +209,8 @@ Use `catalog.fault_configurations(k)` to lazily iterate every configuration
 where exactly `k` distinct locations fire and one alternative is chosen from
 each selected location.
 
-For `k = 0`, the iterator yields exactly one no-fault configuration:
+For `k = 0`, the iterator yields exactly one no-fault configuration. Its
+probability is the product of every location's `no_fault_probability`:
 
 ```python
 configs = list(catalog.fault_configurations(0))
@@ -219,12 +223,7 @@ assert no_fault.measurements == []
 assert no_fault.detectors == []
 assert no_fault.observables == []
 assert no_fault.selected_probability == 1.0
-```
 
-The no-fault configuration probability is the product of every location's
-`no_fault_probability`:
-
-```python
 expected = 1.0
 for loc in catalog.locations:
     expected *= loc.no_fault_probability
@@ -306,12 +305,9 @@ decoder = {}
 for syndrome, logical_weights in table.items():
     best_logical = max(logical_weights.items(), key=lambda item: item[1])[0]
     decoder[syndrome] = best_logical
-```
 
-To apply the decoder to an enumerated event, XOR the event's logical class with
-the selected correction:
 
-```python
+# Apply the decoder: XOR the event's logical class with the correction
 def xor_sorted(a, b):
     out = set(a)
     for item in b:
@@ -420,11 +416,11 @@ The structural catalog (no noise needed) lets you explore every fault event:
 ```python
 catalog = fault_catalog(circuit)
 
-# What faults can flip detector D3?
+# What faults can flip detector D0?
 for loc in catalog:
     for alt in loc.faults:
-        if 3 in alt.detectors:
-            print(f"D3 flipped by {alt.pauli} at {loc.gate_type}({loc.qubits})")
+        if 0 in alt.detectors:
+            print(f"D0 flipped by {alt.pauli} at {loc.gate_type}({loc.qubits})")
 
 # Find undetectable weight-2 logical errors:
 catalog.with_noise(p1=0.01, p2=0.05, p_meas=0.01, p_prep=0.01)
@@ -442,9 +438,19 @@ measurement records -- they are detected by forward Pauli propagation.
 Add tracked operators to a circuit via `pauli_operator`:
 
 ```python
-from pecos.quantum import PauliString
+tc2 = TickCircuit()
+tc2.tick().h([0, 1])
+tc2.tick().mz([0, 1])
+tc2.set_meta("num_measurements", "2")
+tc2.set_meta("detectors", "[]")
+tc2.set_meta("observables", "[]")
+tc2.pauli_operator(PauliString.from_str("XX"), label="logical_X")
 
-circuit.pauli_operator(PauliString.from_str("X0 X1 X2"), label="logical_X")
+cat2 = fault_catalog(tc2, p1=0.01, p2=0.0, p_meas=0.01, p_prep=0.0)
+for loc in cat2:
+    for alt in loc.faults:
+        if alt.tracked_ops:
+            print(f"{alt.pauli} flips tracked ops {alt.tracked_ops}")
 ```
 
 Each `FaultAlternative` then has a `tracked_ops` field listing which tracked

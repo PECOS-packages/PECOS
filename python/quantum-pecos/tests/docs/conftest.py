@@ -63,7 +63,7 @@ def cuda_check() -> bool:
 
 
 @pytest.fixture(autouse=True)
-def restore_cwd():
+def restore_cwd():  # noqa: ANN201
     """Restore the current working directory after each test.
 
     Some tests (e.g., WASM examples) change the working directory,

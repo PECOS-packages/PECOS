@@ -189,7 +189,7 @@ fn test_user_guide_fault_tolerance_rust_8() -> Result<(), Box<dyn std::error::Er
     let analyzer = DagFaultAnalyzer::new(&dag);
     let influence_map = analyzer.build_influence_map();
 
-    // Define detectors and tracked ops
+    // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
     let observables_json = r"[]";
 

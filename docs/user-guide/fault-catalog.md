@@ -44,28 +44,21 @@ The rest of this tutorial uses a small hand-built circuit to explain the
 concepts. Everything works the same way with surface codes or any other
 `TickCircuit`.
 
-## What is the fault catalog?
+Note: when using circuit builders like `SurfacePatch`, the detector and
+observable metadata is set automatically. The hand-built examples below
+set metadata explicitly via `set_meta` -- you normally don't need to write
+JSON strings by hand.
 
-The fault catalog exposes every possible physical fault event in a circuit:
-what Pauli error occurs at each gate, which measurements flip, which
-detectors fire, which observables flip, and which tracked operators are
-affected.
+## Core model
 
-It serves two purposes:
-
-1. **Research tool** -- explore fault anatomy, build custom decoders, analyze
-   noise sensitivity, find undetectable errors, all without committing to a
-   noise model.
-2. **Sampling infrastructure** -- parameterize with noise, then sample raw
-   measurements or enumerate fault configurations for decoding.
-
-The core model is:
-
-- each `FaultLocation` is an independent physical fault mechanism
-- each location has one or more `FaultAlternative`s
-- exactly one alternative is chosen when the location fires
-- measurement, detector, observable, and tracked-operator effects combine by
-  XOR parity
+- Each `FaultLocation` is an independent physical fault mechanism (one per
+  noisy gate in the circuit).
+- Each location has one or more `FaultAlternative`s (e.g., X/Y/Z for a
+  single-qubit depolarizing channel, 15 alternatives for two-qubit).
+- When the location fires, exactly one alternative is chosen uniformly.
+- Each alternative records which measurements, detectors, observables, and
+  tracked operators it flips.
+- Multi-fault effects combine by XOR parity.
 
 ## Structural vs Parameterized Catalogs
 

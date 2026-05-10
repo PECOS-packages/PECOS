@@ -18,7 +18,7 @@
 use std::error::Error;
 use std::fmt;
 
-use nalgebra::{DMatrix, DVector, SVD};
+use nalgebra::{DMatrix, DVector, SVD, Schur};
 use num_complex::Complex64;
 
 use crate::channel::Ptm;
@@ -95,6 +95,27 @@ pub enum MeasureError {
         /// Invalid base.
         base: f64,
     },
+    /// Subsystem dimensions are invalid for a multipartite measure.
+    InvalidSubsystemDimensions {
+        /// Subsystem dimensions supplied by the caller.
+        dims: Vec<usize>,
+        /// Actual Hilbert-space dimension of the density matrix.
+        matrix_dim: usize,
+    },
+    /// A subsystem index is outside the supplied tensor-factor list.
+    SubsystemOutOfRange {
+        /// Number of subsystems supplied by the caller.
+        num_subsystems: usize,
+        /// Invalid subsystem index.
+        subsystem: usize,
+    },
+    /// A subsystem was listed more than once.
+    DuplicateSubsystem {
+        /// Repeated subsystem index.
+        subsystem: usize,
+    },
+    /// An eigendecomposition did not converge.
+    EigenDecompositionFailed,
 }
 
 impl fmt::Display for MeasureError {
@@ -149,11 +170,85 @@ impl fmt::Display for MeasureError {
                     "entropy logarithm base must be finite, positive, and not 1; got {base}"
                 )
             }
+            Self::InvalidSubsystemDimensions { dims, matrix_dim } => write!(
+                f,
+                "invalid subsystem dimensions {dims:?} for density matrix dimension {matrix_dim}"
+            ),
+            Self::SubsystemOutOfRange {
+                num_subsystems,
+                subsystem,
+            } => write!(
+                f,
+                "subsystem {subsystem} is outside the {num_subsystems}-subsystem tensor product"
+            ),
+            Self::DuplicateSubsystem { subsystem } => {
+                write!(f, "duplicate subsystem index: {subsystem}")
+            }
+            Self::EigenDecompositionFailed => write!(f, "eigendecomposition failed"),
         }
     }
 }
 
 impl Error for MeasureError {}
+
+/// Method-style partial trace operations for state density matrices.
+///
+/// This trait is implemented for `DMatrix<Complex64>` because PECOS currently
+/// represents state density matrices as dense complex matrices. The methods
+/// validate that the matrix is a trace-one Hermitian density matrix before
+/// reducing it.
+pub trait DensityMatrixPartialTrace {
+    /// Returns the reduced density matrix after tracing out selected
+    /// tensor-product subsystems.
+    ///
+    /// `dims[i]` is the Hilbert-space dimension of subsystem `i`. Subsystem 0
+    /// is the fastest-varying factor in the computational-basis index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the matrix is not a structurally valid density
+    /// matrix, when `dims` do not match its shape, or when `traced_subsystems`
+    /// contains an out-of-range or repeated subsystem.
+    fn partial_trace(
+        &self,
+        dims: &[usize],
+        traced_subsystems: &[usize],
+    ) -> Result<DMatrix<Complex64>, MeasureError>;
+
+    /// Returns the reduced density matrix after tracing out selected qubits.
+    ///
+    /// Qubit indexing is little-endian: qubit 0 is the least-significant bit
+    /// of the computational-basis index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the matrix is not a structurally valid density
+    /// matrix, when its shape is not `2^num_qubits x 2^num_qubits`, or when
+    /// `traced_qubits` contains an out-of-range or repeated qubit.
+    fn partial_trace_qubits(
+        &self,
+        num_qubits: usize,
+        traced_qubits: &[usize],
+    ) -> Result<DMatrix<Complex64>, MeasureError>;
+}
+
+impl DensityMatrixPartialTrace for DMatrix<Complex64> {
+    fn partial_trace(
+        &self,
+        dims: &[usize],
+        traced_subsystems: &[usize],
+    ) -> Result<DMatrix<Complex64>, MeasureError> {
+        partial_trace_subsystems(self, dims, traced_subsystems)
+    }
+
+    fn partial_trace_qubits(
+        &self,
+        num_qubits: usize,
+        traced_qubits: &[usize],
+    ) -> Result<DMatrix<Complex64>, MeasureError> {
+        partial_trace_qubits(self, num_qubits, traced_qubits)
+    }
+}
 
 /// Returns pure-state fidelity `|<left|right>|^2`.
 ///
@@ -322,6 +417,181 @@ pub fn gate_error(left: &Ptm, right: &Ptm) -> Result<f64, MeasureError> {
     Ok(1.0 - average_gate_fidelity(left, right)?)
 }
 
+/// Returns the two-qubit concurrence of a density matrix.
+///
+/// For a two-qubit state `rho`, this computes Wootters' concurrence using the
+/// spin-flipped matrix `rho_tilde = (Y ⊗ Y) rho* (Y ⊗ Y)` and the square roots
+/// of the eigenvalues of `rho rho_tilde`.
+///
+/// # Errors
+///
+/// Returns an error when `rho` is not a structurally valid 4x4 density matrix,
+/// or when the eigendecomposition fails.
+pub fn concurrence(rho: &DMatrix<Complex64>) -> Result<f64, MeasureError> {
+    validate_density_matrix(rho)?;
+    if rho.nrows() != 4 || rho.ncols() != 4 {
+        return Err(MeasureError::InvalidMatrixShape {
+            expected_rows: 4,
+            expected_cols: 4,
+            rows: rho.nrows(),
+            cols: rho.ncols(),
+        });
+    }
+
+    let yy = pauli_y_tensor_pauli_y();
+    let rho_conj = rho.map(|value| value.conj());
+    let rho_tilde = &yy * rho_conj * yy;
+    let product = rho * rho_tilde;
+    let eigenvalues = Schur::try_new(product, DEFAULT_TOLERANCE, 0)
+        .and_then(|schur| schur.eigenvalues())
+        .ok_or(MeasureError::EigenDecompositionFailed)?;
+
+    let mut roots: Vec<f64> = eigenvalues
+        .iter()
+        .map(|lambda| {
+            if lambda.im.abs() <= 1e-8 {
+                lambda.re.max(0.0).sqrt()
+            } else {
+                lambda.norm().sqrt()
+            }
+        })
+        .collect();
+    roots.sort_by(|a, b| b.total_cmp(a));
+    let value = roots[0] - roots[1] - roots[2] - roots[3];
+    Ok(value.max(0.0).min(1.0))
+}
+
+/// Returns the two-qubit entanglement of formation.
+///
+/// This is derived from [`concurrence`] as
+/// `h((1 + sqrt(1 - C^2)) / 2)`, where `h` is binary entropy.
+///
+/// # Errors
+///
+/// Returns an error when [`concurrence`] fails.
+pub fn entanglement_of_formation(rho: &DMatrix<Complex64>) -> Result<f64, MeasureError> {
+    let concurrence = concurrence(rho)?;
+    let argument = (1.0 + (1.0 - concurrence * concurrence).max(0.0).sqrt()) / 2.0;
+    Ok(binary_entropy(argument))
+}
+
+/// Returns the reduced density matrix after tracing out selected subsystems.
+///
+/// `dims[i]` is the Hilbert-space dimension of subsystem `i`. Subsystem 0 is
+/// the fastest-varying factor in the computational-basis index, matching PECOS
+/// little-endian qubit ordering. The returned density matrix keeps untraced
+/// subsystems in ascending subsystem-index order.
+///
+/// # Errors
+///
+/// Returns an error when `rho` is not a structurally valid density matrix,
+/// when the product of `dims` does not match `rho`, or when
+/// `traced_subsystems` contains an out-of-range or repeated subsystem.
+pub fn partial_trace_subsystems(
+    rho: &DMatrix<Complex64>,
+    dims: &[usize],
+    traced_subsystems: &[usize],
+) -> Result<DMatrix<Complex64>, MeasureError> {
+    validate_density_matrix(rho)?;
+    validate_subsystem_dimensions(rho, dims)?;
+
+    let mut traced = traced_subsystems.to_vec();
+    traced.sort_unstable();
+    for window in traced.windows(2) {
+        if window[0] == window[1] {
+            return Err(MeasureError::DuplicateSubsystem {
+                subsystem: window[0],
+            });
+        }
+    }
+    for &subsystem in &traced {
+        if subsystem >= dims.len() {
+            return Err(MeasureError::SubsystemOutOfRange {
+                num_subsystems: dims.len(),
+                subsystem,
+            });
+        }
+    }
+
+    let kept: Vec<usize> = (0..dims.len())
+        .filter(|subsystem| traced.binary_search(subsystem).is_err())
+        .collect();
+    let out_dim = subsystem_product(dims, &kept)?;
+    let traced_dim = subsystem_product(dims, &traced)?;
+    let strides = subsystem_strides(dims)?;
+
+    let mut out = DMatrix::zeros(out_dim, out_dim);
+    for kept_row in 0..out_dim {
+        for kept_col in 0..out_dim {
+            let mut value = Complex64::new(0.0, 0.0);
+            for traced_idx in 0..traced_dim {
+                let row =
+                    embed_subsystem_index(dims, &strides, &kept, kept_row, &traced, traced_idx);
+                let col =
+                    embed_subsystem_index(dims, &strides, &kept, kept_col, &traced, traced_idx);
+                value += rho[(row, col)];
+            }
+            out[(kept_row, kept_col)] = value;
+        }
+    }
+    Ok(out)
+}
+
+/// Returns the reduced density matrix after tracing out selected qubits.
+///
+/// Qubit indexing is little-endian: qubit 0 is the least-significant bit of
+/// the computational-basis index. The returned density matrix keeps untraced
+/// qubits in ascending qubit-index order.
+///
+/// # Errors
+///
+/// Returns an error when `rho` is not a structurally valid density matrix, when
+/// its shape is not `2^num_qubits x 2^num_qubits`, or when `traced_qubits`
+/// contains an out-of-range or repeated qubit.
+pub fn partial_trace_qubits(
+    rho: &DMatrix<Complex64>,
+    num_qubits: usize,
+    traced_qubits: &[usize],
+) -> Result<DMatrix<Complex64>, MeasureError> {
+    let dims = vec![2; num_qubits];
+    partial_trace_subsystems(rho, &dims, traced_qubits)
+}
+
+/// Returns bipartite quantum mutual information.
+///
+/// `dims` is `(dim_a, dim_b)`, and `rho` must have shape
+/// `(dim_a * dim_b) x (dim_a * dim_b)`. Subsystem `A` is the fastest-varying
+/// factor in the computational-basis index, matching
+/// [`partial_trace_subsystems`].
+///
+/// # Errors
+///
+/// Returns an error when `rho` is not a structurally valid density matrix, when
+/// `dims` are invalid, or when entropy evaluation fails on a reduced state.
+pub fn mutual_information(
+    rho: &DMatrix<Complex64>,
+    dims: (usize, usize),
+) -> Result<f64, MeasureError> {
+    validate_density_matrix(rho)?;
+    let (dim_a, dim_b) = dims;
+    let Some(total_dim) = dim_a.checked_mul(dim_b) else {
+        return Err(MeasureError::InvalidSubsystemDimensions {
+            dims: vec![dim_a, dim_b],
+            matrix_dim: rho.nrows(),
+        });
+    };
+    if dim_a == 0 || dim_b == 0 || rho.nrows() != total_dim || rho.ncols() != total_dim {
+        return Err(MeasureError::InvalidSubsystemDimensions {
+            dims: vec![dim_a, dim_b],
+            matrix_dim: rho.nrows(),
+        });
+    }
+
+    let rho_a = partial_trace_subsystems(rho, &[dim_a, dim_b], &[1])?;
+    let rho_b = partial_trace_subsystems(rho, &[dim_a, dim_b], &[0])?;
+    Ok(entropy(&rho_a)? + entropy(&rho_b)? - entropy(rho)?)
+}
+
 fn validate_state_vector(vector: &DVector<Complex64>) -> Result<(), MeasureError> {
     let mut norm_sqr = 0.0;
     for value in vector.iter() {
@@ -391,6 +661,129 @@ fn validate_entropy_base(base: f64) -> Result<(), MeasureError> {
 fn trace(matrix: &DMatrix<Complex64>) -> Complex64 {
     let n = matrix.nrows().min(matrix.ncols());
     (0..n).map(|idx| matrix[(idx, idx)]).sum()
+}
+
+fn pauli_y_tensor_pauli_y() -> DMatrix<Complex64> {
+    let i = Complex64::new(0.0, 1.0);
+    let minus_i = Complex64::new(0.0, -1.0);
+    let y = DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            minus_i,
+            i,
+            Complex64::new(0.0, 0.0),
+        ],
+    );
+    kronecker(&y, &y)
+}
+
+fn kronecker(left: &DMatrix<Complex64>, right: &DMatrix<Complex64>) -> DMatrix<Complex64> {
+    let rows = left.nrows() * right.nrows();
+    let cols = left.ncols() * right.ncols();
+    let mut out = DMatrix::zeros(rows, cols);
+    for left_row in 0..left.nrows() {
+        for left_col in 0..left.ncols() {
+            let scale = left[(left_row, left_col)];
+            for right_row in 0..right.nrows() {
+                for right_col in 0..right.ncols() {
+                    out[(
+                        left_row * right.nrows() + right_row,
+                        left_col * right.ncols() + right_col,
+                    )] = scale * right[(right_row, right_col)];
+                }
+            }
+        }
+    }
+    out
+}
+
+fn validate_subsystem_dimensions(
+    rho: &DMatrix<Complex64>,
+    dims: &[usize],
+) -> Result<(), MeasureError> {
+    let Some(total_dim) =
+        dims.iter().try_fold(
+            1usize,
+            |acc, &dim| {
+                if dim == 0 { None } else { acc.checked_mul(dim) }
+            },
+        )
+    else {
+        return Err(MeasureError::InvalidSubsystemDimensions {
+            dims: dims.to_vec(),
+            matrix_dim: rho.nrows(),
+        });
+    };
+
+    if rho.nrows() == total_dim && rho.ncols() == total_dim {
+        Ok(())
+    } else {
+        Err(MeasureError::InvalidSubsystemDimensions {
+            dims: dims.to_vec(),
+            matrix_dim: rho.nrows(),
+        })
+    }
+}
+
+fn subsystem_product(dims: &[usize], subsystems: &[usize]) -> Result<usize, MeasureError> {
+    subsystems.iter().try_fold(1usize, |acc, &subsystem| {
+        acc.checked_mul(dims[subsystem])
+            .ok_or_else(|| MeasureError::InvalidSubsystemDimensions {
+                dims: dims.to_vec(),
+                matrix_dim: usize::MAX,
+            })
+    })
+}
+
+fn subsystem_strides(dims: &[usize]) -> Result<Vec<usize>, MeasureError> {
+    let mut strides = Vec::with_capacity(dims.len());
+    let mut stride = 1usize;
+    for &dim in dims {
+        strides.push(stride);
+        stride =
+            stride
+                .checked_mul(dim)
+                .ok_or_else(|| MeasureError::InvalidSubsystemDimensions {
+                    dims: dims.to_vec(),
+                    matrix_dim: usize::MAX,
+                })?;
+    }
+    Ok(strides)
+}
+
+fn embed_subsystem_index(
+    dims: &[usize],
+    strides: &[usize],
+    kept_subsystems: &[usize],
+    kept_index: usize,
+    traced_subsystems: &[usize],
+    traced_index: usize,
+) -> usize {
+    let mut index = 0usize;
+    let mut kept_remaining = kept_index;
+    for &subsystem in kept_subsystems {
+        let coord = kept_remaining % dims[subsystem];
+        kept_remaining /= dims[subsystem];
+        index += coord * strides[subsystem];
+    }
+    let mut traced_remaining = traced_index;
+    for &subsystem in traced_subsystems {
+        let coord = traced_remaining % dims[subsystem];
+        traced_remaining /= dims[subsystem];
+        index += coord * strides[subsystem];
+    }
+    index
+}
+
+fn binary_entropy(probability: f64) -> f64 {
+    let p = probability.clamp(0.0, 1.0);
+    if p <= DEFAULT_TOLERANCE || (1.0 - p) <= DEFAULT_TOLERANCE {
+        0.0
+    } else {
+        -p * p.log2() - (1.0 - p) * (1.0 - p).log2()
+    }
 }
 
 fn hilbert_dim(num_qubits: usize) -> Result<usize, MeasureError> {
@@ -477,6 +870,104 @@ mod tests {
         assert!(matches!(
             purity(&non_hermitian).unwrap_err(),
             MeasureError::NonHermitianMatrix { .. }
+        ));
+    }
+
+    #[test]
+    fn two_qubit_entanglement_measures_match_known_states() {
+        let bell = ket(&[
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+        ]);
+        let bell_rho = pure_density(&bell);
+        assert_close(concurrence(&bell_rho).unwrap(), 1.0);
+        assert_close(entanglement_of_formation(&bell_rho).unwrap(), 1.0);
+        assert_close(mutual_information(&bell_rho, (2, 2)).unwrap(), 2.0);
+
+        let zero_zero = ket(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ]);
+        let product = pure_density(&zero_zero);
+        assert_close(concurrence(&product).unwrap(), 0.0);
+        assert_close(entanglement_of_formation(&product).unwrap(), 0.0);
+        assert_close(mutual_information(&product, (2, 2)).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn mutual_information_accepts_non_qubit_subsystem_dims() {
+        let mut rho = DMatrix::zeros(6, 6);
+        rho[(0, 0)] = Complex64::new(0.5, 0.0);
+        rho[(5, 5)] = Complex64::new(0.5, 0.0);
+
+        assert_close(mutual_information(&rho, (2, 3)).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn partial_trace_supports_method_and_qubit_forms() {
+        let bell = ket(&[
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+        ]);
+        let bell_rho = pure_density(&bell);
+
+        let reduced_from_method = bell_rho.partial_trace(&[2, 2], &[1]).unwrap();
+        let reduced_from_qubits = partial_trace_qubits(&bell_rho, 2, &[1]).unwrap();
+        let expected = DMatrix::from_diagonal_element(2, 2, Complex64::new(0.5, 0.0));
+
+        assert_close((&reduced_from_method - &expected).norm(), 0.0);
+        assert_close((&reduced_from_qubits - expected).norm(), 0.0);
+    }
+
+    #[test]
+    fn partial_trace_subsystems_accepts_arbitrary_tensor_factors() {
+        let mut state = DVector::zeros(12);
+        state[2] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        state[9] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        let rho = pure_density(&state);
+
+        let reduced = partial_trace_subsystems(&rho, &[2, 3, 2], &[1]).unwrap();
+        let mut expected = DMatrix::zeros(4, 4);
+        expected[(0, 0)] = Complex64::new(0.5, 0.0);
+        expected[(0, 3)] = Complex64::new(0.5, 0.0);
+        expected[(3, 0)] = Complex64::new(0.5, 0.0);
+        expected[(3, 3)] = Complex64::new(0.5, 0.0);
+
+        assert_close((reduced - expected).norm(), 0.0);
+    }
+
+    #[test]
+    fn partial_trace_rejects_repeated_or_out_of_range_subsystems() {
+        let mixed = DMatrix::from_diagonal_element(4, 4, Complex64::new(0.25, 0.0));
+        assert!(matches!(
+            partial_trace_subsystems(&mixed, &[2, 2], &[0, 0]).unwrap_err(),
+            MeasureError::DuplicateSubsystem { subsystem: 0 }
+        ));
+        assert!(matches!(
+            partial_trace_subsystems(&mixed, &[2, 2], &[2]).unwrap_err(),
+            MeasureError::SubsystemOutOfRange {
+                num_subsystems: 2,
+                subsystem: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn entanglement_measures_reject_invalid_shapes() {
+        let mixed = DMatrix::from_diagonal_element(2, 2, Complex64::new(0.5, 0.0));
+        assert!(matches!(
+            concurrence(&mixed).unwrap_err(),
+            MeasureError::InvalidMatrixShape { .. }
+        ));
+        assert!(matches!(
+            mutual_information(&mixed, (2, 2)).unwrap_err(),
+            MeasureError::InvalidSubsystemDimensions { .. }
         ));
     }
 

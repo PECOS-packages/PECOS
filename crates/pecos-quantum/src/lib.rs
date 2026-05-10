@@ -107,8 +107,10 @@ pub use channel::{
     random_1q_clifford, random_2q_clifford, random_clifford, random_pauli,
 };
 pub use measures::{
-    MeasureError, average_gate_fidelity, entropy, entropy_with_base, gate_error, process_fidelity,
-    purity, state_fidelity, state_fidelity_with_density_matrix,
+    DensityMatrixPartialTrace, MeasureError, average_gate_fidelity, concurrence,
+    entanglement_of_formation, entropy, entropy_with_base, gate_error, mutual_information,
+    partial_trace_qubits, partial_trace_subsystems, process_fidelity, purity, state_fidelity,
+    state_fidelity_with_density_matrix,
 };
 
 // Re-export operator matrix types for convenient method-style matrix conversion

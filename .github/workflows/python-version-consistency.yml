@@ -3,9 +3,11 @@ name: Python Version Consistency Check
 on:
   push:
     paths:
+      - 'pyproject.toml'
       - 'python/**/pyproject.toml'
   pull_request:
     paths:
+      - 'pyproject.toml'
       - 'python/**/pyproject.toml'
 
 jobs:
@@ -17,8 +19,8 @@ jobs:
 
       - name: Check version consistency
         run: |
-          # Find all pyproject.toml files in the python/ directory
-          PYPROJECT_FILES=$(find python -name pyproject.toml)
+          # Check the root uv workspace project plus all Python packages.
+          PYPROJECT_FILES="pyproject.toml $(find python -name pyproject.toml | sort)"
 
           # Initialize variables
           FIRST_VERSION=""
@@ -26,7 +28,13 @@ jobs:
 
           # Check each pyproject.toml file
           for file in $PYPROJECT_FILES; do
-            VERSION=$(grep -oP 'version = "\K[^"]+' $file)
+            VERSION=$(grep -oP '^version = "\K[^"]+' "$file")
+
+            if [ -z "$VERSION" ]; then
+              echo "Error: No project version found in $file"
+              INCONSISTENT=true
+              continue
+            fi
 
             if [ -z "$FIRST_VERSION" ]; then
               FIRST_VERSION=$VERSION

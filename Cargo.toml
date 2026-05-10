@@ -151,13 +151,16 @@ assert_cmd = "2"
 criterion = "0.8"
 paste = "1"
 random_tester = "0.1"
+proptest = "1"
 
 # --- ZX calculus ---
 quizx = "0.3"
 
 # --- Decoder libraries ---
 fusion-blossom = "0.2"
-mwpf = { git = "https://github.com/yuewuo/mwpf", tag = "v0.2.12", default-features = false, features = ["f64_weight"] }
+mwpf = { git = "https://github.com/yuewuo/mwpf", tag = "v0.2.12", default-features = false, features = [
+  "f64_weight",
+] }
 relay-bp = "0.2"
 # ndarray 0.16 for relay-bp compat (relay-bp uses ndarray 0.16, PECOS uses 0.17)
 ndarray-016 = { package = "ndarray", version = "0.16" }
@@ -232,7 +235,7 @@ strip = true      # Strip debug symbols for smaller binaries
 [profile.profiling]
 inherits = "release"
 strip = false
-debug = 1  # line tables only — minimal size impact
+debug = 1            # line tables only — minimal size impact
 
 # Native profile: release + CPU-specific optimizations
 # Use with: cargo build --profile native
@@ -252,4 +255,4 @@ multiple-crate-versions = "allow"
 # Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
 similar-names = "allow"
 many-single-char-names = "allow"
-too-many-lines = "allow"          # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
+too-many-lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks

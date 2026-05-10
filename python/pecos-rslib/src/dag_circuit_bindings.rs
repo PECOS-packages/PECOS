@@ -24,10 +24,85 @@
 
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
-use pecos_core::{Angle64, GateQubits, GateSignature, TimeUnits};
+use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
 use pecos_quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+
+type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
+
+fn pauli_string_terms(pauli: &pecos_core::PauliString) -> Vec<(String, usize)> {
+    pauli
+        .paulis()
+        .iter()
+        .map(|(p, q)| {
+            let label = match p {
+                Pauli::I => "I",
+                Pauli::X => "X",
+                Pauli::Y => "Y",
+                Pauli::Z => "Z",
+            };
+            (label.to_string(), q.index())
+        })
+        .collect()
+}
+
+fn mixed_pauli_terms(channel: &ChannelExpr) -> PyResult<Vec<PyMixedPauliTerm>> {
+    match channel {
+        ChannelExpr::Unitary(unitary) => {
+            let pauli = unitary.clone().try_to_pauli_string().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "channel unitary is not representable as a Pauli operator",
+                )
+            })?;
+            Ok(vec![(1.0, pauli_string_terms(&pauli))])
+        }
+        ChannelExpr::MixedUnitary(ops) => ops
+            .iter()
+            .map(|(prob, unitary)| {
+                let pauli = unitary.clone().try_to_pauli_string().ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "mixed-unitary channel contains a non-Pauli unitary",
+                    )
+                })?;
+                Ok((*prob, pauli_string_terms(&pauli)))
+            })
+            .collect(),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "channel is not a Pauli mixed-unitary channel",
+        )),
+    }
+}
+
+fn validate_probability(name: &str, p: f64) -> PyResult<()> {
+    if (0.0..=1.0).contains(&p) {
+        Ok(())
+    } else {
+        Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} must be in [0, 1], got {p}"
+        )))
+    }
+}
+
+fn receives_two_qubit_noise(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::CRZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+    )
+}
 
 /// Convert a Rust Attribute to a Python object.
 fn attribute_to_py(py: Python<'_>, attr: &Attribute) -> Py<PyAny> {
@@ -632,6 +707,22 @@ impl PyGate {
     /// Check if this is a two-qubit gate.
     fn is_two_qubit(&self) -> bool {
         self.inner.is_two_qubit()
+    }
+
+    /// Check if this gate carries a channel payload.
+    fn is_channel(&self) -> bool {
+        self.inner.is_channel()
+    }
+
+    /// Return a Pauli mixed-unitary channel payload as `(probability, terms)`.
+    ///
+    /// Each term is a list of `(pauli, qubit)` pairs. Identity terms are
+    /// represented by an empty list. Non-Pauli channels raise `ValueError`.
+    fn channel_mixed_pauli_terms(&self) -> PyResult<Vec<PyMixedPauliTerm>> {
+        let channel = self.inner.channel_expr().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("gate does not carry a channel payload")
+        })?;
+        mixed_pauli_terms(channel)
     }
 
     // Factory methods for common gates
@@ -2456,6 +2547,106 @@ impl PyTickCircuit {
     /// `DEPOLARIZE1` on idle qubits between ticks.
     fn fill_idle_gates(&mut self) {
         self.inner.fill_idle_gates();
+    }
+
+    /// Return a new circuit with explicit Pauli channel operations inserted.
+    ///
+    /// This compiles gate-triggered quantum noise into inline channel gates.
+    /// Measurement readout noise is intentionally not represented here because
+    /// it is classical outcome noise, not a quantum channel after measurement.
+    #[pyo3(signature = (p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0))]
+    fn with_noise(&self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> PyResult<Self> {
+        validate_probability("p1", p1)?;
+        validate_probability("p2", p2)?;
+        validate_probability("p_meas", p_meas)?;
+        validate_probability("p_prep", p_prep)?;
+
+        if p_meas > 0.0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "TickCircuit.with_noise inserts quantum channel operations and cannot represent classical measurement readout noise; use sim_neo(...).noise(...) for p_meas",
+            ));
+        }
+
+        if p2 > 0.0 {
+            for (tick_idx, gate) in self.inner.iter_gates_with_tick() {
+                if receives_two_qubit_noise(gate.gate_type) && !gate.qubits.len().is_multiple_of(2)
+                {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "{:?} at tick {tick_idx} has {} qubits; expected pairs",
+                        gate.gate_type,
+                        gate.qubits.len()
+                    )));
+                }
+            }
+        }
+
+        let noisy = self
+            .inner
+            .try_with_noise(&|gate: &Gate| -> Vec<ChannelExpr> {
+                let mut channels = Vec::new();
+                match gate.gate_type {
+                    GateType::PZ | GateType::QAlloc if p_prep > 0.0 => {
+                        channels.extend(
+                            gate.qubits
+                                .iter()
+                                .map(|q| pecos_core::channel::BitFlip(p_prep, q.index())),
+                        );
+                    }
+                    GateType::I
+                    | GateType::X
+                    | GateType::Y
+                    | GateType::Z
+                    | GateType::H
+                    | GateType::F
+                    | GateType::Fdg
+                    | GateType::SX
+                    | GateType::SXdg
+                    | GateType::SY
+                    | GateType::SYdg
+                    | GateType::SZ
+                    | GateType::SZdg
+                    | GateType::T
+                    | GateType::Tdg
+                    | GateType::RX
+                    | GateType::RY
+                    | GateType::RZ
+                    | GateType::U
+                    | GateType::R1XY
+                    | GateType::Idle
+                        if p1 > 0.0 =>
+                    {
+                        channels.extend(
+                            gate.qubits
+                                .iter()
+                                .map(|q| pecos_core::channel::Depolarizing(p1, q.index())),
+                        );
+                    }
+                    GateType::CX
+                    | GateType::CY
+                    | GateType::CZ
+                    | GateType::SZZ
+                    | GateType::SZZdg
+                    | GateType::SXX
+                    | GateType::SXXdg
+                    | GateType::SYY
+                    | GateType::SYYdg
+                    | GateType::SWAP
+                    | GateType::CRZ
+                    | GateType::RXX
+                    | GateType::RYY
+                    | GateType::RZZ
+                        if p2 > 0.0 =>
+                    {
+                        channels.extend(gate.qubits.chunks_exact(2).map(|pair| {
+                            pecos_core::channel::Depolarizing2(p2, pair[0].index(), pair[1].index())
+                        }));
+                    }
+                    _ => {}
+                }
+                channels
+            })
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(Self { inner: noisy })
     }
 
     /// Compact ticks by merging gates into earlier ticks when possible.

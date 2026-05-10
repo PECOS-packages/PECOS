@@ -1450,6 +1450,10 @@ impl UnitaryRep {
                 },
                 qubits,
             ) => {
+                if angle == Angle64::ZERO {
+                    return Some(PauliString::identity());
+                }
+
                 // Only half-turn rotations are Pauli operators
                 let half = Angle64::HALF_TURN;
                 let neg_half = negate_angle(half);
@@ -4215,6 +4219,21 @@ mod tests {
             assert_eq!(ps.get(2), crate::Pauli::Z);
         } else {
             panic!("Expected Pauli variant");
+        }
+    }
+
+    #[test]
+    fn test_try_to_pauli_string_zero_rotation_is_identity() {
+        for unitary in [
+            I(0),
+            RX(Angle64::ZERO, 0),
+            RY(Angle64::ZERO, 1),
+            RZ(Angle64::ZERO, 2),
+        ] {
+            let ps = unitary
+                .try_to_pauli_string()
+                .expect("zero rotation should convert to identity Pauli");
+            assert_eq!(ps.weight(), 0);
         }
     }
 

@@ -149,6 +149,7 @@ pub mod command;
 pub mod ecs;
 pub mod engines;
 pub mod extensible;
+pub mod inline_channel;
 pub mod noise;
 pub mod outcome;
 pub mod program;

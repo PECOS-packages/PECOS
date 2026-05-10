@@ -22,7 +22,7 @@
 //!     .run())
 //! ```
 
-use pecos_core::{Angle64, PauliString};
+use pecos_core::{Angle64, ChannelExpr, Gate, Pauli, PauliString, QuarterPhase, QubitId};
 use pecos_neo::command::CommandBuilder;
 use pecos_neo::noise::{
     ComposableNoiseModel, MeasurementChannel, PreparationChannel, SingleQubitChannel,
@@ -547,6 +547,10 @@ impl PySimNeoBuilder {
     /// All backends return `RawMeasurementResult` which supports:
     /// `result[shot]`, `result.get(shot, meas)`, `len(result)`, iteration.
     fn run(&self) -> PyResult<PyRawMeasurementResult> {
+        if self.tick_circuit.has_channel_operations() {
+            return self.run_inline_channel_circuit();
+        }
+
         if self.backend == "meas_sampling" {
             return self.run_meas_sampling();
         }
@@ -597,6 +601,48 @@ impl PySimNeoBuilder {
 }
 
 impl PySimNeoBuilder {
+    fn run_inline_channel_circuit(&self) -> PyResult<PyRawMeasurementResult> {
+        if self.noise_config.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "sim_neo received a TickCircuit with inline channel operations; do not also pass .noise()",
+            ));
+        }
+
+        match self.backend.as_str() {
+            "statevec" => self.run_inline_channel_density_matrix(),
+            "stabilizer" => self.run_inline_pauli_channel_stabilizer(),
+            "stabmps" => Err(pyo3::exceptions::PyValueError::new_err(
+                "stab_mps backend does not support inline channel operations; use statevec()/default for density-matrix execution",
+            )),
+            "meas_sampling" => Err(pyo3::exceptions::PyValueError::new_err(
+                "meas_sampling backend builds its own measurement model and does not consume inline channel operations",
+            )),
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown backend: {other}"
+            ))),
+        }
+    }
+
+    fn run_inline_channel_density_matrix(&self) -> PyResult<PyRawMeasurementResult> {
+        let rows = pecos_neo::inline_channel::run_inline_channels_density_matrix(
+            &self.tick_circuit,
+            self.shots,
+            self.seed,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(PyRawMeasurementResult::from_rows(rows))
+    }
+
+    fn run_inline_pauli_channel_stabilizer(&self) -> PyResult<PyRawMeasurementResult> {
+        let rows = pecos_neo::inline_channel::run_inline_pauli_channels_stabilizer(
+            &self.tick_circuit,
+            self.shots,
+            self.seed,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(PyRawMeasurementResult::from_rows(rows))
+    }
+
     /// DEM sampling backend: dispatches to stochastic or coherent path based on method.
     fn run_meas_sampling(&self) -> PyResult<PyRawMeasurementResult> {
         let noise_config = self.noise_config.as_ref().ok_or_else(|| {
@@ -749,7 +795,7 @@ impl PySimNeoBuilder {
 
 /// Convert CommandQueue to Vec<Gate> for EEG analysis.
 fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_core::Gate> {
-    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
+    use pecos_core::{GateAngles, GateMeasIds, GateParams};
 
     commands
         .iter()
@@ -789,11 +835,14 @@ fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_c
 #[pyfunction]
 #[pyo3(name = "sim_neo")]
 pub fn py_sim_neo(tick_circuit: &Bound<'_, PyAny>) -> PyResult<PySimNeoBuilder> {
-    let commands = extract_commands(tick_circuit)?;
-
     // Build a Rust TickCircuit from the Python object.
     // This is the canonical circuit representation used by DemSampler.
     let tc = build_rust_tick_circuit(tick_circuit)?;
+    let commands = if tc.has_channel_operations() {
+        pecos_neo::command::CommandQueue::new()
+    } else {
+        extract_commands(tick_circuit)?
+    };
 
     Ok(PySimNeoBuilder {
         commands,
@@ -999,6 +1048,32 @@ fn parse_python_pauli_string(text: &str) -> Option<PauliString> {
     ))
 }
 
+fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExpr> {
+    let terms: Vec<(f64, Vec<(String, usize)>)> =
+        gate.call_method0("channel_mixed_pauli_terms")?.extract()?;
+    let mut ops = Vec::with_capacity(terms.len());
+    for (probability, terms) in terms {
+        let mut paulis = Vec::with_capacity(terms.len());
+        for (label, qubit) in terms {
+            let pauli = match label.as_str() {
+                "I" => continue,
+                "X" => Pauli::X,
+                "Y" => Pauli::Y,
+                "Z" => Pauli::Z,
+                other => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "unsupported channel Pauli label {other:?}"
+                    )));
+                }
+            };
+            paulis.push((pauli, QubitId(qubit)));
+        }
+        let pauli_string = PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis);
+        ops.push((probability, pecos_core::UnitaryRep::from(pauli_string)));
+    }
+    Ok(ChannelExpr::MixedUnitary(ops))
+}
+
 /// Create detector or observable annotations from JSON metadata.
 fn create_annotations_from_json(
     tc: &mut pecos_quantum::TickCircuit,
@@ -1036,6 +1111,10 @@ fn build_gate_from_python(
 ) -> PyResult<pecos_core::Gate> {
     use pecos_core::gate_type::GateType;
     use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
+
+    if gate_name == "Channel" {
+        return Ok(Gate::channel(channel_expr_from_python_gate(gate)?));
+    }
 
     let gate_type = match gate_name {
         "H" => GateType::H,

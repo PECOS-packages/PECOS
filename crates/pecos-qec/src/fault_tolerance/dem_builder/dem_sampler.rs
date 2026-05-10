@@ -71,7 +71,7 @@ use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
-use super::types::{PerGateTypeNoise, combine_probabilities};
+use super::types::{NoiseConfig, PerGateTypeNoise, combine_probabilities};
 
 // ============================================================================
 // DEM Mechanism (used during building)
@@ -1838,7 +1838,7 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     p2: f64,
     p_meas: f64,
     p_prep: f64,
-    p_idle: Option<f64>,
+    idle_noise: Option<NoiseConfig>,
     detector_records: Vec<Vec<i32>>,
     observable_records: Vec<Vec<i32>>,
     measurement_order: Option<Vec<usize>>,
@@ -1861,7 +1861,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             p2: 0.01,
             p_meas: 0.01,
             p_prep: 0.01,
-            p_idle: None,
+            idle_noise: None,
             per_gate: None,
             detector_records: Vec::new(),
             observable_records: Vec::new(),
@@ -1883,7 +1883,14 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Set idle gate noise rate.
     #[must_use]
     pub fn with_idle_noise(mut self, p_idle: f64) -> Self {
-        self.p_idle = Some(p_idle);
+        self.idle_noise = Some(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle(p_idle));
+        self
+    }
+
+    /// Set the full idle-noise model for idle gates.
+    #[must_use]
+    pub fn with_idle_noise_config(mut self, noise: NoiseConfig) -> Self {
+        self.idle_noise = Some(noise);
         self
     }
 
@@ -2056,22 +2063,12 @@ impl<'a> SamplingEngineBuilder<'a> {
                     }
                 }
                 GateType::Idle
-                    // Idle gate errors: only "after" locations, depolarizing.
-                    // Probability scales with duration: p = p_idle_rate * duration,
-                    // clamped to [0, 1].
+                    // Idle gate errors: only "after" locations. Idle is
+                    // noiseless unless idle noise or per-gate Idle rates are
+                    // explicitly configured.
                     if !loc.before =>
                 {
-                    let rates = if self.per_gate.is_some() {
-                        self.rates_1q(loc.gate_type, &loc.qubits)
-                    } else if self.p_idle.is_some_and(|p| p > 0.0) {
-                        // Duration values are small integers; precision loss is not a concern.
-                        #[allow(clippy::cast_precision_loss)]
-                        let duration = loc.idle_duration.max(1) as f64;
-                        let p = (self.p_idle.unwrap() * duration).min(1.0);
-                        [p / 3.0; 3]
-                    } else {
-                        self.rates_1q(loc.gate_type, &loc.qubits)
-                    };
+                    let rates = self.idle_rates(loc);
                     if rates.iter().any(|r| *r > 0.0) {
                         self.process_depolarizing_fault_rates(
                             loc_idx,
@@ -2279,6 +2276,40 @@ impl<'a> SamplingEngineBuilder<'a> {
         } else {
             [self.p1 / 3.0; 3]
         }
+    }
+
+    /// Resolve per-Pauli rates for an explicit idle location.
+    fn idle_rates(
+        &self,
+        loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
+    ) -> [f64; 3] {
+        if let Some(pg) = &self.per_gate {
+            let explicit_rates = loc
+                .qubits
+                .first()
+                .and_then(|q| pg.explicit_1q_rates_on(GateType::Idle, *q))
+                .or_else(|| pg.explicit_1q_rates(GateType::Idle));
+            if let Some(rates) = explicit_rates {
+                return rates;
+            }
+            if pg.base.uses_dedicated_idle_noise() {
+                #[allow(clippy::cast_precision_loss)]
+                let duration = loc.idle_duration.max(1) as f64;
+                let probs = pg.base.idle_pauli_probs(duration);
+                return [probs.px, probs.py, probs.pz];
+            }
+            return [0.0; 3];
+        }
+
+        if let Some(noise) = &self.idle_noise
+            && noise.uses_dedicated_idle_noise()
+        {
+            #[allow(clippy::cast_precision_loss)]
+            let duration = loc.idle_duration.max(1) as f64;
+            let probs = noise.idle_pauli_probs(duration);
+            return [probs.px, probs.py, probs.pz];
+        }
+        [0.0; 3]
     }
 
     /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a

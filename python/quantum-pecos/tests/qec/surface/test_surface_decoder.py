@@ -383,6 +383,49 @@ class TestDemGeneration:
 
         assert cached_dem == expected_dem
 
+    def test_native_circuit_level_dem_cache_inserts_idle_gates_only_for_idle_noise(self) -> None:
+        """Shared native DEM caching should make idle locations an explicit noise choice."""
+        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch
+        from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
+
+        patch = SurfacePatch.create(distance=3)
+        base_noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        base_params = {
+            "p1": base_noise.p1,
+            "p2": base_noise.p2,
+            "p_meas": base_noise.p_meas,
+            "p_prep": base_noise.p_prep,
+            "decompose_errors": False,
+        }
+
+        tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        expected_base_dem = generate_dem_from_tick_circuit(tc, **base_params)
+        cached_base_dem = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=base_noise,
+            basis="X",
+        )
+
+        idle_noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001, p_idle=0.002)
+        idle_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
+        idle_tc.fill_idle_gates()
+        expected_idle_dem = generate_dem_from_tick_circuit(
+            idle_tc,
+            **base_params,
+            p_idle=idle_noise.p_idle,
+        )
+        cached_idle_dem = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=idle_noise,
+            basis="X",
+        )
+
+        assert cached_base_dem == expected_base_dem
+        assert cached_idle_dem == expected_idle_dem
+        assert cached_idle_dem != cached_base_dem
+
     def test_traced_qis_native_dem_and_sampler_build(self) -> None:
         """The traced-QIS circuit source should build DEMs and samplers end-to-end."""
         from pecos.qec.surface import build_native_sampler

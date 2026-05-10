@@ -10,14 +10,14 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Integration tests for idle-gate noise. In QEC circuits, ancilla
-//! qubits often sit idle while 2Q gates run on others. Before this test,
-//! `GateType::Idle` locations were silently dropped from the DEM (they
-//! fell through the default arm in `build()`). These tests verify idle
-//! qubits now contribute per-qubit per-Pauli rates.
+//! Integration tests for idle-gate noise. `GateType::Idle` is a no-op unless
+//! noise is explicitly attached to idle locations via dedicated idle noise or
+//! per-gate idle rates.
 
 use pecos_core::{QubitId, TimeUnits};
-use pecos_qec::fault_tolerance::dem_builder::{DemSamplerBuilder, NoiseConfig, PerGateTypeNoise};
+use pecos_qec::fault_tolerance::dem_builder::{
+    DemBuilder, DemSamplerBuilder, NoiseConfig, PerGateTypeNoise,
+};
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::{DagCircuit, GateType};
 
@@ -66,9 +66,8 @@ fn idle_locations_contribute_mechanisms_when_rates_set() {
 
 #[test]
 fn idle_rates_absent_means_no_idle_contribution() {
-    // Config provides no Idle rates and uses zero base noise. DEM should
-    // have zero mechanisms: prep/measure are 0 and idle uses the
-    // per-gate-type default ([p1/3]), which is 0 here.
+    // Config provides no Idle rates and uses zero base noise. DEM should have
+    // zero mechanisms: prep/measure are 0 and idle is a no-op by default.
     let dag = build_idle_then_measure(3);
     let analyzer = DagFaultAnalyzer::new(&dag);
     let influence = analyzer.build_influence_map();
@@ -80,6 +79,43 @@ fn idle_rates_absent_means_no_idle_contribution() {
         .unwrap()
         .build().unwrap();
     assert_eq!(sim.num_mechanisms(), 0);
+}
+
+#[test]
+fn per_gate_base_p1_does_not_attach_to_idle() {
+    let dag = build_idle_then_measure(2);
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence = analyzer.build_influence_map();
+
+    let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.01, 0.0, 0.0, 0.0));
+    let sim = DemSamplerBuilder::new(&influence)
+        .with_per_gate_noise(cfg)
+        .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(sim.num_mechanisms(), 0);
+}
+
+#[test]
+fn per_gate_base_idle_noise_attaches_to_idle() {
+    let dag = build_idle_then_measure(2);
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence = analyzer.build_influence_map();
+
+    let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002));
+    let sim = DemSamplerBuilder::new(&influence)
+        .with_per_gate_noise(cfg)
+        .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert!(
+        sim.num_mechanisms() > 0,
+        "base p_idle in per-gate config should attach to idle locations",
+    );
 }
 
 #[test]
@@ -107,10 +143,9 @@ fn idle_noise_respects_per_qubit_override() {
 }
 
 #[test]
-fn idle_with_scalar_uniform_still_noisy() {
-    // Legacy uniform-depolarizing path: p1 = 0.01 applied uniformly.
-    // Idle locations should now ALSO pick up this rate (they used to
-    // be silent). Ensure the legacy path isn't regressed.
+fn idle_with_scalar_p1_is_noop() {
+    // Ordinary p1 gate noise should not attach to Idle. Idle is a no-op unless
+    // idle noise is explicitly configured.
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
     let influence = analyzer.build_influence_map();
@@ -122,10 +157,57 @@ fn idle_with_scalar_uniform_still_noisy() {
         .build()
         .unwrap();
 
-    // Before fix: zero mechanisms (idle ignored). After fix: idle on
-    // both qubits contributes.
+    assert_eq!(sim.num_mechanisms(), 0);
+}
+
+#[test]
+fn explicit_uniform_idle_noise_is_noisy() {
+    let dag = build_idle_then_measure(2);
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence = analyzer.build_influence_map();
+
+    let sim = DemSamplerBuilder::new(&influence)
+        .with_noise_config(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002))
+        .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
+        .unwrap()
+        .build()
+        .unwrap();
+
     assert!(
         sim.num_mechanisms() > 0,
-        "scalar p1 path should propagate through idle locations too",
+        "explicit p_idle should produce idle-location mechanisms",
+    );
+}
+
+#[test]
+fn dem_builder_scalar_p1_does_not_attach_to_idle() {
+    let dag = build_idle_then_measure(1);
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence = analyzer.build_influence_map();
+
+    let dem = DemBuilder::new(&influence)
+        .with_noise(0.01, 0.0, 0.0, 0.0)
+        .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
+        .unwrap()
+        .build();
+
+    assert_eq!(dem.num_contributions(), 0);
+}
+
+#[test]
+fn dem_builder_explicit_idle_noise_is_noisy() {
+    let dag = build_idle_then_measure(1);
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence = analyzer.build_influence_map();
+
+    let dem = DemBuilder::new(&influence)
+        .with_noise_config(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002))
+        .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
+        .unwrap()
+        .build();
+
+    assert!(
+        dem.num_contributions() > 0,
+        "explicit p_idle should produce idle-location DEM contributions",
     );
 }

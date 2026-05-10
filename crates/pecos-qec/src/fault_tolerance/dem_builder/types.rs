@@ -1329,14 +1329,17 @@ impl std::error::Error for PecosDemMetadataError {}
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use pecos_core::pauli::{X, Y, Z};
+/// use pecos_qec::fault_tolerance::dem_builder::PauliWeights;
 ///
 /// // Single-qubit: biased toward dephasing
 /// let w = PauliWeights::from([(Z(0), 0.8), (X(0), 0.1), (Y(0), 0.1)]);
+/// assert_eq!(w.entries().len(), 3);
 ///
 /// // Two-qubit: uniform (convenience)
 /// let w = PauliWeights::uniform_2q();
+/// assert_eq!(w.entries().len(), 15);
 /// ```
 #[derive(Debug, Clone)]
 pub struct PauliWeights {
@@ -1626,11 +1629,14 @@ impl NoiseConfig {
 
     /// Sets custom per-Pauli weights for single-qubit gates.
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_core::pauli::{X, Y, Z};
-    /// noise.set_p1_weights(PauliWeights::from([
+    /// use pecos_qec::fault_tolerance::dem_builder::{NoiseConfig, PauliWeights};
+    ///
+    /// let noise = NoiseConfig::uniform(0.001).set_p1_weights(PauliWeights::from([
     ///     (X(0), 0.1), (Y(0), 0.1), (Z(0), 0.8),
     /// ]));
+    /// assert_eq!(noise.p1_weights.as_ref().unwrap().weight_for(&Z(7)), 0.8);
     /// ```
     #[must_use]
     pub fn set_p1_weights(mut self, weights: PauliWeights) -> Self {
@@ -1689,8 +1695,7 @@ impl NoiseConfig {
 
     /// Returns true when idle locations use the dedicated idle-noise model.
     ///
-    /// Otherwise `Idle` is modeled as an ordinary one-qubit gate and receives
-    /// the same Pauli error model as other one-qubit gates.
+    /// Otherwise `Idle` is a no-op for noise.
     #[must_use]
     pub fn uses_dedicated_idle_noise(&self) -> bool {
         self.p_idle > 0.0 || matches!((self.t1, self.t2), (Some(_), Some(_)))
@@ -2058,6 +2063,24 @@ impl PerGateTypeNoise {
         self
     }
 
+    /// Return explicitly attached 1Q Pauli rates for a gate type.
+    #[must_use]
+    pub fn explicit_1q_rates(&self, gate: GateType) -> Option<[f64; 3]> {
+        self.rates_1q.get(&gate).copied()
+    }
+
+    /// Return explicitly attached 1Q Pauli rates for a gate on a specific qubit.
+    ///
+    /// Per-qubit rates take precedence over gate-type rates. Unlike
+    /// [`Self::rate_1q_on`], this does not fall back to the base noise model.
+    #[must_use]
+    pub fn explicit_1q_rates_on(&self, gate: GateType, qubit: QubitId) -> Option<[f64; 3]> {
+        self.rates_1q_per_qubit
+            .get(&(gate, qubit))
+            .copied()
+            .or_else(|| self.explicit_1q_rates(gate))
+    }
+
     /// Attach rates for a 2Q gate on a specific ordered qubit pair.
     /// Takes precedence over [`Self::with_2q_rates`] for that
     /// `(gate, q_control, q_target)` combination.
@@ -2076,11 +2099,27 @@ impl PerGateTypeNoise {
 
     /// Lookup 1Q Pauli rate for a gate. Returns `base.p1 / 3.0` if the
     /// gate type is not in the map. `pauli_idx` is 0=X, 1=Y, 2=Z.
+    ///
+    /// `Idle` is a no-op by default. It receives noise only from explicitly
+    /// attached idle rates or from the base idle-noise model.
     #[must_use]
     pub fn rate_1q(&self, gate: GateType, pauli_idx: usize) -> f64 {
-        self.rates_1q
-            .get(&gate)
-            .map_or(self.base.p1 / 3.0, |r| r[pauli_idx])
+        if let Some(rates) = self.rates_1q.get(&gate) {
+            return rates[pauli_idx];
+        }
+        if gate == GateType::Idle {
+            if self.base.uses_dedicated_idle_noise() {
+                let probs = self.base.idle_pauli_probs(1.0);
+                return match pauli_idx {
+                    0 => probs.px,
+                    1 => probs.py,
+                    2 => probs.pz,
+                    _ => 0.0,
+                };
+            }
+            return 0.0;
+        }
+        self.base.p1 / 3.0
     }
 
     /// Lookup 1Q Pauli rate for a gate on a specific qubit. Tries the

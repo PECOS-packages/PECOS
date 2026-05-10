@@ -235,6 +235,35 @@ impl<'a> DemBuilder<'a> {
         [per, per, per]
     }
 
+    /// Resolve `[rate_X, rate_Y, rate_Z]` for an explicit idle location.
+    fn idle_rates_for_loc(&self, loc: &DagSpacetimeLocation) -> [f64; 3] {
+        if let Some(pg) = &self.per_gate {
+            let explicit_rates = loc
+                .qubits
+                .first()
+                .and_then(|q| pg.explicit_1q_rates_on(GateType::Idle, *q))
+                .or_else(|| pg.explicit_1q_rates(GateType::Idle));
+            if let Some(rates) = explicit_rates {
+                return rates;
+            }
+            if pg.base.uses_dedicated_idle_noise() {
+                #[allow(clippy::cast_precision_loss)]
+                let duration = loc.idle_duration.max(1) as f64;
+                let probs = pg.base.idle_pauli_probs(duration);
+                return [probs.px, probs.py, probs.pz];
+            }
+            return [0.0; 3];
+        }
+
+        if self.noise.uses_dedicated_idle_noise() {
+            #[allow(clippy::cast_precision_loss)]
+            let duration = loc.idle_duration.max(1) as f64;
+            let probs = self.noise.idle_pauli_probs(duration);
+            return [probs.px, probs.py, probs.pz];
+        }
+        [0.0; 3]
+    }
+
     /// Resolve the 15-entry 2Q per-Pauli-pair rate array for a gate
     /// spanning two fault locations.
     fn rates_2q_for_locs(
@@ -512,17 +541,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 }
                 GateType::Idle if !loc.before => {
-                    let rates = if self.per_gate.is_some() {
-                        self.rates_1q_for_loc(loc)
-                    } else if self.noise.uses_dedicated_idle_noise() {
-                        // Duration values are small integers; precision loss is not a concern.
-                        #[allow(clippy::cast_precision_loss)]
-                        let duration = loc.idle_duration.max(1) as f64;
-                        let pauli_probs = self.noise.idle_pauli_probs(duration);
-                        [pauli_probs.px, pauli_probs.py, pauli_probs.pz]
-                    } else {
-                        self.rates_1q_for_loc(loc)
-                    };
+                    let rates = self.idle_rates_for_loc(loc);
                     if rates.iter().any(|r| *r > 0.0) {
                         self.process_single_qubit_fault_source_tracked(
                             loc_idx,

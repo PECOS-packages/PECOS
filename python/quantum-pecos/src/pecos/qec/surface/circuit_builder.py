@@ -2215,6 +2215,9 @@ def generate_dem_from_tick_circuit(
     p2: float = 0.01,
     p_meas: float = 0.01,
     p_prep: float = 0.01,
+    p_idle: float | None = None,
+    t1: float | None = None,
+    t2: float | None = None,
     decompose_errors: bool = True,
     maximal_decomposition: bool = False,
 ) -> str:
@@ -2242,6 +2245,10 @@ def generate_dem_from_tick_circuit(
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
+        p_idle: Optional idle noise rate per explicit idle-gate time unit.
+            The caller is responsible for inserting idle gates where needed.
+        t1: Optional T1 relaxation time for explicit idle gates.
+        t2: Optional T2 dephasing time for explicit idle gates.
         decompose_errors: If True (default), decompose hyperedge errors into
             graphlike components using the `^` separator. Set to False to
             output raw hyperedges. Ignored if maximal_decomposition=True.
@@ -2276,7 +2283,7 @@ def generate_dem_from_tick_circuit(
 
     # Build DEM using Rust DemBuilder
     builder = DemBuilder(influence_map)
-    builder.with_noise(p1, p2, p_meas, p_prep)
+    builder.with_noise(p1, p2, p_meas, p_prep, p_idle=p_idle, t1=t1, t2=t2)
     builder.with_num_measurements(num_measurements)
     builder.with_measurement_order(measurement_order)
     builder.with_detectors_json(detectors_json)

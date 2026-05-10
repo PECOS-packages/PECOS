@@ -755,6 +755,21 @@ def _can_use_cached_surface_topology(
     return ancilla_budget is None
 
 
+def _uses_dedicated_idle_noise(
+    *,
+    p_idle: float | None,
+    t1: float | None,
+    t2: float | None,
+) -> bool:
+    """Return True when noise parameters require explicit idle locations."""
+    return (p_idle is not None and p_idle > 0.0) or (t1 is not None and t2 is not None)
+
+
+def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
+    """Return True when this noise model requires explicit idle locations."""
+    return _uses_dedicated_idle_noise(p_idle=noise.p_idle, t1=noise.t1, t2=noise.t2)
+
+
 @cache
 def _cached_surface_native_topology(
     patch_key: tuple[int, int, str, bool],
@@ -762,6 +777,7 @@ def _cached_surface_native_topology(
     basis: str,
     ancilla_budget: int | None,
     circuit_source: Literal["abstract", "traced_qis"],
+    include_idle_gates: bool,
 ) -> _CachedNativeSurfaceTopology:
     """Cache topology-only native analysis shared across noise parameters."""
     import json
@@ -777,11 +793,11 @@ def _cached_surface_native_topology(
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
     )
-    # Insert idle gates so non-active qubits get noise in the after-only model.
-    # Note: the traced circuit has one gate per tick (fully serialized).
-    # Call tc.compact_ticks() before this to merge parallel gates into
-    # shared ticks if the hardware model supports parallel execution.
-    tc.fill_idle_gates()
+    if include_idle_gates:
+        # Insert idle gates only when the requested noise model includes a
+        # dedicated idle channel. Otherwise inserted idle gates receive ordinary
+        # one-qubit gate noise and change the explicit circuit-level DEM.
+        tc.fill_idle_gates()
 
     dag = tc.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
@@ -841,12 +857,14 @@ def _cached_surface_native_dem_string(
     t2: float | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
+    include_idle_gates = _uses_dedicated_idle_noise(p_idle=p_idle, t1=t1, t2=t2)
     topology = _cached_surface_native_topology(
         patch_key,
         num_rounds,
         basis,
         ancilla_budget,
         circuit_source,
+        include_idle_gates,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -932,10 +950,8 @@ def _build_native_sampler_from_tick_circuit(
     from pecos.qec import DagFaultAnalyzer, DemSampler, ParsedDem
     from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
 
-    # Insert idle gates for qubits not active during each tick.
-    # This is critical: without idle gates, qubits sitting idle between
-    # operations get no noise in the after-only fault model.
-    tc.fill_idle_gates()
+    if _noise_uses_dedicated_idle_noise(noise):
+        tc.fill_idle_gates()
 
     dag = tc.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
@@ -953,6 +969,9 @@ def _build_native_sampler_from_tick_circuit(
             p2=noise.p2,
             p_meas=noise.p_meas,
             p_prep=noise.p_prep,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
             decompose_errors=True,
         )
         sampler = ParsedDem.from_string(dem_str).to_dem_sampler()
@@ -973,8 +992,8 @@ def _build_native_sampler_from_tick_circuit(
         )
         sampling_model = "influence_dem"
     elif sampling_model == "from_circuit":
-        # Direct from_circuit path: uses DagCircuit annotations and
-        # handles idle noise automatically via NoiseConfig.
+        # Direct from_circuit path: uses DagCircuit annotations and any
+        # explicit idle locations inserted above for dedicated idle noise.
         sampler = DemSampler.from_circuit(
             dag,
             p1=noise.p1,
@@ -1072,12 +1091,17 @@ def generate_circuit_level_dem_from_builder(
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
     )
+    if _noise_uses_dedicated_idle_noise(noise):
+        tc.fill_idle_gates()
     return generate_dem_from_tick_circuit(
         tc,
         p1=noise.p1,
         p2=noise.p2,
         p_meas=noise.p_meas,
         p_prep=noise.p_prep,
+        p_idle=noise.p_idle,
+        t1=noise.t1,
+        t2=noise.t2,
         decompose_errors=decompose_errors,
     )
 
@@ -2627,6 +2651,7 @@ def build_native_sampler(
             basis,
             ancilla_budget,
             circuit_source,
+            _noise_uses_dedicated_idle_noise(noise),
         )
         if sampling_model == "dem":
             dem_str = _cached_surface_native_dem_string(

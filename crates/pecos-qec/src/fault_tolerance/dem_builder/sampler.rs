@@ -1196,8 +1196,8 @@ impl<'a> DemSamplerBuilder<'a> {
 
         if let Some(per_gate) = self.per_gate {
             builder = builder.with_per_gate_noise(per_gate);
-        } else if self.noise.p_idle > 0.0 {
-            builder = builder.with_idle_noise(self.noise.p_idle);
+        } else if self.noise.uses_dedicated_idle_noise() {
+            builder = builder.with_idle_noise_config(self.noise.clone());
         }
 
         if let Some(order) = self.measurement_order {
@@ -1290,7 +1290,7 @@ pub(crate) fn compute_location_probs_from_noise(
                         let duration = loc.idle_duration.max(1) as f64;
                         noise.idle_pauli_probs(duration).total()
                     } else {
-                        noise.p1
+                        0.0
                     }
                 }
                 _ => noise.p1,

@@ -51,7 +51,7 @@
 
 use crate::{CliffordGateable, MeasurementResult, QuantumSimulator, StabilizerTableauSimulator};
 use core::fmt::Debug;
-use pecos_core::{QubitId, RngManageable};
+use pecos_core::{Pauli, PauliString, Phase, QuarterPhase, QubitId, RngManageable};
 use pecos_random::rng_ext::RngProbabilityExt;
 use pecos_random::{PecosRng, Rng, SeedableRng};
 
@@ -1348,6 +1348,100 @@ impl<R: SeedableRng + Rng + Debug + Clone> StabilizerTableauSimulator for DenseS
 }
 
 impl<R: Rng> DenseStab<R> {
+    fn generator_from_rows(
+        num_qubits: usize,
+        words_per_row: usize,
+        row_x: &[u64],
+        row_z: &[u64],
+        signs_minus: &[u64],
+        signs_i: &[u64],
+        row: usize,
+    ) -> PauliString {
+        let mut phase = match (get_sign(signs_minus, row), get_sign(signs_i, row)) {
+            (false, false) => QuarterPhase::PlusOne,
+            (true, false) => QuarterPhase::MinusOne,
+            (false, true) => QuarterPhase::PlusI,
+            (true, true) => QuarterPhase::MinusI,
+        };
+        let base = row * words_per_row;
+        let mut paulis = Vec::new();
+        let mut num_y_terms = 0usize;
+        for qubit in 0..num_qubits {
+            let word_idx = base + qubit / 64;
+            let bit_mask = 1u64 << (qubit % 64);
+            let in_x = row_x[word_idx] & bit_mask != 0;
+            let in_z = row_z[word_idx] & bit_mask != 0;
+            let pauli = match (in_x, in_z) {
+                (false, false) => continue,
+                (true, false) => Pauli::X,
+                (false, true) => Pauli::Z,
+                (true, true) => {
+                    num_y_terms += 1;
+                    Pauli::Y
+                }
+            };
+            paulis.push((pauli, QubitId::new(qubit)));
+        }
+        for _ in 0..num_y_terms {
+            phase = phase.multiply(&QuarterPhase::MinusI);
+        }
+        PauliString::with_phase_and_paulis(phase, paulis)
+    }
+
+    fn generators_from_rows(
+        &self,
+        row_x: &[u64],
+        row_z: &[u64],
+        signs_minus: &[u64],
+        signs_i: &[u64],
+    ) -> Vec<PauliString> {
+        (0..self.num_qubits)
+            .map(|row| {
+                Self::generator_from_rows(
+                    self.num_qubits,
+                    self.words_per_row,
+                    row_x,
+                    row_z,
+                    signs_minus,
+                    signs_i,
+                    row,
+                )
+            })
+            .collect()
+    }
+
+    /// Extracts the stabilizer generators as a [`PauliStabilizerGroup`].
+    ///
+    /// The dense tableau stores X/Z support plus two sign bits per row. This
+    /// converts that signed row representation into the shared algebraic
+    /// stabilizer type used by state inspection and quantum-info routines.
+    ///
+    /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    #[must_use]
+    pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
+        let generators = self.generators_from_rows(
+            &self.stab_row_x,
+            &self.stab_row_z,
+            &self.stab_signs_minus,
+            &self.stab_signs_i,
+        );
+        pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
+    }
+
+    /// Extracts the destabilizer generators as a [`PauliSequence`].
+    ///
+    /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    #[must_use]
+    pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
+        let generators = self.generators_from_rows(
+            &self.destab_row_x,
+            &self.destab_row_z,
+            &self.destab_signs_minus,
+            &self.destab_signs_i,
+        );
+        pecos_quantum::PauliSequence::new(generators)
+    }
+
     /// Produces a tableau string from dense bit arrays.
     fn gen_tableau_string(
         num_qubits: usize,

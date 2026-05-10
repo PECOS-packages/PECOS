@@ -18,6 +18,7 @@
 //! propagation backends should not pretend to expose either.
 
 use crate::clifford_gateable::{CliffordGateable, MeasurementResult};
+use crate::dense_stab::DenseStab;
 use crate::density_matrix::DensityMatrix;
 use crate::quantum_simulator::QuantumSimulator;
 use crate::sparse_stab::{SparseStabGeneric, SparseStabHybrid};
@@ -632,6 +633,19 @@ where
     }
 }
 
+impl<R> PauliExpectationAccess for DenseStab<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
+        pauli_expectation_from_stabilizer_group(
+            &self.to_stabilizer_group(),
+            StateInfo::num_qubits(self),
+            pauli,
+        )
+    }
+}
+
 impl PauliExpectationAccess for Stabilizer {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
         pauli_expectation_from_stabilizer_group(
@@ -941,7 +955,9 @@ fn pauli_expectation_from_stabilizer_group(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CliffordGateable, SparseStab, SparseStabHybrid, Stabilizer, StateVec, qid};
+    use crate::{
+        CliffordGateable, DenseStab, SparseStab, SparseStabHybrid, Stabilizer, StateVec, qid,
+    };
     use pecos_core::QubitId;
     use pecos_core::pauli::algebra::i;
     use pecos_core::pauli::*;
@@ -1120,6 +1136,20 @@ mod tests {
     }
 
     #[test]
+    fn dense_stab_pauli_expectation_matches_state_vector_for_bell_state() {
+        let mut state_vec = StateVec::new(2);
+        let mut dense = DenseStab::new(2);
+        state_vec.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        dense.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+
+        for pauli in [X(0) & X(1), Y(0) & Y(1), Z(0) & Z(1), X(0), Z(0)] {
+            let expected = state_vec.pauli_expectation(&pauli).unwrap();
+            let actual = dense.pauli_expectation(&pauli).unwrap();
+            assert_close(actual, expected);
+        }
+    }
+
+    #[test]
     fn sparse_stab_hybrid_supports_pauli_expectation_access() {
         let mut plus = SparseStabHybrid::new(1);
         plus.h(&qid(0));
@@ -1157,6 +1187,36 @@ mod tests {
         assert_close(
             hybrid.pauli_expectation(&Y(0)).unwrap(),
             Complex64::new(1.0, 0.0),
+        );
+
+        let mut dense = DenseStab::new(1);
+        dense.h(&qid(0)).sz(&qid(0));
+        assert_close(
+            dense.pauli_expectation(&Y(0)).unwrap(),
+            Complex64::new(1.0, 0.0),
+        );
+        assert_close(
+            dense.pauli_expectation(&X(0)).unwrap(),
+            Complex64::new(0.0, 0.0),
+        );
+    }
+
+    #[test]
+    fn dense_stab_pauli_expectation_preserves_signed_basis_state() {
+        let mut one = DenseStab::new(1);
+        one.x(&qid(0));
+
+        assert_close(
+            one.pauli_expectation(&Z(0)).unwrap(),
+            Complex64::new(-1.0, 0.0),
+        );
+        assert_close(
+            one.pauli_expectation(&(-Z(0))).unwrap(),
+            Complex64::new(1.0, 0.0),
+        );
+        assert_close(
+            one.pauli_expectation(&(i * Z(0))).unwrap(),
+            Complex64::new(0.0, -1.0),
         );
     }
 

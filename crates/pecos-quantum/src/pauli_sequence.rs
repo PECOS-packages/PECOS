@@ -816,6 +816,42 @@ impl PauliSequence {
         matrix
     }
 
+    /// Greedily partitions the sequence into mutually commuting groups.
+    ///
+    /// The returned groups preserve the input order within each group. This is
+    /// a graph-coloring heuristic on the anticommutation graph, so it is not
+    /// guaranteed to produce the minimum possible number of groups.
+    #[must_use]
+    pub fn group_commuting(&self) -> Vec<PauliSequence> {
+        let anticommutation = self.commutation_matrix();
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+
+        'next_pauli: for pauli_idx in 0..self.paulis.len() {
+            for group in &mut groups {
+                if group
+                    .iter()
+                    .all(|&other_idx| anticommutation.get(pauli_idx, other_idx) == 0)
+                {
+                    group.push(pauli_idx);
+                    continue 'next_pauli;
+                }
+            }
+            groups.push(vec![pauli_idx]);
+        }
+
+        groups
+            .into_iter()
+            .map(|group| {
+                PauliSequence::new(
+                    group
+                        .into_iter()
+                        .map(|idx| self.paulis[idx].clone())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     /// Returns the sequence in row-reduced form.
     ///
     /// This returns a new `PauliSequence` where the Pauli strings are independent
@@ -1190,6 +1226,17 @@ mod tests {
                 assert_eq!(cm.get(i, j), expected, "entry ({i}, {j})");
             }
         }
+    }
+
+    #[test]
+    fn group_commuting_partitions_into_abelian_sequences() {
+        let gens = PauliSequence::new(vec![X(0), Z(0), X(1), Z(1)]);
+        let groups = gens.group_commuting();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].paulis(), &[X(0), X(1)]);
+        assert_eq!(groups[1].paulis(), &[Z(0), Z(1)]);
+        assert!(groups.iter().all(PauliSequence::is_abelian));
     }
 
     #[test]

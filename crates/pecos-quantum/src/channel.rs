@@ -526,6 +526,34 @@ impl PauliSum {
         self
     }
 
+    /// Greedily partitions terms into mutually commuting sums.
+    ///
+    /// Coefficients are preserved exactly. The grouping is a graph-coloring
+    /// heuristic on the anticommutation graph, so it is not guaranteed to use
+    /// the minimum possible number of groups.
+    #[must_use]
+    pub fn group_commuting(&self) -> Vec<Self> {
+        let mut groups: Vec<BTreeMap<PauliBitmaskSmall, Complex64>> = Vec::new();
+
+        'next_term: for (pauli, coefficient) in &self.terms {
+            for group in &mut groups {
+                if group.keys().all(|other| pauli.commutes_with(other)) {
+                    group.insert(pauli.clone(), *coefficient);
+                    continue 'next_term;
+                }
+            }
+            groups.push(BTreeMap::from([(pauli.clone(), *coefficient)]));
+        }
+
+        groups
+            .into_iter()
+            .map(|terms| Self {
+                num_qubits: self.num_qubits,
+                terms,
+            })
+            .collect()
+    }
+
     /// Returns the Pauli conjugation `P * self * P†`.
     ///
     /// Pauli conjugation preserves each Pauli label and flips the coefficient
@@ -2473,6 +2501,48 @@ mod tests {
             *conjugated.terms().get(&PauliBitmaskSmall::z(0)).unwrap(),
             Complex64::new(3.0, 0.0),
         );
+    }
+
+    #[test]
+    fn pauli_sum_group_commuting_preserves_coefficients() {
+        let mut sum = PauliSum::new(2);
+        sum.add_term(PauliBitmaskSmall::x(0), Complex64::new(2.0, 0.0))
+            .unwrap();
+        sum.add_term(PauliBitmaskSmall::z(0), Complex64::new(3.0, 0.0))
+            .unwrap();
+        sum.add_term(PauliBitmaskSmall::x(1), Complex64::new(5.0, 0.0))
+            .unwrap();
+        sum.add_term(PauliBitmaskSmall::z(1), Complex64::new(7.0, 0.0))
+            .unwrap();
+
+        let groups = sum.group_commuting();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.terms().len())
+                .sum::<usize>(),
+            4
+        );
+
+        for group in &groups {
+            for left in group.terms().keys() {
+                for right in group.terms().keys() {
+                    assert!(left.commutes_with(right));
+                }
+            }
+        }
+
+        let recovered: BTreeMap<_, _> = groups
+            .iter()
+            .flat_map(|group| {
+                group
+                    .terms()
+                    .iter()
+                    .map(|(pauli, coeff)| (pauli.clone(), *coeff))
+            })
+            .collect();
+        assert_eq!(recovered, sum.terms().clone());
     }
 
     #[test]

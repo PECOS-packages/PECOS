@@ -131,6 +131,15 @@ impl PyPauliSequence {
         self.inner.commutation_matrix().rows()
     }
 
+    /// Greedily partition Pauli strings into mutually commuting groups.
+    fn group_commuting(&self) -> Vec<Self> {
+        self.inner
+            .group_commuting()
+            .into_iter()
+            .map(|inner| Self { inner })
+            .collect()
+    }
+
     /// Row-reduced form: independent Pauli strings in echelon form.
     ///
     /// Returns a new PauliSequence with redundant elements removed and

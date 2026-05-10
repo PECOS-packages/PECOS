@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 from pecos.quantum_info import (
+    ChiMatrix,
     ChoiMatrix,
     PauliChannel,
     Ptm,
+    Stinespring,
+    SuperOp,
     average_gate_fidelity,
+    entropy,
     gate_error,
+    hellinger_distance,
+    hellinger_fidelity,
+    logarithmic_negativity,
+    negativity,
     pauli_channel_diamond_distance,
     pauli_channel_diamond_norm,
     process_fidelity,
     purity,
     random_density_matrix,
     random_quantum_channel,
+    schmidt_decomposition,
+    shannon_entropy,
     state_fidelity,
     state_fidelity_with_density_matrix,
 )
@@ -66,16 +76,46 @@ def test_choi_and_kraus_wrappers_round_trip_identity_channel() -> None:
     assert_close(average_gate_fidelity(kraus.to_ptm(), identity), 1.0)
     assert_close(gate_error(kraus.to_ptm(), identity), 0.0)
 
+    superop = kraus.to_superop()
+    assert isinstance(superop, SuperOp)
+    assert_close(process_fidelity(superop.to_ptm(), identity), 1.0)
+
+    chi = kraus.to_chi()
+    assert isinstance(chi, ChiMatrix)
+    assert_close(process_fidelity(chi.to_ptm(), identity), 1.0)
+
+    stinespring = kraus.to_stinespring()
+    assert isinstance(stinespring, Stinespring)
+    assert stinespring.environment_dim() == 1
+    assert_close(process_fidelity(stinespring.to_kraus().to_ptm(), identity), 1.0)
+
 
 def test_state_measure_wrappers() -> None:
     zero = [1.0 + 0.0j, 0.0 + 0.0j]
     plus = [2.0**-0.5 + 0.0j, 2.0**-0.5 + 0.0j]
     zero_density = [[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 0.0j]]
+    bell = [2.0**-0.5 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 2.0**-0.5 + 0.0j]
+    bell_density = [
+        [0.5 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.5 + 0.0j],
+        [0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j],
+        [0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j],
+        [0.5 + 0.0j, 0.0 + 0.0j, 0.0 + 0.0j, 0.5 + 0.0j],
+    ]
 
     assert_close(state_fidelity(zero, zero), 1.0)
     assert_close(state_fidelity(zero, plus), 0.5)
     assert_close(state_fidelity_with_density_matrix(zero_density, zero), 1.0)
     assert_close(purity(zero_density), 1.0)
+    assert_close(entropy(zero_density), 0.0)
+    assert_close(shannon_entropy([0.5, 0.5], 2.0), 1.0)
+    assert_close(negativity(bell_density, [2, 2], 1), 0.5)
+    assert_close(logarithmic_negativity(bell_density, [2, 2], 1), 1.0)
+    assert_close(hellinger_distance([1.0, 0.0], [0.0, 1.0]), 1.0)
+    assert_close(hellinger_fidelity([0.25, 0.75], [0.25, 0.75]), 1.0)
+    schmidt = schmidt_decomposition(bell, [2, 2], [0])
+    assert len(schmidt) == 2
+    assert_close(schmidt[0][0], 2.0**-0.5)
+    assert_close(schmidt[1][0], 2.0**-0.5)
 
 
 def test_random_generators_are_seed_reproducible_and_valid() -> None:

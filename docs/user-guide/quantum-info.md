@@ -10,7 +10,7 @@ fault catalog.
 
 ## Channel Representations
 
-PECOS currently provides four concrete channel representations:
+PECOS currently provides seven concrete channel representations:
 
 | Type | Purpose |
 | ---- | ------- |
@@ -18,6 +18,9 @@ PECOS currently provides four concrete channel representations:
 | `Ptm` | Dense Pauli transfer matrix. |
 | `KrausOps` | Kraus-operator representation. |
 | `ChoiMatrix` | Choi-matrix representation for channel validation and tomography. |
+| `SuperOp` | Dense column-stacked superoperator. |
+| `ChiMatrix` | Process matrix in the Pauli basis. |
+| `Stinespring` | Stinespring isometry. |
 
 The representations use PECOS's little-endian qubit convention. Pauli-channel
 labels are displayed with the highest-numbered qubit first, so label `IX` on two
@@ -87,12 +90,35 @@ trace_check = choi.partial_trace_output()
 For PECOS's Choi convention, a trace-preserving channel satisfies
 `partial_trace_output() == I`.
 
+The dense channel forms convert through the same Rust-backed validation path:
+
+```python
+from pecos.quantum_info import Ptm
+
+ptm = Ptm.identity(1)
+superop = ptm.to_superop()
+chi = ptm.to_chi()
+stinespring = ptm.to_kraus().to_stinespring()
+
+assert superop.to_ptm().matrix() == ptm.matrix()
+assert chi.to_ptm().matrix() == ptm.matrix()
+assert stinespring.to_kraus().is_trace_preserving()
+```
+
 ## State and Process Measures
 
 State measures accept Python lists of complex values:
 
 ```python
-from pecos.quantum_info import purity, state_fidelity
+from pecos.quantum_info import (
+    entropy,
+    hellinger_distance,
+    negativity,
+    purity,
+    schmidt_decomposition,
+    shannon_entropy,
+    state_fidelity,
+)
 
 zero = [1.0 + 0.0j, 0.0 + 0.0j]
 plus = [2.0**-0.5, 2.0**-0.5]
@@ -102,6 +128,21 @@ assert abs(state_fidelity(zero, plus) - 0.5) < 1e-12
 
 rho_zero = [[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 0.0j]]
 assert purity(rho_zero) == 1.0
+assert entropy(rho_zero) == 0.0
+
+bell = [2.0**-0.5 + 0.0j, 0.0j, 0.0j, 2.0**-0.5 + 0.0j]
+bell_rho = [
+    [0.5 + 0.0j, 0.0j, 0.0j, 0.5 + 0.0j],
+    [0.0j, 0.0j, 0.0j, 0.0j],
+    [0.0j, 0.0j, 0.0j, 0.0j],
+    [0.5 + 0.0j, 0.0j, 0.0j, 0.5 + 0.0j],
+]
+
+assert abs(negativity(bell_rho, [2, 2], 1) - 0.5) < 1e-12
+assert len(schmidt_decomposition(bell, [2, 2], [0])) == 2
+
+assert shannon_entropy([0.5, 0.5], 2.0) == 1.0
+assert hellinger_distance([1.0, 0.0], [0.0, 1.0]) == 1.0
 ```
 
 Process measures operate on `Ptm` values:

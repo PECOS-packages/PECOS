@@ -18,16 +18,22 @@ use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use pecos_core::PauliBitmaskSmall;
 use pecos_quantum::{
-    ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps, PauliChannel as RustPauliChannel,
-    Ptm as RustPtm, average_gate_fidelity as rust_average_gate_fidelity,
-    gate_error as rust_gate_error, pauli_basis_len, process_fidelity as rust_process_fidelity,
-    purity as rust_purity, random_density_matrix as rust_random_density_matrix,
+    ChiMatrix as RustChiMatrix, ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps,
+    PauliChannel as RustPauliChannel, Ptm as RustPtm, Stinespring as RustStinespring,
+    SuperOp as RustSuperOp, average_gate_fidelity as rust_average_gate_fidelity,
+    entropy as rust_entropy, gate_error as rust_gate_error,
+    hellinger_distance as rust_hellinger_distance, hellinger_fidelity as rust_hellinger_fidelity,
+    logarithmic_negativity as rust_logarithmic_negativity, negativity as rust_negativity,
+    pauli_basis_len, process_fidelity as rust_process_fidelity, purity as rust_purity,
+    random_density_matrix as rust_random_density_matrix,
     random_quantum_channel as rust_random_quantum_channel, state_fidelity as rust_state_fidelity,
     state_fidelity_with_density_matrix as rust_state_fidelity_with_density_matrix,
 };
 use pecos_random::PecosRng;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
+
+type PySchmidtTerm = (f64, Vec<Complex64>, Vec<Complex64>);
 
 fn py_value_err(err: impl std::fmt::Display) -> PyErr {
     pyo3::exceptions::PyValueError::new_err(err.to_string())
@@ -220,6 +226,18 @@ impl PyPtm {
         })
     }
 
+    fn to_superop(&self) -> PyResult<PySuperOp> {
+        Ok(PySuperOp {
+            inner: self.inner.to_superop().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_chi(&self) -> PyResult<PyChiMatrix> {
+        Ok(PyChiMatrix {
+            inner: self.inner.to_chi().map_err(py_value_err)?,
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("Ptm(num_qubits={})", self.inner.num_qubits())
     }
@@ -268,6 +286,24 @@ impl PyKrausOps {
     fn to_choi(&self) -> PyResult<PyChoiMatrix> {
         Ok(PyChoiMatrix {
             inner: self.inner.to_choi().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_superop(&self) -> PyResult<PySuperOp> {
+        Ok(PySuperOp {
+            inner: self.inner.to_superop().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_chi(&self) -> PyResult<PyChiMatrix> {
+        Ok(PyChiMatrix {
+            inner: self.inner.to_chi().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_stinespring(&self) -> PyResult<PyStinespring> {
+        Ok(PyStinespring {
+            inner: self.inner.to_stinespring().map_err(py_value_err)?,
         })
     }
 
@@ -348,8 +384,172 @@ impl PyChoiMatrix {
         })
     }
 
+    fn to_superop(&self) -> PyResult<PySuperOp> {
+        Ok(PySuperOp {
+            inner: self.inner.to_superop().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_chi(&self) -> PyResult<PyChiMatrix> {
+        Ok(PyChiMatrix {
+            inner: self.inner.to_chi().map_err(py_value_err)?,
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("ChoiMatrix(num_qubits={})", self.inner.num_qubits())
+    }
+}
+
+#[pyclass(name = "SuperOp", module = "pecos_rslib.quantum_info")]
+pub struct PySuperOp {
+    inner: RustSuperOp,
+}
+
+#[pymethods]
+impl PySuperOp {
+    #[new]
+    fn new(num_qubits: usize, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustSuperOp::try_new(num_qubits, complex_matrix_from_rows(matrix)?)
+                .map_err(py_value_err)?,
+        })
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn matrix(&self) -> Vec<Vec<Complex64>> {
+        complex_matrix_to_rows(self.inner.matrix())
+    }
+
+    fn to_choi(&self) -> PyResult<PyChoiMatrix> {
+        Ok(PyChoiMatrix {
+            inner: self.inner.to_choi().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_ptm(&self) -> PyResult<PyPtm> {
+        Ok(PyPtm {
+            inner: self.inner.to_ptm().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_kraus(&self) -> PyResult<PyKrausOps> {
+        Ok(PyKrausOps {
+            inner: self.inner.to_kraus().map_err(py_value_err)?,
+        })
+    }
+
+    fn compose(&self, other: &PySuperOp) -> PyResult<PySuperOp> {
+        Ok(PySuperOp {
+            inner: self.inner.compose(&other.inner).map_err(py_value_err)?,
+        })
+    }
+
+    fn tensor(&self, other: &PySuperOp) -> PyResult<PySuperOp> {
+        Ok(PySuperOp {
+            inner: self.inner.tensor(&other.inner).map_err(py_value_err)?,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("SuperOp(num_qubits={})", self.inner.num_qubits())
+    }
+}
+
+#[pyclass(name = "ChiMatrix", module = "pecos_rslib.quantum_info")]
+pub struct PyChiMatrix {
+    inner: RustChiMatrix,
+}
+
+#[pymethods]
+impl PyChiMatrix {
+    #[new]
+    fn new(num_qubits: usize, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustChiMatrix::try_new(num_qubits, complex_matrix_from_rows(matrix)?)
+                .map_err(py_value_err)?,
+        })
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn matrix(&self) -> Vec<Vec<Complex64>> {
+        complex_matrix_to_rows(self.inner.matrix())
+    }
+
+    fn to_choi(&self) -> PyResult<PyChoiMatrix> {
+        Ok(PyChoiMatrix {
+            inner: self.inner.to_choi().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_ptm(&self) -> PyResult<PyPtm> {
+        Ok(PyPtm {
+            inner: self.inner.to_ptm().map_err(py_value_err)?,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ChiMatrix(num_qubits={})", self.inner.num_qubits())
+    }
+}
+
+#[pyclass(name = "Stinespring", module = "pecos_rslib.quantum_info")]
+pub struct PyStinespring {
+    inner: RustStinespring,
+}
+
+#[pymethods]
+impl PyStinespring {
+    #[new]
+    fn new(num_qubits: usize, isometry: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustStinespring::try_new(num_qubits, complex_matrix_from_rows(isometry)?)
+                .map_err(py_value_err)?,
+        })
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn environment_dim(&self) -> usize {
+        self.inner.environment_dim()
+    }
+
+    fn isometry(&self) -> Vec<Vec<Complex64>> {
+        complex_matrix_to_rows(self.inner.isometry())
+    }
+
+    fn to_kraus(&self) -> PyResult<PyKrausOps> {
+        Ok(PyKrausOps {
+            inner: self.inner.to_kraus().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_choi(&self) -> PyResult<PyChoiMatrix> {
+        Ok(PyChoiMatrix {
+            inner: self.inner.to_choi().map_err(py_value_err)?,
+        })
+    }
+
+    fn to_superop(&self) -> PyResult<PySuperOp> {
+        Ok(PySuperOp {
+            inner: self.inner.to_superop().map_err(py_value_err)?,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Stinespring(num_qubits={}, environment_dim={})",
+            self.inner.num_qubits(),
+            self.inner.environment_dim()
+        )
     }
 }
 
@@ -373,6 +573,51 @@ fn state_fidelity_with_density_matrix(
 #[pyfunction]
 fn purity(rho: Vec<Vec<Complex64>>) -> PyResult<f64> {
     rust_purity(&complex_matrix_from_rows(rho)?).map_err(py_value_err)
+}
+
+#[pyfunction]
+fn entropy(rho: Vec<Vec<Complex64>>) -> PyResult<f64> {
+    rust_entropy(&complex_matrix_from_rows(rho)?).map_err(py_value_err)
+}
+
+#[pyfunction]
+fn shannon_entropy(probabilities: Vec<f64>, base: f64) -> PyResult<f64> {
+    pecos_quantum::shannon_entropy(&probabilities, base).map_err(py_value_err)
+}
+
+#[pyfunction]
+fn negativity(rho: Vec<Vec<Complex64>>, dims: Vec<usize>, subsystem: usize) -> PyResult<f64> {
+    rust_negativity(&complex_matrix_from_rows(rho)?, &dims, subsystem).map_err(py_value_err)
+}
+
+#[pyfunction]
+fn logarithmic_negativity(
+    rho: Vec<Vec<Complex64>>,
+    dims: Vec<usize>,
+    subsystem: usize,
+) -> PyResult<f64> {
+    rust_logarithmic_negativity(&complex_matrix_from_rows(rho)?, &dims, subsystem)
+        .map_err(py_value_err)
+}
+
+#[pyfunction]
+fn schmidt_decomposition(
+    state: Vec<Complex64>,
+    dims: Vec<usize>,
+    left_subsystems: Vec<usize>,
+) -> PyResult<Vec<PySchmidtTerm>> {
+    pecos_quantum::schmidt_decomposition(&DVector::from_vec(state), &dims, &left_subsystems)
+        .map_err(py_value_err)
+}
+
+#[pyfunction]
+fn hellinger_distance(left: Vec<f64>, right: Vec<f64>) -> PyResult<f64> {
+    rust_hellinger_distance(&left, &right).map_err(py_value_err)
+}
+
+#[pyfunction]
+fn hellinger_fidelity(left: Vec<f64>, right: Vec<f64>) -> PyResult<f64> {
+    rust_hellinger_fidelity(&left, &right).map_err(py_value_err)
 }
 
 #[pyfunction]
@@ -422,6 +667,9 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
     parent.add_class::<PyPtm>()?;
     parent.add_class::<PyKrausOps>()?;
     parent.add_class::<PyChoiMatrix>()?;
+    parent.add_class::<PySuperOp>()?;
+    parent.add_class::<PyChiMatrix>()?;
+    parent.add_class::<PyStinespring>()?;
 
     parent.add_function(wrap_pyfunction!(state_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(
@@ -429,6 +677,13 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
         parent
     )?)?;
     parent.add_function(wrap_pyfunction!(purity, parent)?)?;
+    parent.add_function(wrap_pyfunction!(entropy, parent)?)?;
+    parent.add_function(wrap_pyfunction!(shannon_entropy, parent)?)?;
+    parent.add_function(wrap_pyfunction!(negativity, parent)?)?;
+    parent.add_function(wrap_pyfunction!(logarithmic_negativity, parent)?)?;
+    parent.add_function(wrap_pyfunction!(schmidt_decomposition, parent)?)?;
+    parent.add_function(wrap_pyfunction!(hellinger_distance, parent)?)?;
+    parent.add_function(wrap_pyfunction!(hellinger_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(process_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(average_gate_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(gate_error, parent)?)?;
@@ -444,9 +699,19 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
         "Ptm",
         "KrausOps",
         "ChoiMatrix",
+        "SuperOp",
+        "ChiMatrix",
+        "Stinespring",
         "state_fidelity",
         "state_fidelity_with_density_matrix",
         "purity",
+        "entropy",
+        "shannon_entropy",
+        "negativity",
+        "logarithmic_negativity",
+        "schmidt_decomposition",
+        "hellinger_distance",
+        "hellinger_fidelity",
         "process_fidelity",
         "average_gate_fidelity",
         "gate_error",

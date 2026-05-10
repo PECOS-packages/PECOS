@@ -64,7 +64,7 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{
-    Angle64, Gate, GateMeasIds, GateQubits, GateSignature, MeasId, QubitId, TimeUnits,
+    Angle64, ChannelExpr, Gate, GateMeasIds, GateQubits, GateSignature, MeasId, QubitId, TimeUnits,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -462,6 +462,40 @@ pub struct TickCircuit {
     next_meas_record: usize,
 }
 
+/// Maps an ideal circuit gate to zero or more channel annotations.
+///
+/// [`TickCircuit::with_noise`] uses this trait to compile an ideal circuit into
+/// an annotated circuit with explicit channel operations interleaved after the
+/// ideal gates that triggered them.
+pub trait GateNoiseModel {
+    /// Returns channel operations that should be placed after `gate`.
+    fn channels_after(&self, gate: &Gate) -> Vec<ChannelExpr>;
+}
+
+impl<F> GateNoiseModel for F
+where
+    F: Fn(&Gate) -> Vec<ChannelExpr>,
+{
+    fn channels_after(&self, gate: &Gate) -> Vec<ChannelExpr> {
+        self(gate)
+    }
+}
+
+fn schedule_channel_gate(noise_ticks: &mut Vec<Tick>, gate: Gate) {
+    let mut pending = Some(gate);
+    for tick in noise_ticks.iter_mut() {
+        let gate_ref = pending.as_ref().expect("pending gate is present");
+        if tick.find_conflicts(&gate_ref.qubits).is_empty() {
+            tick.add_gate(pending.take().expect("pending gate is present"));
+            return;
+        }
+    }
+
+    let mut tick = Tick::new();
+    tick.add_gate(pending.expect("pending gate is present"));
+    noise_ticks.push(tick);
+}
+
 /// Handle to a specific tick for adding gates.
 ///
 /// Gates added through the handle are placed in the associated tick.
@@ -809,6 +843,65 @@ impl TickCircuit {
         self.gate_signatures.clear();
     }
 
+    /// Try to compile an ideal circuit plus a gate-triggered noise model into
+    /// an annotated circuit containing explicit channel operations.
+    ///
+    /// The original gates are preserved. For each source tick, channel
+    /// operations returned by `noise.channels_after(gate)` are scheduled into
+    /// one or more immediately following ticks while respecting qubit
+    /// conflicts. This produces a concrete inline representation useful for
+    /// inspection, visualization, and simulators that consume interleaved
+    /// channel operations directly.
+    /// # Errors
+    ///
+    /// Returns an error if the source circuit already contains channel
+    /// operations. Apply either inline channels or a noise model, not both.
+    pub fn try_with_noise<N: GateNoiseModel>(&self, noise: &N) -> Result<Self, String> {
+        if let Some((tick_idx, _)) = self
+            .iter_gates_with_tick()
+            .find(|(_, gate)| gate.is_channel())
+        {
+            return Err(format!(
+                "with_noise cannot apply a noise model to a circuit that already contains channel operations (first channel at tick {tick_idx})"
+            ));
+        }
+
+        let mut out = Self::new();
+        out.circuit_attrs.clone_from(&self.circuit_attrs);
+        out.gate_signatures.clone_from(&self.gate_signatures);
+        out.annotations.clone_from(&self.annotations);
+        out.next_meas_record = self.next_meas_record;
+
+        for tick in &self.ticks {
+            out.ticks.push(tick.clone());
+
+            let mut noise_ticks = Vec::new();
+            for gate in tick.gates() {
+                for channel in noise.channels_after(gate) {
+                    schedule_channel_gate(&mut noise_ticks, Gate::channel(channel));
+                }
+            }
+            out.ticks.extend(noise_ticks);
+        }
+
+        out.next_tick = out.ticks.len();
+        Ok(out)
+    }
+
+    /// Compile an ideal circuit plus a gate-triggered noise model into an
+    /// annotated circuit containing explicit channel operations.
+    ///
+    /// This is the convenience form of [`try_with_noise`](Self::try_with_noise).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the source circuit already contains channel operations.
+    #[must_use]
+    pub fn with_noise<N: GateNoiseModel>(&self, noise: &N) -> Self {
+        self.try_with_noise(noise)
+            .expect("with_noise requires an ideal circuit without existing channel operations")
+    }
+
     /// Reserve empty ticks in advance.
     ///
     /// This preallocates `n` empty ticks, which can be useful when you know
@@ -1015,6 +1108,12 @@ impl TickCircuit {
     /// ```
     pub fn iter_gates(&self) -> impl Iterator<Item = &Gate> {
         self.ticks.iter().flat_map(Tick::gates)
+    }
+
+    /// Returns true if any tick contains an explicit channel operation.
+    #[must_use]
+    pub fn has_channel_operations(&self) -> bool {
+        self.iter_gates().any(Gate::is_channel)
     }
 
     /// Iterate over all gates with their tick index.
@@ -1622,6 +1721,14 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::u(theta.into(), phi.into(), lambda.into(), qubits))
     }
 
+    /// Place a typed channel operation in this tick.
+    ///
+    /// This is for annotated/noisy circuits. It does not use custom-gate
+    /// metadata; the channel payload is stored directly on the gate.
+    pub fn channel(&mut self, channel: ChannelExpr) -> &mut Self {
+        self.add_gate(Gate::channel(channel))
+    }
+
     // --- Two-qubit gates ---
 
     /// Apply CNOT (CX) gate(s) to one or more qubit pairs.
@@ -2186,7 +2293,9 @@ impl From<&TickCircuit> for DagCircuit {
                         | GateType::SZZ
                         | GateType::SZZdg
                 );
-                let needs_split = if is_two_qubit {
+                let needs_split = if gate.is_channel() {
+                    false
+                } else if is_two_qubit {
                     gate.qubits.len() > 2
                 } else {
                     gate.qubits.len() > 1
@@ -2216,6 +2325,7 @@ impl From<&TickCircuit> for DagCircuit {
                                 angles: gate.angles.clone(),
                                 params: gate.params.clone(),
                                 meas_ids: mr,
+                                channel: gate.channel.clone(),
                             }
                         })
                         .collect()
@@ -3431,6 +3541,103 @@ mod tests {
 
         // Tick 0: qubit 1 was idle, should get an idle gate
         assert!(count_after > count_before, "Should have added idle gates");
+    }
+
+    #[test]
+    fn test_channel_gate_is_first_class_tick_operation() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .channel(pecos_core::channel::Depolarizing(0.25, 0));
+
+        let gate = &tc.get_tick(0).unwrap().gates()[0];
+        assert_eq!(gate.gate_type, GateType::Channel);
+        assert_eq!(gate.qubits.as_slice(), &[QubitId::from(0)]);
+        assert!(gate.channel_expr().is_some());
+        assert!(tc.has_channel_operations());
+        assert!(gate.validate().is_ok());
+    }
+
+    #[test]
+    fn test_with_noise_inserts_channel_ticks() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]);
+        tc.tick().cx(&[(0, 1)]);
+
+        let noisy = tc.with_noise(&|gate: &Gate| {
+            gate.qubits
+                .iter()
+                .map(|q| pecos_core::channel::Depolarizing(0.01, q.index()))
+                .collect()
+        });
+
+        assert_eq!(noisy.num_ticks(), 4);
+        assert_eq!(noisy.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
+        assert!(
+            noisy
+                .get_tick(1)
+                .unwrap()
+                .gates()
+                .iter()
+                .all(Gate::is_channel)
+        );
+        assert_eq!(
+            noisy.get_tick(2).unwrap().gates()[0].gate_type,
+            GateType::CX
+        );
+        assert!(
+            noisy
+                .get_tick(3)
+                .unwrap()
+                .gates()
+                .iter()
+                .all(Gate::is_channel)
+        );
+    }
+
+    #[test]
+    fn test_with_noise_splits_conflicting_channel_ticks() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+
+        let noisy = tc.with_noise(&|_: &Gate| {
+            vec![
+                pecos_core::channel::Depolarizing(0.01, 0),
+                pecos_core::channel::Dephasing(0.02, 0),
+            ]
+        });
+
+        assert_eq!(noisy.num_ticks(), 3);
+        assert_eq!(noisy.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
+
+        let first_noise_tick = noisy.get_tick(1).unwrap();
+        assert_eq!(first_noise_tick.gates().len(), 1);
+        assert!(first_noise_tick.gates()[0].is_channel());
+        assert_eq!(
+            first_noise_tick.gates()[0].qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+
+        let second_noise_tick = noisy.get_tick(2).unwrap();
+        assert_eq!(second_noise_tick.gates().len(), 1);
+        assert!(second_noise_tick.gates()[0].is_channel());
+        assert_eq!(
+            second_noise_tick.gates()[0].qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+    }
+
+    #[test]
+    fn test_with_noise_rejects_existing_channel_operations() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .channel(pecos_core::channel::Depolarizing(0.25, 0));
+
+        let err = tc
+            .try_with_noise(&|_: &Gate| vec![pecos_core::channel::Depolarizing(0.01, 0)])
+            .unwrap_err();
+
+        assert!(err.contains("already contains channel operations"));
+        assert!(err.contains("tick 0"));
     }
 
     #[test]

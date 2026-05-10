@@ -1278,6 +1278,30 @@ impl KrausOps {
         kraus_from_channel_expr_with_size(channel, num_qubits)
     }
 
+    /// Converts a symbolic channel expression to Kraus operators embedded in a
+    /// specific system size.
+    ///
+    /// Use this when applying a local channel to a larger simulator state: a
+    /// channel acting on qubit 3 of a 6-qubit system needs 6-qubit Kraus
+    /// matrices, not the minimal 4-qubit representation implied by the highest
+    /// touched qubit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the expression is unsupported, invalid, or touches
+    /// a qubit outside `num_qubits`.
+    pub fn from_channel_expr_with_num_qubits(
+        channel: &ChannelExpr,
+        num_qubits: usize,
+    ) -> Result<Self, ChannelError> {
+        for qubit in channel.qubits() {
+            if qubit >= num_qubits {
+                return Err(ChannelError::QubitOutOfRange { num_qubits, qubit });
+            }
+        }
+        kraus_from_channel_expr_with_size(channel, num_qubits)
+    }
+
     /// Converts this Kraus channel to a dense PTM.
     ///
     /// # Errors
@@ -3363,6 +3387,22 @@ mod tests {
         assert_eq!(compose_kraus.num_qubits(), 1);
         assert_eq!(compose_kraus.operators().len(), 4);
         assert!(compose_kraus.is_trace_preserving());
+    }
+
+    #[test]
+    fn kraus_from_channel_expr_can_embed_in_larger_system() {
+        let expr = pecos_core::channel::BitFlip(0.25, 2);
+        let kraus = KrausOps::from_channel_expr_with_num_qubits(&expr, 3).unwrap();
+
+        assert_eq!(kraus.num_qubits(), 3);
+        assert!(kraus.is_trace_preserving());
+        assert!(matches!(
+            KrausOps::from_channel_expr_with_num_qubits(&expr, 2),
+            Err(ChannelError::QubitOutOfRange {
+                num_qubits: 2,
+                qubit: 2
+            })
+        ));
     }
 
     #[test]

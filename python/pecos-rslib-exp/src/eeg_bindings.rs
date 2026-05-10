@@ -1141,6 +1141,7 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                                 angles: GateAngles::new(),
                                 params: GateParams::new(),
                                 meas_ids: GateMeasIds::new(),
+                                channel: None,
                             });
                         }
                     }
@@ -1169,6 +1170,7 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                             angles: GateAngles::new(),
                             params: GateParams::new(),
                             meas_ids: GateMeasIds::new(),
+                            channel: None,
                         });
                     }
                 }
@@ -1181,6 +1183,7 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                             angles: GateAngles::new(),
                             params: GateParams::new(),
                             meas_ids: GateMeasIds::new(),
+                            channel: None,
                         });
                     }
                 }
@@ -1202,6 +1205,7 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                         angles: GateAngles::new(),
                         params: GateParams::new(),
                         meas_ids: GateMeasIds::new(),
+                        channel: None,
                     };
                     if gt == pecos_core::gate_type::GateType::RZ
                         && let Ok(angles) = gate.getattr("angles")?.extract::<Vec<f64>>()

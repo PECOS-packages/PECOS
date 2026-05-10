@@ -120,6 +120,12 @@ pub enum GateType {
     PauliOperatorMeta = 210,
     MeasCrosstalkGlobalPayload = 218,
     MeasCrosstalkLocalPayload = 219,
+    /// Typed channel operation embedded in an annotated/noisy circuit.
+    ///
+    /// The concrete channel payload is stored on [`crate::Gate`], not in the
+    /// numeric gate type. Ideal circuits should not contain this gate type; it
+    /// represents compiled noise annotations or explicit channel placement.
+    Channel = 220,
     /// Custom/unrecognized gate type, with actual name stored in metadata
     Custom = 255,
 }
@@ -175,6 +181,7 @@ impl From<u8> for GateType {
             218 => GateType::MeasCrosstalkGlobalPayload,
             219 => GateType::MeasCrosstalkLocalPayload,
             210 => GateType::PauliOperatorMeta,
+            220 => GateType::Channel,
             255 => GateType::Custom,
             _ => panic!("Invalid gate type ID: {value}"),
         }
@@ -232,6 +239,7 @@ impl GateType {
             | GateType::MeasureFree
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
+            | GateType::Channel
             | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
@@ -299,9 +307,11 @@ impl GateType {
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
             | GateType::Custom
-            // PauliOperatorMeta is variable-arity but returns 1 here because
-            // gate validation checks `is_multiple_of(quantum_arity())` and any
-            // count is a multiple of 1. The actual qubit count is in the gate.
+            // PauliOperatorMeta and Channel are variable-arity but return 1
+            // here because gate validation checks
+            // `is_multiple_of(quantum_arity())` and any count is a multiple
+            // of 1. The actual qubit count is in the gate.
+            | GateType::Channel
             | GateType::PauliOperatorMeta => 1,
 
             // Two-qubit gates
@@ -429,6 +439,7 @@ impl fmt::Display for GateType {
             GateType::Idle => write!(f, "Idle"),
             GateType::MeasCrosstalkGlobalPayload => write!(f, "MeasCrosstalkGlobalPayload"),
             GateType::MeasCrosstalkLocalPayload => write!(f, "MeasCrosstalkLocalPayload"),
+            GateType::Channel => write!(f, "Channel"),
             GateType::Custom => write!(f, "Custom"),
             GateType::PauliOperatorMeta => write!(f, "PauliOperator"),
         }
@@ -492,6 +503,7 @@ impl std::str::FromStr for GateType {
             "QALLOC" => Ok(GateType::QAlloc),
             "QFREE" => Ok(GateType::QFree),
             "IDLE" => Ok(GateType::Idle),
+            "CHANNEL" => Ok(GateType::Channel),
             _ => Err(format!("Unknown gate type: {s}")),
         }
     }
@@ -527,6 +539,7 @@ mod tests {
         assert_eq!(GateType::Idle as u8, 200);
         assert_eq!(GateType::MeasCrosstalkGlobalPayload as u8, 218);
         assert_eq!(GateType::MeasCrosstalkLocalPayload as u8, 219);
+        assert_eq!(GateType::Channel as u8, 220);
         assert_eq!(GateType::Custom as u8, 255);
 
         assert_eq!(GateType::from(0u8), GateType::I);
@@ -553,6 +566,7 @@ mod tests {
         assert_eq!(GateType::from(200u8), GateType::Idle);
         assert_eq!(GateType::from(218u8), GateType::MeasCrosstalkGlobalPayload);
         assert_eq!(GateType::from(219u8), GateType::MeasCrosstalkLocalPayload);
+        assert_eq!(GateType::from(220u8), GateType::Channel);
         assert_eq!(GateType::from(255u8), GateType::Custom);
     }
 
@@ -570,6 +584,7 @@ mod tests {
         assert_eq!(GateType::from_str("SXXdg").unwrap(), GateType::SXXdg);
         assert_eq!(GateType::from_str("SYY").unwrap(), GateType::SYY);
         assert_eq!(GateType::from_str("SYYdg").unwrap(), GateType::SYYdg);
+        assert_eq!(GateType::from_str("Channel").unwrap(), GateType::Channel);
         assert_eq!(GateType::from_str("SWAP").unwrap(), GateType::SWAP);
         assert_eq!(GateType::from_str("CCX").unwrap(), GateType::CCX);
 
@@ -616,6 +631,7 @@ mod tests {
         assert_eq!(GateType::MeasureFree.classical_arity(), 0);
         assert_eq!(GateType::MeasCrosstalkGlobalPayload.classical_arity(), 0);
         assert_eq!(GateType::MeasCrosstalkLocalPayload.classical_arity(), 0);
+        assert_eq!(GateType::Channel.classical_arity(), 0);
         assert_eq!(GateType::PZ.classical_arity(), 0);
         assert_eq!(GateType::QAlloc.classical_arity(), 0);
         assert_eq!(GateType::QFree.classical_arity(), 0);
@@ -652,6 +668,7 @@ mod tests {
         assert_eq!(GateType::Idle.quantum_arity(), 1);
         assert_eq!(GateType::MeasCrosstalkGlobalPayload.quantum_arity(), 1);
         assert_eq!(GateType::MeasCrosstalkLocalPayload.quantum_arity(), 1);
+        assert_eq!(GateType::Channel.quantum_arity(), 1);
 
         // Two-qubit gates
         assert_eq!(GateType::CX.quantum_arity(), 2);

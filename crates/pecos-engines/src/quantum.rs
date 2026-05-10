@@ -4,6 +4,7 @@ use crate::byte_message::GateType;
 use dyn_clone::DynClone;
 use log::debug;
 use pecos_core::Angle64;
+use pecos_core::ChannelExpr;
 use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
@@ -52,6 +53,26 @@ fn flat_to_pairs(qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
     let mut pairs = Vec::with_capacity(qubits.len() / 2);
     pairs.extend(qubits.chunks_exact(2).map(|pair| (pair[0], pair[1])));
     pairs
+}
+
+trait ChannelDispatch {
+    fn apply_channel_expr(&mut self, channel: &ChannelExpr) -> Result<(), PecosError>;
+}
+
+impl ChannelDispatch for StabVec {
+    fn apply_channel_expr(&mut self, _channel: &ChannelExpr) -> Result<(), PecosError> {
+        Err(quantum_error(
+            "Channel gate requires a channel-aware simulator path",
+        ))
+    }
+}
+
+impl ChannelDispatch for DensityMatrix {
+    fn apply_channel_expr(&mut self, channel: &ChannelExpr) -> Result<(), PecosError> {
+        DensityMatrix::apply_channel_expr(self, channel)
+            .map(|_| ())
+            .map_err(|err| quantum_error(format!("invalid channel gate: {err}")))
+    }
 }
 
 /// Process a `ByteMessage` against any Clifford-capable simulator.
@@ -274,7 +295,9 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 /// Shared gate dispatch for `StabVecEngine`, `DensityMatrixEngine`, etc.
 /// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX, CRZ),
 /// preparations, and measurements with MZ batching.
-fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator>(
+fn process_general_message<
+    S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator + ChannelDispatch,
+>(
     sim: &mut S,
     message: &ByteMessage,
 ) -> Result<ByteMessage, PecosError> {
@@ -534,6 +557,12 @@ fn process_general_message<S: CliffordGateable + ArbitraryRotationGateable + Qua
             // State preparation
             GateType::PZ | GateType::QAlloc => {
                 sim.pz(&cmd.qubits);
+            }
+            GateType::Channel => {
+                let channel = cmd
+                    .channel_expr()
+                    .ok_or_else(|| quantum_error("Channel gate is missing its channel payload"))?;
+                sim.apply_channel_expr(channel)?;
             }
 
             // No-ops
@@ -1093,6 +1122,11 @@ where
                 GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);
                     self.simulator.pz(&cmd.qubits);
+                }
+                GateType::Channel => {
+                    return Err(quantum_error(
+                        "Channel gate requires a channel-aware simulator path",
+                    ));
                 }
                 GateType::I
                 | GateType::Idle

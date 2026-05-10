@@ -4,6 +4,7 @@
 //! gate operation with its type, qubits, and parameters.
 
 use crate::Angle64;
+use crate::ChannelExpr;
 use crate::MeasId;
 use crate::QubitId;
 use crate::gate_type::GateType;
@@ -56,6 +57,11 @@ pub struct Gate {
     /// transformations. Empty for non-measurement gates.
     /// Follows the MLIR SSA pattern: defined once, referenced everywhere.
     pub meas_ids: GateMeasIds,
+    /// Typed channel payload for `GateType::Channel`.
+    ///
+    /// This is `None` for ideal circuit gates. It is populated only for
+    /// annotated/noisy circuits that explicitly carry channel operations.
+    pub channel: Option<ChannelExpr>,
 }
 
 /// Legacy quantum gate representation for `ByteMessageBuilder` compatibility
@@ -79,6 +85,7 @@ impl Gate {
             params: params.into(),
             qubits: qubits.into(),
             meas_ids: GateMeasIds::new(),
+            channel: None,
         }
     }
 
@@ -126,6 +133,36 @@ impl Gate {
     #[must_use]
     pub fn custom(qubits: impl Into<GateQubits>) -> Self {
         Self::simple(GateType::Custom, qubits)
+    }
+
+    /// Create a typed channel operation for an annotated/noisy circuit.
+    #[must_use]
+    pub fn channel(channel: ChannelExpr) -> Self {
+        let qubits = channel
+            .qubits()
+            .into_iter()
+            .map(QubitId)
+            .collect::<GateQubits>();
+        Self {
+            gate_type: GateType::Channel,
+            angles: GateAngles::new(),
+            params: GateParams::new(),
+            qubits,
+            meas_ids: GateMeasIds::new(),
+            channel: Some(channel),
+        }
+    }
+
+    /// Returns the typed channel payload when this is a channel operation.
+    #[must_use]
+    pub fn channel_expr(&self) -> Option<&ChannelExpr> {
+        self.channel.as_ref()
+    }
+
+    /// Returns true when this gate carries a channel payload.
+    #[must_use]
+    pub fn is_channel(&self) -> bool {
+        self.gate_type == GateType::Channel
     }
 
     /// Create Identity gate on multiple qubits
@@ -929,6 +966,9 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn classical_arity(&self) -> usize {
+        if self.is_channel() {
+            return 0;
+        }
         self.gate_type.classical_arity()
     }
 
@@ -940,6 +980,9 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn quantum_arity(&self) -> usize {
+        if self.is_channel() {
+            return self.qubits.len().max(1);
+        }
         self.gate_type.quantum_arity()
     }
 
@@ -947,6 +990,9 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn is_parameterized(&self) -> bool {
+        if self.is_channel() {
+            return false;
+        }
         self.gate_type.is_parameterized()
     }
 
@@ -954,6 +1000,9 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn is_single_qubit(&self) -> bool {
+        if self.is_channel() {
+            return self.qubits.len() == 1;
+        }
         self.gate_type.is_single_qubit()
     }
 
@@ -961,6 +1010,9 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn is_two_qubit(&self) -> bool {
+        if self.is_channel() {
+            return self.qubits.len() == 2;
+        }
         self.gate_type.is_two_qubit()
     }
 
@@ -968,6 +1020,9 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn angle_arity(&self) -> usize {
+        if self.is_channel() {
+            return 0;
+        }
         self.gate_type.angle_arity()
     }
 
@@ -983,6 +1038,32 @@ impl Gate {
     /// - The number of angles doesn't match the gate's angle arity
     /// - The number of qubits is not a multiple of the gate's quantum arity
     pub fn validate(&self) -> Result<(), String> {
+        if self.is_channel() {
+            let Some(channel) = &self.channel else {
+                return Err("GateType::Channel requires a channel payload".to_string());
+            };
+            if !self.angles.is_empty() || !self.params.is_empty() || !self.meas_ids.is_empty() {
+                return Err(
+                    "Channel gates cannot carry angle, parameter, or measurement-id payloads"
+                        .to_string(),
+                );
+            }
+            let expected = channel
+                .qubits()
+                .into_iter()
+                .map(QubitId)
+                .collect::<GateQubits>();
+            if self.qubits != expected {
+                return Err(format!(
+                    "Channel gate qubits {:?} do not match channel payload qubits {:?}",
+                    self.qubits, expected
+                ));
+            }
+            return Ok(());
+        }
+        if self.channel.is_some() {
+            return Err("Only GateType::Channel can carry a channel payload".to_string());
+        }
         // Check angle parameters
         if self.angles.len() != self.angle_arity() {
             return Err(format!(
@@ -1051,6 +1132,27 @@ mod tests {
             &[QubitId::from(2), QubitId::from(3)]
         );
         assert!(measure_gate.angles.is_empty());
+    }
+
+    #[test]
+    fn test_channel_gate_creation_and_validation() {
+        use crate::channel::{Dephasing, Depolarizing};
+
+        let gate = Gate::channel(Depolarizing(0.25, 0));
+        assert_eq!(gate.gate_type, GateType::Channel);
+        assert_eq!(gate.qubits.as_slice(), &[QubitId::from(0)]);
+        assert!(gate.channel_expr().is_some());
+        assert!(gate.validate().is_ok());
+
+        let two_qubit_channel = Depolarizing(0.1, 0) & Dephasing(0.2, 1);
+        let two_qubit_gate = Gate::channel(two_qubit_channel);
+        assert_eq!(
+            two_qubit_gate.qubits.as_slice(),
+            &[QubitId::from(0), QubitId::from(1)]
+        );
+        assert_eq!(two_qubit_gate.quantum_arity(), 2);
+        assert!(two_qubit_gate.is_two_qubit());
+        assert!(two_qubit_gate.validate().is_ok());
     }
 
     #[test]

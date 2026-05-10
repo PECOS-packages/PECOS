@@ -255,6 +255,7 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
         angles: gate.angles.clone(),
         params: gate.params.clone(),
         meas_ids: gate.meas_ids.clone(),
+        channel: None,
     };
 
     let mut sp = SparsePauli::from_bm(label);

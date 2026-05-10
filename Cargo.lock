@@ -4502,6 +4502,7 @@ dependencies = [
 name = "pecos-simulators"
 version = "0.2.0-dev.0"
 dependencies = [
+ "nalgebra",
  "num-complex 0.4.6",
  "paste",
  "pecos-core",

@@ -81,6 +81,13 @@ pub struct DepolarizingNoiseModel {
 impl ProbabilityValidator for DepolarizingNoiseModel {}
 
 impl DepolarizingNoiseModel {
+    fn channel_gate_error() -> PecosError {
+        PecosError::Input(
+            "ByteMessage noise models cannot process GateType::Channel; channel operations carry typed payloads and must use a channel-aware circuit path"
+                .to_string(),
+        )
+    }
+
     /// Compute a probability threshold from a f64 probability
     #[inline]
     fn compute_threshold(p: f64) -> u64 {
@@ -231,6 +238,7 @@ impl DepolarizingNoiseModel {
                 trace!("Applying preparation with possible fault");
                 Self::apply_prep_faults(rng, p_prep_threshold, builder, gate);
             }
+            GateType::Channel => unreachable!("channel gates are rejected before noise is applied"),
             GateType::I
             | GateType::Idle
             | GateType::MeasCrosstalkLocalPayload
@@ -564,6 +572,15 @@ impl ControlEngine for DepolarizingNoiseModel {
         // For quantum operations, apply gate noise
         trace!("DepolarizingNoise::start - applying noise to quantum operations");
 
+        self.scratch_gates.clear();
+        input
+            .quantum_ops_into(&mut self.scratch_gates)
+            .map_err(|e| PecosError::Input(format!("Failed to parse quantum operations: {e}")))?;
+
+        if self.scratch_gates.iter().any(Gate::is_channel) {
+            return Err(Self::channel_gate_error());
+        }
+
         if self.p_prep_threshold == 0
             && self.p_meas_threshold == 0
             && self.p1_threshold == 0
@@ -571,11 +588,6 @@ impl ControlEngine for DepolarizingNoiseModel {
         {
             return Ok(EngineStage::NeedsProcessing(input));
         }
-
-        self.scratch_gates.clear();
-        input
-            .quantum_ops_into(&mut self.scratch_gates)
-            .map_err(|e| PecosError::Input(format!("Failed to parse quantum operations: {e}")))?;
 
         self.scratch_builder.reset();
         let _ = self.scratch_builder.for_quantum_operations();

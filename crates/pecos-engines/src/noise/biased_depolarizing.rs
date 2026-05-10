@@ -73,6 +73,13 @@ pub struct BiasedDepolarizingNoiseModel {
 impl ProbabilityValidator for BiasedDepolarizingNoiseModel {}
 
 impl BiasedDepolarizingNoiseModel {
+    fn channel_gate_error() -> PecosError {
+        PecosError::Input(
+            "ByteMessage noise models cannot process GateType::Channel; channel operations carry typed payloads and must use a channel-aware circuit path"
+                .to_string(),
+        )
+    }
+
     /// Create a new general noise model with the given probabilities
     #[must_use]
     pub fn new(p_prep: f64, p_meas_0: f64, p_meas_1: f64, p1: f64, p2: f64) -> Self {
@@ -216,6 +223,9 @@ impl BiasedDepolarizingNoiseModel {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying preparation with possible fault");
                     self.apply_prep_faults(&mut builder, gate);
+                }
+                GateType::Channel => {
+                    unreachable!("channel gates are rejected before noise is applied")
                 }
                 GateType::I
                 | GateType::Idle
@@ -441,6 +451,9 @@ impl ControlEngine for BiasedDepolarizingNoiseModel {
 
         // Parse the input as quantum operations
         let gates: Vec<crate::Gate> = input.quantum_ops()?;
+        if gates.iter().any(Gate::is_channel) {
+            return Err(Self::channel_gate_error());
+        }
 
         // Apply noise to the gates
         let noisy_gates = self.apply_noise_to_gates(&gates);

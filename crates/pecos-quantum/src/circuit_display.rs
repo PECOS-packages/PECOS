@@ -74,6 +74,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::QFree => "QF",
         GateType::I | GateType::Idle => "I",
         GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => "XT",
+        GateType::Channel => "Ch",
         GateType::Custom => "?",
         GateType::PauliOperatorMeta => "PO",
     }
@@ -208,6 +209,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::QAlloc
         | GateType::QFree
         | GateType::Custom
+        | GateType::Channel
         | GateType::MeasCrosstalkGlobalPayload
         | GateType::MeasCrosstalkLocalPayload
         | GateType::CX

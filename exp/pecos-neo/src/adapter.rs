@@ -139,15 +139,18 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
 }
 
 /// Convert a pecos-core `Gate` to a pecos-neo `GateCommand`.
-///
-/// Returns `None` if the gate type is not supported.
-fn convert_gate(gate: &Gate) -> Option<GateCommand> {
-    let neo_type = convert_gate_type(gate.gate_type)?;
+fn convert_gate(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosError> {
+    let neo_type = convert_gate_type(gate.gate_type).ok_or_else(|| {
+        pecos_core::errors::PecosError::Input(format!(
+            "pecos-neo adapter does not support gate type {:?}",
+            gate.gate_type
+        ))
+    })?;
 
     let qubits = gate.qubits.iter().copied().collect();
     let angles = gate.angles.iter().copied().collect();
 
-    Some(GateCommand {
+    Ok(GateCommand {
         gate_type: neo_type,
         qubits,
         angles,
@@ -156,10 +159,9 @@ fn convert_gate(gate: &Gate) -> Option<GateCommand> {
 
 /// Convert a `ByteMessage` containing quantum operations to a `CommandQueue`.
 ///
-/// Skips any gates that can't be converted (with a warning in debug mode).
-///
 /// # Errors
-/// Returns `PecosError` if the byte message cannot be decoded.
+/// Returns `PecosError` if the byte message cannot be decoded or contains a
+/// gate unsupported by the pecos-neo command representation.
 #[cfg(feature = "engines-adapter")]
 pub fn byte_message_to_command_queue(
     message: &pecos_engines::ByteMessage,
@@ -169,9 +171,7 @@ pub fn byte_message_to_command_queue(
     let mut queue = CommandQueue::with_capacity(gates.len());
 
     for gate in &gates {
-        if let Some(cmd) = convert_gate(gate) {
-            queue.push(cmd);
-        }
+        queue.push(convert_gate(gate)?);
     }
 
     Ok(queue)
@@ -362,21 +362,27 @@ where
 ///
 /// This is useful when you have raw Gate objects and want to convert them
 /// to the pecos-neo format.
-#[must_use]
-pub fn gate_to_command(gate: &Gate) -> Option<GateCommand> {
+///
+/// # Errors
+///
+/// Returns `PecosError` if the gate has no pecos-neo command representation.
+pub fn gate_to_command(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosError> {
     convert_gate(gate)
 }
 
 /// Convert a slice of pecos-core Gates to a `CommandQueue`.
-#[must_use]
-pub fn gates_to_command_queue(gates: &[Gate]) -> CommandQueue {
+///
+/// # Errors
+///
+/// Returns `PecosError` if any gate has no pecos-neo command representation.
+pub fn gates_to_command_queue(
+    gates: &[Gate],
+) -> Result<CommandQueue, pecos_core::errors::PecosError> {
     let mut queue = CommandQueue::with_capacity(gates.len());
     for gate in gates {
-        if let Some(cmd) = convert_gate(gate) {
-            queue.push(cmd);
-        }
+        queue.push(convert_gate(gate)?);
     }
-    queue
+    Ok(queue)
 }
 
 /// Convert a `CommandQueue` back to a Vec of pecos-core Gates.
@@ -505,7 +511,7 @@ mod tests {
             Gate::new(CoreGateType::MZ, vec![], vec![], vec![QubitId(0)]),
         ];
 
-        let queue = gates_to_command_queue(&gates);
+        let queue = gates_to_command_queue(&gates).expect("should convert");
         assert_eq!(queue.len(), 3);
     }
 
@@ -521,11 +527,23 @@ mod tests {
             ),
         ];
 
-        let queue = gates_to_command_queue(&original_gates);
+        let queue = gates_to_command_queue(&original_gates).expect("should convert");
         let back = command_queue_to_gates(&queue);
 
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].gate_type, CoreGateType::H);
         assert_eq!(back[1].gate_type, CoreGateType::CX);
+    }
+
+    #[test]
+    fn test_gate_to_command_rejects_channel_gate() {
+        let gate = Gate::channel(pecos_core::channel::Depolarizing(0.01, 0));
+
+        let err = gate_to_command(&gate).expect_err("channel gates need typed channel handling");
+
+        assert!(
+            err.to_string()
+                .contains("does not support gate type Channel")
+        );
     }
 }

@@ -46,7 +46,6 @@ use smallvec::SmallVec;
 // ============================================================================
 
 impl From<pecos_core::gate_type::GateType> for GateType {
-    #[allow(clippy::match_same_arms)] // Unknown gate types explicitly map to I
     fn from(gt: pecos_core::gate_type::GateType) -> Self {
         use pecos_core::gate_type::GateType as CoreGT;
         match gt {
@@ -73,6 +72,10 @@ impl From<pecos_core::gate_type::GateType> for GateType {
             CoreGT::CX => Self::CX,
             CoreGT::CY => Self::CY,
             CoreGT::CZ => Self::CZ,
+            CoreGT::SXX => Self::SXX,
+            CoreGT::SXXdg => Self::SXXdg,
+            CoreGT::SYY => Self::SYY,
+            CoreGT::SYYdg => Self::SYYdg,
             CoreGT::SZZ => Self::SZZ,
             CoreGT::SZZdg => Self::SZZdg,
             CoreGT::SWAP => Self::SWAP,
@@ -88,8 +91,7 @@ impl From<pecos_core::gate_type::GateType> for GateType {
             CoreGT::QAlloc => Self::QAlloc,
             CoreGT::QFree => Self::QFree,
             CoreGT::Idle => Self::Idle,
-            // Any unknown gate types default to identity
-            _ => Self::I,
+            other => panic!("unsupported pecos-core gate type for pecos-neo conversion: {other:?}"),
         }
     }
 }
@@ -297,9 +299,10 @@ impl From<&CommandQueue> for TickCircuit {
                         params: SmallVec::new(),
                         qubits: qubit_ids,
                         meas_ids: SmallVec::new(),
+                        channel: None,
                     };
-                    // Use try_add_gate and ignore errors (shouldn't happen with one gate per tick)
-                    let _ = tick.try_add_gate(gate);
+                    tick.try_add_gate(gate)
+                        .expect("one gate per tick should not have qubit conflicts");
                 }
             }
         }
@@ -429,6 +432,7 @@ mod tests {
             params: SmallVec::new(),
             qubits: smallvec::smallvec![QubitId(0)],
             meas_ids: SmallVec::new(),
+            channel: None,
         };
 
         let cmd: GateCommand = (&gate).into();

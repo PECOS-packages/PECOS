@@ -2035,6 +2035,7 @@ mod tests {
             angles: GateAngles::new(),
             params: GateParams::new(),
             meas_ids: pecos_core::GateMeasIds::new(),
+            channel: None,
         }
     }
 

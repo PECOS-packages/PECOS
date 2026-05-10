@@ -15,6 +15,7 @@ fn gate(gt: GateType, qubits: &[usize]) -> Gate {
         angles: GateAngles::new(),
         params: GateParams::new(),
         meas_ids: pecos_core::GateMeasIds::new(),
+        channel: None,
     }
 }
 

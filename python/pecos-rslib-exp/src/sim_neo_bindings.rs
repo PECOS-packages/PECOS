@@ -767,6 +767,7 @@ fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_c
                 angles,
                 params: GateParams::new(),
                 meas_ids: GateMeasIds::new(),
+                channel: None,
             }
         })
         .collect()
@@ -1096,6 +1097,7 @@ fn build_gate_from_python(
         angles,
         params: GateParams::new(),
         meas_ids: GateMeasIds::new(),
+        channel: None,
     })
 }
 

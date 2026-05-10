@@ -1018,7 +1018,7 @@ mod tests {
             let state = random_statevector(&mut rng, 2).unwrap();
             p0_sum += state[0].norm_sqr();
         }
-        let mean = p0_sum / samples as f64;
+        let mean = p0_sum / f64::from(samples);
         assert!(
             (0.22..0.28).contains(&mean),
             "expected E[|psi_0|^2] near 1/4 for a 4D Haar state, got {mean}"

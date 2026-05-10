@@ -318,6 +318,7 @@ where
             | GateType::CRZ
             | GateType::CH
             | GateType::CCX
+            | GateType::Channel
             | GateType::Custom => {
                 return Err(HugrExecutionError::UnsupportedGate {
                     gate_type: gate.gate_type,

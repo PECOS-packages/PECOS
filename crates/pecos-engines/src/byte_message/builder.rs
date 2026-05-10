@@ -155,6 +155,10 @@ impl ByteMessageBuilder {
     where
         I: IntoIterator<Item = usize>,
     {
+        assert!(
+            gate_type != GateType::Channel,
+            "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
+        );
         let payload_size = size_of::<GateHeader>()
             + num_qubits * size_of::<u32>()
             + (angles.len() + params.len()) * size_of::<f64>();
@@ -326,6 +330,10 @@ impl ByteMessageBuilder {
     /// This function will panic if the number of qubits in the gate exceeds 255,
     /// as the protocol uses a u8 to represent the qubit count.
     pub fn add_gate_command(&mut self, gate: &Gate) -> &mut Self {
+        assert!(
+            !gate.is_channel(),
+            "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
+        );
         self.add_gate_parts_from_usizes(
             gate.gate_type,
             gate.qubits.len(),
@@ -967,6 +975,18 @@ mod tests {
         // Build and verify basic structure
         let message = builder.build();
         assert!(!message.is_empty().unwrap());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
+    )]
+    fn test_add_gate_command_rejects_channel_gate() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+
+        let gate = Gate::channel(pecos_core::channel::Depolarizing(0.01, 0));
+        builder.add_gate_command(&gate);
     }
 
     #[test]

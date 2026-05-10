@@ -15,7 +15,9 @@ use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use super::state_vec::StateVec;
 use super::state_vec_soa::StateVecSoA;
-use pecos_core::{Angle64, QubitId, RngManageable};
+use nalgebra::DMatrix;
+use pecos_core::{Angle64, ChannelExpr, QubitId, RngManageable};
+use pecos_quantum::{ChannelError, KrausOps};
 use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 
 use core::fmt::{Debug, Display, Formatter, Write};
@@ -860,6 +862,73 @@ where
 
         self
     }
+
+    /// Apply a symbolic channel expression to this density matrix.
+    ///
+    /// Supported expressions are those convertible to same-Hilbert-space Kraus
+    /// operators: unitary, mixed-unitary, amplitude damping, phase damping,
+    /// tensor, and composition. Erasure, leakage, and gate instruments are
+    /// intentionally rejected because they need extra flag/outcome semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the channel expression is unsupported or invalid for
+    /// this simulator's qubit count.
+    pub fn apply_channel_expr(&mut self, channel: &ChannelExpr) -> Result<&mut Self, ChannelError> {
+        let kraus = KrausOps::from_channel_expr_with_num_qubits(channel, self.num_physical_qubits)?;
+        self.apply_kraus_ops(&kraus)
+    }
+
+    /// Apply Kraus operators to this density matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Kraus operators are not defined on the same
+    /// number of qubits as this density matrix.
+    pub fn apply_kraus_ops(&mut self, kraus: &KrausOps) -> Result<&mut Self, ChannelError> {
+        let num_qubits_u32 = u32::try_from(self.num_physical_qubits).map_err(|_| {
+            ChannelError::DimensionOverflow {
+                num_qubits: self.num_physical_qubits,
+            }
+        })?;
+        let dim = 1usize
+            .checked_shl(num_qubits_u32)
+            .ok_or(ChannelError::DimensionOverflow {
+                num_qubits: self.num_physical_qubits,
+            })?;
+        if kraus.num_qubits() != self.num_physical_qubits {
+            let actual_qubits_u32 =
+                u32::try_from(kraus.num_qubits()).map_err(|_| ChannelError::DimensionOverflow {
+                    num_qubits: kraus.num_qubits(),
+                })?;
+            let actual_dim =
+                1usize
+                    .checked_shl(actual_qubits_u32)
+                    .ok_or(ChannelError::DimensionOverflow {
+                        num_qubits: kraus.num_qubits(),
+                    })?;
+            return Err(ChannelError::InvalidMatrixShape {
+                expected_rows: dim,
+                expected_cols: dim,
+                rows: actual_dim,
+                cols: actual_dim,
+            });
+        }
+
+        let rho = self.get_density_matrix();
+        let flat: Vec<Complex64> = rho.iter().flat_map(|row| row.iter().copied()).collect();
+        let rho_matrix = DMatrix::from_row_slice(dim, dim, &flat);
+        let mut evolved = DMatrix::zeros(dim, dim);
+        for operator in kraus.operators() {
+            evolved += operator * &rho_matrix * operator.adjoint();
+        }
+
+        let new_rho: Vec<Vec<Complex64>> = (0..dim)
+            .map(|row| (0..dim).map(|col| evolved[(row, col)]).collect())
+            .collect();
+        self.set_from_density_matrix(&new_rho);
+        Ok(self)
+    }
 }
 
 impl<R> From<&StateVecSoA<R>> for DensityMatrix<R>
@@ -1414,6 +1483,26 @@ mod tests {
 
         // State should be pure
         assert!(dm.is_pure());
+    }
+
+    #[test]
+    fn channel_expr_bit_flip_applies_to_density_matrix() {
+        let mut dm = DensityMatrix::new(1);
+        dm.apply_channel_expr(&pecos_core::channel::BitFlip(1.0, 0))
+            .unwrap();
+
+        assert!(dm.probability(0) < 1e-10);
+        assert!((dm.probability(1) - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn channel_expr_embeds_local_channel_in_larger_density_matrix() {
+        let mut dm = DensityMatrix::new(2);
+        dm.apply_channel_expr(&pecos_core::channel::BitFlip(1.0, 1))
+            .unwrap();
+
+        assert!(dm.probability(0) < 1e-10);
+        assert!((dm.probability(2) - 1.0).abs() < 1e-10);
     }
 
     #[test]

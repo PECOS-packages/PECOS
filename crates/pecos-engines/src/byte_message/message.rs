@@ -288,15 +288,7 @@ impl ByteMessage {
                 }
             }
 
-            match Self::parse_gate_command(payload) {
-                Ok(cmd) => Some(cmd),
-                Err(e) => {
-                    if trace_enabled {
-                        trace!("Error parsing gate: {e}");
-                    }
-                    None
-                }
-            }
+            Some(Self::parse_gate_command(payload)?)
         } else {
             None
         };
@@ -722,6 +714,12 @@ impl ByteMessage {
         let num_qubits = header.num_qubits as usize;
         let has_params = header.has_params != 0;
         let gate_type = GateType::from(header.gate_type);
+        if gate_type == GateType::Channel {
+            return Err(PecosError::Input(
+                "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
+                    .to_string(),
+            ));
+        }
 
         if trace_enabled {
             trace!(
@@ -798,6 +796,34 @@ mod tests {
         assert_eq!(
             parsed_commands[1].qubits.as_slice(),
             &[QubitId(0), QubitId(1)]
+        );
+    }
+
+    #[test]
+    fn test_raw_channel_gate_message_is_rejected() {
+        use crate::byte_message::protocol::{GateHeader, MessageFlags, MessageType};
+
+        let header = GateHeader {
+            gate_type: GateType::Channel as u8,
+            num_qubits: 1,
+            has_params: 0,
+            reserved: 0,
+        };
+        let mut payload = Vec::new();
+        payload.extend_from_slice(bytemuck::bytes_of(&header));
+        payload.extend_from_slice(&0u32.to_le_bytes());
+
+        let mut builder = ByteMessage::quantum_operations_builder();
+        builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
+        let message = builder.build();
+
+        let err = message
+            .quantum_ops()
+            .expect_err("ByteMessage cannot carry typed channel payloads");
+
+        assert!(
+            err.to_string()
+                .contains("Channel gates carry typed payloads")
         );
     }
 

@@ -25,6 +25,7 @@ pecos-quantum.workspace = true
 pecos-random.workspace = true
 rand.workspace = true
 num-complex.workspace = true
+nalgebra.workspace = true
 smallvec.workspace = true
 wide.workspace = true
 rayon = { version = "1.10", optional = true }

@@ -1519,18 +1519,16 @@ impl ChoiMatrix {
         Ok(out)
     }
 
-    /// Returns whether `Tr_output(J) = I_input` within the default tolerance.
-    #[must_use]
-    pub fn is_trace_preserving(&self) -> bool {
-        self.is_trace_preserving_with_tolerance(1e-10)
-    }
-
-    /// Returns whether `Tr_output(J) = I_input` within `tolerance`.
-    #[must_use]
-    pub fn is_trace_preserving_with_tolerance(&self, tolerance: f64) -> bool {
-        let Ok(dim) = hilbert_dim(self.num_qubits) else {
-            return false;
-        };
+    /// Returns the output partial trace `Tr_output(J)`.
+    ///
+    /// With PECOS's column-stacked Choi convention, this equals the input-space
+    /// identity for a trace-preserving channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Hilbert-space dimension overflows.
+    pub fn partial_trace_output(&self) -> Result<DMatrix<Complex64>, ChannelError> {
+        let dim = hilbert_dim(self.num_qubits)?;
         let mut reduced = DMatrix::zeros(dim, dim);
         for input_row in 0..dim {
             for input_col in 0..dim {
@@ -1544,6 +1542,98 @@ impl ChoiMatrix {
                 reduced[(input_row, input_col)] = value;
             }
         }
+        Ok(reduced)
+    }
+
+    /// Returns the input partial trace `Tr_input(J)`.
+    ///
+    /// With PECOS's column-stacked Choi convention, this equals `E(I)` and
+    /// therefore equals the output-space identity for a unital channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Hilbert-space dimension overflows.
+    pub fn partial_trace_input(&self) -> Result<DMatrix<Complex64>, ChannelError> {
+        let dim = hilbert_dim(self.num_qubits)?;
+        let mut reduced = DMatrix::zeros(dim, dim);
+        for output_row in 0..dim {
+            for output_col in 0..dim {
+                let mut value = Complex64::new(0.0, 0.0);
+                for input in 0..dim {
+                    value += self.matrix[(
+                        choi_index(dim, output_row, input),
+                        choi_index(dim, output_col, input),
+                    )];
+                }
+                reduced[(output_row, output_col)] = value;
+            }
+        }
+        Ok(reduced)
+    }
+
+    /// Returns whether this Choi matrix is positive semidefinite within the
+    /// default tolerance.
+    #[must_use]
+    pub fn is_completely_positive(&self) -> bool {
+        self.is_completely_positive_with_tolerance(1e-10)
+    }
+
+    /// Returns whether this Choi matrix is positive semidefinite within
+    /// `tolerance`.
+    #[must_use]
+    pub fn is_completely_positive_with_tolerance(&self, tolerance: f64) -> bool {
+        self.to_kraus_with_tolerance(tolerance).is_ok()
+    }
+
+    /// Returns whether this Choi matrix is completely positive and
+    /// trace-preserving within the default tolerance.
+    #[must_use]
+    pub fn is_cptp(&self) -> bool {
+        self.is_cptp_with_tolerance(1e-10)
+    }
+
+    /// Returns whether this Choi matrix is completely positive and
+    /// trace-preserving within `tolerance`.
+    #[must_use]
+    pub fn is_cptp_with_tolerance(&self, tolerance: f64) -> bool {
+        self.is_completely_positive_with_tolerance(tolerance)
+            && self.is_trace_preserving_with_tolerance(tolerance)
+    }
+
+    /// Returns whether `E(I) = I` within the default tolerance.
+    #[must_use]
+    pub fn is_unital(&self) -> bool {
+        self.is_unital_with_tolerance(1e-10)
+    }
+
+    /// Returns whether `E(I) = I` within `tolerance`.
+    #[must_use]
+    pub fn is_unital_with_tolerance(&self, tolerance: f64) -> bool {
+        let Ok(dim) = hilbert_dim(self.num_qubits) else {
+            return false;
+        };
+        let Ok(reduced) = self.partial_trace_input() else {
+            return false;
+        };
+        let identity = DMatrix::<Complex64>::identity(dim, dim);
+        matrix_max_abs_diff(&reduced, &identity) <= tolerance
+    }
+
+    /// Returns whether `Tr_output(J) = I_input` within the default tolerance.
+    #[must_use]
+    pub fn is_trace_preserving(&self) -> bool {
+        self.is_trace_preserving_with_tolerance(1e-10)
+    }
+
+    /// Returns whether `Tr_output(J) = I_input` within `tolerance`.
+    #[must_use]
+    pub fn is_trace_preserving_with_tolerance(&self, tolerance: f64) -> bool {
+        let Ok(dim) = hilbert_dim(self.num_qubits) else {
+            return false;
+        };
+        let Ok(reduced) = self.partial_trace_output() else {
+            return false;
+        };
         let identity = DMatrix::<Complex64>::identity(dim, dim);
         matrix_max_abs_diff(&reduced, &identity) <= tolerance
     }
@@ -2510,6 +2600,9 @@ mod tests {
         assert_eq!(choi.num_qubits(), 1);
         assert_eq!(choi.matrix().shape(), (4, 4));
         assert!(choi.is_trace_preserving());
+        assert!(choi.is_completely_positive());
+        assert!(choi.is_cptp());
+        assert!(choi.is_unital());
         assert_complex_close(trace_complex(choi.matrix()), Complex64::new(2.0, 0.0));
 
         let mut expected = DMatrix::zeros(4, 4);
@@ -2518,6 +2611,51 @@ mod tests {
         expected[(3, 0)] = Complex64::new(1.0, 0.0);
         expected[(3, 3)] = Complex64::new(1.0, 0.0);
         assert_complex_matrix_close(choi.matrix(), &expected);
+
+        let identity = DMatrix::identity(2, 2);
+        assert_complex_matrix_close(&choi.partial_trace_output().unwrap(), &identity);
+        assert_complex_matrix_close(&choi.partial_trace_input().unwrap(), &identity);
+    }
+
+    #[test]
+    fn choi_tomography_helpers_classify_basic_channels() {
+        let zero = ChoiMatrix::try_new(1, DMatrix::zeros(4, 4)).unwrap();
+        assert!(zero.is_completely_positive());
+        assert!(!zero.is_trace_preserving());
+        assert!(!zero.is_cptp());
+        assert!(!zero.is_unital());
+
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let damping = ChoiMatrix::from_channel_expr(&expr).unwrap();
+        assert!(damping.is_completely_positive());
+        assert!(damping.is_trace_preserving());
+        assert!(damping.is_cptp());
+        assert!(!damping.is_unital());
+
+        let mut expected_trace_input = DMatrix::zeros(2, 2);
+        expected_trace_input[(0, 0)] = Complex64::new(1.25, 0.0);
+        expected_trace_input[(1, 1)] = Complex64::new(0.75, 0.0);
+        assert_complex_matrix_close(
+            &damping.partial_trace_input().unwrap(),
+            &expected_trace_input,
+        );
+    }
+
+    #[test]
+    fn choi_transpose_map_is_trace_preserving_unital_but_not_cp() {
+        let mut transpose_choi = DMatrix::zeros(4, 4);
+        transpose_choi[(0, 0)] = Complex64::new(1.0, 0.0);
+        transpose_choi[(1, 2)] = Complex64::new(1.0, 0.0);
+        transpose_choi[(2, 1)] = Complex64::new(1.0, 0.0);
+        transpose_choi[(3, 3)] = Complex64::new(1.0, 0.0);
+        let choi = ChoiMatrix::try_new(1, transpose_choi).unwrap();
+
+        assert!(choi.is_trace_preserving());
+        assert!(choi.is_unital());
+        assert!(!choi.is_completely_positive());
+        assert!(!choi.is_cptp());
     }
 
     #[test]

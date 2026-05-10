@@ -22,8 +22,8 @@ use num_complex::Complex64;
 
 use pecos_lindblad::matrix::{self, Matrix};
 use pecos_lindblad::{
-    DEFAULT_N_STEPS, Gate, Lindbladian, Pauli1, PauliString, synthesize_exact_unitary,
-    synthesize_numerical,
+    synthesize_exact_unitary, synthesize_numerical, Gate, Lindbladian, Pauli1, PauliString,
+    DEFAULT_N_STEPS,
 };
 
 fn kron_all(ops: &[&Matrix]) -> Matrix {
@@ -59,6 +59,7 @@ fn four_qubit_identity_ad_on_one_qubit() {
 
     let gate = Gate::identity(4, noise, tau_g);
     let pl = synthesize_numerical(&gate, DEFAULT_N_STEPS);
+    let pl_coarse = synthesize_numerical(&gate, 2);
 
     // Expected non-zero rates: lambda_{q1=X}, lambda_{q1=Y}, lambda_{q1=Z}
     // on qubit 1 (index 1 from left in "qqqq" string).
@@ -68,6 +69,9 @@ fn four_qubit_identity_ad_on_one_qubit() {
     assert_abs_diff_eq!(rate("IXII"), beta_down * tau_g / 4.0, epsilon = 1e-10);
     assert_abs_diff_eq!(rate("IYII"), beta_down * tau_g / 4.0, epsilon = 1e-10);
     assert_abs_diff_eq!(rate("IZII"), beta_phi * tau_g / 2.0, epsilon = 1e-10);
+    for ps in PauliString::enumerate_nonidentity(4) {
+        assert_abs_diff_eq!(pl.rate(&ps), pl_coarse.rate(&ps), epsilon = 1e-14);
+    }
 
     // All other 252 non-identity 4Q Paulis should be zero.
     for ps in PauliString::enumerate_nonidentity(4) {

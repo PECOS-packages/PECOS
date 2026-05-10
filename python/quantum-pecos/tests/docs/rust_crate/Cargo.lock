@@ -2992,6 +2992,7 @@ dependencies = [
  "num-complex",
  "pecos-core",
  "pecos-num",
+ "pecos-random",
  "smallvec",
  "tket",
 ]
@@ -3010,6 +3011,7 @@ dependencies = [
 name = "pecos-simulators"
 version = "0.2.0-dev.0"
 dependencies = [
+ "nalgebra",
  "num-complex",
  "pecos-core",
  "pecos-quantum",

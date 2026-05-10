@@ -222,16 +222,39 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 ///
 /// # Usage
 ///
-/// ```ignore
-/// let mut stream = StreamingLogicalDecoder::new(decoder, round_to_det_map);
+/// ```
+/// use pecos_decoder_core::{DecoderError, ObservableDecoder};
+/// use pecos_decoder_core::logical_algorithm::{
+///     AlgorithmDescriptor, LogicalAlgorithmDecoder, SegmentDescriptor, StreamingLogicalDecoder,
+/// };
+///
+/// struct AnyDetectionDecoder;
+///
+/// impl ObservableDecoder for AnyDetectionDecoder {
+///     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+///         Ok(u64::from(syndrome.iter().any(|&bit| bit != 0)))
+///     }
+/// }
+///
+/// let descriptor = AlgorithmDescriptor {
+///     segments: vec![SegmentDescriptor {
+///         num_detectors: 2,
+///         num_observables: 1,
+///     }],
+///     boundary_gates: vec![],
+///     num_observables: 1,
+/// };
+/// let decoder = LogicalAlgorithmDecoder::new(Box::new(AnyDetectionDecoder), descriptor);
+/// let mut stream = StreamingLogicalDecoder::new(decoder);
 ///
 /// // Feed syndrome round by round
-/// for (round, detectors) in syndrome_stream {
-///     stream.feed_round(&detectors);
+/// for sparse_round in [vec![(0, 1)], vec![(1, 0)]] {
+///     stream.feed_sparse(&sparse_round);
 /// }
 ///
 /// // Decode at the end
-/// let obs = stream.flush()?;
+/// let obs = stream.flush().unwrap();
+/// assert_eq!(obs, 1);
 /// ```
 pub struct StreamingLogicalDecoder {
     /// The underlying batch decoder (full-circuit OSD).

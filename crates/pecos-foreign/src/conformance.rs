@@ -15,9 +15,14 @@
 //!
 //! # Usage from Rust
 //!
-//! ```rust,ignore
-//! let results = run_conformance_tests(&mut foreign_sim);
-//! assert!(results.all_passed());
+//! ```rust,no_run
+//! use pecos_foreign::ForeignSimulator;
+//! use pecos_foreign::conformance::run_conformance_tests;
+//!
+//! fn check_foreign_simulator(mut foreign_sim: ForeignSimulator) {
+//!     let results = run_conformance_tests(&mut foreign_sim);
+//!     assert!(results.all_passed());
+//! }
 //! ```
 
 use crate::simulator::{ForeignSimulator, ForeignSimulatorVTable};

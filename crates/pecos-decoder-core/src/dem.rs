@@ -617,13 +617,63 @@ impl DemMatchingGraph {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use pecos_decoder_core::dem::{DemCheckMatrix, CheckMatrixObservableDecoder};
+/// ```
+/// use ndarray::ArrayView1;
 ///
-/// let dcm = DemCheckMatrix::from_dem_str(dem_str)?;
-/// let inner_decoder = /* create BP+OSD from dcm.check_matrix */;
+/// use pecos_decoder_core::{
+///     CheckMatrixObservableDecoder, Decoder, DecoderError, DecodingResultTrait, DemCheckMatrix,
+///     ObservableDecoder,
+/// };
+///
+/// struct CorrectionResult {
+///     correction: Vec<u8>,
+/// }
+///
+/// impl DecodingResultTrait for CorrectionResult {
+///     fn is_successful(&self) -> bool {
+///         true
+///     }
+///
+///     fn correction(&self) -> &[u8] {
+///         &self.correction
+///     }
+/// }
+///
+/// struct FirstMechanismDecoder {
+///     checks: usize,
+///     bits: usize,
+/// }
+///
+/// impl Decoder for FirstMechanismDecoder {
+///     type Result = CorrectionResult;
+///     type Error = DecoderError;
+///
+///     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
+///         assert_eq!(input.len(), self.checks);
+///         let mut correction = vec![0; self.bits];
+///         correction[0] = 1;
+///         Ok(CorrectionResult { correction })
+///     }
+///
+///     fn check_count(&self) -> usize {
+///         self.checks
+///     }
+///
+///     fn bit_count(&self) -> usize {
+///         self.bits
+///     }
+/// }
+///
+/// let dem_str = "error(0.01) D0 L0\nerror(0.02) D0";
+/// let dcm = DemCheckMatrix::from_dem_str(dem_str).unwrap();
+/// let inner_decoder = FirstMechanismDecoder {
+///     checks: dcm.num_detectors,
+///     bits: dcm.num_mechanisms,
+/// };
 /// let mut decoder = CheckMatrixObservableDecoder::new(inner_decoder, dcm);
-/// let mask = decoder.decode_to_observables(&syndrome)?;
+///
+/// let mask = decoder.decode_to_observables(&[1]).unwrap();
+/// assert_eq!(mask, 0b1);
 /// ```
 pub struct CheckMatrixObservableDecoder<D> {
     /// The inner check-matrix decoder.

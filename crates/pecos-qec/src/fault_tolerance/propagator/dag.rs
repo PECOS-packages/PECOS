@@ -992,9 +992,14 @@ impl DemOutputMetadata {
 /// compose via XOR (symmetric difference) for multi-qubit Pauli events.
 ///
 /// Borrows the influence map so you can query events directly:
-/// ```ignore
+/// ```
+/// use pecos_qec::fault_tolerance::propagator::dag::DagFaultInfluenceMap;
+///
+/// let map = DagFaultInfluenceMap::with_capacity(0);
 /// for loc in map.gate_fault_locations() {
-///     for event in loc.events() { ... }
+///     for event in loc.events() {
+///         println!("{}: dets={:?}", event.pauli, event.detectors);
+///     }
 /// }
 /// ```
 pub struct GateFaultLocation<'a> {
@@ -1034,9 +1039,25 @@ impl FaultEffect {
     /// - Detectors, `dem_outputs`, and measurements are XOR'd (symmetric difference)
     ///
     /// This is the building block for weight-w fault analysis:
-    /// ```ignore
+    /// ```
+    /// use pecos_core::PauliString;
+    /// use pecos_qec::fault_tolerance::propagator::dag::FaultEffect;
+    ///
+    /// let effect_a = FaultEffect {
+    ///     pauli: PauliString::x(0),
+    ///     detectors: vec![0],
+    ///     dem_outputs: vec![],
+    ///     measurements: vec![],
+    /// };
+    /// let effect_b = FaultEffect {
+    ///     pauli: PauliString::z(1),
+    ///     detectors: vec![0, 1],
+    ///     dem_outputs: vec![0],
+    ///     measurements: vec![],
+    /// };
     /// let w2 = effect_a.compose(&effect_b);
-    /// let w3 = w2.compose(&effect_c);
+    /// assert_eq!(w2.detectors, vec![1]);
+    /// assert_eq!(w2.dem_outputs, vec![0]);
     /// ```
     #[must_use]
     pub fn compose(&self, other: &Self) -> Self {
@@ -1367,7 +1388,10 @@ impl DagFaultInfluenceMap {
     /// Each returned [`GateFaultLocation`] represents a gate at a specific
     /// timing (before/after) and supports querying multi-qubit Pauli events.
     ///
-    /// ```ignore
+    /// ```
+    /// use pecos_qec::fault_tolerance::propagator::dag::DagFaultInfluenceMap;
+    ///
+    /// let map = DagFaultInfluenceMap::with_capacity(0);
     /// for loc in map.gate_fault_locations() {
     ///     for event in loc.events() {
     ///         println!("{}: dets={:?} dem_outputs={:?}", event.pauli, event.detectors, event.dem_outputs);
@@ -1435,7 +1459,10 @@ impl DagFaultInfluenceMap {
     ///
     /// Uses a callback to avoid allocating a potentially huge result vec.
     ///
-    /// ```ignore
+    /// ```
+    /// use pecos_qec::fault_tolerance::propagator::dag::DagFaultInfluenceMap;
+    ///
+    /// let map = DagFaultInfluenceMap::with_capacity(0);
     /// // Find all undetectable weight-2 errors
     /// map.for_each_fault_combo(2, |combo| {
     ///     if !combo.effect.dem_outputs.is_empty() && combo.effect.detectors.is_empty() {

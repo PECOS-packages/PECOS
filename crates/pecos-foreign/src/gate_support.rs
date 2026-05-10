@@ -11,9 +11,14 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! let sim = ForeignSimulator::new(handle, vtable);
-//! let runner = configure_runner_for_foreign(&sim);
+//! ```rust,no_run
+//! use pecos_foreign::ForeignSimulator;
+//! use pecos_foreign::gate_support::configure_runner_for_foreign;
+//!
+//! fn configure_foreign_runner(sim: &ForeignSimulator) {
+//!     let runner = configure_runner_for_foreign(sim);
+//!     let _ = runner;
+//! }
 //! // runner will decompose unsupported gates into {SZ, H, CX, MZ, RX?, RZ?, RZZ?}
 //! ```
 

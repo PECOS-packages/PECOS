@@ -19,17 +19,31 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! let mut frame = PauliFrameAccumulator::new(decoder);
+//! ```
+//! use pecos_decoder_core::{DecoderError, ObservableDecoder};
+//! use pecos_decoder_core::pauli_frame::PauliFrameAccumulator;
+//!
+//! struct FixedDecoder(u64);
+//!
+//! impl ObservableDecoder for FixedDecoder {
+//!     fn decode_to_observables(&mut self, _syndrome: &[u8]) -> Result<u64, DecoderError> {
+//!         Ok(self.0)
+//!     }
+//! }
+//!
+//! let mut frame = PauliFrameAccumulator::new(Box::new(FixedDecoder(0b01)));
 //!
 //! // QEC cycles
-//! for syndrome in syndrome_stream {
-//!     frame.decode_cycle(&syndrome)?;
+//! for syndrome in [&[1, 0][..], &[0, 1][..]] {
+//!     frame.decode_cycle(syndrome).unwrap();
 //! }
+//! assert_eq!(frame.current_frame(), 0b00);
 //!
 //! // At logical measurement: consume frame
 //! let correction = frame.consume_frame();
+//! let raw_measurement = 1;
 //! let logical_result = raw_measurement ^ (correction & 1);
+//! assert_eq!(logical_result, 1);
 //! ```
 
 use crate::ObservableDecoder;

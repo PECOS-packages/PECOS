@@ -268,8 +268,9 @@ pub fn run_measurement_stress_tests<S: ArbitraryRotationGateable>(sim: &mut S) {
 /// Generate a test that runs the measurement stress suite on a simulator type.
 ///
 /// Usage:
-/// ```ignore
-/// use pecos_simulators::measurement_stress_test_suite;
+/// ```
+/// use pecos_simulators::{StabVec, measurement_stress_test_suite};
+///
 /// measurement_stress_test_suite!(StabVec, 4);
 /// ```
 #[macro_export]

@@ -327,12 +327,21 @@ impl DemSampler {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let mut dag = DagCircuit::new();
-    /// // ... build circuit, add detectors/observables ...
+    /// ```
+    /// use rand::SeedableRng;
+    /// use rand::rngs::StdRng;
+    ///
+    /// use pecos_qec::fault_tolerance::dem_builder::{DemSampler, NoiseConfig};
+    /// use pecos_quantum::DagCircuit;
+    ///
+    /// let dag = DagCircuit::new();
     /// let noise = NoiseConfig::uniform(0.01);
-    /// let sampler = DemSampler::from_circuit(&dag, &noise)?;
+    /// let sampler = DemSampler::from_circuit(&dag, &noise).unwrap();
+    ///
+    /// let mut rng = StdRng::seed_from_u64(123);
     /// let (det, obs) = sampler.sample(&mut rng);
+    /// assert!(det.is_empty());
+    /// assert!(obs.is_empty());
     /// ```
     /// Build a sampler from a `TickCircuit` and noise parameters.
     ///

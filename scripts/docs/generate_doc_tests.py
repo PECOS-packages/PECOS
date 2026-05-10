@@ -24,6 +24,7 @@ Supported markers in markdown:
     <!--skip-if-no-cuda-rust-->            - Skip if CUDA Rust bindings not available
     <!--expect-error: pattern-->           - Expect error matching regex pattern
     <!--expect-output: text-->             - Expect stdout to contain text
+    <!--requires-module: package[, ...]--> - Skip if Python module is unavailable
     <!--test-name: my_test-->              - Name the test function
     <!--mark.slow-->                       - Add @pytest.mark.slow
     <!--continuation-->                    - Continue from previous block's state
@@ -71,6 +72,7 @@ class CodeBlock:
     expect_output: str | None = None
     expect_output_block: str | None = None
     expect_output_mode: str = "exact"  # "exact" or "ellipsis"
+    required_modules: list[str] = field(default_factory=list)
     test_name: str | None = None
     marks: list[str] = field(default_factory=list)
     is_continuation: bool = False
@@ -200,6 +202,7 @@ def _parse_marker_comment(comment: str) -> dict:
         "expect_output": None,
         "expect_output_block": False,
         "expect_output_mode": "exact",
+        "required_modules": [],
         "test_name": None,
         "marks": [],
         "is_continuation": False,
@@ -254,6 +257,12 @@ def _parse_marker_comment(comment: str) -> dict:
         match = re.search(r"expect-output:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             result["expect_output"] = match.group(1).strip()
+
+    # Check for required Python modules
+    if "requires-module" in comment_lower:
+        match = re.search(r"requires-module:\s*(.+?)\s*-->", comment, re.IGNORECASE)
+        if match:
+            result["required_modules"] = [module.strip() for module in match.group(1).split(",") if module.strip()]
 
     # Check for test-name
     match = re.search(r"test-name:\s*(\w+)", comment, re.IGNORECASE)
@@ -420,6 +429,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             expect_output=attrs["expect_output"],
             expect_output_block=output_block_text,
             expect_output_mode=output_mode,
+            required_modules=attrs["required_modules"],
             test_name=attrs["test_name"],
             marks=attrs["marks"],
             is_continuation=attrs["is_continuation"],
@@ -468,6 +478,8 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
 
     # Docstring with source file and line number for easy navigation
     lines.append(f'    """Test from {block.source_file}:{block.line_number}."""')
+
+    lines.extend(f'    pytest.importorskip("{module}")' for module in block.required_modules)
 
     # Generate function body based on test type and language
     if block.language == "rust":

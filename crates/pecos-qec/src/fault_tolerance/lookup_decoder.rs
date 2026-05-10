@@ -18,17 +18,18 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use pecos_qec::fault_tolerance::lookup_decoder::LookupDecoder;
+//! use pecos_qec::fault_tolerance::dem_builder::NoiseConfig;
+//! use pecos_qec::fault_tolerance::propagator::dag::DagFaultInfluenceMap;
 //!
-//! let map = InfluenceBuilder::new(&dag)
-//!     .with_circuit_annotations(&dag)
-//!     .build();
+//! let map = DagFaultInfluenceMap::with_capacity(0);
 //! let noise = NoiseConfig::uniform(0.001);
 //!
 //! let decoder = LookupDecoder::build(&map, &noise, 3);
-//! let result = decoder.decode(&[0, 2]);  // syndrome: detectors 0 and 2 fired
-//! println!("corrections: {:?}", result.corrections);
+//! let result = decoder.decode(&[]);
+//! assert!(result.known_syndrome);
+//! assert!(result.corrections.is_empty());
 //! ```
 
 use super::dem_builder::NoiseConfig;

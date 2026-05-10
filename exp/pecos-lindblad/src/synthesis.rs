@@ -279,6 +279,15 @@ pub fn synthesize_numerical(gate: &Gate, n_steps: usize) -> PauliLindbladModel {
     );
     let n = gate.num_qubits;
     let paulis = PauliString::enumerate_nonidentity(n);
+    if is_zero_matrix(&gate.ideal.hamiltonian) {
+        let tau = gate.tau_g;
+        let alphas: Vec<f64> = paulis
+            .iter()
+            .map(|p| constant_alpha_pauli_string(&gate.noise, p) * tau)
+            .collect();
+        return model_from_alphas_walsh(paulis, alphas, n);
+    }
+
     let alphas: Vec<f64> = paulis
         .iter()
         .map(|p| integrated_alpha(gate, p, n_steps))
@@ -290,6 +299,16 @@ pub fn synthesize_numerical(gate: &Gate, n_steps: usize) -> PauliLindbladModel {
 fn constant_alpha(noise: &Lindbladian, p: Pauli1) -> f64 {
     let d = noise.d;
     let p_mat = matrix::pauli_1q(p);
+    let l_p = noise.apply(&p_mat);
+    let inner = matrix::trace(&matrix::matmul(&p_mat, &l_p, d), d);
+    -inner.re / d as f64
+}
+
+/// `alpha_b = -Tr(P_b L(P_b)) / d` for a time-independent Lindbladian and
+/// arbitrary-qubit Pauli string. Units: 1/time.
+fn constant_alpha_pauli_string(noise: &Lindbladian, p: &PauliString) -> f64 {
+    let d = noise.d;
+    let p_mat = matrix::pauli_string_mat(p);
     let l_p = noise.apply(&p_mat);
     let inner = matrix::trace(&matrix::matmul(&p_mat, &l_p, d), d);
     -inner.re / d as f64

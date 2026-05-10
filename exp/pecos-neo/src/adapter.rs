@@ -29,8 +29,9 @@
 //!
 //! ## Example
 //!
-#![cfg_attr(feature = "engines-adapter", doc = "```no_run")]
-#![cfg_attr(not(feature = "engines-adapter"), doc = "```ignore")]
+//! ```rust,no_run
+//! #[cfg(feature = "engines-adapter")]
+//! fn example() {
 //! use std::str::FromStr;
 //! use pecos_neo::adapter::ClassicalEngineAdapter;
 //! use pecos_neo::prelude::*;
@@ -61,6 +62,7 @@
 //!     .with_noise(noise);
 //!
 //! let result = runner.run_shot(&mut program);
+//! }
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType as NeoGateType};

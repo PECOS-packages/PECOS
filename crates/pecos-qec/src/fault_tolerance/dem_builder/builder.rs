@@ -54,19 +54,25 @@ struct ParsedObservable {
 ///
 /// For most use cases, use the one-liner:
 ///
-/// ```ignore
+/// ```
 /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+/// use pecos_quantum::DagCircuit;
 ///
 /// // Build DEM from circuit + noise (reads detectors from circuit metadata)
+/// let dag = DagCircuit::new();
 /// let dem = DemBuilder::from_circuit(&dag, 0.001, 0.01, 0.001, 0.001);
-/// println!("{}", dem.to_string());
+/// assert_eq!(dem.num_detectors(), 0);
 /// ```
 ///
 /// Also works with `TickCircuit`:
 ///
-/// ```ignore
-/// # use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+/// ```
+/// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+/// use pecos_quantum::TickCircuit;
+///
+/// let tc = TickCircuit::new();
 /// let dem = DemBuilder::from_tick_circuit(&tc, 0.001, 0.01, 0.001, 0.001);
+/// assert_eq!(dem.num_detectors(), 0);
 /// ```
 ///
 /// # Advanced API
@@ -111,10 +117,13 @@ impl<'a> DemBuilder<'a> {
     /// One-liner for the common case. Reads detector/DEM output definitions
     /// from circuit metadata (`"detectors"`, `"observables"` attributes).
     ///
-    /// ```ignore
+    /// ```
     /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
+    /// use pecos_quantum::DagCircuit;
+    ///
+    /// let dag = DagCircuit::new();
     /// let dem = DemBuilder::from_circuit(&dag, 0.001, 0.01, 0.001, 0.001);
-    /// println!("{}", dem.to_string());
+    /// assert_eq!(dem.num_detectors(), 0);
     /// ```
     /// Build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
     ///

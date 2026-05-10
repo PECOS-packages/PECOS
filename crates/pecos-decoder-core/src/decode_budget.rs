@@ -18,10 +18,19 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! let budget = DecodeBudget::neutral_atom(distance);
-//! let strategy = CommittedOsdStrategy::new(osd, budget);
-//! let decoder = LogicalCircuitDecoder::new(descriptor, strategy);
+//! ```
+//! use std::time::Duration;
+//!
+//! use pecos_decoder_core::decode_budget::{DecodeBudget, DetectorRegion};
+//!
+//! let distance = 7;
+//! let budget = DecodeBudget::from_reaction_time(Duration::from_millis(1), distance);
+//! assert!(budget.is_windowed());
+//! assert_eq!(budget.code_distance, distance);
+//!
+//! let first_round = DetectorRegion { start: 0, end: distance * distance };
+//! assert!(first_round.contains(0));
+//! assert!(!first_round.is_empty());
 //! ```
 
 use crate::errors::DecoderError;

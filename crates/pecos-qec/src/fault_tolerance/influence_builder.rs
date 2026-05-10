@@ -142,9 +142,17 @@ impl<'a> InfluenceBuilder<'a> {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// // Check if Y = X_0 * Z_1 * Z_2 flips
-    /// builder.with_tracked_operator(PauliString::from_paulis(vec![(0, 1), (1, 3), (2, 3)]))
+    /// use pecos_core::{Pauli, PauliString};
+    /// use pecos_qec::fault_tolerance::InfluenceBuilder;
+    /// use pecos_quantum::DagCircuit;
+    ///
+    /// let dag = DagCircuit::new();
+    /// let builder = InfluenceBuilder::new(&dag).with_tracked_operator(
+    ///     PauliString::from_paulis(&[Pauli::X, Pauli::Z, Pauli::Z]),
+    /// );
+    /// let _map = builder.build();
     /// ```
     #[must_use]
     pub fn with_tracked_operator(mut self, pauli: PauliString) -> Self {

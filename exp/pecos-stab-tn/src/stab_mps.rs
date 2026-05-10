@@ -338,8 +338,11 @@ impl StabMpsBuilder {
     ///   for adversarial T-heavy subcircuits before truncation hits the cap.
     ///
     /// Override any of these with subsequent builder calls:
-    /// ```ignore
-    /// StabMps::builder(n).for_qec().max_bond_dim(64).build()
+    /// ```
+    /// use pecos_stab_tn::stab_mps::StabMps;
+    ///
+    /// let sim = StabMps::builder(4).for_qec().max_bond_dim(64).build();
+    /// assert_eq!(sim.num_qubits(), 4);
     /// ```
     #[must_use]
     pub fn for_qec(self) -> Self {

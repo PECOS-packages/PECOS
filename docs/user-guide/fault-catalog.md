@@ -4,7 +4,7 @@
 
 If you have a surface code and want to simulate noisy measurements:
 
-<!--skip: requires pecos surface code infrastructure-->
+<!--setup-->
 ```python
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -28,7 +28,7 @@ print(f"{len(result)} shots, {len(result[0])} measurements each")
 
 If you want to inspect what faults are possible in that circuit:
 
-<!--skip: requires pecos surface code infrastructure-->
+<!--continuation; requires-module: pecos_rslib_exp-->
 ```python
 from pecos_rslib_exp import fault_catalog
 
@@ -379,6 +379,7 @@ for event in catalog.fault_configurations(1):
 
 The Rust API lives in `pecos-qec`:
 
+<!--setup-->
 ```rust
 use pecos_qec::fault_tolerance::fault_sampler::{
     FaultCatalog, StochasticNoiseParams,
@@ -417,6 +418,7 @@ catalog.with_noise(&noise);
 
 Iterate locations and alternatives:
 
+<!--continuation-->
 ```rust
 for loc in &catalog.locations {
     println!(
@@ -443,6 +445,7 @@ for loc in &catalog.locations {
 
 Iterate configurations:
 
+<!--continuation-->
 ```rust
 for event in catalog.fault_configurations(2) {
     println!(

@@ -5,7 +5,7 @@
 
 
 #[test]
-fn test_user_guide_fault_catalog_rust_1() {
+fn test_user_guide_fault_catalog_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_quantum::{Attribute, TickCircuit};
     use pecos_qec::fault_tolerance::fault_sampler::{
 FaultCatalog, StochasticNoiseParams,
@@ -38,4 +38,77 @@ FaultCatalog, StochasticNoiseParams,
 
     // Or one-shot convenience:
     // let catalog = build_fault_catalog(&circuit, &noise).unwrap();
+
+    for loc in &catalog.locations {
+        println!(
+            "tick={} gate={:?} channel={:?} p={} k={}",
+            loc.tick,
+            loc.gate_type,
+            loc.channel,
+            loc.channel_probability,
+            loc.num_alternatives
+        );
+
+        for fault in &loc.faults {
+            println!(
+                "  {:?} dets={:?} obs={:?} tracked={:?} p_alt={}",
+                fault.kind,
+                fault.affected_detectors,
+                fault.affected_observables,
+                fault.affected_tracked_ops,
+                fault.absolute_probability
+            );
+        }
+    }
+    Ok(())
+}
+
+
+
+#[test]
+fn test_user_guide_fault_catalog_rust_2() -> Result<(), Box<dyn std::error::Error>> {
+    use pecos_quantum::{Attribute, TickCircuit};
+    use pecos_qec::fault_tolerance::fault_sampler::{
+FaultCatalog, StochasticNoiseParams,
+};
+    let mut circuit = TickCircuit::new();
+    circuit.tick().h(&[0]);
+    circuit.tick().mz(&[0]);
+
+    circuit.set_meta("num_measurements", Attribute::String("1".into()));
+    circuit.set_meta(
+        "detectors",
+        Attribute::String(r#"[{"records":[-1]}]"#.into()),
+    );
+    circuit.set_meta(
+        "observables",
+        Attribute::String(r#"[{"records":[-1]}]"#.into()),
+    );
+
+    // Structural catalog (no noise):
+    let mut catalog = FaultCatalog::from_circuit(&circuit).unwrap();
+
+    // Parameterize:
+    let noise = StochasticNoiseParams {
+        p1: 0.03,
+        p2: 0.0,
+        p_meas: 0.01,
+        p_prep: 0.0,
+    };
+    catalog.with_noise(&noise);
+
+    // Or one-shot convenience:
+    // let catalog = build_fault_catalog(&circuit, &noise).unwrap();
+
+    for event in catalog.fault_configurations(2) {
+        println!(
+            "locations={:?} alternatives={:?} dets={:?} obs={:?} p={}",
+            event.location_indices,
+            event.alternative_indices,
+            event.affected_detectors,
+            event.affected_observables,
+            event.configuration_probability
+        );
+    }
+    Ok(())
 }

@@ -62,6 +62,7 @@ nav:
   - Gate and Angle Types: user-guide/gate-angle-types.md
   - Noise Model Builders: user-guide/noise-model-builders.md
   - Quantum Operator Algebra: user-guide/quantum-operator-algebra.md
+  - Quantum Information Primitives: user-guide/quantum-info.md
   - Stabilizer Codes: user-guide/stabilizer-codes.md
   - Pauli Algebra and QEC in Python: user-guide/python-pauli-qec.md
   - Fault Tolerance Analysis: user-guide/fault-tolerance.md

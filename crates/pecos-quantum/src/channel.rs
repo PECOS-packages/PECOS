@@ -28,6 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
+use std::f64::consts::TAU;
 use std::fmt;
 use std::ops::{Add, Mul};
 
@@ -1792,6 +1793,107 @@ pub fn matrix_unit_basis(num_qubits: usize) -> Result<Vec<DMatrix<Complex64>>, C
     Ok(basis)
 }
 
+/// Samples a Hilbert-Schmidt random density matrix on `num_qubits` qubits.
+///
+/// This samples a square complex Ginibre matrix `G` and returns
+/// `G G† / Tr(G G†)`. The returned matrix uses the same little-endian
+/// computational-basis order as PECOS's dense matrix helpers.
+///
+/// # Errors
+///
+/// Returns an error when the Hilbert-space dimension overflows.
+pub fn random_density_matrix<R>(
+    rng: &mut R,
+    num_qubits: usize,
+) -> Result<DMatrix<Complex64>, ChannelError>
+where
+    R: Rng + ?Sized,
+{
+    let dim = hilbert_dim(num_qubits)?;
+    random_density_matrix_with_rank(rng, num_qubits, dim)
+}
+
+/// Samples a Hilbert-Schmidt random density matrix with explicit Ginibre rank.
+///
+/// A rank of `1` produces a random pure-state density matrix. Larger ranks
+/// produce mixed states from a `dim x rank` complex Ginibre matrix.
+///
+/// # Errors
+///
+/// Returns an error when the Hilbert-space dimension overflows or `rank == 0`.
+pub fn random_density_matrix_with_rank<R>(
+    rng: &mut R,
+    num_qubits: usize,
+    rank: usize,
+) -> Result<DMatrix<Complex64>, ChannelError>
+where
+    R: Rng + ?Sized,
+{
+    if rank == 0 {
+        return Err(ChannelError::EmptyKrausSet);
+    }
+    let dim = hilbert_dim(num_qubits)?;
+    let ginibre = DMatrix::from_fn(dim, rank, |_, _| standard_complex_normal(rng));
+    let mut rho = &ginibre * ginibre.adjoint();
+    let trace = trace_complex(&rho).re;
+    if trace <= 0.0 || !trace.is_finite() {
+        return Err(ChannelError::DecompositionFailed {
+            reason: "random density matrix has invalid trace".to_string(),
+        });
+    }
+    rho /= Complex64::new(trace, 0.0);
+    Ok(rho)
+}
+
+/// Samples a random CPTP quantum channel in Kraus form.
+///
+/// The implementation samples a random Stinespring isometry by QR-decomposing a
+/// complex Ginibre matrix of shape `(num_kraus * d) x d`, where
+/// `d = 2^num_qubits`, then splits the isometry into `num_kraus` Kraus blocks.
+/// The resulting operators satisfy `sum_k K_k† K_k = I` up to numerical
+/// precision.
+///
+/// # Errors
+///
+/// Returns an error when dimensions overflow or `num_kraus == 0`.
+pub fn random_quantum_channel<R>(
+    rng: &mut R,
+    num_qubits: usize,
+    num_kraus: usize,
+) -> Result<KrausOps, ChannelError>
+where
+    R: Rng + ?Sized,
+{
+    if num_kraus == 0 {
+        return Err(ChannelError::EmptyKrausSet);
+    }
+    let dim = hilbert_dim(num_qubits)?;
+    let rows = dim
+        .checked_mul(num_kraus)
+        .ok_or(ChannelError::DimensionOverflow { num_qubits })?;
+    let ginibre = DMatrix::from_fn(rows, dim, |_, _| standard_complex_normal(rng));
+    let (mut q, r) = ginibre.qr().unpack();
+
+    for col in 0..dim {
+        let diagonal = r[(col, col)];
+        let norm = diagonal.norm();
+        if norm > 0.0 {
+            let phase = diagonal / norm;
+            for row in 0..rows {
+                q[(row, col)] *= phase;
+            }
+        }
+    }
+
+    let operators = (0..num_kraus)
+        .map(|kraus_idx| {
+            let start = kraus_idx * dim;
+            DMatrix::from_fn(dim, dim, |row, col| q[(start + row, col)])
+        })
+        .collect();
+    KrausOps::try_new(num_qubits, operators)
+}
+
 /// Samples a random `num_qubits`-qubit Pauli string.
 ///
 /// Each qubit independently receives one of `I, X, Y, Z` with equal
@@ -1825,6 +1927,20 @@ pub fn random_2q_clifford<R: Rng + ?Sized>(rng: &mut R) -> Clifford {
 pub fn random_clifford<R: Rng + ?Sized>(rng: &mut R) -> Clifford {
     let all = Clifford::all();
     all[rng.random_range(0..all.len())]
+}
+
+fn standard_complex_normal<R: Rng + ?Sized>(rng: &mut R) -> Complex64 {
+    Complex64::new(standard_normal(rng), standard_normal(rng))
+}
+
+fn standard_normal<R: Rng + ?Sized>(rng: &mut R) -> f64 {
+    loop {
+        let u1 = rng.random::<f64>();
+        if u1 > 0.0 {
+            let u2 = rng.random::<f64>();
+            return (-2.0 * u1.ln()).sqrt() * (TAU * u2).cos();
+        }
+    }
 }
 
 fn bitmask_from_paulis(paulis: &[Pauli]) -> PauliBitmaskSmall {
@@ -2904,6 +3020,64 @@ mod tests {
         let keep_q1 = partial_trace(&rho, 2, &[0]).unwrap();
         assert_complex_close(keep_q1[(0, 0)], Complex64::new(1.0, 0.0));
         assert_complex_close(keep_q1[(1, 1)], Complex64::new(0.0, 0.0));
+    }
+
+    #[test]
+    fn random_density_matrix_is_normalized_hermitian_and_reproducible() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        let rho = random_density_matrix(&mut rng, 2).unwrap();
+        assert_eq!(rho.shape(), (4, 4));
+        assert_complex_close(trace_complex(&rho), Complex64::new(1.0, 0.0));
+        assert_complex_matrix_close(&rho, &rho.adjoint());
+
+        let mut same_seed = PecosRng::seed_from_u64(123);
+        let same = random_density_matrix(&mut same_seed, 2).unwrap();
+        assert_complex_matrix_close(&rho, &same);
+
+        let mut different_seed = PecosRng::seed_from_u64(456);
+        let different = random_density_matrix(&mut different_seed, 2).unwrap();
+        assert_ne!(rho, different);
+    }
+
+    #[test]
+    fn random_density_matrix_rank_one_is_pure() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        let rho = random_density_matrix_with_rank(&mut rng, 2, 1).unwrap();
+        let purity = trace_complex(&(&rho * &rho)).re;
+        assert_close(purity, 1.0);
+
+        assert!(matches!(
+            random_density_matrix_with_rank(&mut rng, 1, 0).unwrap_err(),
+            ChannelError::EmptyKrausSet
+        ));
+    }
+
+    #[test]
+    fn random_quantum_channel_is_cptp_and_reproducible() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        let channel = random_quantum_channel(&mut rng, 1, 3).unwrap();
+        assert_eq!(channel.operators().len(), 3);
+        assert!(channel.is_trace_preserving());
+        assert!(channel.to_choi().unwrap().is_cptp());
+
+        let mut same_seed = PecosRng::seed_from_u64(123);
+        let same = random_quantum_channel(&mut same_seed, 1, 3).unwrap();
+        for (left, right) in channel.operators().iter().zip(same.operators()) {
+            assert_complex_matrix_close(left, right);
+        }
+
+        let mut different_seed = PecosRng::seed_from_u64(456);
+        let different = random_quantum_channel(&mut different_seed, 1, 3).unwrap();
+        assert_ne!(channel, different);
+    }
+
+    #[test]
+    fn random_quantum_channel_rejects_zero_kraus_count() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        assert!(matches!(
+            random_quantum_channel(&mut rng, 1, 0).unwrap_err(),
+            ChannelError::EmptyKrausSet
+        ));
     }
 
     #[test]

@@ -105,7 +105,8 @@ pub use channel::{
     ChannelError, ChoiMatrix, DiagonalPtm, KrausOps, PauliChannel, PauliSum, Ptm, PtmBasisOrder,
     basis_bitmask, basis_digit_to_pauli, basis_element, basis_index, basis_label, bitmask_label,
     matrix_unit_basis, partial_trace, pauli_basis_len, pauli_string_to_bitmask,
-    pauli_to_basis_digit, random_1q_clifford, random_2q_clifford, random_clifford, random_pauli,
+    pauli_to_basis_digit, random_1q_clifford, random_2q_clifford, random_clifford,
+    random_density_matrix, random_density_matrix_with_rank, random_pauli, random_quantum_channel,
 };
 pub use diamond_norm::{
     DiamondNormError, hermitian_to_real_symmetric, hermitian_to_real_symmetric_with_tolerance,

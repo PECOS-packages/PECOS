@@ -15,7 +15,7 @@ on:
       - '.github/workflows/python-version-consistency.yml'
 
 jobs:
-  check_versions:
+  check_python_workspace:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

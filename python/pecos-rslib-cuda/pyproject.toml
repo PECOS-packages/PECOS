@@ -43,9 +43,6 @@ test = [
     "pytest>=9.0",
 ]
 
-[tool.uv.sources]
-pecos-rslib-cuda = { workspace = true }
-
 [tool.pytest.ini_options]
 markers = [
     "cuda: marks tests that require CUDA and cuQuantum (deselect with '-m \"not cuda\"')",

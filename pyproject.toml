@@ -7,7 +7,9 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-cuda = ["quantum-pecos[cuda]"]
+# Keep this in sync with the cuda dependency group below. The extra supports
+# `uv sync --extra cuda`; the group supports `uv run --group cuda ...`.
+cuda = ["quantum-pecos[cuda]==0.8.0.dev8"]
 
 [tool.uv.workspace]
 members = [
@@ -65,15 +67,20 @@ numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with s
   "scipy>=1.1.0",
 ]
 cuda = [ # CUDA Python packages for GPU-accelerated simulations (requires CUDA toolkit)
-  "quantum-pecos[cuda]",
+  "quantum-pecos[cuda]==0.8.0.dev8",
 ]
 
 [tool.uv]
 default-groups = ["dev", "test"]
-# Prevent uv from caching pecos-rslib wheels - always use freshly built version
-# This fixes stale code issues when uv sync/run reinstalls cached old wheels
+# Prevent uv from caching native workspace wheels - always use freshly built versions.
+# This fixes stale code issues when uv sync/run reinstalls cached old wheels.
 # See: https://github.com/astral-sh/uv/issues/11390
-reinstall-package = ["pecos-rslib", "pecos-rslib-cuda", "pecos-rslib-llvm"]
+reinstall-package = [
+  "pecos-rslib",
+  "pecos-rslib-cuda",
+  "pecos-rslib-exp",
+  "pecos-rslib-llvm",
+]
 
 [tool.black]
 line-length = 120

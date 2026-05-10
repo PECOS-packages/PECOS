@@ -332,9 +332,11 @@ impl PauliStabilizerGroup {
         self.inner.to_symplectic_matrix()
     }
 
-    /// Returns the commutation matrix (always all-true for a valid stabilizer group).
+    /// Returns the pairwise anticommutation matrix.
+    ///
+    /// This is always all-zero for a valid stabilizer group.
     #[must_use]
-    pub fn commutation_matrix(&self) -> Vec<Vec<bool>> {
+    pub fn commutation_matrix(&self) -> F2Matrix {
         self.inner.commutation_matrix()
     }
 
@@ -1039,6 +1041,19 @@ mod tests {
         assert_eq!(checked.stabilizers().len(), unchecked.stabilizers().len());
         for s in checked.stabilizers() {
             assert!(unchecked.contains_with_phase(s));
+        }
+    }
+
+    #[test]
+    fn commutation_matrix_delegates_as_all_zero_anticommutation_matrix() {
+        let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let mat = stab.commutation_matrix();
+        assert_eq!(mat.num_rows(), 2);
+        assert_eq!(mat.num_cols(), 2);
+        for row in 0..mat.num_rows() {
+            for col in 0..mat.num_cols() {
+                assert_eq!(mat.get(row, col), 0);
+            }
         }
     }
 

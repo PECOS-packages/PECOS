@@ -795,20 +795,22 @@ impl PauliSequence {
         true
     }
 
-    /// Returns the commutation matrix.
+    /// Returns the pairwise anticommutation matrix.
     ///
-    /// `result[i][j]` is `true` if entries `i` and `j` commute, `false` if they anticommute.
-    /// The diagonal is always `true` (every operator commutes with itself).
+    /// Entry `(i, j)` is `1` if entries `i` and `j` anticommute, and `0` if
+    /// they commute. The diagonal is always zero.
     #[must_use]
-    #[allow(clippy::needless_range_loop)] // symmetric update requires indexing both [i][j] and [j][i]
-    pub fn commutation_matrix(&self) -> Vec<Vec<bool>> {
+    pub fn commutation_matrix(&self) -> F2Matrix {
         let k = self.paulis.len();
-        let mut matrix = vec![vec![true; k]; k];
+        let n = self.num_qubits();
+        let (x_rows, z_rows) = self.to_packed_xz_rows(n);
+        let mut matrix = F2Matrix::zeros(k, k);
         for i in 0..k {
             for j in (i + 1)..k {
-                let commutes = self.paulis[i].commutes_with(&self.paulis[j]);
-                matrix[i][j] = commutes;
-                matrix[j][i] = commutes;
+                if symplectic_inner_product(&x_rows[i], &z_rows[i], &x_rows[j], &z_rows[j]) != 0 {
+                    matrix.set(i, j, 1);
+                    matrix.set(j, i, 1);
+                }
             }
         }
         matrix
@@ -916,6 +918,35 @@ impl PauliSequence {
 
         s_omega.kernel()
     }
+
+    fn to_packed_xz_rows(&self, num_qubits: usize) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
+        let num_words = num_qubits.div_ceil(F2Matrix::WORD_BITS);
+        let mut x_rows = vec![vec![0u64; num_words]; self.paulis.len()];
+        let mut z_rows = vec![vec![0u64; num_words]; self.paulis.len()];
+        for (row, pauli) in self.paulis.iter().enumerate() {
+            for q in pauli.x_positions() {
+                if q < num_qubits {
+                    let (word, mask) = F2Matrix::word_mask(q);
+                    x_rows[row][word] |= mask;
+                }
+            }
+            for q in pauli.z_positions() {
+                if q < num_qubits {
+                    let (word, mask) = F2Matrix::word_mask(q);
+                    z_rows[row][word] |= mask;
+                }
+            }
+        }
+        (x_rows, z_rows)
+    }
+}
+
+fn symplectic_inner_product(x_a: &[u64], z_a: &[u64], x_b: &[u64], z_b: &[u64]) -> u8 {
+    let mut parity = 0u32;
+    for (((&xa, &za), &xb), &zb) in x_a.iter().zip(z_a).zip(x_b).zip(z_b) {
+        parity ^= ((xa & zb) ^ (za & xb)).count_ones() & 1;
+    }
+    u8::from(parity != 0)
 }
 
 impl PauliSequence {
@@ -1127,16 +1158,38 @@ mod tests {
         let gens = PauliSequence::new(vec![X(0), Z(0), Y(0)]);
         let cm = gens.commutation_matrix();
         // X,Z anticommute
-        assert!(!cm[0][1]);
-        assert!(!cm[1][0]);
+        assert_eq!(cm.get(0, 1), 1);
+        assert_eq!(cm.get(1, 0), 1);
         // X,Y anticommute
-        assert!(!cm[0][2]);
+        assert_eq!(cm.get(0, 2), 1);
         // Z,Y anticommute
-        assert!(!cm[1][2]);
+        assert_eq!(cm.get(1, 2), 1);
         // Self-commutation
-        assert!(cm[0][0]);
-        assert!(cm[1][1]);
-        assert!(cm[2][2]);
+        assert_eq!(cm.get(0, 0), 0);
+        assert_eq!(cm.get(1, 1), 0);
+        assert_eq!(cm.get(2, 2), 0);
+    }
+
+    #[test]
+    fn test_commutation_matrix_matches_pairwise_across_packed_words() {
+        let gens = PauliSequence::new(vec![
+            X(0),
+            Z(0),
+            X(65) & Z(130),
+            Z(65),
+            Y(130),
+            Zs([0, 65, 130]),
+        ]);
+        let cm = gens.commutation_matrix();
+
+        assert_eq!(cm.num_rows(), gens.len());
+        assert_eq!(cm.num_cols(), gens.len());
+        for i in 0..gens.len() {
+            for j in 0..gens.len() {
+                let expected = u8::from(!gens.paulis()[i].commutes_with(&gens.paulis()[j]));
+                assert_eq!(cm.get(i, j), expected, "entry ({i}, {j})");
+            }
+        }
     }
 
     #[test]

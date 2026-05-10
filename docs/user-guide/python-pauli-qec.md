@@ -156,7 +156,7 @@ print(seq.is_abelian())  # False (XZ and ZX anticommute)
 
 # Commutation matrix
 comm = seq.commutation_matrix()
-# comm[i][j] is True if seq[i] commutes with seq[j]
+# comm[i][j] is 1 if seq[i] anticommutes with seq[j]
 
 # GF(2) membership
 print(seq.contains(PauliString.from_str("YY")))  # True (XZ * ZX = -YY in GF(2) span)

@@ -453,9 +453,11 @@ impl PauliGroup {
         self.inner.to_symplectic_matrix()
     }
 
-    /// Returns the commutation matrix (always all-true for a valid group).
+    /// Returns the pairwise anticommutation matrix.
+    ///
+    /// This is always all-zero for a valid commuting group.
     #[must_use]
-    pub fn commutation_matrix(&self) -> Vec<Vec<bool>> {
+    pub fn commutation_matrix(&self) -> F2Matrix {
         self.inner.commutation_matrix()
     }
 
@@ -1164,14 +1166,15 @@ mod tests {
     // --- commutation_matrix for valid group ---
 
     #[test]
-    fn commutation_matrix_all_true() {
+    fn commutation_matrix_all_zero() {
         let group = PauliGroup::new(vec![X(0), Z(1), X(2)]).unwrap();
         let mat = group.commutation_matrix();
-        for row in &mat {
-            for &val in row {
-                assert!(
-                    val,
-                    "commutation matrix should be all-true for abelian group"
+        for row in 0..mat.num_rows() {
+            for col in 0..mat.num_cols() {
+                assert_eq!(
+                    mat.get(row, col),
+                    0,
+                    "anticommutation matrix should be all-zero for abelian group"
                 );
             }
         }

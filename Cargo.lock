@@ -4320,6 +4320,7 @@ dependencies = [
  "num-complex 0.4.6",
  "pecos-core",
  "pecos-num",
+ "pecos-random",
  "pecos-simulators",
  "smallvec",
  "tket",

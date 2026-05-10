@@ -103,7 +103,7 @@ fn superop_identity_handles_mixed_coherent_and_dissipative_2q() {
     let gate = Gate::identity(2, mixed, tau_g);
     let pl = synthesize_superop_identity(&gate);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
 
     // Expected (leading-order superposition of independent contributions):
     //   Dissipative (AD+PD) on each qubit contributes single-qubit rates

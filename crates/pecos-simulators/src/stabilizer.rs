@@ -112,6 +112,22 @@ impl Stabilizer {
     pub fn gens_data(&self, is_stab: bool) -> crate::GensData {
         self.inner.gens_data(is_stab)
     }
+
+    /// Extracts the stabilizer generators as a [`PauliStabilizerGroup`].
+    ///
+    /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    #[must_use]
+    pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
+        self.inner.to_stabilizer_group()
+    }
+
+    /// Extracts the destabilizer generators as a [`PauliSequence`].
+    ///
+    /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    #[must_use]
+    pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
+        self.inner.to_destabilizer_sequence()
+    }
 }
 
 impl QuantumSimulator for Stabilizer {

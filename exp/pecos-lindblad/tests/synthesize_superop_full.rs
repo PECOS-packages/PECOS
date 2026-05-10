@@ -121,7 +121,7 @@ fn superop_handles_cx_mixed_ad_pd_plus_coherent_zz() {
     }
 
     // Additional sanity: mixed has non-trivial rates from both sources.
-    let rate_mixed = |s: &str| pl_mixed.rate(&PauliString::from_str(s).unwrap());
+    let rate_mixed = |s: &str| pl_mixed.rate(&PauliString::from_label(s).unwrap());
     assert!(
         rate_mixed("IX") > 1e-8,
         "dissipative contribution should be present"

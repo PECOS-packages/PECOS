@@ -100,8 +100,7 @@ fn per_qubit_measurement_rate_raises_only_targeted_qubit() {
         (sim_only_q0.average_error_probability() - sim_uniform.average_error_probability()).abs();
     assert!(
         delta < 1e-12,
-        "per-mech probabilities should match: {}",
-        delta
+        "per-mech probabilities should match: {delta}"
     );
 }
 
@@ -163,5 +162,5 @@ fn per_qubit_measurement_path_uses_base_rate_without_overrides() {
     assert_eq!(sim_per_gate.num_mechanisms(), sim_scalar.num_mechanisms());
     let delta =
         (sim_per_gate.average_error_probability() - sim_scalar.average_error_probability()).abs();
-    assert!(delta < 1e-12, "delta {} should be near zero", delta);
+    assert!(delta < 1e-12, "delta {delta} should be near zero");
 }

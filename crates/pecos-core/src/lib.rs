@@ -98,6 +98,8 @@ pub use circuit_diagram::{
 //   use pecos_core::pauli::*;     // I, X, Y, Z, Xs, Ys, Zs -> PauliString
 //   use pecos_core::clifford::*;  // H, CX, CZ, SWAP, ... -> CliffordRep
 //   use pecos_core::unitary::*;   // T, RZ, CCX, ... -> UnitaryRep
+//   use pecos_core::gate::*;      // MZ, PZ, Reset, ... -> GateExpr
+//   use pecos_core::channel::*;   // Depolarizing, PauliChannel, ... -> ChannelExpr
 //   use pecos_core::op::*;        // MZ, PZ, Depolarizing, ... -> Op (promoted)
 
 pub mod unitary;
@@ -108,6 +110,8 @@ pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
 pub mod clifford;
 pub use clifford::Clifford;
 
+pub mod channel;
+pub mod gate;
 pub mod gate_algebra;
 
 pub mod op;

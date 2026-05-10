@@ -31,6 +31,9 @@
 
 use nalgebra::DMatrix;
 use num_complex::Complex64;
+use pecos_random::{Rng, RngExt as _};
+use std::error::Error;
+use std::f64::consts::TAU;
 use std::fmt;
 use std::ops::{BitAnd, Deref, DerefMut, Mul, Neg, Sub};
 use std::sync::LazyLock;
@@ -69,6 +72,30 @@ use pecos_core::{Angle64, Op, Pauli, PauliString, Phase};
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnitaryMatrix(pub DMatrix<Complex64>);
+
+/// Error returned by dense unitary-matrix helpers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnitaryMatrixError {
+    /// The requested number of qubits would overflow a dense Hilbert-space
+    /// dimension.
+    DimensionOverflow {
+        /// Number of qubits supplied by the caller.
+        num_qubits: usize,
+    },
+}
+
+impl fmt::Display for UnitaryMatrixError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DimensionOverflow { num_qubits } => write!(
+                f,
+                "dense unitary dimension overflows usize for {num_qubits} qubits"
+            ),
+        }
+    }
+}
+
+impl Error for UnitaryMatrixError {}
 
 impl UnitaryMatrix {
     /// Creates an identity matrix of size `n x n`.
@@ -189,6 +216,70 @@ impl UnitaryMatrix {
             return None;
         }
         try_identify_rotation(&self.0)
+    }
+}
+
+/// Returns a Haar-random dense unitary on `num_qubits` qubits.
+///
+/// The implementation samples a complex Ginibre matrix, performs QR
+/// decomposition, and fixes the column phases from the `R` diagonal. The output
+/// is a dense matrix in the same little-endian computational-basis convention as
+/// the rest of PECOS's matrix helpers.
+///
+/// # Errors
+///
+/// Returns [`UnitaryMatrixError::DimensionOverflow`] if `2^num_qubits` does not
+/// fit in `usize`.
+pub fn random_unitary<R>(
+    rng: &mut R,
+    num_qubits: usize,
+) -> Result<UnitaryMatrix, UnitaryMatrixError>
+where
+    R: Rng + ?Sized,
+{
+    let dim = dense_hilbert_dim(num_qubits)?;
+    let ginibre = DMatrix::from_fn(dim, dim, |_, _| standard_complex_normal(rng));
+    let (mut q, r) = ginibre.qr().unpack();
+
+    for col in 0..dim {
+        let diagonal = r[(col, col)];
+        let norm = diagonal.norm();
+        if norm > 0.0 {
+            let phase = diagonal / norm;
+            for row in 0..dim {
+                q[(row, col)] *= phase;
+            }
+        }
+    }
+
+    Ok(UnitaryMatrix(q))
+}
+
+fn dense_hilbert_dim(num_qubits: usize) -> Result<usize, UnitaryMatrixError> {
+    let exponent = u32::try_from(num_qubits)
+        .map_err(|_| UnitaryMatrixError::DimensionOverflow { num_qubits })?;
+    2usize
+        .checked_pow(exponent)
+        .ok_or(UnitaryMatrixError::DimensionOverflow { num_qubits })
+}
+
+fn standard_complex_normal<R>(rng: &mut R) -> Complex64
+where
+    R: Rng + ?Sized,
+{
+    Complex64::new(standard_normal(rng), standard_normal(rng))
+}
+
+fn standard_normal<R>(rng: &mut R) -> f64
+where
+    R: Rng + ?Sized,
+{
+    loop {
+        let u1 = rng.random::<f64>();
+        if u1 > 0.0 {
+            let u2 = rng.random::<f64>();
+            return (-2.0 * u1.ln()).sqrt() * (TAU * u2).cos();
+        }
     }
 }
 
@@ -1921,6 +2012,7 @@ mod tests {
     use super::*;
     use pecos_core::Angle64;
     use pecos_core::unitary_rep::{CX, H, I, Is, RX, RZ, SWAP, SZ, T, X, Y, Z};
+    use pecos_random::PecosRng;
     use std::f64::consts::PI;
 
     // --- Basic to_matrix tests ---
@@ -3115,6 +3207,32 @@ mod tests {
     fn is_unitary_rejects_non_square() {
         let mat = UnitaryMatrix(DMatrix::zeros(2, 4));
         assert!(!mat.is_unitary());
+    }
+
+    #[test]
+    fn random_unitary_is_unitary_and_seed_reproducible() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        let unitary = random_unitary(&mut rng, 2).unwrap();
+        assert_eq!(unitary.inner().shape(), (4, 4));
+        assert!(unitary.is_unitary_with_tolerance(1e-10));
+
+        let mut same_seed = PecosRng::seed_from_u64(123);
+        let same = random_unitary(&mut same_seed, 2).unwrap();
+        assert_eq!(unitary.inner(), same.inner());
+
+        let mut different_seed = PecosRng::seed_from_u64(456);
+        let different = random_unitary(&mut different_seed, 2).unwrap();
+        assert!(
+            !matrices_approx_equal(unitary.inner(), different.inner(), 1e-8),
+            "different seeds should not produce the same Haar draw"
+        );
+    }
+
+    #[test]
+    fn random_unitary_dimension_overflow_is_reported() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        let err = random_unitary(&mut rng, usize::BITS as usize).unwrap_err();
+        assert!(matches!(err, UnitaryMatrixError::DimensionOverflow { .. }));
     }
 
     #[test]

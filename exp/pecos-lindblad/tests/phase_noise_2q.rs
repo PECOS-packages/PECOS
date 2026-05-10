@@ -18,10 +18,10 @@
 //!
 //! Cases tested:
 //! - (i)   Identity (H_g = 0): all three delta components commute with H_g,
-//!         so rates are quadratic-in-delta and decoupled (eq. 981).
+//!   so rates are quadratic-in-delta and decoupled (eq. 981).
 //! - (iii) CX_theta: phase noise doesn't commute with X_target, producing
-//!         mixing between delta_iz and delta_zz into lambda_iy, lambda_zy,
-//!         lambda_iz, lambda_zz (eqs. 986-990).
+//!   mixing between delta_iz and delta_zz into lambda_iy, lambda_zy,
+//!   lambda_iz, lambda_zz (eqs. 986-990).
 //!
 //! Synthesis path: `synthesize_exact_unitary` (coherent noise, no c_ops).
 
@@ -63,7 +63,7 @@ fn identity_2q_phase_noise_commuting_case() {
     let gate = Gate::identity(2, noise, tau_g);
     let pl = synthesize_exact_unitary(&gate);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
     assert_abs_diff_eq!(
         rate("IZ"),
         (delta_iz * tau_g).powi(2) / 4.0,
@@ -108,7 +108,7 @@ fn cx_theta_phase_noise_mixing_case() {
     let gate = Gate::cx_theta(omega, theta, noise);
     let pl = synthesize_exact_unitary(&gate);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
 
     let s2t = (2.0 * theta).sin();
     let sin4 = theta.sin().powi(4);
@@ -149,7 +149,7 @@ fn cz_theta_phase_noise_commuting_case() {
     let gate = Gate::cz_theta(omega_cz, theta, noise);
     let pl = synthesize_exact_unitary(&gate);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
     let factor = theta.powi(2) / 4.0 / omega_cz.powi(2);
     assert_abs_diff_eq!(rate("IZ"), factor * delta_iz.powi(2), epsilon = 1e-14);
     assert_abs_diff_eq!(rate("ZI"), factor * delta_zi.powi(2), epsilon = 1e-14);
@@ -175,7 +175,7 @@ fn cx_theta_phase_noise_pi_over_2() {
     let gate = Gate::cx_theta(omega, theta, noise);
     let pl = synthesize_exact_unitary(&gate);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
     let expected = (2.0 * theta * (delta_iz + delta_zz)).powi(2) / (64.0 * omega.powi(2));
     assert_abs_diff_eq!(rate("IZ"), expected, epsilon = 1e-9);
     assert_abs_diff_eq!(rate("ZZ"), expected, epsilon = 1e-9);

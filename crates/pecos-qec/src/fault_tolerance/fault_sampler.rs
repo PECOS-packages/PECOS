@@ -36,10 +36,9 @@ use pecos_core::pauli::pauli_string::PauliString;
 use pecos_core::{Pauli, QubitId};
 use pecos_quantum::{AnnotationKind, TickCircuit};
 use pecos_random::{PecosRng, RngExt};
-use pecos_simulators::CliffordGateable;
 use pecos_simulators::measurement_sampler::{MeasurementKind, SampleResult};
-use pecos_simulators::pauli_prop::PauliProp;
 use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
+use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
@@ -317,7 +316,7 @@ pub(crate) fn propagate_single(
     gates: &[GateLoc],
     meas_positions: &HashMap<usize, usize>,
 ) -> BTreeSet<usize> {
-    let mut prop = PauliProp::new();
+    let mut prop = BitmaskPauliProp::new();
     match pauli {
         PauliType::X => prop.track_x(&[qubit]),
         PauliType::Y => prop.track_y(&[qubit]),
@@ -335,7 +334,7 @@ fn propagate_single_effect(
     meas_positions: &HashMap<usize, usize>,
     tracked_ops: &[PauliString],
 ) -> PropagatedFaultEffect {
-    let mut prop = PauliProp::new();
+    let mut prop = BitmaskPauliProp::new();
     match pauli {
         PauliType::X => prop.track_x(&[qubit]),
         PauliType::Y => prop.track_y(&[qubit]),
@@ -357,7 +356,7 @@ fn propagate_pair_effect(
     meas_positions: &HashMap<usize, usize>,
     tracked_ops: &[PauliString],
 ) -> PropagatedFaultEffect {
-    let mut prop = PauliProp::new();
+    let mut prop = BitmaskPauliProp::new();
     for (pauli, qubit) in faults {
         match pauli {
             PauliType::X => prop.track_x(&[qubit]),
@@ -381,7 +380,7 @@ struct PropagatedFaultEffect {
 
 /// Core forward propagation: evolve a Pauli through gates, collecting affected measurements.
 fn propagate_forward(
-    prop: &mut PauliProp,
+    prop: &mut BitmaskPauliProp,
     start: usize,
     gates: &[GateLoc],
     meas_positions: &HashMap<usize, usize>,
@@ -474,6 +473,10 @@ fn propagate_forward(
                 prop.clear_qubit(q);
             }
             _ => {}
+        }
+
+        if prop.is_identity() {
+            break;
         }
     }
 
@@ -988,6 +991,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
             }
         })
         .unwrap_or(meas_positions.len());
+    let record_effect_index = RecordEffectIndex::new(&det_records, &obs_records, num_meas);
 
     let mut locations = Vec::new();
 
@@ -1058,7 +1062,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                     );
                     let pauli = pauli_type_to_string(pt, q);
                     let (affected, dets, obs, tracked) =
-                        catalog_effect_parts(effect, &det_records, &obs_records, num_meas);
+                        catalog_effect_parts(effect, &record_effect_index);
                     faults.push(FaultAlternative {
                         kind: FaultKind::Pauli,
                         pauli: Some(pauli),
@@ -1102,7 +1106,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         );
                         let pauli = pauli_pair_to_string(p1, q1, p2, q2);
                         let (affected, dets, obs, tracked) =
-                            catalog_effect_parts(effect, &det_records, &obs_records, num_meas);
+                            catalog_effect_parts(effect, &record_effect_index);
                         faults.push(FaultAlternative {
                             kind: FaultKind::Pauli,
                             pauli: Some(pauli),
@@ -1127,7 +1131,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                     );
                     let pauli = pauli_type_to_string(p, q1);
                     let (affected, dets, obs, tracked) =
-                        catalog_effect_parts(effect, &det_records, &obs_records, num_meas);
+                        catalog_effect_parts(effect, &record_effect_index);
                     faults.push(FaultAlternative {
                         kind: FaultKind::Pauli,
                         pauli: Some(pauli),
@@ -1149,7 +1153,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                     );
                     let pauli = pauli_type_to_string(p, q2);
                     let (affected, dets, obs, tracked) =
-                        catalog_effect_parts(effect, &det_records, &obs_records, num_meas);
+                        catalog_effect_parts(effect, &record_effect_index);
                     faults.push(FaultAlternative {
                         kind: FaultKind::Pauli,
                         pauli: Some(pauli),
@@ -1186,7 +1190,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                     &tracked_op_annotations,
                 );
                 let (affected, dets, obs, tracked) =
-                    catalog_effect_parts(effect, &det_records, &obs_records, num_meas);
+                    catalog_effect_parts(effect, &record_effect_index);
                 locations.push(FaultLocation {
                     tick: tick_idx,
                     gate_index: gate_idx,
@@ -1212,8 +1216,8 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
             GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                 if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     let affected = vec![meas_idx];
-                    let dets = measurements_to_detectors(&affected, &det_records, num_meas);
-                    let obs = measurements_to_observables(&affected, &obs_records, num_meas);
+                    let dets = record_effect_index.detectors_for_measurements(&affected);
+                    let obs = record_effect_index.observables_for_measurements(&affected);
                     locations.push(FaultLocation {
                         tick: tick_idx,
                         gate_index: gate_idx,
@@ -1298,7 +1302,7 @@ fn parse_tracked_operator_annotations(tc: &TickCircuit) -> Vec<PauliString> {
         .collect()
 }
 
-fn tracked_ops_flipped_by(prop: &PauliProp, tracked_ops: &[PauliString]) -> Vec<usize> {
+fn tracked_ops_flipped_by(prop: &BitmaskPauliProp, tracked_ops: &[PauliString]) -> Vec<usize> {
     tracked_ops
         .iter()
         .enumerate()
@@ -1355,62 +1359,78 @@ fn record_absolute_index(num_meas: usize, rec: i32) -> Option<usize> {
     usize::try_from(abs_idx).ok()
 }
 
-/// Map measurement effects to detector effects via record XOR.
-fn measurements_to_detectors(
-    affected_meas: &[usize],
-    det_records: &[Vec<i32>],
-    num_meas: usize,
-) -> Vec<usize> {
-    let mut fired = Vec::new();
-    for (det_idx, records) in det_records.iter().enumerate() {
-        let mut parity = 0u8;
-        for &rec in records {
-            if let Some(abs_idx) = record_absolute_index(num_meas, rec)
-                && affected_meas.contains(&abs_idx)
-            {
-                parity ^= 1;
-            }
-        }
-        if parity != 0 {
-            fired.push(det_idx);
-        }
-    }
-    fired
+struct RecordEffectIndex {
+    detectors_by_measurement: Vec<Vec<usize>>,
+    observables_by_measurement: Vec<Vec<usize>>,
 }
 
-/// Map measurement effects to observable effects via record XOR.
-fn measurements_to_observables(
-    affected_meas: &[usize],
-    obs_records: &[Vec<i32>],
-    num_meas: usize,
-) -> Vec<usize> {
-    let mut fired = Vec::new();
-    for (obs_idx, records) in obs_records.iter().enumerate() {
-        let mut parity = 0u8;
-        for &rec in records {
-            if let Some(abs_idx) = record_absolute_index(num_meas, rec)
-                && affected_meas.contains(&abs_idx)
-            {
-                parity ^= 1;
-            }
-        }
-        if parity != 0 {
-            fired.push(obs_idx);
+impl RecordEffectIndex {
+    fn new(det_records: &[Vec<i32>], obs_records: &[Vec<i32>], num_meas: usize) -> Self {
+        Self {
+            detectors_by_measurement: records_by_measurement(det_records, num_meas),
+            observables_by_measurement: records_by_measurement(obs_records, num_meas),
         }
     }
-    fired
+
+    /// Map measurement effects to detector effects via record XOR.
+    fn detectors_for_measurements(&self, affected_meas: &[usize]) -> Vec<usize> {
+        measurements_to_record_effects(affected_meas, &self.detectors_by_measurement)
+    }
+
+    /// Map measurement effects to observable effects via record XOR.
+    fn observables_for_measurements(&self, affected_meas: &[usize]) -> Vec<usize> {
+        measurements_to_record_effects(affected_meas, &self.observables_by_measurement)
+    }
 }
 
 fn catalog_effect_parts(
     effect: PropagatedFaultEffect,
-    det_records: &[Vec<i32>],
-    obs_records: &[Vec<i32>],
-    num_meas: usize,
+    record_effect_index: &RecordEffectIndex,
 ) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>) {
     let affected: Vec<usize> = effect.affected_measurements.into_iter().collect();
-    let dets = measurements_to_detectors(&affected, det_records, num_meas);
-    let obs = measurements_to_observables(&affected, obs_records, num_meas);
+    let dets = record_effect_index.detectors_for_measurements(&affected);
+    let obs = record_effect_index.observables_for_measurements(&affected);
     (affected, dets, obs, effect.affected_tracked_ops)
+}
+
+fn records_by_measurement(records_by_output: &[Vec<i32>], num_meas: usize) -> Vec<Vec<usize>> {
+    let mut by_measurement = vec![Vec::new(); num_meas];
+    for (output_idx, records) in records_by_output.iter().enumerate() {
+        for &rec in records {
+            if let Some(meas_idx) = record_absolute_index(num_meas, rec)
+                && meas_idx < num_meas
+            {
+                by_measurement[meas_idx].push(output_idx);
+            }
+        }
+    }
+    by_measurement
+}
+
+fn measurements_to_record_effects(
+    affected_meas: &[usize],
+    outputs_by_measurement: &[Vec<usize>],
+) -> Vec<usize> {
+    let mut fired = Vec::new();
+    for &meas_idx in affected_meas {
+        if let Some(outputs) = outputs_by_measurement.get(meas_idx) {
+            for &output_idx in outputs {
+                toggle_sorted(&mut fired, output_idx);
+            }
+        }
+    }
+    fired
+}
+
+fn toggle_sorted(values: &mut Vec<usize>, value: usize) {
+    match values.binary_search(&value) {
+        Ok(pos) => {
+            values.remove(pos);
+        }
+        Err(pos) => {
+            values.insert(pos, value);
+        }
+    }
 }
 
 // ============================================================================
@@ -1827,6 +1847,18 @@ mod tests {
             (actual - expected).abs() < 1e-12,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn test_record_effect_index_maps_measurement_effects_by_xor() {
+        let det_records = vec![vec![-1], vec![-2, -1], vec![-1, -1], vec![-4], vec![1]];
+        let obs_records = vec![vec![-2], vec![-1, -2]];
+        let index = RecordEffectIndex::new(&det_records, &obs_records, 3);
+
+        assert_eq!(index.detectors_for_measurements(&[2]), vec![0, 1]);
+        assert_eq!(index.detectors_for_measurements(&[1, 2]), vec![0]);
+        assert_eq!(index.observables_for_measurements(&[1]), vec![0, 1]);
+        assert_eq!(index.observables_for_measurements(&[1, 2]), vec![0]);
     }
 
     /// Build a minimal `TickCircuit`: PZ(0) H(0) CX(0,1) H(0) MZ(0) PZ(0) H(0) CX(0,1) H(0) MZ(0)

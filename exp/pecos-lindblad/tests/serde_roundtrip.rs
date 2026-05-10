@@ -32,7 +32,7 @@ fn pauli1_round_trip() {
 #[test]
 fn pauli_string_round_trip() {
     for s in ["I", "X", "Y", "Z", "IX", "XYZI", "ZZZZZ"] {
-        let ps = PauliString::from_str(s).unwrap();
+        let ps = PauliString::from_label(s).unwrap();
         let json = serde_json::to_string(&ps).unwrap();
         let restored: PauliString = serde_json::from_str(&json).unwrap();
         assert_eq!(ps, restored);
@@ -69,8 +69,8 @@ fn pauli_lindblad_model_json_is_human_readable() {
     // inspect / hand-edit.
     let pl = PauliLindbladModel::new(
         vec![
-            PauliString::from_str("X").unwrap(),
-            PauliString::from_str("Z").unwrap(),
+            PauliString::from_label("X").unwrap(),
+            PauliString::from_label("Z").unwrap(),
         ],
         vec![0.001, 0.002],
     );

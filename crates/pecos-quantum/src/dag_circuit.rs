@@ -17,7 +17,7 @@
 //! This module provides [`DagCircuit`], a directed acyclic graph representation
 //! of quantum circuits where nodes are gates and edges are qubit wires.
 //!
-//! The design follows HUGR and Qiskit's `DAGCircuit`: edges represent qubit wires
+//! The design follows a wire-edge DAG model: edges represent qubit wires
 //! flowing between gates, not just abstract dependencies.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -317,7 +317,7 @@ impl TraversalWorkBuffers {
 ///
 /// Each node in the DAG represents a quantum gate. Edges represent qubit wires
 /// flowing between gates - each edge is labeled with the [`QubitId`] it carries.
-/// This design follows HUGR and Qiskit's `DAGCircuit`.
+/// This design follows a wire-edge DAG model.
 ///
 /// For a two-qubit gate like CX, there are two incoming edges (one per qubit)
 /// and two outgoing edges.

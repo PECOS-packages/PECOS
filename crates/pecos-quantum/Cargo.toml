@@ -14,6 +14,7 @@ readme = "README.md"
 [dependencies]
 pecos-core.workspace = true
 pecos-num.workspace = true
+pecos-random.workspace = true
 nalgebra.workspace = true
 num-complex.workspace = true
 smallvec.workspace = true

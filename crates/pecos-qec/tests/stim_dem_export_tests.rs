@@ -47,19 +47,13 @@ fn dem_text_export_with_scalar_noise() {
     // Must contain at least one error mechanism.
     assert!(
         text.contains("error("),
-        "expected 'error(' line in DEM text:\n{}",
-        text
+        "expected 'error(' line in DEM text:\n{text}"
     );
     // Must declare the detector and observable.
-    assert!(
-        text.contains("detector D0"),
-        "missing detector D0:\n{}",
-        text
-    );
+    assert!(text.contains("detector D0"), "missing detector D0:\n{text}");
     assert!(
         text.contains("logical_observable L0") || text.contains("observable_include L0"),
-        "missing observable decl:\n{}",
-        text,
+        "missing observable decl:\n{text}",
     );
 }
 
@@ -85,8 +79,7 @@ fn dem_text_export_with_per_gate_noise() {
     let error_lines = text.matches("error(").count();
     assert!(
         error_lines > 0,
-        "expected per-gate-noise path to produce error lines:\n{}",
-        text,
+        "expected per-gate-noise path to produce error lines:\n{text}",
     );
     assert!(text.contains("detector D0"));
 }
@@ -131,6 +124,6 @@ fn dem_probabilities_recoverable_from_thresholds() {
         // Parse the prob inside "error(...)".
         let inner = line.trim_start_matches("error(").split(')').next().unwrap();
         let p: f64 = inner.parse().unwrap();
-        assert!(p > 0.0 && p < 1.0, "probability out of range: {}", p);
+        assert!(p > 0.0 && p < 1.0, "probability out of range: {p}");
     }
 }

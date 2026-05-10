@@ -273,7 +273,7 @@ pub fn synthesize_exact_unitary(gate: &Gate) -> PauliLindbladModel {
 /// inverts via Walsh-Hadamard.
 pub fn synthesize_numerical(gate: &Gate, n_steps: usize) -> PauliLindbladModel {
     assert!(
-        n_steps >= 2 && n_steps % 2 == 0,
+        n_steps >= 2 && n_steps.is_multiple_of(2),
         "n_steps must be even and >= 2, got {}",
         n_steps
     );

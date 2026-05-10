@@ -13,6 +13,7 @@
 //! Pauli basis types for Lindblad -> Pauli-Lindblad synthesis.
 
 use std::fmt;
+use std::str::FromStr;
 
 /// Single-qubit Pauli operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,12 +77,25 @@ impl Pauli1 {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PauliString(pub Vec<Pauli1>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParsePauliStringError {
+    invalid_char: char,
+}
+
+impl fmt::Display for ParsePauliStringError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid Pauli character {:?}", self.invalid_char)
+    }
+}
+
+impl std::error::Error for ParsePauliStringError {}
+
 impl PauliString {
     pub fn single(p: Pauli1) -> Self {
         PauliString(vec![p])
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_label(s: &str) -> Option<Self> {
         s.chars()
             .map(Pauli1::from_char)
             .collect::<Option<Vec<_>>>()
@@ -154,6 +168,21 @@ impl PauliString {
     }
 }
 
+impl FromStr for PauliString {
+    type Err = ParsePauliStringError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut paulis = Vec::with_capacity(s.len());
+        for c in s.chars() {
+            let Some(pauli) = Pauli1::from_char(c) else {
+                return Err(ParsePauliStringError { invalid_char: c });
+            };
+            paulis.push(pauli);
+        }
+        Ok(PauliString(paulis))
+    }
+}
+
 impl fmt::Display for PauliString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for p in &self.0 {
@@ -169,7 +198,7 @@ mod tests {
 
     #[test]
     fn roundtrip_string() {
-        let s = PauliString::from_str("XYZ").unwrap();
+        let s = PauliString::from_label("XYZ").unwrap();
         assert_eq!(s.num_qubits(), 3);
         assert_eq!(s.weight(), 3);
         assert_eq!(format!("{}", s), "XYZ");
@@ -177,21 +206,21 @@ mod tests {
 
     #[test]
     fn identity_weight() {
-        let s = PauliString::from_str("III").unwrap();
+        let s = PauliString::from_label("III").unwrap();
         assert_eq!(s.weight(), 0);
     }
 
     #[test]
     fn mixed_weight() {
-        let s = PauliString::from_str("IXI").unwrap();
+        let s = PauliString::from_label("IXI").unwrap();
         assert_eq!(s.weight(), 1);
     }
 
     #[test]
     fn symplectic_product_2q() {
-        let ix = PauliString::from_str("IX").unwrap();
-        let iz = PauliString::from_str("IZ").unwrap();
-        let zx = PauliString::from_str("ZX").unwrap();
+        let ix = PauliString::from_label("IX").unwrap();
+        let iz = PauliString::from_label("IZ").unwrap();
+        let zx = PauliString::from_label("ZX").unwrap();
         assert_eq!(ix.symplectic_product(&iz), 1); // X,Z anticommute on right
         assert_eq!(ix.symplectic_product(&ix), 0);
         assert_eq!(zx.symplectic_product(&iz), 1); // X,Z on right anticommute
@@ -202,9 +231,9 @@ mod tests {
     fn enumerate_1q_gives_xyz() {
         let all = PauliString::enumerate_nonidentity(1);
         assert_eq!(all.len(), 3);
-        assert_eq!(all[0], PauliString::from_str("X").unwrap());
-        assert_eq!(all[1], PauliString::from_str("Y").unwrap());
-        assert_eq!(all[2], PauliString::from_str("Z").unwrap());
+        assert_eq!(all[0], PauliString::from_label("X").unwrap());
+        assert_eq!(all[1], PauliString::from_label("Y").unwrap());
+        assert_eq!(all[2], PauliString::from_label("Z").unwrap());
     }
 
     #[test]
@@ -212,8 +241,8 @@ mod tests {
         let all = PauliString::enumerate_nonidentity(2);
         assert_eq!(all.len(), 15);
         // First should be IX (idx 1 = 0b01 = 0|X).
-        assert_eq!(all[0], PauliString::from_str("IX").unwrap());
+        assert_eq!(all[0], PauliString::from_label("IX").unwrap());
         // Last should be ZZ (idx 15 = 0b1111 = Z|Z).
-        assert_eq!(all[14], PauliString::from_str("ZZ").unwrap());
+        assert_eq!(all[14], PauliString::from_label("ZZ").unwrap());
     }
 }

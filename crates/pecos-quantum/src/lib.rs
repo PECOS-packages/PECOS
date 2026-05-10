@@ -63,9 +63,11 @@
 //! circuit2.tick().mz(&[0, 1, 2, 3]);    // Measure multiple qubits
 //! ```
 
+pub mod channel;
 mod circuit;
 mod circuit_display;
 mod dag_circuit;
+pub mod measures;
 pub mod pass;
 pub mod pauli_group;
 pub mod pauli_sequence;
@@ -97,8 +99,20 @@ pub use pecos_core::gate_type::GateType;
 pub use pecos_core::{ClassicalBitId, Gate, QubitId, TimeScale, TimeUnits};
 pub use pecos_num::dag::DagWouldCycleError;
 
+// Concrete channel representation types
+pub use channel::{
+    ChannelError, ChoiMatrix, DiagonalPtm, KrausOps, PauliChannel, PauliSum, Ptm, PtmBasisOrder,
+    basis_bitmask, basis_digit_to_pauli, basis_element, basis_index, basis_label, bitmask_label,
+    partial_trace, pauli_basis_len, pauli_string_to_bitmask, pauli_to_basis_digit,
+    random_1q_clifford, random_2q_clifford, random_clifford, random_pauli,
+};
+pub use measures::{
+    MeasureError, average_gate_fidelity, entropy, entropy_with_base, gate_error, process_fidelity,
+    purity, state_fidelity, state_fidelity_with_density_matrix,
+};
+
 // Re-export operator matrix types for convenient method-style matrix conversion
-pub use unitary_matrix::{ToMatrix, UnitaryMatrix};
+pub use unitary_matrix::{ToMatrix, UnitaryMatrix, UnitaryMatrixError, random_unitary};
 
 // Pauli collection and stabilizer group types
 pub use pauli_group::{PauliGroup, PauliGroupError};

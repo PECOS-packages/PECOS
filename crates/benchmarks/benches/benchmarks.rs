@@ -21,6 +21,7 @@ mod modules {
     pub mod dem_builder;
     pub mod dem_sampler;
     pub mod dod_statevec;
+    pub mod fault_catalog;
     pub mod quizx_eval;
     pub mod stab_vec;
     // TODO: pub mod hadamard_ops;
@@ -57,9 +58,9 @@ use modules::sparse_stab_vs_cpp;
 use modules::stab_mps_vs_stab_vec;
 use modules::{
     allocation_overhead, cpu_stabilizer_comparison, dem_builder, dem_sampler, dod_statevec,
-    measurement_sampling, native_statevec_comparison, noise_models, pecos_neo_comparison,
-    quizx_eval, rng, set_ops, sparse_stab_w_vs_y, sparse_state_vec, stab_vec, stabilizer_sims,
-    state_vec_sims, surface_code, trig,
+    fault_catalog, measurement_sampling, native_statevec_comparison, noise_models,
+    pecos_neo_comparison, quizx_eval, rng, set_ops, sparse_stab_w_vs_y, sparse_state_vec, stab_vec,
+    stabilizer_sims, state_vec_sims, surface_code, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
@@ -72,6 +73,7 @@ fn all_benchmarks(c: &mut Criterion) {
     dem_builder::benchmarks(c);
     dem_sampler::benchmarks(c);
     dod_statevec::benchmarks(c);
+    fault_catalog::benchmarks(c);
     #[cfg(feature = "gpu-sims")]
     gpu_influence_sampler::benchmarks(c);
     measurement_sampling::benchmarks(c);

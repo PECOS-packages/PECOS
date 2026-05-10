@@ -61,7 +61,7 @@ fn inverse_walsh_hadamard(paulis: &[PauliString], alphas: &[f64], n_qubits: usiz
 fn round_trip(n_qubits: usize, seed_rates: &[(&str, f64)]) {
     let supports: Vec<PauliString> = seed_rates
         .iter()
-        .map(|(s, _)| PauliString::from_str(s).unwrap())
+        .map(|(s, _)| PauliString::from_label(s).unwrap())
         .collect();
     let rates: Vec<f64> = seed_rates.iter().map(|(_, r)| *r).collect();
     let model = PauliLindbladModel::new(supports.clone(), rates.clone());

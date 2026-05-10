@@ -114,7 +114,7 @@ fn run_cx(theta: f64, omega: f64, bd_l: f64, bd_r: f64, bp_l: f64, bp_r: f64, to
         "IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZI", "ZX", "ZY", "ZZ",
     ];
     for label in all_labels {
-        let got = pl.rate(&PauliString::from_str(label).unwrap());
+        let got = pl.rate(&PauliString::from_label(label).unwrap());
         let expected = paper_cx_rate(label, theta, omega, bd_l, bd_r, bp_l, bp_r);
         assert_abs_diff_eq!(got, expected, epsilon = tol);
     }

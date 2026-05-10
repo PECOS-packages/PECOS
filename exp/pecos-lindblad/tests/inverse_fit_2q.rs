@@ -84,7 +84,7 @@ fn recovery_residual_nonzero_under_model_mismatch() {
     // simulating measured rates that don't fit the pure-AD+PD form.
     let supports: Vec<_> = ["IX", "IY", "XI", "YI"]
         .iter()
-        .map(|s| PauliString::from_str(s).unwrap())
+        .map(|s| PauliString::from_label(s).unwrap())
         .collect();
     // IX, IY differ by 20% (not allowed under pure AD+PD for CZ).
     let rates = vec![0.003, 0.0036, 0.002, 0.002];
@@ -100,12 +100,12 @@ fn recovery_residual_nonzero_under_model_mismatch() {
 #[test]
 fn recovery_returns_none_on_negative_rates() {
     let supports = vec![
-        PauliString::from_str("IX").unwrap(),
-        PauliString::from_str("IY").unwrap(),
-        PauliString::from_str("XI").unwrap(),
-        PauliString::from_str("YI").unwrap(),
-        PauliString::from_str("IZ").unwrap(),
-        PauliString::from_str("ZI").unwrap(),
+        PauliString::from_label("IX").unwrap(),
+        PauliString::from_label("IY").unwrap(),
+        PauliString::from_label("XI").unwrap(),
+        PauliString::from_label("YI").unwrap(),
+        PauliString::from_label("IZ").unwrap(),
+        PauliString::from_label("ZI").unwrap(),
     ];
     // lambda_ix is zero -> recovery can't infer beta_down_r.
     let rates = vec![0.0, 0.0, 0.001, 0.001, 0.002, 0.002];

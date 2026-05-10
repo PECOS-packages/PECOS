@@ -64,7 +64,7 @@ fn four_qubit_identity_ad_on_one_qubit() {
     // on qubit 1 (index 1 from left in "qqqq" string).
     //   lambda_IXII = lambda_IYII = beta_down * tau_g / 4
     //   lambda_IZII = beta_phi * tau_g / 2
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
     assert_abs_diff_eq!(rate("IXII"), beta_down * tau_g / 4.0, epsilon = 1e-10);
     assert_abs_diff_eq!(rate("IYII"), beta_down * tau_g / 4.0, epsilon = 1e-10);
     assert_abs_diff_eq!(rate("IZII"), beta_phi * tau_g / 2.0, epsilon = 1e-10);
@@ -97,7 +97,7 @@ fn four_qubit_identity_coherent_zzzz_smoke() {
     // lambda_ZZZZ = (delta * tau_g)^2 / 4  (by analogy with 1Q phase noise).
     let expected = (delta * tau_g).powi(2) / 4.0;
     assert_abs_diff_eq!(
-        pl.rate(&PauliString::from_str("ZZZZ").unwrap()),
+        pl.rate(&PauliString::from_label("ZZZZ").unwrap()),
         expected,
         epsilon = 1e-10
     );

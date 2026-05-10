@@ -301,6 +301,28 @@ where
         self
     }
 
+    /// Extracts the stabilizer generators as a [`PauliStabilizerGroup`].
+    ///
+    /// Converts the simulator's internal tableau into the algebraic
+    /// representation, enabling rank analysis, distance calculation,
+    /// logical operator computation, and other GF(2) operations.
+    ///
+    /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    #[must_use]
+    pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
+        let generators = self.stabs.generators();
+        pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
+    }
+
+    /// Extracts the destabilizer generators as a [`PauliSequence`].
+    ///
+    /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    #[must_use]
+    pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
+        let generators = self.destabs.generators();
+        pecos_quantum::PauliSequence::new(generators)
+    }
+
     /// Returns generator data as sparse index vectors.
     ///
     /// Returns `(col_x, col_z, row_x, row_z)` where each is a `Vec<Vec<usize>>`.

@@ -63,7 +63,7 @@ fn identity_2q_rates_agree_with_1q_independent_qubits() {
     let bp_l = 1.0 / t2_l - 1.0 / (2.0 * t1_l);
     let bp_r = 1.0 / t2_r - 1.0 / (2.0 * t1_r);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
     assert_abs_diff_eq!(rate("IX"), bd_r * tau_g / 4.0, epsilon = 1e-12);
     assert_abs_diff_eq!(rate("IY"), bd_r * tau_g / 4.0, epsilon = 1e-12);
     assert_abs_diff_eq!(rate("IZ"), bp_r * tau_g / 2.0, epsilon = 1e-12);

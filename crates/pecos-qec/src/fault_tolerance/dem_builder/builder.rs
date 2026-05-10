@@ -189,20 +189,20 @@ impl<'a> DemBuilder<'a> {
 
     /// Resolve preparation X-error rate at a specific location.
     fn init_rate_for_loc(&self, loc: &DagSpacetimeLocation) -> f64 {
-        if let Some(pg) = &self.per_gate {
-            if let Some(q) = loc.qubits.first() {
-                return pg.init_rate_on(*q);
-            }
+        if let Some(pg) = &self.per_gate
+            && let Some(q) = loc.qubits.first()
+        {
+            return pg.init_rate_on(*q);
         }
         self.noise.p_prep
     }
 
     /// Resolve measurement X-flip rate at a specific location.
     fn measurement_rate_for_loc(&self, loc: &DagSpacetimeLocation) -> f64 {
-        if let Some(pg) = &self.per_gate {
-            if let Some(q) = loc.qubits.first() {
-                return pg.measurement_rate_on(*q);
-            }
+        if let Some(pg) = &self.per_gate
+            && let Some(q) = loc.qubits.first()
+        {
+            return pg.measurement_rate_on(*q);
         }
         self.noise.p_meas
     }
@@ -442,25 +442,25 @@ impl<'a> DemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PZ | GateType::QAlloc => {
-                    if !loc.before && self.init_rate_for_loc(loc) > 0.0 {
-                        self.process_prep_fault_source_tracked(
-                            loc_idx,
-                            dem,
-                            meas_to_detectors,
-                            meas_to_observables,
-                        );
-                    }
+                GateType::PZ | GateType::QAlloc
+                    if !loc.before && self.init_rate_for_loc(loc) > 0.0 =>
+                {
+                    self.process_prep_fault_source_tracked(
+                        loc_idx,
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
                 }
-                GateType::MZ | GateType::MeasureFree => {
-                    if loc.before && self.measurement_rate_for_loc(loc) > 0.0 {
-                        self.process_meas_fault_source_tracked(
-                            loc_idx,
-                            dem,
-                            meas_to_detectors,
-                            meas_to_observables,
-                        );
-                    }
+                GateType::MZ | GateType::MeasureFree
+                    if loc.before && self.measurement_rate_for_loc(loc) > 0.0 =>
+                {
+                    self.process_meas_fault_source_tracked(
+                        loc_idx,
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
                 }
                 GateType::CX
                 | GateType::CZ

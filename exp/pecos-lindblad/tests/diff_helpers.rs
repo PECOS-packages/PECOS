@@ -19,7 +19,7 @@ use pecos_lindblad::{PauliLindbladModel, PauliString};
 fn model(entries: &[(&str, f64)]) -> PauliLindbladModel {
     let supports: Vec<_> = entries
         .iter()
-        .map(|(s, _)| PauliString::from_str(s).unwrap())
+        .map(|(s, _)| PauliString::from_label(s).unwrap())
         .collect();
     let rates: Vec<_> = entries.iter().map(|(_, r)| *r).collect();
     PauliLindbladModel::new(supports, rates)

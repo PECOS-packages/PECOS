@@ -12,6 +12,9 @@
 
 //! Sparse Pauli-Lindblad noise model (arXiv:2201.09866 generator form).
 
+use std::collections::BTreeMap;
+
+use pecos_quantum::{ChannelError, DiagonalPtm, basis_bitmask, basis_label};
 use rand::{Rng, RngExt};
 
 use crate::basis::{Pauli1, PauliString};
@@ -54,6 +57,65 @@ impl PauliLindbladModel {
     /// *any* Pauli error firing during the gate.
     pub fn total_rate(&self) -> f64 {
         self.rates.iter().sum()
+    }
+
+    /// Number of qubits spanned by this model.
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        self.supports
+            .iter()
+            .map(PauliString::num_qubits)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Converts the Pauli-Lindblad model to diagonal PTM fidelities.
+    ///
+    /// For `N(rho) = exp(sum_k lambda_k (P_k rho P_k - rho))`, a Pauli basis
+    /// element `B` has diagonal PTM entry
+    /// `exp(-2 * sum_{k: {P_k, B}=0} lambda_k)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when supports have inconsistent qubit counts or the
+    /// PECOS Pauli-basis dimension cannot be represented.
+    pub fn to_diagonal_ptm(&self) -> Result<DiagonalPtm, ChannelError> {
+        let n = self.num_qubits();
+        for support in &self.supports {
+            if support.num_qubits() != n {
+                return Err(ChannelError::UnsupportedChannelExpr {
+                    reason: format!(
+                        "PauliLindbladModel support {} has {} qubits in a {}-qubit model",
+                        support,
+                        support.num_qubits(),
+                        n
+                    ),
+                });
+            }
+        }
+
+        let basis_len = pecos_quantum::pauli_basis_len(n)?;
+        let mut fidelities = BTreeMap::new();
+        for basis_idx in 0..basis_len {
+            let label = basis_label(n, basis_idx)?;
+            let basis_pauli = PauliString::from_label(&label).ok_or_else(|| {
+                ChannelError::UnsupportedChannelExpr {
+                    reason: format!("internal basis label {label} was not a Lindblad Pauli string"),
+                }
+            })?;
+            let anticommuting_rate: f64 = self
+                .supports
+                .iter()
+                .zip(&self.rates)
+                .filter(|(support, _)| support.symplectic_product(&basis_pauli) == 1)
+                .map(|(_, rate)| *rate)
+                .sum();
+            fidelities.insert(
+                basis_bitmask(n, basis_idx)?,
+                (-2.0 * anticommuting_rate).exp(),
+            );
+        }
+        DiagonalPtm::try_new(n, fidelities)
     }
 
     /// Sum of rates restricted to a given Pauli weight (number of
@@ -104,7 +166,7 @@ impl PauliLindbladModel {
         ];
         let mut out = [0.0; 15];
         for (i, label) in ORDER.iter().enumerate() {
-            out[i] = self.rate(&PauliString::from_str(label).unwrap());
+            out[i] = self.rate(&PauliString::from_label(label).unwrap());
         }
         out
     }
@@ -275,12 +337,12 @@ impl PauliLindbladModel {
             match weight {
                 1 => msgs.push(format!(
                     "weight-1 residual {:.3e}: suggests missing incoherent single-qubit noise \
-                     (T_1, T_phi mis-characterized, or extra dephasing/relaxation channels)",
+                     (T_1, T_phi mischaracterized, or extra dephasing/relaxation channels)",
                     total_abs
                 )),
                 2 => msgs.push(format!(
                     "weight-2 residual {:.3e}: suggests correlated 2-qubit noise not in model \
-                     (coherent ZZ crosstalk, leakage-induced correlations, or gate mis-calibration)",
+                     (coherent ZZ crosstalk, leakage-induced correlations, or gate miscalibration)",
                     total_abs
                 )),
                 w if *w >= 3 => msgs.push(format!(
@@ -292,13 +354,13 @@ impl PauliLindbladModel {
             }
         }
         // Highlight the single worst Pauli as a concrete pointer.
-        if let Some((p, r)) = self.max_residual(other) {
-            if r.abs() >= tol {
-                msgs.push(format!(
-                    "largest per-Pauli residual: |lambda_{{{}}}^pred - lambda_{{{}}}^meas| = {:.3e}",
-                    p, p, r
-                ));
-            }
+        if let Some((p, r)) = self.max_residual(other)
+            && r.abs() >= tol
+        {
+            msgs.push(format!(
+                "largest per-Pauli residual: |lambda_{{{}}}^pred - lambda_{{{}}}^meas| = {:.3e}",
+                p, p, r
+            ));
         }
         msgs
     }
@@ -329,9 +391,9 @@ mod tests {
     #[test]
     fn summary_helpers() {
         let supports = vec![
-            PauliString::from_str("IX").unwrap(),
-            PauliString::from_str("IZ").unwrap(),
-            PauliString::from_str("XX").unwrap(),
+            PauliString::from_label("IX").unwrap(),
+            PauliString::from_label("IZ").unwrap(),
+            PauliString::from_label("XX").unwrap(),
         ];
         let rates = vec![0.001, 0.003, 0.002];
         let model = PauliLindbladModel::new(supports, rates);
@@ -356,5 +418,30 @@ mod tests {
             let s = model.sample(1.0, &mut rng);
             assert_eq!(s, PauliString::single(Pauli1::I));
         }
+    }
+
+    #[test]
+    fn diagonal_ptm_matches_pauli_lindblad_rates() {
+        let model = PauliLindbladModel::new(
+            vec![
+                PauliString::single(Pauli1::X),
+                PauliString::single(Pauli1::Z),
+            ],
+            vec![0.2, 0.3],
+        );
+
+        let diagonal = model.to_diagonal_ptm().unwrap();
+        let label = |s: &str| {
+            let idx = ["I", "X", "Y", "Z"]
+                .iter()
+                .position(|label| *label == s)
+                .unwrap();
+            pecos_quantum::basis_bitmask(1, idx).unwrap()
+        };
+
+        assert!((diagonal.fidelity(&label("I")) - 1.0).abs() < 1e-12);
+        assert!((diagonal.fidelity(&label("X")) - (-0.6_f64).exp()).abs() < 1e-12);
+        assert!((diagonal.fidelity(&label("Y")) - (-1.0_f64).exp()).abs() < 1e-12);
+        assert!((diagonal.fidelity(&label("Z")) - (-0.4_f64).exp()).abs() < 1e-12);
     }
 }

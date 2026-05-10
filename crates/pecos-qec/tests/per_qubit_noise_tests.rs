@@ -22,6 +22,13 @@ use pecos_qec::fault_tolerance::dem_builder::{DemSamplerBuilder, NoiseConfig, Pe
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_quantum::{DagCircuit, GateType};
 
+fn assert_rate_eq(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < 1e-14,
+        "expected rate {expected:.16e}, got {actual:.16e}"
+    );
+}
+
 #[test]
 fn per_qubit_override_takes_precedence_over_per_gate_type() {
     // Direct unit test of the lookup layering, independent of DemSampler.
@@ -32,13 +39,13 @@ fn per_qubit_override_takes_precedence_over_per_gate_type() {
         .with_1q_rates_for_qubit(GateType::H, q0, [0.001, 0.002, 0.003]);
 
     // qubit 0 has per-qubit override
-    assert_eq!(cfg.rate_1q_on(GateType::H, q0, 0), 0.001);
-    assert_eq!(cfg.rate_1q_on(GateType::H, q0, 1), 0.002);
-    assert_eq!(cfg.rate_1q_on(GateType::H, q0, 2), 0.003);
+    assert_rate_eq(cfg.rate_1q_on(GateType::H, q0, 0), 0.001);
+    assert_rate_eq(cfg.rate_1q_on(GateType::H, q0, 1), 0.002);
+    assert_rate_eq(cfg.rate_1q_on(GateType::H, q0, 2), 0.003);
 
     // qubit 1 uses the per-gate-type default.
-    assert_eq!(cfg.rate_1q_on(GateType::H, q1, 0), 0.01);
-    assert_eq!(cfg.rate_1q_on(GateType::H, q1, 1), 0.02);
+    assert_rate_eq(cfg.rate_1q_on(GateType::H, q1, 0), 0.01);
+    assert_rate_eq(cfg.rate_1q_on(GateType::H, q1, 1), 0.02);
 
     // Unregistered gate on qubit 0 uses the per-gate-type default (not set),
     // then to uniform base.p1/3.
@@ -63,11 +70,11 @@ fn per_qubit_2q_override_takes_precedence() {
         .with_2q_rates_for_qubits(GateType::CX, q0, q1, per_pair);
 
     // (q0, q1) uses the specific rates
-    assert_eq!(cfg.rate_2q_on(GateType::CX, q0, q1, 0), 1e-3);
+    assert_rate_eq(cfg.rate_2q_on(GateType::CX, q0, q1, 0), 1e-3);
     // (q2, q3) uses the per-gate-type default.
-    assert_eq!(cfg.rate_2q_on(GateType::CX, q2, q3, 0), 5e-4);
+    assert_rate_eq(cfg.rate_2q_on(GateType::CX, q2, q3, 0), 5e-4);
     // Different ordered pair (q1, q0): NOT the same as (q0, q1). Falls back.
-    assert_eq!(cfg.rate_2q_on(GateType::CX, q1, q0, 0), 5e-4);
+    assert_rate_eq(cfg.rate_2q_on(GateType::CX, q1, q0, 0), 5e-4);
 }
 
 fn build_circuit_with_two_cxs() -> DagCircuit {
@@ -125,9 +132,7 @@ fn per_qubit_cx_rate_affects_mechanism_probabilities() {
     let avg_over = overridden.average_error_probability();
     assert!(
         avg_over > 2.0 * avg_base,
-        "expected per-qubit override to raise avg error >>2x, got base={} over={}",
-        avg_base,
-        avg_over,
+        "expected per-qubit override to raise avg error >>2x, got base={avg_base} over={avg_over}",
     );
 }
 

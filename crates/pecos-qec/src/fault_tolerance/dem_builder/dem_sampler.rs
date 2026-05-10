@@ -225,6 +225,16 @@ pub struct SamplingEngine {
     num_dem_outputs: usize,
 }
 
+const U32_BASE_AS_F64: f64 = 4_294_967_296.0;
+const U64_MAX_AS_F64: f64 = 18_446_744_073_709_551_615.0;
+
+fn threshold_to_probability(threshold: u64) -> f64 {
+    let hi = u32::try_from(threshold >> 32).expect("upper threshold word fits in u32");
+    let lo =
+        u32::try_from(threshold & u64::from(u32::MAX)).expect("lower threshold word fits in u32");
+    (f64::from(hi) * U32_BASE_AS_F64 + f64::from(lo)) / U64_MAX_AS_F64
+}
+
 impl SamplingEngine {
     /// Number of mechanisms in the sampler.
     #[must_use]
@@ -253,7 +263,7 @@ impl SamplingEngine {
         self.num_dem_outputs
     }
 
-    /// Reconstruct a [`DetectorErrorModel`] from the aggregated SoA
+    /// Reconstruct a [`DetectorErrorModel`] from the aggregated `SoA`
     /// mechanism state for text output (e.g. Stim-format via
     /// [`DetectorErrorModel::to_string`]).
     ///
@@ -268,9 +278,8 @@ impl SamplingEngine {
     pub fn to_detector_error_model(&self) -> super::types::DetectorErrorModel {
         use super::types::{DetectorErrorModel, FaultMechanism};
         let mut dem = DetectorErrorModel::with_capacity(self.num_detectors, self.num_dem_outputs);
-        let inv_max = 1.0_f64 / u64::MAX as f64;
         for i in 0..self.thresholds.len() {
-            let prob = self.thresholds[i] as f64 * inv_max;
+            let prob = threshold_to_probability(self.thresholds[i]);
             let det_start = self.detector_offsets[i] as usize;
             let det_end = self.detector_offsets[i + 1] as usize;
             let obs_start = self.dem_output_offsets[i] as usize;
@@ -1512,23 +1521,25 @@ impl SamplingEngine {
     ///
     /// Used to decide between geometric (low p) and SIMD (high p) sampling.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)]
     pub fn average_error_probability(&self) -> f64 {
         if self.thresholds.is_empty() {
             return 0.0;
         }
-        let sum: u128 = self.thresholds.iter().map(|&t| u128::from(t)).sum();
-        let avg_threshold = (sum / self.thresholds.len() as u128) as f64;
-        avg_threshold / u64::MAX as f64
+        let mut sum = 0.0;
+        let mut count = 0.0;
+        for &threshold in &self.thresholds {
+            sum += threshold_to_probability(threshold);
+            count += 1.0;
+        }
+        sum / count
     }
 
     /// Maximum error probability across all mechanisms.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)]
     pub fn max_error_probability(&self) -> f64 {
         self.thresholds
             .iter()
-            .map(|&t| t as f64 / u64::MAX as f64)
+            .map(|&t| threshold_to_probability(t))
             .fold(0.0, f64::max)
     }
 
@@ -2224,10 +2235,10 @@ impl<'a> SamplingEngineBuilder<'a> {
         &self,
         loc: &super::super::propagator::dag::DagSpacetimeLocation,
     ) -> f64 {
-        if let Some(pg) = &self.per_gate {
-            if let Some(q) = loc.qubits.first() {
-                return pg.init_rate_on(*q);
-            }
+        if let Some(pg) = &self.per_gate
+            && let Some(q) = loc.qubits.first()
+        {
+            return pg.init_rate_on(*q);
         }
         self.p_prep
     }
@@ -2239,10 +2250,10 @@ impl<'a> SamplingEngineBuilder<'a> {
         &self,
         loc: &super::super::propagator::dag::DagSpacetimeLocation,
     ) -> f64 {
-        if let Some(pg) = &self.per_gate {
-            if let Some(q) = loc.qubits.first() {
-                return pg.measurement_rate_on(*q);
-            }
+        if let Some(pg) = &self.per_gate
+            && let Some(q) = loc.qubits.first()
+        {
+            return pg.measurement_rate_on(*q);
         }
         self.p_meas
     }

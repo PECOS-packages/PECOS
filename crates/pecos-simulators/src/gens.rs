@@ -164,8 +164,9 @@ impl GensHybrid {
     #[must_use]
     pub fn generator(&self, i: usize) -> PauliString {
         assert!(i < self.num_generators(), "generator index out of bounds");
-        let phase = self.generator_phase(i);
+        let mut phase = self.generator_phase(i);
         let mut paulis = Vec::new();
+        let mut num_y_terms = 0usize;
         for q in 0..self.num_qubits {
             let has_x = self.row_x[i].contains(q);
             let has_z = self.row_z[i].contains(q);
@@ -173,9 +174,15 @@ impl GensHybrid {
                 (false, false) => continue,
                 (true, false) => Pauli::X,
                 (false, true) => Pauli::Z,
-                (true, true) => Pauli::Y,
+                (true, true) => {
+                    num_y_terms += 1;
+                    Pauli::Y
+                }
             };
             paulis.push((pauli, QubitId::new(q)));
+        }
+        for _ in 0..num_y_terms {
+            phase = phase.multiply(&QuarterPhase::MinusI);
         }
         PauliString::with_phase_and_paulis(phase, paulis)
     }
@@ -391,10 +398,11 @@ impl<S: IndexSet> GensGeneric<S> {
     pub fn generator(&self, i: usize) -> PauliString {
         assert!(i < self.num_generators(), "generator index out of bounds");
 
-        let phase = self.generator_phase(i);
+        let mut phase = self.generator_phase(i);
 
         // Collect non-identity Paulis
         let mut paulis = Vec::new();
+        let mut num_y_terms = 0usize;
 
         // Iterate over all qubits and determine the Pauli at each position
         for q in 0..self.num_qubits {
@@ -405,10 +413,16 @@ impl<S: IndexSet> GensGeneric<S> {
                 (false, false) => continue, // Identity, skip
                 (true, false) => Pauli::X,
                 (false, true) => Pauli::Z,
-                (true, true) => Pauli::Y,
+                (true, true) => {
+                    num_y_terms += 1;
+                    Pauli::Y
+                }
             };
 
             paulis.push((pauli, QubitId::new(q)));
+        }
+        for _ in 0..num_y_terms {
+            phase = phase.multiply(&QuarterPhase::MinusI);
         }
 
         PauliString::with_phase_and_paulis(phase, paulis)

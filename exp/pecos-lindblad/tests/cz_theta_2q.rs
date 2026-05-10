@@ -123,7 +123,7 @@ fn run_cz(
         beta_phi_l,
         beta_phi_r,
     );
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
 
     assert_abs_diff_eq!(rate("IZ"), exp.iz, epsilon = tol);
     assert_abs_diff_eq!(rate("ZI"), exp.zi, epsilon = tol);

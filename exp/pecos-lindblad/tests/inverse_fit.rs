@@ -74,32 +74,32 @@ fn recovery_returns_none_on_zero_tau() {
 fn compose_independent_sums_rates() {
     let a = PauliLindbladModel::new(
         vec![
-            PauliString::from_str("IX").unwrap(),
-            PauliString::from_str("ZZ").unwrap(),
+            PauliString::from_label("IX").unwrap(),
+            PauliString::from_label("ZZ").unwrap(),
         ],
         vec![0.001, 0.005],
     );
     let b = PauliLindbladModel::new(
         vec![
-            PauliString::from_str("IX").unwrap(),
-            PauliString::from_str("XI").unwrap(),
+            PauliString::from_label("IX").unwrap(),
+            PauliString::from_label("XI").unwrap(),
         ],
         vec![0.002, 0.003],
     );
     let ab = a.compose_independent(&b);
     // Expected support: IX (merged), XI, ZZ. Rates: IX=0.003, XI=0.003, ZZ=0.005.
     assert_abs_diff_eq!(
-        ab.rate(&PauliString::from_str("IX").unwrap()),
+        ab.rate(&PauliString::from_label("IX").unwrap()),
         0.003,
         epsilon = 1e-14
     );
     assert_abs_diff_eq!(
-        ab.rate(&PauliString::from_str("XI").unwrap()),
+        ab.rate(&PauliString::from_label("XI").unwrap()),
         0.003,
         epsilon = 1e-14
     );
     assert_abs_diff_eq!(
-        ab.rate(&PauliString::from_str("ZZ").unwrap()),
+        ab.rate(&PauliString::from_label("ZZ").unwrap()),
         0.005,
         epsilon = 1e-14
     );

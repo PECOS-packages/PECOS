@@ -1958,8 +1958,8 @@ pub const PAULI_2Q_ORDER: [&str; 15] = [
 ///
 /// (And analogously for 2Q with `(gate, (q_control, q_target))`.)
 ///
-/// This lets users specify "H on qubit 0 has these rates (high T_1), H on
-/// qubit 1 has these (low T_1), every other H uses the per-gate default".
+/// This lets users specify "H on qubit 0 has these rates (high `T_1`), H on
+/// qubit 1 has these (low `T_1`), every other H uses the per-gate default".
 ///
 /// # Integration with `pecos-lindblad`
 ///
@@ -2080,8 +2080,7 @@ impl PerGateTypeNoise {
     pub fn rate_1q(&self, gate: GateType, pauli_idx: usize) -> f64 {
         self.rates_1q
             .get(&gate)
-            .map(|r| r[pauli_idx])
-            .unwrap_or(self.base.p1 / 3.0)
+            .map_or(self.base.p1 / 3.0, |r| r[pauli_idx])
     }
 
     /// Lookup 1Q Pauli rate for a gate on a specific qubit. Tries the
@@ -2101,8 +2100,7 @@ impl PerGateTypeNoise {
     pub fn rate_2q(&self, gate: GateType, pair_idx: usize) -> f64 {
         self.rates_2q
             .get(&gate)
-            .map(|r| r[pair_idx])
-            .unwrap_or(self.base.p2 / 15.0)
+            .map_or(self.base.p2 / 15.0, |r| r[pair_idx])
     }
 
     /// Lookup 2Q Pauli pair rate for a gate on a specific ordered

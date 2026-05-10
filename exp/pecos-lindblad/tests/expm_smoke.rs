@@ -47,7 +47,7 @@ fn expm_of_diagonal_is_elementwise_exp() {
     let d = 4;
     let mut m = matrix::zeros(d);
     m[0] = Complex64::new(0.5, 0.0);
-    m[1 * d + 1] = Complex64::new(-0.3, 0.0);
+    m[d + 1] = Complex64::new(-0.3, 0.0);
     m[2 * d + 2] = Complex64::new(0.0, 1.2);
     m[3 * d + 3] = Complex64::new(-0.1, -0.4);
     let result = matrix::expm(&m, d);

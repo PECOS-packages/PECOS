@@ -80,25 +80,11 @@ impl<'a> MemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PZ | GateType::QAlloc => {
-                    if self.noise.p_prep > 0.0 && !loc.before {
-                        self.process_single_pauli_fault(
-                            loc_idx,
-                            Pauli::X,
-                            self.noise.p_prep,
-                            &mut mem,
-                        );
-                    }
+                GateType::PZ | GateType::QAlloc if self.noise.p_prep > 0.0 && !loc.before => {
+                    self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_prep, &mut mem);
                 }
-                GateType::MZ | GateType::MeasureFree => {
-                    if self.noise.p_meas > 0.0 && loc.before {
-                        self.process_single_pauli_fault(
-                            loc_idx,
-                            Pauli::X,
-                            self.noise.p_meas,
-                            &mut mem,
-                        );
-                    }
+                GateType::MZ | GateType::MeasureFree if self.noise.p_meas > 0.0 && loc.before => {
+                    self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_meas, &mut mem);
                 }
                 GateType::CX
                 | GateType::CZ
@@ -112,10 +98,10 @@ impl<'a> MemBuilder<'a> {
                 | GateType::SWAP
                 | GateType::RXX
                 | GateType::RYY
-                | GateType::RZZ => {
-                    if !loc.before {
-                        two_qubit_groups.entry(loc.node).or_default().push(loc_idx);
-                    }
+                | GateType::RZZ
+                    if !loc.before =>
+                {
+                    two_qubit_groups.entry(loc.node).or_default().push(loc_idx);
                 }
                 GateType::H
                 | GateType::F
@@ -135,44 +121,27 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY => {
-                    if self.noise.p1 > 0.0 && !loc.before {
-                        self.process_single_qubit_fault(loc_idx, &mut mem);
-                    }
+                | GateType::R1XY
+                    if self.noise.p1 > 0.0 && !loc.before =>
+                {
+                    self.process_single_qubit_fault(loc_idx, &mut mem);
                 }
-                GateType::Idle => {
-                    if !loc.before {
-                        if self.noise.uses_dedicated_idle_noise() {
-                            #[allow(clippy::cast_precision_loss)]
-                            let duration = loc.idle_duration.max(1) as f64;
-                            let probs = self.noise.idle_pauli_probs(duration);
-                            if probs.px > 0.0 {
-                                self.process_single_pauli_fault(
-                                    loc_idx,
-                                    Pauli::X,
-                                    probs.px,
-                                    &mut mem,
-                                );
-                            }
-                            if probs.py > 0.0 {
-                                self.process_single_pauli_fault(
-                                    loc_idx,
-                                    Pauli::Y,
-                                    probs.py,
-                                    &mut mem,
-                                );
-                            }
-                            if probs.pz > 0.0 {
-                                self.process_single_pauli_fault(
-                                    loc_idx,
-                                    Pauli::Z,
-                                    probs.pz,
-                                    &mut mem,
-                                );
-                            }
-                        } else if self.noise.p1 > 0.0 {
-                            self.process_single_qubit_fault(loc_idx, &mut mem);
+                GateType::Idle if !loc.before => {
+                    if self.noise.uses_dedicated_idle_noise() {
+                        #[allow(clippy::cast_precision_loss)]
+                        let duration = loc.idle_duration.max(1) as f64;
+                        let probs = self.noise.idle_pauli_probs(duration);
+                        if probs.px > 0.0 {
+                            self.process_single_pauli_fault(loc_idx, Pauli::X, probs.px, &mut mem);
                         }
+                        if probs.py > 0.0 {
+                            self.process_single_pauli_fault(loc_idx, Pauli::Y, probs.py, &mut mem);
+                        }
+                        if probs.pz > 0.0 {
+                            self.process_single_pauli_fault(loc_idx, Pauli::Z, probs.pz, &mut mem);
+                        }
+                    } else if self.noise.p1 > 0.0 {
+                        self.process_single_qubit_fault(loc_idx, &mut mem);
                     }
                 }
                 _ => {}

@@ -59,7 +59,7 @@ fn cx_theta_via_device_params_matches_hand_rolled() {
     let s2 = (2.0 * theta).sin();
     let expected = (2.0 * theta + s2) / 16.0 * bd_l / omega;
     assert_abs_diff_eq!(
-        pl.rate(&PauliString::from_str("XI").unwrap()),
+        pl.rate(&PauliString::from_label("XI").unwrap()),
         expected,
         epsilon = 1e-8
     );
@@ -79,7 +79,7 @@ fn coherent_phase_2q_via_api() {
     let gate = Gate::cz_theta(omega_cz, theta, noise);
     let pl = synthesize_exact_unitary(&gate);
 
-    let rate = |s: &str| pl.rate(&PauliString::from_str(s).unwrap());
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
     let factor = theta.powi(2) / 4.0 / omega_cz.powi(2);
     assert_abs_diff_eq!(rate("IZ"), factor * delta_iz.powi(2), epsilon = 1e-14);
     assert_abs_diff_eq!(rate("ZI"), factor * delta_zi.powi(2), epsilon = 1e-14);

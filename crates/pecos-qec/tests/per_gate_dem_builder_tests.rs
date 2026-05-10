@@ -64,9 +64,7 @@ fn uniform_equivalent_per_gate_matches_scalar_dem() {
             .lines()
             .filter(|l| l.starts_with("error("))
             .count(),
-        "scalar and uniform-per-gate should produce identical error-line counts:\nscalar:\n{}\nper_gate:\n{}",
-        scalar_text,
-        per_gate_text,
+        "scalar and uniform-per-gate should produce identical error-line counts:\nscalar:\n{scalar_text}\nper_gate:\n{per_gate_text}",
     );
 }
 
@@ -96,8 +94,7 @@ fn per_gate_override_produces_decomposed_dem_text() {
     let error_lines = text.lines().filter(|l| l.starts_with("error(")).count();
     assert!(
         error_lines > 0,
-        "expected per-gate CX rates to produce error lines in decomposed DEM:\n{}",
-        text,
+        "expected per-gate CX rates to produce error lines in decomposed DEM:\n{text}",
     );
 }
 
@@ -145,9 +142,7 @@ fn per_qubit_cx_override_changes_dem_probabilities() {
     let boosted_sum = sum_probs(&boosted.to_string());
     assert!(
         boosted_sum > 2.0 * baseline_sum,
-        "per-qubit-pair boost should raise probability sum: baseline={} boosted={}",
-        baseline_sum,
-        boosted_sum,
+        "per-qubit-pair boost should raise probability sum: baseline={baseline_sum} boosted={boosted_sum}",
     );
 }
 
@@ -176,8 +171,7 @@ fn idle_locations_contribute_to_dem_text() {
     let text = dem.to_string();
     assert!(
         text.contains("error("),
-        "expected idle location to produce an error line:\n{}",
-        text,
+        "expected idle location to produce an error line:\n{text}",
     );
 }
 

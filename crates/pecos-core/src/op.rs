@@ -1358,6 +1358,16 @@ pub fn PX(qubit: impl Into<QubitId>) -> Op {
     })
 }
 
+/// Prepare qubit in the Y-basis +1 eigenstate.
+#[allow(non_snake_case)]
+#[must_use]
+pub fn PY(qubit: impl Into<QubitId>) -> Op {
+    Op::Gate(GateExpr::Prep {
+        basis: Basis::Y,
+        qubit: qubit.into().0,
+    })
+}
+
 /// Measure qubit in the Z basis (computational basis measurement).
 #[allow(non_snake_case)]
 #[must_use]
@@ -1374,6 +1384,16 @@ pub fn MZ(qubit: impl Into<QubitId>) -> Op {
 pub fn MX(qubit: impl Into<QubitId>) -> Op {
     Op::Gate(GateExpr::Measure {
         basis: Basis::X,
+        qubit: qubit.into().0,
+    })
+}
+
+/// Measure qubit in the Y basis.
+#[allow(non_snake_case)]
+#[must_use]
+pub fn MY(qubit: impl Into<QubitId>) -> Op {
+    Op::Gate(GateExpr::Measure {
+        basis: Basis::Y,
         qubit: qubit.into().0,
     })
 }
@@ -2068,8 +2088,10 @@ mod tests {
     fn gate_level() {
         assert!(MZ(0).is_gate());
         assert!(MX(0).is_gate());
+        assert!(MY(0).is_gate());
         assert!(PZ(0).is_gate());
         assert!(PX(0).is_gate());
+        assert!(PY(0).is_gate());
     }
 
     #[test]
@@ -2345,6 +2367,28 @@ mod tests {
         let op = Reset(0);
         assert!(op.is_gate());
         assert_eq!(op.qubits(), vec![0]);
+
+        assert!(matches!(
+            PX(1),
+            Op::Gate(GateExpr::Prep {
+                basis: Basis::X,
+                qubit: 1
+            })
+        ));
+        assert!(matches!(
+            PY(2),
+            Op::Gate(GateExpr::Prep {
+                basis: Basis::Y,
+                qubit: 2
+            })
+        ));
+        assert!(matches!(
+            PZ(3),
+            Op::Gate(GateExpr::Prep {
+                basis: Basis::Z,
+                qubit: 3
+            })
+        ));
     }
 
     #[test]

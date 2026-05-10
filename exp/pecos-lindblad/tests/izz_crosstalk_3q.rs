@@ -101,6 +101,6 @@ fn izz_crosstalk_produces_only_weight_3_and_no_weight_2() {
     }
 
     // At least one weight-3 rate (e.g. lambda_iyz) should be non-zero.
-    let iyz = PauliString::from_str("IYZ").unwrap();
+    let iyz = PauliString::from_label("IYZ").unwrap();
     assert!(pl.rate(&iyz) > 1e-12);
 }

@@ -193,7 +193,7 @@ pub fn recover_ad_pd_2q_from_cz_theta(
     if omega_cz <= 0.0 || theta <= 0.0 {
         return None;
     }
-    let r = |s: &str| model.rate(&PauliString::from_str(s).unwrap());
+    let r = |s: &str| model.rate(&PauliString::from_label(s).unwrap());
     let factor_weight1_amp = (2.0 * theta + (2.0 * theta).sin()) / 16.0;
 
     // Amplitude damping: average the two equal rates (paper's 2-fold degeneracy).
@@ -257,7 +257,7 @@ pub fn recover_ad_pd_2q_from_cx_theta(
         // Degenerate: can't separate beta_down_r from beta_phi_r.
         return None;
     }
-    let r = |s: &str| model.rate(&PauliString::from_str(s).unwrap());
+    let r = |s: &str| model.rate(&PauliString::from_label(s).unwrap());
 
     // Left qubit: clean single-parameter back-solves.
     let factor_weight1_amp_l = (2.0 * theta + s2) / 16.0;
@@ -296,7 +296,7 @@ pub fn recover_ad_pd_2q_from_cx_theta(
 /// residuals flag model mismatch (noise source beyond AD+PD).
 pub fn cz_recovery_residual(model: &crate::PauliLindbladModel) -> f64 {
     use crate::PauliString;
-    let r = |s: &str| model.rate(&PauliString::from_str(s).unwrap());
+    let r = |s: &str| model.rate(&PauliString::from_label(s).unwrap());
     let pairs = [
         (r("IX"), r("IY")),
         (r("XI"), r("YI")),

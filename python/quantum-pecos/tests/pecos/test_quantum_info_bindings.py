@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+from pecos.quantum import X, Z
 from pecos.quantum_info import (
     ChiMatrix,
     ChoiMatrix,
@@ -16,6 +18,8 @@ from pecos.quantum_info import (
     logarithmic_negativity,
     matrix_unit_basis,
     negativity,
+    partial_trace_qubits,
+    partial_trace_subsystems,
     pauli_channel_diamond_distance,
     pauli_channel_diamond_norm,
     process_fidelity,
@@ -27,6 +31,7 @@ from pecos.quantum_info import (
     state_fidelity,
     state_fidelity_with_density_matrix,
 )
+from pecos_rslib import PauliString
 
 
 def assert_close(actual: float, expected: float, tol: float = 1e-12) -> None:
@@ -55,6 +60,41 @@ def test_pauli_channel_exposes_probabilities_and_ptm() -> None:
     other = PauliChannel.one_qubit(0.0, 0.2, 0.3)
     assert_close(pauli_channel_diamond_norm(channel, other), 0.6)
     assert_close(pauli_channel_diamond_distance(channel, other), 0.3)
+
+
+def test_pauli_channel_accepts_pauli_string_probability_keys() -> None:
+    channel = PauliChannel.from_probabilities(
+        2,
+        {
+            PauliString.I(): 0.97,
+            X(0): 0.01,
+            Z(1): 0.02,
+        },
+    )
+
+    assert channel.probabilities() == {"II": 0.97, "IX": 0.01, "ZI": 0.02}
+    assert_close(channel.total_error_rate(), 0.03)
+
+    from_sequence = PauliChannel.from_probabilities(
+        2,
+        [
+            (PauliString.I(), 0.97),
+            (X(0), 0.01),
+            (Z(1), 0.02),
+        ],
+    )
+    assert from_sequence.probabilities() == channel.probabilities()
+
+
+def test_pauli_channel_rejects_ambiguous_pauli_string_keys() -> None:
+    with pytest.raises(ValueError, match="unphased"):
+        PauliChannel.from_probabilities(1, {-X(0): 1.0})
+
+    with pytest.raises(ValueError, match="outside num_qubits"):
+        PauliChannel.from_probabilities(1, {Z(1): 1.0})
+
+    with pytest.raises(ValueError, match="duplicate"):
+        PauliChannel.from_probabilities(1, [("X", 0.5), (X(0), 0.5)])
 
 
 def test_choi_and_kraus_wrappers_round_trip_identity_channel() -> None:
@@ -140,6 +180,9 @@ def test_state_measure_wrappers() -> None:
     assert_close(shannon_entropy([0.5, 0.5], 2.0), 1.0)
     assert_close(negativity(bell_density, [2, 2], 1), 0.5)
     assert_close(logarithmic_negativity(bell_density, [2, 2], 1), 1.0)
+    expected_reduced = [[0.5 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.5 + 0.0j]]
+    assert_matrix_close(partial_trace_qubits(bell_density, 2, [1]), expected_reduced)
+    assert_matrix_close(partial_trace_subsystems(bell_density, [2, 2], [1]), expected_reduced)
     assert_close(hellinger_distance([1.0, 0.0], [0.0, 1.0]), 1.0)
     assert_close(hellinger_fidelity([0.25, 0.75], [0.25, 0.75]), 1.0)
     schmidt = schmidt_decomposition(bell, [2, 2], [0])

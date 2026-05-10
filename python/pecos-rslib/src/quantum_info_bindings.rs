@@ -14,25 +14,28 @@
 
 use std::collections::BTreeMap;
 
+use crate::pauli_bindings::PauliString as PyPauliString;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
-use pecos_core::PauliBitmaskSmall;
+use pecos_core::{Pauli as RustPauli, PauliBitmaskSmall, QuarterPhase};
 use pecos_quantum::{
-    ChiMatrix as RustChiMatrix, ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps,
-    PauliChannel as RustPauliChannel, ProcessTomographyDesign as RustProcessTomographyDesign,
-    Ptm as RustPtm, Stinespring as RustStinespring, SuperOp as RustSuperOp,
     average_gate_fidelity as rust_average_gate_fidelity, entropy as rust_entropy,
     gate_error as rust_gate_error, hellinger_distance as rust_hellinger_distance,
     hellinger_fidelity as rust_hellinger_fidelity,
     logarithmic_negativity as rust_logarithmic_negativity, negativity as rust_negativity,
-    pauli_basis_len, process_fidelity as rust_process_fidelity, purity as rust_purity,
+    partial_trace_qubits as rust_partial_trace_qubits,
+    partial_trace_subsystems as rust_partial_trace_subsystems, pauli_basis_len,
+    process_fidelity as rust_process_fidelity, purity as rust_purity,
     random_density_matrix as rust_random_density_matrix,
     random_quantum_channel as rust_random_quantum_channel, state_fidelity as rust_state_fidelity,
     state_fidelity_with_density_matrix as rust_state_fidelity_with_density_matrix,
+    ChiMatrix as RustChiMatrix, ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps,
+    PauliChannel as RustPauliChannel, ProcessTomographyDesign as RustProcessTomographyDesign,
+    Ptm as RustPtm, Stinespring as RustStinespring, SuperOp as RustSuperOp,
 };
 use pecos_random::PecosRng;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyDict, PyModule, PyTuple};
 
 type PySchmidtTerm = (f64, Vec<Complex64>, Vec<Complex64>);
 
@@ -112,21 +115,86 @@ fn parse_pauli_label(num_qubits: usize, label: &str) -> PyResult<PauliBitmaskSma
     pecos_quantum::basis_bitmask(num_qubits, index).map_err(py_value_err)
 }
 
+fn parse_pauli_string_key(
+    num_qubits: usize,
+    pauli_string: &PyPauliString,
+) -> PyResult<PauliBitmaskSmall> {
+    if pauli_string.inner.get_phase() != QuarterPhase::PlusOne {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "PauliChannel probabilities require unphased PauliString keys",
+        ));
+    }
+
+    let mut out = PauliBitmaskSmall::identity();
+    for (pauli, qubit) in pauli_string.inner.get_paulis() {
+        let qubit = qubit.index();
+        if qubit >= num_qubits {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "PauliString key acts on qubit {qubit}, outside num_qubits={num_qubits}"
+            )));
+        }
+        let single = match pauli {
+            RustPauli::I => PauliBitmaskSmall::identity(),
+            RustPauli::X => PauliBitmaskSmall::x(qubit),
+            RustPauli::Y => PauliBitmaskSmall::y(qubit),
+            RustPauli::Z => PauliBitmaskSmall::z(qubit),
+        };
+        out = out.multiply(&single);
+    }
+    Ok(out)
+}
+
+fn parse_pauli_probability_key(
+    num_qubits: usize,
+    key: &Bound<'_, PyAny>,
+) -> PyResult<PauliBitmaskSmall> {
+    if let Ok(label) = key.extract::<String>() {
+        return parse_pauli_label(num_qubits, &label);
+    }
+    if let Ok(pauli_string) = key.extract::<PyRef<'_, PyPauliString>>() {
+        return parse_pauli_string_key(num_qubits, &pauli_string);
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "PauliChannel probability keys must be dense Pauli labels or PauliString objects",
+    ))
+}
+
+fn insert_probability(
+    probabilities: &mut BTreeMap<PauliBitmaskSmall, f64>,
+    pauli: PauliBitmaskSmall,
+    probability: f64,
+) -> PyResult<()> {
+    if probabilities.insert(pauli, probability).is_some() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "duplicate PauliChannel probability key",
+        ));
+    }
+    Ok(())
+}
+
 fn pauli_probabilities_from_py(
     num_qubits: usize,
     probabilities: &Bound<'_, PyAny>,
 ) -> PyResult<BTreeMap<PauliBitmaskSmall, f64>> {
-    let items: Vec<(String, f64)> = if let Ok(dict) = probabilities.cast::<PyDict>() {
-        dict.iter()
-            .map(|(key, value)| Ok((key.extract()?, value.extract()?)))
-            .collect::<PyResult<_>>()?
+    let mut out = BTreeMap::new();
+    if let Ok(dict) = probabilities.cast::<PyDict>() {
+        for (key, value) in dict.iter() {
+            let pauli = parse_pauli_probability_key(num_qubits, &key)?;
+            insert_probability(&mut out, pauli, value.extract()?)?;
+        }
     } else {
-        probabilities.extract()?
-    };
-    items
-        .into_iter()
-        .map(|(label, probability)| Ok((parse_pauli_label(num_qubits, &label)?, probability)))
-        .collect()
+        for item in probabilities.try_iter()? {
+            let tuple: Bound<'_, PyTuple> = item?.cast_into()?;
+            if tuple.len() != 2 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "PauliChannel probability sequences must contain (pauli, probability) pairs",
+                ));
+            }
+            let pauli = parse_pauli_probability_key(num_qubits, &tuple.get_item(0)?)?;
+            insert_probability(&mut out, pauli, tuple.get_item(1)?.extract()?)?;
+        }
+    }
+    Ok(out)
 }
 
 #[pyclass(name = "PauliChannel", module = "pecos_rslib.quantum_info")]
@@ -716,6 +784,30 @@ fn schmidt_decomposition(
 }
 
 #[pyfunction]
+fn partial_trace_subsystems(
+    rho: Vec<Vec<Complex64>>,
+    dims: Vec<usize>,
+    traced_subsystems: Vec<usize>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    Ok(complex_matrix_to_rows(
+        &rust_partial_trace_subsystems(&complex_matrix_from_rows(rho)?, &dims, &traced_subsystems)
+            .map_err(py_value_err)?,
+    ))
+}
+
+#[pyfunction]
+fn partial_trace_qubits(
+    rho: Vec<Vec<Complex64>>,
+    num_qubits: usize,
+    traced_qubits: Vec<usize>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    Ok(complex_matrix_to_rows(
+        &rust_partial_trace_qubits(&complex_matrix_from_rows(rho)?, num_qubits, &traced_qubits)
+            .map_err(py_value_err)?,
+    ))
+}
+
+#[pyfunction]
 fn hellinger_distance(left: Vec<f64>, right: Vec<f64>) -> PyResult<f64> {
     rust_hellinger_distance(&left, &right).map_err(py_value_err)
 }
@@ -795,6 +887,8 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
     parent.add_function(wrap_pyfunction!(negativity, parent)?)?;
     parent.add_function(wrap_pyfunction!(logarithmic_negativity, parent)?)?;
     parent.add_function(wrap_pyfunction!(schmidt_decomposition, parent)?)?;
+    parent.add_function(wrap_pyfunction!(partial_trace_subsystems, parent)?)?;
+    parent.add_function(wrap_pyfunction!(partial_trace_qubits, parent)?)?;
     parent.add_function(wrap_pyfunction!(hellinger_distance, parent)?)?;
     parent.add_function(wrap_pyfunction!(hellinger_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(process_fidelity, parent)?)?;
@@ -825,6 +919,8 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
         "negativity",
         "logarithmic_negativity",
         "schmidt_decomposition",
+        "partial_trace_subsystems",
+        "partial_trace_qubits",
         "hellinger_distance",
         "hellinger_fidelity",
         "process_fidelity",

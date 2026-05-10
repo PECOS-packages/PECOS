@@ -1190,6 +1190,7 @@ class PauliPropRs:
 
 ComplexMatrix = Sequence[Sequence[complex]]
 RealMatrix = Sequence[Sequence[float]]
+PauliProbabilityMap = Mapping[str | PauliString, float] | Sequence[tuple[str | PauliString, float]]
 
 class PauliChannel:
     """Sparse Pauli error channel represented by probabilities."""
@@ -1199,7 +1200,7 @@ class PauliChannel:
     @staticmethod
     def from_probabilities(
         num_qubits: int,
-        probabilities: Mapping[str, float] | Sequence[tuple[str, float]],
+        probabilities: PauliProbabilityMap,
     ) -> PauliChannel: ...
     def num_qubits(self) -> int: ...
     def probabilities(self) -> dict[str, float]: ...
@@ -1295,6 +1296,16 @@ def schmidt_decomposition(
     dims: Sequence[int],
     left_subsystems: Sequence[int],
 ) -> list[tuple[float, list[complex], list[complex]]]: ...
+def partial_trace_subsystems(
+    rho: ComplexMatrix,
+    dims: Sequence[int],
+    traced_subsystems: Sequence[int],
+) -> list[list[complex]]: ...
+def partial_trace_qubits(
+    rho: ComplexMatrix,
+    num_qubits: int,
+    traced_qubits: Sequence[int],
+) -> list[list[complex]]: ...
 def hellinger_distance(left: Sequence[float], right: Sequence[float]) -> float: ...
 def hellinger_fidelity(left: Sequence[float], right: Sequence[float]) -> float: ...
 def process_fidelity(left: Ptm, right: Ptm) -> float: ...
@@ -1420,6 +1431,14 @@ class quantum_info:
     schmidt_decomposition: Callable[
         [Sequence[complex], Sequence[int], Sequence[int]],
         list[tuple[float, list[complex], list[complex]]],
+    ]
+    partial_trace_subsystems: Callable[
+        [ComplexMatrix, Sequence[int], Sequence[int]],
+        list[list[complex]],
+    ]
+    partial_trace_qubits: Callable[
+        [ComplexMatrix, int, Sequence[int]],
+        list[list[complex]],
     ]
     hellinger_distance: Callable[[Sequence[float], Sequence[float]], float]
     hellinger_fidelity: Callable[[Sequence[float], Sequence[float]], float]

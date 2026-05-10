@@ -22,9 +22,29 @@ PECOS currently provides seven concrete channel representations:
 | `ChiMatrix` | Process matrix in the Pauli basis. |
 | `Stinespring` | Stinespring isometry. |
 
-The representations use PECOS's little-endian qubit convention. Pauli-channel
-labels are displayed with the highest-numbered qubit first, so label `IX` on two
-qubits means identity on qubit 1 and X on qubit 0.
+Use the representation that matches the question you are asking:
+
+| Goal | Start with |
+| ---- | ---------- |
+| Small pure-state examples | State vectors |
+| Noisy states and entanglement measures | Density matrices |
+| Operational noise construction | `KrausOps` |
+| Complete positivity, trace preservation, and tomography reconstruction | `ChoiMatrix` |
+| Pauli-basis channel diagnostics | `Ptm` |
+| Sparse stochastic Pauli noise | `PauliChannel` |
+| Environment/isometry models | `Stinespring` |
+
+PECOS uses these conventions consistently:
+
+| Convention | Meaning |
+| ---------- | ------- |
+| Qubit order | Little-endian: qubit 0 is the least-significant computational-basis bit. |
+| Dense Pauli labels | Highest-numbered qubit first, so `IX` on two qubits means I on qubit 1 and X on qubit 0. |
+| Sparse Pauli strings | Constructor and sparse text forms use explicit qubit IDs, e.g. `X(0) & Z(3)` or `"X0 Z3"`. |
+| PTM basis order | Dense Pauli labels in PECOS basis-label order. |
+| Superoperator order | Column-stacked operator vectorization. |
+| Choi matrix | Built from PECOS's column-stacked superoperator convention. A trace-preserving channel has output partial trace equal to identity. |
+| Subsystem order | Subsystem 0 is the fastest-varying tensor factor. Qubit helpers follow the same little-endian rule. |
 
 ```python
 from pecos.quantum_info import PauliChannel, process_fidelity
@@ -66,7 +86,7 @@ For multi-qubit Pauli channels, pass a label-to-probability map:
 ```python
 from pecos.quantum_info import PauliChannel
 
-channel = PauliChannel.from_probabilities(
+from_labels = PauliChannel.from_probabilities(
     2,
     {
         "II": 0.98,
@@ -74,6 +94,30 @@ channel = PauliChannel.from_probabilities(
         "ZI": 0.01,
     },
 )
+```
+
+You can also use `PauliString` keys when the channel is written in PECOS's typed
+Pauli style:
+
+```python
+from pecos.quantum import X, Z
+from pecos_rslib import PauliString
+from pecos.quantum_info import PauliChannel
+
+from_paulis = PauliChannel.from_probabilities(
+    2,
+    {
+        PauliString.I(): 0.98,
+        X(0): 0.01,
+        Z(1): 0.01,
+    },
+)
+
+assert from_paulis.probabilities() == {
+    "II": 0.98,
+    "IX": 0.01,
+    "ZI": 0.01,
+}
 ```
 
 ## Choi Validation
@@ -151,6 +195,8 @@ from pecos.quantum_info import (
     entropy,
     hellinger_distance,
     negativity,
+    partial_trace_qubits,
+    partial_trace_subsystems,
     purity,
     schmidt_decomposition,
     shannon_entropy,
@@ -177,6 +223,14 @@ bell_rho = [
 
 assert abs(negativity(bell_rho, [2, 2], 1) - 0.5) < 1e-12
 assert len(schmidt_decomposition(bell, [2, 2], [0])) == 2
+assert partial_trace_qubits(bell_rho, 2, [1]) == [
+    [0.5 + 0.0j, 0.0 + 0.0j],
+    [0.0 + 0.0j, 0.5 + 0.0j],
+]
+assert partial_trace_subsystems(bell_rho, [2, 2], [1]) == [
+    [0.5 + 0.0j, 0.0 + 0.0j],
+    [0.0 + 0.0j, 0.5 + 0.0j],
+]
 
 assert shannon_entropy([0.5, 0.5], 2.0) == 1.0
 assert hellinger_distance([1.0, 0.0], [0.0, 1.0]) == 1.0

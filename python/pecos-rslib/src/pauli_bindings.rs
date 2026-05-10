@@ -19,6 +19,8 @@
 // pyfunction generates internal modules named after the function (X, Y, Z)
 #![allow(non_snake_case)]
 
+use std::hash::{Hash, Hasher};
+
 use crate::prelude::{
     Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
 };
@@ -204,7 +206,7 @@ impl PauliString {
         };
 
         // Build PauliString from input
-        let rust_paulis = if let Some(pauli_input) = paulis {
+        let mut rust_paulis = if let Some(pauli_input) = paulis {
             use pyo3::types::PyList;
 
             // Try to extract as a list - using cast() per PyO3 0.27 API
@@ -249,6 +251,18 @@ impl PauliString {
         } else {
             Vec::new()
         };
+
+        rust_paulis.retain(|(pauli, _)| *pauli != RustPauli::I);
+        rust_paulis.sort_by_key(|(_, qubit)| *qubit);
+        for window in rust_paulis.windows(2) {
+            if window[0].1 == window[1].1 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "multiple non-identity Pauli operators were specified for qubit {}; \
+                     use multiplication (*) if you intend to compose Paulis on the same qubit",
+                    window[0].1.index()
+                )));
+            }
+        }
 
         // Construct RustPauliString using the new constructor
         let inner = RustPauliString::with_phase_and_paulis(rust_phase, rust_paulis);
@@ -503,6 +517,13 @@ impl PauliString {
     /// Equality check.
     fn __eq__(&self, other: &PauliString) -> bool {
         self.inner == other.inner
+    }
+
+    /// Hash for use in dictionaries and sets.
+    fn __hash__(&self) -> isize {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish() as isize
     }
 
     /// Number of non-identity Pauli operators.

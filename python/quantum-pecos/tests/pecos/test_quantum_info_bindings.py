@@ -6,6 +6,8 @@ from pecos.quantum_info import (
     Ptm,
     average_gate_fidelity,
     gate_error,
+    pauli_channel_diamond_distance,
+    pauli_channel_diamond_norm,
     process_fidelity,
     purity,
     random_density_matrix,
@@ -37,6 +39,10 @@ def test_pauli_channel_exposes_probabilities_and_ptm() -> None:
     ptm = channel.to_ptm()
     assert ptm.num_qubits() == 1
     assert_close(ptm.entry(0, 0), 1.0)
+
+    other = PauliChannel.one_qubit(0.0, 0.2, 0.3)
+    assert_close(pauli_channel_diamond_norm(channel, other), 0.6)
+    assert_close(pauli_channel_diamond_distance(channel, other), 0.3)
 
 
 def test_choi_and_kraus_wrappers_round_trip_identity_channel() -> None:

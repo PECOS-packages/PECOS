@@ -10,19 +10,20 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Internal linear-algebra helpers for a future Rust diamond-norm solver.
+//! Diamond-norm utilities.
 //!
-//! This module deliberately does not expose a public `diamond_norm` routine or
-//! add an SDP solver dependency yet. It contains the convention-sensitive pieces
-//! needed before a feature-gated conic-solver integration is reviewable:
-//! Clarabel-style scaled triangular vectorization for real PSD cones and the
-//! standard complex-Hermitian to real-symmetric embedding.
+//! General channel diamond norm requires solving a semidefinite program. PECOS
+//! does not add an external SDP dependency for that. This module exposes exact
+//! dependency-free cases that are mathematically closed-form today, plus the
+//! linear-algebra pieces needed by a future PECOS-owned general solver.
 
 use std::error::Error;
 use std::fmt;
 
 use nalgebra::DMatrix;
 use num_complex::Complex64;
+
+use crate::channel::{PauliChannel, basis_bitmask, pauli_basis_len};
 
 const DEFAULT_TOLERANCE: f64 = 1e-12;
 
@@ -53,6 +54,18 @@ pub enum DiamondNormError {
     },
     /// A matrix entry was not finite.
     NonFiniteEntry,
+    /// Two channel representations act on different Hilbert spaces.
+    QubitCountMismatch {
+        /// Left channel qubit count.
+        left: usize,
+        /// Right channel qubit count.
+        right: usize,
+    },
+    /// Failed to enumerate the Pauli basis for a channel.
+    PauliBasis {
+        /// Underlying reason.
+        reason: String,
+    },
 }
 
 impl fmt::Display for DiamondNormError {
@@ -73,11 +86,69 @@ impl fmt::Display for DiamondNormError {
                 "matrix is not Hermitian/symmetric within tolerance {tolerance}; max difference {max_difference}"
             ),
             Self::NonFiniteEntry => write!(f, "matrix contains a non-finite entry"),
+            Self::QubitCountMismatch { left, right } => write!(
+                f,
+                "channels must act on the same number of qubits, got {left} and {right}"
+            ),
+            Self::PauliBasis { reason } => {
+                write!(f, "failed to enumerate Pauli basis: {reason}")
+            }
         }
     }
 }
 
 impl Error for DiamondNormError {}
+
+/// Returns `||left - right||_diamond` for two Pauli channels.
+///
+/// For Pauli channels, the diamond norm of the channel difference is exactly
+/// the L1 distance between the two Pauli probability vectors. Applying the
+/// channel difference to half of a maximally entangled state produces
+/// orthogonal Pauli-labelled Bell states, so no SDP is needed.
+///
+/// # Errors
+///
+/// Returns an error if the channels act on different numbers of qubits or the
+/// Pauli basis size overflows.
+pub fn pauli_channel_diamond_norm(
+    left: &PauliChannel,
+    right: &PauliChannel,
+) -> Result<f64, DiamondNormError> {
+    if left.num_qubits() != right.num_qubits() {
+        return Err(DiamondNormError::QubitCountMismatch {
+            left: left.num_qubits(),
+            right: right.num_qubits(),
+        });
+    }
+    let num_qubits = left.num_qubits();
+    let basis_len = pauli_basis_len(num_qubits).map_err(|err| DiamondNormError::PauliBasis {
+        reason: err.to_string(),
+    })?;
+    let mut total = 0.0;
+    for basis_index in 0..basis_len {
+        let pauli =
+            basis_bitmask(num_qubits, basis_index).map_err(|err| DiamondNormError::PauliBasis {
+                reason: err.to_string(),
+            })?;
+        total += (left.probability(&pauli) - right.probability(&pauli)).abs();
+    }
+    Ok(total)
+}
+
+/// Returns the diamond distance between two Pauli channels.
+///
+/// The diamond distance is `0.5 * ||left - right||_diamond`, matching the
+/// standard trace-distance normalization.
+///
+/// # Errors
+///
+/// Returns an error if [`pauli_channel_diamond_norm`] fails.
+pub fn pauli_channel_diamond_distance(
+    left: &PauliChannel,
+    right: &PauliChannel,
+) -> Result<f64, DiamondNormError> {
+    Ok(0.5 * pauli_channel_diamond_norm(left, right)?)
+}
 
 /// Returns the length of the scaled upper-triangular vector for an `n x n`
 /// symmetric matrix.
@@ -86,7 +157,7 @@ pub const fn scaled_psd_triangle_len(n: usize) -> usize {
     n * (n + 1) / 2
 }
 
-/// Converts a real symmetric matrix to Clarabel-style scaled upper-triangular
+/// Converts a real symmetric matrix to scaled upper-triangular
 /// vector form.
 ///
 /// Diagonal entries are stored unchanged. Strict upper-triangular entries are
@@ -125,7 +196,7 @@ pub fn svec_real_symmetric_with_tolerance(
     Ok(out)
 }
 
-/// Converts Clarabel-style scaled upper-triangular vector form back to a real
+/// Converts scaled upper-triangular vector form back to a real
 /// symmetric matrix.
 ///
 /// # Errors
@@ -165,9 +236,8 @@ pub fn smat_real_symmetric(n: usize, data: &[f64]) -> Result<DMatrix<f64>, Diamo
 /// [ Y   X ]
 /// ```
 ///
-/// This embedding maps complex PSD constraints into real PSD constraints and is
-/// the representation needed before modeling the diamond-norm SDP in a real
-/// conic solver.
+/// This embedding maps complex PSD constraints into real PSD constraints, which
+/// is the representation needed by a real-valued PECOS SDP implementation.
 ///
 /// # Errors
 ///
@@ -259,9 +329,47 @@ fn validate_hermitian(matrix: &DMatrix<Complex64>, tolerance: f64) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn assert_close(left: f64, right: f64) {
         assert!((left - right).abs() < 1e-12, "{left} != {right}");
+    }
+
+    #[test]
+    fn pauli_channel_diamond_norm_is_l1_probability_distance() {
+        let left = PauliChannel::one_qubit(0.1, 0.2, 0.0).unwrap();
+        let right = PauliChannel::one_qubit(0.0, 0.2, 0.3).unwrap();
+
+        assert_close(pauli_channel_diamond_norm(&left, &right).unwrap(), 0.6);
+        assert_close(pauli_channel_diamond_distance(&left, &right).unwrap(), 0.3);
+    }
+
+    #[test]
+    fn pauli_channel_diamond_norm_includes_absent_terms_as_zero() {
+        let mut left_probs = BTreeMap::new();
+        left_probs.insert(basis_bitmask(2, 0).unwrap(), 0.9);
+        left_probs.insert(basis_bitmask(2, 5).unwrap(), 0.1);
+        let left = PauliChannel::try_new(2, left_probs).unwrap();
+
+        let mut right_probs = BTreeMap::new();
+        right_probs.insert(basis_bitmask(2, 0).unwrap(), 0.8);
+        right_probs.insert(basis_bitmask(2, 10).unwrap(), 0.2);
+        let right = PauliChannel::try_new(2, right_probs).unwrap();
+
+        assert_close(pauli_channel_diamond_norm(&left, &right).unwrap(), 0.4);
+    }
+
+    #[test]
+    fn pauli_channel_diamond_norm_rejects_qubit_count_mismatch() {
+        let left = PauliChannel::one_qubit(0.1, 0.0, 0.0).unwrap();
+        let mut right_probs = BTreeMap::new();
+        right_probs.insert(basis_bitmask(2, 0).unwrap(), 1.0);
+        let right = PauliChannel::try_new(2, right_probs).unwrap();
+
+        assert!(matches!(
+            pauli_channel_diamond_norm(&left, &right).unwrap_err(),
+            DiamondNormError::QubitCountMismatch { left: 1, right: 2 }
+        ));
     }
 
     fn frobenius_inner(left: &DMatrix<f64>, right: &DMatrix<f64>) -> f64 {

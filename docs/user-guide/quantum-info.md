@@ -35,6 +35,23 @@ identity = type(ptm).identity(1)
 print(process_fidelity(ptm, identity))
 ```
 
+For Pauli channels, PECOS also provides exact dependency-free diamond norm and
+diamond distance helpers:
+
+```python
+from pecos.quantum_info import (
+    PauliChannel,
+    pauli_channel_diamond_distance,
+    pauli_channel_diamond_norm,
+)
+
+left = PauliChannel.one_qubit(0.001, 0.0, 0.0)
+right = PauliChannel.one_qubit(0.0, 0.0, 0.001)
+
+print(pauli_channel_diamond_norm(left, right))
+print(pauli_channel_diamond_distance(left, right))
+```
+
 For multi-qubit Pauli channels, pass a label-to-probability map:
 
 ```python

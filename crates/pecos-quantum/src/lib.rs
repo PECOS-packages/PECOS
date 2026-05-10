@@ -110,8 +110,8 @@ pub use channel::{
 };
 pub use diamond_norm::{
     DiamondNormError, hermitian_to_real_symmetric, hermitian_to_real_symmetric_with_tolerance,
-    scaled_psd_triangle_len, smat_real_symmetric, svec_real_symmetric,
-    svec_real_symmetric_with_tolerance,
+    pauli_channel_diamond_distance, pauli_channel_diamond_norm, scaled_psd_triangle_len,
+    smat_real_symmetric, svec_real_symmetric, svec_real_symmetric_with_tolerance,
 };
 pub use measures::{
     DensityMatrixPartialTrace, MeasureError, average_gate_fidelity, concurrence,

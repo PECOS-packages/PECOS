@@ -391,6 +391,16 @@ fn gate_error(left: &PyPtm, right: &PyPtm) -> PyResult<f64> {
 }
 
 #[pyfunction]
+fn pauli_channel_diamond_norm(left: &PyPauliChannel, right: &PyPauliChannel) -> PyResult<f64> {
+    pecos_quantum::pauli_channel_diamond_norm(&left.inner, &right.inner).map_err(py_value_err)
+}
+
+#[pyfunction]
+fn pauli_channel_diamond_distance(left: &PyPauliChannel, right: &PyPauliChannel) -> PyResult<f64> {
+    pecos_quantum::pauli_channel_diamond_distance(&left.inner, &right.inner).map_err(py_value_err)
+}
+
+#[pyfunction]
 fn random_density_matrix(num_qubits: usize, seed: u64) -> PyResult<Vec<Vec<Complex64>>> {
     let mut rng = PecosRng::seed_from_u64(seed);
     Ok(complex_matrix_to_rows(
@@ -422,6 +432,8 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
     parent.add_function(wrap_pyfunction!(process_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(average_gate_fidelity, parent)?)?;
     parent.add_function(wrap_pyfunction!(gate_error, parent)?)?;
+    parent.add_function(wrap_pyfunction!(pauli_channel_diamond_norm, parent)?)?;
+    parent.add_function(wrap_pyfunction!(pauli_channel_diamond_distance, parent)?)?;
     parent.add_function(wrap_pyfunction!(random_density_matrix, parent)?)?;
     parent.add_function(wrap_pyfunction!(random_quantum_channel, parent)?)?;
 
@@ -438,6 +450,8 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
         "process_fidelity",
         "average_gate_fidelity",
         "gate_error",
+        "pauli_channel_diamond_norm",
+        "pauli_channel_diamond_distance",
         "random_density_matrix",
         "random_quantum_channel",
     ] {

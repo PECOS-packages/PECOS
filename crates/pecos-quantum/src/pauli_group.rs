@@ -265,15 +265,15 @@ impl PauliGroup {
         for (row_idx, generator) in self.inner.paulis().iter().enumerate() {
             for q in generator.x_positions() {
                 if q < n {
-                    mat.rows[row_idx][q] = 1;
+                    mat.set(row_idx, q, 1);
                 }
             }
             for q in generator.z_positions() {
                 if q < n {
-                    mat.rows[row_idx][n + q] = 1;
+                    mat.set(row_idx, n + q, 1);
                 }
             }
-            mat.rows[row_idx][2 * n + row_idx] = 1;
+            mat.set(row_idx, 2 * n + row_idx, 1);
         }
 
         let (reduced, pivots) = mat.row_reduce();
@@ -295,7 +295,7 @@ impl PauliGroup {
         for (row_idx, &pivot_col) in pivots.iter().enumerate() {
             if target[pivot_col] == 1 {
                 for (col, t) in target.iter_mut().enumerate() {
-                    *t ^= reduced.rows[row_idx][col];
+                    *t ^= reduced.get(row_idx, col);
                 }
             }
         }

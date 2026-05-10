@@ -50,28 +50,43 @@ use pecos_core::{ParsePauliStringError, PauliOperator, PauliString};
 use std::fmt;
 use std::str::FromStr;
 
-/// A binary matrix over GF(2), represented row-major.
+/// A binary matrix over GF(2), represented row-major as packed `u64` words.
 ///
 /// Each row is a 2n-bit vector representing a Pauli string in the binary
 /// symplectic representation: `(x_0, ..., x_{n-1} | z_0, ..., z_{n-1})`
 /// where `x_q = 1` if qubit q has X or Y, and `z_q = 1` if qubit q has Z or Y.
-///
-// TODO: Each bit is stored as a full `u8`. For large codes, consider packing
-// into `u64` words or using a bitvec for 8x memory reduction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct F2Matrix {
-    pub(crate) rows: Vec<Vec<u8>>,
+    rows: Vec<Vec<u64>>,
     num_cols: usize,
 }
 
 impl F2Matrix {
+    const WORD_BITS: usize = u64::BITS as usize;
+
     /// Creates a new F2 matrix with the given dimensions, initialized to zero.
     #[must_use]
     pub fn zeros(num_rows: usize, num_cols: usize) -> Self {
         Self {
-            rows: vec![vec![0; num_cols]; num_rows],
+            rows: vec![vec![0; Self::num_words(num_cols)]; num_rows],
             num_cols,
         }
+    }
+
+    /// Creates an F2 matrix from dense 0/1 rows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the rows do not all have the same length, or if any entry is
+    /// not 0 or 1.
+    #[must_use]
+    pub fn from_rows(rows: Vec<Vec<u8>>) -> Self {
+        let num_cols = rows.first().map_or(0, Vec::len);
+        let mut mat = Self::zeros(rows.len(), num_cols);
+        for (i, row) in rows.iter().enumerate() {
+            mat.set_row(i, row);
+        }
+        mat
     }
 
     /// Returns the number of rows.
@@ -88,38 +103,138 @@ impl F2Matrix {
 
     /// Returns a reference to the rows.
     #[must_use]
-    pub fn rows(&self) -> &[Vec<u8>] {
-        &self.rows
+    pub fn rows(&self) -> Vec<Vec<u8>> {
+        (0..self.num_rows()).map(|i| self.row(i)).collect()
     }
 
-    /// Returns a reference to a specific row.
+    /// Returns a dense copy of a specific row.
     #[must_use]
-    pub fn row(&self, i: usize) -> &[u8] {
+    pub fn row(&self, i: usize) -> Vec<u8> {
+        (0..self.num_cols).map(|col| self.get(i, col)).collect()
+    }
+
+    /// Returns the packed words for a row.
+    #[must_use]
+    pub(crate) fn row_words(&self, i: usize) -> &[u64] {
         &self.rows[i]
     }
 
-    /// Returns a mutable reference to a specific row.
-    pub fn row_mut(&mut self, i: usize) -> &mut Vec<u8> {
-        &mut self.rows[i]
+    /// Returns a single matrix entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` or `col` is out of bounds.
+    #[must_use]
+    pub fn get(&self, row: usize, col: usize) -> u8 {
+        assert!(col < self.num_cols);
+        let (word, mask) = Self::word_mask(col);
+        u8::from((self.rows[row][word] & mask) != 0)
+    }
+
+    /// Sets a single matrix entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` or `col` is out of bounds, or if `value` is not 0 or 1.
+    pub fn set(&mut self, row: usize, col: usize, value: u8) {
+        assert!(col < self.num_cols);
+        assert!(value <= 1, "F2Matrix entries must be 0 or 1");
+        let (word, mask) = Self::word_mask(col);
+        if value == 0 {
+            self.rows[row][word] &= !mask;
+        } else {
+            self.rows[row][word] |= mask;
+        }
+    }
+
+    /// Replaces one row from a dense 0/1 slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the row length does not match `num_cols`, or if any entry is
+    /// not 0 or 1.
+    pub fn set_row(&mut self, row: usize, bits: &[u8]) {
+        assert_eq!(bits.len(), self.num_cols);
+        self.rows[row].fill(0);
+        for (col, &bit) in bits.iter().enumerate() {
+            if bit != 0 {
+                assert_eq!(bit, 1, "F2Matrix entries must be 0 or 1");
+                self.set(row, col, 1);
+            }
+        }
     }
 
     /// Checks if a row is all zeros.
     #[must_use]
     pub fn is_zero_row(&self, i: usize) -> bool {
-        self.rows[i].iter().all(|&b| b == 0)
+        self.rows[i].iter().all(|&word| word == 0)
     }
 
     /// XORs row `src` into row `dst` (row[dst] ^= row[src]).
     fn xor_row(&mut self, dst: usize, src: usize) {
-        // Avoid borrow issues by doing index operations
-        for col in 0..self.num_cols {
-            self.rows[dst][col] ^= self.rows[src][col];
+        if dst == src {
+            self.rows[dst].fill(0);
+            return;
+        }
+        let src_row = self.rows[src].clone();
+        for (dst_word, src_word) in self.rows[dst].iter_mut().zip(src_row) {
+            *dst_word ^= src_word;
+        }
+        self.clear_unused_bits(dst);
+    }
+
+    fn xor_row_into_dense(&self, row: usize, dense: &mut [u8]) {
+        assert_eq!(dense.len(), self.num_cols);
+        for word_idx in 0..self.rows[row].len() {
+            let mut word = self.rows[row][word_idx];
+            while word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                let col = word_idx * Self::WORD_BITS + bit;
+                if col < self.num_cols {
+                    dense[col] ^= 1;
+                }
+                word &= word - 1;
+            }
         }
     }
 
     /// Swaps two rows.
     fn swap_rows(&mut self, a: usize, b: usize) {
         self.rows.swap(a, b);
+    }
+
+    fn num_words(num_cols: usize) -> usize {
+        num_cols.div_ceil(Self::WORD_BITS)
+    }
+
+    fn word_mask(col: usize) -> (usize, u64) {
+        let word = col / Self::WORD_BITS;
+        let bit = col % Self::WORD_BITS;
+        (word, 1u64 << bit)
+    }
+
+    fn last_word_mask(&self) -> u64 {
+        let rem = self.num_cols % Self::WORD_BITS;
+        if rem == 0 {
+            u64::MAX
+        } else {
+            (1u64 << rem) - 1
+        }
+    }
+
+    fn clear_unused_bits(&mut self, row: usize) {
+        if self.num_cols == 0 {
+            return;
+        }
+        let mask = self.last_word_mask();
+        if let Some(last) = self.rows[row].last_mut() {
+            *last &= mask;
+        }
+    }
+
+    fn row_has_bit(&self, row: usize, col: usize) -> bool {
+        let (word, mask) = Self::word_mask(col);
+        (self.rows[row][word] & mask) != 0
     }
 
     /// Performs Gaussian elimination over GF(2), returning the row echelon form
@@ -137,7 +252,7 @@ impl F2Matrix {
             // Find a row with a 1 in this column at or below pivot_row
             let mut found = None;
             for row in pivot_row..mat.num_rows() {
-                if mat.rows[row][col] == 1 {
+                if mat.row_has_bit(row, col) {
                     found = Some(row);
                     break;
                 }
@@ -152,7 +267,7 @@ impl F2Matrix {
 
             // Eliminate all other rows with a 1 in this column
             for row in 0..mat.num_rows() {
-                if row != pivot_row && mat.rows[row][col] == 1 {
+                if row != pivot_row && mat.row_has_bit(row, col) {
                     mat.xor_row(row, pivot_row);
                 }
             }
@@ -169,7 +284,7 @@ impl F2Matrix {
     pub fn identity(n: usize) -> Self {
         let mut mat = Self::zeros(n, n);
         for i in 0..n {
-            mat.rows[i][i] = 1;
+            mat.set(i, i, 1);
         }
         mat
     }
@@ -188,9 +303,9 @@ impl F2Matrix {
         let mut aug = Self::zeros(n, 2 * n);
         for i in 0..n {
             for j in 0..n {
-                aug.rows[i][j] = self.rows[i][j];
+                aug.set(i, j, self.get(i, j));
             }
-            aug.rows[i][n + i] = 1;
+            aug.set(i, n + i, 1);
         }
 
         // Row-reduce the augmented matrix.
@@ -199,7 +314,7 @@ impl F2Matrix {
             // Find pivot in this column at or below the diagonal
             let mut found = None;
             for row in col..n {
-                if aug.rows[row][col] == 1 {
+                if aug.row_has_bit(row, col) {
                     found = Some(row);
                     break;
                 }
@@ -212,7 +327,7 @@ impl F2Matrix {
 
             // Eliminate all other rows
             for row in 0..n {
-                if row != col && aug.rows[row][col] == 1 {
+                if row != col && aug.row_has_bit(row, col) {
                     aug.xor_row(row, col);
                 }
             }
@@ -221,7 +336,9 @@ impl F2Matrix {
         // Extract the inverse from the right half
         let mut inv = Self::zeros(n, n);
         for i in 0..n {
-            inv.rows[i] = aug.rows[i][n..2 * n].to_vec();
+            for j in 0..n {
+                inv.set(i, j, aug.get(i, n + j));
+            }
         }
         Some(inv)
     }
@@ -237,13 +354,16 @@ impl F2Matrix {
         let m = self.num_rows();
         let p = other.num_cols;
         let mut result = Self::zeros(m, p);
+        let other_t = other.transpose();
         for i in 0..m {
             for j in 0..p {
-                let mut sum = 0u8;
-                for k in 0..self.num_cols {
-                    sum ^= self.rows[i][k] & other.rows[k][j];
+                let mut parity = 0u32;
+                for (a, b) in self.rows[i].iter().zip(other_t.row_words(j)) {
+                    parity ^= (a & b).count_ones() & 1;
                 }
-                result.rows[i][j] = sum;
+                if parity != 0 {
+                    result.set(i, j, 1);
+                }
             }
         }
         result
@@ -257,7 +377,7 @@ impl F2Matrix {
         let mut result = Self::zeros(n, m);
         for i in 0..m {
             for j in 0..n {
-                result.rows[j][i] = self.rows[i][j];
+                result.set(j, i, self.get(i, j));
             }
         }
         result
@@ -275,7 +395,7 @@ impl F2Matrix {
         let mut aug = Self::zeros(m, n + n);
         for i in 0..m {
             for j in 0..n {
-                aug.rows[i][j] = self.rows[i][j];
+                aug.set(i, j, self.get(i, j));
             }
         }
         // We actually need to work with the transpose to find the right kernel.
@@ -287,12 +407,12 @@ impl F2Matrix {
         let mut at = Self::zeros(n, m + n);
         for i in 0..m {
             for j in 0..n {
-                at.rows[j][i] = self.rows[i][j];
+                at.set(j, i, self.get(i, j));
             }
         }
         // Augment with identity in the right block
         for j in 0..n {
-            at.rows[j][m + j] = 1;
+            at.set(j, m + j, 1);
         }
 
         // Row-reduce A^T
@@ -300,11 +420,11 @@ impl F2Matrix {
 
         // Rows that are zero in the A^T part (columns 0..m) give kernel vectors
         // from the identity part (columns m..m+n).
-        let mut basis = Vec::new();
+        let mut basis: Vec<Vec<u8>> = Vec::new();
         for i in 0..n {
-            if reduced.rows[i][..m].iter().all(|&b| b == 0) {
+            if (0..m).all(|col| reduced.get(i, col) == 0) {
                 // This row's right block is a kernel vector
-                basis.push(reduced.rows[i][m..m + n].to_vec());
+                basis.push((m..m + n).map(|col| reduced.get(i, col)).collect());
             }
         }
 
@@ -316,20 +436,14 @@ impl F2Matrix {
 
         // Handle overcounting: only keep linearly independent vectors
         if basis.len() > 1 {
-            let check = Self {
-                rows: basis.clone(),
-                num_cols: n,
-            };
+            let check = Self::from_rows(basis.clone());
             let (_, _ind_pivots) = check.row_reduce();
             // The first ind_pivots.len() rows of the reduced form are independent
             // but we want the original basis vectors. Since we sorted, just take
             // the independent count. Actually, let's re-reduce properly.
             let (reduced_basis, _) = check.row_reduce();
-            basis = reduced_basis
-                .rows
-                .into_iter()
-                .filter(|r| r.iter().any(|&b| b != 0))
-                .collect();
+            basis = reduced_basis.rows();
+            basis.retain(|r| r.iter().any(|&b| b != 0));
         }
 
         basis
@@ -338,17 +452,17 @@ impl F2Matrix {
 
 impl fmt::Display for F2Matrix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, row) in self.rows.iter().enumerate() {
+        for i in 0..self.num_rows() {
             if i > 0 {
                 writeln!(f)?;
             }
             // Show the X block and Z block separated by |
             let n = self.num_cols / 2;
-            for (j, &bit) in row.iter().enumerate() {
+            for j in 0..self.num_cols {
                 if j == n {
                     write!(f, "|")?;
                 }
-                write!(f, "{bit}")?;
+                write!(f, "{}", self.get(i, j))?;
             }
         }
         Ok(())
@@ -501,10 +615,10 @@ impl PauliSequence {
 
         for (row_idx, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
-                mat.rows[row_idx][q] = 1;
+                mat.set(row_idx, q, 1);
             }
             for q in generator.z_positions() {
-                mat.rows[row_idx][n + q] = 1;
+                mat.set(row_idx, n + q, 1);
             }
         }
 
@@ -583,9 +697,7 @@ impl PauliSequence {
         // Eliminate the target using the reduced generators' pivots
         for (row_idx, &pivot_col) in pivots.iter().enumerate() {
             if target[pivot_col] == 1 {
-                for (col, t) in target.iter_mut().enumerate() {
-                    *t ^= reduced.rows[row_idx][col];
-                }
+                reduced.xor_row_into_dense(row_idx, &mut target);
             }
         }
 
@@ -614,12 +726,12 @@ impl PauliSequence {
 
         for (row_idx, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
-                mat.rows[row_idx][q] = 1;
+                mat.set(row_idx, q, 1);
             }
             for q in generator.z_positions() {
-                mat.rows[row_idx][n + q] = 1;
+                mat.set(row_idx, n + q, 1);
             }
-            mat.rows[row_idx][2 * n + row_idx] = 1;
+            mat.set(row_idx, 2 * n + row_idx, 1);
         }
 
         let (reduced, pivots) = mat.row_reduce();
@@ -636,9 +748,7 @@ impl PauliSequence {
         // Eliminate the target using the reduced rows
         for (row_idx, &pivot_col) in pivots.iter().enumerate() {
             if target[pivot_col] == 1 {
-                for (col, t) in target.iter_mut().enumerate() {
-                    *t ^= reduced.rows[row_idx][col];
-                }
+                reduced.xor_row_into_dense(row_idx, &mut target);
             }
         }
 
@@ -722,7 +832,7 @@ impl PauliSequence {
         for col in 0..mat.num_cols {
             let mut found = None;
             for row in pivot_row..k {
-                if mat.rows[row][col] == 1 {
+                if mat.get(row, col) == 1 {
                     found = Some(row);
                     break;
                 }
@@ -736,7 +846,7 @@ impl PauliSequence {
             paulis.swap(pivot_row, found_row);
 
             for row in 0..k {
-                if row != pivot_row && mat.rows[row][col] == 1 {
+                if row != pivot_row && mat.get(row, col) == 1 {
                     mat.xor_row(row, pivot_row);
                     let pivot_ps = paulis[pivot_row].clone();
                     paulis[row] = paulis[row].clone() * pivot_ps;
@@ -785,12 +895,12 @@ impl PauliSequence {
         for (row_idx, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
                 if q < n {
-                    mat.rows[row_idx][q] = 1;
+                    mat.set(row_idx, q, 1);
                 }
             }
             for q in generator.z_positions() {
                 if q < n {
-                    mat.rows[row_idx][n + q] = 1;
+                    mat.set(row_idx, n + q, 1);
                 }
             }
         }
@@ -799,8 +909,8 @@ impl PauliSequence {
         let mut s_omega = F2Matrix::zeros(mat.num_rows(), 2 * n);
         for i in 0..mat.num_rows() {
             for j in 0..n {
-                s_omega.rows[i][j] = mat.rows[i][n + j]; // Z block -> first half
-                s_omega.rows[i][n + j] = mat.rows[i][j]; // X block -> second half
+                s_omega.set(i, j, mat.get(i, n + j)); // Z block -> first half
+                s_omega.set(i, n + j, mat.get(i, j)); // X block -> second half
             }
         }
 
@@ -1200,9 +1310,7 @@ mod tests {
     #[test]
     fn test_f2_kernel() {
         // Identity matrix: kernel is empty
-        let mut mat = F2Matrix::zeros(2, 2);
-        mat.rows[0][0] = 1;
-        mat.rows[1][1] = 1;
+        let mat = F2Matrix::from_rows(vec![vec![1, 0], vec![0, 1]]);
         assert!(mat.kernel().is_empty());
 
         // Zero matrix 2x3: kernel dimension = 3
@@ -1213,9 +1321,7 @@ mod tests {
     #[test]
     fn test_f2_kernel_rank_deficient() {
         // [[1,0,0],[1,0,0]]: rank 1, kernel dimension = 3 - 1 = 2
-        let mut mat = F2Matrix::zeros(2, 3);
-        mat.rows[0][0] = 1;
-        mat.rows[1][0] = 1;
+        let mat = F2Matrix::from_rows(vec![vec![1, 0, 0], vec![1, 0, 0]]);
         let kern = mat.kernel();
         assert_eq!(kern.len(), 2);
         // Each kernel vector should satisfy A * v = 0
@@ -1230,9 +1336,7 @@ mod tests {
     #[test]
     fn test_f2_kernel_rectangular() {
         // 1x4 matrix [1,1,0,0]: kernel dim = 3
-        let mut mat = F2Matrix::zeros(1, 4);
-        mat.rows[0][0] = 1;
-        mat.rows[0][1] = 1;
+        let mat = F2Matrix::from_rows(vec![vec![1, 1, 0, 0]]);
         let kern = mat.kernel();
         assert_eq!(kern.len(), 3);
     }
@@ -1304,24 +1408,21 @@ mod tests {
         let seq = PauliSequence::new(vec![Y(0)]);
         let mat = seq.to_symplectic_matrix();
         // For 1 qubit, symplectic vector is [x0, z0]
-        assert_eq!(mat.rows[0], vec![1, 1], "Y should set both x and z bits");
+        assert_eq!(mat.row(0), vec![1, 1], "Y should set both x and z bits");
     }
 
     #[test]
     fn test_f2_matrix_row_reduce_empty() {
         let mat = F2Matrix::zeros(0, 3);
         let (reduced, pivots) = mat.row_reduce();
-        assert!(reduced.rows.is_empty());
+        assert_eq!(reduced.num_rows(), 0);
         assert!(pivots.is_empty());
     }
 
     #[test]
     fn test_f2_matrix_kernel_tall_matrix() {
         // More rows than columns: 3x2 matrix
-        let mut mat = F2Matrix::zeros(3, 2);
-        mat.rows[0] = vec![1, 0];
-        mat.rows[1] = vec![0, 1];
-        mat.rows[2] = vec![1, 1]; // row 2 = row 0 + row 1 (redundant)
+        let mat = F2Matrix::from_rows(vec![vec![1, 0], vec![0, 1], vec![1, 1]]);
         // Full column rank => kernel is empty
         let kern = mat.kernel();
         assert!(
@@ -1333,10 +1434,7 @@ mod tests {
     #[test]
     fn test_f2_matrix_kernel_identity() {
         // Identity matrix: full rank, trivial kernel
-        let mut mat = F2Matrix::zeros(3, 3);
-        mat.rows[0] = vec![1, 0, 0];
-        mat.rows[1] = vec![0, 1, 0];
-        mat.rows[2] = vec![0, 0, 1];
+        let mat = F2Matrix::identity(3);
         let kern = mat.kernel();
         assert!(kern.is_empty());
     }
@@ -1382,9 +1480,7 @@ mod tests {
     #[test]
     fn test_f2_invert_swap_matrix() {
         // Swap rows 0 and 1: [[0,1],[1,0]]
-        let mut m = F2Matrix::zeros(2, 2);
-        m.rows[0][1] = 1;
-        m.rows[1][0] = 1;
+        let m = F2Matrix::from_rows(vec![vec![0, 1], vec![1, 0]]);
         let inv = m.invert().unwrap();
         // Swap is self-inverse
         assert_eq!(inv, m);
@@ -1393,10 +1489,7 @@ mod tests {
     #[test]
     fn test_f2_invert_upper_triangular() {
         // [[1,1],[0,1]] over GF(2) is self-inverse
-        let mut m = F2Matrix::zeros(2, 2);
-        m.rows[0][0] = 1;
-        m.rows[0][1] = 1;
-        m.rows[1][1] = 1;
+        let m = F2Matrix::from_rows(vec![vec![1, 1], vec![0, 1]]);
         let inv = m.invert().unwrap();
         assert_eq!(inv, m);
     }
@@ -1404,9 +1497,7 @@ mod tests {
     #[test]
     fn test_f2_invert_singular() {
         // [[1,1],[1,1]] is singular
-        let mut m = F2Matrix::zeros(2, 2);
-        m.rows[0] = vec![1, 1];
-        m.rows[1] = vec![1, 1];
+        let m = F2Matrix::from_rows(vec![vec![1, 1], vec![1, 1]]);
         assert!(m.invert().is_none());
     }
 
@@ -1419,26 +1510,18 @@ mod tests {
     #[test]
     fn test_f2_mul() {
         // [[1,1],[0,1]] * [[1,0],[1,1]] = [[0,1],[1,1]] over GF(2)
-        let mut a = F2Matrix::zeros(2, 2);
-        a.rows[0] = vec![1, 1];
-        a.rows[1] = vec![0, 1];
-
-        let mut b = F2Matrix::zeros(2, 2);
-        b.rows[0] = vec![1, 0];
-        b.rows[1] = vec![1, 1];
+        let a = F2Matrix::from_rows(vec![vec![1, 1], vec![0, 1]]);
+        let b = F2Matrix::from_rows(vec![vec![1, 0], vec![1, 1]]);
 
         let c = a.mul(&b);
-        assert_eq!(c.rows[0], vec![0, 1]);
-        assert_eq!(c.rows[1], vec![1, 1]);
+        assert_eq!(c.row(0), vec![0, 1]);
+        assert_eq!(c.row(1), vec![1, 1]);
     }
 
     #[test]
     fn test_f2_mul_inverse_gives_identity() {
         // Invertible 3x3 matrix over GF(2)
-        let mut m = F2Matrix::zeros(3, 3);
-        m.rows[0] = vec![1, 1, 0];
-        m.rows[1] = vec![0, 1, 1];
-        m.rows[2] = vec![1, 1, 1];
+        let m = F2Matrix::from_rows(vec![vec![1, 1, 0], vec![0, 1, 1], vec![1, 1, 1]]);
 
         let inv = m.invert().unwrap();
         let product = m.mul(&inv);
@@ -1451,15 +1534,13 @@ mod tests {
 
     #[test]
     fn test_f2_transpose() {
-        let mut m = F2Matrix::zeros(2, 3);
-        m.rows[0] = vec![1, 0, 1];
-        m.rows[1] = vec![0, 1, 0];
+        let m = F2Matrix::from_rows(vec![vec![1, 0, 1], vec![0, 1, 0]]);
         let t = m.transpose();
         assert_eq!(t.num_rows(), 3);
         assert_eq!(t.num_cols(), 2);
-        assert_eq!(t.rows[0], vec![1, 0]);
-        assert_eq!(t.rows[1], vec![0, 1]);
-        assert_eq!(t.rows[2], vec![1, 0]);
+        assert_eq!(t.row(0), vec![1, 0]);
+        assert_eq!(t.row(1), vec![0, 1]);
+        assert_eq!(t.row(2), vec![1, 0]);
     }
 
     // ========================================================================
@@ -1536,16 +1617,15 @@ mod tests {
     #[test]
     fn test_f2_identity_1x1() {
         let id = F2Matrix::identity(1);
-        assert_eq!(id.rows[0], vec![1]);
+        assert_eq!(id.row(0), vec![1]);
     }
 
     #[test]
     fn test_f2_invert_1x1() {
         // [[1]] is invertible
-        let mut m = F2Matrix::zeros(1, 1);
-        m.rows[0] = vec![1];
+        let m = F2Matrix::identity(1);
         let inv = m.invert().unwrap();
-        assert_eq!(inv.rows[0], vec![1]);
+        assert_eq!(inv.row(0), vec![1]);
 
         // [[0]] is not invertible
         let z = F2Matrix::zeros(1, 1);
@@ -1555,10 +1635,7 @@ mod tests {
     #[test]
     fn test_f2_mul_identity() {
         let id = F2Matrix::identity(3);
-        let mut m = F2Matrix::zeros(3, 3);
-        m.rows[0] = vec![1, 1, 0];
-        m.rows[1] = vec![0, 1, 1];
-        m.rows[2] = vec![1, 1, 1];
+        let m = F2Matrix::from_rows(vec![vec![1, 1, 0], vec![0, 1, 1], vec![1, 1, 1]]);
 
         // I * A = A
         assert_eq!(id.mul(&m), m);
@@ -1567,20 +1644,33 @@ mod tests {
     }
 
     #[test]
+    fn test_f2_matrix_crosses_multiple_words() {
+        let mut m = F2Matrix::zeros(3, 130);
+        m.set(0, 0, 1);
+        m.set(0, 64, 1);
+        m.set(1, 65, 1);
+        m.set(2, 129, 1);
+
+        assert_eq!(m.get(0, 0), 1);
+        assert_eq!(m.get(0, 64), 1);
+        assert_eq!(m.get(1, 65), 1);
+        assert_eq!(m.get(2, 129), 1);
+        let (_, pivots) = m.row_reduce();
+        assert_eq!(pivots.len(), 3);
+        assert_eq!(m.transpose().transpose(), m);
+    }
+
+    #[test]
     fn test_f2_transpose_square() {
-        let mut m = F2Matrix::zeros(2, 2);
-        m.rows[0] = vec![1, 1];
-        m.rows[1] = vec![0, 1];
+        let m = F2Matrix::from_rows(vec![vec![1, 1], vec![0, 1]]);
         let t = m.transpose();
-        assert_eq!(t.rows[0], vec![1, 0]);
-        assert_eq!(t.rows[1], vec![1, 1]);
+        assert_eq!(t.row(0), vec![1, 0]);
+        assert_eq!(t.row(1), vec![1, 1]);
     }
 
     #[test]
     fn test_f2_double_transpose() {
-        let mut m = F2Matrix::zeros(2, 3);
-        m.rows[0] = vec![1, 0, 1];
-        m.rows[1] = vec![0, 1, 0];
+        let m = F2Matrix::from_rows(vec![vec![1, 0, 1], vec![0, 1, 0]]);
         let tt = m.transpose().transpose();
         assert_eq!(tt, m);
     }
@@ -1588,11 +1678,12 @@ mod tests {
     #[test]
     fn test_f2_invert_4x4() {
         // A larger invertible matrix over GF(2)
-        let mut m = F2Matrix::zeros(4, 4);
-        m.rows[0] = vec![1, 0, 0, 1];
-        m.rows[1] = vec![0, 1, 0, 1];
-        m.rows[2] = vec![0, 0, 1, 1];
-        m.rows[3] = vec![1, 1, 1, 0];
+        let m = F2Matrix::from_rows(vec![
+            vec![1, 0, 0, 1],
+            vec![0, 1, 0, 1],
+            vec![0, 0, 1, 1],
+            vec![1, 1, 1, 0],
+        ]);
 
         let inv = m.invert().unwrap();
         assert_eq!(m.mul(&inv), F2Matrix::identity(4));

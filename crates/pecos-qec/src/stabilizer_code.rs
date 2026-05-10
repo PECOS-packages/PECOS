@@ -147,10 +147,10 @@ impl StabilizerCode {
         let mut stab_mat = F2Matrix::zeros(num_generators, 2 * n);
         for (row_idx, stab) in self.group.stabilizers().iter().enumerate() {
             for q in stab.x_positions() {
-                stab_mat.row_mut(row_idx)[q] = 1;
+                stab_mat.set(row_idx, q, 1);
             }
             for q in stab.z_positions() {
-                stab_mat.row_mut(row_idx)[n + q] = 1;
+                stab_mat.set(row_idx, n + q, 1);
             }
         }
         let (stab_rref, stab_pivots) = stab_mat.row_reduce();
@@ -167,7 +167,7 @@ impl StabilizerCode {
             for (row_idx, &pivot_col) in stab_pivots.iter().enumerate() {
                 if v[pivot_col] == 1 {
                     for (col, vi) in v.iter_mut().enumerate() {
-                        *vi ^= stab_rref.row(row_idx)[col];
+                        *vi ^= stab_rref.get(row_idx, col);
                     }
                 }
             }
@@ -182,11 +182,11 @@ impl StabilizerCode {
         if logical_vecs.len() > 1 {
             let mut log_mat = F2Matrix::zeros(logical_vecs.len(), 2 * n);
             for (i, v) in logical_vecs.iter().enumerate() {
-                log_mat.row_mut(i).clone_from(v);
+                log_mat.set_row(i, v);
             }
             let (reduced, _) = log_mat.row_reduce();
             logical_vecs = (0..reduced.num_rows())
-                .map(|i| reduced.row(i).to_vec())
+                .map(|i| reduced.row(i))
                 .filter(|r| r.iter().any(|&b| b != 0))
                 .collect();
         }

@@ -644,53 +644,77 @@ impl Copy for Conjugated<u128> {}
 /// Hadamard on qubit q: X↔Z, Y→-Y.
 #[must_use]
 pub fn conjugate_h<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    let has_x = p.x_bits.get_bit(q);
-    let has_z = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if has_x != has_z {
-        label.x_bits.xor_bit(q);
-        label.z_bits.xor_bit(q);
-    }
+    let sign_negative = conjugate_h_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: has_x && has_z,
+        sign_negative,
     }
+}
+
+/// In-place Hadamard conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_h_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    let has_x = p.x_bits.get_bit(q);
+    let has_z = p.z_bits.get_bit(q);
+    if has_x != has_z {
+        p.x_bits.xor_bit(q);
+        p.z_bits.xor_bit(q);
+    }
+    has_x && has_z
 }
 
 /// SZ gate on qubit q: X→Y, Y→-X, Z→Z.
 #[must_use]
 pub fn conjugate_sz<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    if !p.x_bits.get_bit(q) {
-        return Conjugated {
-            label: p.clone(),
-            sign_negative: false,
-        };
-    }
-    let was_y = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    label.z_bits.xor_bit(q);
+    let sign_negative = conjugate_sz_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: was_y,
+        sign_negative,
     }
+}
+
+/// In-place SZ conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sz_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    if !p.x_bits.get_bit(q) {
+        return false;
+    }
+    let was_y = p.z_bits.get_bit(q);
+    p.z_bits.xor_bit(q);
+    was_y
 }
 
 /// `SZdg` gate on qubit q: X→-Y, Y→X, Z→Z.
 #[must_use]
 pub fn conjugate_szdg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    if !p.x_bits.get_bit(q) {
-        return Conjugated {
-            label: p.clone(),
-            sign_negative: false,
-        };
-    }
-    let was_y = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    label.z_bits.xor_bit(q);
+    let sign_negative = conjugate_szdg_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: !was_y,
+        sign_negative,
     }
+}
+
+/// In-place `SZdg` conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_szdg_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q: usize,
+) -> bool {
+    if !p.x_bits.get_bit(q) {
+        return false;
+    }
+    let was_y = p.z_bits.get_bit(q);
+    p.z_bits.xor_bit(q);
+    !was_y
 }
 
 /// CX (CNOT) with control c, target t: XI→XX, IZ→ZZ.
@@ -707,6 +731,23 @@ pub fn conjugate_cx<B: BitmaskStorage>(
     c: usize,
     t: usize,
 ) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_cx_in_place(&mut label, c, t);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place CX conjugation with control c and target t.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_cx_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    c: usize,
+    t: usize,
+) -> bool {
     const PHASE: [[u8; 4]; 4] = [
         [0, 0, 0, 0], // I·{I,X,Z,Y}
         [0, 0, 3, 1], // X·{I,X,Z,Y}
@@ -718,12 +759,11 @@ pub fn conjugate_cx<B: BitmaskStorage>(
     let cz = p.z_bits.get_bit(c);
     let tx = p.x_bits.get_bit(t);
     let tz = p.z_bits.get_bit(t);
-    let mut label = p.clone();
     if cx {
-        label.x_bits.xor_bit(t);
+        p.x_bits.xor_bit(t);
     }
     if tz {
-        label.z_bits.xor_bit(c);
+        p.z_bits.xor_bit(c);
     }
     // Pauli type encoding: I=0, X=1, Z=2, Y=3 (x + 2*z)
     // Phase from Pauli multiplication table:
@@ -732,10 +772,7 @@ pub fn conjugate_cx<B: BitmaskStorage>(
     let pt = u8::from(tx) + 2 * u8::from(tz);
     let phase_c = if tz { PHASE[pc as usize][2] } else { 0 };
     let phase_t = if cx { PHASE[1][pt as usize] } else { 0 };
-    Conjugated {
-        label,
-        sign_negative: (phase_c + phase_t) % 4 == 2,
-    }
+    (phase_c + phase_t) % 4 == 2
 }
 
 /// CZ on qubits a, b: XI→XZ, IX→ZX, ZI→ZI, IZ→IZ.
@@ -745,48 +782,91 @@ pub fn conjugate_cz<B: BitmaskStorage>(
     a: usize,
     b: usize,
 ) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_cz_in_place(&mut label, a, b);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place CZ conjugation on qubits a and b.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_cz_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    a: usize,
+    b: usize,
+) -> bool {
     let ax = p.x_bits.get_bit(a);
     let az = p.z_bits.get_bit(a);
     let bx = p.x_bits.get_bit(b);
     let bz = p.z_bits.get_bit(b);
-    let mut label = p.clone();
     if bx {
-        label.z_bits.xor_bit(a);
+        p.z_bits.xor_bit(a);
     }
     if ax {
-        label.z_bits.xor_bit(b);
+        p.z_bits.xor_bit(b);
     }
-    Conjugated {
-        label,
-        sign_negative: ax && bx && (az != bz),
-    }
+    ax && bx && (az != bz)
 }
 
 /// Pauli X gate on qubit q: Z→-Z, Y→-Y.
 #[must_use]
 pub fn conjugate_x<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_x_in_place(&mut label, q);
     Conjugated {
-        label: p.clone(),
-        sign_negative: p.z_bits.get_bit(q),
+        label,
+        sign_negative,
     }
+}
+
+/// In-place Pauli X conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_x_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    p.z_bits.get_bit(q)
 }
 
 /// Pauli Y gate on qubit q: X→-X, Z→-Z.
 #[must_use]
 pub fn conjugate_y<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_y_in_place(&mut label, q);
     Conjugated {
-        label: p.clone(),
-        sign_negative: p.x_bits.get_bit(q) != p.z_bits.get_bit(q),
+        label,
+        sign_negative,
     }
+}
+
+/// In-place Pauli Y conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_y_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    p.x_bits.get_bit(q) != p.z_bits.get_bit(q)
 }
 
 /// Pauli Z gate on qubit q: X→-X, Y→-Y.
 #[must_use]
 pub fn conjugate_z<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_z_in_place(&mut label, q);
     Conjugated {
-        label: p.clone(),
-        sign_negative: p.x_bits.get_bit(q),
+        label,
+        sign_negative,
     }
+}
+
+/// In-place Pauli Z conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_z_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    p.x_bits.get_bit(q)
 }
 
 /// SWAP on qubits a, b: exchanges the Pauli at both sites.
@@ -796,99 +876,154 @@ pub fn conjugate_swap<B: BitmaskStorage>(
     a: usize,
     b: usize,
 ) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_swap_in_place(&mut label, a, b);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place SWAP conjugation on qubits a and b.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_swap_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    a: usize,
+    b: usize,
+) -> bool {
     let ax = p.x_bits.get_bit(a);
     let az = p.z_bits.get_bit(a);
     let bx = p.x_bits.get_bit(b);
     let bz = p.z_bits.get_bit(b);
-    let mut label = p.clone();
     // Clear both positions
-    label.x_bits.clear_bit(a);
-    label.x_bits.clear_bit(b);
+    p.x_bits.clear_bit(a);
+    p.x_bits.clear_bit(b);
     if az {
-        label.z_bits.clear_bit(a);
+        p.z_bits.clear_bit(a);
     }
     if bz {
-        label.z_bits.clear_bit(b);
+        p.z_bits.clear_bit(b);
     }
     // Set swapped
     if bx {
-        label.x_bits.set_bit(a);
+        p.x_bits.set_bit(a);
     }
     if ax {
-        label.x_bits.set_bit(b);
+        p.x_bits.set_bit(b);
     }
     if bz {
-        label.z_bits.set_bit(a);
+        p.z_bits.set_bit(a);
     }
     if az {
-        label.z_bits.set_bit(b);
+        p.z_bits.set_bit(b);
     }
-    Conjugated {
-        label,
-        sign_negative: false,
-    }
+    false
 }
 
 /// SX gate on qubit q: X→X, Z→-Y, Y→Z.
 #[must_use]
 pub fn conjugate_sx<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    let xq = p.x_bits.get_bit(q);
-    let zq = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if zq {
-        label.x_bits.xor_bit(q);
-    }
+    let sign_negative = conjugate_sx_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: !xq && zq,
+        sign_negative,
     }
+}
+
+/// In-place SX conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sx_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    let xq = p.x_bits.get_bit(q);
+    let zq = p.z_bits.get_bit(q);
+    if zq {
+        p.x_bits.xor_bit(q);
+    }
+    !xq && zq
 }
 
 /// `SXdg` gate on qubit q: X→X, Z→Y, Y→-Z.
 #[must_use]
 pub fn conjugate_sxdg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    let xq = p.x_bits.get_bit(q);
-    let zq = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if zq {
-        label.x_bits.xor_bit(q);
-    }
+    let sign_negative = conjugate_sxdg_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: xq && zq,
+        sign_negative,
     }
+}
+
+/// In-place `SXdg` conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sxdg_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q: usize,
+) -> bool {
+    let xq = p.x_bits.get_bit(q);
+    let zq = p.z_bits.get_bit(q);
+    if zq {
+        p.x_bits.xor_bit(q);
+    }
+    xq && zq
 }
 
 /// SY gate on qubit q: X→-Z, Y→Y, Z→X.
 #[must_use]
 pub fn conjugate_sy<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    let xq = p.x_bits.get_bit(q);
-    let zq = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if xq != zq {
-        label.x_bits.xor_bit(q);
-        label.z_bits.xor_bit(q);
-    }
+    let sign_negative = conjugate_sy_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: xq && !zq,
+        sign_negative,
     }
+}
+
+/// In-place SY conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sy_in_place<B: BitmaskStorage>(p: &mut PauliBitmaskGeneric<B>, q: usize) -> bool {
+    let xq = p.x_bits.get_bit(q);
+    let zq = p.z_bits.get_bit(q);
+    if xq != zq {
+        p.x_bits.xor_bit(q);
+        p.z_bits.xor_bit(q);
+    }
+    xq && !zq
 }
 
 /// `SYdg` gate on qubit q: X→Z, Y→Y, Z→-X.
 #[must_use]
 pub fn conjugate_sydg<B: BitmaskStorage>(p: &PauliBitmaskGeneric<B>, q: usize) -> Conjugated<B> {
-    let xq = p.x_bits.get_bit(q);
-    let zq = p.z_bits.get_bit(q);
     let mut label = p.clone();
-    if xq != zq {
-        label.x_bits.xor_bit(q);
-        label.z_bits.xor_bit(q);
-    }
+    let sign_negative = conjugate_sydg_in_place(&mut label, q);
     Conjugated {
         label,
-        sign_negative: !xq && zq,
+        sign_negative,
     }
+}
+
+/// In-place `SYdg` conjugation on qubit q.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sydg_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q: usize,
+) -> bool {
+    let xq = p.x_bits.get_bit(q);
+    let zq = p.z_bits.get_bit(q);
+    if xq != zq {
+        p.x_bits.xor_bit(q);
+        p.z_bits.xor_bit(q);
+    }
+    !xq && zq
 }
 
 /// CY (controlled-Y) with control c, target t.
@@ -903,13 +1038,24 @@ pub fn conjugate_cy<B: BitmaskStorage>(
     c: usize,
     t: usize,
 ) -> Conjugated<B> {
-    let r1 = conjugate_szdg(p, t);
-    let r2 = conjugate_cx(&r1.label, c, t);
-    let r3 = conjugate_sz(&r2.label, t);
+    let mut label = p.clone();
+    let sign_negative = conjugate_cy_in_place(&mut label, c, t);
     Conjugated {
-        label: r3.label,
-        sign_negative: r1.sign_negative ^ r2.sign_negative ^ r3.sign_negative,
+        label,
+        sign_negative,
     }
+}
+
+/// In-place CY conjugation with control c and target t.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_cy_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    c: usize,
+    t: usize,
+) -> bool {
+    conjugate_szdg_in_place(p, t) ^ conjugate_cx_in_place(p, c, t) ^ conjugate_sz_in_place(p, t)
 }
 
 #[cfg(test)]

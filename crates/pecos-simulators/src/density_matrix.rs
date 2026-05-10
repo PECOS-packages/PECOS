@@ -14,11 +14,35 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use super::state_vec::StateVec;
+use super::state_vec_soa::StateVecSoA;
 use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 
 use core::fmt::{Debug, Display, Formatter, Write};
 use num_complex::Complex64;
+use std::error::Error;
+
+const PURE_STATE_TOLERANCE: f64 = 1e-10;
+
+/// Error returned when converting between simulator state representations.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StateConversionError {
+    /// The density matrix is not rank-1 within the conversion tolerance.
+    MixedDensityMatrix { residual: f64 },
+}
+
+impl Display for StateConversionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MixedDensityMatrix { residual } => write!(
+                f,
+                "density matrix is not a pure state; reconstruction residual is {residual}"
+            ),
+        }
+    }
+}
+
+impl Error for StateConversionError {}
 
 /// A quantum state simulator using the density matrix representation via the Choi-Jamiolkowski isomorphism
 ///
@@ -838,6 +862,76 @@ where
     }
 }
 
+impl<R> From<&StateVecSoA<R>> for DensityMatrix<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    fn from(state: &StateVecSoA<R>) -> Self {
+        let mut state = state.clone();
+        let amplitudes = state.state();
+        let dim = amplitudes.len();
+        let num_physical_qubits = dim.trailing_zeros() as usize;
+        let mut purification = vec![Complex64::new(0.0, 0.0); dim * dim];
+
+        for (row, amplitude) in amplitudes.iter().enumerate() {
+            purification[row << num_physical_qubits] = *amplitude;
+        }
+
+        Self {
+            num_physical_qubits,
+            state_vector: StateVec::from_state(&purification, state.rng().clone()),
+        }
+    }
+}
+
+impl<R> TryFrom<&DensityMatrix<R>> for Vec<Complex64>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Error = StateConversionError;
+
+    fn try_from(density_matrix: &DensityMatrix<R>) -> Result<Self, Self::Error> {
+        let mut density_matrix = density_matrix.clone();
+        let rho = density_matrix.get_density_matrix();
+        pure_state_from_density_matrix(&rho)
+    }
+}
+
+fn pure_state_from_density_matrix(
+    rho: &[Vec<Complex64>],
+) -> Result<Vec<Complex64>, StateConversionError> {
+    let dim = rho.len();
+    let (pivot, pivot_probability) = rho
+        .iter()
+        .enumerate()
+        .map(|(i, row)| (i, row[i].re.max(0.0)))
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .unwrap_or((0, 0.0));
+
+    if pivot_probability <= PURE_STATE_TOLERANCE {
+        return Err(StateConversionError::MixedDensityMatrix { residual: 1.0 });
+    }
+
+    let pivot_amplitude = pivot_probability.sqrt();
+    let state: Vec<Complex64> = (0..dim)
+        .map(|row| rho[row][pivot] / pivot_amplitude)
+        .collect();
+
+    let mut residual = 0.0_f64;
+    for row in 0..dim {
+        for col in 0..dim {
+            let reconstructed = state[row] * state[col].conj();
+            residual = residual.max((rho[row][col] - reconstructed).norm());
+        }
+    }
+
+    if residual > PURE_STATE_TOLERANCE {
+        return Err(StateConversionError::MixedDensityMatrix { residual });
+    }
+
+    Ok(state)
+}
+
 impl<R> Display for DensityMatrix<R>
 where
     R: Rng + SeedableRng + Debug + Clone,
@@ -1320,6 +1414,37 @@ mod tests {
 
         // State should be pure
         assert!(dm.is_pure());
+    }
+
+    #[test]
+    fn state_vector_converts_to_density_matrix_and_back() {
+        let mut state = StateVecSoA::new(2);
+        state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+
+        let mut density_matrix = DensityMatrix::from(&state);
+        assert!((density_matrix.probability(0) - 0.5).abs() < 1e-10);
+        assert!(density_matrix.probability(1) < 1e-10);
+        assert!(density_matrix.probability(2) < 1e-10);
+        assert!((density_matrix.probability(3) - 0.5).abs() < 1e-10);
+
+        let recovered = Vec::<Complex64>::try_from(&density_matrix).unwrap();
+        let expected = state.state();
+
+        for (actual, expected) in recovered.iter().zip(expected.iter()) {
+            assert!((*actual - *expected).norm() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn mixed_density_matrix_rejects_state_vector_conversion() {
+        let mut density_matrix = DensityMatrix::new(1);
+        density_matrix.prepare_maximally_mixed();
+
+        let err = Vec::<Complex64>::try_from(&density_matrix).unwrap_err();
+        assert!(matches!(
+            err,
+            StateConversionError::MixedDensityMatrix { .. }
+        ));
     }
 
     // Additional tests for other gates and operations would be added here

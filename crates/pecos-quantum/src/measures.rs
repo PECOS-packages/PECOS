@@ -95,6 +95,20 @@ pub enum MeasureError {
         /// Invalid base.
         base: f64,
     },
+    /// A probability is negative or non-finite.
+    InvalidProbability {
+        /// Index of the invalid probability.
+        index: usize,
+        /// Invalid probability value.
+        probability: f64,
+    },
+    /// A probability distribution does not sum to one.
+    InvalidProbabilitySum {
+        /// Observed probability sum.
+        sum: f64,
+        /// Allowed absolute tolerance.
+        tolerance: f64,
+    },
     /// Subsystem dimensions are invalid for a multipartite measure.
     InvalidSubsystemDimensions {
         /// Subsystem dimensions supplied by the caller.
@@ -170,6 +184,14 @@ impl fmt::Display for MeasureError {
                     "entropy logarithm base must be finite, positive, and not 1; got {base}"
                 )
             }
+            Self::InvalidProbability { index, probability } => write!(
+                f,
+                "probability at index {index} must be finite and non-negative, got {probability}"
+            ),
+            Self::InvalidProbabilitySum { sum, tolerance } => write!(
+                f,
+                "probability distribution must sum to 1 within tolerance {tolerance}, got {sum}"
+            ),
             Self::InvalidSubsystemDimensions { dims, matrix_dim } => write!(
                 f,
                 "invalid subsystem dimensions {dims:?} for density matrix dimension {matrix_dim}"
@@ -352,13 +374,36 @@ pub fn entropy_with_base(rho: &DMatrix<Complex64>, base: f64) -> Result<f64, Mea
     validate_density_matrix(rho)?;
     validate_entropy_base(base)?;
     let svd = SVD::new(rho.clone(), false, false);
+    shannon_entropy(svd.singular_values.as_slice(), base)
+}
+
+/// Returns the Shannon entropy of a probability distribution.
+///
+/// The result is `-sum_i p_i log_base(p_i)`. Zero-probability entries
+/// contribute zero.
+///
+/// # Errors
+///
+/// Returns an error when `base` is invalid, when a probability is negative or
+/// non-finite, or when the probabilities do not sum to one.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_quantum::shannon_entropy;
+///
+/// let entropy = shannon_entropy(&[0.5, 0.5], 2.0).unwrap();
+/// assert!((entropy - 1.0).abs() < 1e-12);
+/// ```
+pub fn shannon_entropy(probabilities: &[f64], base: f64) -> Result<f64, MeasureError> {
+    validate_entropy_base(base)?;
+    validate_probability_distribution(probabilities)?;
     let log_base = base.ln();
-    Ok(svd
-        .singular_values
+    Ok(probabilities
         .iter()
         .copied()
-        .filter(|lambda| *lambda > DEFAULT_TOLERANCE)
-        .map(|lambda| -lambda * lambda.ln() / log_base)
+        .filter(|probability| *probability > DEFAULT_TOLERANCE)
+        .map(|probability| -probability * probability.ln() / log_base)
         .sum())
 }
 
@@ -473,6 +518,98 @@ pub fn entanglement_of_formation(rho: &DMatrix<Complex64>) -> Result<f64, Measur
     let concurrence = concurrence(rho)?;
     let argument = f64::midpoint(1.0, (1.0 - concurrence * concurrence).max(0.0).sqrt());
     Ok(binary_entropy(argument))
+}
+
+/// Returns the entanglement negativity of a bipartite or multipartite state.
+///
+/// This computes `(||rho^T_s||_1 - 1) / 2`, where `rho^T_s` is the partial
+/// transpose with respect to `subsystem`.
+///
+/// # Errors
+///
+/// Returns an error when `rho` is not a structurally valid density matrix,
+/// when `dims` do not match its Hilbert-space dimension, or when `subsystem`
+/// is out of range.
+pub fn negativity(
+    rho: &DMatrix<Complex64>,
+    dims: &[usize],
+    subsystem: usize,
+) -> Result<f64, MeasureError> {
+    let partial_transpose = partial_transpose_subsystem(rho, dims, subsystem)?;
+    let trace_norm: f64 = SVD::new(partial_transpose, false, false)
+        .singular_values
+        .iter()
+        .sum();
+    Ok(((trace_norm - 1.0) / 2.0).max(0.0))
+}
+
+/// Returns logarithmic negativity `log2(2 * negativity + 1)`.
+///
+/// # Errors
+///
+/// Returns an error when [`negativity`] fails.
+pub fn logarithmic_negativity(
+    rho: &DMatrix<Complex64>,
+    dims: &[usize],
+    subsystem: usize,
+) -> Result<f64, MeasureError> {
+    Ok((2.0 * negativity(rho, dims, subsystem)? + 1.0).log2())
+}
+
+/// Returns the Schmidt decomposition of a pure state across a bipartition.
+///
+/// `dims[i]` is the dimension of subsystem `i`; subsystem 0 is the
+/// fastest-varying factor. `left_subsystems` selects the left side of the
+/// bipartition. The right side is the sorted complement. Returned terms are
+/// `(coefficient, left_vector, right_vector)` and omit numerically-zero
+/// coefficients.
+///
+/// # Errors
+///
+/// Returns an error when the state is not normalized, when `dims` do not match
+/// the state-vector length, or when `left_subsystems` contains an invalid or
+/// repeated subsystem.
+pub fn schmidt_decomposition(
+    state: &DVector<Complex64>,
+    dims: &[usize],
+    left_subsystems: &[usize],
+) -> Result<Vec<(f64, Vec<Complex64>, Vec<Complex64>)>, MeasureError> {
+    validate_state_vector(state)?;
+    validate_state_subsystem_dimensions(state.len(), dims)?;
+    let left = validated_sorted_subsystems(dims, left_subsystems)?;
+    let right: Vec<usize> = (0..dims.len())
+        .filter(|subsystem| left.binary_search(subsystem).is_err())
+        .collect();
+    let left_dim = subsystem_product(dims, &left)?;
+    let right_dim = subsystem_product(dims, &right)?;
+    let strides = subsystem_strides(dims)?;
+
+    let mut matrix = DMatrix::zeros(left_dim, right_dim);
+    for basis_index in 0..state.len() {
+        let left_index = project_subsystem_index(dims, &strides, &left, basis_index);
+        let right_index = project_subsystem_index(dims, &strides, &right, basis_index);
+        matrix[(left_index, right_index)] = state[basis_index];
+    }
+
+    let svd = SVD::new(matrix, true, true);
+    let left_vectors = svd.u.ok_or(MeasureError::EigenDecompositionFailed)?;
+    let right_vectors_adjoint = svd.v_t.ok_or(MeasureError::EigenDecompositionFailed)?;
+
+    Ok(svd
+        .singular_values
+        .iter()
+        .enumerate()
+        .filter(|(_, coefficient)| **coefficient > DEFAULT_TOLERANCE)
+        .map(|(idx, &coefficient)| {
+            let left_vector = left_vectors.column(idx).iter().copied().collect();
+            let right_vector = right_vectors_adjoint
+                .row(idx)
+                .iter()
+                .map(|value| value.conj())
+                .collect();
+            (coefficient, left_vector, right_vector)
+        })
+        .collect())
 }
 
 /// Returns the reduced density matrix after tracing out selected subsystems.
@@ -592,6 +729,44 @@ pub fn mutual_information(
     Ok(entropy(&rho_a)? + entropy(&rho_b)? - entropy(rho)?)
 }
 
+/// Returns the Hellinger distance between classical probability distributions.
+///
+/// `H(p, q) = sqrt(1 - sum_i sqrt(p_i q_i))`.
+///
+/// # Errors
+///
+/// Returns an error when the vectors have different lengths or either vector is
+/// not a probability distribution.
+pub fn hellinger_distance(left: &[f64], right: &[f64]) -> Result<f64, MeasureError> {
+    if left.len() != right.len() {
+        return Err(MeasureError::VectorLengthMismatch {
+            left: left.len(),
+            right: right.len(),
+        });
+    }
+    validate_probability_distribution(left)?;
+    validate_probability_distribution(right)?;
+    let affinity: f64 = left
+        .iter()
+        .zip(right.iter())
+        .map(|(&left, &right)| (left * right).sqrt())
+        .sum();
+    Ok((1.0 - affinity.clamp(0.0, 1.0)).sqrt())
+}
+
+/// Returns Hellinger fidelity between classical probability distributions.
+///
+/// The value is `(1 - H(p, q)^2)^2`, where `H` is
+/// [`hellinger_distance`].
+///
+/// # Errors
+///
+/// Returns an error when [`hellinger_distance`] fails.
+pub fn hellinger_fidelity(left: &[f64], right: &[f64]) -> Result<f64, MeasureError> {
+    let distance = hellinger_distance(left, right)?;
+    Ok((1.0 - distance * distance).powi(2))
+}
+
 fn validate_state_vector(vector: &DVector<Complex64>) -> Result<(), MeasureError> {
     let mut norm_sqr = 0.0;
     for value in vector.iter() {
@@ -656,6 +831,23 @@ fn validate_entropy_base(base: f64) -> Result<(), MeasureError> {
     } else {
         Err(MeasureError::InvalidEntropyBase { base })
     }
+}
+
+fn validate_probability_distribution(probabilities: &[f64]) -> Result<(), MeasureError> {
+    let mut sum = 0.0;
+    for (index, &probability) in probabilities.iter().enumerate() {
+        if !probability.is_finite() || probability < -DEFAULT_TOLERANCE {
+            return Err(MeasureError::InvalidProbability { index, probability });
+        }
+        sum += probability.max(0.0);
+    }
+    if (sum - 1.0).abs() > DEFAULT_TOLERANCE {
+        return Err(MeasureError::InvalidProbabilitySum {
+            sum,
+            tolerance: DEFAULT_TOLERANCE,
+        });
+    }
+    Ok(())
 }
 
 fn trace(matrix: &DMatrix<Complex64>) -> Complex64 {
@@ -727,6 +919,58 @@ fn validate_subsystem_dimensions(
     }
 }
 
+fn validate_state_subsystem_dimensions(
+    state_len: usize,
+    dims: &[usize],
+) -> Result<(), MeasureError> {
+    let Some(total_dim) =
+        dims.iter().try_fold(
+            1usize,
+            |acc, &dim| {
+                if dim == 0 { None } else { acc.checked_mul(dim) }
+            },
+        )
+    else {
+        return Err(MeasureError::InvalidSubsystemDimensions {
+            dims: dims.to_vec(),
+            matrix_dim: state_len,
+        });
+    };
+
+    if state_len == total_dim {
+        Ok(())
+    } else {
+        Err(MeasureError::InvalidSubsystemDimensions {
+            dims: dims.to_vec(),
+            matrix_dim: state_len,
+        })
+    }
+}
+
+fn validated_sorted_subsystems(
+    dims: &[usize],
+    subsystems: &[usize],
+) -> Result<Vec<usize>, MeasureError> {
+    let mut sorted = subsystems.to_vec();
+    sorted.sort_unstable();
+    for window in sorted.windows(2) {
+        if window[0] == window[1] {
+            return Err(MeasureError::DuplicateSubsystem {
+                subsystem: window[0],
+            });
+        }
+    }
+    for &subsystem in &sorted {
+        if subsystem >= dims.len() {
+            return Err(MeasureError::SubsystemOutOfRange {
+                num_subsystems: dims.len(),
+                subsystem,
+            });
+        }
+    }
+    Ok(sorted)
+}
+
 fn subsystem_product(dims: &[usize], subsystems: &[usize]) -> Result<usize, MeasureError> {
     subsystems.iter().try_fold(1usize, |acc, &subsystem| {
         acc.checked_mul(dims[subsystem])
@@ -775,6 +1019,52 @@ fn embed_subsystem_index(
         index += coord * strides[subsystem];
     }
     index
+}
+
+fn project_subsystem_index(
+    dims: &[usize],
+    strides: &[usize],
+    subsystems: &[usize],
+    basis_index: usize,
+) -> usize {
+    let mut out = 0usize;
+    let mut out_stride = 1usize;
+    for &subsystem in subsystems {
+        let coord = (basis_index / strides[subsystem]) % dims[subsystem];
+        out += coord * out_stride;
+        out_stride *= dims[subsystem];
+    }
+    out
+}
+
+fn partial_transpose_subsystem(
+    rho: &DMatrix<Complex64>,
+    dims: &[usize],
+    subsystem: usize,
+) -> Result<DMatrix<Complex64>, MeasureError> {
+    validate_density_matrix(rho)?;
+    validate_subsystem_dimensions(rho, dims)?;
+    if subsystem >= dims.len() {
+        return Err(MeasureError::SubsystemOutOfRange {
+            num_subsystems: dims.len(),
+            subsystem,
+        });
+    }
+
+    let strides = subsystem_strides(dims)?;
+    let mut out = DMatrix::zeros(rho.nrows(), rho.ncols());
+    for row in 0..rho.nrows() {
+        for col in 0..rho.ncols() {
+            let row_coord = (row / strides[subsystem]) % dims[subsystem];
+            let col_coord = (col / strides[subsystem]) % dims[subsystem];
+            let transposed_row =
+                row - row_coord * strides[subsystem] + col_coord * strides[subsystem];
+            let transposed_col =
+                col - col_coord * strides[subsystem] + row_coord * strides[subsystem];
+            out[(transposed_row, transposed_col)] = rho[(row, col)];
+        }
+    }
+    Ok(out)
 }
 
 fn binary_entropy(probability: f64) -> f64 {
@@ -899,12 +1189,83 @@ mod tests {
     }
 
     #[test]
+    fn negativity_matches_bell_and_product_states() {
+        let bell = ket(&[
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+        ]);
+        let bell_rho = pure_density(&bell);
+        assert_close(negativity(&bell_rho, &[2, 2], 1).unwrap(), 0.5);
+        assert_close(logarithmic_negativity(&bell_rho, &[2, 2], 1).unwrap(), 1.0);
+
+        let product = pure_density(&ket(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ]));
+        assert_close(negativity(&product, &[2, 2], 1).unwrap(), 0.0);
+        assert_close(logarithmic_negativity(&product, &[2, 2], 1).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn schmidt_decomposition_matches_bell_and_product_states() {
+        let bell = ket(&[
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+        ]);
+        let bell_terms = schmidt_decomposition(&bell, &[2, 2], &[0]).unwrap();
+        assert_eq!(bell_terms.len(), 2);
+        assert_close(bell_terms[0].0, 1.0 / 2.0_f64.sqrt());
+        assert_close(bell_terms[1].0, 1.0 / 2.0_f64.sqrt());
+
+        let product = ket(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ]);
+        let product_terms = schmidt_decomposition(&product, &[2, 2], &[0]).unwrap();
+        assert_eq!(product_terms.len(), 1);
+        assert_close(product_terms[0].0, 1.0);
+    }
+
+    #[test]
     fn mutual_information_accepts_non_qubit_subsystem_dims() {
         let mut rho = DMatrix::zeros(6, 6);
         rho[(0, 0)] = Complex64::new(0.5, 0.0);
         rho[(5, 5)] = Complex64::new(0.5, 0.0);
 
         assert_close(mutual_information(&rho, (2, 3)).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn shannon_entropy_is_public_distribution_entropy() {
+        assert_close(shannon_entropy(&[0.5, 0.5], 2.0).unwrap(), 1.0);
+        assert_close(shannon_entropy(&[1.0, 0.0], 2.0).unwrap(), 0.0);
+        assert!(matches!(
+            shannon_entropy(&[0.25, 0.25], 2.0).unwrap_err(),
+            MeasureError::InvalidProbabilitySum { .. }
+        ));
+    }
+
+    #[test]
+    fn hellinger_distance_and_fidelity_match_classical_cases() {
+        assert_close(
+            hellinger_distance(&[0.25, 0.75], &[0.25, 0.75]).unwrap(),
+            0.0,
+        );
+        assert_close(
+            hellinger_fidelity(&[0.25, 0.75], &[0.25, 0.75]).unwrap(),
+            1.0,
+        );
+
+        assert_close(hellinger_distance(&[1.0, 0.0], &[0.0, 1.0]).unwrap(), 1.0);
+        assert_close(hellinger_fidelity(&[1.0, 0.0], &[0.0, 1.0]).unwrap(), 0.0);
     }
 
     #[test]

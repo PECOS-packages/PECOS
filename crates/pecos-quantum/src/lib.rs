@@ -115,9 +115,10 @@ pub use diamond_norm::{
 };
 pub use measures::{
     DensityMatrixPartialTrace, MeasureError, average_gate_fidelity, concurrence,
-    entanglement_of_formation, entropy, entropy_with_base, gate_error, mutual_information,
-    partial_trace_qubits, partial_trace_subsystems, process_fidelity, purity, state_fidelity,
-    state_fidelity_with_density_matrix,
+    entanglement_of_formation, entropy, entropy_with_base, gate_error, hellinger_distance,
+    hellinger_fidelity, logarithmic_negativity, mutual_information, negativity,
+    partial_trace_qubits, partial_trace_subsystems, process_fidelity, purity,
+    schmidt_decomposition, shannon_entropy, state_fidelity, state_fidelity_with_density_matrix,
 };
 
 // Re-export operator matrix types for convenient method-style matrix conversion

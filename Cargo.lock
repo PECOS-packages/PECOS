@@ -4358,6 +4358,7 @@ dependencies = [
  "dirs",
  "libc",
  "log",
+ "nalgebra",
  "ndarray 0.17.2",
  "num-complex 0.4.6",
  "parking_lot",

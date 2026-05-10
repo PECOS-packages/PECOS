@@ -61,6 +61,7 @@ mod phir_json_bridge;
 mod programs_module;
 mod py_foreign_decoder;
 mod py_foreign_simulator;
+mod quantum_info_bindings;
 mod shot_results_bindings;
 mod sim;
 mod simulator_utils;
@@ -314,6 +315,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
     dag_circuit_bindings::register_quantum_circuit_types(m)?;
+
+    // Register quantum-information channel and measure types
+    quantum_info_bindings::register_quantum_info_module(m)?;
 
     // Register gate registry types (GateRegistry, GateDefBuilder, AngleSource)
     gate_registry_bindings::register_gate_registry_types(m)?;

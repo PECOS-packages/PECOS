@@ -48,6 +48,7 @@ mod gpu_sampler;
 mod gpu_stab;
 mod gpu_stab_multi;
 pub mod prelude;
+pub mod state_access;
 
 #[cfg(test)]
 mod gpu_sampler_validation;
@@ -75,6 +76,7 @@ pub use gpu_pauli_prop::GpuPauliProp;
 pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};
 pub use gpu_stab::GpuStab;
 pub use gpu_stab_multi::GpuStabMulti;
+pub use state_access::{GpuDensityMatrixHostAccess, GpuStateVectorHostAccess};
 
 /// Default GPU stabilizer simulator using `PecosRng`
 pub type DefaultGpuStab = GpuStab<pecos_random::PecosRng>;

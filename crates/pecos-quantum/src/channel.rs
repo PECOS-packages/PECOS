@@ -140,6 +140,13 @@ pub enum ChannelError {
         /// Repeated qubit/subsystem index.
         qubit: usize,
     },
+    /// A tomography reconstruction had the wrong number of basis samples.
+    InvalidTomographySampleCount {
+        /// Expected number of operator-basis outputs.
+        expected: usize,
+        /// Actual number of supplied outputs.
+        actual: usize,
+    },
 }
 
 impl fmt::Display for ChannelError {
@@ -196,6 +203,10 @@ impl fmt::Display for ChannelError {
             Self::DuplicateSubsystem { qubit } => {
                 write!(f, "duplicate subsystem/qubit index: {qubit}")
             }
+            Self::InvalidTomographySampleCount { expected, actual } => write!(
+                f,
+                "invalid tomography sample count {actual}; expected {expected} operator-basis outputs"
+            ),
         }
     }
 }
@@ -1399,6 +1410,49 @@ impl ChoiMatrix {
         Self::try_new(ptm.num_qubits, matrix)
     }
 
+    /// Reconstructs a Choi matrix from complete operator-basis tomography data.
+    ///
+    /// `outputs` must contain `d^2` matrices, where `d = 2^num_qubits`.
+    /// Entry `input_row + input_col * d` is the measured/reconstructed output
+    /// operator `E(|input_row><input_col|)`. This is linear-inversion process
+    /// tomography in the computational matrix-unit basis, using PECOS's
+    /// column-stacked Choi convention.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow, the sample count is not
+    /// `d^2`, or any output matrix is not `d x d`.
+    pub fn from_matrix_unit_outputs(
+        num_qubits: usize,
+        outputs: &[DMatrix<Complex64>],
+    ) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(num_qubits)?;
+        let dim_squared = pauli_basis_len(num_qubits)?;
+        if outputs.len() != dim_squared {
+            return Err(ChannelError::InvalidTomographySampleCount {
+                expected: dim_squared,
+                actual: outputs.len(),
+            });
+        }
+
+        let mut matrix = DMatrix::zeros(dim_squared, dim_squared);
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let output = &outputs[matrix_unit_index(dim, input_row, input_col)];
+                validate_complex_matrix(output, dim, dim)?;
+                for output_row in 0..dim {
+                    for output_col in 0..dim {
+                        matrix[(
+                            choi_index(dim, output_row, input_row),
+                            choi_index(dim, output_col, input_col),
+                        )] = output[(output_row, output_col)];
+                    }
+                }
+            }
+        }
+        Self::try_new(num_qubits, matrix)
+    }
+
     /// Converts this Choi matrix to a dense PTM.
     ///
     /// # Errors
@@ -1715,6 +1769,29 @@ pub fn partial_trace(
     Ok(out)
 }
 
+/// Returns the computational matrix-unit operator basis.
+///
+/// The returned vector has length `d^2`, where `d = 2^num_qubits`. Entry
+/// `row + col * d` is the matrix unit `|row><col|`. This order is the input
+/// order expected by [`ChoiMatrix::from_matrix_unit_outputs`].
+///
+/// # Errors
+///
+/// Returns an error when the Hilbert-space dimension overflows.
+pub fn matrix_unit_basis(num_qubits: usize) -> Result<Vec<DMatrix<Complex64>>, ChannelError> {
+    let dim = hilbert_dim(num_qubits)?;
+    let dim_squared = pauli_basis_len(num_qubits)?;
+    let mut basis = Vec::with_capacity(dim_squared);
+    for col in 0..dim {
+        for row in 0..dim {
+            let mut matrix = DMatrix::zeros(dim, dim);
+            matrix[(row, col)] = Complex64::new(1.0, 0.0);
+            basis.push(matrix);
+        }
+    }
+    Ok(basis)
+}
+
 /// Samples a random `num_qubits`-qubit Pauli string.
 ///
 /// Each qubit independently receives one of `I, X, Y, Z` with equal
@@ -1995,6 +2072,10 @@ fn embed_single_qubit_operator(
 
 fn choi_index(dim: usize, output_index: usize, input_index: usize) -> usize {
     output_index + input_index * dim
+}
+
+fn matrix_unit_index(dim: usize, row: usize, col: usize) -> usize {
+    row + col * dim
 }
 
 fn trace_complex(matrix: &DMatrix<Complex64>) -> Complex64 {
@@ -2730,6 +2811,67 @@ mod tests {
         assert!(matches!(
             choi.to_kraus_with_tolerance(-1e-12).unwrap_err(),
             ChannelError::DecompositionFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn matrix_unit_basis_uses_column_stacked_order() {
+        let basis = matrix_unit_basis(1).unwrap();
+        assert_eq!(basis.len(), 4);
+        for (idx, (row, col)) in [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().enumerate() {
+            let mut expected = DMatrix::zeros(2, 2);
+            expected[(row, col)] = Complex64::new(1.0, 0.0);
+            assert_complex_matrix_close(&basis[idx], &expected);
+        }
+    }
+
+    #[test]
+    fn choi_reconstructs_identity_from_matrix_unit_outputs() {
+        let inputs = matrix_unit_basis(1).unwrap();
+        let reconstructed = ChoiMatrix::from_matrix_unit_outputs(1, &inputs).unwrap();
+        let expected = ChoiMatrix::from_unitary(&unitary::I(0), 1).unwrap();
+
+        assert_complex_matrix_close(reconstructed.matrix(), expected.matrix());
+        assert!(reconstructed.is_cptp());
+        assert!(reconstructed.is_unital());
+    }
+
+    #[test]
+    fn choi_reconstructs_amplitude_damping_from_matrix_unit_outputs() {
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let expected = ChoiMatrix::from_channel_expr(&expr).unwrap();
+        let outputs: Vec<DMatrix<Complex64>> = matrix_unit_basis(1)
+            .unwrap()
+            .iter()
+            .map(|operator| expected.apply_to_operator(operator).unwrap())
+            .collect();
+
+        let reconstructed = ChoiMatrix::from_matrix_unit_outputs(1, &outputs).unwrap();
+        assert_complex_matrix_close(reconstructed.matrix(), expected.matrix());
+        assert!(reconstructed.is_cptp());
+        assert!(!reconstructed.is_unital());
+    }
+
+    #[test]
+    fn choi_tomography_rejects_bad_sample_count_and_shape() {
+        let err = ChoiMatrix::from_matrix_unit_outputs(1, &[]).unwrap_err();
+        assert_eq!(
+            err,
+            ChannelError::InvalidTomographySampleCount {
+                expected: 4,
+                actual: 0
+            }
+        );
+
+        let bad_outputs = vec![DMatrix::zeros(2, 2); 3]
+            .into_iter()
+            .chain(std::iter::once(DMatrix::zeros(3, 3)))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            ChoiMatrix::from_matrix_unit_outputs(1, &bad_outputs).unwrap_err(),
+            ChannelError::InvalidMatrixShape { .. }
         ));
     }
 

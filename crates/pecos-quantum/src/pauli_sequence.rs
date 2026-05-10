@@ -83,8 +83,8 @@ impl F2Matrix {
     pub fn from_rows(rows: Vec<Vec<u8>>) -> Self {
         let num_cols = rows.first().map_or(0, Vec::len);
         let mut mat = Self::zeros(rows.len(), num_cols);
-        for (i, row) in rows.iter().enumerate() {
-            mat.set_row(i, row);
+        for (i, row) in rows.into_iter().enumerate() {
+            mat.set_row(i, &row);
         }
         mat
     }

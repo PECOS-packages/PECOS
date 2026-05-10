@@ -458,7 +458,7 @@ pub fn concurrence(rho: &DMatrix<Complex64>) -> Result<f64, MeasureError> {
         .collect();
     roots.sort_by(|a, b| b.total_cmp(a));
     let value = roots[0] - roots[1] - roots[2] - roots[3];
-    Ok(value.max(0.0).min(1.0))
+    Ok(value.clamp(0.0, 1.0))
 }
 
 /// Returns the two-qubit entanglement of formation.
@@ -471,7 +471,7 @@ pub fn concurrence(rho: &DMatrix<Complex64>) -> Result<f64, MeasureError> {
 /// Returns an error when [`concurrence`] fails.
 pub fn entanglement_of_formation(rho: &DMatrix<Complex64>) -> Result<f64, MeasureError> {
     let concurrence = concurrence(rho)?;
-    let argument = (1.0 + (1.0 - concurrence * concurrence).max(0.0).sqrt()) / 2.0;
+    let argument = f64::midpoint(1.0, (1.0 - concurrence * concurrence).max(0.0).sqrt());
     Ok(binary_entropy(argument))
 }
 

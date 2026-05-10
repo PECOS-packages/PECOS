@@ -52,16 +52,32 @@ assert Pauli.X.to_int() == 1
 ### Pauli Strings
 
 `PauliString` represents a multi-qubit Pauli operator with a phase from {+1, -1, +i, -i}.
+For inline code, prefer constructor syntax such as `X(0) & Z(1)`. Use sparse
+strings like `"X0 Z1"` when text input is useful and dense strings like `"XZ"`
+for compact table-like input.
 
 ```python
-from pecos_rslib import Pauli, PauliString
+from pecos_rslib import Pauli, PauliString, X, Z
 
-# From string notation
-p = PauliString.from_str("XZI")  # X on qubit 0, Z on qubit 1, I on qubit 2
-q = PauliString.from_str("ZXI")
+# Constructor syntax
+p = X(0) & Z(1)
+q = Z(0) & X(1)
 
 # From list of (Pauli, qubit) pairs
-p = PauliString([(Pauli.X, 0), (Pauli.Z, 1)])
+same_p = PauliString([(Pauli.X, 0), (Pauli.Z, 1)])
+assert p == same_p
+
+# From string notation
+sparse_text = PauliString.from_sparse_str("X0 Z1")
+dense_text = PauliString.from_dense_str("XZ")
+auto_detected = PauliString.from_str("X0 Z1")
+assert p == sparse_text
+assert p == dense_text
+assert p == auto_detected
+
+# To string notation
+assert p.to_sparse_str() == "+X0 Z1"
+assert p.to_dense_str() == "+XZ"
 
 # Get components
 print(p.get_paulis())  # [(Pauli.X, 0), (Pauli.Z, 1)]
@@ -74,9 +90,9 @@ print(p)  # Shows sparse representation with non-identity operators
 ### Matrix Representation
 
 ```python
-from pecos_rslib import PauliString
+from pecos_rslib import X, Z
 
-p = PauliString.from_str("XZ")
+p = X(0) & Z(1)
 matrix = p.to_matrix()  # Returns complex matrix as list of lists
 # Each element is a (real, imag) tuple
 ```
@@ -86,11 +102,11 @@ matrix = p.to_matrix()  # Returns complex matrix as list of lists
 `PauliStabilizerGroup` represents a group of mutually commuting Pauli strings with real phases (+1 or -1). This is the standard stabilizer group used in QEC.
 
 ```python
-from pecos_rslib import PauliString, PauliStabilizerGroup
+from pecos_rslib import PauliStabilizerGroup, Z
 
 # Create from generators
-g1 = PauliString.from_str("ZZI")
-g2 = PauliString.from_str("IZZ")
+g1 = Z(0) & Z(1)
+g2 = Z(1) & Z(2)
 group = PauliStabilizerGroup([g1, g2])
 
 # Basic properties
@@ -100,7 +116,7 @@ print(group.num_generators())  # 2
 print(group.is_independent())  # True
 
 # Membership testing (GF(2) span)
-ziz = PauliString.from_str("ZIZ")
+ziz = Z(0) & Z(2)
 print(group.contains(ziz))  # True (ZIZ = ZZI * IZZ)
 print(group.contains_with_phase(ziz))  # True (with correct +1 phase)
 
@@ -124,12 +140,12 @@ group = PauliStabilizerGroup.from_str("Z0 Z1\nZ1 Z2")
 ### Modifying Groups
 
 ```python
-from pecos_rslib import PauliString, PauliStabilizerGroup
+from pecos_rslib import PauliStabilizerGroup, X
 
 group = PauliStabilizerGroup.from_str("ZZI\nIZZ")
 
 # Add a generator (must commute with existing generators)
-group.add_generator(PauliString.from_str("XXX"))
+group.add_generator(X(0) & X(1) & X(2))
 
 # Remove a generator by index
 removed = group.remove_generator(2)  # Returns the removed PauliString
@@ -144,10 +160,10 @@ group.merge(other)
 `PauliSequence` is an ordered list of Pauli strings with no constraints (they can anticommute). Provides GF(2) symplectic analysis.
 
 ```python
-from pecos_rslib import PauliString, PauliSequence
+from pecos_rslib import PauliSequence, X, Y, Z
 
-p1 = PauliString.from_str("XZ")
-p2 = PauliString.from_str("ZX")
+p1 = X(0) & Z(1)
+p2 = Z(0) & X(1)
 seq = PauliSequence([p1, p2])
 
 # Analysis
@@ -159,7 +175,7 @@ comm = seq.commutation_matrix()
 # comm[i][j] is 1 if seq[i] anticommutes with seq[j]
 
 # GF(2) membership
-print(seq.contains(PauliString.from_str("YY")))  # True (XZ * ZX = -YY in GF(2) span)
+print(seq.contains(Y(0) & Y(1)))  # True (XZ * ZX = -YY in GF(2) span)
 
 # Row reduction to independent subset
 reduced = seq.row_reduce()
@@ -237,22 +253,22 @@ for op in logicals:
 ### Syndrome Computation
 
 ```python
-from pecos_rslib import StabilizerCode, PauliString
+from pecos_rslib import StabilizerCode, X, Z
 
 code = StabilizerCode.repetition(3)
 
 # X error on qubit 0
-error = PauliString.from_str("XII")
+error = X(0)
 syndrome = code.syndrome(error)
 print(syndrome)  # [True, False] -- triggers first stabilizer
 
 # X error on qubit 1
-error = PauliString.from_str("IXI")
+error = X(1)
 syndrome = code.syndrome(error)
 print(syndrome)  # [True, True] -- triggers both stabilizers
 
 # Z error (undetectable by Z-stabilizers)
-error = PauliString.from_str("ZII")
+error = Z(0)
 syndrome = code.syndrome(error)
 print(syndrome)  # [False, False]
 ```

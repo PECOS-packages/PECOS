@@ -70,9 +70,16 @@ fn test_user_guide_quantum_operator_algebra_rust_3() {
 #[test]
 fn test_user_guide_quantum_operator_algebra_rust_4() {
     use pecos_core::PauliString;
-    let p: PauliString = "XZI".parse().unwrap();    // X(0) & Z(1)
-    let q: PauliString = "+XZZXI".parse().unwrap(); // with explicit phase
-    let r: PauliString = "-iYX".parse().unwrap();   // -i * Y(0) * X(1)
+    let sparse: PauliString = "X0 Z3".parse().unwrap();
+    let dense: PauliString = "XIIZ".parse().unwrap();
+    let explicit_sparse = PauliString::from_sparse_str("X0 Z3").unwrap();
+    let explicit_dense = PauliString::from_dense_str("XIIZ").unwrap();
+
+    assert_eq!(sparse, dense);
+    assert_eq!(sparse, explicit_sparse);
+    assert_eq!(dense, explicit_dense);
+    assert_eq!(sparse.to_sparse_str(), "+X0 Z3");
+    assert_eq!(sparse.to_dense_str(None), "+XIIZ");
 }
 
 

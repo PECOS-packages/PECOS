@@ -82,6 +82,7 @@ For OpenQASM, PHIR, or other formats, see the [documentation](#documentation). F
 For tutorials, API reference, and advanced features:
 
 - [Getting Started Guide](docs/user-guide/getting-started.md) — Installation, first simulation, next steps
+- [PECOS Concepts](docs/user-guide/pecos-concepts.md) — Detectors, observables, tracked operators, gates, and noise
 - [Simulators Guide](docs/user-guide/simulators.md) — Choosing the right backend
 - [Noise Model Builders](docs/user-guide/noise-model-builders.md) — Adding realistic noise
 - [Decoders Guide](docs/user-guide/decoders.md) — Quantum error correction decoding

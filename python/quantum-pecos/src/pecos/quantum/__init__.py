@@ -56,19 +56,23 @@ Examples:
     >>> errors = array([Pauli.X, Pauli.Y, Pauli.Z])
 
     >>> # Create Pauli strings with convenient syntax
-    >>> from pecos.quantum import pauli_string
-    >>> ps = pauli_string("XYZ", phase=-1)  # -X_0 Y_1 Z_2
+    >>> from pecos.quantum import X, Z, pauli_string
+    >>> ps = X(0) & Z(3)
+    >>> from_text = pauli_string("X0 Z3")
+    >>> assert ps == from_text
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
+from collections.abc import Sequence as SequenceABC
 from typing import TYPE_CHECKING
 
 from pecos.quantum import commute, gate_groups
 from pecos.typing import INTEGER_TYPES
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from pecos.typing import Integer
 
@@ -118,6 +122,9 @@ try:
         SZdg,
         SZZdg,
         TableauWrapper,
+        X,
+        Y,
+        Z,
         adjust_tableau_string,
         sparse_stab,
     )
@@ -152,7 +159,7 @@ except ImportError as e:
 
 
 def pauli_string(
-    operators: str | Sequence[tuple[Pauli, int]] | dict[int, Pauli],
+    operators: str | Sequence[tuple[Pauli, int]] | Sequence[Pauli] | Mapping[int, Pauli],
     phase: complex = 1,
 ) -> PauliString:
     """Create a PauliString from a convenient specification.
@@ -162,9 +169,10 @@ def pauli_string(
 
     Args:
         operators: One of the following:
-            - String like "XYZ" or "IXZI" (sequential qubits starting at 0)
-            - List of (Pauli, qubit_index) tuples
-            - Dict mapping qubit_index -> Pauli
+            - Sparse string like "X0 Z2" or dense string like "XIZ"
+            - Sequence of (Pauli, qubit_index) tuples
+            - Sequence of Pauli values for implicit qubits 0, 1, 2, ...
+            - Mapping from qubit_index -> Pauli
         phase: Phase factor, one of:
             - 1 or +1: Plus one (default)
             - -1: Minus one
@@ -175,11 +183,19 @@ def pauli_string(
         PauliString object
 
     Examples:
-        >>> from pecos.quantum import Pauli, pauli_string
+        >>> from pecos.quantum import Pauli, X, Z, pauli_string
 
-        >>> # From string (sequential qubits)
-        >>> ps = pauli_string("XYZ")
-        >>> print(ps)  # X_0 Y_1 Z_2
+        >>> # Constructor syntax is preferred for ordinary code
+        >>> ps = X(0) & Z(2)
+        >>> print(ps)  # X_0 Z_2
+
+        >>> # From sparse string (explicit qubit indices)
+        >>> ps = pauli_string("X0 Z2")
+        >>> print(ps)  # X_0 Z_2
+
+        >>> # From dense string (character position is qubit index)
+        >>> ps = pauli_string("XIZ")
+        >>> print(ps)  # X_0 Z_2
 
         >>> # From list of (Pauli, qubit) tuples
         >>> ps = pauli_string([(Pauli.X, 0), (Pauli.Z, 2)])
@@ -229,14 +245,14 @@ def pauli_string(
             paulis = ps.get_paulis()
             return PauliString(paulis, phase=phase_code)
         return ps
-    if isinstance(operators, dict):
-        # Dict format - convert to list
+    if isinstance(operators, MappingABC):
+        # Mapping format - convert to list
         paulis = [(pauli, qubit) for qubit, pauli in sorted(operators.items())]
         return PauliString(paulis, phase=phase_code)
-    if isinstance(operators, list):
-        # Already in list format
-        return PauliString(operators, phase=phase_code)
-    msg = f"Invalid operators type: {type(operators)}. Must be str, dict, or list"
+    if isinstance(operators, SequenceABC):
+        # PyO3 constructor accepts lists, so normalize all Python sequences.
+        return PauliString(list(operators), phase=phase_code)
+    msg = f"Invalid operators type: {type(operators)}. Must be str, mapping, or sequence"
     raise TypeError(msg)
 
 
@@ -295,6 +311,9 @@ __all__ = [
     "TickHandle",
     "TickMeasureHandle",
     "TickPrepHandle",
+    "X",
+    "Y",
+    "Z",
     "adjust_tableau_string",
     "commute",
     "gate_groups",

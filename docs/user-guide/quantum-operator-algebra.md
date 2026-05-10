@@ -109,12 +109,23 @@ All three implement the `PauliOperator` trait, which provides `multiply()`, `wei
 
 ### Parsing from Strings
 
+Use constructors for ordinary code. Use sparse strings when explicit qubit
+indices make text input clearer, and dense strings when positional notation is
+useful for compact tables.
+
 ```rust
 use pecos_core::PauliString;
 
-let p: PauliString = "XZI".parse().unwrap();    // X(0) & Z(1)
-let q: PauliString = "+XZZXI".parse().unwrap(); // with explicit phase
-let r: PauliString = "-iYX".parse().unwrap();   // -i * Y(0) * X(1)
+let sparse: PauliString = "X0 Z3".parse().unwrap();
+let dense: PauliString = "XIIZ".parse().unwrap();
+let explicit_sparse = PauliString::from_sparse_str("X0 Z3").unwrap();
+let explicit_dense = PauliString::from_dense_str("XIIZ").unwrap();
+
+assert_eq!(sparse, dense);
+assert_eq!(sparse, explicit_sparse);
+assert_eq!(dense, explicit_dense);
+assert_eq!(sparse.to_sparse_str(), "+X0 Z3");
+assert_eq!(sparse.to_dense_str(None), "+XIIZ");
 ```
 
 ---

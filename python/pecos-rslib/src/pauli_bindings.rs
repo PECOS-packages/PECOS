@@ -256,44 +256,45 @@ impl PauliString {
         Ok(PauliString { inner })
     }
 
-    /// Create `PauliString` from a string like "XYZ" or "IXZI"
+    /// Create `PauliString` from dense or sparse string notation.
     ///
     /// Args:
-    ///     s: String of Pauli operators (I, X, Y, Z)
+    ///     s: Dense notation like "XIZ" or sparse notation like "X0 Z2".
     ///
     /// Returns:
-    ///     `PauliString` with operators on sequential qubits starting at 0
+    ///     `PauliString` parsed with the same auto-detection as Rust.
     ///
     /// Examples:
-    ///     >>> ps = `PauliString.from_str("XYZ`")
+    ///     >>> ps = PauliString.from_str("XYZ")
     ///     >>> # X on qubit 0, Y on qubit 1, Z on qubit 2
+    ///     >>> ps = PauliString.from_str("X0 Z2")
+    ///     >>> # X on qubit 0, Z on qubit 2
     #[staticmethod]
     fn from_str(s: &str) -> PyResult<Self> {
-        // Parse string character by character
-        let mut paulis = Vec::new();
+        s.parse::<RustPauliString>()
+            .map(|inner| PauliString { inner })
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+    }
 
-        for (i, c) in s.chars().enumerate() {
-            let pauli = match c {
-                'I' | 'i' => RustPauli::I,
-                'X' | 'x' => RustPauli::X,
-                'Y' | 'y' => RustPauli::Y,
-                'Z' | 'z' => RustPauli::Z,
-                _ => {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Invalid Pauli character '{c}' at position {i}. Must be 'I', 'X', 'Y', or 'Z'"
-                    )));
-                }
-            };
+    /// Create `PauliString` from dense string notation.
+    ///
+    /// Dense notation uses one Pauli character per qubit index, e.g. "XIZ"
+    /// means X on qubit 0 and Z on qubit 2.
+    #[staticmethod]
+    fn from_dense_str(s: &str) -> PyResult<Self> {
+        RustPauliString::from_dense_str(s)
+            .map(|inner| PauliString { inner })
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+    }
 
-            // Only store non-identity operators (sparse representation)
-            if pauli != RustPauli::I {
-                paulis.push((pauli, QubitId::new(i)));
-            }
-        }
-
-        let inner = RustPauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis);
-
-        Ok(PauliString { inner })
+    /// Create `PauliString` from sparse string notation.
+    ///
+    /// Sparse notation uses Pauli/qubit tokens, e.g. "X0 Z2".
+    #[staticmethod]
+    fn from_sparse_str(s: &str) -> PyResult<Self> {
+        RustPauliString::from_sparse_str(s)
+            .map(|inner| PauliString { inner })
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// String representation
@@ -327,6 +328,21 @@ impl PauliString {
             .join(" ");
 
         format!("{phase_str}{pauli_str}")
+    }
+
+    /// Dense string representation with an explicit phase prefix.
+    ///
+    /// Example: `+XIZ` for X on qubit 0 and Z on qubit 2.
+    #[pyo3(signature = (num_qubits=None))]
+    fn to_dense_str(&self, num_qubits: Option<usize>) -> String {
+        self.inner.to_dense_str(num_qubits)
+    }
+
+    /// Sparse string representation with an explicit phase prefix.
+    ///
+    /// Example: `+X0 Z2` for X on qubit 0 and Z on qubit 2.
+    fn to_sparse_str(&self) -> String {
+        self.inner.to_sparse_str()
     }
 
     /// Repr for debugging

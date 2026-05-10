@@ -131,6 +131,17 @@ noise = (
 )
 ```
 
+### Idle Locations
+
+`Idle` gates are timing markers by default. They do not silently inherit
+single-qubit gate noise from `p1` or `with_p1_probability(...)`.
+
+This is intentional: adding an idle location changes circuit timing, while
+adding idle noise changes the physical noise model. To model idle decoherence,
+use an API that explicitly attaches idle noise or an explicit channel to idle
+locations. This keeps scheduling changes from accidentally changing the noise
+model.
+
 ## Common Noise Model Examples
 
 ### Basic Depolarizing Noise

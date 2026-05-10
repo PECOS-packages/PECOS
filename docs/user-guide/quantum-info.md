@@ -55,6 +55,12 @@ print(pauli_channel_diamond_norm(left, right))
 print(pauli_channel_diamond_distance(left, right))
 ```
 
+Arbitrary-channel diamond norm is intentionally not exposed yet. General
+channels require a semidefinite program, and PECOS will only expose that API
+once the solver and SDP assembly live in Rust with PECOS-owned validation. The
+current Rust groundwork covers the exact Pauli-channel formula plus internal
+linear-algebra helpers for future SDP assembly.
+
 For multi-qubit Pauli channels, pass a label-to-probability map:
 
 ```python
@@ -113,6 +119,13 @@ outputs = design.simulate_outputs(choi)
 reconstructed = design.reconstruct_choi(outputs)
 assert reconstructed.matrix() == choi.matrix()
 ```
+
+Physical process tomography is a separate layer. A physical workflow prepares
+experimentally realizable input states, measures in chosen bases, aggregates
+shot counts, and reconstructs an estimated channel before converting it into
+`Ptm`, `ChoiMatrix`, or another channel representation. The current
+`ProcessTomographyDesign` is the Rust-backed exact reconstruction primitive
+that those higher-level experiment-design helpers should build on.
 
 The dense channel forms convert through the same Rust-backed validation path:
 

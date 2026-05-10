@@ -309,8 +309,8 @@ pub fn hermitian_to_real_symmetric_with_tolerance(
 /// row-vector convention used by the Watrous diamond-norm SDP objective.
 ///
 /// PECOS indexes Choi rows and columns as `output + input * dim_output`.
-/// This helper performs the same convention transform described in Qiskit's
-/// diamond-norm implementation:
+/// This helper performs the convention transform used when assembling the
+/// row-vector form of the Watrous SDP:
 ///
 /// ```text
 /// reshape(J, (dim_in, dim_out, dim_in, dim_out))

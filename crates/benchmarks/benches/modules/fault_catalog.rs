@@ -192,6 +192,25 @@ fn bench_noise_sweeps<M: Measurement>(c: &mut Criterion<M>) {
         );
 
         group.bench_with_input(
+            BenchmarkId::new("mutable_catalog_sweep", id.clone()),
+            &memory,
+            |b, memory| {
+                b.iter(|| {
+                    let mut catalog = FaultCatalog::from_circuit(black_box(&memory.circuit))
+                        .expect("surface memory circuit should be supported");
+                    let mut total_locations = 0usize;
+                    let mut total_alternatives = 0usize;
+                    for noise in SWEEP_NOISES {
+                        catalog.with_noise(black_box(noise));
+                        total_locations += catalog.locations.len();
+                        total_alternatives += count_alternatives(&catalog);
+                    }
+                    black_box((total_locations, total_alternatives))
+                });
+            },
+        );
+
+        group.bench_with_input(
             BenchmarkId::new("direct_raw_mechanism_sweep", id.clone()),
             &memory,
             |b, memory| {
@@ -213,7 +232,7 @@ fn bench_noise_sweeps<M: Measurement>(c: &mut Criterion<M>) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("parameterized_raw_mechanism_sweep", id),
+            BenchmarkId::new("parameterized_raw_mechanism_sweep", id.clone()),
             &memory,
             |b, memory| {
                 b.iter(|| {
@@ -223,6 +242,29 @@ fn bench_noise_sweeps<M: Measurement>(c: &mut Criterion<M>) {
                     let mut total_alternatives = 0usize;
                     for noise in SWEEP_NOISES {
                         let catalog = structural.parameterized(noise);
+                        let mechanisms = catalog.to_mechanisms();
+                        total_mechanisms += mechanisms.len();
+                        total_alternatives += mechanisms
+                            .iter()
+                            .map(|mechanism| mechanism.alternatives.len())
+                            .sum::<usize>();
+                    }
+                    black_box((total_mechanisms, total_alternatives))
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("mutable_raw_mechanism_sweep", id),
+            &memory,
+            |b, memory| {
+                b.iter(|| {
+                    let mut catalog = FaultCatalog::from_circuit(black_box(&memory.circuit))
+                        .expect("surface memory circuit should be supported");
+                    let mut total_mechanisms = 0usize;
+                    let mut total_alternatives = 0usize;
+                    for noise in SWEEP_NOISES {
+                        catalog.with_noise(black_box(noise));
                         let mechanisms = catalog.to_mechanisms();
                         total_mechanisms += mechanisms.len();
                         total_alternatives += mechanisms

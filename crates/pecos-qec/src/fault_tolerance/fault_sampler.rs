@@ -164,6 +164,8 @@ pub struct StochasticNoiseParams {
 /// A gate in the flattened gate list (one entry per qubit-pair or single qubit).
 #[derive(Clone, Debug)]
 pub(crate) struct GateLoc {
+    pub(crate) tick: usize,
+    pub(crate) gate_index: usize,
     pub(crate) gate_type: GateType,
     pub(crate) qubits: Vec<usize>,
 }
@@ -259,8 +261,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
     let mut meas_positions = HashMap::new();
     let mut meas_count = 0usize;
 
-    for tick in tc.ticks() {
-        for gate in tick.gates() {
+    for (tick_idx, tick) in tc.ticks().iter().enumerate() {
+        for (gate_idx, gate) in tick.gates().iter().enumerate() {
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
             let is_mz = is_supported_measurement_gate(gate.gate_type);
             let is_2q = is_standard_2q_clifford_gate(gate.gate_type);
@@ -270,6 +272,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
                     meas_positions.insert(gates.len(), meas_count);
                     meas_count += 1;
                     gates.push(GateLoc {
+                        tick: tick_idx,
+                        gate_index: gate_idx,
                         gate_type: gate.gate_type,
                         qubits: vec![q],
                     });
@@ -277,6 +281,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
             } else if is_2q && qs.len() > 2 {
                 for pair in qs.chunks(2).filter(|c| c.len() == 2) {
                     gates.push(GateLoc {
+                        tick: tick_idx,
+                        gate_index: gate_idx,
                         gate_type: gate.gate_type,
                         qubits: vec![pair[0], pair[1]],
                     });
@@ -284,6 +290,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
             } else if qs.len() > 1 && !is_2q && !is_mz {
                 for &q in &qs {
                     gates.push(GateLoc {
+                        tick: tick_idx,
+                        gate_index: gate_idx,
                         gate_type: gate.gate_type,
                         qubits: vec![q],
                     });
@@ -294,6 +302,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
                     meas_count += 1;
                 }
                 gates.push(GateLoc {
+                    tick: tick_idx,
+                    gate_index: gate_idx,
                     gate_type: gate.gate_type,
                     qubits: qs,
                 });
@@ -1066,58 +1076,16 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
 
     let mut locations = Vec::new();
 
-    // Track original tick/gate indices through the flattened gate list
-    let mut tick_gate_map: Vec<(usize, usize)> = Vec::new();
-    for (tick_idx, tick) in tc.ticks().iter().enumerate() {
-        for (gate_idx, _gate) in tick.gates().iter().enumerate() {
-            tick_gate_map.push((tick_idx, gate_idx));
-        }
-    }
-
-    // Re-walk the flattened gate list (same order as build_fault_table)
-    // but record location metadata and Pauli labels
-    let mut flat_idx_to_tick_gate: Vec<(usize, usize, GateType, Vec<usize>)> = Vec::new();
-    {
-        let mut orig_idx = 0;
-        for tick in tc.ticks() {
-            for gate in tick.gates() {
-                let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-                let is_mz = is_supported_measurement_gate(gate.gate_type);
-                let is_2q = is_standard_2q_clifford_gate(gate.gate_type);
-                let (tick_idx, gate_idx) = tick_gate_map[orig_idx];
-
-                if is_mz && qs.len() > 1 {
-                    for &q in &qs {
-                        flat_idx_to_tick_gate.push((tick_idx, gate_idx, gate.gate_type, vec![q]));
-                    }
-                } else if is_2q && qs.len() > 2 {
-                    for pair in qs.chunks(2).filter(|c| c.len() == 2) {
-                        flat_idx_to_tick_gate.push((
-                            tick_idx,
-                            gate_idx,
-                            gate.gate_type,
-                            vec![pair[0], pair[1]],
-                        ));
-                    }
-                } else if qs.len() > 1 && !is_2q && !is_mz {
-                    for &q in &qs {
-                        flat_idx_to_tick_gate.push((tick_idx, gate_idx, gate.gate_type, vec![q]));
-                    }
-                } else {
-                    flat_idx_to_tick_gate.push((tick_idx, gate_idx, gate.gate_type, qs));
-                }
-                orig_idx += 1;
-            }
-        }
-    }
-
     let pauli_types = [PauliType::X, PauliType::Y, PauliType::Z];
     let mut effect_cache = PropagatedEffectCache::default();
 
     for (loc_idx, loc) in gates.iter().enumerate() {
-        let (tick_idx, gate_idx, gate_type, ref qubits) = flat_idx_to_tick_gate[loc_idx];
+        let tick_idx = loc.tick;
+        let gate_idx = loc.gate_index;
+        let gate_type = loc.gate_type;
+        let qubits = &loc.qubits;
 
-        match loc.gate_type {
+        match gate_type {
             gate_type if is_standard_1q_clifford_gate(gate_type) && !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
                 let num_alts = 3;
@@ -2052,6 +2020,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_flatten_tick_circuit_preserves_source_metadata() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0), QubitId(1)]);
+        tc.tick()
+            .cx(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        tc.tick().mz(&[QubitId(0), QubitId(1)]);
+
+        let (gates, meas_positions) = flatten_tick_circuit(&tc);
+
+        assert_eq!(gates.len(), 6);
+        assert_eq!(meas_positions.get(&4), Some(&0));
+        assert_eq!(meas_positions.get(&5), Some(&1));
+
+        assert_eq!(gates[0].tick, 0);
+        assert_eq!(gates[0].gate_index, 0);
+        assert_eq!(gates[0].gate_type, GateType::H);
+        assert_eq!(gates[0].qubits, vec![0]);
+
+        assert_eq!(gates[1].tick, 0);
+        assert_eq!(gates[1].gate_index, 0);
+        assert_eq!(gates[1].gate_type, GateType::H);
+        assert_eq!(gates[1].qubits, vec![1]);
+
+        assert_eq!(gates[2].tick, 1);
+        assert_eq!(gates[2].gate_index, 0);
+        assert_eq!(gates[2].gate_type, GateType::CX);
+        assert_eq!(gates[2].qubits, vec![0, 1]);
+
+        assert_eq!(gates[3].tick, 1);
+        assert_eq!(gates[3].gate_index, 0);
+        assert_eq!(gates[3].gate_type, GateType::CX);
+        assert_eq!(gates[3].qubits, vec![2, 3]);
+
+        assert_eq!(gates[4].tick, 2);
+        assert_eq!(gates[4].gate_index, 0);
+        assert_eq!(gates[4].gate_type, GateType::MZ);
+        assert_eq!(gates[4].qubits, vec![0]);
+
+        assert_eq!(gates[5].tick, 2);
+        assert_eq!(gates[5].gate_index, 0);
+        assert_eq!(gates[5].gate_type, GateType::MZ);
+        assert_eq!(gates[5].qubits, vec![1]);
     }
 
     // ---- Direct propagation tests using propagate_single ----

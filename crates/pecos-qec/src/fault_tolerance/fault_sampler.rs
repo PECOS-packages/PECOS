@@ -169,7 +169,7 @@ pub(crate) struct GateLoc {
 }
 
 /// Single-qubit Pauli type for fault injection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PauliType {
     X,
     Y,
@@ -349,6 +349,7 @@ fn propagate_single_effect(
     }
 }
 
+#[cfg(test)]
 fn propagate_pair_effect(
     faults: [(PauliType, usize); 2],
     start: usize,
@@ -373,9 +374,79 @@ fn propagate_pair_effect(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PropagatedFaultEffect {
     affected_measurements: BTreeSet<usize>,
     affected_tracked_ops: Vec<usize>,
+}
+
+#[derive(Default)]
+struct PropagatedEffectCache {
+    singles: HashMap<(usize, PauliType, usize), PropagatedFaultEffect>,
+}
+
+impl PropagatedEffectCache {
+    fn single(
+        &mut self,
+        pauli: PauliType,
+        qubit: usize,
+        start: usize,
+        gates: &[GateLoc],
+        meas_positions: &HashMap<usize, usize>,
+        tracked_ops: &[PauliString],
+    ) -> PropagatedFaultEffect {
+        self.singles
+            .entry((start, pauli, qubit))
+            .or_insert_with(|| {
+                propagate_single_effect(pauli, qubit, start, gates, meas_positions, tracked_ops)
+            })
+            .clone()
+    }
+}
+
+fn xor_fault_effects(
+    left: &PropagatedFaultEffect,
+    right: &PropagatedFaultEffect,
+) -> PropagatedFaultEffect {
+    let mut affected_measurements = left.affected_measurements.clone();
+    for &measurement in &right.affected_measurements {
+        if !affected_measurements.remove(&measurement) {
+            affected_measurements.insert(measurement);
+        }
+    }
+
+    PropagatedFaultEffect {
+        affected_measurements,
+        affected_tracked_ops: xor_sorted_unique_indices(
+            &left.affected_tracked_ops,
+            &right.affected_tracked_ops,
+        ),
+    }
+}
+
+fn xor_sorted_unique_indices(left: &[usize], right: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(left.len() + right.len());
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < left.len() && j < right.len() {
+        match left[i].cmp(&right[j]) {
+            std::cmp::Ordering::Less => {
+                out.push(left[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                out.push(right[j]);
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out.extend_from_slice(&left[i..]);
+    out.extend_from_slice(&right[j..]);
+    out
 }
 
 /// Core forward propagation: evolve a Pauli through gates, collecting affected measurements.
@@ -1041,6 +1112,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
     }
 
     let pauli_types = [PauliType::X, PauliType::Y, PauliType::Z];
+    let mut effect_cache = PropagatedEffectCache::default();
 
     for (loc_idx, loc) in gates.iter().enumerate() {
         let (tick_idx, gate_idx, gate_type, ref qubits) = flat_idx_to_tick_gate[loc_idx];
@@ -1052,7 +1124,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 let conditional_probability = 1.0 / 3.0;
                 let mut faults = Vec::with_capacity(num_alts);
                 for &pt in &pauli_types {
-                    let effect = propagate_single_effect(
+                    let effect = effect_cache.single(
                         pt,
                         q,
                         loc_idx + 1,
@@ -1097,13 +1169,23 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 // 9 two-qubit pairs
                 for &p1 in &pauli_types {
                     for &p2 in &pauli_types {
-                        let effect = propagate_pair_effect(
-                            [(p1, q1), (p2, q2)],
+                        let left = effect_cache.single(
+                            p1,
+                            q1,
                             loc_idx + 1,
                             &gates,
                             &meas_positions,
                             &tracked_op_annotations,
                         );
+                        let right = effect_cache.single(
+                            p2,
+                            q2,
+                            loc_idx + 1,
+                            &gates,
+                            &meas_positions,
+                            &tracked_op_annotations,
+                        );
+                        let effect = xor_fault_effects(&left, &right);
                         let pauli = pauli_pair_to_string(p1, q1, p2, q2);
                         let (affected, dets, obs, tracked) =
                             catalog_effect_parts(effect, &record_effect_index);
@@ -1121,7 +1203,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 }
                 // 6 single-qubit (PI and IP)
                 for &p in &pauli_types {
-                    let effect = propagate_single_effect(
+                    let effect = effect_cache.single(
                         p,
                         q1,
                         loc_idx + 1,
@@ -1143,7 +1225,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         absolute_probability: 0.0,
                     });
 
-                    let effect = propagate_single_effect(
+                    let effect = effect_cache.single(
                         p,
                         q2,
                         loc_idx + 1,
@@ -1181,7 +1263,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
 
             GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
-                let effect = propagate_single_effect(
+                let effect = effect_cache.single(
                     PauliType::X,
                     q,
                     loc_idx + 1,
@@ -2133,6 +2215,34 @@ mod tests {
             BTreeSet::from([0]),
             "X should flip first MZ only, not second"
         );
+    }
+
+    #[test]
+    fn test_xor_combined_single_effects_match_pair_propagation() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().cx(&[(QubitId(0), QubitId(1))]);
+        tc.tick().h(&[QubitId(1)]);
+        tc.tick().mz(&[QubitId(0), QubitId(1)]);
+        tc.tracked_operator_labeled("tracked_z0", PauliString::z(0));
+        tc.tracked_operator_labeled("tracked_z1", PauliString::z(1));
+
+        let (gates, meas_pos) = flatten_tick_circuit(&tc);
+        let tracked_ops = parse_tracked_operator_annotations(&tc);
+        let start = 1;
+        let left = propagate_single_effect(PauliType::X, 0, start, &gates, &meas_pos, &tracked_ops);
+        let right =
+            propagate_single_effect(PauliType::Z, 1, start, &gates, &meas_pos, &tracked_ops);
+        let combined = xor_fault_effects(&left, &right);
+        let direct = propagate_pair_effect(
+            [(PauliType::X, 0), (PauliType::Z, 1)],
+            start,
+            &gates,
+            &meas_pos,
+            &tracked_ops,
+        );
+
+        assert_eq!(combined, direct);
     }
 
     #[test]

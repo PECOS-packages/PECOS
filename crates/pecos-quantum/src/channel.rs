@@ -89,6 +89,13 @@ pub enum ChannelError {
         /// Highest qubit touched by the offending Pauli term.
         qubit: usize,
     },
+    /// Two channel objects act on different numbers of qubits.
+    QubitCountMismatch {
+        /// Expected qubit count.
+        expected: usize,
+        /// Actual qubit count.
+        actual: usize,
+    },
     /// A coefficient or fidelity is not finite.
     InvalidCoefficient {
         /// Offending coefficient.
@@ -151,6 +158,22 @@ pub enum ChannelError {
         /// Actual number of supplied outputs.
         actual: usize,
     },
+    /// A tomography input index is outside the experiment design.
+    TomographyInputOutOfRange {
+        /// Number of tomography inputs in the design.
+        num_inputs: usize,
+        /// Invalid input index.
+        index: usize,
+    },
+    /// A computational matrix-unit row/column is outside the Hilbert space.
+    MatrixUnitOutOfRange {
+        /// Hilbert-space dimension.
+        dim: usize,
+        /// Invalid row.
+        row: usize,
+        /// Invalid column.
+        col: usize,
+    },
 }
 
 impl fmt::Display for ChannelError {
@@ -172,6 +195,10 @@ impl fmt::Display for ChannelError {
             Self::QubitOutOfRange { num_qubits, qubit } => write!(
                 f,
                 "Pauli term touches qubit {qubit}, outside declared {num_qubits}-qubit range"
+            ),
+            Self::QubitCountMismatch { expected, actual } => write!(
+                f,
+                "channel qubit count mismatch: expected {expected}, got {actual}"
             ),
             Self::InvalidCoefficient { value } => {
                 write!(f, "invalid non-finite coefficient: {value}")
@@ -210,6 +237,14 @@ impl fmt::Display for ChannelError {
             Self::InvalidTomographySampleCount { expected, actual } => write!(
                 f,
                 "invalid tomography sample count {actual}; expected {expected} operator-basis outputs"
+            ),
+            Self::TomographyInputOutOfRange { num_inputs, index } => write!(
+                f,
+                "tomography input index {index} is outside the {num_inputs}-input design"
+            ),
+            Self::MatrixUnitOutOfRange { dim, row, col } => write!(
+                f,
+                "matrix unit |{row}><{col}| is outside the {dim}-dimensional Hilbert space"
             ),
         }
     }
@@ -2375,6 +2410,176 @@ pub fn matrix_unit_basis(num_qubits: usize) -> Result<Vec<DMatrix<Complex64>>, C
     Ok(basis)
 }
 
+/// Metadata for one computational matrix-unit tomography input.
+///
+/// The input operator is `|row><col|`, and `index = row + col * dim`, where
+/// `dim = 2^num_qubits`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MatrixUnitTomographyInput {
+    /// Input index in PECOS matrix-unit tomography order.
+    pub index: usize,
+    /// Ket row of the matrix unit.
+    pub row: usize,
+    /// Bra column of the matrix unit.
+    pub col: usize,
+}
+
+/// Complete linear-inversion process-tomography design.
+///
+/// The current design uses the computational matrix-unit basis. It is useful
+/// for exact channel characterization, simulator validation, and importing
+/// reconstructed channel data. It is not a physical state-preparation recipe;
+/// it records the linear operator basis and the PECOS ordering needed to
+/// reconstruct a [`ChoiMatrix`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessTomographyDesign {
+    num_qubits: usize,
+    dim: usize,
+    num_inputs: usize,
+}
+
+impl ProcessTomographyDesign {
+    /// Builds the complete computational matrix-unit design.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Hilbert-space dimension overflows.
+    pub fn matrix_unit(num_qubits: usize) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(num_qubits)?;
+        let num_inputs = pauli_basis_len(num_qubits)?;
+        Ok(Self {
+            num_qubits,
+            dim,
+            num_inputs,
+        })
+    }
+
+    /// Returns the number of qubits in the characterized channel.
+    #[must_use]
+    pub const fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Returns the Hilbert-space dimension `2^num_qubits`.
+    #[must_use]
+    pub const fn dim(&self) -> usize {
+        self.dim
+    }
+
+    /// Returns the number of matrix-unit input operators, `dim^2`.
+    #[must_use]
+    pub const fn num_inputs(&self) -> usize {
+        self.num_inputs
+    }
+
+    /// Returns the index for matrix unit `|row><col|`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `row` or `col` is outside the Hilbert space.
+    pub fn input_index(&self, row: usize, col: usize) -> Result<usize, ChannelError> {
+        if row >= self.dim || col >= self.dim {
+            return Err(ChannelError::MatrixUnitOutOfRange {
+                dim: self.dim,
+                row,
+                col,
+            });
+        }
+        Ok(matrix_unit_index(self.dim, row, col))
+    }
+
+    /// Returns metadata for one matrix-unit input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is outside the design.
+    pub fn input_metadata(&self, index: usize) -> Result<MatrixUnitTomographyInput, ChannelError> {
+        if index >= self.num_inputs {
+            return Err(ChannelError::TomographyInputOutOfRange {
+                num_inputs: self.num_inputs,
+                index,
+            });
+        }
+        Ok(MatrixUnitTomographyInput {
+            index,
+            row: index % self.dim,
+            col: index / self.dim,
+        })
+    }
+
+    /// Returns metadata for all matrix-unit inputs in reconstruction order.
+    #[must_use]
+    pub fn input_metadata_all(&self) -> Vec<MatrixUnitTomographyInput> {
+        (0..self.num_inputs)
+            .map(|index| MatrixUnitTomographyInput {
+                index,
+                row: index % self.dim,
+                col: index / self.dim,
+            })
+            .collect()
+    }
+
+    /// Returns the matrix-unit input operator at `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is outside the design.
+    pub fn input_operator(&self, index: usize) -> Result<DMatrix<Complex64>, ChannelError> {
+        let input = self.input_metadata(index)?;
+        let mut matrix = DMatrix::zeros(self.dim, self.dim);
+        matrix[(input.row, input.col)] = Complex64::new(1.0, 0.0);
+        Ok(matrix)
+    }
+
+    /// Returns all matrix-unit input operators in reconstruction order.
+    #[must_use]
+    pub fn input_operators(&self) -> Vec<DMatrix<Complex64>> {
+        (0..self.num_inputs)
+            .map(|index| {
+                let row = index % self.dim;
+                let col = index / self.dim;
+                let mut matrix = DMatrix::zeros(self.dim, self.dim);
+                matrix[(row, col)] = Complex64::new(1.0, 0.0);
+                matrix
+            })
+            .collect()
+    }
+
+    /// Applies `channel` to each design input in reconstruction order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `channel` acts on a different number of qubits or
+    /// if channel application fails.
+    pub fn simulate_outputs(
+        &self,
+        channel: &ChoiMatrix,
+    ) -> Result<Vec<DMatrix<Complex64>>, ChannelError> {
+        if channel.num_qubits() != self.num_qubits {
+            return Err(ChannelError::QubitCountMismatch {
+                expected: self.num_qubits,
+                actual: channel.num_qubits(),
+            });
+        }
+        self.input_operators()
+            .iter()
+            .map(|operator| channel.apply_to_operator(operator))
+            .collect()
+    }
+
+    /// Reconstructs a Choi matrix from outputs ordered by this design.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when output count or shapes do not match the design.
+    pub fn reconstruct_choi(
+        &self,
+        outputs: &[DMatrix<Complex64>],
+    ) -> Result<ChoiMatrix, ChannelError> {
+        ChoiMatrix::from_matrix_unit_outputs(self.num_qubits, outputs)
+    }
+}
+
 /// Samples a Hilbert-Schmidt random density matrix on `num_qubits` qubits.
 ///
 /// This samples a square complex Ginibre matrix `G` and returns
@@ -3678,6 +3883,95 @@ mod tests {
             expected[(row, col)] = Complex64::new(1.0, 0.0);
             assert_complex_matrix_close(&basis[idx], &expected);
         }
+    }
+
+    #[test]
+    fn process_tomography_design_exposes_matrix_unit_order() {
+        let design = ProcessTomographyDesign::matrix_unit(1).unwrap();
+        assert_eq!(design.num_qubits(), 1);
+        assert_eq!(design.dim(), 2);
+        assert_eq!(design.num_inputs(), 4);
+        assert_eq!(design.input_index(0, 0).unwrap(), 0);
+        assert_eq!(design.input_index(1, 0).unwrap(), 1);
+        assert_eq!(design.input_index(0, 1).unwrap(), 2);
+        assert_eq!(design.input_index(1, 1).unwrap(), 3);
+
+        let metadata = design.input_metadata_all();
+        assert_eq!(
+            metadata,
+            vec![
+                MatrixUnitTomographyInput {
+                    index: 0,
+                    row: 0,
+                    col: 0
+                },
+                MatrixUnitTomographyInput {
+                    index: 1,
+                    row: 1,
+                    col: 0
+                },
+                MatrixUnitTomographyInput {
+                    index: 2,
+                    row: 0,
+                    col: 1
+                },
+                MatrixUnitTomographyInput {
+                    index: 3,
+                    row: 1,
+                    col: 1
+                },
+            ]
+        );
+
+        let from_design = design.input_operators();
+        let from_free_function = matrix_unit_basis(1).unwrap();
+        for (actual, expected) in from_design.iter().zip(from_free_function.iter()) {
+            assert_complex_matrix_close(actual, expected);
+        }
+    }
+
+    #[test]
+    fn process_tomography_design_reconstructs_channel_outputs() {
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let expected = ChoiMatrix::from_channel_expr(&expr).unwrap();
+        let design = ProcessTomographyDesign::matrix_unit(1).unwrap();
+        let outputs = design.simulate_outputs(&expected).unwrap();
+        let reconstructed = design.reconstruct_choi(&outputs).unwrap();
+
+        assert_complex_matrix_close(reconstructed.matrix(), expected.matrix());
+        assert!(reconstructed.is_cptp());
+        assert!(!reconstructed.is_unital());
+    }
+
+    #[test]
+    fn process_tomography_design_rejects_invalid_inputs() {
+        let design = ProcessTomographyDesign::matrix_unit(1).unwrap();
+        assert!(matches!(
+            design.input_metadata(4).unwrap_err(),
+            ChannelError::TomographyInputOutOfRange {
+                num_inputs: 4,
+                index: 4
+            }
+        ));
+        assert!(matches!(
+            design.input_index(2, 0).unwrap_err(),
+            ChannelError::MatrixUnitOutOfRange {
+                dim: 2,
+                row: 2,
+                col: 0
+            }
+        ));
+
+        let two_qubit_channel = ChoiMatrix::from_unitary(&unitary::I(0), 2).unwrap();
+        assert!(matches!(
+            design.simulate_outputs(&two_qubit_channel).unwrap_err(),
+            ChannelError::QubitCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        ));
     }
 
     #[test]

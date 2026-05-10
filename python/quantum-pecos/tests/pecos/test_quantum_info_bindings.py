@@ -4,6 +4,7 @@ from pecos.quantum_info import (
     ChiMatrix,
     ChoiMatrix,
     PauliChannel,
+    ProcessTomographyDesign,
     Ptm,
     Stinespring,
     SuperOp,
@@ -13,6 +14,7 @@ from pecos.quantum_info import (
     hellinger_distance,
     hellinger_fidelity,
     logarithmic_negativity,
+    matrix_unit_basis,
     negativity,
     pauli_channel_diamond_distance,
     pauli_channel_diamond_norm,
@@ -88,6 +90,34 @@ def test_choi_and_kraus_wrappers_round_trip_identity_channel() -> None:
     assert isinstance(stinespring, Stinespring)
     assert stinespring.environment_dim() == 1
     assert_close(process_fidelity(stinespring.to_kraus().to_ptm(), identity), 1.0)
+
+
+def test_process_tomography_design_reconstructs_identity_channel() -> None:
+    design = ProcessTomographyDesign.matrix_unit(1)
+
+    assert design.num_qubits() == 1
+    assert design.dim() == 2
+    assert design.num_inputs() == 4
+    assert design.input_metadata_all() == [(0, 0, 0), (1, 1, 0), (2, 0, 1), (3, 1, 1)]
+    assert design.input_index(1, 0) == 1
+    assert_matrix_close(
+        design.input_operator(2),
+        [[0.0 + 0.0j, 1.0 + 0.0j], [0.0 + 0.0j, 0.0 + 0.0j]],
+    )
+    assert design.input_operators() == matrix_unit_basis(1)
+
+    choi = Ptm.identity(1).to_choi()
+    outputs = design.simulate_outputs(choi)
+    reconstructed = design.reconstruct_choi(outputs)
+    assert_matrix_close(reconstructed.matrix(), choi.matrix())
+    assert reconstructed.is_cptp()
+    assert reconstructed.is_unital()
+
+
+def test_choi_from_matrix_unit_outputs_static_constructor() -> None:
+    outputs = matrix_unit_basis(1)
+    reconstructed = ChoiMatrix.from_matrix_unit_outputs(1, outputs)
+    assert_matrix_close(reconstructed.matrix(), Ptm.identity(1).to_choi().matrix())
 
 
 def test_state_measure_wrappers() -> None:

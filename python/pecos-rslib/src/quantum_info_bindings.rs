@@ -19,10 +19,11 @@ use num_complex::Complex64;
 use pecos_core::PauliBitmaskSmall;
 use pecos_quantum::{
     ChiMatrix as RustChiMatrix, ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps,
-    PauliChannel as RustPauliChannel, Ptm as RustPtm, Stinespring as RustStinespring,
-    SuperOp as RustSuperOp, average_gate_fidelity as rust_average_gate_fidelity,
-    entropy as rust_entropy, gate_error as rust_gate_error,
-    hellinger_distance as rust_hellinger_distance, hellinger_fidelity as rust_hellinger_fidelity,
+    PauliChannel as RustPauliChannel, ProcessTomographyDesign as RustProcessTomographyDesign,
+    Ptm as RustPtm, Stinespring as RustStinespring, SuperOp as RustSuperOp,
+    average_gate_fidelity as rust_average_gate_fidelity, entropy as rust_entropy,
+    gate_error as rust_gate_error, hellinger_distance as rust_hellinger_distance,
+    hellinger_fidelity as rust_hellinger_fidelity,
     logarithmic_negativity as rust_logarithmic_negativity, negativity as rust_negativity,
     pauli_basis_len, process_fidelity as rust_process_fidelity, purity as rust_purity,
     random_density_matrix as rust_random_density_matrix,
@@ -63,6 +64,12 @@ fn complex_matrix_from_rows(rows: Vec<Vec<Complex64>>) -> PyResult<DMatrix<Compl
     Ok(DMatrix::from_row_slice(row_count, col_count, &data))
 }
 
+fn complex_matrices_from_rows(
+    matrices: Vec<Vec<Vec<Complex64>>>,
+) -> PyResult<Vec<DMatrix<Complex64>>> {
+    matrices.into_iter().map(complex_matrix_from_rows).collect()
+}
+
 fn real_matrix_to_rows(matrix: &DMatrix<f64>) -> Vec<Vec<f64>> {
     (0..matrix.nrows())
         .map(|row| (0..matrix.ncols()).map(|col| matrix[(row, col)]).collect())
@@ -73,6 +80,10 @@ fn complex_matrix_to_rows(matrix: &DMatrix<Complex64>) -> Vec<Vec<Complex64>> {
     (0..matrix.nrows())
         .map(|row| (0..matrix.ncols()).map(|col| matrix[(row, col)]).collect())
         .collect()
+}
+
+fn complex_matrices_to_rows(matrices: &[DMatrix<Complex64>]) -> Vec<Vec<Vec<Complex64>>> {
+    matrices.iter().map(complex_matrix_to_rows).collect()
 }
 
 fn parse_pauli_label(num_qubits: usize, label: &str) -> PyResult<PauliBitmaskSmall> {
@@ -327,6 +338,20 @@ impl PyChoiMatrix {
         })
     }
 
+    #[staticmethod]
+    fn from_matrix_unit_outputs(
+        num_qubits: usize,
+        outputs: Vec<Vec<Vec<Complex64>>>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustChoiMatrix::from_matrix_unit_outputs(
+                num_qubits,
+                &complex_matrices_from_rows(outputs)?,
+            )
+            .map_err(py_value_err)?,
+        })
+    }
+
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
     }
@@ -398,6 +423,86 @@ impl PyChoiMatrix {
 
     fn __repr__(&self) -> String {
         format!("ChoiMatrix(num_qubits={})", self.inner.num_qubits())
+    }
+}
+
+#[pyclass(name = "ProcessTomographyDesign", module = "pecos_rslib.quantum_info")]
+pub struct PyProcessTomographyDesign {
+    inner: RustProcessTomographyDesign,
+}
+
+#[pymethods]
+impl PyProcessTomographyDesign {
+    #[staticmethod]
+    fn matrix_unit(num_qubits: usize) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustProcessTomographyDesign::matrix_unit(num_qubits).map_err(py_value_err)?,
+        })
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn dim(&self) -> usize {
+        self.inner.dim()
+    }
+
+    fn num_inputs(&self) -> usize {
+        self.inner.num_inputs()
+    }
+
+    fn input_index(&self, row: usize, col: usize) -> PyResult<usize> {
+        self.inner.input_index(row, col).map_err(py_value_err)
+    }
+
+    fn input_metadata(&self, index: usize) -> PyResult<(usize, usize, usize)> {
+        let input = self.inner.input_metadata(index).map_err(py_value_err)?;
+        Ok((input.index, input.row, input.col))
+    }
+
+    fn input_metadata_all(&self) -> Vec<(usize, usize, usize)> {
+        self.inner
+            .input_metadata_all()
+            .into_iter()
+            .map(|input| (input.index, input.row, input.col))
+            .collect()
+    }
+
+    fn input_operator(&self, index: usize) -> PyResult<Vec<Vec<Complex64>>> {
+        Ok(complex_matrix_to_rows(
+            &self.inner.input_operator(index).map_err(py_value_err)?,
+        ))
+    }
+
+    fn input_operators(&self) -> Vec<Vec<Vec<Complex64>>> {
+        complex_matrices_to_rows(&self.inner.input_operators())
+    }
+
+    fn simulate_outputs(&self, channel: &PyChoiMatrix) -> PyResult<Vec<Vec<Vec<Complex64>>>> {
+        Ok(complex_matrices_to_rows(
+            &self
+                .inner
+                .simulate_outputs(&channel.inner)
+                .map_err(py_value_err)?,
+        ))
+    }
+
+    fn reconstruct_choi(&self, outputs: Vec<Vec<Vec<Complex64>>>) -> PyResult<PyChoiMatrix> {
+        Ok(PyChoiMatrix {
+            inner: self
+                .inner
+                .reconstruct_choi(&complex_matrices_from_rows(outputs)?)
+                .map_err(py_value_err)?,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ProcessTomographyDesign(num_qubits={}, num_inputs={})",
+            self.inner.num_qubits(),
+            self.inner.num_inputs()
+        )
     }
 }
 
@@ -646,6 +751,13 @@ fn pauli_channel_diamond_distance(left: &PyPauliChannel, right: &PyPauliChannel)
 }
 
 #[pyfunction]
+fn matrix_unit_basis(num_qubits: usize) -> PyResult<Vec<Vec<Vec<Complex64>>>> {
+    Ok(complex_matrices_to_rows(
+        &pecos_quantum::matrix_unit_basis(num_qubits).map_err(py_value_err)?,
+    ))
+}
+
+#[pyfunction]
 fn random_density_matrix(num_qubits: usize, seed: u64) -> PyResult<Vec<Vec<Complex64>>> {
     let mut rng = PecosRng::seed_from_u64(seed);
     Ok(complex_matrix_to_rows(
@@ -667,6 +779,7 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
     parent.add_class::<PyPtm>()?;
     parent.add_class::<PyKrausOps>()?;
     parent.add_class::<PyChoiMatrix>()?;
+    parent.add_class::<PyProcessTomographyDesign>()?;
     parent.add_class::<PySuperOp>()?;
     parent.add_class::<PyChiMatrix>()?;
     parent.add_class::<PyStinespring>()?;
@@ -689,6 +802,7 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
     parent.add_function(wrap_pyfunction!(gate_error, parent)?)?;
     parent.add_function(wrap_pyfunction!(pauli_channel_diamond_norm, parent)?)?;
     parent.add_function(wrap_pyfunction!(pauli_channel_diamond_distance, parent)?)?;
+    parent.add_function(wrap_pyfunction!(matrix_unit_basis, parent)?)?;
     parent.add_function(wrap_pyfunction!(random_density_matrix, parent)?)?;
     parent.add_function(wrap_pyfunction!(random_quantum_channel, parent)?)?;
 
@@ -699,6 +813,7 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
         "Ptm",
         "KrausOps",
         "ChoiMatrix",
+        "ProcessTomographyDesign",
         "SuperOp",
         "ChiMatrix",
         "Stinespring",
@@ -717,6 +832,7 @@ pub fn register_quantum_info_module(parent: &Bound<'_, PyModule>) -> PyResult<()
         "gate_error",
         "pauli_channel_diamond_norm",
         "pauli_channel_diamond_distance",
+        "matrix_unit_basis",
         "random_density_matrix",
         "random_quantum_channel",
     ] {

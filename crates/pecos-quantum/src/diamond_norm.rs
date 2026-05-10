@@ -52,6 +52,24 @@ pub enum DiamondNormError {
         /// Allowed tolerance.
         tolerance: f64,
     },
+    /// A Choi matrix does not match the expected input/output dimensions.
+    InvalidChoiShape {
+        /// Expected row count.
+        expected_rows: usize,
+        /// Expected column count.
+        expected_cols: usize,
+        /// Actual row count.
+        rows: usize,
+        /// Actual column count.
+        cols: usize,
+    },
+    /// Input/output dimensions overflowed a `usize` matrix dimension.
+    DimensionOverflow {
+        /// Input Hilbert-space dimension.
+        dim_in: usize,
+        /// Output Hilbert-space dimension.
+        dim_out: usize,
+    },
     /// A matrix entry was not finite.
     NonFiniteEntry,
     /// Two channel representations act on different Hilbert spaces.
@@ -84,6 +102,19 @@ impl fmt::Display for DiamondNormError {
             } => write!(
                 f,
                 "matrix is not Hermitian/symmetric within tolerance {tolerance}; max difference {max_difference}"
+            ),
+            Self::InvalidChoiShape {
+                expected_rows,
+                expected_cols,
+                rows,
+                cols,
+            } => write!(
+                f,
+                "invalid Choi matrix shape {rows}x{cols}; expected {expected_rows}x{expected_cols}"
+            ),
+            Self::DimensionOverflow { dim_in, dim_out } => write!(
+                f,
+                "Choi input/output dimensions overflow usize: dim_in={dim_in}, dim_out={dim_out}"
             ),
             Self::NonFiniteEntry => write!(f, "matrix contains a non-finite entry"),
             Self::QubitCountMismatch { left, right } => write!(
@@ -274,6 +305,64 @@ pub fn hermitian_to_real_symmetric_with_tolerance(
     Ok(out)
 }
 
+/// Converts PECOS's column-stacked Choi convention to the transposed
+/// row-vector convention used by the Watrous diamond-norm SDP objective.
+///
+/// PECOS indexes Choi rows and columns as `output + input * dim_output`.
+/// This helper performs the same convention transform described in Qiskit's
+/// diamond-norm implementation:
+///
+/// ```text
+/// reshape(J, (dim_in, dim_out, dim_in, dim_out))
+/// transpose axes (3, 2, 1, 0)
+/// reshape back to a matrix
+/// ```
+///
+/// The result is not a public diamond-norm implementation. It is a tested
+/// convention helper for the future PECOS-owned SDP assembly.
+///
+/// # Errors
+///
+/// Returns an error if `choi` is not `(dim_in * dim_out) x (dim_in * dim_out)`
+/// or if it contains a non-finite entry.
+pub fn choi_to_watrous_row_transpose(
+    choi: &DMatrix<Complex64>,
+    dim_in: usize,
+    dim_out: usize,
+) -> Result<DMatrix<Complex64>, DiamondNormError> {
+    let size = dim_in
+        .checked_mul(dim_out)
+        .ok_or(DiamondNormError::DimensionOverflow { dim_in, dim_out })?;
+    if choi.nrows() != size || choi.ncols() != size {
+        return Err(DiamondNormError::InvalidChoiShape {
+            expected_rows: size,
+            expected_cols: size,
+            rows: choi.nrows(),
+            cols: choi.ncols(),
+        });
+    }
+
+    let mut out = DMatrix::zeros(size, size);
+    for input_row in 0..dim_in {
+        for output_row in 0..dim_out {
+            let src_row = output_row + input_row * dim_out;
+            for input_col in 0..dim_in {
+                for output_col in 0..dim_out {
+                    let src_col = output_col + input_col * dim_out;
+                    let value = choi[(src_row, src_col)];
+                    if !value.re.is_finite() || !value.im.is_finite() {
+                        return Err(DiamondNormError::NonFiniteEntry);
+                    }
+                    let dst_row = input_col + output_col * dim_in;
+                    let dst_col = input_row + output_row * dim_in;
+                    out[(dst_row, dst_col)] = value;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn validate_real_symmetric(matrix: &DMatrix<f64>, tolerance: f64) -> Result<(), DiamondNormError> {
     if matrix.nrows() != matrix.ncols() {
         return Err(DiamondNormError::NonSquareMatrix {
@@ -421,6 +510,57 @@ mod tests {
     }
 
     #[test]
+    fn choi_to_watrous_row_transpose_matches_reference_axis_permutation() {
+        let choi = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(2.0, 0.0),
+                Complex64::new(3.0, 0.0),
+                Complex64::new(4.0, 0.0),
+                Complex64::new(5.0, 0.0),
+                Complex64::new(6.0, 0.0),
+                Complex64::new(7.0, 0.0),
+                Complex64::new(8.0, 0.0),
+                Complex64::new(9.0, 0.0),
+                Complex64::new(10.0, 0.0),
+                Complex64::new(11.0, 0.0),
+                Complex64::new(12.0, 0.0),
+                Complex64::new(13.0, 0.0),
+                Complex64::new(14.0, 0.0),
+                Complex64::new(15.0, 0.0),
+            ],
+        );
+        let converted = choi_to_watrous_row_transpose(&choi, 2, 2).unwrap();
+        let expected = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(8.0, 0.0),
+                Complex64::new(4.0, 0.0),
+                Complex64::new(12.0, 0.0),
+                Complex64::new(2.0, 0.0),
+                Complex64::new(10.0, 0.0),
+                Complex64::new(6.0, 0.0),
+                Complex64::new(14.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(9.0, 0.0),
+                Complex64::new(5.0, 0.0),
+                Complex64::new(13.0, 0.0),
+                Complex64::new(3.0, 0.0),
+                Complex64::new(11.0, 0.0),
+                Complex64::new(7.0, 0.0),
+                Complex64::new(15.0, 0.0),
+            ],
+        );
+
+        assert_eq!(converted, expected);
+    }
+
+    #[test]
     fn helper_validation_rejects_invalid_inputs() {
         assert!(matches!(
             svec_real_symmetric(&DMatrix::zeros(2, 3)).unwrap_err(),
@@ -451,6 +591,11 @@ mod tests {
         assert!(matches!(
             hermitian_to_real_symmetric(&nonhermitian).unwrap_err(),
             DiamondNormError::NonHermitian { .. }
+        ));
+
+        assert!(matches!(
+            choi_to_watrous_row_transpose(&DMatrix::zeros(2, 2), 2, 2).unwrap_err(),
+            DiamondNormError::InvalidChoiShape { .. }
         ));
     }
 }

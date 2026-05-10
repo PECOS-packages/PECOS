@@ -102,17 +102,18 @@ pub use pecos_num::dag::DagWouldCycleError;
 
 // Concrete channel representation types
 pub use channel::{
-    ChannelError, ChiMatrix, ChoiMatrix, DiagonalPtm, KrausOps, PauliChannel, PauliSum, Ptm,
-    PtmBasisOrder, Stinespring, SuperOp, basis_bitmask, basis_digit_to_pauli, basis_element,
-    basis_index, basis_label, bitmask_label, matrix_unit_basis, partial_trace, pauli_basis_len,
-    pauli_string_to_bitmask, pauli_to_basis_digit, random_1q_clifford, random_2q_clifford,
-    random_clifford, random_density_matrix, random_density_matrix_with_rank, random_pauli,
-    random_quantum_channel,
+    ChannelError, ChiMatrix, ChoiMatrix, DiagonalPtm, KrausOps, MatrixUnitTomographyInput,
+    PauliChannel, PauliSum, ProcessTomographyDesign, Ptm, PtmBasisOrder, Stinespring, SuperOp,
+    basis_bitmask, basis_digit_to_pauli, basis_element, basis_index, basis_label, bitmask_label,
+    matrix_unit_basis, partial_trace, pauli_basis_len, pauli_string_to_bitmask,
+    pauli_to_basis_digit, random_1q_clifford, random_2q_clifford, random_clifford,
+    random_density_matrix, random_density_matrix_with_rank, random_pauli, random_quantum_channel,
 };
 pub use diamond_norm::{
-    DiamondNormError, hermitian_to_real_symmetric, hermitian_to_real_symmetric_with_tolerance,
-    pauli_channel_diamond_distance, pauli_channel_diamond_norm, scaled_psd_triangle_len,
-    smat_real_symmetric, svec_real_symmetric, svec_real_symmetric_with_tolerance,
+    DiamondNormError, choi_to_watrous_row_transpose, hermitian_to_real_symmetric,
+    hermitian_to_real_symmetric_with_tolerance, pauli_channel_diamond_distance,
+    pauli_channel_diamond_norm, scaled_psd_triangle_len, smat_real_symmetric, svec_real_symmetric,
+    svec_real_symmetric_with_tolerance,
 };
 pub use measures::{
     DensityMatrixPartialTrace, MeasureError, SchmidtTerm, average_gate_fidelity, concurrence,

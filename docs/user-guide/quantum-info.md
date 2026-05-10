@@ -90,6 +90,30 @@ trace_check = choi.partial_trace_output()
 For PECOS's Choi convention, a trace-preserving channel satisfies
 `partial_trace_output() == I`.
 
+## Process Tomography Helpers
+
+`ProcessTomographyDesign.matrix_unit(n)` gives the complete computational
+matrix-unit operator basis used by PECOS Choi reconstruction. This is a
+linear-inversion design for exact channel characterization and simulator
+validation; it is not a physical state-preparation recipe.
+
+```python
+from pecos.quantum_info import ProcessTomographyDesign, Ptm
+
+design = ProcessTomographyDesign.matrix_unit(1)
+assert design.input_metadata_all() == [
+    (0, 0, 0),  # |0><0|
+    (1, 1, 0),  # |1><0|
+    (2, 0, 1),  # |0><1|
+    (3, 1, 1),  # |1><1|
+]
+
+choi = Ptm.identity(1).to_choi()
+outputs = design.simulate_outputs(choi)
+reconstructed = design.reconstruct_choi(outputs)
+assert reconstructed.matrix() == choi.matrix()
+```
+
 The dense channel forms convert through the same Rust-backed validation path:
 
 ```python

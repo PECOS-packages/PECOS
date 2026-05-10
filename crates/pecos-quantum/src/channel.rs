@@ -20,6 +20,9 @@
 //! - [`Ptm`] stores a dense real Pauli-transfer matrix.
 //! - [`KrausOps`] stores a concrete Kraus-operator channel representation.
 //! - [`ChoiMatrix`] stores a concrete Choi representation.
+//! - [`SuperOp`] stores a dense column-stacked superoperator.
+//! - [`ChiMatrix`] stores a process matrix in the Pauli basis.
+//! - [`Stinespring`] stores a Stinespring isometry.
 //!
 //! Pauli-channel probabilities and diagonal PTM entries are connected by an
 //! explicit Walsh-Hadamard transform. They are not the same representation:
@@ -1187,6 +1190,24 @@ impl Ptm {
     pub fn to_kraus(&self) -> Result<KrausOps, ChannelError> {
         self.to_choi()?.to_kraus()
     }
+
+    /// Converts this PTM to a column-stacked superoperator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the conversion through matrix units fails.
+    pub fn to_superop(&self) -> Result<SuperOp, ChannelError> {
+        SuperOp::from_ptm(self)
+    }
+
+    /// Converts this PTM to a Pauli-basis process matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the conversion through Choi/Kraus form fails.
+    pub fn to_chi(&self) -> Result<ChiMatrix, ChannelError> {
+        ChiMatrix::from_ptm(self)
+    }
 }
 
 /// Concrete Kraus-operator representation of a quantum channel.
@@ -1296,6 +1317,33 @@ impl KrausOps {
     /// Returns an error when dimensions overflow.
     pub fn to_choi(&self) -> Result<ChoiMatrix, ChannelError> {
         ChoiMatrix::from_kraus(self)
+    }
+
+    /// Converts this Kraus channel to a column-stacked superoperator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn to_superop(&self) -> Result<SuperOp, ChannelError> {
+        SuperOp::from_kraus(self)
+    }
+
+    /// Converts this Kraus channel to a Pauli-basis process matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn to_chi(&self) -> Result<ChiMatrix, ChannelError> {
+        ChiMatrix::from_kraus(self)
+    }
+
+    /// Converts this Kraus channel to a Stinespring isometry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the stacked Kraus operators are not an isometry.
+    pub fn to_stinespring(&self) -> Result<Stinespring, ChannelError> {
+        Stinespring::from_kraus(self)
     }
 
     /// Returns whether `sum_k K_k† K_k = I` within the default tolerance.
@@ -1526,6 +1574,24 @@ impl ChoiMatrix {
         self.to_kraus_with_tolerance(DEFAULT_TOLERANCE)
     }
 
+    /// Converts this Choi matrix to a column-stacked superoperator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn to_superop(&self) -> Result<SuperOp, ChannelError> {
+        SuperOp::from_choi(self)
+    }
+
+    /// Converts this Choi matrix to a Pauli-basis process matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when conversion through Kraus form fails.
+    pub fn to_chi(&self) -> Result<ChiMatrix, ChannelError> {
+        ChiMatrix::from_choi(self)
+    }
+
     /// Converts this Choi matrix to Kraus operators with an explicit
     /// singular-value cutoff.
     ///
@@ -1737,6 +1803,470 @@ impl ChoiMatrix {
     #[must_use]
     pub fn into_matrix(self) -> DMatrix<Complex64> {
         self.matrix
+    }
+}
+
+/// Dense column-stacked superoperator representation.
+///
+/// `SuperOp` stores the matrix `S` satisfying `vec(E(A)) = S vec(A)`, where
+/// `vec` uses column-stacking in PECOS's little-endian computational basis.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SuperOp {
+    num_qubits: usize,
+    matrix: DMatrix<Complex64>,
+}
+
+impl SuperOp {
+    /// Constructs a superoperator after structural validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `matrix` is not `4^n x 4^n` or contains
+    /// non-finite entries.
+    pub fn try_new(num_qubits: usize, matrix: DMatrix<Complex64>) -> Result<Self, ChannelError> {
+        let dim_squared = pauli_basis_len(num_qubits)?;
+        validate_complex_matrix(&matrix, dim_squared, dim_squared)?;
+        Ok(Self { num_qubits, matrix })
+    }
+
+    /// Constructs a superoperator from Kraus operators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn from_kraus(kraus: &KrausOps) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(kraus.num_qubits)?;
+        let dim_squared = pauli_basis_len(kraus.num_qubits)?;
+        let mut matrix = DMatrix::zeros(dim_squared, dim_squared);
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let input_idx = matrix_unit_index(dim, input_row, input_col);
+                for output_col in 0..dim {
+                    for output_row in 0..dim {
+                        let output_idx = matrix_unit_index(dim, output_row, output_col);
+                        let mut value = Complex64::new(0.0, 0.0);
+                        for operator in kraus.operators() {
+                            value += operator[(output_row, input_row)]
+                                * operator[(output_col, input_col)].conj();
+                        }
+                        matrix[(output_idx, input_idx)] = value;
+                    }
+                }
+            }
+        }
+        Self::try_new(kraus.num_qubits, matrix)
+    }
+
+    /// Constructs a superoperator from a Choi matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn from_choi(choi: &ChoiMatrix) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(choi.num_qubits)?;
+        let dim_squared = pauli_basis_len(choi.num_qubits)?;
+        let mut matrix = DMatrix::zeros(dim_squared, dim_squared);
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let input_idx = matrix_unit_index(dim, input_row, input_col);
+                for output_col in 0..dim {
+                    for output_row in 0..dim {
+                        let output_idx = matrix_unit_index(dim, output_row, output_col);
+                        matrix[(output_idx, input_idx)] = choi.matrix()[(
+                            choi_index(dim, output_row, input_row),
+                            choi_index(dim, output_col, input_col),
+                        )];
+                    }
+                }
+            }
+        }
+        Self::try_new(choi.num_qubits, matrix)
+    }
+
+    /// Constructs a superoperator from a PTM.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn from_ptm(ptm: &Ptm) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(ptm.num_qubits)?;
+        let dim_squared = pauli_basis_len(ptm.num_qubits)?;
+        let mut matrix = DMatrix::zeros(dim_squared, dim_squared);
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let mut input = DMatrix::zeros(dim, dim);
+                input[(input_row, input_col)] = Complex64::new(1.0, 0.0);
+                let output = apply_ptm_to_operator(ptm, &input)?;
+                let input_idx = matrix_unit_index(dim, input_row, input_col);
+                for output_col in 0..dim {
+                    for output_row in 0..dim {
+                        let output_idx = matrix_unit_index(dim, output_row, output_col);
+                        matrix[(output_idx, input_idx)] = output[(output_row, output_col)];
+                    }
+                }
+            }
+        }
+        Self::try_new(ptm.num_qubits, matrix)
+    }
+
+    /// Constructs a superoperator from a supported channel expression.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the expression cannot be represented as Kraus
+    /// operators.
+    pub fn from_channel_expr(channel: &ChannelExpr) -> Result<Self, ChannelError> {
+        KrausOps::from_channel_expr(channel)?.to_superop()
+    }
+
+    /// Converts this superoperator to a Choi matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn to_choi(&self) -> Result<ChoiMatrix, ChannelError> {
+        let dim = hilbert_dim(self.num_qubits)?;
+        let mut matrix = DMatrix::zeros(self.matrix.nrows(), self.matrix.ncols());
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let input_idx = matrix_unit_index(dim, input_row, input_col);
+                for output_col in 0..dim {
+                    for output_row in 0..dim {
+                        let output_idx = matrix_unit_index(dim, output_row, output_col);
+                        matrix[(
+                            choi_index(dim, output_row, input_row),
+                            choi_index(dim, output_col, input_col),
+                        )] = self.matrix[(output_idx, input_idx)];
+                    }
+                }
+            }
+        }
+        ChoiMatrix::try_new(self.num_qubits, matrix)
+    }
+
+    /// Converts this superoperator to a PTM.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Choi/PTM conversion fails.
+    pub fn to_ptm(&self) -> Result<Ptm, ChannelError> {
+        self.to_choi()?.to_ptm()
+    }
+
+    /// Converts this superoperator to Kraus operators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Choi/Kraus conversion fails.
+    pub fn to_kraus(&self) -> Result<KrausOps, ChannelError> {
+        self.to_choi()?.to_kraus()
+    }
+
+    /// Returns the composition `self ∘ other`, applying `other` first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when qubit counts differ.
+    pub fn compose(&self, other: &Self) -> Result<Self, ChannelError> {
+        if self.num_qubits != other.num_qubits {
+            return Err(ChannelError::InvalidMatrixShape {
+                expected_rows: self.matrix.nrows(),
+                expected_cols: self.matrix.ncols(),
+                rows: other.matrix.nrows(),
+                cols: other.matrix.ncols(),
+            });
+        }
+        Self::try_new(self.num_qubits, &self.matrix * &other.matrix)
+    }
+
+    /// Returns the tensor product of two superoperators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn tensor(&self, other: &Self) -> Result<Self, ChannelError> {
+        Self::try_new(
+            self.num_qubits + other.num_qubits,
+            complex_kronecker(&self.matrix, &other.matrix),
+        )
+    }
+
+    /// Returns the number of qubits represented by this superoperator.
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Returns the dense superoperator matrix.
+    #[must_use]
+    pub fn matrix(&self) -> &DMatrix<Complex64> {
+        &self.matrix
+    }
+
+    /// Consumes this value and returns its dense matrix.
+    #[must_use]
+    pub fn into_matrix(self) -> DMatrix<Complex64> {
+        self.matrix
+    }
+}
+
+/// Pauli-basis process matrix.
+///
+/// `ChiMatrix` stores coefficients `chi_ij` in
+/// `E(rho) = sum_ij chi_ij P_i rho P_j†`, with the same Pauli basis ordering
+/// as [`Ptm`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChiMatrix {
+    num_qubits: usize,
+    basis_order: PtmBasisOrder,
+    matrix: DMatrix<Complex64>,
+}
+
+impl ChiMatrix {
+    /// Constructs a chi matrix after structural validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `matrix` is not `4^n x 4^n` or contains
+    /// non-finite entries.
+    pub fn try_new(num_qubits: usize, matrix: DMatrix<Complex64>) -> Result<Self, ChannelError> {
+        let basis_len = pauli_basis_len(num_qubits)?;
+        validate_complex_matrix(&matrix, basis_len, basis_len)?;
+        Ok(Self {
+            num_qubits,
+            basis_order: PtmBasisOrder::default(),
+            matrix,
+        })
+    }
+
+    /// Constructs a chi matrix from Kraus operators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn from_kraus(kraus: &KrausOps) -> Result<Self, ChannelError> {
+        let basis_len = pauli_basis_len(kraus.num_qubits)?;
+        let dim = hilbert_dim(kraus.num_qubits)?;
+        #[allow(clippy::cast_precision_loss)]
+        let dim_f = dim as f64;
+        let basis = pauli_basis_matrices(kraus.num_qubits)?;
+        let mut matrix = DMatrix::zeros(basis_len, basis_len);
+        for operator in kraus.operators() {
+            let coefficients: Vec<Complex64> = basis
+                .iter()
+                .map(|pauli| trace_complex(&(pauli * operator)) / dim_f)
+                .collect();
+            for row in 0..basis_len {
+                for col in 0..basis_len {
+                    matrix[(row, col)] += coefficients[row] * coefficients[col].conj();
+                }
+            }
+        }
+        Self::try_new(kraus.num_qubits, matrix)
+    }
+
+    /// Constructs a chi matrix from a Choi matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Choi/Kraus conversion fails.
+    pub fn from_choi(choi: &ChoiMatrix) -> Result<Self, ChannelError> {
+        choi.to_kraus()?.to_chi()
+    }
+
+    /// Constructs a chi matrix from a PTM.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when PTM/Choi/Kraus conversion fails.
+    pub fn from_ptm(ptm: &Ptm) -> Result<Self, ChannelError> {
+        ptm.to_kraus()?.to_chi()
+    }
+
+    /// Constructs a chi matrix from a supported channel expression.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the expression cannot be represented as Kraus
+    /// operators.
+    pub fn from_channel_expr(channel: &ChannelExpr) -> Result<Self, ChannelError> {
+        KrausOps::from_channel_expr(channel)?.to_chi()
+    }
+
+    /// Converts this chi matrix to a Choi matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn to_choi(&self) -> Result<ChoiMatrix, ChannelError> {
+        let dim_squared = pauli_basis_len(self.num_qubits)?;
+        let basis = pauli_basis_matrices(self.num_qubits)?;
+        let basis_vectors: Vec<DMatrix<Complex64>> = basis.iter().map(vectorize_matrix).collect();
+        let mut matrix = DMatrix::zeros(dim_squared, dim_squared);
+        for row in 0..dim_squared {
+            for col in 0..dim_squared {
+                let coefficient = self.matrix[(row, col)];
+                if coefficient.norm() <= DEFAULT_TOLERANCE {
+                    continue;
+                }
+                matrix += &basis_vectors[row] * basis_vectors[col].adjoint() * coefficient;
+            }
+        }
+        ChoiMatrix::try_new(self.num_qubits, matrix)
+    }
+
+    /// Converts this chi matrix to a PTM.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Choi/PTM conversion fails.
+    pub fn to_ptm(&self) -> Result<Ptm, ChannelError> {
+        self.to_choi()?.to_ptm()
+    }
+
+    /// Returns the number of qubits represented by this chi matrix.
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Returns the PTM basis ordering.
+    #[must_use]
+    pub fn basis_order(&self) -> PtmBasisOrder {
+        self.basis_order
+    }
+
+    /// Returns the dense chi matrix.
+    #[must_use]
+    pub fn matrix(&self) -> &DMatrix<Complex64> {
+        &self.matrix
+    }
+
+    /// Consumes this value and returns its dense matrix.
+    #[must_use]
+    pub fn into_matrix(self) -> DMatrix<Complex64> {
+        self.matrix
+    }
+}
+
+/// Stinespring isometry representation of a quantum channel.
+///
+/// The matrix has shape `(num_kraus * d) x d` and stacks Kraus operators
+/// vertically, where `d = 2^num_qubits`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stinespring {
+    num_qubits: usize,
+    environment_dim: usize,
+    isometry: DMatrix<Complex64>,
+}
+
+impl Stinespring {
+    /// Constructs a Stinespring isometry after structural validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when shape or isometry validation fails.
+    pub fn try_new(num_qubits: usize, isometry: DMatrix<Complex64>) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(num_qubits)?;
+        if isometry.ncols() != dim || isometry.nrows() == 0 || !isometry.nrows().is_multiple_of(dim)
+        {
+            return Err(ChannelError::InvalidMatrixShape {
+                expected_rows: dim,
+                expected_cols: dim,
+                rows: isometry.nrows(),
+                cols: isometry.ncols(),
+            });
+        }
+        validate_complex_matrix(&isometry, isometry.nrows(), dim)?;
+        let identity = DMatrix::<Complex64>::identity(dim, dim);
+        let gram = isometry.adjoint() * &isometry;
+        if matrix_max_abs_diff(&gram, &identity) > 1e-10 {
+            return Err(ChannelError::DecompositionFailed {
+                reason: "Stinespring matrix is not an isometry".to_string(),
+            });
+        }
+        Ok(Self {
+            num_qubits,
+            environment_dim: isometry.nrows() / dim,
+            isometry,
+        })
+    }
+
+    /// Constructs a Stinespring isometry by stacking Kraus operators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Kraus operators are not trace preserving.
+    pub fn from_kraus(kraus: &KrausOps) -> Result<Self, ChannelError> {
+        let dim = hilbert_dim(kraus.num_qubits)?;
+        let mut isometry = DMatrix::zeros(dim * kraus.operators().len(), dim);
+        for (kraus_idx, operator) in kraus.operators().iter().enumerate() {
+            for row in 0..dim {
+                for col in 0..dim {
+                    isometry[(kraus_idx * dim + row, col)] = operator[(row, col)];
+                }
+            }
+        }
+        Self::try_new(kraus.num_qubits, isometry)
+    }
+
+    /// Converts this Stinespring isometry to Kraus operators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when dimensions overflow.
+    pub fn to_kraus(&self) -> Result<KrausOps, ChannelError> {
+        let dim = hilbert_dim(self.num_qubits)?;
+        let operators = (0..self.environment_dim)
+            .map(|kraus_idx| {
+                DMatrix::from_fn(dim, dim, |row, col| {
+                    self.isometry[(kraus_idx * dim + row, col)]
+                })
+            })
+            .collect();
+        KrausOps::try_new(self.num_qubits, operators)
+    }
+
+    /// Converts this Stinespring isometry to a Choi matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Kraus/Choi conversion fails.
+    pub fn to_choi(&self) -> Result<ChoiMatrix, ChannelError> {
+        self.to_kraus()?.to_choi()
+    }
+
+    /// Converts this Stinespring isometry to a superoperator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Kraus/superoperator conversion fails.
+    pub fn to_superop(&self) -> Result<SuperOp, ChannelError> {
+        self.to_kraus()?.to_superop()
+    }
+
+    /// Returns the number of qubits represented by this isometry.
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Returns the environment dimension, equal to the number of Kraus blocks.
+    #[must_use]
+    pub fn environment_dim(&self) -> usize {
+        self.environment_dim
+    }
+
+    /// Returns the dense Stinespring isometry.
+    #[must_use]
+    pub fn isometry(&self) -> &DMatrix<Complex64> {
+        &self.isometry
+    }
+
+    /// Consumes this value and returns its dense isometry.
+    #[must_use]
+    pub fn into_isometry(self) -> DMatrix<Complex64> {
+        self.isometry
     }
 }
 
@@ -2220,6 +2750,34 @@ fn choi_index(dim: usize, output_index: usize, input_index: usize) -> usize {
 
 fn matrix_unit_index(dim: usize, row: usize, col: usize) -> usize {
     row + col * dim
+}
+
+fn vectorize_matrix(matrix: &DMatrix<Complex64>) -> DMatrix<Complex64> {
+    DMatrix::from_fn(matrix.nrows() * matrix.ncols(), 1, |idx, _| {
+        let row = idx % matrix.nrows();
+        let col = idx / matrix.nrows();
+        matrix[(row, col)]
+    })
+}
+
+fn complex_kronecker(left: &DMatrix<Complex64>, right: &DMatrix<Complex64>) -> DMatrix<Complex64> {
+    let rows = left.nrows() * right.nrows();
+    let cols = left.ncols() * right.ncols();
+    let mut out = DMatrix::zeros(rows, cols);
+    for left_row in 0..left.nrows() {
+        for left_col in 0..left.ncols() {
+            let scale = left[(left_row, left_col)];
+            for right_row in 0..right.nrows() {
+                for right_col in 0..right.ncols() {
+                    out[(
+                        left_row * right.nrows() + right_row,
+                        left_col * right.ncols() + right_col,
+                    )] = scale * right[(right_row, right_col)];
+                }
+            }
+        }
+    }
+    out
 }
 
 fn trace_complex(matrix: &DMatrix<Complex64>) -> Complex64 {
@@ -2965,6 +3523,77 @@ mod tests {
 
         let recovered = kraus.to_ptm().unwrap();
         assert_matrix_close(recovered.matrix(), ptm.matrix());
+    }
+
+    #[test]
+    fn superop_identity_round_trips_through_channel_representations() {
+        let kraus = KrausOps::from_unitary(&unitary::I(0), 1).unwrap();
+        let superop = SuperOp::from_kraus(&kraus).unwrap();
+        let identity = DMatrix::<Complex64>::identity(4, 4);
+        assert_complex_matrix_close(superop.matrix(), &identity);
+
+        let choi = superop.to_choi().unwrap();
+        let expected_choi = ChoiMatrix::from_kraus(&kraus).unwrap();
+        assert_complex_matrix_close(choi.matrix(), expected_choi.matrix());
+
+        let ptm = superop.to_ptm().unwrap();
+        assert_matrix_close(ptm.matrix(), Ptm::identity(1).unwrap().matrix());
+    }
+
+    #[test]
+    fn superop_compose_and_tensor_follow_matrix_semantics() {
+        let x = KrausOps::from_unitary(&unitary::X(0), 1)
+            .unwrap()
+            .to_superop()
+            .unwrap();
+        let xx = x.compose(&x).unwrap();
+        assert_complex_matrix_close(xx.matrix(), &DMatrix::<Complex64>::identity(4, 4));
+
+        let identity = KrausOps::from_unitary(&unitary::I(0), 1)
+            .unwrap()
+            .to_superop()
+            .unwrap();
+        let tensor = identity.tensor(&identity).unwrap();
+        assert_eq!(tensor.num_qubits(), 2);
+        assert_complex_matrix_close(tensor.matrix(), &DMatrix::<Complex64>::identity(16, 16));
+    }
+
+    #[test]
+    fn chi_matrix_is_diagonal_for_pauli_mixture() {
+        let expr = ChannelExpr::MixedUnitary(vec![(0.7, unitary::I(0)), (0.3, unitary::X(0))]);
+        let chi = ChiMatrix::from_channel_expr(&expr).unwrap();
+        let identity = basis_index(1, &PauliBitmaskSmall::identity()).unwrap();
+        let x = basis_index(1, &PauliBitmaskSmall::x(0)).unwrap();
+
+        assert_complex_close(chi.matrix()[(identity, identity)], Complex64::new(0.7, 0.0));
+        assert_complex_close(chi.matrix()[(x, x)], Complex64::new(0.3, 0.0));
+        for row in 0..chi.matrix().nrows() {
+            for col in 0..chi.matrix().ncols() {
+                if (row, col) != (identity, identity) && (row, col) != (x, x) {
+                    assert!(chi.matrix()[(row, col)].norm() < 1e-10);
+                }
+            }
+        }
+
+        let recovered = chi.to_ptm().unwrap();
+        let expected = Ptm::from_channel_expr(&expr).unwrap();
+        assert_matrix_close(recovered.matrix(), expected.matrix());
+    }
+
+    #[test]
+    fn stinespring_round_trips_trace_preserving_kraus_channels() {
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let kraus = KrausOps::from_channel_expr(&expr).unwrap();
+        let stinespring = kraus.to_stinespring().unwrap();
+        assert_eq!(stinespring.num_qubits(), 1);
+        assert_eq!(stinespring.environment_dim(), kraus.operators().len());
+
+        let recovered = stinespring.to_kraus().unwrap();
+        let expected_choi = kraus.to_choi().unwrap();
+        let recovered_choi = recovered.to_choi().unwrap();
+        assert_complex_matrix_close(recovered_choi.matrix(), expected_choi.matrix());
     }
 
     #[test]

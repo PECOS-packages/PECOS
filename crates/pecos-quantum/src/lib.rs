@@ -102,11 +102,12 @@ pub use pecos_num::dag::DagWouldCycleError;
 
 // Concrete channel representation types
 pub use channel::{
-    ChannelError, ChoiMatrix, DiagonalPtm, KrausOps, PauliChannel, PauliSum, Ptm, PtmBasisOrder,
-    basis_bitmask, basis_digit_to_pauli, basis_element, basis_index, basis_label, bitmask_label,
-    matrix_unit_basis, partial_trace, pauli_basis_len, pauli_string_to_bitmask,
-    pauli_to_basis_digit, random_1q_clifford, random_2q_clifford, random_clifford,
-    random_density_matrix, random_density_matrix_with_rank, random_pauli, random_quantum_channel,
+    ChannelError, ChiMatrix, ChoiMatrix, DiagonalPtm, KrausOps, PauliChannel, PauliSum, Ptm,
+    PtmBasisOrder, Stinespring, SuperOp, basis_bitmask, basis_digit_to_pauli, basis_element,
+    basis_index, basis_label, bitmask_label, matrix_unit_basis, partial_trace, pauli_basis_len,
+    pauli_string_to_bitmask, pauli_to_basis_digit, random_1q_clifford, random_2q_clifford,
+    random_clifford, random_density_matrix, random_density_matrix_with_rank, random_pauli,
+    random_quantum_channel,
 };
 pub use diamond_norm::{
     DiamondNormError, hermitian_to_real_symmetric, hermitian_to_real_symmetric_with_tolerance,
@@ -114,7 +115,7 @@ pub use diamond_norm::{
     smat_real_symmetric, svec_real_symmetric, svec_real_symmetric_with_tolerance,
 };
 pub use measures::{
-    DensityMatrixPartialTrace, MeasureError, average_gate_fidelity, concurrence,
+    DensityMatrixPartialTrace, MeasureError, SchmidtTerm, average_gate_fidelity, concurrence,
     entanglement_of_formation, entropy, entropy_with_base, gate_error, hellinger_distance,
     hellinger_fidelity, logarithmic_negativity, mutual_information, negativity,
     partial_trace_qubits, partial_trace_subsystems, process_fidelity, purity,

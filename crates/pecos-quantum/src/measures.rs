@@ -25,6 +25,11 @@ use crate::channel::Ptm;
 
 const DEFAULT_TOLERANCE: f64 = 1e-12;
 
+/// One term in a Schmidt decomposition.
+///
+/// The tuple is `(coefficient, left_vector, right_vector)`.
+pub type SchmidtTerm = (f64, Vec<Complex64>, Vec<Complex64>);
+
 /// Error returned by quantum-information measure functions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MeasureError {
@@ -573,7 +578,7 @@ pub fn schmidt_decomposition(
     state: &DVector<Complex64>,
     dims: &[usize],
     left_subsystems: &[usize],
-) -> Result<Vec<(f64, Vec<Complex64>, Vec<Complex64>)>, MeasureError> {
+) -> Result<Vec<SchmidtTerm>, MeasureError> {
     validate_state_vector(state)?;
     validate_state_subsystem_dimensions(state.len(), dims)?;
     let left = validated_sorted_subsystems(dims, left_subsystems)?;
@@ -605,6 +610,7 @@ pub fn schmidt_decomposition(
             let right_vector = right_vectors_adjoint
                 .row(idx)
                 .iter()
+                .copied()
                 .map(|value| value.conj())
                 .collect();
             (coefficient, left_vector, right_vector)

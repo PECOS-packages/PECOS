@@ -1773,25 +1773,29 @@ impl RawMeasurementPlan {
     ///
     /// Complexity: O(p * shots) per mechanism (geometric = O(fired events)).
     fn overlay_faults_geometric(&self, shots: usize, columns: &mut [Vec<u64>], rng: &mut PecosRng) {
+        let num_words = columns.first().map_or(0, Vec::len);
         for (mech_idx, mechanism) in self.mechanisms.iter().enumerate() {
             let inv_log = self.inv_log_1_minus_p[mech_idx];
             let p = mechanism.probability;
             let num_alts = mechanism.alternatives.len();
+            if num_alts == 0 {
+                continue;
+            }
 
             // p=1: every shot fires (handle before inv_log check since inv_log=0 for p=1)
             if p >= 1.0 {
-                for shot in 0..shots {
-                    let word_idx = shot / 64;
-                    let bit_idx = shot % 64;
-                    let mask = 1u64 << bit_idx;
-                    let alt_idx = if num_alts == 1 {
-                        0
-                    } else {
-                        rng.random_range(0..num_alts)
-                    };
-                    for &meas_idx in &mechanism.alternatives[alt_idx] {
-                        columns[meas_idx][word_idx] ^= mask;
+                if num_alts == 1 {
+                    let word_masks = full_shot_word_masks(shots, num_words);
+                    apply_word_masks(columns, &mechanism.alternatives[0], &word_masks);
+                } else {
+                    let mut alt_word_masks = vec![vec![0u64; num_words]; num_alts];
+                    for shot in 0..shots {
+                        let word_idx = shot / 64;
+                        let bit_idx = shot % 64;
+                        let alt_idx = rng.random_range(0..num_alts);
+                        alt_word_masks[alt_idx][word_idx] ^= 1u64 << bit_idx;
                     }
+                    apply_alternative_word_masks(columns, mechanism, &alt_word_masks);
                 }
                 continue;
             }
@@ -1803,6 +1807,7 @@ impl RawMeasurementPlan {
 
             // Geometric skip sampling: O(fired events)
             let mut shot: usize = 0;
+            let mut alt_word_masks: Option<Vec<Vec<u64>>> = None;
             while shot < shots {
                 // Sample skip distance
                 #[allow(clippy::cast_precision_loss)]
@@ -1826,13 +1831,42 @@ impl RawMeasurementPlan {
                 } else {
                     rng.random_range(0..num_alts)
                 };
-                for &meas_idx in &mechanism.alternatives[alt_idx] {
-                    if meas_idx < columns.len() {
-                        columns[meas_idx][word_idx] ^= mask;
-                    }
-                }
+                alt_word_masks.get_or_insert_with(|| vec![vec![0u64; num_words]; num_alts])
+                    [alt_idx][word_idx] ^= mask;
 
                 shot += 1;
+            }
+            if let Some(alt_word_masks) = alt_word_masks {
+                apply_alternative_word_masks(columns, mechanism, &alt_word_masks);
+            }
+        }
+    }
+}
+
+fn full_shot_word_masks(shots: usize, num_words: usize) -> Vec<u64> {
+    let mut masks = vec![!0u64; num_words];
+    mask_partial_final_word(std::slice::from_mut(&mut masks), shots);
+    masks
+}
+
+fn apply_alternative_word_masks(
+    columns: &mut [Vec<u64>],
+    mechanism: &FaultMechanism,
+    alt_word_masks: &[Vec<u64>],
+) {
+    for (measurements, word_masks) in mechanism.alternatives.iter().zip(alt_word_masks) {
+        apply_word_masks(columns, measurements, word_masks);
+    }
+}
+
+fn apply_word_masks(columns: &mut [Vec<u64>], measurements: &[usize], word_masks: &[u64]) {
+    if word_masks.iter().all(|&mask| mask == 0) {
+        return;
+    }
+    for &meas_idx in measurements {
+        if let Some(column) = columns.get_mut(meas_idx) {
+            for (word, &mask) in column.iter_mut().zip(word_masks) {
+                *word ^= mask;
             }
         }
     }

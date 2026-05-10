@@ -1,6 +1,7 @@
 [project]
 name = "pecos-workspace"
 version = "0.8.0.dev8"
+requires-python = ">=3.10"
 # Meta-package; runtime deps live in the member packages. Test/example/dev
 # tooling is declared in [dependency-groups] below.
 dependencies = []

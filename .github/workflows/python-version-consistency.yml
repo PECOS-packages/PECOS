@@ -5,10 +5,14 @@ on:
     paths:
       - 'pyproject.toml'
       - 'python/**/pyproject.toml'
+      - 'scripts/check_python_workspace.py'
+      - '.github/workflows/python-version-consistency.yml'
   pull_request:
     paths:
       - 'pyproject.toml'
       - 'python/**/pyproject.toml'
+      - 'scripts/check_python_workspace.py'
+      - '.github/workflows/python-version-consistency.yml'
 
 jobs:
   check_versions:
@@ -17,40 +21,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Check version consistency
-        run: |
-          # Check the root uv workspace project plus all Python packages.
-          PYPROJECT_FILES="pyproject.toml $(find python -name pyproject.toml | sort)"
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
 
-          # Initialize variables
-          FIRST_VERSION=""
-          INCONSISTENT=false
-
-          # Check each pyproject.toml file
-          for file in $PYPROJECT_FILES; do
-            VERSION=$(grep -oP '^version = "\K[^"]+' "$file")
-
-            if [ -z "$VERSION" ]; then
-              echo "Error: No project version found in $file"
-              INCONSISTENT=true
-              continue
-            fi
-
-            if [ -z "$FIRST_VERSION" ]; then
-              FIRST_VERSION=$VERSION
-              echo "Reference version: $FIRST_VERSION (from $file)"
-            elif [ "$VERSION" != "$FIRST_VERSION" ]; then
-              echo "Inconsistent version found in $file: $VERSION"
-              INCONSISTENT=true
-            else
-              echo "Consistent version found in $file: $VERSION"
-            fi
-          done
-
-          # Exit with error if versions are inconsistent
-          if [ "$INCONSISTENT" = true ]; then
-            echo "Error: Inconsistent versions found across pyproject.toml files"
-            exit 1
-          else
-            echo "Success: All pyproject.toml files have consistent versions"
-          fi
+      - name: Check Python workspace metadata
+        run: python scripts/check_python_workspace.py

@@ -2910,7 +2910,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-workspace"
-version = "0.8.0.dev5"
+version = "0.8.0.dev8"
 source = { virtual = "." }
 
 [package.optional-dependencies]

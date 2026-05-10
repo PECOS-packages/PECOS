@@ -195,7 +195,7 @@ test mode="release": (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix":
+lint mode="fix": python-workspace-check
     #!/usr/bin/env bash
     set -euo pipefail
     # Detect CUDA: only use --all-features when CUDA toolkit is available
@@ -244,6 +244,11 @@ lint mode="fix":
 [group('lint')]
 check:
     cargo check --workspace --all-targets
+
+# Check Python workspace metadata
+[group('lint')]
+python-workspace-check:
+    @if command -v python3 >/dev/null 2>&1; then python3 scripts/check_python_workspace.py; else python scripts/check_python_workspace.py; fi
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]

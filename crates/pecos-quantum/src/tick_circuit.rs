@@ -4147,6 +4147,379 @@ mod tests {
     }
 
     #[test]
+    fn test_all_standard_gate_families_round_trip_through_dag() {
+        use pecos_core::pauli::{X, Z};
+
+        fn channel_payloads(circuit: &TickCircuit) -> Vec<pecos_core::ChannelExpr> {
+            circuit
+                .iter_gates()
+                .filter_map(|gate| gate.channel.clone())
+                .collect()
+        }
+
+        fn nonzero_gate_counts(
+            circuit: &TickCircuit,
+        ) -> std::collections::BTreeMap<GateType, usize> {
+            circuit
+                .gate_counts_by_type()
+                .into_iter()
+                .filter(|(_, count)| *count > 0)
+                .collect()
+        }
+
+        let mut tc1 = TickCircuit::new();
+        tc1.tick()
+            .x(&[0])
+            .y(&[1])
+            .z(&[2])
+            .h(&[3])
+            .sx(&[4])
+            .sxdg(&[5])
+            .sy(&[6])
+            .sydg(&[7])
+            .sz(&[8])
+            .szdg(&[9])
+            .f(&[10])
+            .fdg(&[11])
+            .iden(&[12]);
+        tc1.tick()
+            .cx(&[(20, 21)])
+            .cy(&[(22, 23)])
+            .cz(&[(24, 25)])
+            .sxx(&[(26, 27)])
+            .sxxdg(&[(28, 29)])
+            .syy(&[(30, 31)])
+            .syydg(&[(32, 33)])
+            .szz(&[(34, 35)])
+            .szzdg(&[(36, 37)])
+            .swap(&[(38, 39)]);
+        tc1.tick()
+            .rx(Angle64::from_turns(0.125), &[40])
+            .ry(Angle64::from_turns(0.25), &[41])
+            .rz(Angle64::from_turns(0.375), &[42])
+            .r1xy(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
+            .u(
+                Angle64::from_turns(0.125),
+                Angle64::from_turns(0.25),
+                Angle64::from_turns(0.375),
+                &[44],
+            );
+        tc1.tick()
+            .channel(pecos_core::channel::Depolarizing(0.01, 50));
+        tc1.tick()
+            .channel(pecos_core::channel::Depolarizing2(0.02, 51, 52));
+        tc1.tick().idle(3u64, &[60]);
+        tc1.tick().pz(&[70, 71]);
+        let ms = tc1.tick().mz(&[70, 71]);
+        tc1.detector_labeled("det-all-gates", &[ms[0]]);
+        tc1.observable_labeled("obs-all-gates", &[ms[1]]);
+        tc1.tracked_operator_labeled("tracked-all-gates", X(70) & Z(71));
+
+        let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+
+        assert_eq!(tc2.gate_count(), tc1.gate_count());
+        assert_eq!(tc2.num_measurements(), tc1.num_measurements());
+        assert_eq!(nonzero_gate_counts(&tc2), nonzero_gate_counts(&tc1));
+        assert_eq!(channel_payloads(&tc2), channel_payloads(&tc1));
+        assert_eq!(tc2.annotations().len(), tc1.annotations().len());
+        assert_eq!(
+            tc2.annotations()
+                .iter()
+                .map(|ann| ann.label.as_deref())
+                .collect::<Vec<_>>(),
+            tc1.annotations()
+                .iter()
+                .map(|ann| ann.label.as_deref())
+                .collect::<Vec<_>>()
+        );
+        assert!(matches!(
+            tc2.annotations()[0].kind,
+            AnnotationKind::Detector { .. }
+        ));
+        assert!(matches!(
+            tc2.annotations()[1].kind,
+            AnnotationKind::Observable { .. }
+        ));
+        assert!(matches!(
+            tc2.annotations()[2].kind,
+            AnnotationKind::TrackedOperator
+        ));
+        assert!(tc2.has_channel_operations());
+    }
+
+    #[test]
+    fn test_seeded_mixed_standard_gate_round_trip_preserves_metadata_annotations_and_batches() {
+        use pecos_core::pauli::{X, Y, Z};
+
+        fn apply_single(tick: &mut TickHandle<'_>, gate_type: GateType, qubit: usize) {
+            match gate_type {
+                GateType::X => {
+                    tick.x(&[qubit]);
+                }
+                GateType::Y => {
+                    tick.y(&[qubit]);
+                }
+                GateType::Z => {
+                    tick.z(&[qubit]);
+                }
+                GateType::H => {
+                    tick.h(&[qubit]);
+                }
+                GateType::SZ => {
+                    tick.sz(&[qubit]);
+                }
+                GateType::SZdg => {
+                    tick.szdg(&[qubit]);
+                }
+                GateType::SX => {
+                    tick.sx(&[qubit]);
+                }
+                GateType::SXdg => {
+                    tick.sxdg(&[qubit]);
+                }
+                GateType::SY => {
+                    tick.sy(&[qubit]);
+                }
+                GateType::SYdg => {
+                    tick.sydg(&[qubit]);
+                }
+                GateType::F => {
+                    tick.f(&[qubit]);
+                }
+                GateType::Fdg => {
+                    tick.fdg(&[qubit]);
+                }
+                other => panic!("unexpected single-qubit gate {other:?}"),
+            }
+        }
+
+        fn apply_pair(tick: &mut TickHandle<'_>, gate_type: GateType, a: usize, b: usize) {
+            match gate_type {
+                GateType::CX => {
+                    tick.cx(&[(a, b)]);
+                }
+                GateType::CY => {
+                    tick.cy(&[(a, b)]);
+                }
+                GateType::CZ => {
+                    tick.cz(&[(a, b)]);
+                }
+                GateType::SXX => {
+                    tick.sxx(&[(a, b)]);
+                }
+                GateType::SXXdg => {
+                    tick.sxxdg(&[(a, b)]);
+                }
+                GateType::SYY => {
+                    tick.syy(&[(a, b)]);
+                }
+                GateType::SYYdg => {
+                    tick.syydg(&[(a, b)]);
+                }
+                GateType::SZZ => {
+                    tick.szz(&[(a, b)]);
+                }
+                GateType::SZZdg => {
+                    tick.szzdg(&[(a, b)]);
+                }
+                GateType::SWAP => {
+                    tick.swap(&[(a, b)]);
+                }
+                other => panic!("unexpected two-qubit gate {other:?}"),
+            }
+        }
+
+        fn nonzero_gate_counts(
+            circuit: &TickCircuit,
+        ) -> std::collections::BTreeMap<GateType, usize> {
+            circuit
+                .gate_counts_by_type()
+                .into_iter()
+                .filter(|(_, count)| *count > 0)
+                .collect()
+        }
+
+        fn choose_gate(gates: &[GateType], state: u64, shift: u32) -> GateType {
+            let len = u64::try_from(gates.len()).unwrap();
+            let idx = usize::try_from((state >> shift) % len).unwrap();
+            gates[idx]
+        }
+
+        const ONE_Q: &[GateType] = &[
+            GateType::X,
+            GateType::Y,
+            GateType::Z,
+            GateType::H,
+            GateType::SZ,
+            GateType::SZdg,
+            GateType::SX,
+            GateType::SXdg,
+            GateType::SY,
+            GateType::SYdg,
+            GateType::F,
+            GateType::Fdg,
+        ];
+        const TWO_Q: &[GateType] = &[
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::SWAP,
+        ];
+
+        let mut state = 0xdecaf_bad5eed_u64;
+        for case_idx in 0..10usize {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let base = 100 * case_idx;
+            let one_a = choose_gate(ONE_Q, state, 0);
+            let one_b = choose_gate(ONE_Q, state, 8);
+            let two = choose_gate(TWO_Q, state, 16);
+            let rz_bucket = u8::try_from((state >> 24) & 3).unwrap();
+            let rz_turns = f64::from(rz_bucket + 1) / 8.0;
+
+            let mut tc1 = TickCircuit::new();
+            tc1.set_meta("case", Attribute::Int(i64::try_from(case_idx).unwrap()));
+            {
+                let mut tick = tc1.tick();
+                tick.meta("round", Attribute::Int(0))
+                    .meta("kind", Attribute::String("single".into()));
+                apply_single(&mut tick, one_a, base);
+                apply_single(&mut tick, one_b, base + 1);
+            }
+            {
+                let mut tick = tc1.tick();
+                tick.meta("round", Attribute::Int(1))
+                    .meta("kind", Attribute::String("mixed".into()));
+                apply_pair(&mut tick, two, base + 2, base + 3);
+                tick.rz(Angle64::from_turns(rz_turns), &[base + 4])
+                    .rx(Angle64::from_turns(0.25), &[base + 5]);
+            }
+            tc1.tick()
+                .meta("round", Attribute::Int(2))
+                .channel(pecos_core::channel::Depolarizing(0.01, base + 6));
+            tc1.tick().pz(&[base, base + 1, base + 2]);
+            let measurements = tc1.tick().mz(&[base, base + 1, base + 2]);
+            tc1.detector_labeled(
+                &format!("det-{case_idx}"),
+                &[measurements[0], measurements[2]],
+            );
+            tc1.observable_labeled(&format!("obs-{case_idx}"), &[measurements[1]]);
+            let tracked = if state & (1 << 32) == 0 {
+                X(base) & Z(base + 3)
+            } else {
+                Y(base + 2)
+            };
+            tc1.tracked_operator_labeled(&format!("tracked-{case_idx}"), tracked.clone());
+
+            let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+
+            assert_eq!(
+                tc2.get_meta("case"),
+                tc1.get_meta("case"),
+                "case {case_idx}"
+            );
+            assert_eq!(tc2.gate_count(), tc1.gate_count(), "case {case_idx}");
+            assert_eq!(
+                tc2.num_measurements(),
+                tc1.num_measurements(),
+                "case {case_idx}"
+            );
+            assert_eq!(
+                nonzero_gate_counts(&tc2),
+                nonzero_gate_counts(&tc1),
+                "case {case_idx}"
+            );
+            assert_eq!(tc2.annotations().len(), 3, "case {case_idx}");
+            assert_eq!(
+                tc2.annotations()
+                    .iter()
+                    .map(|ann| ann.label.as_deref())
+                    .collect::<Vec<_>>(),
+                tc1.annotations()
+                    .iter()
+                    .map(|ann| ann.label.as_deref())
+                    .collect::<Vec<_>>(),
+                "case {case_idx}"
+            );
+            assert!(matches!(
+                tc2.annotations()[0].kind,
+                AnnotationKind::Detector { .. }
+            ));
+            assert!(matches!(
+                tc2.annotations()[1].kind,
+                AnnotationKind::Observable { .. }
+            ));
+            assert!(matches!(
+                tc2.annotations()[2].kind,
+                AnnotationKind::TrackedOperator
+            ));
+            assert_eq!(tc2.annotations()[2].pauli, tracked, "case {case_idx}");
+            assert!(tc2.has_channel_operations(), "case {case_idx}");
+        }
+    }
+
+    #[test]
+    fn test_batching_invariants_cover_parameters_channels_and_measurements() {
+        let same_rz = Gate::rz(Angle64::from_turns(0.25), &[0]);
+        let same_rz_disjoint = Gate::rz(Angle64::from_turns(0.25), &[1]);
+        let different_rz = Gate::rz(Angle64::from_turns(0.5), &[2]);
+        assert!(same_rz.can_batch_with(&same_rz_disjoint));
+        assert!(!same_rz.can_batch_with(&different_rz));
+
+        let channel0 = Gate::channel(pecos_core::channel::Depolarizing(0.01, 10));
+        let channel1 = Gate::channel(pecos_core::channel::Depolarizing(0.01, 11));
+        assert!(!channel0.can_batch_with(&channel1));
+
+        let mut tick = Tick::new();
+        tick.add_gate(same_rz);
+        tick.add_gate(same_rz_disjoint);
+        tick.merge_compatible_gate_at(1);
+        tick.add_gate(different_rz);
+        tick.add_gate(channel0);
+        tick.add_gate(channel1);
+
+        assert_eq!(tick.gate_count(), 5);
+        assert_eq!(tick.gate_batch_count(), 4);
+        assert_eq!(
+            tick.gates()[0].qubits.as_slice(),
+            &[QubitId::from(0), QubitId::from(1)]
+        );
+        assert!(tick.gates()[2].is_channel());
+        assert!(tick.gates()[3].is_channel());
+
+        let mut meas = TickCircuit::new();
+        meas.reserve_ticks(1);
+        let refs0 = meas.tick_at(0).mz(&[0, 1]);
+        meas.get_tick_mut(0).unwrap().set_gate_attr(
+            refs0[0].gate_idx,
+            "readout_family",
+            Attribute::String("fast".into()),
+        );
+        let refs2 = meas.tick_at(0).mz(&[2]);
+        let tick = meas.get_tick_mut(0).unwrap();
+        tick.set_gate_attr(
+            refs2[0].gate_idx,
+            "readout_family",
+            Attribute::String("slow".into()),
+        );
+        tick.merge_compatible_gate_at(refs2[0].gate_idx);
+
+        let tick = meas.get_tick(0).unwrap();
+        assert_eq!(tick.len(), 2);
+        assert_eq!(tick.gate_count(), 3);
+        assert_eq!(tick.gate_batch_count(), 2);
+        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
+        assert_eq!(tick.gates()[1].meas_ids.as_slice(), &[MeasId(2)]);
+    }
+
+    #[test]
     fn test_tick_attrs_preserved_in_conversion() {
         let mut tc1 = TickCircuit::new();
         tc1.set_meta("circuit_name", Attribute::String("test".to_string()));

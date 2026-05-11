@@ -137,6 +137,10 @@ def test_dem_sampler_statistics() -> None:
     assert "dem_output_rates" in stats
     assert stats["per_dem_output"] == stats["per_observable"]
     assert stats["dem_output_rates"] == stats["logical_rates"]
+    assert stats["tracked_op_statistics_supported"] is True
+    assert "tracked_op_statistics_error" not in stats
+    assert sampler.sample_tracked_ops(seed=42) == []
+    assert sampler.sample_tracked_op_batch(2, seed=42) == [[], []]
 
     assert stats["total_shots"] == 10000
     assert 0.0 <= stats["logical_error_rate"] <= 1.0
@@ -170,6 +174,13 @@ def test_dem_sampler_tracked_op_labels() -> None:
     assert stats["per_observable"] == []
     assert stats["per_tracked_op"] == []
     assert stats["per_dem_output"] == []
+    assert stats["tracked_op_statistics_supported"] is False
+    assert "cannot directly sample tracked operator flips" in stats["tracked_op_statistics_error"]
+
+    with pytest.raises(RuntimeError, match="cannot directly sample tracked operator flips"):
+        sampler.sample_tracked_ops(seed=7)
+    with pytest.raises(RuntimeError, match="cannot directly sample tracked operator flips"):
+        sampler.sample_tracked_op_batch(4, seed=7)
 
 
 def test_dem_events_split_observables_and_tracked_ops() -> None:

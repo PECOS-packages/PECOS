@@ -3370,6 +3370,50 @@ impl PyDemSampler {
         self.inner.sample_batch(num_shots, &mut rng)
     }
 
+    /// Sample direct tracked-operator flips.
+    ///
+    /// Raises:
+    ///     RuntimeError: If this sampler carries tracked operators but the
+    ///         backend cannot evaluate tracked-operator flips directly.
+    #[pyo3(signature = (seed=None))]
+    fn sample_tracked_ops(&self, seed: Option<u64>) -> PyResult<Vec<bool>> {
+        use pecos_random::PecosRng;
+        use rand::RngExt;
+
+        let mut rng = match seed {
+            Some(s) => PecosRng::seed_from_u64(s),
+            None => PecosRng::seed_from_u64(rand::rng().random()),
+        };
+
+        self.inner
+            .sample_tracked_operator_flips(&mut rng)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Sample direct tracked-operator flips for multiple shots.
+    ///
+    /// Raises:
+    ///     RuntimeError: If this sampler carries tracked operators but the
+    ///         backend cannot evaluate tracked-operator flips directly.
+    #[pyo3(signature = (num_shots, seed=None))]
+    fn sample_tracked_op_batch(
+        &self,
+        num_shots: usize,
+        seed: Option<u64>,
+    ) -> PyResult<Vec<Vec<bool>>> {
+        use pecos_random::PecosRng;
+        use rand::RngExt;
+
+        let mut rng = match seed {
+            Some(s) => PecosRng::seed_from_u64(s),
+            None => PecosRng::seed_from_u64(rand::rng().random()),
+        };
+
+        self.inner
+            .sample_tracked_operator_batch(num_shots, &mut rng)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
     /// Generate samples and store them in Rust memory as a `SampleBatch`.
     ///
     /// The batch can then be decoded by multiple decoders without re-sampling.
@@ -3427,7 +3471,9 @@ impl PyDemSampler {
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
         let stats = self.inner.sample_statistics(num_shots, actual_seed);
         let observable_indices = self.inner.observable_ids();
-        let tracked_op_indices = self.inner.tracked_operator_ids();
+        let tracked_op_result = self.inner.tracked_operator_ids();
+        let tracked_op_statistics_error = tracked_op_result.as_ref().err().map(ToString::to_string);
+        let tracked_op_indices = tracked_op_result.unwrap_or_default();
         let per_observable = stats.observable_counts(&observable_indices);
         let per_tracked_op: Vec<usize> = tracked_op_indices
             .iter()
@@ -3458,6 +3504,13 @@ impl PyDemSampler {
         dict.set_item("logical_rates", logical_rates)?;
         dict.set_item("tracked_op_rates", tracked_op_rates)?;
         dict.set_item("dem_output_rates", stats.dem_output_rates())?;
+        dict.set_item(
+            "tracked_op_statistics_supported",
+            tracked_op_statistics_error.is_none(),
+        )?;
+        if let Some(error) = tracked_op_statistics_error {
+            dict.set_item("tracked_op_statistics_error", error)?;
+        }
         Ok(dict.unbind())
     }
 

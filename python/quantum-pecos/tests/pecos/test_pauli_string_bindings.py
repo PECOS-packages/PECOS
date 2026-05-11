@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import pytest
-from pecos_rslib import Pauli, PauliString, X, Y, Z
+from pecos_rslib import H, Pauli, PauliString, X, Y, Z
 
 
 def test_pauli_string_from_str_accepts_dense_and_sparse_formats() -> None:
@@ -42,6 +42,18 @@ def test_pauli_string_tensor_result_is_pauli_string() -> None:
 
     assert isinstance(tensor, PauliString)
     assert tensor.get_paulis() == [(Pauli.X, 0), (Pauli.Y, 3)]
+
+
+def test_pauli_string_tensor_equality_hash_and_text_forms_match() -> None:
+    tensor = X(0) & Y(3)
+    same_sparse = PauliString.from_sparse_str("X0 Y3")
+    same_dense = PauliString.from_dense_str("XIIY")
+    same_from_tuples = PauliString([(Pauli.Y, 3), (Pauli.X, 0)])
+
+    assert tensor == same_sparse == same_dense == same_from_tuples
+    assert len({tensor, same_sparse, same_dense, same_from_tuples}) == 1
+    assert tensor.to_sparse_str() == "+X0 Y3"
+    assert tensor.to_dense_str() == "+XIIY"
 
 
 def test_pauli_string_explicit_from_dense_and_sparse_formats() -> None:
@@ -87,11 +99,22 @@ def test_pauli_string_tuple_constructor_rejects_duplicate_qubits() -> None:
 
 
 def test_pauli_string_tensor_rejects_overlapping_qubits() -> None:
+    with pytest.raises(ValueError, match=r"overlapping qubits: \[0\]"):
+        _ = X(0) & Y(0)
+
     with pytest.raises(ValueError, match="tensor product requires disjoint Pauli support"):
         _ = X(0) & Z(0)
 
     with pytest.raises(ValueError, match=r"overlapping qubits: \[2\]"):
         _ = (X(0) & Y(2)) & Z(2)
+
+
+def test_pauli_string_tensor_rejects_non_pauli_operands_explicitly() -> None:
+    with pytest.raises(TypeError):
+        _ = X(0) & H(1)
+
+    with pytest.raises(TypeError):
+        _ = H(0) & H(1)
 
 
 def test_pauli_string_composition_allows_same_qubit() -> None:

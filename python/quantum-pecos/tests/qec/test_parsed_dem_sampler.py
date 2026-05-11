@@ -146,6 +146,26 @@ class TestParsedDemOptimizedSampler:
         assert sampler.num_mechanisms == 1
         assert sampler.num_detectors == 2
 
+    def test_optimized_sampler_projects_tracked_ops_but_fails_direct_sampling(self) -> None:
+        """Parsed PECOS DEM samplers preserve tracked-op IDs but do not sample them directly."""
+        from pecos_rslib.qec import ParsedDem
+
+        parsed = ParsedDem.from_string("error(0.1) D0 TP1")
+        sampler = parsed.to_dem_sampler()
+
+        assert parsed.num_tracked_ops == 2
+        assert sampler.num_detectors == 1
+        assert sampler.num_dem_outputs == 0
+        assert sampler.num_tracked_ops == 2
+
+        detectors, dem_outputs = sampler.sample(seed=11)
+        assert len(detectors) == 1
+        assert isinstance(detectors[0], bool)
+        assert dem_outputs == []
+
+        with pytest.raises(RuntimeError, match="cannot directly sample tracked operator flips"):
+            sampler.sample_tracked_ops(seed=11)
+
     def test_optimized_matches_naive_sampler(self) -> None:
         """Optimized sampler should produce same statistics as naive sampler."""
         from pecos_rslib.qec import ParsedDem

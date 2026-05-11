@@ -431,6 +431,63 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_ignores_tracked_operator_effects() {
+        let catalog = FaultCatalog {
+            locations: vec![
+                FaultLocation {
+                    tick: 0,
+                    gate_index: 0,
+                    gate_type: GateType::H,
+                    qubits: vec![0],
+                    channel: crate::fault_tolerance::fault_sampler::FaultChannel::P1,
+                    channel_probability: 0.2,
+                    no_fault_probability: 0.8,
+                    num_alternatives: 1,
+                    faults: vec![FaultAlternative {
+                        kind: FaultKind::Pauli,
+                        pauli: None,
+                        affected_measurements: Vec::new(),
+                        affected_detectors: vec![0],
+                        affected_observables: vec![1],
+                        affected_tracked_ops: vec![0],
+                        conditional_probability: 1.0,
+                        absolute_probability: 0.2,
+                    }],
+                },
+                FaultLocation {
+                    tick: 1,
+                    gate_index: 0,
+                    gate_type: GateType::H,
+                    qubits: vec![1],
+                    channel: crate::fault_tolerance::fault_sampler::FaultChannel::P1,
+                    channel_probability: 0.1,
+                    no_fault_probability: 0.9,
+                    num_alternatives: 1,
+                    faults: vec![FaultAlternative {
+                        kind: FaultKind::Pauli,
+                        pauli: None,
+                        affected_measurements: Vec::new(),
+                        affected_detectors: vec![0],
+                        affected_observables: Vec::new(),
+                        affected_tracked_ops: vec![3],
+                        conditional_probability: 1.0,
+                        absolute_probability: 0.1,
+                    }],
+                },
+            ],
+        };
+
+        let result = TargetedLookupDecoder::new(&catalog)
+            .max_faults(1)
+            .decode(&[0]);
+
+        assert_eq!(result.best_logical, vec![1]);
+        assert_eq!(result.logical_weights.len(), 2);
+        assert!((result.logical_weights[&vec![1]] - (0.2 / 0.8)).abs() < 1e-12);
+        assert!((result.logical_weights[&vec![]] - (0.1 / 0.9)).abs() < 1e-12);
+    }
+
+    #[test]
     fn test_unexplainable_syndrome_returns_empty_weights() {
         let mut tc = TickCircuit::new();
         tc.tick().mz(&[QubitId(0)]);

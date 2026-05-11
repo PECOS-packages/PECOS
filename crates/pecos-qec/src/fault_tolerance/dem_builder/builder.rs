@@ -937,12 +937,19 @@ impl<'a> DemBuilder<'a> {
         // Convert to pre-defined detector IDs using XOR
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
         let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
+        let mut triggered_tracked_ops: SmallVec<[u32; 2]> = SmallVec::new();
 
         for dem_output_idx in self
             .influence_map
             .get_observable_indices(loc_idx, pauli.as_u8())
         {
             xor_toggle_2(&mut triggered_obs, dem_output_idx);
+        }
+        for tracked_op_idx in self
+            .influence_map
+            .get_tracked_op_indices(loc_idx, pauli.as_u8())
+        {
+            xor_toggle_2(&mut triggered_tracked_ops, tracked_op_idx);
         }
 
         for &rust_det in rust_dets {
@@ -966,8 +973,13 @@ impl<'a> DemBuilder<'a> {
         // Sort for canonical form
         triggered_dets.sort_unstable();
         triggered_obs.sort_unstable();
+        triggered_tracked_ops.sort_unstable();
 
-        FaultMechanism::from_sorted(triggered_dets, triggered_obs)
+        FaultMechanism::from_sorted_with_tracked_ops(
+            triggered_dets,
+            triggered_obs,
+            triggered_tracked_ops,
+        )
     }
 }
 
@@ -1423,7 +1435,10 @@ mod tests {
             "+X0"
         );
         assert!(!dem.to_string().contains("logical_observable"));
-        assert!(dem.to_pecos_string().contains("pecos_tracked_op"));
+        assert!(!dem.to_string().contains("TP0"));
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("TP0"));
+        assert!(pecos_text.contains("pecos_tracked_op"));
     }
 
     #[test]
@@ -1454,7 +1469,10 @@ mod tests {
         let dem_str = dem.to_string();
         assert!(dem_str.contains("logical_observable L0"));
         assert!(!dem_str.contains("logical_observable L1"));
-        assert!(dem.to_pecos_string().contains("pecos_tracked_op"));
+        assert!(!dem_str.contains("TP0"));
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("TP0"));
+        assert!(pecos_text.contains("pecos_tracked_op"));
         let summaries = dem.contribution_effect_summaries();
         assert!(
             summaries
@@ -1462,16 +1480,23 @@ mod tests {
                 .any(|summary| summary.effect.dem_outputs.as_slice() == [0]),
             "observable should remain L0"
         );
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary.effect.tracked_ops.as_slice() == [0]),
+            "tracked operator should remain TP0"
+        );
     }
 
     #[test]
     fn test_tick_dag_tick_dem_keeps_detector_observable_and_tracked_operator_distinct() {
-        use pecos_core::pauli::Z;
+        use pecos_core::pauli::X;
         use pecos_quantum::{DagCircuit, TickCircuit};
 
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1]);
         circuit.tick().h(&[0]);
+        circuit.tracked_operator_labeled("tracked_x0", X(0));
         circuit.tick().mz(&[0, 1]);
         circuit.set_meta(
             "num_measurements",
@@ -1483,8 +1508,6 @@ mod tests {
         circuit
             .add_observable_metadata(&[-1], Some(0), Some("L0"))
             .unwrap();
-        circuit.tracked_operator_labeled("tracked_z0", Z(0));
-
         let round_tripped = TickCircuit::from(&DagCircuit::from(&circuit));
         let dem = DemBuilder::from_tick_circuit(&round_tripped, 0.03, 0.0, 0.02, 0.0);
 
@@ -1494,10 +1517,10 @@ mod tests {
         assert_eq!(dem.dem_outputs()[0].id, 0);
         assert_eq!(dem.num_tracked_ops(), 1);
         assert_eq!(dem.tracked_ops()[0].id, 0);
-        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("tracked_z0"));
+        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("tracked_x0"));
         assert_eq!(
             dem.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
-            "+Z0"
+            "+X0"
         );
 
         let standard_text = dem.to_string();

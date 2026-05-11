@@ -3083,6 +3083,434 @@ mod tests {
     }
 
     #[test]
+    fn test_catalog_all_two_qubit_cliffords_propagate_x_fault_measurement_support() {
+        fn apply_gate(tc: &mut TickCircuit, gate_type: GateType) {
+            match gate_type {
+                GateType::CX => {
+                    tc.tick().cx(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::CY => {
+                    tc.tick().cy(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::CZ => {
+                    tc.tick().cz(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SXX => {
+                    tc.tick().sxx(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SXXdg => {
+                    tc.tick().sxxdg(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SYY => {
+                    tc.tick().syy(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SYYdg => {
+                    tc.tick().syydg(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SZZ => {
+                    tc.tick().szz(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SZZdg => {
+                    tc.tick().szzdg(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SWAP => {
+                    tc.tick().swap(&[(QubitId(0), QubitId(1))]);
+                }
+                other => panic!("unexpected gate type {other:?}"),
+            }
+        }
+
+        for (gate_type, expected_measurements) in [
+            (GateType::CX, &[0usize, 1][..]),
+            (GateType::CY, &[0usize, 1][..]),
+            (GateType::CZ, &[0usize][..]),
+            (GateType::SXX, &[0usize][..]),
+            (GateType::SXXdg, &[0usize][..]),
+            (GateType::SYY, &[1usize][..]),
+            (GateType::SYYdg, &[1usize][..]),
+            (GateType::SZZ, &[0usize][..]),
+            (GateType::SZZdg, &[0usize][..]),
+            (GateType::SWAP, &[1usize][..]),
+        ] {
+            let mut tc = TickCircuit::new();
+            tc.tick().h(&[QubitId(0)]);
+            apply_gate(&mut tc, gate_type);
+            tc.tick().mz(&[QubitId(0), QubitId(1)]);
+
+            let catalog = build_fault_catalog(
+                &tc,
+                &StochasticNoiseParams {
+                    p1: 0.03,
+                    p2: 0.0,
+                    p_meas: 0.0,
+                    p_prep: 0.0,
+                },
+            )
+            .unwrap();
+
+            let h_loc = catalog
+                .locations
+                .iter()
+                .find(|loc| loc.gate_type == GateType::H && loc.qubits.as_slice() == [0])
+                .unwrap();
+            let x_fault = h_loc
+                .faults
+                .iter()
+                .find(|fault| fault.pauli.as_ref() == Some(&PauliString::x(0)))
+                .unwrap();
+
+            assert_eq!(
+                x_fault.affected_measurements.as_slice(),
+                expected_measurements,
+                "{gate_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_catalog_standard_cliffords_match_forward_pauli_oracle_for_all_alternatives() {
+        fn apply_single_gate(tc: &mut TickCircuit, gate_type: GateType) {
+            match gate_type {
+                GateType::X => {
+                    tc.tick().x(&[QubitId(0)]);
+                }
+                GateType::Y => {
+                    tc.tick().y(&[QubitId(0)]);
+                }
+                GateType::Z => {
+                    tc.tick().z(&[QubitId(0)]);
+                }
+                GateType::H => {
+                    tc.tick().h(&[QubitId(0)]);
+                }
+                GateType::SZ => {
+                    tc.tick().sz(&[QubitId(0)]);
+                }
+                GateType::SZdg => {
+                    tc.tick().szdg(&[QubitId(0)]);
+                }
+                GateType::SX => {
+                    tc.tick().sx(&[QubitId(0)]);
+                }
+                GateType::SXdg => {
+                    tc.tick().sxdg(&[QubitId(0)]);
+                }
+                GateType::SY => {
+                    tc.tick().sy(&[QubitId(0)]);
+                }
+                GateType::SYdg => {
+                    tc.tick().sydg(&[QubitId(0)]);
+                }
+                GateType::F => {
+                    tc.tick().f(&[QubitId(0)]);
+                }
+                GateType::Fdg => {
+                    tc.tick().fdg(&[QubitId(0)]);
+                }
+                other => panic!("unexpected single-qubit gate {other:?}"),
+            }
+        }
+
+        fn apply_pair_gate(tc: &mut TickCircuit, gate_type: GateType) {
+            match gate_type {
+                GateType::CX => {
+                    tc.tick().cx(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::CY => {
+                    tc.tick().cy(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::CZ => {
+                    tc.tick().cz(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SXX => {
+                    tc.tick().sxx(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SXXdg => {
+                    tc.tick().sxxdg(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SYY => {
+                    tc.tick().syy(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SYYdg => {
+                    tc.tick().syydg(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SZZ => {
+                    tc.tick().szz(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SZZdg => {
+                    tc.tick().szzdg(&[(QubitId(0), QubitId(1))]);
+                }
+                GateType::SWAP => {
+                    tc.tick().swap(&[(QubitId(0), QubitId(1))]);
+                }
+                other => panic!("unexpected two-qubit gate {other:?}"),
+            }
+        }
+
+        fn pauli_type(pauli: Pauli) -> PauliType {
+            match pauli {
+                Pauli::X => PauliType::X,
+                Pauli::Y => PauliType::Y,
+                Pauli::Z => PauliType::Z,
+                Pauli::I => panic!("identity is not a fault alternative"),
+            }
+        }
+
+        fn expected_effect(
+            pauli: &PauliString,
+            start: usize,
+            gates: &[GateLoc],
+            meas_positions: &HashMap<usize, usize>,
+            tracked_ops: &[PauliString],
+        ) -> PropagatedFaultEffect {
+            let terms: Vec<_> = pauli
+                .iter_pairs()
+                .map(|(p, q)| (pauli_type(p), q.index()))
+                .collect();
+            match terms.as_slice() {
+                [(p, q)] => {
+                    propagate_single_effect(*p, *q, start, gates, meas_positions, tracked_ops)
+                }
+                [(p0, q0), (p1, q1)] => propagate_pair_effect(
+                    [(*p0, *q0), (*p1, *q1)],
+                    start,
+                    gates,
+                    meas_positions,
+                    tracked_ops,
+                ),
+                other => panic!("expected one- or two-qubit Pauli alternative, got {other:?}"),
+            }
+        }
+
+        for gate_type in STANDARD_1Q_CLIFFORD_GATES {
+            let mut tc = TickCircuit::new();
+            tc.tick().h(&[QubitId(0)]);
+            apply_single_gate(&mut tc, *gate_type);
+            tc.tick().cx(&[(QubitId(0), QubitId(1))]);
+            tc.tick().mz(&[QubitId(0)]);
+            tc.set_meta(
+                "num_measurements",
+                pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
+            );
+            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+                .unwrap();
+            tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+                .unwrap();
+            tc.tracked_operator_labeled("tracked_x1", PauliString::x(1));
+            tc.tracked_operator_labeled("tracked_y1", PauliString::y(1));
+            tc.tracked_operator_labeled("tracked_z1", PauliString::z(1));
+
+            let (gates, meas_positions) = flatten_tick_circuit(&tc);
+            let tracked_ops = parse_tracked_operator_annotations(&tc);
+            let catalog = build_fault_catalog(
+                &tc,
+                &StochasticNoiseParams {
+                    p1: 0.03,
+                    p2: 0.0,
+                    p_meas: 0.0,
+                    p_prep: 0.0,
+                },
+            )
+            .unwrap();
+            let source_loc_idx = gates
+                .iter()
+                .position(|loc| loc.gate_type == GateType::H && loc.qubits.as_slice() == [0])
+                .unwrap();
+            let source_loc = catalog
+                .locations
+                .iter()
+                .find(|loc| {
+                    loc.tick == gates[source_loc_idx].tick
+                        && loc.gate_index == gates[source_loc_idx].gate_index
+                })
+                .unwrap();
+
+            for fault in &source_loc.faults {
+                let pauli = fault.pauli.as_ref().unwrap();
+                let effect = expected_effect(
+                    pauli,
+                    source_loc_idx + 1,
+                    &gates,
+                    &meas_positions,
+                    &tracked_ops,
+                );
+                let measurements: Vec<_> = effect.affected_measurements.iter().copied().collect();
+                assert_eq!(
+                    fault.affected_measurements, measurements,
+                    "{gate_type:?} {pauli:?}"
+                );
+                assert_eq!(
+                    fault.affected_detectors, measurements,
+                    "{gate_type:?} {pauli:?}"
+                );
+                assert_eq!(
+                    fault.affected_observables, measurements,
+                    "{gate_type:?} {pauli:?}"
+                );
+                assert_eq!(
+                    fault.affected_tracked_ops, effect.affected_tracked_ops,
+                    "{gate_type:?} {pauli:?}"
+                );
+            }
+        }
+
+        for gate_type in STANDARD_2Q_CLIFFORD_GATES {
+            let mut tc = TickCircuit::new();
+            tc.tick().cx(&[(QubitId(0), QubitId(1))]);
+            apply_pair_gate(&mut tc, *gate_type);
+            tc.tick()
+                .cx(&[(QubitId(0), QubitId(2)), (QubitId(1), QubitId(3))]);
+            tc.tick().mz(&[QubitId(0), QubitId(1)]);
+            tc.set_meta(
+                "num_measurements",
+                pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
+            );
+            tc.add_detector_metadata(&[-2], None, Some("D0"), Some(0))
+                .unwrap();
+            tc.add_detector_metadata(&[-1], None, Some("D1"), Some(1))
+                .unwrap();
+            tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
+                .unwrap();
+            tc.add_observable_metadata(&[-1], Some(1), Some("L1"))
+                .unwrap();
+            tc.tracked_operator_labeled("tracked_x2", PauliString::x(2));
+            tc.tracked_operator_labeled("tracked_y2", PauliString::y(2));
+            tc.tracked_operator_labeled("tracked_z2", PauliString::z(2));
+            tc.tracked_operator_labeled("tracked_x3", PauliString::x(3));
+            tc.tracked_operator_labeled("tracked_y3", PauliString::y(3));
+            tc.tracked_operator_labeled("tracked_z3", PauliString::z(3));
+
+            let (gates, meas_positions) = flatten_tick_circuit(&tc);
+            let tracked_ops = parse_tracked_operator_annotations(&tc);
+            let catalog = build_fault_catalog(
+                &tc,
+                &StochasticNoiseParams {
+                    p1: 0.0,
+                    p2: 0.03,
+                    p_meas: 0.0,
+                    p_prep: 0.0,
+                },
+            )
+            .unwrap();
+            let source_loc_idx = gates
+                .iter()
+                .position(|loc| loc.gate_type == GateType::CX && loc.qubits.as_slice() == [0, 1])
+                .unwrap();
+            let source_loc = catalog
+                .locations
+                .iter()
+                .find(|loc| {
+                    loc.tick == gates[source_loc_idx].tick
+                        && loc.gate_index == gates[source_loc_idx].gate_index
+                })
+                .unwrap();
+
+            for fault in &source_loc.faults {
+                let pauli = fault.pauli.as_ref().unwrap();
+                let effect = expected_effect(
+                    pauli,
+                    source_loc_idx + 1,
+                    &gates,
+                    &meas_positions,
+                    &tracked_ops,
+                );
+                let measurements: Vec<_> = effect.affected_measurements.iter().copied().collect();
+                assert_eq!(
+                    fault.affected_measurements, measurements,
+                    "{gate_type:?} {pauli:?}"
+                );
+                assert_eq!(
+                    fault.affected_detectors, measurements,
+                    "{gate_type:?} {pauli:?}"
+                );
+                assert_eq!(
+                    fault.affected_observables, measurements,
+                    "{gate_type:?} {pauli:?}"
+                );
+                assert_eq!(
+                    fault.affected_tracked_ops, effect.affected_tracked_ops,
+                    "{gate_type:?} {pauli:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_fault_configurations_xor_detectors_observables_and_tracked_ops_separately() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0), QubitId(1)]);
+        tc.tick().cx(&[(QubitId(0), QubitId(2))]);
+        tc.tick().mz(&[QubitId(0), QubitId(1)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
+        );
+        tc.add_detector_metadata(&[-2, -1], None, Some("D0"), Some(0))
+            .unwrap();
+        tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
+            .unwrap();
+        tc.tracked_operator_labeled("tracked_z2", PauliString::z(2));
+
+        let catalog = build_fault_catalog(
+            &tc,
+            &StochasticNoiseParams {
+                p1: 1.0,
+                p2: 0.0,
+                p_meas: 0.0,
+                p_prep: 0.0,
+            },
+        )
+        .unwrap();
+        let h0 = catalog
+            .locations
+            .iter()
+            .position(|loc| loc.gate_type == GateType::H && loc.qubits.as_slice() == [0])
+            .unwrap();
+        let h1 = catalog
+            .locations
+            .iter()
+            .position(|loc| loc.gate_type == GateType::H && loc.qubits.as_slice() == [1])
+            .unwrap();
+        let x0 = catalog.locations[h0]
+            .faults
+            .iter()
+            .position(|fault| fault.pauli.as_ref() == Some(&PauliString::x(0)))
+            .unwrap();
+        let x1 = catalog.locations[h1]
+            .faults
+            .iter()
+            .position(|fault| fault.pauli.as_ref() == Some(&PauliString::x(1)))
+            .unwrap();
+
+        let config = catalog
+            .fault_configurations(2)
+            .find(|config| {
+                config.location_indices == [h0, h1] && config.alternative_indices == [x0, x1]
+            })
+            .unwrap();
+
+        assert_eq!(catalog.locations[h0].faults[x0].affected_detectors, [0]);
+        assert_eq!(catalog.locations[h0].faults[x0].affected_observables, [0]);
+        assert_eq!(catalog.locations[h0].faults[x0].affected_tracked_ops, [0]);
+        assert_eq!(catalog.locations[h1].faults[x1].affected_detectors, [0]);
+        assert!(
+            catalog.locations[h1].faults[x1]
+                .affected_observables
+                .is_empty()
+        );
+        assert!(
+            catalog.locations[h1].faults[x1]
+                .affected_tracked_ops
+                .is_empty()
+        );
+
+        assert_eq!(config.affected_measurements, [0, 1]);
+        assert!(config.affected_detectors.is_empty());
+        assert_eq!(config.affected_observables, [0]);
+        assert_eq!(config.affected_tracked_ops, [0]);
+    }
+
+    #[test]
     fn test_tracked_operator_phase_is_ignored_for_flip_tracking() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
@@ -3318,6 +3746,46 @@ mod tests {
         assert_close(mechanisms[0].probability, 0.02);
         assert_eq!(mechanisms[0].alternatives, vec![vec![0]]);
         assert_eq!(mechanisms, build_fault_table(&tc, &noise).unwrap());
+    }
+
+    #[test]
+    fn test_fault_configurations_skip_zero_probability_fault_events() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String("1".to_string()),
+        );
+
+        let catalog = FaultCatalog::from_circuit(&tc).unwrap();
+        assert_eq!(catalog.fault_configurations(0).count(), 1);
+        assert_eq!(
+            catalog.fault_configurations(1).count(),
+            0,
+            "unparameterized structural catalogs should not yield zero-probability selected faults"
+        );
+
+        let mut parameterized = catalog.clone();
+        parameterized.with_noise(&StochasticNoiseParams {
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: 0.02,
+            p_prep: 0.0,
+        });
+        assert_eq!(
+            parameterized.fault_configurations(1).count(),
+            1,
+            "only the nonzero measurement fault location should be yielded"
+        );
+        assert_eq!(
+            parameterized
+                .fault_configurations(1)
+                .next()
+                .unwrap()
+                .location_indices,
+            vec![1]
+        );
     }
 
     #[test]

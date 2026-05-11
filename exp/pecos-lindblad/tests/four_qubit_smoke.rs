@@ -39,6 +39,74 @@ fn kron_all(ops: &[&Matrix]) -> Matrix {
 }
 
 #[test]
+fn three_qubit_identity_ad_on_one_qubit_fast_smoke() {
+    let d = 8;
+    let i2 = matrix::identity(2);
+    let sm = matrix::sigma_minus();
+    let z = matrix::pauli_1q(Pauli1::Z);
+
+    let beta_down = 1e-3;
+    let beta_phi = 2e-3;
+    let tau_g = 5.0;
+
+    let sm_q1 = kron_all(&[&i2, &sm, &i2]);
+    let z_q1 = kron_all(&[&i2, &z, &i2]);
+
+    let collapse: Vec<(Matrix, f64)> = vec![(sm_q1, beta_down), (z_q1, beta_phi / 2.0)];
+    let hamiltonian: Matrix = vec![Complex64::new(0.0, 0.0); d * d];
+    let noise = Lindbladian::new(d, hamiltonian, collapse);
+
+    let gate = Gate::identity(3, noise, tau_g);
+    let pl = synthesize_numerical(&gate, DEFAULT_N_STEPS);
+    let pl_coarse = synthesize_numerical(&gate, 2);
+
+    let rate = |s: &str| pl.rate(&PauliString::from_label(s).unwrap());
+    assert_abs_diff_eq!(rate("IXI"), beta_down * tau_g / 4.0, epsilon = 1e-10);
+    assert_abs_diff_eq!(rate("IYI"), beta_down * tau_g / 4.0, epsilon = 1e-10);
+    assert_abs_diff_eq!(rate("IZI"), beta_phi * tau_g / 2.0, epsilon = 1e-10);
+    for ps in PauliString::enumerate_nonidentity(3) {
+        assert_abs_diff_eq!(pl.rate(&ps), pl_coarse.rate(&ps), epsilon = 1e-14);
+    }
+
+    for ps in PauliString::enumerate_nonidentity(3) {
+        let label = format!("{}", ps);
+        if label == "IXI" || label == "IYI" || label == "IZI" {
+            continue;
+        }
+        assert_abs_diff_eq!(pl.rate(&ps), 0.0, epsilon = 1e-10);
+    }
+}
+
+#[test]
+fn three_qubit_identity_coherent_zzz_fast_smoke() {
+    let d = 8;
+    let tau_g = 5.0;
+    let delta = 1e-4;
+
+    let z = matrix::pauli_1q(Pauli1::Z);
+    let zzz = kron_all(&[&z, &z, &z]);
+    let h_delta = matrix::scale(&zzz, Complex64::new(delta / 2.0, 0.0));
+    let noise = Lindbladian::new(d, h_delta, Vec::new());
+    let gate = Gate::identity(3, noise, tau_g);
+    let pl = synthesize_exact_unitary(&gate);
+
+    let expected = (delta * tau_g).powi(2) / 4.0;
+    assert_abs_diff_eq!(
+        pl.rate(&PauliString::from_label("ZZZ").unwrap()),
+        expected,
+        epsilon = 1e-10
+    );
+
+    for ps in PauliString::enumerate_nonidentity(3) {
+        if format!("{}", ps) == "ZZZ" {
+            continue;
+        }
+        assert_abs_diff_eq!(pl.rate(&ps), 0.0, epsilon = 1e-10);
+    }
+}
+
+#[test]
+#[ignore = "Slow 4Q validation; run explicitly with: cargo test -p pecos-lindblad --test four_qubit_smoke -- --ignored"]
 fn four_qubit_identity_ad_on_one_qubit() {
     let d = 16;
     let i2 = matrix::identity(2);
@@ -84,6 +152,7 @@ fn four_qubit_identity_ad_on_one_qubit() {
 }
 
 #[test]
+#[ignore = "Slow 4Q validation; run explicitly with: cargo test -p pecos-lindblad --test four_qubit_smoke -- --ignored"]
 fn four_qubit_identity_coherent_zzzz_smoke() {
     // 4Q identity with coherent ZZZZ noise -- since all Zs commute, each
     // lambda_{all-Z} should be non-zero, everything else zero.

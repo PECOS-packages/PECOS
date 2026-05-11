@@ -499,6 +499,28 @@ mod tests {
         }
     }
 
+    fn assert_phase_free_1q_table<F>(name: &str, mut apply: F, table: &[(&str, &str)])
+    where
+        F: FnMut(&mut BitmaskPauliProp),
+    {
+        for &(input, expected) in table {
+            let mut prop = bitmask_prop_from_dense(input);
+            apply(&mut prop);
+            assert_eq!(prop.dense_string(), expected, "{name}: {input}");
+        }
+    }
+
+    fn assert_phase_free_2q_table<F>(name: &str, mut apply: F, table: &[(&str, &str)])
+    where
+        F: FnMut(&mut BitmaskPauliProp),
+    {
+        for &(input, expected) in table {
+            let mut prop = bitmask_prop_from_dense(input);
+            apply(&mut prop);
+            assert_eq!(prop.dense_string(), expected, "{name}: {input}");
+        }
+    }
+
     #[test]
     fn single_qubit_cliffords_match_sparse_pauli_prop() {
         assert_matches_sparse_1q(
@@ -581,6 +603,229 @@ mod tests {
             |p| {
                 p.fdg(&[QubitId(0)]);
             },
+        );
+    }
+
+    #[test]
+    fn standard_cliffords_match_phase_free_pauli_tables() {
+        const PAULI_SELF: &[(&str, &str)] = &[("I", "I"), ("X", "X"), ("Y", "Y"), ("Z", "Z")];
+        const H_SY: &[(&str, &str)] = &[("I", "I"), ("X", "Z"), ("Y", "Y"), ("Z", "X")];
+        const SZ: &[(&str, &str)] = &[("I", "I"), ("X", "Y"), ("Y", "X"), ("Z", "Z")];
+        const SX: &[(&str, &str)] = &[("I", "I"), ("X", "X"), ("Y", "Z"), ("Z", "Y")];
+        const F: &[(&str, &str)] = &[("I", "I"), ("X", "Y"), ("Y", "Z"), ("Z", "X")];
+        const FDG: &[(&str, &str)] = &[("I", "I"), ("X", "Z"), ("Y", "X"), ("Z", "Y")];
+        const CX: &[(&str, &str)] = &[
+            ("XI", "XX"),
+            ("YI", "YX"),
+            ("ZI", "ZI"),
+            ("IX", "IX"),
+            ("IY", "ZY"),
+            ("IZ", "ZZ"),
+        ];
+        const CY: &[(&str, &str)] = &[
+            ("XI", "XY"),
+            ("YI", "YY"),
+            ("ZI", "ZI"),
+            ("IX", "ZX"),
+            ("IY", "IY"),
+            ("IZ", "ZZ"),
+        ];
+        const CZ: &[(&str, &str)] = &[
+            ("XI", "XZ"),
+            ("YI", "YZ"),
+            ("ZI", "ZI"),
+            ("IX", "ZX"),
+            ("IY", "ZY"),
+            ("IZ", "IZ"),
+        ];
+        const SXX: &[(&str, &str)] = &[
+            ("XI", "XI"),
+            ("YI", "ZX"),
+            ("ZI", "YX"),
+            ("IX", "IX"),
+            ("IY", "XZ"),
+            ("IZ", "XY"),
+        ];
+        const SYY: &[(&str, &str)] = &[
+            ("XI", "ZY"),
+            ("YI", "YI"),
+            ("ZI", "XY"),
+            ("IX", "YZ"),
+            ("IY", "IY"),
+            ("IZ", "YX"),
+        ];
+        const SZZ: &[(&str, &str)] = &[
+            ("XI", "YZ"),
+            ("YI", "XZ"),
+            ("ZI", "ZI"),
+            ("IX", "ZY"),
+            ("IY", "ZX"),
+            ("IZ", "IZ"),
+        ];
+        const SWAP: &[(&str, &str)] = &[
+            ("XI", "IX"),
+            ("YI", "IY"),
+            ("ZI", "IZ"),
+            ("IX", "XI"),
+            ("IY", "YI"),
+            ("IZ", "ZI"),
+        ];
+
+        assert_phase_free_1q_table(
+            "X",
+            |p| {
+                p.x(&[QubitId(0)]);
+            },
+            PAULI_SELF,
+        );
+        assert_phase_free_1q_table(
+            "Y",
+            |p| {
+                p.y(&[QubitId(0)]);
+            },
+            PAULI_SELF,
+        );
+        assert_phase_free_1q_table(
+            "Z",
+            |p| {
+                p.z(&[QubitId(0)]);
+            },
+            PAULI_SELF,
+        );
+        assert_phase_free_1q_table(
+            "H",
+            |p| {
+                p.h(&[QubitId(0)]);
+            },
+            H_SY,
+        );
+        assert_phase_free_1q_table(
+            "SZ",
+            |p| {
+                p.sz(&[QubitId(0)]);
+            },
+            SZ,
+        );
+        assert_phase_free_1q_table(
+            "SZdg",
+            |p| {
+                p.szdg(&[QubitId(0)]);
+            },
+            SZ,
+        );
+        assert_phase_free_1q_table(
+            "SX",
+            |p| {
+                p.sx(&[QubitId(0)]);
+            },
+            SX,
+        );
+        assert_phase_free_1q_table(
+            "SXdg",
+            |p| {
+                p.sxdg(&[QubitId(0)]);
+            },
+            SX,
+        );
+        assert_phase_free_1q_table(
+            "SY",
+            |p| {
+                p.sy(&[QubitId(0)]);
+            },
+            H_SY,
+        );
+        assert_phase_free_1q_table(
+            "SYdg",
+            |p| {
+                p.sydg(&[QubitId(0)]);
+            },
+            H_SY,
+        );
+        assert_phase_free_1q_table(
+            "F",
+            |p| {
+                p.f(&[QubitId(0)]);
+            },
+            F,
+        );
+        assert_phase_free_1q_table(
+            "Fdg",
+            |p| {
+                p.fdg(&[QubitId(0)]);
+            },
+            FDG,
+        );
+
+        let pair = [(QubitId(0), QubitId(1))];
+        assert_phase_free_2q_table(
+            "CX",
+            |p| {
+                p.cx(&pair);
+            },
+            CX,
+        );
+        assert_phase_free_2q_table(
+            "CY",
+            |p| {
+                p.cy(&pair);
+            },
+            CY,
+        );
+        assert_phase_free_2q_table(
+            "CZ",
+            |p| {
+                p.cz(&pair);
+            },
+            CZ,
+        );
+        assert_phase_free_2q_table(
+            "SXX",
+            |p| {
+                p.sxx(&pair);
+            },
+            SXX,
+        );
+        assert_phase_free_2q_table(
+            "SXXdg",
+            |p| {
+                p.sxxdg(&pair);
+            },
+            SXX,
+        );
+        assert_phase_free_2q_table(
+            "SYY",
+            |p| {
+                p.syy(&pair);
+            },
+            SYY,
+        );
+        assert_phase_free_2q_table(
+            "SYYdg",
+            |p| {
+                p.syydg(&pair);
+            },
+            SYY,
+        );
+        assert_phase_free_2q_table(
+            "SZZ",
+            |p| {
+                p.szz(&pair);
+            },
+            SZZ,
+        );
+        assert_phase_free_2q_table(
+            "SZZdg",
+            |p| {
+                p.szzdg(&pair);
+            },
+            SZZ,
+        );
+        assert_phase_free_2q_table(
+            "SWAP",
+            |p| {
+                p.swap(&pair);
+            },
+            SWAP,
         );
     }
 

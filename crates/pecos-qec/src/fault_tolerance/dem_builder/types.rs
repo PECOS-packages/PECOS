@@ -524,6 +524,11 @@ pub struct FaultMechanism {
     ///
     /// New code should treat these as standard observable `L<n>` output channels.
     pub dem_outputs: SmallVec<[u32; 2]>,
+    /// PECOS tracked-Pauli operator indices that flip together (sorted).
+    ///
+    /// These are rendered as `TP<n>` only in PECOS DEM text. Standard DEM text
+    /// and decoder-facing mechanism tables intentionally ignore them.
+    pub tracked_ops: SmallVec<[u32; 2]>,
 }
 
 impl FaultMechanism {
@@ -539,19 +544,42 @@ impl FaultMechanism {
         detectors: impl IntoIterator<Item = u32>,
         dem_outputs: impl IntoIterator<Item = u32>,
     ) -> Self {
+        Self::from_unsorted_with_tracked_ops(detectors, dem_outputs, std::iter::empty())
+    }
+
+    /// Creates a mechanism from unsorted detector, DEM-output, and tracked-Pauli indices.
+    #[must_use]
+    pub fn from_unsorted_with_tracked_ops(
+        detectors: impl IntoIterator<Item = u32>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+        tracked_ops: impl IntoIterator<Item = u32>,
+    ) -> Self {
         let mut dets: SmallVec<[u32; 4]> = detectors.into_iter().collect();
         let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
+        let mut tracked_ops: SmallVec<[u32; 2]> = tracked_ops.into_iter().collect();
         dets.sort_unstable();
         dem_outputs.sort_unstable();
+        tracked_ops.sort_unstable();
         Self {
             detectors: dets,
             dem_outputs,
+            tracked_ops,
         }
     }
 
     /// Creates a mechanism from pre-sorted detector and DEM-output indices.
     #[must_use]
     pub fn from_sorted(detectors: SmallVec<[u32; 4]>, dem_outputs: SmallVec<[u32; 2]>) -> Self {
+        Self::from_sorted_with_tracked_ops(detectors, dem_outputs, SmallVec::new())
+    }
+
+    /// Creates a mechanism from pre-sorted detector, DEM-output, and tracked-Pauli indices.
+    #[must_use]
+    pub fn from_sorted_with_tracked_ops(
+        detectors: SmallVec<[u32; 4]>,
+        dem_outputs: SmallVec<[u32; 2]>,
+        tracked_ops: SmallVec<[u32; 2]>,
+    ) -> Self {
         debug_assert!(
             detectors.windows(2).all(|w| w[0] <= w[1]),
             "detectors must be sorted"
@@ -560,9 +588,14 @@ impl FaultMechanism {
             dem_outputs.windows(2).all(|w| w[0] <= w[1]),
             "dem_outputs must be sorted"
         );
+        debug_assert!(
+            tracked_ops.windows(2).all(|w| w[0] <= w[1]),
+            "tracked_ops must be sorted"
+        );
         Self {
             detectors,
             dem_outputs,
+            tracked_ops,
         }
     }
 
@@ -570,7 +603,27 @@ impl FaultMechanism {
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
+        self.detectors.is_empty() && self.dem_outputs.is_empty() && self.tracked_ops.is_empty()
+    }
+
+    /// Returns true if this mechanism has no decoder-facing effect.
+    ///
+    /// This ignores PECOS tracked-Pauli effects, matching standard DEM and
+    /// decoder-facing sampler behavior.
+    #[inline]
+    #[must_use]
+    pub fn is_standard_empty(&self) -> bool {
         self.detectors.is_empty() && self.dem_outputs.is_empty()
+    }
+
+    /// Returns the decoder-facing projection of this mechanism.
+    #[must_use]
+    pub fn standard_effect(&self) -> Self {
+        Self {
+            detectors: self.detectors.clone(),
+            dem_outputs: self.dem_outputs.clone(),
+            tracked_ops: SmallVec::new(),
+        }
     }
 
     /// Returns the number of detectors in this mechanism.
@@ -587,6 +640,13 @@ impl FaultMechanism {
         self.dem_outputs.len()
     }
 
+    /// Returns the number of tracked Pauli operator outputs in this mechanism.
+    #[inline]
+    #[must_use]
+    pub fn num_tracked_ops(&self) -> usize {
+        self.tracked_ops.len()
+    }
+
     /// XOR this mechanism with another, returning the combined effect.
     ///
     /// Used when combining correlated errors (e.g., two-qubit gate errors).
@@ -595,6 +655,7 @@ impl FaultMechanism {
         Self {
             detectors: symmetric_difference_4(&self.detectors, &other.detectors),
             dem_outputs: symmetric_difference_2(&self.dem_outputs, &other.dem_outputs),
+            tracked_ops: symmetric_difference_2(&self.tracked_ops, &other.tracked_ops),
         }
     }
 
@@ -680,7 +741,9 @@ fn symmetric_difference_2(a: &SmallVec<[u32; 2]>, b: &SmallVec<[u32; 2]>) -> Sma
 
 impl PartialEq for FaultMechanism {
     fn eq(&self, other: &Self) -> bool {
-        self.detectors == other.detectors && self.dem_outputs == other.dem_outputs
+        self.detectors == other.detectors
+            && self.dem_outputs == other.dem_outputs
+            && self.tracked_ops == other.tracked_ops
     }
 }
 
@@ -690,6 +753,7 @@ impl Hash for FaultMechanism {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.detectors.hash(state);
         self.dem_outputs.hash(state);
+        self.tracked_ops.hash(state);
     }
 }
 
@@ -704,6 +768,7 @@ impl Ord for FaultMechanism {
         self.detectors
             .cmp(&other.detectors)
             .then_with(|| self.dem_outputs.cmp(&other.dem_outputs))
+            .then_with(|| self.tracked_ops.cmp(&other.tracked_ops))
     }
 }
 
@@ -711,9 +776,10 @@ impl fmt::Debug for FaultMechanism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "FaultMechanism(dets={:?}, dem_outputs={:?})",
+            "FaultMechanism(dets={:?}, dem_outputs={:?}, tracked_ops={:?})",
             self.detectors.as_slice(),
-            self.dem_outputs.as_slice()
+            self.dem_outputs.as_slice(),
+            self.tracked_ops.as_slice()
         )
     }
 }
@@ -773,16 +839,17 @@ impl DecomposedFault {
     pub fn to_stim_targets(&self) -> String {
         self.components
             .iter()
-            .map(|comp| {
-                let mut targets = Vec::new();
-                for &det in &comp.detectors {
-                    targets.push(format!("D{det}"));
-                }
-                for &dem_output in &comp.dem_outputs {
-                    targets.push(format!("L{dem_output}"));
-                }
-                targets.join(" ")
-            })
+            .map(format_mechanism_targets)
+            .collect::<Vec<_>>()
+            .join(" ^ ")
+    }
+
+    /// Formats this error for PECOS DEM output, including tracked Pauli `TP<n>` targets.
+    #[must_use]
+    pub fn to_pecos_targets(&self) -> String {
+        self.components
+            .iter()
+            .map(format_pecos_mechanism_targets)
             .collect::<Vec<_>>()
             .join(" ^ ")
     }
@@ -2662,20 +2729,66 @@ impl DetectorErrorModel {
         Ok(self)
     }
 
-    /// Converts the DEM to PECOS's strict superset of Stim DEM text.
+    /// Converts the DEM to PECOS DEM text.
     ///
-    /// The beginning of the output is exactly the standard Stim-compatible DEM
-    /// from [`Self::to_string`]. PECOS-only metadata follows as
-    /// `pecos_observable {json}` and `pecos_tracked_op {json}` statements. This makes PECOS DEM text a
-    /// strict superset: every Stim DEM remains valid PECOS DEM text, and PECOS
-    /// adds statements for data Stim cannot represent.
+    /// This format is a strict superset of standard DEM text. It uses `D<n>`
+    /// detector targets and `L<n>` measurement-defined observable targets as
+    /// usual, and adds PECOS-only `TP<n>` tracked-Pauli targets for tracked
+    /// operator flips. Metadata follows as `pecos_observable {json}` and
+    /// `pecos_tracked_op {json}` statements.
     ///
     /// # Panics
     ///
     /// Panics only if serializing JSON values constructed in this method fails.
     #[must_use]
     pub fn to_pecos_string(&self) -> String {
-        let mut text = self.to_string();
+        let mut lines = Vec::new();
+
+        for det in &self.detectors {
+            if let Some([x, y, z]) = det.coords {
+                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            } else {
+                lines.push(format!("detector D{}", det.id));
+            }
+        }
+
+        for obs in &self.observables {
+            lines.push(format!("logical_observable L{}", obs.id));
+        }
+
+        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
+        for contrib in &self.contributions {
+            by_effect
+                .entry(contrib.effect.clone())
+                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
+                .or_insert(contrib.probability);
+        }
+
+        for (effect, total_prob) in by_effect {
+            if effect.is_empty() || total_prob <= 0.0 {
+                continue;
+            }
+
+            let targets = format_pecos_mechanism_targets(&effect);
+            if !targets.is_empty() {
+                lines.push(format!(
+                    "error({}) {}",
+                    format_probability(total_prob),
+                    targets
+                ));
+            }
+        }
+
+        let metadata_lines = self.pecos_metadata_lines();
+
+        if metadata_lines.is_empty() {
+            return lines.join("\n");
+        }
+        lines.extend(metadata_lines);
+        lines.join("\n")
+    }
+
+    fn pecos_metadata_lines(&self) -> Vec<String> {
         let observable_lines = self.observables.iter().map(|observable| {
             let value = pecos_metadata_dem_output_value(observable);
             let payload = serde_json::to_string(&value)
@@ -2688,16 +2801,7 @@ impl DetectorErrorModel {
                 .expect("serializing PECOS tracked-op metadata should not fail");
             format!("pecos_tracked_op {payload}")
         });
-        let metadata_lines: Vec<String> = observable_lines.chain(tracked_op_lines).collect();
-
-        if metadata_lines.is_empty() {
-            return text;
-        }
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(&metadata_lines.join("\n"));
-        text
+        observable_lines.chain(tracked_op_lines).collect()
     }
 
     /// Applies PECOS metadata embedded in extended DEM text.
@@ -3286,14 +3390,14 @@ impl DetectorErrorModel {
         let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
         for contrib in &self.contributions {
             by_effect
-                .entry(contrib.effect.clone())
+                .entry(contrib.effect.standard_effect())
                 .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
                 .or_insert(contrib.probability);
         }
 
         let mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)> = by_effect
             .into_iter()
-            .filter(|(effect, prob)| !effect.is_empty() && *prob > 0.0)
+            .filter(|(effect, prob)| !effect.is_standard_empty() && *prob > 0.0)
             .map(|(effect, prob)| (prob, effect.detectors.to_vec(), effect.dem_outputs.to_vec()))
             .collect();
 
@@ -3427,14 +3531,14 @@ impl DetectorErrorModel {
         let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
         for contrib in &self.contributions {
             by_effect
-                .entry(contrib.effect.clone())
+                .entry(contrib.effect.standard_effect())
                 .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
                 .or_insert(contrib.probability);
         }
 
         // Output each mechanism with its total probability
         for (effect, total_prob) in by_effect {
-            if effect.is_empty() || total_prob <= 0.0 {
+            if effect.is_standard_empty() || total_prob <= 0.0 {
                 continue;
             }
 
@@ -3554,7 +3658,7 @@ impl DetectorErrorModel {
             return (cached.clone(), strategy, recorded_component_targets);
         }
 
-        let effect = &contrib.effect;
+        let effect = contrib.effect.standard_effect();
         let (targets, strategy) = if let Some((x_effect, z_effect)) =
             contrib.decomposition_components()
         {
@@ -3580,7 +3684,7 @@ impl DetectorErrorModel {
                 };
                 (targets, ContributionRenderStrategy::SourceComponents)
             } else if effect.num_detectors() == 2 && effect.dem_outputs.is_empty() {
-                let direct_targets = Self::two_detector_direct_targets(effect, singleton_set);
+                let direct_targets = Self::two_detector_direct_targets(&effect, singleton_set);
                 if matches!(
                     two_detector_direct_policy,
                     TwoDetectorDirectRenderPolicy::PreferRecordedComponents
@@ -3610,7 +3714,7 @@ impl DetectorErrorModel {
                     )
                 }
             } else if effect.is_hyperedge() {
-                if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(effect) {
+                if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(&effect) {
                     (
                         Self::maybe_maximally_decompose_parts(decomp, singleton_set)
                             .iter()
@@ -3621,7 +3725,7 @@ impl DetectorErrorModel {
                     )
                 } else {
                     (
-                        format_mechanism_targets(effect),
+                        format_mechanism_targets(&effect),
                         ContributionRenderStrategy::EffectDirect,
                     )
                 }
@@ -3636,7 +3740,7 @@ impl DetectorErrorModel {
                 )
             }
         } else if effect.num_detectors() == 2 && effect.dem_outputs.is_empty() {
-            let direct_targets = Self::two_detector_direct_targets(effect, singleton_set);
+            let direct_targets = Self::two_detector_direct_targets(&effect, singleton_set);
             if matches!(
                 two_detector_direct_policy,
                 TwoDetectorDirectRenderPolicy::PreferRecordedComponents
@@ -3666,7 +3770,7 @@ impl DetectorErrorModel {
                 )
             }
         } else if effect.is_hyperedge() {
-            if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(effect) {
+            if let Some(decomp) = graphlike_index.find_hyperedge_decomposition(&effect) {
                 (
                     Self::maybe_maximally_decompose_parts(decomp, singleton_set)
                         .iter()
@@ -3677,7 +3781,7 @@ impl DetectorErrorModel {
                 )
             } else {
                 (
-                    format_mechanism_targets(effect),
+                    format_mechanism_targets(&effect),
                     ContributionRenderStrategy::EffectDirect,
                 )
             }
@@ -3851,8 +3955,9 @@ impl DetectorErrorModel {
     fn collect_graphlike_mechanisms(&self) -> BTreeSet<FaultMechanism> {
         let mut graphlike = BTreeSet::new();
         for contrib in &self.contributions {
-            if contrib.effect.is_graphlike() {
-                graphlike.insert(contrib.effect.clone());
+            let standard = contrib.effect.standard_effect();
+            if !standard.is_standard_empty() && standard.is_graphlike() {
+                graphlike.insert(standard);
             }
         }
         graphlike
@@ -3890,6 +3995,21 @@ fn format_mechanism_targets(mechanism: &FaultMechanism) -> String {
     }
     for &dem_output in &mechanism.dem_outputs {
         targets.push(format!("L{dem_output}"));
+    }
+    targets.join(" ")
+}
+
+/// Formats a PECOS DEM mechanism's targets, including tracked Pauli `TP<n>` outputs.
+fn format_pecos_mechanism_targets(mechanism: &FaultMechanism) -> String {
+    let mut targets = Vec::new();
+    for &det in &mechanism.detectors {
+        targets.push(format!("D{det}"));
+    }
+    for &dem_output in &mechanism.dem_outputs {
+        targets.push(format!("L{dem_output}"));
+    }
+    for &tracked_op in &mechanism.tracked_ops {
+        targets.push(format!("TP{tracked_op}"));
     }
     targets.join(" ")
 }
@@ -3969,6 +4089,33 @@ mod tests {
         assert_eq!(m1, m2);
         assert_eq!(m1.detectors.as_slice(), &[0, 1, 2]);
         assert_eq!(m1.dem_outputs.as_slice(), &[0, 1]);
+    }
+
+    #[test]
+    fn test_error_mechanism_equality_and_hash_include_tracked_ops() {
+        let standard = FaultMechanism::from_unsorted([0], []);
+        let with_tracked = FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]);
+
+        assert_ne!(standard, with_tracked);
+        assert_eq!(standard.standard_effect(), with_tracked.standard_effect());
+
+        let mut set = std::collections::HashSet::new();
+        set.insert(standard);
+        set.insert(with_tracked);
+        assert_eq!(
+            set.len(),
+            2,
+            "internal mechanism identity must keep tracked operators distinct"
+        );
+    }
+
+    #[test]
+    fn test_pecos_target_format_canonicalizes_tracked_ops() {
+        let mechanism = FaultMechanism::from_unsorted_with_tracked_ops([], [], [2, 0]);
+        assert_eq!(
+            DecomposedFault::single(mechanism).to_pecos_targets(),
+            "TP0 TP2"
+        );
     }
 
     #[test]
@@ -4280,14 +4427,19 @@ mod tests {
                 .with_pauli(X(0) & Z(2))
                 .with_label("track_check"),
         );
-        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], []), 0.01);
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]),
+            0.01,
+        );
 
         let stim_text = dem.to_string();
         assert!(!stim_text.contains("logical_observable L0"));
+        assert!(stim_text.contains("error(0.01) D0"));
+        assert!(!stim_text.contains("TP0"));
         assert!(!stim_text.contains("pecos_"));
 
         let pecos_text = dem.to_pecos_string();
-        assert!(pecos_text.starts_with(&stim_text));
+        assert!(pecos_text.contains("error(0.01) D0 TP0"));
         assert!(pecos_text.contains("pecos_tracked_op"));
         assert!(pecos_text.contains(r#""kind":"tracked_operator""#));
         assert!(pecos_text.contains(r#""pauli":"+X0 Z2""#));
@@ -4329,16 +4481,21 @@ mod tests {
                 .with_pauli(Z(3))
                 .with_label("tracked_z3"),
         );
-        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], [0]), 0.01);
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [0], [0]),
+            0.01,
+        );
         dem.add_direct_contribution(FaultMechanism::from_unsorted([], [1]), 0.02);
 
         let stim_text = dem.to_string();
         assert!(stim_text.contains("logical_observable L0"));
         assert!(stim_text.contains("logical_observable L1"));
         assert!(!stim_text.contains("logical_observable L2"));
+        assert!(!stim_text.contains("TP0"));
         assert!(!stim_text.contains("pecos_tracked_op"));
 
         let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("error(0.01) D0 L0 TP0"));
         assert!(pecos_text.contains("pecos_observable"));
         assert!(pecos_text.contains("pecos_tracked_op"));
 
@@ -4379,6 +4536,365 @@ mod tests {
     }
 
     #[test]
+    fn test_pecos_dem_text_parses_error_targets_and_metadata() {
+        use crate::fault_tolerance::dem_builder::ParsedDem;
+        use pecos_core::pauli::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0]));
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
+        dem.add_tracked_operator(
+            DemOutput::new(0)
+                .with_pauli(X(0) & Z(2))
+                .with_label("tracked_x0_z2"),
+        );
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [0], [0]),
+            0.25,
+        );
+
+        let pecos_text = dem.to_pecos_string();
+        let parsed: ParsedDem = pecos_text.parse().unwrap();
+
+        assert_eq!(parsed.num_detectors, 1);
+        assert_eq!(parsed.num_dem_outputs(), 1);
+        assert_eq!(parsed.num_tracked_ops(), 1);
+        assert_eq!(parsed.mechanisms.len(), 1);
+        assert_eq!(parsed.mechanisms[0].format_targets(), "D0 L0 TP0");
+        assert_eq!(parsed.mechanisms[0].components[0].detectors, vec![0]);
+        assert_eq!(parsed.mechanisms[0].components[0].observables, vec![0]);
+        assert_eq!(parsed.mechanisms[0].components[0].tracked_ops, vec![0]);
+        assert_eq!(
+            parsed.dem_outputs[0].as_ref().unwrap().label.as_deref(),
+            Some("L0")
+        );
+        assert_eq!(
+            parsed.tracked_ops[0]
+                .as_ref()
+                .unwrap()
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
+            "+X0 Z2"
+        );
+    }
+
+    #[test]
+    fn test_tracked_only_contribution_is_pecos_only_and_decoder_invisible() {
+        use pecos_core::pauli::X;
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([], [], [0]),
+            0.25,
+        );
+
+        let standard_text = dem.to_string();
+        assert!(!standard_text.contains("error("));
+        assert!(!standard_text.contains("TP0"));
+        assert!(!standard_text.contains("pecos_tracked_op"));
+
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("error(0.25) TP0"));
+        assert!(pecos_text.contains("pecos_tracked_op"));
+
+        let (mechanisms, coords) = dem.to_mechanisms();
+        assert!(mechanisms.is_empty());
+        assert!(coords.is_empty());
+    }
+
+    #[test]
+    fn test_standard_projection_merges_effects_that_differ_only_by_tracked_ops() {
+        use pecos_core::pauli::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_tracked_operator(DemOutput::new(1).with_pauli(Z(0)).with_label("tracked_z0"));
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]),
+            0.1,
+        );
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [1]),
+            0.2,
+        );
+
+        let standard_text = dem.to_string();
+        let error_lines = standard_text
+            .lines()
+            .filter(|line| line.starts_with("error("))
+            .collect::<Vec<_>>();
+        assert_eq!(error_lines, ["error(0.26) D0"]);
+        assert!(!standard_text.contains("TP0"));
+        assert!(!standard_text.contains("TP1"));
+
+        let (mechanisms, _coords) = dem.to_mechanisms();
+        assert_eq!(mechanisms.len(), 1);
+        assert!((mechanisms[0].0 - 0.26).abs() < 1e-12);
+        assert_eq!(mechanisms[0].1, vec![0]);
+        assert!(mechanisms[0].2.is_empty());
+    }
+
+    #[test]
+    fn test_pecos_dem_preserves_effects_that_differ_by_tracked_ops() {
+        use pecos_core::pauli::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_tracked_operator(DemOutput::new(1).with_pauli(Z(0)).with_label("tracked_z0"));
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]),
+            0.1,
+        );
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [1]),
+            0.2,
+        );
+
+        let pecos_text = dem.to_pecos_string();
+        let error_lines = pecos_text
+            .lines()
+            .filter(|line| line.starts_with("error("))
+            .collect::<Vec<_>>();
+        assert_eq!(error_lines, ["error(0.1) D0 TP0", "error(0.2) D0 TP1"]);
+        assert!(pecos_text.contains(r#""label":"tracked_x0""#));
+        assert!(pecos_text.contains(r#""label":"tracked_z0""#));
+    }
+
+    #[test]
+    fn test_standard_dem_serialization_never_shifts_observable_ids_for_tracked_ops() {
+        use pecos_core::pauli::{X, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
+        dem.add_observable(DemOutput::new(2).with_records([-2]).with_label("L2"));
+        dem.add_tracked_operator(
+            DemOutput::new(0)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(X(0))
+                .with_label("tracked_x0"),
+        );
+        dem.add_tracked_operator(
+            DemOutput::new(1)
+                .with_kind(DemOutputKind::TrackedOperator)
+                .with_pauli(Z(3))
+                .with_label("tracked_z3"),
+        );
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [0, 2], [1]),
+            0.01,
+        );
+
+        assert_eq!(dem.num_observables(), 3);
+        assert_eq!(dem.num_dem_outputs(), 3);
+        assert_eq!(dem.num_tracked_ops(), 2);
+
+        let standard_text = dem.to_string();
+        assert!(standard_text.contains("logical_observable L0"));
+        assert!(!standard_text.contains("logical_observable L1"));
+        assert!(standard_text.contains("logical_observable L2"));
+        assert!(!standard_text.contains("logical_observable L3"));
+        assert!(standard_text.contains("error(0.01) D0 L0 L2"));
+        assert!(!standard_text.contains("TP1"));
+        assert!(!standard_text.contains("pecos_observable"));
+        assert!(!standard_text.contains("pecos_tracked_op"));
+
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("error(0.01) D0 L0 L2 TP1"));
+        assert!(pecos_text.contains(r#""kind":"observable""#));
+        assert!(pecos_text.contains(r#""kind":"tracked_operator""#));
+        assert!(pecos_text.contains(r#""id":0"#));
+        assert!(pecos_text.contains(r#""id":2"#));
+        assert!(pecos_text.contains(r#""pauli":"+X0""#));
+        assert!(pecos_text.contains(r#""pauli":"+Z3""#));
+
+        let recovered = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(&pecos_text)
+            .unwrap();
+        assert_eq!(recovered.num_dem_outputs(), 3);
+        assert_eq!(recovered.num_tracked_ops(), 2);
+        assert_eq!(
+            recovered
+                .dem_outputs()
+                .iter()
+                .map(|op| op.id)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        assert_eq!(
+            recovered
+                .tracked_ops()
+                .iter()
+                .map(|op| op.id)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+    }
+
+    #[test]
+    fn test_pecos_dem_text_metadata_round_trip_keeps_observable_and_tracked_id_spaces() {
+        use pecos_core::pauli::{X, Y, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_detector(DetectorDef::new(1));
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
+        dem.add_observable(
+            DemOutput::new(3)
+                .with_records([-2, -1])
+                .with_label("logical_aux"),
+        );
+        dem.add_tracked_operator(
+            DemOutput::new(0)
+                .with_pauli(X(0) & Z(2))
+                .with_label("tracked_x0_z2"),
+        );
+        dem.add_tracked_operator(DemOutput::new(2).with_pauli(Y(5)).with_label("tracked_y5"));
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0, 1], [3], [2]),
+            0.125,
+        );
+
+        let standard_text = dem.to_string();
+        assert!(standard_text.contains("logical_observable L0"));
+        assert!(!standard_text.contains("logical_observable L1"));
+        assert!(!standard_text.contains("logical_observable L2"));
+        assert!(standard_text.contains("logical_observable L3"));
+        assert!(standard_text.contains("error(0.125) D0 D1 L3"));
+        assert!(!standard_text.contains("TP2"));
+        assert!(!standard_text.contains("pecos_tracked_op"));
+
+        let pecos_text = format!(
+            "# ordinary comments and standard DEM lines are allowed\n{}\n",
+            dem.to_pecos_string()
+        );
+        let recovered = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(&pecos_text)
+            .unwrap();
+        assert_eq!(recovered.num_observables(), 4);
+        assert_eq!(recovered.num_dem_outputs(), 4);
+        assert_eq!(recovered.num_tracked_ops(), 3);
+        assert_eq!(
+            recovered
+                .dem_outputs()
+                .iter()
+                .map(|op| (op.id, op.label.as_deref()))
+                .collect::<Vec<_>>(),
+            [(0, Some("L0")), (3, Some("logical_aux"))]
+        );
+        assert_eq!(
+            recovered
+                .tracked_ops()
+                .iter()
+                .map(|op| (op.id, op.label.as_deref()))
+                .collect::<Vec<_>>(),
+            [(0, Some("tracked_x0_z2")), (2, Some("tracked_y5"))]
+        );
+        assert_eq!(
+            recovered.tracked_ops()[0]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
+            "+X0 Z2"
+        );
+        assert_eq!(
+            recovered.tracked_ops()[1]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
+            "+Y5"
+        );
+
+        let reserialized = recovered.to_pecos_string();
+        assert!(reserialized.contains("logical_observable L0"));
+        assert!(!reserialized.contains("logical_observable L1"));
+        assert!(!reserialized.contains("logical_observable L2"));
+        assert!(reserialized.contains("logical_observable L3"));
+        assert!(reserialized.contains(r#""kind":"observable""#));
+        assert!(reserialized.contains(r#""kind":"tracked_operator""#));
+        assert!(reserialized.contains(r#""pauli":"+X0 Z2""#));
+        assert!(reserialized.contains(r#""pauli":"+Y5""#));
+        assert!(
+            !reserialized.contains("TP2"),
+            "metadata-only recovery should not invent mechanism effects"
+        );
+    }
+
+    #[test]
+    fn test_pecos_dem_text_and_metadata_json_preserve_same_output_metadata() {
+        use crate::fault_tolerance::dem_builder::ParsedDem;
+        use pecos_core::pauli::{X, Y, Z};
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_records([-1]));
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
+        dem.add_observable(DemOutput::new(3).with_records([-2]).with_label("L3"));
+        dem.add_tracked_operator(
+            DemOutput::new(0)
+                .with_pauli(X(0) & Z(2))
+                .with_label("tracked_x0_z2"),
+        );
+        dem.add_tracked_operator(DemOutput::new(3).with_pauli(Y(5)).with_label("tracked_y5"));
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([0], [3], [3]),
+            0.125,
+        );
+
+        let json_recovered = DetectorErrorModel::new()
+            .with_pecos_metadata_json(&dem.to_pecos_metadata_json())
+            .unwrap();
+        let text_recovered = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(&dem.to_pecos_string())
+            .unwrap();
+
+        let source_json: serde_json::Value =
+            serde_json::from_str(&dem.to_pecos_metadata_json()).unwrap();
+        let from_json: serde_json::Value =
+            serde_json::from_str(&json_recovered.to_pecos_metadata_json()).unwrap();
+        let from_text: serde_json::Value =
+            serde_json::from_str(&text_recovered.to_pecos_metadata_json()).unwrap();
+
+        assert_eq!(from_json, source_json);
+        assert_eq!(from_text, source_json);
+
+        let parsed: ParsedDem = dem.to_pecos_string().parse().unwrap();
+        assert_eq!(parsed.num_dem_outputs(), 4);
+        assert_eq!(parsed.num_tracked_ops(), 4);
+        assert_eq!(parsed.mechanisms[0].format_targets(), "D0 L3 TP3");
+        assert_eq!(parsed.mechanisms[0].components[0].observables, vec![3]);
+        assert_eq!(parsed.mechanisms[0].components[0].tracked_ops, vec![3]);
+        assert_eq!(
+            parsed.dem_outputs[0].as_ref().unwrap().label.as_deref(),
+            Some("L0")
+        );
+        assert_eq!(
+            parsed.dem_outputs[3].as_ref().unwrap().label.as_deref(),
+            Some("L3")
+        );
+        assert_eq!(
+            parsed.tracked_ops[0]
+                .as_ref()
+                .unwrap()
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
+            "+X0 Z2"
+        );
+        assert_eq!(
+            parsed.tracked_ops[3].as_ref().unwrap().label.as_deref(),
+            Some("tracked_y5")
+        );
+    }
+
+    #[test]
     fn test_pecos_dem_metadata_parser_rejects_malformed_extension_line() {
         let err = DetectorErrorModel::new()
             .with_pecos_dem_metadata("error(0.01) D0\npecos_tracked_op not-json")
@@ -4403,13 +4919,14 @@ mod tests {
 
     #[test]
     fn test_decomposed_error_single() {
-        let mechanism = FaultMechanism::from_unsorted([0, 1], [0]);
+        let mechanism = FaultMechanism::from_unsorted_with_tracked_ops([0, 1], [0], [2]);
         let decomposed = DecomposedFault::single(mechanism.clone());
 
         assert_eq!(decomposed.components.len(), 1);
         assert!(decomposed.is_graphlike());
         assert_eq!(decomposed.full_effect(), mechanism);
         assert_eq!(decomposed.to_stim_targets(), "D0 D1 L0");
+        assert_eq!(decomposed.to_pecos_targets(), "D0 D1 L0 TP2");
     }
 
     #[test]

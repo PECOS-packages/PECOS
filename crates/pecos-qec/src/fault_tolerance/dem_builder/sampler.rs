@@ -97,6 +97,49 @@ impl std::fmt::Display for DetectorValidationError {
 
 impl std::error::Error for DetectorValidationError {}
 
+/// Error returned when a sampler backend is asked to directly evaluate tracked
+/// operators it only preserves as metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedOperatorSamplingError {
+    backend: &'static str,
+    num_tracked_ops: usize,
+}
+
+impl TrackedOperatorSamplingError {
+    fn new(backend: &'static str, num_tracked_ops: usize) -> Self {
+        Self {
+            backend,
+            num_tracked_ops,
+        }
+    }
+
+    /// Backend that rejected direct tracked-operator sampling.
+    #[must_use]
+    pub fn backend(&self) -> &'static str {
+        self.backend
+    }
+
+    /// Number of tracked operators carried as metadata by that backend.
+    #[must_use]
+    pub fn num_tracked_ops(&self) -> usize {
+        self.num_tracked_ops
+    }
+}
+
+impl std::fmt::Display for TrackedOperatorSamplingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} cannot directly sample tracked operator flips for {} tracked operator(s). \
+             This backend samples decoder-facing detectors and observables only; tracked \
+             operators are preserved as PECOS metadata and fault effects.",
+            self.backend, self.num_tracked_ops
+        )
+    }
+}
+
+impl std::error::Error for TrackedOperatorSamplingError {}
+
 /// Output mode for the unified sampler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -476,6 +519,24 @@ impl DemSampler {
         sampler
     }
 
+    /// Attach observable and tracked-operator metadata to an existing sampler.
+    ///
+    /// This is useful for parser paths where the sampling engine projects to
+    /// detector/observable columns but the original PECOS DEM still declared
+    /// tracked operators in a separate ID space.
+    #[must_use]
+    pub fn with_dem_output_metadata(
+        mut self,
+        dem_outputs: Vec<Option<DemOutput>>,
+        tracked_ops: Vec<Option<DemOutput>>,
+    ) -> Self {
+        self.labels.dem_outputs = dem_outputs;
+        self.labels.dem_output_labels = labels_from_dem_outputs(&self.labels.dem_outputs);
+        self.labels.tracked_ops = tracked_ops;
+        self.labels.tracked_op_labels = labels_from_dem_outputs(&self.labels.tracked_ops);
+        self
+    }
+
     /// Reconstruct a detector error model from the compiled mechanism table.
     ///
     /// The returned model contains mechanism probabilities and effects. Higher
@@ -543,7 +604,7 @@ impl DemSampler {
     /// Number of tracked operators.
     #[must_use]
     pub fn num_tracked_ops(&self) -> usize {
-        self.labels.tracked_ops.iter().flatten().count()
+        self.labels.tracked_ops.len()
     }
 
     /// Standard observable `L<n>` IDs selected from this sampler.
@@ -553,9 +614,68 @@ impl DemSampler {
     }
 
     /// PECOS tracked-operator IDs selected from this sampler.
-    #[must_use]
-    pub fn tracked_operator_ids(&self) -> Vec<usize> {
-        Vec::new()
+    ///
+    /// Decoder-facing DEM samplers do not directly evaluate tracked operators:
+    /// tracked operators are preserved in metadata and in PECOS DEM fault
+    /// effects, but the sampled bit columns are detectors plus standard
+    /// observable `L<n>` outputs only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrackedOperatorSamplingError`] when tracked operators are
+    /// present and the caller is asking for a direct sampled tracked-operator
+    /// output space.
+    pub fn tracked_operator_ids(&self) -> Result<Vec<usize>, TrackedOperatorSamplingError> {
+        self.ensure_tracked_operator_sampling_supported()?;
+        Ok(Vec::new())
+    }
+
+    /// Sample direct tracked-operator flips.
+    ///
+    /// This returns an empty vector when the sampler carries no tracked
+    /// operators. If tracked operators are present, this backend fails
+    /// explicitly instead of returning silently empty data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrackedOperatorSamplingError`] when tracked operators are
+    /// present because [`DemSampler`] samples detector and observable columns,
+    /// not tracked-operator columns.
+    pub fn sample_tracked_operator_flips<R: Rng>(
+        &self,
+        _rng: &mut R,
+    ) -> Result<Vec<bool>, TrackedOperatorSamplingError> {
+        self.ensure_tracked_operator_sampling_supported()?;
+        Ok(Vec::new())
+    }
+
+    /// Sample direct tracked-operator flips for multiple shots.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrackedOperatorSamplingError`] when tracked operators are
+    /// present for the same reason as [`Self::sample_tracked_operator_flips`].
+    pub fn sample_tracked_operator_batch<R: Rng>(
+        &self,
+        num_shots: usize,
+        _rng: &mut R,
+    ) -> Result<Vec<Vec<bool>>, TrackedOperatorSamplingError> {
+        self.ensure_tracked_operator_sampling_supported()?;
+        Ok(vec![Vec::new(); num_shots])
+    }
+
+    fn ensure_tracked_operator_sampling_supported(
+        &self,
+    ) -> Result<(), TrackedOperatorSamplingError> {
+        let num_tracked_ops = self.num_tracked_ops();
+        if num_tracked_ops == 0 {
+            Ok(())
+        } else {
+            Err(TrackedOperatorSamplingError::new(
+                "DemSampler",
+                num_tracked_ops,
+            ))
+        }
     }
 
     /// Bit mask selecting observable outputs.
@@ -1705,6 +1825,121 @@ mod tests {
     }
 
     #[test]
+    fn sampler_paths_preserve_output_split_for_noiseless_and_forced_faults() {
+        use super::super::builder::DemBuilder;
+        use super::super::types::NoiseConfig;
+        use pecos_core::pauli::X;
+        use pecos_quantum::Attribute;
+
+        fn assert_metadata(sampler: &DemSampler) {
+            assert_eq!(sampler.num_detectors(), 1);
+            assert_eq!(sampler.num_dem_outputs(), 1);
+            assert_eq!(sampler.num_observables(), 1);
+            assert_eq!(sampler.num_tracked_ops(), 1);
+            assert_eq!(sampler.observable_ids(), vec![0]);
+            let err = sampler.tracked_operator_ids().unwrap_err();
+            assert_eq!(err.backend(), "DemSampler");
+            assert_eq!(err.num_tracked_ops(), 1);
+            assert!(
+                err.to_string()
+                    .contains("cannot directly sample tracked operator flips")
+            );
+            assert_eq!(
+                sampler.labels().dem_outputs[0]
+                    .as_ref()
+                    .unwrap()
+                    .label
+                    .as_deref(),
+                Some("obs0")
+            );
+            assert_eq!(
+                sampler.labels().tracked_ops[0]
+                    .as_ref()
+                    .unwrap()
+                    .label
+                    .as_deref(),
+                Some("tracked_x0")
+            );
+        }
+
+        fn sample_once(sampler: &DemSampler) -> (Vec<bool>, Vec<bool>) {
+            let mut rng = PecosRng::seed_from_u64(123);
+            sampler.sample(&mut rng)
+        }
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let meas = circuit.mz(&[0]);
+        circuit.detector_labeled("det0", &[meas[0]]);
+        circuit.observable_labeled("obs0", &[meas[0]]);
+        circuit.tracked_operator_labeled("tracked_x0", X(0));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1],"label":"det0"}]"#.to_string()),
+        );
+        circuit.set_attr(
+            "observables",
+            Attribute::String(r#"[{"id":0,"records":[-1],"label":"obs0"}]"#.to_string()),
+        );
+
+        let noiseless = DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap();
+        assert_metadata(&noiseless);
+        assert_eq!(sample_once(&noiseless), (vec![false], vec![false]));
+
+        let forced_noise = NoiseConfig::new(0.0, 0.0, 1.0, 0.0);
+        let from_circuit = DemSampler::from_circuit(&circuit, &forced_noise).unwrap();
+        assert_metadata(&from_circuit);
+        assert_eq!(sample_once(&from_circuit), (vec![true], vec![true]));
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0);
+        let from_dem = DemSampler::from_detector_error_model(&dem);
+        assert_metadata(&from_dem);
+        assert_eq!(sample_once(&from_dem), (vec![true], vec![true]));
+
+        let influence_map = InfluenceBuilder::new(&circuit)
+            .with_circuit_annotations(&circuit)
+            .build();
+        let from_builder = DemSamplerBuilder::new(&influence_map)
+            .with_noise(0.0, 0.0, 1.0, 0.0)
+            .with_detector_records(vec![vec![-1]])
+            .with_observable_records(vec![vec![-1]])
+            .build()
+            .unwrap();
+        assert_metadata(&from_builder);
+        assert_eq!(sample_once(&from_builder), (vec![true], vec![true]));
+    }
+
+    #[test]
+    fn sampler_xors_detectors_and_observables_while_tracked_ops_stay_metadata() {
+        use super::super::types::{DetectorDef, DetectorErrorModel, FaultMechanism};
+        use pecos_core::pauli::Z;
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0));
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
+        dem.add_tracked_operator(DemOutput::new(0).with_pauli(Z(3)).with_label("tracked_z3"));
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], [0]), 1.0);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0], []), 1.0);
+
+        let sampler = DemSampler::from_detector_error_model(&dem);
+        let mut rng = PecosRng::seed_from_u64(99);
+
+        assert_eq!(sampler.num_detectors(), 1);
+        assert_eq!(sampler.num_observables(), 1);
+        assert_eq!(sampler.num_tracked_ops(), 1);
+        assert_eq!(
+            sampler.labels().tracked_ops[0]
+                .as_ref()
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("tracked_z3")
+        );
+        assert_eq!(sampler.sample(&mut rng), (vec![false], vec![true]));
+    }
+
+    #[test]
     fn raw_mode_without_dem_outputs_reports_zero_dem_outputs() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
@@ -1744,10 +1979,57 @@ mod tests {
         let sampler = DemSampler::from_detector_error_model(&dem);
 
         assert_eq!(sampler.observable_ids(), vec![0]);
-        assert_eq!(sampler.tracked_operator_ids(), Vec::<usize>::new());
+        assert_eq!(
+            sampler
+                .tracked_operator_ids()
+                .unwrap_err()
+                .num_tracked_ops(),
+            1
+        );
         assert_eq!(sampler.observable_dem_output_mask(), 1);
         assert_eq!(sampler.observable_mask_from_dem_output_flips(&[false]), 0);
         assert_eq!(sampler.observable_mask_from_dem_output_flips(&[true]), 1);
+    }
+
+    #[test]
+    fn tracked_operator_direct_sampling_fails_explicitly_when_unsupported() {
+        use super::super::types::{DetectorErrorModel, FaultMechanism};
+        use pecos_core::pauli::X;
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_ops([], [], [0]),
+            0.25,
+        );
+
+        let sampler = DemSampler::from_detector_error_model(&dem);
+        let mut rng = PecosRng::seed_from_u64(17);
+
+        let err = sampler
+            .sample_tracked_operator_flips(&mut rng)
+            .expect_err("DemSampler should reject direct tracked-op sampling");
+        assert_eq!(err.backend(), "DemSampler");
+        assert_eq!(err.num_tracked_ops(), 1);
+        assert!(
+            err.to_string()
+                .contains("samples decoder-facing detectors and observables only")
+        );
+
+        let err = sampler
+            .sample_tracked_operator_batch(4, &mut rng)
+            .expect_err("DemSampler should reject direct tracked-op batch sampling");
+        assert_eq!(err.num_tracked_ops(), 1);
+
+        let empty = DemSampler::from_detector_error_model(&DetectorErrorModel::new());
+        assert_eq!(
+            empty.sample_tracked_operator_flips(&mut rng).unwrap(),
+            Vec::<bool>::new()
+        );
+        assert_eq!(
+            empty.sample_tracked_operator_batch(3, &mut rng).unwrap(),
+            vec![Vec::<bool>::new(), Vec::new(), Vec::new()]
+        );
     }
 
     #[test]

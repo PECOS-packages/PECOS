@@ -64,8 +64,7 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{
-    Angle64, ChannelExpr, Gate, GateAngles, GateMeasIds, GateParams, GateQubits, GateSignature,
-    MeasId, QubitId, TimeUnits,
+    Angle64, ChannelExpr, Gate, GateMeasIds, GateQubits, GateSignature, MeasId, QubitId, TimeUnits,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -329,81 +328,53 @@ impl From<TickGateError> for CustomGateError {
 
 #[derive(Debug, Clone, Default)]
 struct TickGateStorage {
-    gate_types: Vec<GateType>,
-    angles: Vec<GateAngles>,
-    params: Vec<GateParams>,
-    qubits: Vec<GateQubits>,
-    meas_ids: Vec<GateMeasIds>,
-    channels: Vec<Option<ChannelExpr>>,
-    materialized: Vec<Gate>,
+    commands: Vec<Gate>,
 }
 
 impl TickGateStorage {
     fn len(&self) -> usize {
-        self.gate_types.len()
+        self.commands.len()
     }
 
     fn is_empty(&self) -> bool {
-        self.gate_types.is_empty()
+        self.commands.is_empty()
     }
 
     fn as_slice(&self) -> &[Gate] {
-        &self.materialized
+        &self.commands
     }
 
     fn iter(&self) -> std::slice::Iter<'_, Gate> {
-        self.materialized.iter()
+        self.commands.iter()
     }
 
     fn get(&self, idx: usize) -> Option<&Gate> {
-        self.materialized.get(idx)
+        self.commands.get(idx)
     }
 
     fn push(&mut self, gate: Gate) {
-        self.gate_types.push(gate.gate_type);
-        self.angles.push(gate.angles.clone());
-        self.params.push(gate.params.clone());
-        self.qubits.push(gate.qubits.clone());
-        self.meas_ids.push(gate.meas_ids.clone());
-        self.channels.push(gate.channel.clone());
-        self.materialized.push(gate);
+        self.commands.push(gate);
     }
 
     fn set(&mut self, idx: usize, gate: Gate) {
-        self.gate_types[idx] = gate.gate_type;
-        self.angles[idx].clone_from(&gate.angles);
-        self.params[idx].clone_from(&gate.params);
-        self.qubits[idx].clone_from(&gate.qubits);
-        self.meas_ids[idx].clone_from(&gate.meas_ids);
-        self.channels[idx].clone_from(&gate.channel);
-        self.materialized[idx] = gate;
+        self.commands[idx] = gate;
     }
 
     fn remove(&mut self, idx: usize) -> Gate {
-        self.gate_types.remove(idx);
-        self.angles.remove(idx);
-        self.params.remove(idx);
-        self.qubits.remove(idx);
-        self.meas_ids.remove(idx);
-        self.channels.remove(idx);
-        self.materialized.remove(idx)
+        self.commands.remove(idx)
     }
 
     fn append_batch(&mut self, idx: usize, gate: Gate) {
         assert!(
-            self.materialized[idx].can_batch_with(&gate),
+            self.commands[idx].can_batch_with(&gate),
             "cannot merge incompatible gate batches"
         );
-        self.qubits[idx].extend(gate.qubits.iter().copied());
-        self.meas_ids[idx].extend(gate.meas_ids.iter().copied());
-        self.materialized[idx].append_batch(gate);
+        self.commands[idx].append_batch(gate);
     }
 
     fn truncate_payload(&mut self, idx: usize, qubit_len: usize, meas_id_len: usize) {
-        self.qubits[idx].truncate(qubit_len);
-        self.meas_ids[idx].truncate(meas_id_len);
-        self.materialized[idx].qubits.truncate(qubit_len);
-        self.materialized[idx].meas_ids.truncate(meas_id_len);
+        self.commands[idx].qubits.truncate(qubit_len);
+        self.commands[idx].meas_ids.truncate(meas_id_len);
     }
 }
 
@@ -419,7 +390,7 @@ impl Index<usize> for TickGateStorage {
     type Output = Gate;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.materialized[index]
+        &self.commands[index]
     }
 }
 
@@ -861,8 +832,8 @@ impl Tick {
 
     /// Mutate a stored gate batch through a temporary [`Gate`] value.
     ///
-    /// This keeps the internal `SoA` storage synchronized with the materialized
-    /// compatibility view returned by [`gate_batches`](Self::gate_batches).
+    /// The updated gate batch is validated with the same conflict checks as a
+    /// full replacement before it is written back.
     ///
     /// # Errors
     ///

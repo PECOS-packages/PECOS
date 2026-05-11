@@ -21,7 +21,7 @@ def measurement_rows(result) -> list[list[int]]:
 
 def test_tick_circuit_with_noise_inserts_channel_payload() -> None:
     noisy = prep_measure_circuit().with_noise(p_prep=1.0)
-    channel_gates = [gate for _, gate in noisy.gates() if gate.is_channel()]
+    channel_gates = [gate for _, gate in noisy.gate_batches() if gate.is_channel()]
 
     assert len(channel_gates) == 1
     assert channel_gates[0].channel_mixed_pauli_terms() == [

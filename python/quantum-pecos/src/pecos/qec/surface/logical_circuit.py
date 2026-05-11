@@ -584,7 +584,7 @@ class LogicalCircuitBuilder:
         meas_order = []
         for tick_idx in range(tc.num_ticks()):
             tick = tc.get_tick(tick_idx)
-            for gate in tick.gates():
+            for gate in tick.gate_batches():
                 if gate.gate_type.name == "MZ":
                     meas_order.extend(int(q) for q in gate.qubits)
 
@@ -626,7 +626,7 @@ class LogicalCircuitBuilder:
         meas_order = []
         for tick_idx in range(tc.num_ticks()):
             tick = tc.get_tick(tick_idx)
-            for gate in tick.gates():
+            for gate in tick.gate_batches():
                 if gate.gate_type.name == "MZ":
                     meas_order.extend(int(q) for q in gate.qubits)
 

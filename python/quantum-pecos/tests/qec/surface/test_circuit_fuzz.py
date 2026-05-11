@@ -33,7 +33,7 @@ def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], in
     """
     max_q = 0
     for i in range(tc.num_ticks()):
-        for g in tc.get_tick(i).gates():
+        for g in tc.get_tick(i).gate_batches():
             for q in g.qubits:
                 max_q = max(max_q, int(q))
 
@@ -42,7 +42,7 @@ def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], in
     flat = []
 
     for i in range(tc.num_ticks()):
-        for g in tc.get_tick(i).gates():
+        for g in tc.get_tick(i).gate_batches():
             name = g.gate_type.name
             qs = [int(q) for q in g.qubits]
             if name == "QAlloc":

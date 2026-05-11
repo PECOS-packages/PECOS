@@ -897,7 +897,7 @@ fn build_rust_tick_circuit_from_gates(
 
     for tick_idx in 0..num_ticks {
         let py_tick = py_tc.call_method1("get_tick", (tick_idx,))?;
-        let py_gates = py_tick.call_method0("gates")?;
+        let py_gates = py_tick.call_method0("gate_batches")?;
         let gates: Vec<Bound<'_, PyAny>> = py_gates.extract()?;
 
         // Separate gates by type: MZ, PZ, and other
@@ -1184,14 +1184,14 @@ fn build_gate_from_python(
 // Circuit extraction
 // ============================================================================
 
-/// Extract a CommandQueue from a Python TickCircuit by iterating its gates.
+/// Extract a CommandQueue from a Python TickCircuit by iterating its stored gate batches.
 fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::CommandQueue> {
     let num_ticks: usize = py_tc.call_method0("num_ticks")?.extract()?;
     let mut cb = CommandBuilder::new();
 
     for tick_idx in 0..num_ticks {
         let py_tick = py_tc.call_method1("get_tick", (tick_idx,))?;
-        let py_gates = py_tick.call_method0("gates")?;
+        let py_gates = py_tick.call_method0("gate_batches")?;
         let gates: Vec<Bound<'_, PyAny>> = py_gates.extract()?;
 
         for gate in &gates {

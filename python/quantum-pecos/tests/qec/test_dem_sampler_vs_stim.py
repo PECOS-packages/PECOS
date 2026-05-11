@@ -39,7 +39,7 @@ def extract_measurement_order(tc: "TickCircuit") -> list[int]:
         tick = tc.get_tick(tick_idx)
         if tick is None:
             continue
-        for gate in tick.gates():
+        for gate in tick.gate_batches():
             gate_type = str(gate.gate_type)
             if "MZ" in gate_type:
                 for qubit in gate.qubits:

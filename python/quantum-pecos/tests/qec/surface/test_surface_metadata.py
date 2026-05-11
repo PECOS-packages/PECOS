@@ -210,7 +210,7 @@ def test_tick_circuit_exposes_measurement_order() -> None:
         tick = tc.get_tick(tick_index)
         if tick is None:
             continue
-        for gate in tick.gates():
+        for gate in tick.gate_batches():
             if "MZ" not in str(gate.gate_type):
                 continue
             for qubit in gate.qubits:

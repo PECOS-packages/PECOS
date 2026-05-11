@@ -1704,7 +1704,7 @@ def tick_circuit_to_stim(
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
-        for gate in tick.gates():
+        for gate in tick.gate_batches():
             instructions, noise_kind = _gate_to_stim(gate)
             if not instructions:
                 continue
@@ -1859,7 +1859,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
-        for gate in tick.gates():
+        for gate in tick.gate_batches():
             gate_name = gate.gate_type.name
             qubits = list(gate.qubits)
             meas_idx = None
@@ -2132,7 +2132,7 @@ def _extract_measurement_order(tc: TickCircuit) -> list[int]:
         tick = tc.get_tick(tick_idx)
         if tick is None:
             continue
-        gates = tick.gates()
+        gates = tick.gate_batches()
         for gate in gates:
             gate_type = str(gate.gate_type)
             if "MZ" in gate_type:

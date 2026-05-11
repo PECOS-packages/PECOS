@@ -2065,8 +2065,8 @@ impl PyTick {
         self.inner.is_empty()
     }
 
-    /// Get the stored gate commands in this tick as a list.
-    fn gates(&self) -> Vec<PyGate> {
+    /// Get the stored gate batches in this tick as a list.
+    fn gate_batches(&self) -> Vec<PyGate> {
         self.inner
             .gate_batches()
             .iter()
@@ -2421,11 +2421,11 @@ impl PyTickCircuit {
         Ok(dict.into())
     }
 
-    /// Get all stored gate commands in the circuit as a list.
+    /// Get all stored gate batches in the circuit as a list.
     ///
     /// Returns:
     ///     A list of (`tick_index`, gate) tuples.
-    fn gates(&self) -> Vec<(usize, PyGate)> {
+    fn gate_batches(&self) -> Vec<(usize, PyGate)> {
         self.inner
             .iter_gate_batches_with_tick()
             .map(|(tick_idx, gate)| {

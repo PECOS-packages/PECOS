@@ -1104,7 +1104,7 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
 
     for tick_idx in 0..num_ticks {
         let py_tick = py_tc.call_method1("get_tick", (tick_idx,))?;
-        let py_gates = py_tick.call_method0("gates")?;
+        let py_gates = py_tick.call_method0("gate_batches")?;
         let gate_list: Vec<Bound<'_, PyAny>> = py_gates.extract()?;
 
         // Collect all gates in this tick first, then emit them.

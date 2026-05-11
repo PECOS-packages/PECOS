@@ -159,7 +159,7 @@ class QuantumCircuit(MutableSequence):
             if tick is not None:
                 # Get individual qubits from all gates in the tick
                 active: set[int] = set()
-                for gate in tick.gates():
+                for gate in tick.gate_batches():
                     for q in gate.qubits:
                         active.add(q)
                 result.append(active)
@@ -380,7 +380,7 @@ class QuantumCircuit(MutableSequence):
         # Use a dict to preserve insertion order and group gates
         grouped: dict[tuple[str, str], tuple[set[Location], JSONDict]] = {}
 
-        for gate_idx, gate in enumerate(tick_obj.gates()):
+        for gate_idx, gate in enumerate(tick_obj.gate_batches()):
             # Check for stored original symbol in metadata
             stored_symbol = tick_obj.get_gate_attr(gate_idx, "_symbol")
 
@@ -769,7 +769,7 @@ class TickView:
             return set()
 
         active: set[Location] = set()
-        for gate in tick.gates():
+        for gate in tick.gate_batches():
             qubits = list(gate.qubits)
             if len(qubits) == 1:
                 active.add(qubits[0])

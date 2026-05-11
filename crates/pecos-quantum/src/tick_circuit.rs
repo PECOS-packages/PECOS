@@ -328,9 +328,9 @@ impl From<TickGateError> for CustomGateError {
 /// A single time slice containing gates that execute in parallel.
 #[derive(Debug, Clone, Default)]
 pub struct Tick {
-    /// Gates in this tick (all act on disjoint qubits).
-    gates: Vec<Gate>,
-    /// Metadata for each gate, indexed by position in `gates`.
+    /// Gate batches in this tick (all act on disjoint qubits).
+    gate_batches: Vec<Gate>,
+    /// Metadata for each gate batch, indexed by position in `gate_batches`.
     gate_attrs: BTreeMap<usize, BTreeMap<String, Attribute>>,
     /// Tick-level metadata.
     attrs: BTreeMap<String, Attribute>,
@@ -358,13 +358,13 @@ impl Tick {
     /// `cx(&[(0, 1), (2, 3)])` count as one stored command.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.gates.len()
+        self.gate_batches.len()
     }
 
     /// Get the number of individual gates in this tick.
     #[must_use]
     pub fn gate_count(&self) -> usize {
-        self.gates.iter().map(Gate::num_gates).sum()
+        self.gate_batches.iter().map(Gate::num_gates).sum()
     }
 
     /// Get the number of compatible gate batches in this tick.
@@ -374,10 +374,10 @@ impl Tick {
     #[must_use]
     pub fn gate_batch_count(&self) -> usize {
         let mut representative_indices: Vec<usize> = Vec::new();
-        'gate: for (idx, gate) in self.gates.iter().enumerate() {
+        'gate: for (idx, gate) in self.gate_batches.iter().enumerate() {
             for &rep_idx in &representative_indices {
                 if self.gate_attrs_equivalent(rep_idx, idx)
-                    && self.gates[rep_idx].can_batch_with(gate)
+                    && self.gate_batches[rep_idx].can_batch_with(gate)
                 {
                     continue 'gate;
                 }
@@ -390,13 +390,13 @@ impl Tick {
     /// Check if the tick is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.gates.is_empty()
+        self.gate_batches.is_empty()
     }
 
     /// Get the gates in this tick.
     #[must_use]
     pub fn gates(&self) -> &[Gate] {
-        &self.gates
+        &self.gate_batches
     }
 
     /// Get the full-fidelity gate batches in this tick.
@@ -411,12 +411,12 @@ impl Tick {
     /// view cheaper or more data-oriented without changing consumers.
     #[must_use]
     pub fn gate_batches(&self) -> &[Gate] {
-        &self.gates
+        &self.gate_batches
     }
 
     /// Get mutable access to the gates in this tick.
     pub fn gates_mut(&mut self) -> &mut [Gate] {
-        &mut self.gates
+        &mut self.gate_batches
     }
 
     /// Add a gate to this tick.
@@ -432,8 +432,8 @@ impl Tick {
     }
 
     fn push_gate_unchecked(&mut self, gate: Gate) -> usize {
-        let idx = self.gates.len();
-        self.gates.push(gate);
+        let idx = self.gate_batches.len();
+        self.gate_batches.push(gate);
         idx
     }
 
@@ -465,7 +465,7 @@ impl Tick {
     }
 
     fn compatible_empty_attr_batch(&self, gate: &Gate) -> Option<usize> {
-        self.gates
+        self.gate_batches
             .iter()
             .enumerate()
             .find(|(idx, existing)| self.gate_has_no_attrs(*idx) && existing.can_batch_with(gate))
@@ -473,7 +473,7 @@ impl Tick {
     }
 
     fn whole_gate_piece(&self, gate_idx: usize) -> GateBatchPiece {
-        let gate = &self.gates[gate_idx];
+        let gate = &self.gate_batches[gate_idx];
         GateBatchPiece {
             gate_idx,
             qubit_start: 0,
@@ -484,21 +484,21 @@ impl Tick {
     }
 
     fn merge_compatible_piece_at(&mut self, piece: GateBatchPiece) -> GateBatchPiece {
-        if piece.gate_idx >= self.gates.len() {
+        if piece.gate_idx >= self.gate_batches.len() {
             return piece;
         }
 
         let Some(target_idx) = (0..piece.gate_idx).find(|&idx| {
             self.gate_attrs_equivalent(idx, piece.gate_idx)
-                && self.gates[idx].can_batch_with(&self.gates[piece.gate_idx])
+                && self.gate_batches[idx].can_batch_with(&self.gate_batches[piece.gate_idx])
         }) else {
             return piece;
         };
 
-        let qubit_start = self.gates[target_idx].qubits.len();
-        let meas_id_start = self.gates[target_idx].meas_ids.len();
-        let gate = self.gates[piece.gate_idx].clone();
-        self.gates[target_idx].append_batch(gate);
+        let qubit_start = self.gate_batches[target_idx].qubits.len();
+        let meas_id_start = self.gate_batches[target_idx].meas_ids.len();
+        let gate = self.gate_batches[piece.gate_idx].clone();
+        self.gate_batches[target_idx].append_batch(gate);
         self.remove_gate(piece.gate_idx);
         GateBatchPiece {
             gate_idx: target_idx,
@@ -510,7 +510,7 @@ impl Tick {
     }
 
     fn merge_compatible_gate_at(&mut self, gate_idx: usize) -> usize {
-        if gate_idx >= self.gates.len() {
+        if gate_idx >= self.gate_batches.len() {
             return gate_idx;
         }
         self.merge_compatible_piece_at(self.whole_gate_piece(gate_idx))
@@ -518,12 +518,12 @@ impl Tick {
     }
 
     fn isolate_batch_piece(&mut self, piece: GateBatchPiece) -> usize {
-        if piece.gate_idx >= self.gates.len() {
+        if piece.gate_idx >= self.gate_batches.len() {
             return piece.gate_idx;
         }
 
-        let gate_qubit_len = self.gates[piece.gate_idx].qubits.len();
-        let gate_meas_id_len = self.gates[piece.gate_idx].meas_ids.len();
+        let gate_qubit_len = self.gate_batches[piece.gate_idx].qubits.len();
+        let gate_meas_id_len = self.gate_batches[piece.gate_idx].meas_ids.len();
         if piece.qubit_start == 0
             && piece.qubit_len == gate_qubit_len
             && piece.meas_id_start == 0
@@ -543,14 +543,15 @@ impl Tick {
             "batched gate metadata can only split the appended measurement-id suffix"
         );
 
-        let mut split_gate = self.gates[piece.gate_idx].clone();
-        split_gate.qubits = self.gates[piece.gate_idx].qubits[piece.qubit_start..].into();
-        split_gate.meas_ids = self.gates[piece.gate_idx].meas_ids[piece.meas_id_start..].into();
+        let mut split_gate = self.gate_batches[piece.gate_idx].clone();
+        split_gate.qubits = self.gate_batches[piece.gate_idx].qubits[piece.qubit_start..].into();
+        split_gate.meas_ids =
+            self.gate_batches[piece.gate_idx].meas_ids[piece.meas_id_start..].into();
 
-        self.gates[piece.gate_idx]
+        self.gate_batches[piece.gate_idx]
             .qubits
             .truncate(piece.qubit_start);
-        self.gates[piece.gate_idx]
+        self.gate_batches[piece.gate_idx]
             .meas_ids
             .truncate(piece.meas_id_start);
 
@@ -641,7 +642,7 @@ impl Tick {
     /// This is computed lazily by iterating through all gates.
     #[must_use]
     pub fn active_qubits(&self) -> BTreeSet<QubitId> {
-        self.gates
+        self.gate_batches
             .iter()
             .flat_map(|gate| gate.qubits.iter().copied())
             .collect()
@@ -650,7 +651,9 @@ impl Tick {
     /// Check if a specific qubit is already in use in this tick.
     #[must_use]
     pub fn uses_qubit(&self, qubit: QubitId) -> bool {
-        self.gates.iter().any(|gate| gate.qubits.contains(&qubit))
+        self.gate_batches
+            .iter()
+            .any(|gate| gate.qubits.contains(&qubit))
     }
 
     /// Check if any of the given qubits are already in use in this tick.
@@ -719,12 +722,12 @@ impl Tick {
         if let Some(gate_idx) = self.compatible_empty_attr_batch(&gate) {
             let piece = GateBatchPiece {
                 gate_idx,
-                qubit_start: self.gates[gate_idx].qubits.len(),
+                qubit_start: self.gate_batches[gate_idx].qubits.len(),
                 qubit_len: gate.qubits.len(),
-                meas_id_start: self.gates[gate_idx].meas_ids.len(),
+                meas_id_start: self.gate_batches[gate_idx].meas_ids.len(),
                 meas_id_len: gate.meas_ids.len(),
             };
-            self.gates[gate_idx].append_batch(gate);
+            self.gate_batches[gate_idx].append_batch(gate);
             return Ok(piece);
         }
         Ok(self.push_gate_unchecked_piece(gate))
@@ -753,7 +756,7 @@ impl Tick {
 
         // Find indices of gates to remove (those using any of the specified qubits)
         let indices_to_remove: Vec<usize> = self
-            .gates
+            .gate_batches
             .iter()
             .enumerate()
             .filter(|(_, gate)| gate.qubits.iter().any(|q| qubits_set.contains(q)))
@@ -768,7 +771,7 @@ impl Tick {
 
         // Remove gates in reverse order to preserve indices
         for &idx in indices_to_remove.iter().rev() {
-            self.gates.remove(idx);
+            self.gate_batches.remove(idx);
         }
 
         // Rebuild gate_attrs with updated indices
@@ -803,11 +806,11 @@ impl Tick {
     /// assert_eq!(tick.len(), 2);  // H and Z remain
     /// ```
     pub fn remove_gate(&mut self, idx: usize) -> Option<Gate> {
-        if idx >= self.gates.len() {
+        if idx >= self.gate_batches.len() {
             return None;
         }
 
-        let gate = self.gates.remove(idx);
+        let gate = self.gate_batches.remove(idx);
 
         // Rebuild gate_attrs with updated indices
         let old_attrs = std::mem::take(&mut self.gate_attrs);
@@ -1422,7 +1425,7 @@ impl TickCircuit {
     /// operations. Apply either inline channels or a noise model, not both.
     pub fn try_with_noise<N: GateNoiseModel>(&self, noise: &N) -> Result<Self, String> {
         for (tick_idx, tick) in self.ticks.iter().enumerate() {
-            for (gate_idx, gate) in tick.gates().iter().enumerate() {
+            for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
                 if gate.is_channel() {
                     return Err(format!(
                         "with_noise cannot apply a noise model to a circuit that already contains channel operations (first channel at tick {tick_idx} gate {gate_idx})"
@@ -1441,7 +1444,7 @@ impl TickCircuit {
             out.ticks.push(tick.clone());
 
             let mut noise_ticks = Vec::new();
-            for gate in tick.gates() {
+            for gate in tick.gate_batches() {
                 for channel in noise.channels_after(gate) {
                     schedule_channel_gate(&mut noise_ticks, Gate::channel(channel));
                 }
@@ -1710,10 +1713,9 @@ impl TickCircuit {
     /// }
     /// ```
     pub fn iter_gates_with_tick(&self) -> impl Iterator<Item = (usize, &Gate)> {
-        self.ticks
-            .iter()
-            .enumerate()
-            .flat_map(|(tick_idx, tick)| tick.gates().iter().map(move |gate| (tick_idx, gate)))
+        self.ticks.iter().enumerate().flat_map(|(tick_idx, tick)| {
+            tick.gate_batches().iter().map(move |gate| (tick_idx, gate))
+        })
     }
 
     /// Iterate over full-fidelity gate batches with their tick index.
@@ -2006,7 +2008,7 @@ impl TickCircuit {
             // Try to merge into the latest existing tick where all qubits are free.
             // Walk backwards to find the latest valid target (ASAP scheduling).
             for target_idx in (0..compacted.len()).rev() {
-                let can_merge = tick.gates.iter().all(|gate| {
+                let can_merge = tick.gate_batches.iter().all(|gate| {
                     gate.qubits
                         .iter()
                         .all(|q| !compacted[target_idx].uses_qubit(*q))
@@ -2016,7 +2018,7 @@ impl TickCircuit {
                     // Check that no tick between target+1..end uses any of these qubits
                     // (would violate ordering).
                     let all_clear = (target_idx + 1..compacted.len()).all(|between| {
-                        tick.gates.iter().all(|gate| {
+                        tick.gate_batches.iter().all(|gate| {
                             gate.qubits
                                 .iter()
                                 .all(|q| !compacted[between].uses_qubit(*q))
@@ -2025,7 +2027,7 @@ impl TickCircuit {
 
                     if all_clear {
                         // Move gates and their per-gate metadata into the target tick.
-                        for (gi, gate) in tick.gates.iter().enumerate() {
+                        for (gi, gate) in tick.gate_batches.iter().enumerate() {
                             if let Some(attrs) = tick.gate_attrs.get(&gi) {
                                 let new_idx = compacted[target_idx]
                                     .try_add_gate_preserving_command(gate.clone())
@@ -2970,7 +2972,7 @@ impl From<&TickCircuit> for DagCircuit {
         let mut meas_record_idx = 0usize;
 
         for (tick_idx, tick) in tc.ticks().iter().enumerate() {
-            for (gate_idx, gate) in tick.gates().iter().enumerate() {
+            for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
                 // Split batched gates into individual operations.
                 //
                 // TickCircuit batches gates for efficiency:
@@ -3181,14 +3183,14 @@ mod tests {
         assert_eq!(tc.gate_count(), 4);
         assert_eq!(tc.gate_batch_count(), 2);
 
-        assert_eq!(tick.gates()[0].gate_type, GateType::H);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::H);
         assert_eq!(
-            tick.gates()[0].qubits.as_slice(),
+            tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(1)]
         );
-        assert_eq!(tick.gates()[1].gate_type, GateType::CX);
+        assert_eq!(tick.gate_batches()[1].gate_type, GateType::CX);
         assert_eq!(
-            tick.gates()[1].qubits.as_slice(),
+            tick.gate_batches()[1].qubits.as_slice(),
             &[
                 QubitId::from(2),
                 QubitId::from(3),
@@ -3247,8 +3249,14 @@ mod tests {
         assert_eq!(tick.len(), 2);
         assert_eq!(tick.gate_count(), 2);
         assert_eq!(tick.gate_batch_count(), 2);
-        assert_eq!(tick.gates()[0].qubits.as_slice(), &[QubitId::from(0)]);
-        assert_eq!(tick.gates()[1].qubits.as_slice(), &[QubitId::from(1)]);
+        assert_eq!(
+            tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+        assert_eq!(
+            tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(1)]
+        );
         assert_eq!(tick.get_gate_attr(0, "calibration"), None);
         assert_eq!(
             tick.get_gate_attr(1, "calibration"),
@@ -3319,7 +3327,10 @@ mod tests {
         assert_eq!(refs1[0].gate_idx, 0);
         assert_eq!(refs0[0].meas_id, MeasId(0));
         assert_eq!(refs1[0].meas_id, MeasId(1));
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0), MeasId(1)]
+        );
     }
 
     #[test]
@@ -3341,7 +3352,10 @@ mod tests {
         assert_eq!(tick.len(), 1);
         assert_eq!(tick.gate_count(), 2);
         assert_eq!(tick.gate_batch_count(), 1);
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0), MeasId(1)]
+        );
         assert_eq!(
             tick.get_gate_attr(0, "basis"),
             Some(&Attribute::String("Z".into()))
@@ -3364,8 +3378,8 @@ mod tests {
         assert_eq!(tick.len(), 2);
         assert_eq!(tick.gate_count(), 2);
         assert_eq!(tick.gate_batch_count(), 2);
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0)]);
-        assert_eq!(tick.gates()[1].meas_ids.as_slice(), &[MeasId(1)]);
+        assert_eq!(tick.gate_batches()[0].meas_ids.as_slice(), &[MeasId(0)]);
+        assert_eq!(tick.gate_batches()[1].meas_ids.as_slice(), &[MeasId(1)]);
         assert_eq!(
             tick.get_gate_attr(0, "basis"),
             Some(&Attribute::String("Z".into()))
@@ -3417,16 +3431,19 @@ mod tests {
         assert_eq!(tick.gate_count(), 3);
         assert_eq!(tick.gate_batch_count(), 2);
         assert_eq!(
-            tick.gates()[0].qubits.as_slice(),
+            tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(1)]
         );
         assert_eq!(
-            tick.gates()[0].angles,
+            tick.gate_batches()[0].angles,
             Gate::rz(Angle64::from_turns(0.25), &[0]).angles
         );
-        assert_eq!(tick.gates()[1].qubits.as_slice(), &[QubitId::from(2)]);
         assert_eq!(
-            tick.gates()[1].angles,
+            tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(2)]
+        );
+        assert_eq!(
+            tick.gate_batches()[1].angles,
             Gate::rz(Angle64::from_turns(0.5), &[2]).angles
         );
     }
@@ -3822,10 +3839,13 @@ mod tests {
             Some(&Attribute::String("b".into()))
         );
         assert_eq!(
-            tick.gates()[0].qubits.as_slice(),
+            tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(2)]
         );
-        assert_eq!(tick.gates()[1].qubits.as_slice(), &[QubitId::from(1)]);
+        assert_eq!(
+            tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(1)]
+        );
     }
 
     #[test]
@@ -3857,8 +3877,11 @@ mod tests {
         assert_eq!(tick.len(), 1);
         assert_eq!(tick.gate_count(), 2);
         assert_eq!(tick.gate_batch_count(), 1);
-        assert_eq!(tick.gates()[0].gate_type, GateType::MZ);
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::MZ);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0), MeasId(1)]
+        );
         assert_eq!(
             tick.get_gate_attr(0, "basis"),
             Some(&Attribute::String("Z".into()))
@@ -3879,7 +3902,7 @@ mod tests {
         assert_eq!(tc1.gate_count(), 1);
         assert_eq!(tc1.gate_batch_count(), 1);
         assert_eq!(
-            tick.gates()[0].qubits.as_slice(),
+            tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(1)]
         );
 
@@ -3930,7 +3953,10 @@ mod tests {
         }
 
         let tick = tc2.get_tick(0).unwrap();
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0), MeasId(1)]
+        );
     }
 
     #[test]
@@ -3951,8 +3977,11 @@ mod tests {
 
         let tick = tc.get_tick(0).unwrap();
         assert_eq!(tick.len(), 1);
-        assert_eq!(tick.gates()[0].gate_type, GateType::MZ);
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::MZ);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0), MeasId(1)]
+        );
     }
 
     #[test]
@@ -3966,7 +3995,7 @@ mod tests {
         let mut tc = TickCircuit::from(&dag);
         assert_eq!(tc.num_measurements(), 6);
         let tick = tc.get_tick(0).unwrap();
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(5)]);
+        assert_eq!(tick.gate_batches()[0].meas_ids.as_slice(), &[MeasId(5)]);
         match &tc.annotations()[0].kind {
             AnnotationKind::Observable { measurement_nodes } => {
                 assert_eq!(measurement_nodes.as_slice(), &[5]);
@@ -4033,7 +4062,7 @@ mod tests {
         fn assert_no_tick_overlaps(circuit: &TickCircuit) {
             for (tick_idx, tick) in circuit.ticks().iter().enumerate() {
                 let mut active = BTreeSet::new();
-                for gate in tick.gates() {
+                for gate in tick.gate_batches() {
                     gate.validate()
                         .unwrap_or_else(|err| panic!("invalid gate in tick {tick_idx}: {err}"));
                     for &qubit in &gate.qubits {
@@ -4529,11 +4558,11 @@ mod tests {
         assert_eq!(tick.gate_count(), 5);
         assert_eq!(tick.gate_batch_count(), 4);
         assert_eq!(
-            tick.gates()[0].qubits.as_slice(),
+            tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(1)]
         );
-        assert!(tick.gates()[2].is_channel());
-        assert!(tick.gates()[3].is_channel());
+        assert!(tick.gate_batches()[2].is_channel());
+        assert!(tick.gate_batches()[3].is_channel());
 
         let mut meas = TickCircuit::new();
         meas.reserve_ticks(1);
@@ -4556,8 +4585,11 @@ mod tests {
         assert_eq!(tick.len(), 2);
         assert_eq!(tick.gate_count(), 3);
         assert_eq!(tick.gate_batch_count(), 2);
-        assert_eq!(tick.gates()[0].meas_ids.as_slice(), &[MeasId(0), MeasId(1)]);
-        assert_eq!(tick.gates()[1].meas_ids.as_slice(), &[MeasId(2)]);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0), MeasId(1)]
+        );
+        assert_eq!(tick.gate_batches()[1].meas_ids.as_slice(), &[MeasId(2)]);
     }
 
     #[test]
@@ -5151,7 +5183,7 @@ mod tests {
 
         assert_eq!(removed, 2); // H on q0 and CX on q2,q3
         assert_eq!(tick.len(), 1); // Only X on q1 remains
-        assert_eq!(tick.gates()[0].gate_type, GateType::X);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::X);
     }
 
     #[test]
@@ -5206,8 +5238,8 @@ mod tests {
         assert_eq!(tick.len(), 2);
 
         // Check remaining gates
-        assert_eq!(tick.gates()[0].gate_type, GateType::H);
-        assert_eq!(tick.gates()[1].gate_type, GateType::Z);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::H);
+        assert_eq!(tick.gate_batches()[1].gate_type, GateType::Z);
     }
 
     #[test]
@@ -5321,7 +5353,7 @@ mod tests {
             .expect("should succeed");
 
         let tick = tc.get_tick(0).unwrap();
-        let gate = &tick.gates()[0];
+        let gate = &tick.gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::Custom);
         assert_eq!(gate.angles.len(), 2);
         assert_eq!(gate.angles[0], a1);
@@ -5588,9 +5620,15 @@ mod tests {
         let noise_tick = noisy.get_tick(1).unwrap();
         assert_eq!(noise_tick.len(), 2);
         assert_eq!(noise_tick.gate_count(), 2);
-        assert!(noise_tick.gates().iter().all(Gate::is_channel));
-        assert_eq!(noise_tick.gates()[0].qubits.as_slice(), &[QubitId::from(0)]);
-        assert_eq!(noise_tick.gates()[1].qubits.as_slice(), &[QubitId::from(1)]);
+        assert!(noise_tick.gate_batches().iter().all(Gate::is_channel));
+        assert_eq!(
+            noise_tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+        assert_eq!(
+            noise_tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(1)]
+        );
     }
 
     #[test]
@@ -5622,17 +5660,23 @@ mod tests {
         assert_eq!(noisy.num_ticks(), 2);
 
         let meas_tick = noisy.get_tick(0).unwrap();
-        assert_eq!(meas_tick.gates()[0].gate_type, GateType::MZ);
+        assert_eq!(meas_tick.gate_batches()[0].gate_type, GateType::MZ);
         assert_eq!(
-            meas_tick.gates()[0].meas_ids.as_slice(),
+            meas_tick.gate_batches()[0].meas_ids.as_slice(),
             &[MeasId(0), MeasId(1)]
         );
 
         let noise_tick = noisy.get_tick(1).unwrap();
         assert_eq!(noise_tick.len(), 2);
-        assert!(noise_tick.gates().iter().all(Gate::is_channel));
-        assert_eq!(noise_tick.gates()[0].qubits.as_slice(), &[QubitId::from(0)]);
-        assert_eq!(noise_tick.gates()[1].qubits.as_slice(), &[QubitId::from(1)]);
+        assert!(noise_tick.gate_batches().iter().all(Gate::is_channel));
+        assert_eq!(
+            noise_tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+        assert_eq!(
+            noise_tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(1)]
+        );
     }
 
     #[test]
@@ -5673,18 +5717,18 @@ mod tests {
         assert_eq!(noisy.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
 
         let first_noise_tick = noisy.get_tick(1).unwrap();
-        assert_eq!(first_noise_tick.gates().len(), 1);
-        assert!(first_noise_tick.gates()[0].is_channel());
+        assert_eq!(first_noise_tick.gate_batches().len(), 1);
+        assert!(first_noise_tick.gate_batches()[0].is_channel());
         assert_eq!(
-            first_noise_tick.gates()[0].qubits.as_slice(),
+            first_noise_tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0)]
         );
 
         let second_noise_tick = noisy.get_tick(2).unwrap();
-        assert_eq!(second_noise_tick.gates().len(), 1);
-        assert!(second_noise_tick.gates()[0].is_channel());
+        assert_eq!(second_noise_tick.gate_batches().len(), 1);
+        assert!(second_noise_tick.gate_batches()[0].is_channel());
         assert_eq!(
-            second_noise_tick.gates()[0].qubits.as_slice(),
+            second_noise_tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0)]
         );
     }

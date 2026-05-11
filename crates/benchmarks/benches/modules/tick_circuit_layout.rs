@@ -253,7 +253,7 @@ fn traverse_tick_circuit(circuit: &TickCircuit) -> usize {
     let mut total = 0usize;
     for (tick_idx, tick) in circuit.iter_ticks() {
         total = total.wrapping_add(tick_idx);
-        for gate in tick.gates() {
+        for gate in tick.gate_batches() {
             total = total.wrapping_add(gate.num_gates());
             total = total.wrapping_add(gate.qubits.len());
         }
@@ -276,7 +276,7 @@ fn run_tick_circuit_direct(circuit: &TickCircuit, num_qubits: usize) -> usize {
     let mut measurement_count = 0usize;
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
-        for gate in tick.gates() {
+        for gate in tick.gate_batches() {
             measurement_count += execute_gate_direct(&mut sim, gate);
         }
     }

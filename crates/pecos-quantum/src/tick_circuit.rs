@@ -393,7 +393,11 @@ impl Tick {
         self.gate_batches.is_empty()
     }
 
-    /// Get the gates in this tick.
+    /// Get the stored gate commands in this tick.
+    ///
+    /// A stored command may be a batch containing multiple gate applications on
+    /// disjoint qubits. Prefer [`gate_batches`](Self::gate_batches) in
+    /// execution/analyzer code where that distinction matters.
     #[must_use]
     pub fn gates(&self) -> &[Gate] {
         &self.gate_batches
@@ -414,7 +418,7 @@ impl Tick {
         &self.gate_batches
     }
 
-    /// Get mutable access to the gates in this tick.
+    /// Get mutable access to the stored gate commands in this tick.
     pub fn gates_mut(&mut self) -> &mut [Gate] {
         &mut self.gate_batches
     }
@@ -1192,7 +1196,7 @@ impl TickCircuit {
         let layers: Vec<Vec<&pecos_core::Gate>> = self
             .ticks
             .iter()
-            .map(|t| t.gates().iter().collect())
+            .map(|t| t.gate_batches().iter().collect())
             .collect();
         let num_qubits = self.all_qubits().len();
         let header = format!(
@@ -1659,9 +1663,13 @@ impl TickCircuit {
 
     // --- Iteration helpers ---
 
-    /// Iterate over all gates in the circuit, across all ticks.
+    /// Iterate over all stored gate commands in the circuit, across all ticks.
     ///
-    /// Gates are yielded in tick order, then in order within each tick.
+    /// A yielded command may be a batch containing multiple gate applications
+    /// on disjoint qubits. Prefer [`iter_gate_batches`](Self::iter_gate_batches)
+    /// in execution/analyzer code where that distinction matters.
+    ///
+    /// Commands are yielded in tick order, then in order within each tick.
     ///
     /// # Examples
     ///

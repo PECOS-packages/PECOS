@@ -108,7 +108,7 @@ pub fn run_inline_channels_density_matrix(
         let mut row = Vec::new();
 
         for tick in circuit.ticks() {
-            for gate in tick.gates() {
+            for gate in tick.gate_batches() {
                 row.extend(apply_gate_to_density_matrix(&mut sim, gate)?);
             }
         }
@@ -145,7 +145,7 @@ pub fn run_inline_pauli_channels_stabilizer(
         let mut row = Vec::new();
 
         for tick in circuit.ticks() {
-            for gate in tick.gates() {
+            for gate in tick.gate_batches() {
                 row.extend(apply_gate_to_stabilizer_with_pauli_channels(
                     &mut sim, gate, &mut rng,
                 )?);

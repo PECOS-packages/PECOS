@@ -1700,7 +1700,7 @@ impl TickCircuit {
     /// Returns true if any tick contains an explicit channel operation.
     #[must_use]
     pub fn has_channel_operations(&self) -> bool {
-        self.iter_gates().any(Gate::is_channel)
+        self.iter_gate_batches().any(Gate::is_channel)
     }
 
     /// Iterate over all gates with their tick index.
@@ -1780,7 +1780,8 @@ impl TickCircuit {
     /// assert_eq!(h_gates.len(), 1);  // One Gate object with 3 qubits
     /// ```
     pub fn iter_gates_by_type(&self, gate_type: GateType) -> impl Iterator<Item = &Gate> {
-        self.iter_gates().filter(move |g| g.gate_type == gate_type)
+        self.iter_gate_batches()
+            .filter(move |g| g.gate_type == gate_type)
     }
 
     /// Get all qubits used in the circuit.
@@ -1799,7 +1800,7 @@ impl TickCircuit {
     /// ```
     #[must_use]
     pub fn all_qubits(&self) -> BTreeSet<QubitId> {
-        self.iter_gates()
+        self.iter_gate_batches()
             .flat_map(|gate| gate.qubits.iter().copied())
             .collect()
     }
@@ -1827,7 +1828,7 @@ impl TickCircuit {
     #[must_use]
     pub fn gate_counts_by_type(&self) -> BTreeMap<GateType, usize> {
         let mut counts = BTreeMap::new();
-        for gate in self.iter_gates() {
+        for gate in self.iter_gate_batches() {
             *counts.entry(gate.gate_type).or_insert(0) += gate.num_gates();
         }
         counts

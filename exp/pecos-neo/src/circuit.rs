@@ -188,13 +188,13 @@ impl From<Gate> for GateCommand {
 impl From<&TickCircuit> for CommandQueue {
     /// Convert a `TickCircuit` to a `CommandQueue`.
     ///
-    /// Gates are added in tick order - all gates from tick 0, then tick 1, etc.
-    /// Within each tick, gates are added in the order they appear.
+    /// Gate batches are added in tick order - all commands from tick 0, then tick 1, etc.
+    /// Within each tick, commands are added in the order they appear.
     fn from(circuit: &TickCircuit) -> Self {
         let mut queue = CommandQueue::new();
 
         for tick in circuit.ticks() {
-            for gate in tick.gates() {
+            for gate in tick.gate_batches() {
                 queue.push(gate.into());
             }
         }

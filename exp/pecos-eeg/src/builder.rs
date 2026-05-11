@@ -57,7 +57,7 @@ impl<'a> EegDemBuilder<'a> {
 
     #[must_use]
     pub fn build(&self) -> Vec<DemEntry> {
-        let gates: Vec<pecos_core::Gate> = self.tc.iter_gates().cloned().collect();
+        let gates: Vec<pecos_core::Gate> = self.tc.iter_gate_batches().cloned().collect();
         let expanded = expand::expand_circuit(&gates);
         let result = circuit::analyze_expanded(&expanded.gates, &self.noise);
         let (detectors, observables) = build_detectors(self.tc, &expanded);
@@ -85,7 +85,7 @@ impl<'a> EegDemBuilder<'a> {
 
     #[must_use]
     pub fn summary(&self) -> EegSummary {
-        let gates: Vec<pecos_core::Gate> = self.tc.iter_gates().cloned().collect();
+        let gates: Vec<pecos_core::Gate> = self.tc.iter_gate_batches().cloned().collect();
         let expanded = expand::expand_circuit(&gates);
         let result = circuit::analyze_expanded(&expanded.gates, &self.noise);
         let (detectors, observables) = build_detectors(self.tc, &expanded);
@@ -281,7 +281,7 @@ mod tests {
             .build();
 
         // Manual path
-        let gates: Vec<pecos_core::Gate> = tc.iter_gates().cloned().collect();
+        let gates: Vec<pecos_core::Gate> = tc.iter_gate_batches().cloned().collect();
         let expanded = expand::expand_circuit(&gates);
         let result = circuit::analyze_expanded(&expanded.gates, &noise);
 

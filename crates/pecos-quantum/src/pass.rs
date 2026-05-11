@@ -235,7 +235,7 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
 
         for tick in old_ticks {
             let mut idle_qubits: Vec<QubitId> = Vec::new();
-            for gate in tick.gates() {
+            for gate in tick.gate_batches() {
                 if gate.is_two_qubit() {
                     for q in &gate.qubits {
                         if !idle_qubits.contains(q) {
@@ -452,7 +452,7 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
             new_tick.set_attr(key, value.clone());
         }
 
-        for (gate_idx, gate) in old_tick.gates().iter().enumerate() {
+        for (gate_idx, gate) in old_tick.gate_batches().iter().enumerate() {
             let attrs: BTreeMap<String, Attribute> = old_tick
                 .gate_attrs(gate_idx)
                 .map(|(key, value)| (key.clone(), value.clone()))
@@ -509,7 +509,7 @@ impl CircuitPass for SimplifyRotations {
             // We need to know which gate indices to remove and what to add.
             let mut decompositions: Vec<(usize, GateType)> = Vec::new();
 
-            for (i, gate) in tick.gates().iter().enumerate() {
+            for (i, gate) in tick.gate_batches().iter().enumerate() {
                 if gate.angles.len() == 1
                     && let Some(pauli) =
                         pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
@@ -520,7 +520,7 @@ impl CircuitPass for SimplifyRotations {
 
             // Process decompositions in reverse order to keep indices valid.
             for &(idx, pauli) in decompositions.iter().rev() {
-                let qubits = tick.gates()[idx].qubits.clone();
+                let qubits = tick.gate_batches()[idx].qubits.clone();
                 // Remove the two-qubit gate, add two single-qubit gates.
                 tick.remove_gate(idx);
                 for pair in qubits.chunks(2) {
@@ -615,7 +615,7 @@ impl CircuitPass for RemoveIdentity {
     fn apply_tick(&self, circuit: &mut TickCircuit) {
         for tick in circuit.ticks_mut() {
             let to_remove: Vec<usize> = tick
-                .gates()
+                .gate_batches()
                 .iter()
                 .enumerate()
                 .filter(|(_, g)| is_identity_gate(g))
@@ -665,11 +665,11 @@ impl CircuitPass for CancelInverses {
         let mut to_remove: Vec<(usize, usize)> = Vec::new();
 
         for (ti, tick) in circuit.ticks().iter().enumerate() {
-            for (gi, gate) in tick.gates().iter().enumerate() {
+            for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
                 if let Some((pred_ti, pred_gi)) = check_all_stacks_agree(&stacks, &qubits) {
-                    let pred_gate = &circuit.ticks()[pred_ti].gates()[pred_gi];
+                    let pred_gate = &circuit.ticks()[pred_ti].gate_batches()[pred_gi];
                     if are_inverses(pred_gate, gate) {
                         for &q in &qubits {
                             if let Some(stack) = stacks.get_mut(&q) {
@@ -748,14 +748,14 @@ impl CircuitPass for MergeAdjacentRotations {
         let mut to_remove: Vec<(usize, usize)> = Vec::new();
 
         for (ti, tick) in circuit.ticks().iter().enumerate() {
-            for (gi, gate) in tick.gates().iter().enumerate() {
+            for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
                 if is_rotation(gate.gate_type)
                     && gate.angles.len() == 1
                     && let Some((pred_ti, pred_gi)) = check_all_stacks_agree(&stacks, &qubits)
                 {
-                    let pred_gate = &circuit.ticks()[pred_ti].gates()[pred_gi];
+                    let pred_gate = &circuit.ticks()[pred_ti].gate_batches()[pred_gi];
                     if pred_gate.gate_type == gate.gate_type && pred_gate.qubits == gate.qubits {
                         *angle_adjustments
                             .entry((pred_ti, pred_gi))
@@ -855,7 +855,7 @@ impl CircuitPass for PeepholeOptimize {
         // Build per-qubit timeline: Vec of (tick_idx, gate_idx) in order.
         let mut timelines: HashMap<QubitId, Vec<(usize, usize)>> = HashMap::new();
         for (ti, tick) in circuit.ticks().iter().enumerate() {
-            for (gi, gate) in tick.gates().iter().enumerate() {
+            for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 for &q in &gate.qubits {
                     timelines.entry(q).or_default().push((ti, gi));
                 }
@@ -885,9 +885,9 @@ impl CircuitPass for PeepholeOptimize {
                     continue;
                 }
 
-                let h1 = &circuit.ticks()[h1_ti].gates()[h1_gi];
-                let mid = &circuit.ticks()[mid_ti].gates()[mid_gi];
-                let h2 = &circuit.ticks()[h2_ti].gates()[h2_gi];
+                let h1 = &circuit.ticks()[h1_ti].gate_batches()[h1_gi];
+                let mid = &circuit.ticks()[mid_ti].gate_batches()[mid_gi];
+                let h2 = &circuit.ticks()[h2_ti].gate_batches()[h2_gi];
 
                 // Both must be single-qubit H on this qubit.
                 if h1.gate_type != GateType::H
@@ -1049,7 +1049,7 @@ impl CircuitPass for AbsorbBasisGates {
         // Forward scan: absorb Z-diagonal gates after Z-preps.
         let mut z_eigenstate: HashSet<QubitId> = HashSet::new();
         for (ti, tick) in circuit.ticks().iter().enumerate() {
-            for (gi, gate) in tick.gates().iter().enumerate() {
+            for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 if is_z_prep(gate.gate_type) {
                     for &q in &gate.qubits {
                         z_eigenstate.insert(q);
@@ -1069,7 +1069,7 @@ impl CircuitPass for AbsorbBasisGates {
         // Backward scan: absorb Z-diagonal gates before Z-measures.
         let mut before_z_measure: HashSet<QubitId> = HashSet::new();
         for (ti, tick) in circuit.ticks().iter().enumerate().rev() {
-            for (gi, gate) in tick.gates().iter().enumerate().rev() {
+            for (gi, gate) in tick.gate_batches().iter().enumerate().rev() {
                 if is_z_measure(gate.gate_type) {
                     for &q in &gate.qubits {
                         before_z_measure.insert(q);
@@ -1179,7 +1179,7 @@ impl CircuitPass for CompactTicks {
         // Collect every gate together with its per-gate attributes.
         let mut entries: Vec<(Gate, BTreeMap<String, Attribute>)> = Vec::new();
         for tick in circuit.ticks() {
-            for (gi, gate) in tick.gates().iter().enumerate() {
+            for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 let attrs: BTreeMap<String, Attribute> = tick
                     .gate_attrs(gi)
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -1451,7 +1451,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::QUARTER_TURN, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::SZ);
         assert!(gate.angles.is_empty());
     }
@@ -1461,7 +1461,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::HALF_TURN, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::Z);
         assert!(gate.angles.is_empty());
     }
@@ -1471,7 +1471,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rx(Angle64::QUARTER_TURN, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::SX);
         assert!(gate.angles.is_empty());
     }
@@ -1481,7 +1481,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().ry(Angle64::HALF_TURN, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::Y);
         assert!(gate.angles.is_empty());
     }
@@ -1491,7 +1491,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::SZZ);
         assert!(gate.angles.is_empty());
     }
@@ -1501,7 +1501,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rzz(Angle64::HALF_TURN, &[(0, 1)]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gates = tc.ticks()[0].gates();
+        let gates = tc.ticks()[0].gate_batches();
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::Z);
         assert_eq!(
@@ -1516,7 +1516,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rxx(Angle64::HALF_TURN, &[(0, 1)]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gates = tc.ticks()[0].gates();
+        let gates = tc.ticks()[0].gate_batches();
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::X);
         assert_eq!(
@@ -1531,7 +1531,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::from_turn_ratio(1, 6), &[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::RZ);
         assert_eq!(gate.angles.len(), 1);
     }
@@ -1541,7 +1541,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::H);
     }
 
@@ -1550,7 +1550,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
         SimplifyRotations.apply_tick(&mut tc);
-        let gate = &tc.ticks()[0].gates()[0];
+        let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::T);
         assert!(gate.angles.is_empty());
     }
@@ -1765,7 +1765,7 @@ mod tests {
         let mut tick_ops: Vec<UnitaryRep> = Vec::new();
 
         for tick in tc.ticks() {
-            let gates = tick.gates();
+            let gates = tick.gate_batches();
             if gates.is_empty() {
                 continue;
             }
@@ -2159,7 +2159,7 @@ mod tests {
         tc.tick();
         tc.ticks_mut()[0].add_gate(Gate::i(&[0]));
         RemoveIdentity.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
     }
 
     #[test]
@@ -2167,7 +2167,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::ZERO, &[0]);
         RemoveIdentity.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
     }
 
     #[test]
@@ -2175,8 +2175,8 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::QUARTER_TURN, &[0]);
         RemoveIdentity.apply_tick(&mut tc);
-        assert_eq!(tc.ticks()[0].gates().len(), 1);
-        assert_eq!(tc.ticks()[0].gates()[0].gate_type, GateType::RZ);
+        assert_eq!(tc.ticks()[0].gate_batches().len(), 1);
+        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::RZ);
     }
 
     #[test]
@@ -2185,8 +2185,8 @@ mod tests {
         tc.tick().h(&[0]);
         tc.ticks_mut()[0].add_gate(Gate::i(&[1]));
         RemoveIdentity.apply_tick(&mut tc);
-        assert_eq!(tc.ticks()[0].gates().len(), 1);
-        assert_eq!(tc.ticks()[0].gates()[0].gate_type, GateType::H);
+        assert_eq!(tc.ticks()[0].gate_batches().len(), 1);
+        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::H);
     }
 
     // ==================== RemoveIdentity DAG tests ====================
@@ -2235,8 +2235,8 @@ mod tests {
         tc.tick().h(&[0]);
         tc.tick().h(&[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
-        assert!(tc.ticks()[1].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert!(tc.ticks()[1].gate_batches().is_empty());
     }
 
     #[test]
@@ -2245,8 +2245,8 @@ mod tests {
         tc.tick().x(&[0]);
         tc.tick().x(&[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
-        assert!(tc.ticks()[1].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert!(tc.ticks()[1].gate_batches().is_empty());
     }
 
     #[test]
@@ -2256,8 +2256,8 @@ mod tests {
         tc.tick();
         tc.ticks_mut()[1].add_gate(Gate::sxdg(&[0]));
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
-        assert!(tc.ticks()[1].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert!(tc.ticks()[1].gate_batches().is_empty());
     }
 
     #[test]
@@ -2267,8 +2267,8 @@ mod tests {
         tc.tick();
         tc.ticks_mut()[1].add_gate(Gate::tdg(&[0]));
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
-        assert!(tc.ticks()[1].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert!(tc.ticks()[1].gate_batches().is_empty());
     }
 
     #[test]
@@ -2277,8 +2277,8 @@ mod tests {
         tc.tick().cx(&[(0, 1)]);
         tc.tick().cx(&[(0, 1)]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
-        assert!(tc.ticks()[1].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert!(tc.ticks()[1].gate_batches().is_empty());
     }
 
     #[test]
@@ -2288,8 +2288,8 @@ mod tests {
         tc.tick().rz(angle, &[0]);
         tc.tick().rz(-angle, &[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gates().is_empty());
-        assert!(tc.ticks()[1].gates().is_empty());
+        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert!(tc.ticks()[1].gate_batches().is_empty());
     }
 
     #[test]
@@ -2303,7 +2303,7 @@ mod tests {
         tc.tick().h(&[0]);
         CancelInverses.apply_tick(&mut tc);
         for tick in tc.ticks() {
-            assert!(tick.gates().is_empty());
+            assert!(tick.gate_batches().is_empty());
         }
     }
 
@@ -2315,9 +2315,9 @@ mod tests {
         tc.tick().x(&[0]);
         tc.tick().h(&[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert_eq!(tc.ticks()[0].gates().len(), 1);
-        assert_eq!(tc.ticks()[1].gates().len(), 1);
-        assert_eq!(tc.ticks()[2].gates().len(), 1);
+        assert_eq!(tc.ticks()[0].gate_batches().len(), 1);
+        assert_eq!(tc.ticks()[1].gate_batches().len(), 1);
+        assert_eq!(tc.ticks()[2].gate_batches().len(), 1);
     }
 
     #[test]
@@ -2326,8 +2326,8 @@ mod tests {
         tc.tick().h(&[0]);
         tc.tick().h(&[1]);
         CancelInverses.apply_tick(&mut tc);
-        assert_eq!(tc.ticks()[0].gates().len(), 1);
-        assert_eq!(tc.ticks()[1].gates().len(), 1);
+        assert_eq!(tc.ticks()[0].gate_batches().len(), 1);
+        assert_eq!(tc.ticks()[1].gate_batches().len(), 1);
     }
 
     // ==================== CancelInverses DAG tests ====================
@@ -2567,20 +2567,20 @@ mod tests {
 
     // ==================== Pass effectiveness analysis ====================
 
-    /// Count total gates across all ticks.
-    fn count_gates(tc: &TickCircuit) -> usize {
-        tc.ticks().iter().map(|t| t.gates().len()).sum()
+    /// Count stored gate batches across all ticks.
+    fn count_gate_batches(tc: &TickCircuit) -> usize {
+        tc.ticks().iter().map(|t| t.gate_batches().len()).sum()
     }
 
-    /// Apply the full pipeline and return (before, after) gate counts.
+    /// Apply the full pipeline and return (before, after) gate-batch counts.
     fn pipeline_stats(tc: &mut TickCircuit) -> (usize, usize) {
-        let before = count_gates(tc);
+        let before = count_gate_batches(tc);
         MergeAdjacentRotations.apply_tick(tc);
         RemoveIdentity.apply_tick(tc);
         SimplifyRotations.apply_tick(tc);
         CancelInverses.apply_tick(tc);
         PeepholeOptimize.apply_tick(tc);
-        let after = count_gates(tc);
+        let after = count_gate_batches(tc);
         (before, after)
     }
 
@@ -2844,14 +2844,14 @@ mod tests {
         let middle = tc
             .ticks()
             .iter()
-            .find(|tick| !tick.gates().is_empty())
+            .find(|tick| !tick.gate_batches().is_empty())
             .expect("peephole result should keep the middle tick");
         assert_eq!(middle.len(), 2);
         assert_eq!(middle.gate_count(), 2);
 
         let mut saw_rewritten = false;
         let mut saw_untouched = false;
-        for (idx, gate) in middle.gates().iter().enumerate() {
+        for (idx, gate) in middle.gate_batches().iter().enumerate() {
             assert_eq!(
                 middle.get_gate_attr(idx, "calibration"),
                 Some(&Attribute::String("entangler".into()))
@@ -3210,8 +3210,8 @@ mod tests {
             .then(MergeAdjacentRotations)
             .then(SimplifyRotations);
         pipeline.apply_tick(&mut tc);
-        assert_eq!(count_gates(&tc), 1);
-        assert_eq!(tc.ticks()[0].gates()[0].gate_type, GateType::SZ);
+        assert_eq!(count_gate_batches(&tc), 1);
+        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::SZ);
     }
 
     #[test]
@@ -3235,7 +3235,7 @@ mod tests {
             .then(CancelInverses);
         pipeline.apply_tick(&mut tc);
         // PZ stays, T and both RZs absorbed (after PZ), H+H cancelled, MZ stays
-        assert_eq!(count_gates(&tc), 2); // PZ + MZ
+        assert_eq!(count_gate_batches(&tc), 2); // PZ + MZ
     }
 
     #[test]
@@ -3259,7 +3259,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[0]);
         pipeline.apply_tick(&mut tc);
-        assert_eq!(count_gates(&tc), 1);
+        assert_eq!(count_gate_batches(&tc), 1);
     }
 
     // ==================== CompactTicks tests ====================
@@ -3284,8 +3284,8 @@ mod tests {
         tc.tick().x(&[0]);
         CompactTicks.apply_tick(&mut tc);
         assert_eq!(tc.num_ticks(), 2);
-        assert_eq!(tc.ticks()[0].gates()[0].gate_type, GateType::H);
-        assert_eq!(tc.ticks()[1].gates()[0].gate_type, GateType::X);
+        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::H);
+        assert_eq!(tc.ticks()[1].gate_batches()[0].gate_type, GateType::X);
     }
 
     #[test]
@@ -3300,7 +3300,7 @@ mod tests {
         assert_eq!(tc.num_ticks(), 3);
         CompactTicks.apply_tick(&mut tc);
         assert_eq!(tc.num_ticks(), 1);
-        assert_eq!(tc.ticks()[0].gates()[0].gate_type, GateType::X);
+        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::X);
     }
 
     #[test]
@@ -3348,9 +3348,9 @@ mod tests {
         tc.tick().sz(&[0]);
         CompactTicks.apply_tick(&mut tc);
         assert_eq!(tc.num_ticks(), 3); // all same qubit, no compaction
-        assert_eq!(tc.ticks()[0].gates()[0].gate_type, GateType::H);
-        assert_eq!(tc.ticks()[1].gates()[0].gate_type, GateType::T);
-        assert_eq!(tc.ticks()[2].gates()[0].gate_type, GateType::SZ);
+        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::H);
+        assert_eq!(tc.ticks()[1].gate_batches()[0].gate_type, GateType::T);
+        assert_eq!(tc.ticks()[2].gate_batches()[0].gate_type, GateType::SZ);
     }
 
     #[test]
@@ -3371,6 +3371,6 @@ mod tests {
         // After absorb+cancel: PZ(0,1), X(0), MZ(0,1)
         // X(0) can't merge with PZ (qubit 0 busy) or MZ (qubit 0 busy).
         assert_eq!(tc.num_ticks(), 3);
-        assert_eq!(count_gates(&tc), 3);
+        assert_eq!(count_gate_batches(&tc), 3);
     }
 }

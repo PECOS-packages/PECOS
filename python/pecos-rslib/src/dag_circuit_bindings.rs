@@ -2065,10 +2065,10 @@ impl PyTick {
         self.inner.is_empty()
     }
 
-    /// Get the gates in this tick as a list.
+    /// Get the stored gate commands in this tick as a list.
     fn gates(&self) -> Vec<PyGate> {
         self.inner
-            .gates()
+            .gate_batches()
             .iter()
             .map(|g: &Gate| PyGate { inner: g.clone() })
             .collect()
@@ -2421,13 +2421,13 @@ impl PyTickCircuit {
         Ok(dict.into())
     }
 
-    /// Get all gates in the circuit as a list.
+    /// Get all stored gate commands in the circuit as a list.
     ///
     /// Returns:
     ///     A list of (`tick_index`, gate) tuples.
     fn gates(&self) -> Vec<(usize, PyGate)> {
         self.inner
-            .iter_gates_with_tick()
+            .iter_gate_batches_with_tick()
             .map(|(tick_idx, gate)| {
                 (
                     tick_idx,
@@ -2636,7 +2636,7 @@ impl PyTickCircuit {
         }
 
         if p2 > 0.0 {
-            for (tick_idx, gate) in self.inner.iter_gates_with_tick() {
+            for (tick_idx, gate) in self.inner.iter_gate_batches_with_tick() {
                 if receives_two_qubit_noise(gate.gate_type) && !gate.qubits.len().is_multiple_of(2)
                 {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(

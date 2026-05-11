@@ -138,7 +138,7 @@ impl CommandSource for TickCircuitEngine {
         self.current_tick += 1;
 
         let mut queue = CommandQueue::new();
-        for gate in tick.gates() {
+        for gate in tick.gate_batches() {
             queue.push(gate.into());
         }
 

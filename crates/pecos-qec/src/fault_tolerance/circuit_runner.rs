@@ -60,7 +60,7 @@ pub fn extract_spacetime_locations(
 
     // Iterate through all ticks
     for (tick_idx, tick) in circuit.iter_ticks() {
-        for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
+        for gate in tick.iter_gate_batches() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
             let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
 
@@ -69,7 +69,7 @@ pub fn extract_spacetime_locations(
                 qubits,
                 is_measurement, // Measurements get "before" errors
                 gate.gate_type,
-                gate_idx,
+                gate.batch_index(),
             ));
         }
     }
@@ -105,10 +105,10 @@ fn apply_fault<S: CliffordGateable>(sim: &mut S, fault: &PauliFault) {
 /// simulator-level batch optimizations (gate fusion, SIMD batching, etc.).
 fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick) {
     // For ticks with few gates, skip consolidation overhead
-    let gate_count = tick.gate_batches().len();
+    let gate_count = tick.len();
     if gate_count <= 2 {
-        for gate in tick.gate_batches() {
-            apply_gate(sim, gate);
+        for gate in tick.iter_gate_batches() {
+            apply_gate(sim, gate.as_gate());
         }
         return;
     }
@@ -139,7 +139,7 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
     let mut mz_qubits: Vec<QubitId> = Vec::new();
     let mut pz_qubits: Vec<QubitId> = Vec::new();
 
-    for gate in tick.gate_batches() {
+    for gate in tick.iter_gate_batches() {
         match gate.gate_type {
             GateType::H => h_qubits.extend(gate.qubits.iter()),
             GateType::X => x_qubits.extend(gate.qubits.iter()),
@@ -208,7 +208,7 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
             GateType::I => {}
             _ => {
                 // Fallback: apply individually for unsupported gate types
-                apply_gate(sim, gate);
+                apply_gate(sim, gate.as_gate());
             }
         }
     }

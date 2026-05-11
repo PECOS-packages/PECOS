@@ -264,15 +264,15 @@ pub fn propagate_through_circuit(
     match direction {
         Direction::Forward => {
             for tick in circuit.ticks() {
-                for gate in tick.gate_batches() {
-                    apply_gate(prop, gate, direction);
+                for gate in tick.iter_gate_batches() {
+                    apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
         Direction::Backward => {
             for tick in circuit.ticks().iter().rev() {
-                for gate in tick.gate_batches() {
-                    apply_gate(prop, gate, direction);
+                for gate in tick.iter_gate_batches() {
+                    apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
@@ -305,16 +305,16 @@ pub fn propagate_tick_range(
         Direction::Forward => {
             for tick_idx in start..=end {
                 let tick = &circuit.ticks()[tick_idx];
-                for gate in tick.gate_batches() {
-                    apply_gate(prop, gate, direction);
+                for gate in tick.iter_gate_batches() {
+                    apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
         Direction::Backward => {
             for tick_idx in (start..=end).rev() {
                 let tick = &circuit.ticks()[tick_idx];
-                for gate in tick.gate_batches() {
-                    apply_gate(prop, gate, direction);
+                for gate in tick.iter_gate_batches() {
+                    apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }

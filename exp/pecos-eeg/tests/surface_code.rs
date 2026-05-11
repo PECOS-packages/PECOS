@@ -33,7 +33,10 @@ fn build_repetition_code() -> (Vec<Gate>, Vec<Detector>, Vec<Observable>) {
     // Final data readout
     tc.tick().mz(&[0, 1, 2]);
 
-    let gates: Vec<Gate> = tc.iter_gate_batches().cloned().collect();
+    let gates: Vec<Gate> = tc
+        .iter_gate_batches()
+        .map(|batch| batch.as_gate().clone())
+        .collect();
 
     // Detector stabilizers: X on ancilla qubit (anticommutes with Z errors
     // that propagate through CX from data qubits).
@@ -168,7 +171,10 @@ fn test_eeg_generator_count_scales_linearly() {
         }
         tc.tick().mz(&[0, 1, 2]);
 
-        let gates: Vec<Gate> = tc.iter_gate_batches().cloned().collect();
+        let gates: Vec<Gate> = tc
+            .iter_gate_batches()
+            .map(|batch| batch.as_gate().clone())
+            .collect();
         let expanded = expand::expand_circuit(&gates);
         let noise = NoiseModel::coherent_only(0.1);
         let result = analyze_expanded(&expanded.gates, &noise);

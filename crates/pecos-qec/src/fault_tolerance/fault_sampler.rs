@@ -231,7 +231,7 @@ pub fn build_fault_table(
 /// Validate that all gates in the `TickCircuit` are supported (before flattening).
 fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
     for (tick_idx, tick) in tc.iter_ticks() {
-        for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
+        for gate in tick.iter_gate_batches() {
             if is_standard_1q_clifford_gate(gate.gate_type)
                 || is_standard_2q_clifford_gate(gate.gate_type)
                 || is_supported_measurement_gate(gate.gate_type)
@@ -243,7 +243,7 @@ fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
             return Err(UnsupportedGateError {
                 gate_type: gate.gate_type,
                 tick: tick_idx,
-                gate_in_tick: gate_idx,
+                gate_in_tick: gate.batch_index(),
                 qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
             });
         }
@@ -262,7 +262,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
     let mut meas_count = 0usize;
 
     for (tick_idx, tick) in tc.iter_ticks() {
-        for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
+        for gate in tick.iter_gate_batches() {
+            let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
             let is_mz = is_supported_measurement_gate(gate.gate_type);
             let is_2q = is_standard_2q_clifford_gate(gate.gate_type);
@@ -1512,10 +1513,8 @@ pub fn symbolic_measurement_history(
     use pecos_simulators::SymbolicSparseStab;
 
     let num_qubits = tc
-        .ticks()
-        .iter()
-        .flat_map(|t| t.gate_batches().iter())
-        .flat_map(|g| g.qubits.iter())
+        .iter_gate_batches()
+        .flat_map(|g| g.as_gate().qubits.iter())
         .map(|q| q.index() + 1)
         .max()
         .unwrap_or(0);
@@ -1523,7 +1522,8 @@ pub fn symbolic_measurement_history(
     let mut sim = SymbolicSparseStab::new(num_qubits);
 
     for (tick_idx, tick) in tc.iter_ticks() {
-        for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
+        for gate in tick.iter_gate_batches() {
+            let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
             match gate.gate_type {

@@ -194,8 +194,8 @@ impl From<&TickCircuit> for CommandQueue {
         let mut queue = CommandQueue::new();
 
         for tick in circuit.ticks() {
-            for gate in tick.gate_batches() {
-                queue.push(gate.into());
+            for gate in tick.iter_gate_batches() {
+                queue.push(gate.as_gate().into());
             }
         }
 

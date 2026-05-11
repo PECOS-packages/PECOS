@@ -235,7 +235,7 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
 
         for tick in old_ticks {
             let mut idle_qubits: Vec<QubitId> = Vec::new();
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 if gate.is_two_qubit() {
                     for q in &gate.qubits {
                         if !idle_qubits.contains(q) {
@@ -452,9 +452,10 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
             new_tick.set_attr(key, value.clone());
         }
 
-        for (gate_idx, gate) in old_tick.gate_batches().iter().enumerate() {
-            let attrs: BTreeMap<String, Attribute> = old_tick
-                .gate_attrs(gate_idx)
+        for batch in old_tick.iter_gate_batches() {
+            let gate = batch.as_gate();
+            let attrs: BTreeMap<String, Attribute> = batch
+                .attrs()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
 
@@ -509,12 +510,12 @@ impl CircuitPass for SimplifyRotations {
             // We need to know which gate indices to remove and what to add.
             let mut decompositions: Vec<(usize, GateType)> = Vec::new();
 
-            for (i, gate) in tick.gate_batches().iter().enumerate() {
+            for gate in tick.iter_gate_batches() {
                 if gate.angles.len() == 1
                     && let Some(pauli) =
                         pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
                 {
-                    decompositions.push((i, pauli));
+                    decompositions.push((gate.batch_index(), pauli));
                 }
             }
 
@@ -668,12 +669,13 @@ impl CircuitPass for CancelInverses {
         let mut to_remove: Vec<(usize, usize)> = Vec::new();
 
         for (ti, tick) in circuit.iter_ticks() {
-            for (gi, gate) in tick.gate_batches().iter().enumerate() {
+            for gate in tick.iter_gate_batches() {
+                let gi = gate.batch_index();
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
                 if let Some((pred_ti, pred_gi)) = check_all_stacks_agree(&stacks, &qubits) {
                     let pred_gate = &circuit.ticks()[pred_ti].gate_batches()[pred_gi];
-                    if are_inverses(pred_gate, gate) {
+                    if are_inverses(pred_gate, gate.as_gate()) {
                         for &q in &qubits {
                             if let Some(stack) = stacks.get_mut(&q) {
                                 stack.pop();
@@ -751,7 +753,8 @@ impl CircuitPass for MergeAdjacentRotations {
         let mut to_remove: Vec<(usize, usize)> = Vec::new();
 
         for (ti, tick) in circuit.iter_ticks() {
-            for (gi, gate) in tick.gate_batches().iter().enumerate() {
+            for gate in tick.iter_gate_batches() {
+                let gi = gate.batch_index();
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
                 if is_rotation(gate.gate_type)
@@ -859,7 +862,8 @@ impl CircuitPass for PeepholeOptimize {
         // Build per-qubit timeline: Vec of (tick_idx, gate_idx) in order.
         let mut timelines: HashMap<QubitId, Vec<(usize, usize)>> = HashMap::new();
         for (ti, tick) in circuit.iter_ticks() {
-            for (gi, gate) in tick.gate_batches().iter().enumerate() {
+            for gate in tick.iter_gate_batches() {
+                let gi = gate.batch_index();
                 for &q in &gate.qubits {
                     timelines.entry(q).or_default().push((ti, gi));
                 }
@@ -1054,12 +1058,13 @@ impl CircuitPass for AbsorbBasisGates {
         // Forward scan: absorb Z-diagonal gates after Z-preps.
         let mut z_eigenstate: HashSet<QubitId> = HashSet::new();
         for (ti, tick) in circuit.iter_ticks() {
-            for (gi, gate) in tick.gate_batches().iter().enumerate() {
+            for gate in tick.iter_gate_batches() {
+                let gi = gate.batch_index();
                 if is_z_prep(gate.gate_type) {
                     for &q in &gate.qubits {
                         z_eigenstate.insert(q);
                     }
-                } else if is_z_diagonal(gate)
+                } else if is_z_diagonal(gate.as_gate())
                     && gate.qubits.iter().all(|q| z_eigenstate.contains(q))
                 {
                     to_remove.push((ti, gi));
@@ -1184,12 +1189,12 @@ impl CircuitPass for CompactTicks {
         // Collect every gate together with its per-gate attributes.
         let mut entries: Vec<(Gate, BTreeMap<String, Attribute>)> = Vec::new();
         for tick in circuit.ticks() {
-            for (gi, gate) in tick.gate_batches().iter().enumerate() {
-                let attrs: BTreeMap<String, Attribute> = tick
-                    .gate_attrs(gi)
+            for gate in tick.iter_gate_batches() {
+                let attrs: BTreeMap<String, Attribute> = gate
+                    .attrs()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                entries.push((gate.clone(), attrs));
+                entries.push((gate.as_gate().clone(), attrs));
             }
         }
 
@@ -1774,13 +1779,12 @@ mod tests {
         let mut tick_ops: Vec<UnitaryRep> = Vec::new();
 
         for tick in tc.ticks() {
-            let gates = tick.gate_batches();
-            if gates.is_empty() {
+            if tick.is_empty() {
                 continue;
             }
             let mut gate_ops: Vec<UnitaryRep> = Vec::new();
-            for gate in gates {
-                let op = gate_to_unitary(gate)?;
+            for gate in tick.iter_gate_batches() {
+                let op = gate_to_unitary(gate.as_gate())?;
                 gate_ops.push(op);
             }
             // Tensor all gates in this tick (they act on disjoint qubits).
@@ -2860,9 +2864,9 @@ mod tests {
 
         let mut saw_rewritten = false;
         let mut saw_untouched = false;
-        for (idx, gate) in middle.gate_batches().iter().enumerate() {
+        for gate in middle.iter_gate_batches() {
             assert_eq!(
-                middle.get_gate_attr(idx, "calibration"),
+                gate.get_attr("calibration"),
                 Some(&Attribute::String("entangler".into()))
             );
             match gate.gate_type {

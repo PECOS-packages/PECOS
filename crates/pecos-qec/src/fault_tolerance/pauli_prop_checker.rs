@@ -76,7 +76,7 @@ pub fn detect_input_qubits(circuit: &TickCircuit) -> Vec<usize> {
     let mut prepared_qubits: HashSet<usize> = HashSet::new();
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
-        for gate in tick.gate_batches() {
+        for gate in tick.iter_gate_batches() {
             for &qubit in &gate.qubits {
                 let q = qubit.index();
                 all_qubits.insert(q);
@@ -108,7 +108,7 @@ pub fn detect_ancilla_qubits(circuit: &TickCircuit) -> Vec<usize> {
     let mut prepared_qubits: HashSet<usize> = HashSet::new();
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
-        for gate in tick.gate_batches() {
+        for gate in tick.iter_gate_batches() {
             if gate.gate_type == GateType::PZ {
                 for &qubit in &gate.qubits {
                     prepared_qubits.insert(qubit.index());
@@ -142,7 +142,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
     let mut measured_qubits: HashSet<usize> = HashSet::new();
 
     for (_tick_idx, tick) in circuit.iter_ticks() {
-        for gate in tick.gate_batches() {
+        for gate in tick.iter_gate_batches() {
             for &qubit in &gate.qubits {
                 let q = qubit.index();
                 all_qubits.insert(q);
@@ -191,7 +191,7 @@ impl CircuitIO {
         let mut measured_qubits: HashSet<usize> = HashSet::new();
 
         for (_tick_idx, tick) in circuit.iter_ticks() {
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 for &qubit in &gate.qubits {
                     let q = qubit.index();
                     all_qubits.insert(q);
@@ -296,8 +296,8 @@ pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
         }
 
         // Apply all gates in this tick
-        for gate in tick.gate_batches() {
-            apply_gate(&mut prop, gate, Direction::Forward);
+        for gate in tick.iter_gate_batches() {
+            apply_gate(&mut prop, gate.as_gate(), Direction::Forward);
         }
     }
 
@@ -335,8 +335,8 @@ pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> P
     // Propagate through the circuit from the minimum tick onward
     for (tick_idx, tick) in circuit.iter_ticks() {
         if tick_idx >= min_tick {
-            for gate in tick.gate_batches() {
-                apply_gate(&mut prop, gate, Direction::Forward);
+            for gate in tick.iter_gate_batches() {
+                apply_gate(&mut prop, gate.as_gate(), Direction::Forward);
             }
         }
     }
@@ -1011,7 +1011,7 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
         let mut z_qubits = Vec::new();
         let x_qubits = Vec::new(); // Currently not tracking X-basis measurements
 
-        for gate in tick.gate_batches() {
+        for gate in tick.iter_gate_batches() {
             match gate.gate_type {
                 GateType::MZ | GateType::MeasureFree => {
                     // Z-basis measurement
@@ -1070,7 +1070,7 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
         }
 
         // Propagate through all gates in this tick
-        for gate in tick.gate_batches() {
+        for gate in tick.iter_gate_batches() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
             match gate.gate_type {
                 GateType::CX if qubits.len() >= 2 => {
@@ -2124,8 +2124,8 @@ impl<'a> PauliPropChecker<'a> {
 
                     // Propagate through circuit
                     for (_tick_idx, tick) in self.circuit.iter_ticks() {
-                        for gate in tick.gate_batches() {
-                            apply_gate(&mut prop, gate, Direction::Forward);
+                        for gate in tick.iter_gate_batches() {
+                            apply_gate(&mut prop, gate.as_gate(), Direction::Forward);
                         }
                     }
 

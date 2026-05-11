@@ -64,7 +64,7 @@ impl<'a> TickFaultAnalyzer<'a> {
         // Find max qubit for active qubit tracking
         let mut max_qubit = 0;
         for tick in circuit.ticks() {
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 for qubit in &gate.qubits {
                     max_qubit = max_qubit.max(qubit.index());
                 }
@@ -151,7 +151,7 @@ impl<'a> TickFaultAnalyzer<'a> {
         let mut measurements = Vec::new();
 
         for (tick_idx, tick) in self.circuit.iter_ticks() {
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 // Currently only Z-basis measurements are supported
                 let basis = match gate.gate_type {
                     GateType::MZ | GateType::MeasureFree => 0, // Z-basis
@@ -229,7 +229,7 @@ impl<'a> TickFaultAnalyzer<'a> {
             // Apply gates at this tick backward - SPARSE: only gates touching active qubits
             if tick_idx < self.circuit.ticks().len() {
                 let tick = &self.circuit.ticks()[tick_idx];
-                for gate in tick.gate_batches() {
+                for gate in tick.iter_gate_batches() {
                     // Check if this gate touches any active qubit
                     let touches_active = gate.qubits.iter().any(|q| {
                         let idx = q.index();
@@ -238,7 +238,7 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                     if touches_active {
                         // Apply gate backward
-                        Self::apply_gate_backward(&mut prop, gate);
+                        Self::apply_gate_backward(&mut prop, gate.as_gate());
 
                         // Update active qubits based on new Pauli state
                         for q in &gate.qubits {
@@ -319,7 +319,7 @@ impl<'a> TickFaultAnalyzer<'a> {
 
             // Apply gates backward - SPARSE: only gates touching active qubits
             let tick = &self.circuit.ticks()[tick_idx];
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 // Check if this gate touches any active qubit
                 let touches_active = gate.qubits.iter().any(|q| {
                     let idx = q.index();
@@ -328,7 +328,7 @@ impl<'a> TickFaultAnalyzer<'a> {
 
                 if touches_active {
                     // Apply gate backward
-                    Self::apply_gate_backward(&mut prop, gate);
+                    Self::apply_gate_backward(&mut prop, gate.as_gate());
 
                     // Update active qubits based on new Pauli state
                     for q in &gate.qubits {

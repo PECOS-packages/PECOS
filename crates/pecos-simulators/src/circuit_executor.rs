@@ -78,8 +78,8 @@ impl<'a> CircuitExecutor<'a> {
         let mut measurements = Vec::new();
 
         for (_tick_idx, tick) in self.circuit.iter_ticks_batched() {
-            for batch in tick.gate_batches() {
-                Self::execute_gate_batch(sim, batch, &mut measurements);
+            for batch in tick.iter_gate_batches() {
+                Self::execute_gate_batch(sim, batch.as_gate(), &mut measurements);
             }
         }
 

@@ -963,7 +963,7 @@ impl<'a> GadgetChecker<'a> {
     /// Propagate a `PauliProp` through the circuit without additional faults.
     fn propagate_through_circuit(&self, mut prop: PauliProp) -> PauliProp {
         for tick in self.circuit.ticks() {
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 let qubits: Vec<QubitId> = gate.qubits.to_vec();
 
                 match gate.gate_type {
@@ -1741,7 +1741,7 @@ impl<'a> GadgetChecker<'a> {
             }
 
             // Apply gates
-            for gate in tick.gate_batches() {
+            for gate in tick.iter_gate_batches() {
                 let qubits: Vec<QubitId> = gate.qubits.to_vec();
                 match gate.gate_type {
                     pecos_core::gate_type::GateType::H => {

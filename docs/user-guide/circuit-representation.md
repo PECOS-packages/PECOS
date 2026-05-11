@@ -396,6 +396,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 
     print(f"Number of ticks: {circuit.num_ticks()}")
     print(f"Total gates: {circuit.gate_count()}")
+    print(f"Gate batches: {circuit.gate_batch_count()}")
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -416,6 +417,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 
     println!("Number of ticks: {}", circuit.num_ticks());
     println!("Total gates: {}", circuit.gate_count());
+    println!("Gate batches: {}", circuit.gate_batch_count());
     ```
 
 ### Qubit Conflict Detection
@@ -667,8 +669,9 @@ A directed acyclic graph with topological ordering and cycle prevention:
 | `new()` | Create empty circuit |
 | `tick()` | Start a new time step |
 | `num_ticks()` | Number of time steps |
-| `gate_count()` | Total gates across all ticks |
-| `gate_batch_count()` | Total compatible gate batches across all ticks |
+| `gate_count()` | Total gate applications across all ticks |
+| `gate_batch_count()` | Total stored compatible gate batches across all ticks |
+| `gate_batches()` | Stored gate batches with tick indices |
 | `set_meta(key, value)` | Circuit-level metadata |
 
 ### DAG Methods

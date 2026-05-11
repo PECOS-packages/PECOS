@@ -2385,7 +2385,7 @@ mod tests {
         let gate = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .next()
             .unwrap();
         assert_eq!(gate.gate_type, GateType::RZ);
@@ -2402,7 +2402,7 @@ mod tests {
         let gate = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .next()
             .unwrap();
         assert_eq!(gate.gate_type, GateType::RZ);
@@ -2418,7 +2418,7 @@ mod tests {
         let gate = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .next()
             .unwrap();
         assert_eq!(gate.gate_type, GateType::RZ);
@@ -2434,7 +2434,7 @@ mod tests {
         let gate = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .next()
             .unwrap();
         assert_eq!(gate.gate_type, GateType::RZZ);
@@ -2776,7 +2776,7 @@ mod tests {
         let gates: Vec<&Gate> = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::CZ);
@@ -2794,7 +2794,7 @@ mod tests {
         let gates: Vec<&Gate> = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::CX);
@@ -2813,7 +2813,7 @@ mod tests {
         let gates: Vec<&Gate> = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
         assert_eq!(gates.len(), 3); // unchanged
     }
@@ -2831,7 +2831,7 @@ mod tests {
         let gates: Vec<&Gate> = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
         assert_eq!(gates.len(), 3); // X, CZ, Z
         assert_eq!(gates[0].gate_type, GateType::X);
@@ -2898,7 +2898,7 @@ mod tests {
         let gates: Vec<&Gate> = tc
             .ticks()
             .iter()
-            .flat_map(super::super::tick_circuit::Tick::gates)
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
         assert_eq!(gates.len(), 2);
         assert!(gates.iter().all(|g| g.gate_type == GateType::CZ));

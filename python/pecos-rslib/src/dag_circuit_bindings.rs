@@ -2055,9 +2055,19 @@ pub struct PyTick {
 
 #[pymethods]
 impl PyTick {
-    /// Get the number of gates in this tick.
+    /// Get the number of stored gate batches in this tick.
     fn __len__(&self) -> usize {
         self.inner.len()
+    }
+
+    /// Get the number of individual gate applications in this tick.
+    fn gate_count(&self) -> usize {
+        self.inner.gate_count()
+    }
+
+    /// Get the number of compatible gate batches in this tick.
+    fn gate_batch_count(&self) -> usize {
+        self.inner.gate_batch_count()
     }
 
     /// Check if the tick is empty.
@@ -2226,6 +2236,11 @@ impl PyTickCircuit {
     /// Get the total number of gates across all ticks.
     fn gate_count(&self) -> usize {
         self.inner.gate_count()
+    }
+
+    /// Get the total number of compatible gate batches across all ticks.
+    fn gate_batch_count(&self) -> usize {
+        self.inner.gate_batch_count()
     }
 
     /// Get the total number of measurement results produced so far.

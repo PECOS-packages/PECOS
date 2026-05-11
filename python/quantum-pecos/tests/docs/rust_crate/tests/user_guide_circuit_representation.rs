@@ -163,6 +163,7 @@ circuit.tick().mz(&[0, 1]);
 
 println!("Number of ticks: {}", circuit.num_ticks());
 println!("Total gates: {}", circuit.gate_count());
+println!("Gate batches: {}", circuit.gate_batch_count());
 
 }
 

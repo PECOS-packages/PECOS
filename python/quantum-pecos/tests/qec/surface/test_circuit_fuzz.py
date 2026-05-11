@@ -1003,6 +1003,20 @@ class TestMirroredBrickwork:
 
 
 class TestTickCircuitStructure:
+    def test_gate_count_and_gate_batch_count_are_distinct(self):
+        tc = TickCircuit()
+        tc.tick().h([0]).h([1]).cx([(2, 3), (4, 5)])
+
+        tick = tc.get_tick(0)
+        assert tick.gate_count() == 4
+        assert tick.gate_batch_count() == 2
+        assert len(tick.gate_batches()) == 2
+        assert len(tick) == 2
+
+        assert tc.gate_count() == 4
+        assert tc.gate_batch_count() == 2
+        assert len(tc.gate_batches()) == 2
+
     @pytest.mark.parametrize("num_qubits", [1, 2, 3, 5, 8])
     @pytest.mark.parametrize("depth", [10, 30])
     @pytest.mark.parametrize("seed", range(3))

@@ -392,7 +392,7 @@ impl TickGateStorage {
     fn append_batch(&mut self, idx: usize, gate: Gate) {
         assert!(
             self.materialized[idx].can_batch_with(&gate),
-            "cannot batch incompatible gate commands"
+            "cannot merge incompatible gate batches"
         );
         self.qubits[idx].extend(gate.qubits.iter().copied());
         self.meas_ids[idx].extend(gate.meas_ids.iter().copied());
@@ -452,8 +452,8 @@ impl Tick {
 
     /// Get the number of gates in this tick.
     ///
-    /// This is the number of stored gate commands. Batched commands such as
-    /// `cx(&[(0, 1), (2, 3)])` count as one stored command.
+    /// This is the number of stored gate batches. Batched commands such as
+    /// `cx(&[(0, 1), (2, 3)])` count as one stored batch.
     #[must_use]
     pub fn len(&self) -> usize {
         self.gate_batches.len()
@@ -491,26 +491,14 @@ impl Tick {
         self.gate_batches.is_empty()
     }
 
-    /// Get the stored gate commands in this tick.
-    ///
-    /// A stored command may be a batch containing multiple gate applications on
-    /// disjoint qubits. Prefer [`gate_batches`](Self::gate_batches) in
-    /// execution/analyzer code where that distinction matters.
-    #[must_use]
-    pub fn gates(&self) -> &[Gate] {
-        self.gate_batches.as_slice()
-    }
-
     /// Get the full-fidelity gate batches in this tick.
     ///
     /// In `TickCircuit`, a stored [`Gate`] command may represent one or more
     /// gate applications on disjoint qubits. For example,
     /// `cx(&[(0, 1), (2, 3)])` is one batch and two gate applications.
     ///
-    /// This is intentionally the same data as [`gates`](Self::gates) today: the
-    /// batches preserve the complete [`Gate`] payload, including measurement
-    /// IDs and typed channel payloads. Future internal storage can make this
-    /// view cheaper or more data-oriented without changing consumers.
+    /// The batches preserve the complete [`Gate`] payload, including
+    /// measurement IDs and typed channel payloads.
     #[must_use]
     pub fn gate_batches(&self) -> &[Gate] {
         self.gate_batches.as_slice()
@@ -1234,7 +1222,7 @@ impl TickCircuit {
 
     /// Convert a per-tick gate index to a global gate index.
     ///
-    /// Global index = sum of stored gate commands for all ticks before
+    /// Global index = sum of stored gate batches for all ticks before
     /// `tick_idx` + `gate_idx`.
     #[must_use]
     pub fn global_gate_index(&self, tick_idx: usize, gate_idx: usize) -> usize {
@@ -1821,31 +1809,6 @@ impl TickCircuit {
 
     // --- Iteration helpers ---
 
-    /// Iterate over all stored gate commands in the circuit, across all ticks.
-    ///
-    /// A yielded command may be a batch containing multiple gate applications
-    /// on disjoint qubits. Prefer [`iter_gate_batches`](Self::iter_gate_batches)
-    /// in execution/analyzer code where that distinction matters.
-    ///
-    /// Commands are yielded in tick order, then in order within each tick.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pecos_quantum::TickCircuit;
-    ///
-    /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().h(&[0, 1]);
-    /// circuit.tick().cx(&[(0, 1)]);
-    ///
-    /// for gate in circuit.iter_gates() {
-    ///     println!("{:?} on {:?}", gate.gate_type, gate.qubits);
-    /// }
-    /// ```
-    pub fn iter_gates(&self) -> impl Iterator<Item = &Gate> {
-        self.ticks.iter().flat_map(Tick::gates)
-    }
-
     /// Iterate over full-fidelity gate batches in the circuit.
     ///
     /// This is the preferred API for consumers that execute or analyze batched
@@ -1859,29 +1822,6 @@ impl TickCircuit {
     #[must_use]
     pub fn has_channel_operations(&self) -> bool {
         self.iter_gate_batches().any(Gate::is_channel)
-    }
-
-    /// Iterate over all gates with their tick index.
-    ///
-    /// Yields `(tick_index, gate)` pairs.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pecos_quantum::TickCircuit;
-    ///
-    /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().h(&[0]);
-    /// circuit.tick().x(&[0]);
-    ///
-    /// for (tick_idx, gate) in circuit.iter_gates_with_tick() {
-    ///     println!("Tick {}: {:?}", tick_idx, gate.gate_type);
-    /// }
-    /// ```
-    pub fn iter_gates_with_tick(&self) -> impl Iterator<Item = (usize, &Gate)> {
-        self.ticks.iter().enumerate().flat_map(|(tick_idx, tick)| {
-            tick.gate_batches().iter().map(move |gate| (tick_idx, gate))
-        })
     }
 
     /// Iterate over full-fidelity gate batches with their tick index.
@@ -1914,7 +1854,7 @@ impl TickCircuit {
     /// Iterate over ticks through the batched command view.
     ///
     /// This is currently equivalent to [`iter_ticks`](Self::iter_ticks), because
-    /// each [`Tick`] stores full-fidelity batched gate commands. It exists so
+    /// each [`Tick`] stores full-fidelity gate batches. It exists so
     /// batched consumers can depend on `TickCircuit` directly instead of a
     /// converted execution-only circuit representation.
     pub fn iter_ticks_batched(&self) -> impl Iterator<Item = (usize, &Tick)> {
@@ -3383,7 +3323,6 @@ mod tests {
             tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(1)]
         );
-        assert_eq!(tick.gates()[0], tick.gate_batches()[0]);
     }
 
     #[test]
@@ -3417,7 +3356,6 @@ mod tests {
             tick.gate_batches()[0].meas_ids.as_slice(),
             &[MeasId(10), MeasId(11)]
         );
-        assert_eq!(tick.gates()[0].meas_ids, tick.gate_batches()[0].meas_ids);
     }
 
     #[test]
@@ -3912,11 +3850,11 @@ mod tests {
 
         // First tick should have H and X (order may vary)
         let tick0 = tc.get_tick(0).unwrap();
-        assert_eq!(tick0.gates().len(), 2);
+        assert_eq!(tick0.gate_batches().len(), 2);
 
         // Second tick should have CX
         let tick1 = tc.get_tick(1).unwrap();
-        assert_eq!(tick1.gates().len(), 1);
+        assert_eq!(tick1.gate_batches().len(), 1);
 
         // Check circuit attribute
         assert_eq!(tc.get_meta("version"), Some(&Attribute::Int(1)));
@@ -3937,8 +3875,8 @@ mod tests {
         assert_eq!(tc1.num_ticks(), tc2.num_ticks());
         for i in 0..tc1.num_ticks() {
             assert_eq!(
-                tc1.get_tick(i).unwrap().gates().len(),
-                tc2.get_tick(i).unwrap().gates().len()
+                tc1.get_tick(i).unwrap().gate_batches().len(),
+                tc2.get_tick(i).unwrap().gate_batches().len()
             );
         }
     }
@@ -4005,7 +3943,7 @@ mod tests {
         assert_eq!(tick0.len(), 1);
         assert_eq!(tick0.gate_count(), 2);
         assert_eq!(tick0.gate_batch_count(), 1);
-        assert_eq!(tick0.gates()[0].gate_type, GateType::H);
+        assert_eq!(tick0.gate_batches()[0].gate_type, GateType::H);
         assert_eq!(
             tick0.get_gate_attr(0, "calibration"),
             Some(&Attribute::String("h-cal".into()))
@@ -4015,7 +3953,7 @@ mod tests {
         assert_eq!(tick1.len(), 1);
         assert_eq!(tick1.gate_count(), 2);
         assert_eq!(tick1.gate_batch_count(), 1);
-        assert_eq!(tick1.gates()[0].gate_type, GateType::CX);
+        assert_eq!(tick1.gate_batches()[0].gate_type, GateType::CX);
         assert_eq!(
             tick1.get_gate_attr(0, "calibration"),
             Some(&Attribute::String("cx-cal".into()))
@@ -4025,9 +3963,9 @@ mod tests {
         assert_eq!(tick2.len(), 1);
         assert_eq!(tick2.gate_count(), 2);
         assert_eq!(tick2.gate_batch_count(), 1);
-        assert_eq!(tick2.gates()[0].gate_type, GateType::MZ);
+        assert_eq!(tick2.gate_batches()[0].gate_type, GateType::MZ);
         assert_eq!(
-            tick2.gates()[0].meas_ids.as_slice(),
+            tick2.gate_batches()[0].meas_ids.as_slice(),
             &[MeasId(0), MeasId(1)]
         );
     }
@@ -4139,7 +4077,7 @@ mod tests {
         let tc2 = TickCircuit::from(&dag);
         assert_eq!(tc2.gate_count(), 1);
         assert_eq!(tc2.gate_batch_count(), 1);
-        let gate = &tc2.get_tick(0).unwrap().gates()[0];
+        let gate = &tc2.get_tick(0).unwrap().gate_batches()[0];
         assert!(gate.is_channel());
         assert_eq!(
             gate.qubits.as_slice(),
@@ -4297,7 +4235,7 @@ mod tests {
 
         fn measurement_ids(circuit: &TickCircuit) -> Vec<MeasId> {
             circuit
-                .iter_gates()
+                .iter_gate_batches()
                 .flat_map(|gate| gate.meas_ids.iter().copied())
                 .collect()
         }
@@ -4442,7 +4380,7 @@ mod tests {
 
         fn channel_payloads(circuit: &TickCircuit) -> Vec<pecos_core::ChannelExpr> {
             circuit
-                .iter_gates()
+                .iter_gate_batches()
                 .filter_map(|gate| gate.channel.clone())
                 .collect()
         }
@@ -5110,23 +5048,12 @@ mod tests {
         tc.tick().cx(&[(0, 1), (2, 3)]);
         tc.tick().mz(&[0, 1, 2, 3]);
 
-        // Test iter_gates
-        let gates: Vec<_> = tc.iter_gates().collect();
-        assert_eq!(gates.len(), 3);
-
-        // Test explicit batched views. These currently mirror the stored gate
-        // commands and preserve full Gate payloads.
+        // Test explicit batched views. These preserve full Gate payloads.
         let batches: Vec<_> = tc.iter_gate_batches().collect();
         assert_eq!(batches.len(), 3);
         assert_eq!(batches[0].gate_type, GateType::H);
         assert_eq!(batches[0].num_gates(), 4);
         assert_eq!(tc.get_tick(0).unwrap().gate_batches()[0].num_gates(), 4);
-
-        // Test iter_gates_with_tick
-        let gates_with_tick: Vec<_> = tc.iter_gates_with_tick().collect();
-        assert_eq!(gates_with_tick.len(), 3);
-        assert_eq!(gates_with_tick[0].0, 0); // First gate is in tick 0
-        assert_eq!(gates_with_tick[1].0, 1); // Second gate is in tick 1
 
         let batches_with_tick: Vec<_> = tc.iter_gate_batches_with_tick().collect();
         assert_eq!(batches_with_tick.len(), 3);
@@ -5306,13 +5233,13 @@ mod tests {
 
         // Check order: H at 0, X at 1, CX at 2
         let tick0 = tc.get_tick(0).unwrap();
-        assert_eq!(tick0.gates()[0].gate_type, GateType::H);
+        assert_eq!(tick0.gate_batches()[0].gate_type, GateType::H);
 
         let tick1 = tc.get_tick(1).unwrap();
-        assert_eq!(tick1.gates()[0].gate_type, GateType::X);
+        assert_eq!(tick1.gate_batches()[0].gate_type, GateType::X);
 
         let tick2 = tc.get_tick(2).unwrap();
-        assert_eq!(tick2.gates()[0].gate_type, GateType::CX);
+        assert_eq!(tick2.gate_batches()[0].gate_type, GateType::CX);
     }
 
     #[test]
@@ -5327,7 +5254,7 @@ mod tests {
 
         // Z should now be at tick 0
         let tick0 = tc.get_tick(0).unwrap();
-        assert_eq!(tick0.gates()[0].gate_type, GateType::Z);
+        assert_eq!(tick0.gate_batches()[0].gate_type, GateType::Z);
     }
 
     #[test]
@@ -5341,7 +5268,7 @@ mod tests {
         assert_eq!(tc.num_ticks(), 2);
 
         let tick1 = tc.get_tick(1).unwrap();
-        assert_eq!(tick1.gates()[0].gate_type, GateType::X);
+        assert_eq!(tick1.gate_batches()[0].gate_type, GateType::X);
     }
 
     #[test]
@@ -5357,9 +5284,18 @@ mod tests {
         assert_eq!(tc.num_ticks(), 3);
 
         // Check each tick has the right gate
-        assert_eq!(tc.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
-        assert_eq!(tc.get_tick(1).unwrap().gates()[0].gate_type, GateType::X);
-        assert_eq!(tc.get_tick(2).unwrap().gates()[0].gate_type, GateType::CX);
+        assert_eq!(
+            tc.get_tick(0).unwrap().gate_batches()[0].gate_type,
+            GateType::H
+        );
+        assert_eq!(
+            tc.get_tick(1).unwrap().gate_batches()[0].gate_type,
+            GateType::X
+        );
+        assert_eq!(
+            tc.get_tick(2).unwrap().gate_batches()[0].gate_type,
+            GateType::CX
+        );
     }
 
     #[test]
@@ -5766,7 +5702,7 @@ mod tests {
         tc.tick()
             .channel(pecos_core::channel::Depolarizing(0.25, 0));
 
-        let gate = &tc.get_tick(0).unwrap().gates()[0];
+        let gate = &tc.get_tick(0).unwrap().gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::Channel);
         assert_eq!(gate.qubits.as_slice(), &[QubitId::from(0)]);
         assert!(gate.channel_expr().is_some());
@@ -5788,24 +5724,27 @@ mod tests {
         });
 
         assert_eq!(noisy.num_ticks(), 4);
-        assert_eq!(noisy.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
+        assert_eq!(
+            noisy.get_tick(0).unwrap().gate_batches()[0].gate_type,
+            GateType::H
+        );
         assert!(
             noisy
                 .get_tick(1)
                 .unwrap()
-                .gates()
+                .gate_batches()
                 .iter()
                 .all(Gate::is_channel)
         );
         assert_eq!(
-            noisy.get_tick(2).unwrap().gates()[0].gate_type,
+            noisy.get_tick(2).unwrap().gate_batches()[0].gate_type,
             GateType::CX
         );
         assert!(
             noisy
                 .get_tick(3)
                 .unwrap()
-                .gates()
+                .gate_batches()
                 .iter()
                 .all(Gate::is_channel)
         );
@@ -5912,8 +5851,10 @@ mod tests {
         for tick_idx in 0..tc.num_ticks() {
             let original = tc.get_tick(tick_idx).unwrap();
             let copied = noisy.get_tick(tick_idx).unwrap();
-            assert_eq!(copied.gates().len(), original.gates().len());
-            for (copied_gate, original_gate) in copied.gates().iter().zip(original.gates()) {
+            assert_eq!(copied.gate_batches().len(), original.gate_batches().len());
+            for (copied_gate, original_gate) in
+                copied.gate_batches().iter().zip(original.gate_batches())
+            {
                 assert_eq!(copied_gate.gate_type, original_gate.gate_type);
                 assert_eq!(copied_gate.qubits, original_gate.qubits);
                 assert!(!copied_gate.is_channel());
@@ -5934,7 +5875,10 @@ mod tests {
         });
 
         assert_eq!(noisy.num_ticks(), 3);
-        assert_eq!(noisy.get_tick(0).unwrap().gates()[0].gate_type, GateType::H);
+        assert_eq!(
+            noisy.get_tick(0).unwrap().gate_batches()[0].gate_type,
+            GateType::H
+        );
 
         let first_noise_tick = noisy.get_tick(1).unwrap();
         assert_eq!(first_noise_tick.gate_batches().len(), 1);
@@ -5968,10 +5912,10 @@ mod tests {
 
         assert_eq!(noisy.num_ticks(), 2);
         assert_eq!(
-            noisy.get_tick(0).unwrap().gates()[0].gate_type,
+            noisy.get_tick(0).unwrap().gate_batches()[0].gate_type,
             GateType::MZ
         );
-        let channel = &noisy.get_tick(1).unwrap().gates()[0];
+        let channel = &noisy.get_tick(1).unwrap().gate_batches()[0];
         assert!(channel.is_channel());
         assert_eq!(channel.qubits.as_slice(), &[QubitId::from(0)]);
     }
@@ -5994,13 +5938,13 @@ mod tests {
         });
 
         assert_eq!(noisy.num_ticks(), 3);
-        assert_eq!(noisy.get_tick(1).unwrap().gates().len(), 2);
-        assert_eq!(noisy.get_tick(2).unwrap().gates().len(), 2);
+        assert_eq!(noisy.get_tick(1).unwrap().gate_batches().len(), 2);
+        assert_eq!(noisy.get_tick(2).unwrap().gate_batches().len(), 2);
         assert!(
             noisy
                 .get_tick(1)
                 .unwrap()
-                .gates()
+                .gate_batches()
                 .iter()
                 .all(Gate::is_channel)
         );
@@ -6008,7 +5952,7 @@ mod tests {
             noisy
                 .get_tick(2)
                 .unwrap()
-                .gates()
+                .gate_batches()
                 .iter()
                 .all(Gate::is_channel)
         );

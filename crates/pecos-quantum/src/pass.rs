@@ -532,8 +532,11 @@ impl CircuitPass for SimplifyRotations {
             }
 
             // Second pass: in-place simplification of remaining gates.
-            for gate in tick.gates_mut() {
-                simplify_gate_in_place(gate);
+            for gate_idx in 0..tick.len() {
+                tick.update_gate_batch(gate_idx, |gate| {
+                    simplify_gate_in_place(gate);
+                })
+                .unwrap_or_else(|err| panic!("{err}"));
             }
         }
     }
@@ -775,10 +778,11 @@ impl CircuitPass for MergeAdjacentRotations {
 
         // Apply angle adjustments to surviving gates.
         for (&(ti, gi), &delta) in &angle_adjustments {
-            if let Some(tick) = circuit.get_tick_mut(ti)
-                && let Some(gate) = tick.gates_mut().get_mut(gi)
-            {
-                gate.angles[0] += delta;
+            if let Some(tick) = circuit.get_tick_mut(ti) {
+                tick.update_gate_batch(gi, |gate| {
+                    gate.angles[0] += delta;
+                })
+                .unwrap_or_else(|err| panic!("{err}"));
             }
         }
 
@@ -912,11 +916,12 @@ impl CircuitPass for PeepholeOptimize {
 
         // Apply replacements.
         for ((ti, gi), new_gt, new_qubits) in &replacements {
-            if let Some(tick) = circuit.get_tick_mut(*ti)
-                && let Some(gate) = tick.gates_mut().get_mut(*gi)
-            {
-                gate.gate_type = *new_gt;
-                gate.qubits.clone_from(new_qubits);
+            if let Some(tick) = circuit.get_tick_mut(*ti) {
+                tick.update_gate_batch(*gi, |gate| {
+                    gate.gate_type = *new_gt;
+                    gate.qubits.clone_from(new_qubits);
+                })
+                .unwrap_or_else(|err| panic!("{err}"));
             }
         }
 
@@ -1260,14 +1265,18 @@ impl CircuitPass for AssignMissingMeasIds {
     fn apply_tick(&self, circuit: &mut TickCircuit) {
         let mut next_id = circuit.num_measurements();
         for tick in circuit.ticks_mut() {
-            for gate in tick.gates_mut() {
-                let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
-                if is_measurement && gate.meas_ids.is_empty() {
-                    for _ in &gate.qubits {
-                        gate.meas_ids.push(pecos_core::MeasId(next_id));
-                        next_id += 1;
+            for gate_idx in 0..tick.len() {
+                tick.update_gate_batch(gate_idx, |gate| {
+                    let is_measurement =
+                        matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+                    if is_measurement && gate.meas_ids.is_empty() {
+                        for _ in &gate.qubits {
+                            gate.meas_ids.push(pecos_core::MeasId(next_id));
+                            next_id += 1;
+                        }
                     }
-                }
+                })
+                .unwrap_or_else(|err| panic!("{err}"));
             }
         }
         let added = next_id - circuit.num_measurements();

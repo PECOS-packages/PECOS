@@ -64,13 +64,15 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{
-    Angle64, ChannelExpr, Gate, GateMeasIds, GateQubits, GateSignature, MeasId, QubitId, TimeUnits,
+    Angle64, ChannelExpr, Gate, GateAngles, GateMeasIds, GateParams, GateQubits, GateSignature,
+    MeasId, QubitId, TimeUnits,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Attribute;
 use crate::dag_circuit::{AnnotationKind, DagCircuit, PauliAnnotation};
 use std::fmt;
+use std::ops::{Deref, Index};
 
 fn meta_json_array(circuit: &TickCircuit, key: &str) -> Result<Vec<serde_json::Value>, String> {
     let Some(attr) = circuit.get_meta(key) else {
@@ -325,11 +327,107 @@ impl From<TickGateError> for CustomGateError {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct TickGateStorage {
+    gate_types: Vec<GateType>,
+    angles: Vec<GateAngles>,
+    params: Vec<GateParams>,
+    qubits: Vec<GateQubits>,
+    meas_ids: Vec<GateMeasIds>,
+    channels: Vec<Option<ChannelExpr>>,
+    materialized: Vec<Gate>,
+}
+
+impl TickGateStorage {
+    fn len(&self) -> usize {
+        self.gate_types.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.gate_types.is_empty()
+    }
+
+    fn as_slice(&self) -> &[Gate] {
+        &self.materialized
+    }
+
+    fn iter(&self) -> std::slice::Iter<'_, Gate> {
+        self.materialized.iter()
+    }
+
+    fn get(&self, idx: usize) -> Option<&Gate> {
+        self.materialized.get(idx)
+    }
+
+    fn push(&mut self, gate: Gate) {
+        self.gate_types.push(gate.gate_type);
+        self.angles.push(gate.angles.clone());
+        self.params.push(gate.params.clone());
+        self.qubits.push(gate.qubits.clone());
+        self.meas_ids.push(gate.meas_ids.clone());
+        self.channels.push(gate.channel.clone());
+        self.materialized.push(gate);
+    }
+
+    fn set(&mut self, idx: usize, gate: Gate) {
+        self.gate_types[idx] = gate.gate_type;
+        self.angles[idx].clone_from(&gate.angles);
+        self.params[idx].clone_from(&gate.params);
+        self.qubits[idx].clone_from(&gate.qubits);
+        self.meas_ids[idx].clone_from(&gate.meas_ids);
+        self.channels[idx].clone_from(&gate.channel);
+        self.materialized[idx] = gate;
+    }
+
+    fn remove(&mut self, idx: usize) -> Gate {
+        self.gate_types.remove(idx);
+        self.angles.remove(idx);
+        self.params.remove(idx);
+        self.qubits.remove(idx);
+        self.meas_ids.remove(idx);
+        self.channels.remove(idx);
+        self.materialized.remove(idx)
+    }
+
+    fn append_batch(&mut self, idx: usize, gate: Gate) {
+        assert!(
+            self.materialized[idx].can_batch_with(&gate),
+            "cannot batch incompatible gate commands"
+        );
+        self.qubits[idx].extend(gate.qubits.iter().copied());
+        self.meas_ids[idx].extend(gate.meas_ids.iter().copied());
+        self.materialized[idx].append_batch(gate);
+    }
+
+    fn truncate_payload(&mut self, idx: usize, qubit_len: usize, meas_id_len: usize) {
+        self.qubits[idx].truncate(qubit_len);
+        self.meas_ids[idx].truncate(meas_id_len);
+        self.materialized[idx].qubits.truncate(qubit_len);
+        self.materialized[idx].meas_ids.truncate(meas_id_len);
+    }
+}
+
+impl Deref for TickGateStorage {
+    type Target = [Gate];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl Index<usize> for TickGateStorage {
+    type Output = Gate;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.materialized[index]
+    }
+}
+
 /// A single time slice containing gates that execute in parallel.
 #[derive(Debug, Clone, Default)]
 pub struct Tick {
     /// Gate batches in this tick (all act on disjoint qubits).
-    gate_batches: Vec<Gate>,
+    gate_batches: TickGateStorage,
     /// Metadata for each gate batch, indexed by position in `gate_batches`.
     gate_attrs: BTreeMap<usize, BTreeMap<String, Attribute>>,
     /// Tick-level metadata.
@@ -400,7 +498,7 @@ impl Tick {
     /// execution/analyzer code where that distinction matters.
     #[must_use]
     pub fn gates(&self) -> &[Gate] {
-        &self.gate_batches
+        self.gate_batches.as_slice()
     }
 
     /// Get the full-fidelity gate batches in this tick.
@@ -415,12 +513,7 @@ impl Tick {
     /// view cheaper or more data-oriented without changing consumers.
     #[must_use]
     pub fn gate_batches(&self) -> &[Gate] {
-        &self.gate_batches
-    }
-
-    /// Get mutable access to the stored gate commands in this tick.
-    pub fn gates_mut(&mut self) -> &mut [Gate] {
-        &mut self.gate_batches
+        self.gate_batches.as_slice()
     }
 
     /// Add a gate to this tick.
@@ -502,7 +595,7 @@ impl Tick {
         let qubit_start = self.gate_batches[target_idx].qubits.len();
         let meas_id_start = self.gate_batches[target_idx].meas_ids.len();
         let gate = self.gate_batches[piece.gate_idx].clone();
-        self.gate_batches[target_idx].append_batch(gate);
+        self.gate_batches.append_batch(target_idx, gate);
         self.remove_gate(piece.gate_idx);
         GateBatchPiece {
             gate_idx: target_idx,
@@ -552,12 +645,8 @@ impl Tick {
         split_gate.meas_ids =
             self.gate_batches[piece.gate_idx].meas_ids[piece.meas_id_start..].into();
 
-        self.gate_batches[piece.gate_idx]
-            .qubits
-            .truncate(piece.qubit_start);
-        self.gate_batches[piece.gate_idx]
-            .meas_ids
-            .truncate(piece.meas_id_start);
+        self.gate_batches
+            .truncate_payload(piece.gate_idx, piece.qubit_start, piece.meas_id_start);
 
         let split_idx = self.push_gate_unchecked(split_gate);
         if let Some(attrs) = self.gate_attrs.get(&piece.gate_idx).cloned() {
@@ -731,10 +820,79 @@ impl Tick {
                 meas_id_start: self.gate_batches[gate_idx].meas_ids.len(),
                 meas_id_len: gate.meas_ids.len(),
             };
-            self.gate_batches[gate_idx].append_batch(gate);
+            self.gate_batches.append_batch(gate_idx, gate);
             return Ok(piece);
         }
         Ok(self.push_gate_unchecked_piece(gate))
+    }
+
+    /// Replace a stored gate batch while preserving storage invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickGateError::InvalidGate`] if `gate_idx` is out of bounds or
+    /// if the replacement gate payload is invalid. Returns
+    /// [`TickGateError::QubitConflict`] if the replacement overlaps another
+    /// command in this tick.
+    pub fn replace_gate_batch(&mut self, gate_idx: usize, gate: Gate) -> Result<(), TickGateError> {
+        if gate_idx >= self.gate_batches.len() {
+            return Err(TickGateError::InvalidGate {
+                message: format!("gate index {gate_idx} out of bounds"),
+                tick_idx: None,
+            });
+        }
+        gate.validate()
+            .map_err(|message| TickGateError::InvalidGate {
+                message,
+                tick_idx: None,
+            })?;
+
+        let mut active = BTreeSet::new();
+        for (idx, existing) in self.gate_batches.iter().enumerate() {
+            if idx == gate_idx {
+                continue;
+            }
+            active.extend(existing.qubits.iter().copied());
+        }
+        let conflicts: Vec<QubitId> = gate
+            .qubits
+            .iter()
+            .filter(|q| active.contains(q))
+            .copied()
+            .collect();
+        if !conflicts.is_empty() {
+            return Err(TickGateError::QubitConflict(QubitConflictError {
+                conflicting_qubits: conflicts,
+                tick_idx: None,
+            }));
+        }
+
+        self.gate_batches.set(gate_idx, gate);
+        Ok(())
+    }
+
+    /// Mutate a stored gate batch through a temporary [`Gate`] value.
+    ///
+    /// This keeps the internal `SoA` storage synchronized with the materialized
+    /// compatibility view returned by [`gate_batches`](Self::gate_batches).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the same errors as [`replace_gate_batch`](Self::replace_gate_batch).
+    pub fn update_gate_batch(
+        &mut self,
+        gate_idx: usize,
+        update: impl FnOnce(&mut Gate),
+    ) -> Result<(), TickGateError> {
+        let Some(existing) = self.gate_batches.get(gate_idx) else {
+            return Err(TickGateError::InvalidGate {
+                message: format!("gate index {gate_idx} out of bounds"),
+                tick_idx: None,
+            });
+        };
+        let mut gate = existing.clone();
+        update(&mut gate);
+        self.replace_gate_batch(gate_idx, gate)
     }
 
     /// Remove all gates that use any of the specified qubits.
@@ -3207,6 +3365,59 @@ mod tests {
                 QubitId::from(5)
             ]
         );
+    }
+
+    #[test]
+    fn test_tick_replace_gate_batch_updates_stored_views() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).h(&[1]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        tick.replace_gate_batch(0, Gate::x(&[0, 1]))
+            .expect("same support replacement should be valid");
+
+        assert_eq!(tick.len(), 1);
+        assert_eq!(tick.gate_count(), 2);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::X);
+        assert_eq!(
+            tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(0), QubitId::from(1)]
+        );
+        assert_eq!(tick.gates()[0], tick.gate_batches()[0]);
+    }
+
+    #[test]
+    fn test_tick_replace_gate_batch_rejects_overlapping_qubits() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        let err = tick
+            .replace_gate_batch(0, Gate::z(&[1]))
+            .expect_err("replacement overlaps the X command on q1");
+
+        assert!(matches!(err, TickGateError::QubitConflict(_)));
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::H);
+        assert_eq!(tick.gate_batches()[1].gate_type, GateType::X);
+    }
+
+    #[test]
+    fn test_tick_update_gate_batch_keeps_measurement_ids_in_sync() {
+        let mut tc = TickCircuit::new();
+        tc.tick().mz(&[0, 1]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        tick.update_gate_batch(0, |gate| {
+            gate.meas_ids[0] = MeasId(10);
+            gate.meas_ids[1] = MeasId(11);
+        })
+        .expect("measurement id update should be valid");
+
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(10), MeasId(11)]
+        );
+        assert_eq!(tick.gates()[0].meas_ids, tick.gate_batches()[0].meas_ids);
     }
 
     #[test]

@@ -3049,7 +3049,7 @@ impl From<&TickCircuit> for DagCircuit {
         let mut meas_record_to_node: BTreeMap<usize, usize> = BTreeMap::new();
         let mut meas_record_idx = 0usize;
 
-        for (tick_idx, tick) in tc.ticks().iter().enumerate() {
+        for (tick_idx, tick) in tc.iter_ticks() {
             for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
                 // Split batched gates into individual operations.
                 //
@@ -4189,7 +4189,7 @@ mod tests {
     #[test]
     fn test_small_pseudorandom_tick_dag_round_trip_invariants() {
         fn assert_no_tick_overlaps(circuit: &TickCircuit) {
-            for (tick_idx, tick) in circuit.ticks().iter().enumerate() {
+            for (tick_idx, tick) in circuit.iter_ticks() {
                 let mut active = BTreeSet::new();
                 for gate in tick.gate_batches() {
                     gate.validate()

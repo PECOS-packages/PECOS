@@ -667,7 +667,7 @@ impl CircuitPass for CancelInverses {
         let mut stacks: HashMap<QubitId, Vec<(usize, usize)>> = HashMap::new();
         let mut to_remove: Vec<(usize, usize)> = Vec::new();
 
-        for (ti, tick) in circuit.ticks().iter().enumerate() {
+        for (ti, tick) in circuit.iter_ticks() {
             for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
@@ -750,7 +750,7 @@ impl CircuitPass for MergeAdjacentRotations {
         let mut angle_adjustments: HashMap<(usize, usize), Angle64> = HashMap::new();
         let mut to_remove: Vec<(usize, usize)> = Vec::new();
 
-        for (ti, tick) in circuit.ticks().iter().enumerate() {
+        for (ti, tick) in circuit.iter_ticks() {
             for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
@@ -858,7 +858,7 @@ impl CircuitPass for PeepholeOptimize {
 
         // Build per-qubit timeline: Vec of (tick_idx, gate_idx) in order.
         let mut timelines: HashMap<QubitId, Vec<(usize, usize)>> = HashMap::new();
-        for (ti, tick) in circuit.ticks().iter().enumerate() {
+        for (ti, tick) in circuit.iter_ticks() {
             for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 for &q in &gate.qubits {
                     timelines.entry(q).or_default().push((ti, gi));
@@ -1053,7 +1053,7 @@ impl CircuitPass for AbsorbBasisGates {
 
         // Forward scan: absorb Z-diagonal gates after Z-preps.
         let mut z_eigenstate: HashSet<QubitId> = HashSet::new();
-        for (ti, tick) in circuit.ticks().iter().enumerate() {
+        for (ti, tick) in circuit.iter_ticks() {
             for (gi, gate) in tick.gate_batches().iter().enumerate() {
                 if is_z_prep(gate.gate_type) {
                     for &q in &gate.qubits {

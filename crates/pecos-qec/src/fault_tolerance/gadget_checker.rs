@@ -1719,7 +1719,7 @@ impl<'a> GadgetChecker<'a> {
         }
 
         // Propagate through circuit up to max_tick, injecting faults as we go
-        for (tick_idx, tick) in self.circuit.ticks().iter().enumerate() {
+        for (tick_idx, tick) in self.circuit.iter_ticks() {
             if tick_idx > max_tick {
                 break;
             }

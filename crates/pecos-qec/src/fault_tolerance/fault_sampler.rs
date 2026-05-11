@@ -230,7 +230,7 @@ pub fn build_fault_table(
 
 /// Validate that all gates in the `TickCircuit` are supported (before flattening).
 fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
-    for (tick_idx, tick) in tc.ticks().iter().enumerate() {
+    for (tick_idx, tick) in tc.iter_ticks() {
         for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
             if is_standard_1q_clifford_gate(gate.gate_type)
                 || is_standard_2q_clifford_gate(gate.gate_type)
@@ -261,7 +261,7 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
     let mut meas_positions = HashMap::new();
     let mut meas_count = 0usize;
 
-    for (tick_idx, tick) in tc.ticks().iter().enumerate() {
+    for (tick_idx, tick) in tc.iter_ticks() {
         for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
             let is_mz = is_supported_measurement_gate(gate.gate_type);
@@ -1522,7 +1522,7 @@ pub fn symbolic_measurement_history(
 
     let mut sim = SymbolicSparseStab::new(num_qubits);
 
-    for (tick_idx, tick) in tc.ticks().iter().enumerate() {
+    for (tick_idx, tick) in tc.iter_ticks() {
         for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 

@@ -43,7 +43,7 @@
 use crate::{CliffordGateable, MeasurementResult};
 use pecos_core::gate_type::GateType;
 use pecos_core::{Gate, QubitId};
-use pecos_quantum::{GateBatch, TickCircuit, TickGateGroups};
+use pecos_quantum::TickCircuit;
 use smallvec::SmallVec;
 
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
@@ -96,126 +96,6 @@ impl<'a> CircuitExecutor<'a> {
         measurements: &mut Vec<MeasurementResult>,
     ) {
         execute_gate_command(sim, batch, measurements);
-    }
-}
-
-/// Executes a `TickGateGroups` directly on a simulator.
-///
-/// This is a simpler interface when you have gate groups but not the full circuit.
-pub fn execute_batched<S: CliffordGateable>(
-    groups: &TickGateGroups,
-    sim: &mut S,
-) -> Vec<MeasurementResult> {
-    let mut measurements = Vec::new();
-
-    for (_tick_idx, tick) in groups.iter_ticks() {
-        for batch in tick.iter() {
-            execute_single_batch(sim, batch, &mut measurements);
-        }
-    }
-
-    measurements
-}
-
-/// Executes a single batch on a simulator.
-#[inline]
-fn execute_single_batch<S: CliffordGateable>(
-    sim: &mut S,
-    batch: &GateBatch,
-    measurements: &mut Vec<MeasurementResult>,
-) {
-    let qubits = batch.qubits();
-
-    match batch.gate_type {
-        GateType::I => {
-            sim.identity(qubits);
-        }
-        GateType::X => {
-            sim.x(qubits);
-        }
-        GateType::Y => {
-            sim.y(qubits);
-        }
-        GateType::Z => {
-            sim.z(qubits);
-        }
-        GateType::H => {
-            sim.h(qubits);
-        }
-        GateType::F => {
-            sim.f(qubits);
-        }
-        GateType::Fdg => {
-            sim.fdg(qubits);
-        }
-        GateType::SX => {
-            sim.sx(qubits);
-        }
-        GateType::SXdg => {
-            sim.sxdg(qubits);
-        }
-        GateType::SY => {
-            sim.sy(qubits);
-        }
-        GateType::SYdg => {
-            sim.sydg(qubits);
-        }
-        GateType::SZ => {
-            sim.sz(qubits);
-        }
-        GateType::SZdg => {
-            sim.szdg(qubits);
-        }
-        GateType::CX => {
-            let pairs = flat_to_pairs(qubits);
-            sim.cx(&pairs);
-        }
-        GateType::CY => {
-            let pairs = flat_to_pairs(qubits);
-            sim.cy(&pairs);
-        }
-        GateType::CZ => {
-            let pairs = flat_to_pairs(qubits);
-            sim.cz(&pairs);
-        }
-        GateType::SXX => {
-            let pairs = flat_to_pairs(qubits);
-            sim.sxx(&pairs);
-        }
-        GateType::SXXdg => {
-            let pairs = flat_to_pairs(qubits);
-            sim.sxxdg(&pairs);
-        }
-        GateType::SYY => {
-            let pairs = flat_to_pairs(qubits);
-            sim.syy(&pairs);
-        }
-        GateType::SYYdg => {
-            let pairs = flat_to_pairs(qubits);
-            sim.syydg(&pairs);
-        }
-        GateType::SZZ => {
-            let pairs = flat_to_pairs(qubits);
-            sim.szz(&pairs);
-        }
-        GateType::SZZdg => {
-            let pairs = flat_to_pairs(qubits);
-            sim.szzdg(&pairs);
-        }
-        GateType::SWAP => {
-            let pairs = flat_to_pairs(qubits);
-            sim.swap(&pairs);
-        }
-        GateType::PZ | GateType::QAlloc => {
-            sim.pz(qubits);
-        }
-        GateType::MZ | GateType::MeasureFree => {
-            measurements.extend(sim.mz(qubits));
-        }
-        GateType::Idle => {}
-        other => {
-            panic!("Unsupported gate type in circuit executor: {other:?}");
-        }
     }
 }
 
@@ -378,7 +258,7 @@ impl<S: CliffordGateable> GateSystemRegistry<S> {
 mod tests {
     use super::*;
     use crate::SparseStab;
-    use pecos_quantum::{TickCircuit, TickCircuitSoA};
+    use pecos_quantum::TickCircuit;
 
     #[test]
     fn test_circuit_executor_basic() {
@@ -411,24 +291,5 @@ mod tests {
 
         // Should have 4 measurements
         assert_eq!(measurements.len(), 4);
-    }
-
-    #[test]
-    fn test_execute_batched_function() {
-        let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .pz(&[0, 1])
-            .tick()
-            .h(&[0, 1])
-            .tick()
-            .mz(&[0, 1]);
-
-        let circuit = builder.build();
-
-        let mut sim = SparseStab::new(2);
-        let measurements = execute_batched(&circuit.batched, &mut sim);
-
-        assert_eq!(measurements.len(), 2);
     }
 }

@@ -62,7 +62,7 @@ pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use batched_ops::{BatchedOps, CommandBuffer, RawOps};
 #[doc(hidden)]
 pub use bitmask_pauli_prop::BitmaskPauliProp;
-pub use circuit_executor::{CircuitExecutor, GateSystem, GateSystemRegistry, execute_batched};
+pub use circuit_executor::{CircuitExecutor, GateSystem, GateSystemRegistry};
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 /// Sparse index representation of stabilizer/destabilizer generators.

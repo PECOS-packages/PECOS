@@ -75,7 +75,6 @@ pub mod pauli_sequence;
 pub mod pauli_set;
 pub mod stabilizer_group;
 mod tick_circuit;
-pub mod tick_circuit_soa;
 pub mod unitary_matrix;
 
 #[cfg(feature = "hugr")]
@@ -89,10 +88,6 @@ pub use dag_circuit::{
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit,
     TickGateError, TickHandle, TickMeasRef, TickMeasureHandle, TickPrepHandle,
-};
-pub use tick_circuit_soa::{
-    CircuitIndexes, GateBatch, GateId, GateStorage, MetadataStorage, TickBatches, TickCircuitSoA,
-    TickCircuitSoABuilder, TickGateGroups,
 };
 
 // Re-export commonly used types from dependencies

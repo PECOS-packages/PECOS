@@ -10,19 +10,17 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! TickCircuit vs TickCircuitSoA layout benchmarks.
+//! TickCircuit batched layout benchmarks.
 //!
-//! These benchmarks measure the current representation tradeoff before making
-//! any storage-refactor decision:
+//! These benchmarks measure the current batched `TickCircuit` access patterns:
 //! - direct TickCircuit traversal,
-//! - TickCircuitSoA batched traversal,
-//! - TickCircuit -> TickCircuitSoA conversion cost, and
-//! - direct vs batched simulator execution with and without conversion cost.
+//! - explicit batched TickCircuit traversal, and
+//! - direct vs `CircuitExecutor` simulator execution.
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos_core::gate_type::GateType;
-use pecos_quantum::{Gate, QubitId, TickCircuit, TickCircuitSoA};
-use pecos_simulators::{CliffordGateable, SparseStab, execute_batched};
+use pecos_quantum::{Gate, QubitId, TickCircuit};
+use pecos_simulators::{CircuitExecutor, CliffordGateable, SparseStab};
 use std::hint::black_box;
 
 const DISTANCES: &[usize] = &[3, 5, 7, 9, 11];
@@ -33,9 +31,7 @@ struct LayoutSpec {
     label: String,
     num_qubits: usize,
     gate_count: usize,
-    gate_batch_count: usize,
     tick_circuit: TickCircuit,
-    soa_circuit: TickCircuitSoA,
 }
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
@@ -44,23 +40,18 @@ pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
         .map(|&distance| {
             let rounds = distance;
             let tick_circuit = build_surface_like_tick_circuit(distance, rounds);
-            let soa_circuit = TickCircuitSoA::from(&tick_circuit);
             let num_qubits = surface_like_num_qubits(distance);
             let gate_count = tick_circuit.gate_count();
-            let gate_batch_count = tick_circuit.gate_batch_count();
             LayoutSpec {
                 label: format!("d{distance}_r{rounds}"),
                 num_qubits,
                 gate_count,
-                gate_batch_count,
                 tick_circuit,
-                soa_circuit,
             }
         })
         .collect::<Vec<_>>();
 
     bench_traversal(c, &specs);
-    bench_conversion(c, &specs);
     bench_execution(c, &specs);
     bench_amortized_execution(c, &specs);
 }
@@ -78,33 +69,10 @@ fn bench_traversal<M: Measurement>(c: &mut Criterion<M>, specs: &[LayoutSpec]) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("tick_circuit_soa_batched", &spec.label),
+            BenchmarkId::new("tick_circuit_gate_batches", &spec.label),
             spec,
             |b, spec| {
-                b.iter(|| black_box(traverse_tick_circuit_soa(black_box(&spec.soa_circuit))));
-            },
-        );
-    }
-
-    group.finish();
-}
-
-fn bench_conversion<M: Measurement>(c: &mut Criterion<M>, specs: &[LayoutSpec]) {
-    let mut group = c.benchmark_group("tick_circuit_layout/conversion");
-
-    for spec in specs {
-        group.throughput(Throughput::Elements(spec.gate_count as u64));
-        group.bench_with_input(
-            BenchmarkId::new(
-                format!("to_soa_{}_batches", spec.gate_batch_count),
-                &spec.label,
-            ),
-            spec,
-            |b, spec| {
-                b.iter(|| {
-                    let soa = TickCircuitSoA::from(black_box(&spec.tick_circuit));
-                    black_box((soa.gate_count(), soa.gate_batch_count()))
-                });
+                b.iter(|| black_box(traverse_tick_circuit_batched(black_box(&spec.tick_circuit))));
             },
         );
     }
@@ -130,22 +98,12 @@ fn bench_execution<M: Measurement>(c: &mut Criterion<M>, specs: &[LayoutSpec]) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("soa_with_conversion", &spec.label),
+            BenchmarkId::new("circuit_executor", &spec.label),
             spec,
             |b, spec| {
                 b.iter(|| {
-                    let soa = TickCircuitSoA::from(black_box(&spec.tick_circuit));
-                    black_box(run_tick_circuit_soa(black_box(&soa), spec.num_qubits))
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("soa_preconverted", &spec.label),
-            spec,
-            |b, spec| {
-                b.iter(|| {
-                    black_box(run_tick_circuit_soa(
-                        black_box(&spec.soa_circuit),
+                    black_box(run_tick_circuit_executor(
+                        black_box(&spec.tick_circuit),
                         spec.num_qubits,
                     ))
                 });
@@ -179,14 +137,14 @@ fn bench_amortized_execution<M: Measurement>(c: &mut Criterion<M>, specs: &[Layo
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("soa_preconverted", &spec.label),
+            BenchmarkId::new("circuit_executor", &spec.label),
             spec,
             |b, spec| {
                 b.iter(|| {
                     let mut total = 0usize;
                     for _ in 0..AMORTIZED_SHOTS {
-                        total = total.wrapping_add(run_tick_circuit_soa(
-                            black_box(&spec.soa_circuit),
+                        total = total.wrapping_add(run_tick_circuit_executor(
+                            black_box(&spec.tick_circuit),
                             spec.num_qubits,
                         ));
                     }
@@ -303,14 +261,12 @@ fn traverse_tick_circuit(circuit: &TickCircuit) -> usize {
     total
 }
 
-fn traverse_tick_circuit_soa(circuit: &TickCircuitSoA) -> usize {
+fn traverse_tick_circuit_batched(circuit: &TickCircuit) -> usize {
     let mut total = 0usize;
-    for (tick_idx, tick) in circuit.iter_ticks_batched() {
+    for (tick_idx, batch) in circuit.iter_gate_batches_with_tick() {
         total = total.wrapping_add(tick_idx);
-        for batch in tick.iter() {
-            total = total.wrapping_add(batch.gate_count());
-            total = total.wrapping_add(batch.qubits().len());
-        }
+        total = total.wrapping_add(batch.num_gates());
+        total = total.wrapping_add(batch.qubits.len());
     }
     total
 }
@@ -352,7 +308,7 @@ fn execute_gate_direct<S: CliffordGateable>(sim: &mut S, gate: &Gate) -> usize {
     }
 }
 
-fn run_tick_circuit_soa(circuit: &TickCircuitSoA, num_qubits: usize) -> usize {
+fn run_tick_circuit_executor(circuit: &TickCircuit, num_qubits: usize) -> usize {
     let mut sim = SparseStab::new(num_qubits);
-    execute_batched(&circuit.batched, &mut sim).len()
+    CircuitExecutor::new(circuit).run(&mut sim).len()
 }

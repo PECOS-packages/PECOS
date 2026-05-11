@@ -1,6 +1,6 @@
 //! Optimized tick fault analyzer using batched `TickCircuit` access.
 //!
-//! This module provides [`TickFaultAnalyzerSoA`] which uses the batched
+//! This module provides [`TickFaultAnalyzerBatched`] which uses the batched
 //! full-fidelity command view of [`TickCircuit`] for cache-efficient fault
 //! analysis without requiring a converted circuit representation.
 //!
@@ -62,7 +62,7 @@ impl AnalyzerWorkBuffers {
 }
 
 // ============================================================================
-// Optimized SOA-Based Fault Analyzer
+// Optimized Batched Tick Fault Analyzer
 // ============================================================================
 
 #[derive(Debug, Clone)]
@@ -75,7 +75,7 @@ struct AnalyzerGate {
 /// Optimized fault analyzer for `TickCircuit`.
 ///
 /// Uses raw indices and bitsets for minimal overhead in hot paths.
-pub struct TickFaultAnalyzerSoA<'a> {
+pub struct TickFaultAnalyzerBatched<'a> {
     circuit: &'a TickCircuit,
     /// Flattened full-fidelity gate command view.
     gates: Vec<AnalyzerGate>,
@@ -89,7 +89,7 @@ pub struct TickFaultAnalyzerSoA<'a> {
     tick_locations: Vec<Vec<(usize, bool)>>,
 }
 
-impl<'a> TickFaultAnalyzerSoA<'a> {
+impl<'a> TickFaultAnalyzerBatched<'a> {
     /// Creates a new analyzer for the given circuit.
     #[must_use]
     pub fn new(circuit: &'a TickCircuit) -> Self {
@@ -724,7 +724,7 @@ mod tests {
         circuit.tick().h(&[0]);
         circuit.tick().cx(&[(0, 1)]);
         circuit.tick().mz(&[0, 1]);
-        let analyzer = TickFaultAnalyzerSoA::new(&circuit);
+        let analyzer = TickFaultAnalyzerBatched::new(&circuit);
 
         assert!(!analyzer.locations().is_empty());
 
@@ -741,7 +741,7 @@ mod tests {
         circuit.tick().h(&[0]).h(&[2]);
         circuit.tick().cx(&[(0, 1)]).cx(&[(2, 3)]);
         circuit.tick().mz(&[0, 1, 2, 3]);
-        let analyzer = TickFaultAnalyzerSoA::new(&circuit);
+        let analyzer = TickFaultAnalyzerBatched::new(&circuit);
 
         let map = analyzer.build_influence_map();
 
@@ -756,7 +756,7 @@ mod tests {
         circuit.tick().h(&[0]);
         circuit.tick().cx(&[(0, 1)]);
         circuit.tick().mz(&[0, 1]);
-        let analyzer = TickFaultAnalyzerSoA::new(&circuit);
+        let analyzer = TickFaultAnalyzerBatched::new(&circuit);
 
         let tracked_ops = [(&[] as &[usize], &[1usize] as &[usize])];
         let map = analyzer.build_influence_map_with_tracked_ops(&tracked_ops);

@@ -97,7 +97,7 @@ mod checker;
 pub mod dag;
 mod pauli;
 mod tick;
-mod tick_soa;
+mod tick_batched;
 pub mod types;
 
 // Re-export from submodules
@@ -113,7 +113,7 @@ pub use pauli::{
     propagate_tick_range,
 };
 pub use tick::TickFaultAnalyzer;
-pub use tick_soa::TickFaultAnalyzerSoA;
+pub use tick_batched::TickFaultAnalyzerBatched;
 pub use types::{
     DemOutputIdx, DetectorId, DetectorIdx, FaultInfluence, FaultInfluenceMap, LocationId,
     MeasurementId, NodeId, Pauli, TrackedOpId, TrackedOpIdx,

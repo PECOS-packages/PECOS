@@ -19,6 +19,9 @@ use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use pecos_core::{Pauli as RustPauli, PauliBitmaskSmall, QuarterPhase};
 use pecos_quantum::{
+    ChiMatrix as RustChiMatrix, ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps,
+    PauliChannel as RustPauliChannel, ProcessTomographyDesign as RustProcessTomographyDesign,
+    Ptm as RustPtm, Stinespring as RustStinespring, SuperOp as RustSuperOp,
     average_gate_fidelity as rust_average_gate_fidelity, entropy as rust_entropy,
     gate_error as rust_gate_error, hellinger_distance as rust_hellinger_distance,
     hellinger_fidelity as rust_hellinger_fidelity,
@@ -29,9 +32,6 @@ use pecos_quantum::{
     random_density_matrix as rust_random_density_matrix,
     random_quantum_channel as rust_random_quantum_channel, state_fidelity as rust_state_fidelity,
     state_fidelity_with_density_matrix as rust_state_fidelity_with_density_matrix,
-    ChiMatrix as RustChiMatrix, ChoiMatrix as RustChoiMatrix, KrausOps as RustKrausOps,
-    PauliChannel as RustPauliChannel, ProcessTomographyDesign as RustProcessTomographyDesign,
-    Ptm as RustPtm, Stinespring as RustStinespring, SuperOp as RustSuperOp,
 };
 use pecos_random::PecosRng;
 use pyo3::prelude::*;

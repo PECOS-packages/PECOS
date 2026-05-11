@@ -29,6 +29,7 @@ license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
     "pecos-rslib==0.8.0.dev8",
+    "pecos-rslib-exp==0.8.0.dev8",
     "pecos-rslib-llvm==0.8.0.dev8",
     "phir>=0.3.3",
     "networkx>=2.1.0",
@@ -88,6 +89,7 @@ cuda = [
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
+pecos-rslib-exp = { workspace = true }
 pecos-rslib-llvm = { workspace = true }
 pecos-rslib-cuda = { workspace = true }
 

@@ -21,7 +21,12 @@ use crate::clifford_gateable::{CliffordGateable, MeasurementResult};
 use crate::quantum_simulator::QuantumSimulator;
 use pecos_core::{BitmaskStorage, PauliBitmaskSmall, QubitId};
 
-/// A phase-free Pauli propagator backed by `PauliBitmaskSmall`.
+/// Internal phase-free Pauli propagator backed by `PauliBitmaskSmall`.
+///
+/// This is a performance helper for fault analysis and other hot internal
+/// propagation paths. User-facing code should prefer Pauli strings and the
+/// standard simulator APIs.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct BitmaskPauliProp {
     label: PauliBitmaskSmall,

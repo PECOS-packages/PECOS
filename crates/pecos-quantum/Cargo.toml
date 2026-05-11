@@ -17,6 +17,7 @@ pecos-num.workspace = true
 pecos-random.workspace = true
 nalgebra.workspace = true
 num-complex.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
 tket = { workspace = true, optional = true }
 log.workspace = true

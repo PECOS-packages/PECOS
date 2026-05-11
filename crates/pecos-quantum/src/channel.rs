@@ -814,6 +814,29 @@ impl PauliChannel {
         Self::try_new(sum.num_qubits(), probabilities)
     }
 
+    /// Constructs a Pauli channel from probabilities keyed by [`PauliString`].
+    ///
+    /// Pauli-string phases are ignored because Pauli channels apply
+    /// `P rho P†`, where global phase cancels. Repeated Pauli keys are
+    /// accumulated before validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any Pauli string touches a qubit outside
+    /// `0..num_qubits`, a probability is invalid, or probabilities do not sum
+    /// to one.
+    pub fn from_pauli_strings<I>(num_qubits: usize, probabilities: I) -> Result<Self, ChannelError>
+    where
+        I: IntoIterator<Item = (PauliString, f64)>,
+    {
+        let mut terms = BTreeMap::new();
+        for (pauli, probability) in probabilities {
+            let pauli = pauli_string_to_bitmask(num_qubits, &pauli)?;
+            *terms.entry(pauli).or_insert(0.0) += probability;
+        }
+        Self::try_new(num_qubits, terms)
+    }
+
     /// Converts a symbolic channel expression into a Pauli channel when it is
     /// a mixture of Pauli unitaries.
     ///
@@ -3392,6 +3415,32 @@ mod tests {
     }
 
     #[test]
+    fn pauli_channel_from_pauli_strings_accumulates_sparse_operator_keys() {
+        use pecos_core::pauli::{I, X, Z};
+
+        let channel = PauliChannel::from_pauli_strings(
+            2,
+            [(I(), 0.5), (X(0) & Z(1), 0.2), (X(0) & Z(1), 0.3)],
+        )
+        .unwrap();
+
+        assert_close(channel.probability(&PauliBitmaskSmall::identity()), 0.5);
+        assert_close(
+            channel.probability(&PauliBitmaskSmall::x(0).multiply(&PauliBitmaskSmall::z(1))),
+            0.5,
+        );
+
+        let err = PauliChannel::from_pauli_strings(1, [(Z(2), 1.0)]).unwrap_err();
+        assert_eq!(
+            err,
+            ChannelError::QubitOutOfRange {
+                num_qubits: 1,
+                qubit: 2
+            }
+        );
+    }
+
+    #[test]
     fn diagonal_ptm_values_are_not_probabilities() {
         let mut fidelities = BTreeMap::new();
         fidelities.insert(PauliBitmaskSmall::identity(), 1.0);
@@ -3436,6 +3485,55 @@ mod tests {
                 assert_close(ptm.entry(row, col), if row == col { 1.0 } else { 0.0 });
             }
         }
+    }
+
+    #[test]
+    fn bit_flip_channel_matches_hand_ptm_and_choi_references() {
+        use pecos_core::pauli::{I, X};
+
+        let p = 0.2;
+        let channel = PauliChannel::from_pauli_strings(1, [(I(), 1.0 - p), (X(0), p)]).unwrap();
+        let ptm = channel.to_ptm().unwrap();
+
+        assert_ptm_entry(&ptm, "I", "I", 1.0);
+        assert_ptm_entry(&ptm, "X", "X", 1.0);
+        assert_ptm_entry(&ptm, "Y", "Y", 1.0 - 2.0 * p);
+        assert_ptm_entry(&ptm, "Z", "Z", 1.0 - 2.0 * p);
+
+        let choi = ptm.to_choi().unwrap();
+        let matrix = choi.matrix();
+        assert_complex_close(matrix[(0, 0)], Complex64::new(1.0 - p, 0.0));
+        assert_complex_close(matrix[(0, 3)], Complex64::new(1.0 - p, 0.0));
+        assert_complex_close(matrix[(3, 0)], Complex64::new(1.0 - p, 0.0));
+        assert_complex_close(matrix[(3, 3)], Complex64::new(1.0 - p, 0.0));
+        assert_complex_close(matrix[(1, 1)], Complex64::new(p, 0.0));
+        assert_complex_close(matrix[(1, 2)], Complex64::new(p, 0.0));
+        assert_complex_close(matrix[(2, 1)], Complex64::new(p, 0.0));
+        assert_complex_close(matrix[(2, 2)], Complex64::new(p, 0.0));
+    }
+
+    #[test]
+    fn depolarizing_channel_matches_hand_diagonal_ptm_reference() {
+        use pecos_core::pauli::{I, X, Y, Z};
+
+        let p = 0.1;
+        let channel = PauliChannel::from_pauli_strings(
+            1,
+            [
+                (I(), 1.0 - p),
+                (X(0), p / 3.0),
+                (Y(0), p / 3.0),
+                (Z(0), p / 3.0),
+            ],
+        )
+        .unwrap();
+        let ptm = channel.to_ptm().unwrap();
+        let non_identity_fidelity = 1.0 - 4.0 * p / 3.0;
+
+        assert_ptm_entry(&ptm, "I", "I", 1.0);
+        assert_ptm_entry(&ptm, "X", "X", non_identity_fidelity);
+        assert_ptm_entry(&ptm, "Y", "Y", non_identity_fidelity);
+        assert_ptm_entry(&ptm, "Z", "Z", non_identity_fidelity);
     }
 
     #[test]

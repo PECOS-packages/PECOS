@@ -92,12 +92,14 @@ from pecos.qec.surface import (
     StabilizerSupport,
     SurfacePatch,
     SurfacePatchBuilder,
+    build_memory_circuit,
     compute_x_stabilizer_supports,
     compute_z_stabilizer_supports,
     generate_nonrotated_surface_layout,
     generate_surface_layout,
     parity_matrix_x,
     parity_matrix_z,
+    surface_code_memory,
 )
 
 __all__ = [
@@ -170,6 +172,8 @@ __all__ = [
     "StabilizerSupport",
     "SurfacePatch",
     "SurfacePatchBuilder",
+    "build_memory_circuit",
+    "surface_code_memory",
     # Color code
     "ColorCode488",
     "ColorCode488Builder",

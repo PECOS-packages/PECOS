@@ -4322,6 +4322,7 @@ dependencies = [
  "pecos-num",
  "pecos-random",
  "pecos-simulators",
+ "serde_json",
  "smallvec",
  "tket",
 ]

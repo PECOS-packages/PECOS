@@ -12,6 +12,7 @@
 
 pub mod arbitrary_rotation_gateable;
 pub mod batched_ops;
+#[doc(hidden)]
 pub mod bitmask_pauli_prop;
 pub mod circuit_executor;
 pub mod clifford_frame;
@@ -59,6 +60,7 @@ pub mod symbolic_sparse_stab_bitset;
 
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use batched_ops::{BatchedOps, CommandBuffer, RawOps};
+#[doc(hidden)]
 pub use bitmask_pauli_prop::BitmaskPauliProp;
 pub use circuit_executor::{CircuitExecutor, GateSystem, GateSystemRegistry, execute_batched};
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};

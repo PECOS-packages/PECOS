@@ -56,6 +56,7 @@ from pecos.qec.surface.decode import (
     NoiseModel,
     SimulationResult,
     SurfaceDecoder,
+    build_memory_circuit,
     build_native_sampler,
     build_stim_circuit_from_patch,
     generate_circuit_level_dem,
@@ -63,6 +64,7 @@ from pecos.qec.surface.decode import (
     generate_repetition_code_dem,
     generate_surface_code_dem,
     run_noisy_memory_experiment,
+    surface_code_memory,
     syndromes_to_detection_events,
 )
 from pecos.qec.surface.layouts import (
@@ -140,6 +142,7 @@ __all__ = [
     "NoiseModel",
     "SimulationResult",
     "SurfaceDecoder",
+    "build_memory_circuit",
     "build_native_sampler",
     "build_stim_circuit_from_patch",
     "generate_circuit_level_dem",
@@ -147,6 +150,7 @@ __all__ = [
     "generate_repetition_code_dem",
     "generate_surface_code_dem",
     "run_noisy_memory_experiment",
+    "surface_code_memory",
     "syndromes_to_detection_events",
     # Visualization
     "plot_patch",

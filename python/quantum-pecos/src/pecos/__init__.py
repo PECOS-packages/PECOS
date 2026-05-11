@@ -31,6 +31,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pecos_rslib
+import pecos_rslib_exp
 from pecos_rslib import (
     AngleSource,  # Angle source specification for gate decomposition
     Array,  # Array type with generic dtype support (Array[f64], etc.)
@@ -285,10 +286,22 @@ biased_depolarizing_noise = pecos_rslib.biased_depolarizing_noise
 general_noise = pecos_rslib.general_noise
 state_vector = pecos_rslib.state_vector
 sparse_stab = pecos_rslib.sparse_stab
-stabilizer = pecos_rslib.stabilizer
 stab_vec = pecos_rslib.stab_vec
 density_matrix = pecos_rslib.density_matrix
 hugr_engine = pecos_rslib.hugr_engine
+
+# Native QEC simulation/fault-catalog entry points.
+#
+# These are Rust-backed APIs from pecos-rslib-exp, re-exported here so common
+# workflows can stay in the main `pecos` namespace:
+#     from pecos import sim_neo, stabilizer, depolarizing
+depolarizing = pecos_rslib_exp.depolarizing
+fault_catalog = pecos_rslib_exp.fault_catalog
+meas_sampling = pecos_rslib_exp.meas_sampling
+sim_neo = pecos_rslib_exp.sim_neo
+stab_mps = pecos_rslib_exp.stab_mps
+stabilizer = pecos_rslib_exp.stabilizer
+statevec = pecos_rslib_exp.statevec
 
 # Re-export noise model builder classes for direct instantiation
 GeneralNoiseModelBuilder = pecos_rslib.GeneralNoiseModelBuilder
@@ -377,6 +390,7 @@ __all__ = [
     "decoders",
     "delete",
     "density_matrix",
+    "depolarizing",
     "depolarizing_noise",
     "diag",
     "dtypes",
@@ -385,6 +399,7 @@ __all__ = [
     "exp",
     "f32",
     "f64",
+    "fault_catalog",
     "floor",
     "general_noise",
     "get_guppy_backends",
@@ -406,6 +421,7 @@ __all__ = [
     "math",
     "max",
     "mean",
+    "meas_sampling",
     "min",
     "nan",
     "newton",
@@ -428,14 +444,17 @@ __all__ = [
     "round",
     "selene_engine",
     "sim",
+    "sim_neo",
     "simulators",
     "sin",
     "sinh",
     "sparse_stab",
     "sqrt",
+    "stab_mps",
     "stab_vec",
     "stabilizer",
     "state_vector",
+    "statevec",
     "stats",
     "std",
     "sum",

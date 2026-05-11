@@ -22,8 +22,8 @@ use num_complex::Complex64;
 
 use pecos_lindblad::matrix::{self, Matrix};
 use pecos_lindblad::{
-    synthesize_exact_unitary, synthesize_numerical, Gate, Lindbladian, Pauli1, PauliString,
-    DEFAULT_N_STEPS,
+    DEFAULT_N_STEPS, Gate, Lindbladian, Pauli1, PauliString, synthesize_exact_unitary,
+    synthesize_numerical,
 };
 
 fn kron_all(ops: &[&Matrix]) -> Matrix {

@@ -1195,6 +1195,23 @@ mod tests {
     }
 
     #[test]
+    fn concurrence_matches_werner_state_threshold_formula() {
+        fn werner_state(p: f64) -> DMatrix<Complex64> {
+            let bell = ket(&[
+                Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+            ]);
+            pure_density(&bell) * Complex64::new(p, 0.0)
+                + DMatrix::identity(4, 4) * Complex64::new((1.0 - p) / 4.0, 0.0)
+        }
+
+        assert_close(concurrence(&werner_state(0.5)).unwrap(), 0.25);
+        assert_close(concurrence(&werner_state(0.3)).unwrap(), 0.0);
+    }
+
+    #[test]
     fn negativity_matches_bell_and_product_states() {
         let bell = ket(&[
             Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),

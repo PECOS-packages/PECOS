@@ -520,10 +520,10 @@ impl PauliString {
     }
 
     /// Hash for use in dictionaries and sets.
-    fn __hash__(&self) -> isize {
+    fn __hash__(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.inner.hash(&mut hasher);
-        hasher.finish() as isize
+        hasher.finish()
     }
 
     /// Number of non-identity Pauli operators.

@@ -72,6 +72,110 @@ use crate::Attribute;
 use crate::dag_circuit::{AnnotationKind, DagCircuit, PauliAnnotation};
 use std::fmt;
 
+fn meta_json_array(circuit: &TickCircuit, key: &str) -> Result<Vec<serde_json::Value>, String> {
+    let Some(attr) = circuit.get_meta(key) else {
+        return Ok(Vec::new());
+    };
+    match attr {
+        Attribute::String(s) => {
+            if s.trim().is_empty() {
+                return Ok(Vec::new());
+            }
+            serde_json::from_str::<Vec<serde_json::Value>>(s)
+                .map_err(|e| format!("metadata {key:?} must be a JSON array: {e}"))
+        }
+        Attribute::Json(serde_json::Value::Array(values)) => Ok(values.clone()),
+        _ => Err(format!(
+            "metadata {key:?} must be a JSON array string or JSON array"
+        )),
+    }
+}
+
+fn set_meta_json_array(
+    circuit: &mut TickCircuit,
+    key: &str,
+    values: &[serde_json::Value],
+) -> Result<(), String> {
+    let json =
+        serde_json::to_string(values).map_err(|e| format!("could not serialize {key:?}: {e}"))?;
+    circuit.set_meta(key, Attribute::String(json));
+    Ok(())
+}
+
+fn json_metadata_id(key: &str, id: u64) -> Result<usize, String> {
+    usize::try_from(id).map_err(|_| format!("metadata {key:?} id {id} does not fit usize"))
+}
+
+fn next_metadata_id(values: &[serde_json::Value], key: &str) -> Result<usize, String> {
+    let mut max_id = None;
+    for value in values {
+        if let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) {
+            let id = json_metadata_id(key, id)?;
+            max_id = Some(max_id.map_or(id, |max_id: usize| max_id.max(id)));
+        }
+    }
+    match max_id {
+        Some(max_id) => max_id
+            .checked_add(1)
+            .ok_or_else(|| format!("metadata {key:?} id counter overflow")),
+        None => Ok(values.len()),
+    }
+}
+
+fn metadata_count(values: &[serde_json::Value], key: &str) -> Result<usize, String> {
+    let mut count = values.len();
+    for value in values {
+        if let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) {
+            let next = json_metadata_id(key, id)?
+                .checked_add(1)
+                .ok_or_else(|| format!("metadata {key:?} count overflow"))?;
+            count = count.max(next);
+        }
+    }
+    Ok(count)
+}
+
+fn metadata_count_attr(values: &[serde_json::Value], key: &str) -> Result<Attribute, String> {
+    let count = metadata_count(values, key)?;
+    let count = i64::try_from(count)
+        .map_err(|_| format!("metadata {key:?} count {count} does not fit i64"))?;
+    Ok(Attribute::Int(count))
+}
+
+fn ensure_unique_metadata_id(
+    values: &[serde_json::Value],
+    key: &str,
+    id_name: &str,
+    id: usize,
+) -> Result<(), String> {
+    for value in values {
+        if let Some(existing) = value.get("id").and_then(serde_json::Value::as_u64) {
+            let existing = json_metadata_id(key, existing)?;
+            if existing == id {
+                return Err(format!("{key} metadata already contains {id_name} {id}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn observable_id_from_label(label: Option<&str>) -> Result<Option<usize>, String> {
+    let Some(label) = label else {
+        return Ok(None);
+    };
+    let Some(rest) = label.strip_prefix('L') else {
+        return Ok(None);
+    };
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    rest.parse::<usize>().map(Some).map_err(|_| {
+        format!(
+            "observable label {label:?} starts with 'L' but does not contain a valid integer id"
+        )
+    })
+}
+
 /// Error when trying to add a gate that uses a qubit already in use in this tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QubitConflictError {
@@ -778,6 +882,96 @@ impl TickCircuit {
         self.circuit_attrs.get(key)
     }
 
+    /// Add detector metadata defined by measurement-record offsets.
+    ///
+    /// This appends one entry to the circuit-level `"detectors"` JSON metadata
+    /// list and updates `"num_detectors"`. It is intended for circuits whose
+    /// detector definitions are stored in metadata rather than as direct
+    /// [`TickMeasRef`] annotations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if existing detector metadata is not a JSON array, if
+    /// JSON serialization fails, or if `detector_id` duplicates an existing
+    /// explicit detector id.
+    pub fn add_detector_metadata(
+        &mut self,
+        records: &[i64],
+        coords: Option<&[f64]>,
+        label: Option<&str>,
+        detector_id: Option<usize>,
+    ) -> Result<usize, String> {
+        let mut detectors = meta_json_array(self, "detectors")?;
+        let id = match detector_id {
+            Some(id) => id,
+            None => next_metadata_id(&detectors, "detectors")?,
+        };
+        ensure_unique_metadata_id(&detectors, "detectors", "detector_id", id)?;
+
+        let mut detector = serde_json::Map::new();
+        detector.insert("id".to_string(), serde_json::json!(id));
+        detector.insert("records".to_string(), serde_json::json!(records));
+        if let Some(coords) = coords {
+            detector.insert("coords".to_string(), serde_json::json!(coords));
+        }
+        if let Some(label) = label {
+            detector.insert("label".to_string(), serde_json::json!(label));
+        }
+        detectors.push(serde_json::Value::Object(detector));
+        set_meta_json_array(self, "detectors", &detectors)?;
+        self.set_meta(
+            "num_detectors",
+            metadata_count_attr(&detectors, "detectors")?,
+        );
+        Ok(id)
+    }
+
+    /// Add observable metadata defined by measurement-record offsets.
+    ///
+    /// Standard observables live in the decoder `L<n>` id space. A label of
+    /// `"L3"` therefore selects observable id 3 unless `observable_id` is
+    /// provided, in which case the two must agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if existing observable metadata is not a JSON array, if
+    /// JSON serialization fails, if the label/id conflict, or if the selected
+    /// id duplicates an existing explicit observable id.
+    pub fn add_observable_metadata(
+        &mut self,
+        records: &[i64],
+        observable_id: Option<usize>,
+        label: Option<&str>,
+    ) -> Result<usize, String> {
+        let mut observables = meta_json_array(self, "observables")?;
+        let label_id = observable_id_from_label(label)?;
+        if let (Some(observable_id), Some(label_id)) = (observable_id, label_id)
+            && observable_id != label_id
+        {
+            return Err(format!(
+                "observable_id={observable_id} conflicts with label id L{label_id}"
+            ));
+        }
+        let id = observable_id
+            .or(label_id)
+            .map_or_else(|| next_metadata_id(&observables, "observables"), Ok)?;
+        ensure_unique_metadata_id(&observables, "observables", "observable_id", id)?;
+
+        let mut observable = serde_json::Map::new();
+        observable.insert("id".to_string(), serde_json::json!(id));
+        observable.insert("records".to_string(), serde_json::json!(records));
+        if let Some(label) = label {
+            observable.insert("label".to_string(), serde_json::json!(label));
+        }
+        observables.push(serde_json::Value::Object(observable));
+        set_meta_json_array(self, "observables", &observables)?;
+        self.set_meta(
+            "num_observables",
+            metadata_count_attr(&observables, "observables")?,
+        );
+        Ok(id)
+    }
+
     /// Get all circuit-level attributes.
     pub fn circuit_attrs(&self) -> impl Iterator<Item = (&String, &Attribute)> {
         self.circuit_attrs.iter()
@@ -841,6 +1035,8 @@ impl TickCircuit {
         self.next_tick = 0;
         self.circuit_attrs.clear();
         self.gate_signatures.clear();
+        self.annotations.clear();
+        self.next_meas_record = 0;
     }
 
     /// Try to compile an ideal circuit plus a gate-triggered noise model into
@@ -852,18 +1048,25 @@ impl TickCircuit {
     /// conflicts. This produces a concrete inline representation useful for
     /// inspection, visualization, and simulators that consume interleaved
     /// channel operations directly.
+    ///
+    /// For measurements, `channels_after` is literal: returned channels are
+    /// placed after the measurement operation. Physical pre-measurement noise
+    /// and classical readout flips should use explicit APIs for those concepts
+    /// instead of being hidden in this post-gate hook.
+    ///
     /// # Errors
     ///
     /// Returns an error if the source circuit already contains channel
     /// operations. Apply either inline channels or a noise model, not both.
     pub fn try_with_noise<N: GateNoiseModel>(&self, noise: &N) -> Result<Self, String> {
-        if let Some((tick_idx, _)) = self
-            .iter_gates_with_tick()
-            .find(|(_, gate)| gate.is_channel())
-        {
-            return Err(format!(
-                "with_noise cannot apply a noise model to a circuit that already contains channel operations (first channel at tick {tick_idx})"
-            ));
+        for (tick_idx, tick) in self.ticks.iter().enumerate() {
+            for (gate_idx, gate) in tick.gates().iter().enumerate() {
+                if gate.is_channel() {
+                    return Err(format!(
+                        "with_noise cannot apply a noise model to a circuit that already contains channel operations (first channel at tick {tick_idx} gate {gate_idx})"
+                    ));
+                }
+            }
         }
 
         let mut out = Self::new();
@@ -3060,6 +3263,82 @@ mod tests {
     }
 
     #[test]
+    fn test_reset_clears_annotations_and_measurement_counter() {
+        let mut tc = TickCircuit::new();
+        let first_measurement = tc.tick().mz(&[0]);
+        tc.detector(&first_measurement);
+        tc.observable(&first_measurement);
+        tc.tracked_operator(pecos_core::pauli::Z(0));
+
+        assert_eq!(tc.num_measurements(), 1);
+        assert_eq!(tc.annotations().len(), 3);
+
+        tc.reset();
+
+        assert_eq!(tc.num_ticks(), 0);
+        assert_eq!(tc.num_measurements(), 0);
+        assert!(tc.annotations().is_empty());
+
+        let reused_measurement = tc.tick().mz(&[1]);
+        assert_eq!(reused_measurement[0].record_idx, 0);
+    }
+
+    #[test]
+    fn test_metadata_helpers_build_detector_and_observable_json() {
+        let mut tc = TickCircuit::new();
+
+        let detector_id = tc
+            .add_detector_metadata(&[-1], Some(&[0.0, 1.0, 2.0]), Some("d0"), None)
+            .unwrap();
+        let observable_id = tc
+            .add_observable_metadata(&[-1, -2], None, Some("L2"))
+            .unwrap();
+
+        assert_eq!(detector_id, 0);
+        assert_eq!(observable_id, 2);
+        assert_eq!(tc.get_meta("num_detectors"), Some(&Attribute::Int(1)));
+        assert_eq!(tc.get_meta("num_observables"), Some(&Attribute::Int(3)));
+
+        let detectors = match tc.get_meta("detectors").unwrap() {
+            Attribute::String(value) => value,
+            other => panic!("expected detectors JSON string, got {other:?}"),
+        };
+        assert_eq!(
+            detectors,
+            r#"[{"coords":[0.0,1.0,2.0],"id":0,"label":"d0","records":[-1]}]"#
+        );
+
+        let observables = match tc.get_meta("observables").unwrap() {
+            Attribute::String(value) => value,
+            other => panic!("expected observables JSON string, got {other:?}"),
+        };
+        assert_eq!(observables, r#"[{"id":2,"label":"L2","records":[-1,-2]}]"#);
+    }
+
+    #[test]
+    fn test_metadata_helpers_reject_conflicts_and_duplicates() {
+        let mut tc = TickCircuit::new();
+
+        let err = tc
+            .add_observable_metadata(&[-1], Some(1), Some("L2"))
+            .unwrap_err();
+        assert!(err.contains("conflicts"));
+
+        tc.add_detector_metadata(&[-1], None, None, Some(7))
+            .unwrap();
+        let err = tc
+            .add_detector_metadata(&[-2], None, None, Some(7))
+            .unwrap_err();
+        assert!(err.contains("already contains detector_id 7"));
+
+        tc.add_observable_metadata(&[-1], Some(3), None).unwrap();
+        let err = tc
+            .add_observable_metadata(&[-2], Some(3), None)
+            .unwrap_err();
+        assert!(err.contains("already contains observable_id 3"));
+    }
+
+    #[test]
     fn test_reserve_ticks() {
         let mut tc = TickCircuit::new();
         tc.reserve_ticks(4);
@@ -3627,6 +3906,67 @@ mod tests {
     }
 
     #[test]
+    fn test_with_noise_places_measurement_channels_after_measurement_tick() {
+        let mut tc = TickCircuit::new();
+        tc.tick().mz(&[0]);
+
+        let noisy = tc.with_noise(&|gate: &Gate| {
+            if gate.gate_type == GateType::MZ {
+                vec![pecos_core::channel::Dephasing(0.25, 0)]
+            } else {
+                Vec::new()
+            }
+        });
+
+        assert_eq!(noisy.num_ticks(), 2);
+        assert_eq!(
+            noisy.get_tick(0).unwrap().gates()[0].gate_type,
+            GateType::MZ
+        );
+        let channel = &noisy.get_tick(1).unwrap().gates()[0];
+        assert!(channel.is_channel());
+        assert_eq!(channel.qubits.as_slice(), &[QubitId::from(0)]);
+    }
+
+    #[test]
+    fn test_with_noise_packs_disjoint_channels_and_splits_conflicts() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]);
+
+        let noisy = tc.with_noise(&|gate: &Gate| {
+            gate.qubits
+                .iter()
+                .flat_map(|q| {
+                    [
+                        pecos_core::channel::Depolarizing(0.01, q.index()),
+                        pecos_core::channel::Dephasing(0.02, q.index()),
+                    ]
+                })
+                .collect()
+        });
+
+        assert_eq!(noisy.num_ticks(), 3);
+        assert_eq!(noisy.get_tick(1).unwrap().gates().len(), 2);
+        assert_eq!(noisy.get_tick(2).unwrap().gates().len(), 2);
+        assert!(
+            noisy
+                .get_tick(1)
+                .unwrap()
+                .gates()
+                .iter()
+                .all(Gate::is_channel)
+        );
+        assert!(
+            noisy
+                .get_tick(2)
+                .unwrap()
+                .gates()
+                .iter()
+                .all(Gate::is_channel)
+        );
+    }
+
+    #[test]
     fn test_with_noise_rejects_existing_channel_operations() {
         let mut tc = TickCircuit::new();
         tc.tick()
@@ -3638,6 +3978,7 @@ mod tests {
 
         assert!(err.contains("already contains channel operations"));
         assert!(err.contains("tick 0"));
+        assert!(err.contains("gate 0"));
     }
 
     #[test]

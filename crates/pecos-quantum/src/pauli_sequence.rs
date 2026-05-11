@@ -1619,6 +1619,44 @@ mod tests {
     }
 
     #[test]
+    fn test_f2_mul_matches_dense_reference_across_word_boundaries() {
+        fn dense_reference(a: &[Vec<u8>], b: &[Vec<u8>]) -> Vec<Vec<u8>> {
+            let rows = a.len();
+            let inner = b.len();
+            let cols = b.first().map_or(0, Vec::len);
+            let mut out = vec![vec![0; cols]; rows];
+            for i in 0..rows {
+                for j in 0..cols {
+                    let mut bit = 0;
+                    for (k, b_row) in b.iter().enumerate().take(inner) {
+                        bit ^= a[i][k] & b_row[j];
+                    }
+                    out[i][j] = bit;
+                }
+            }
+            out
+        }
+
+        let a_rows: Vec<Vec<u8>> = (0..5)
+            .map(|row| {
+                (0..130)
+                    .map(|col| u8::from((row * 17 + col * 11 + row * col) % 7 < 3))
+                    .collect()
+            })
+            .collect();
+        let b_rows: Vec<Vec<u8>> = (0..130)
+            .map(|row| {
+                (0..7)
+                    .map(|col| u8::from((row * 5 + col * 13 + row * col) % 11 < 5))
+                    .collect()
+            })
+            .collect();
+
+        let packed = F2Matrix::from_rows(a_rows.clone()).mul(&F2Matrix::from_rows(b_rows.clone()));
+        assert_eq!(packed.rows(), dense_reference(&a_rows, &b_rows));
+    }
+
+    #[test]
     fn test_f2_mul_inverse_gives_identity() {
         // Invertible 3x3 matrix over GF(2)
         let m = F2Matrix::from_rows(vec![vec![1, 1, 0], vec![0, 1, 1], vec![1, 1, 1]]);

@@ -2200,6 +2200,11 @@ impl PyTickCircuit {
         self.inner.gate_count()
     }
 
+    /// Get the total number of measurement results produced so far.
+    fn num_measurements(&self) -> usize {
+        self.inner.num_measurements()
+    }
+
     /// Get the next tick index that will be allocated.
     fn next_tick_index(&self) -> usize {
         self.inner.next_tick_index()
@@ -2243,6 +2248,41 @@ impl PyTickCircuit {
         self.inner
             .get_meta(key)
             .map(|attr| attribute_to_py(py, attr))
+    }
+
+    /// Add detector metadata using measurement-record offsets.
+    ///
+    /// This is the typed equivalent of appending to the circuit-level
+    /// ``"detectors"`` JSON metadata list. Use ``detector(...)`` when you
+    /// already have explicit measurement handles from this TickCircuit.
+    #[pyo3(signature = (records, coords=None, label=None, detector_id=None))]
+    fn add_detector(
+        &mut self,
+        records: Vec<i64>,
+        coords: Option<Vec<f64>>,
+        label: Option<String>,
+        detector_id: Option<usize>,
+    ) -> PyResult<usize> {
+        self.inner
+            .add_detector_metadata(&records, coords.as_deref(), label.as_deref(), detector_id)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
+    }
+
+    /// Add observable metadata using measurement-record offsets.
+    ///
+    /// Standard observables live in the ``L<n>`` decoder ID space. A label of
+    /// ``"L3"`` therefore selects observable id 3 unless ``observable_id`` is
+    /// provided, in which case the two must agree.
+    #[pyo3(signature = (records, observable_id=None, label=None))]
+    fn add_observable(
+        &mut self,
+        records: Vec<i64>,
+        observable_id: Option<usize>,
+        label: Option<String>,
+    ) -> PyResult<usize> {
+        self.inner
+            .add_observable_metadata(&records, observable_id, label.as_deref())
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     // --- Circuit manipulation ---

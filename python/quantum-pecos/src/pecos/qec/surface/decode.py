@@ -57,6 +57,15 @@ if TYPE_CHECKING:
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 
+def _validate_probability(name: str, value: float) -> float:
+    """Return ``value`` as a float after validating it is a probability."""
+    probability = float(value)
+    if not 0.0 <= probability <= 1.0:
+        msg = f"{name} must be a probability in [0, 1], got {value!r}"
+        raise ValueError(msg)
+    return probability
+
+
 class DecoderType(str, Enum):
     """Available decoder backends."""
 
@@ -92,6 +101,12 @@ class NoiseModel:
     p_idle: float | None = None
     t1: float | None = None
     t2: float | None = None
+
+    @staticmethod
+    def uniform(physical_error_rate: float) -> NoiseModel:
+        """Create a uniform circuit-level noise model from one physical error rate."""
+        p = _validate_probability("physical_error_rate", physical_error_rate)
+        return NoiseModel(p1=p, p2=p, p_meas=p, p_prep=p)
 
     @property
     def is_noiseless(self) -> bool:
@@ -745,6 +760,63 @@ def _build_surface_tick_circuit_for_native_model(
     _copy_surface_tick_circuit_metadata(abstract_tc, traced_tc)
     traced_tc.set_meta("circuit_source", circuit_source)
     return traced_tc
+
+
+def build_memory_circuit(
+    *,
+    rounds: int,
+    distance: int | None = None,
+    patch: SurfacePatch | None = None,
+    basis: str = "Z",
+    ancilla_budget: int | None = None,
+    circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+) -> Any:
+    """Build the standard surface-code memory ``TickCircuit``.
+
+    This is the public, friendly entry point for the circuit used by PECOS's
+    native DEM, sampler, and decoder helpers.
+
+    Args:
+        rounds: Number of syndrome-extraction rounds.
+        distance: Rotated surface-code distance. Provide either ``distance``
+            or ``patch``.
+        patch: Explicit surface-code patch. Provide either ``patch`` or
+            ``distance``.
+        basis: Memory basis, ``"Z"`` or ``"X"``.
+        ancilla_budget: Optional cap on simultaneously live ancillas.
+        circuit_source: ``"abstract"`` for the native surface builder or
+            ``"traced_qis"`` for the lowered traced QIS gate stream.
+
+    Returns:
+        A Rust-backed ``TickCircuit`` with detector and observable metadata.
+
+    Example:
+        >>> from pecos.qec.surface import build_memory_circuit
+        >>> tc = build_memory_circuit(distance=3, rounds=3, basis="Z")
+        >>> int(tc.get_meta("num_measurements")) > 0
+        True
+    """
+    from pecos.qec.surface.patch import SurfacePatch
+
+    if rounds < 1:
+        msg = f"rounds must be >= 1, got {rounds}"
+        raise ValueError(msg)
+    if patch is None:
+        if distance is None:
+            msg = "build_memory_circuit requires either distance=... or patch=..."
+            raise ValueError(msg)
+        patch = SurfacePatch.create(distance=distance)
+    elif distance is not None:
+        msg = "build_memory_circuit accepts either distance=... or patch=..., not both"
+        raise ValueError(msg)
+
+    return _build_surface_tick_circuit_for_native_model(
+        patch,
+        rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        circuit_source=circuit_source,
+    )
 
 
 def _can_use_cached_surface_topology(
@@ -2379,6 +2451,107 @@ class SimulationResult:
     raw_error_rate: float
     decoded: bool
     decoder_type: str | None = None
+
+
+def _memory_noise_model(
+    physical_error_rate: float | None,
+    noise_model: NoiseModel | None,
+) -> NoiseModel:
+    """Resolve the surface-memory noise inputs into an explicit NoiseModel."""
+    if noise_model is not None:
+        if physical_error_rate is not None:
+            msg = "pass either physical_error_rate or noise_model, not both"
+            raise ValueError(msg)
+        return noise_model
+    p = 0.001 if physical_error_rate is None else physical_error_rate
+    return NoiseModel.uniform(p)
+
+
+def surface_code_memory(
+    *,
+    distance: int = 3,
+    physical_error_rate: float | None = None,
+    noise_model: NoiseModel | None = None,
+    shots: int = 1000,
+    rounds: int | None = None,
+    basis: str = "Z",
+    decoder_type: str = "pymatching",
+    seed: int | None = None,
+    decode: bool = True,
+    circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    ancilla_budget: int | None = None,
+) -> SimulationResult:
+    """Run the recommended native surface-code memory workflow.
+
+    This helper keeps the quick-start path short while using PECOS's Rust-backed
+    circuit-level DEM sampler and decoder machinery internally.
+
+    Args:
+        distance: Rotated surface-code distance.
+        physical_error_rate: Uniform physical error rate used for one-qubit
+            gates, two-qubit gates, measurements, and preparation. Defaults to
+            ``0.001`` when ``noise_model`` is not provided.
+        noise_model: Explicit circuit-level noise model. Mutually exclusive
+            with ``physical_error_rate``.
+        shots: Number of Monte Carlo shots.
+        rounds: Number of syndrome-extraction rounds. Defaults to ``distance``.
+        basis: Memory basis, ``"Z"`` or ``"X"``.
+        decoder_type: Decoder backend passed to ``SampleBatch.decode_count``.
+        seed: Optional sampler seed.
+        decode: If false, report the raw observable-flip rate.
+        circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
+        ancilla_budget: Optional cap on simultaneously live ancillas.
+
+    Returns:
+        ``SimulationResult`` with logical and raw error counts/rates.
+
+    Example:
+        >>> from pecos.qec.surface import surface_code_memory
+        >>> result = surface_code_memory(distance=3, physical_error_rate=0.0, shots=4, rounds=1)
+        >>> result.logical_error_rate
+        0.0
+    """
+    from pecos.qec import ParsedDem
+    from pecos.qec.surface.patch import SurfacePatch
+
+    if distance < 1:
+        msg = f"distance must be >= 1, got {distance}"
+        raise ValueError(msg)
+    if shots < 0:
+        msg = f"shots must be >= 0, got {shots}"
+        raise ValueError(msg)
+    num_rounds = distance if rounds is None else rounds
+    if num_rounds < 1:
+        msg = f"rounds must be >= 1, got {num_rounds}"
+        raise ValueError(msg)
+
+    noise_model = _memory_noise_model(physical_error_rate, noise_model)
+    patch = SurfacePatch.create(distance=distance)
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=num_rounds,
+        noise=noise_model,
+        basis=basis,
+        decompose_errors=True,
+        ancilla_budget=ancilla_budget,
+        circuit_source=circuit_source,
+    )
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
+    num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
+    num_logical_errors = batch.decode_count(dem, decoder_type) if decode else num_raw_errors
+
+    return SimulationResult(
+        distance=distance,
+        num_shots=shots,
+        num_rounds=num_rounds,
+        basis=basis,
+        num_logical_errors=num_logical_errors,
+        num_raw_errors=num_raw_errors,
+        logical_error_rate=num_logical_errors / shots if shots else 0.0,
+        raw_error_rate=num_raw_errors / shots if shots else 0.0,
+        decoded=decode,
+        decoder_type=decoder_type if decode else None,
+    )
 
 
 def run_noisy_memory_experiment(

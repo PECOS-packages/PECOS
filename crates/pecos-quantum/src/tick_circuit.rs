@@ -400,7 +400,7 @@ pub struct Tick {
     /// Gate batches in this tick (all act on disjoint qubits).
     gate_batches: TickGateStorage,
     /// Metadata for each gate batch, indexed by position in `gate_batches`.
-    gate_attrs: BTreeMap<usize, BTreeMap<String, Attribute>>,
+    batch_attrs: Vec<Option<BTreeMap<String, Attribute>>>,
     /// Tick-level metadata.
     attrs: BTreeMap<String, Attribute>,
 }
@@ -465,8 +465,8 @@ impl Tick {
     /// Get the full-fidelity gate batches in this tick.
     ///
     /// In `TickCircuit`, a stored [`Gate`] command may represent one or more
-    /// gate applications on disjoint qubits. For example,
-    /// `cx(&[(0, 1), (2, 3)])` is one batch and two gate applications.
+    /// individual gates on disjoint qubits. For example,
+    /// `cx(&[(0, 1), (2, 3)])` is one batch containing two gates.
     ///
     /// The batches preserve the complete [`Gate`] payload, including
     /// measurement IDs and typed channel payloads.
@@ -490,6 +490,7 @@ impl Tick {
     fn push_gate_unchecked(&mut self, gate: Gate) -> usize {
         let idx = self.gate_batches.len();
         self.gate_batches.push(gate);
+        self.batch_attrs.push(None);
         idx
     }
 
@@ -507,8 +508,9 @@ impl Tick {
     }
 
     fn normalized_gate_attrs(&self, gate_idx: usize) -> Option<&BTreeMap<String, Attribute>> {
-        self.gate_attrs
-            .get(&gate_idx)
+        self.batch_attrs
+            .get(gate_idx)
+            .and_then(Option::as_ref)
             .filter(|attrs| !attrs.is_empty())
     }
 
@@ -608,8 +610,8 @@ impl Tick {
             .truncate_payload(piece.gate_idx, piece.qubit_start, piece.meas_id_start);
 
         let split_idx = self.push_gate_unchecked(split_gate);
-        if let Some(attrs) = self.gate_attrs.get(&piece.gate_idx).cloned() {
-            self.gate_attrs.insert(split_idx, attrs);
+        if let Some(attrs) = self.normalized_gate_attrs(piece.gate_idx).cloned() {
+            self.batch_attrs[split_idx] = Some(attrs);
         }
         split_idx
     }
@@ -639,9 +641,12 @@ impl Tick {
     ///
     /// Returns the gate index.
     pub fn set_gate_attr(&mut self, gate_idx: usize, key: &str, value: Attribute) -> usize {
-        self.gate_attrs
-            .entry(gate_idx)
-            .or_default()
+        assert!(
+            gate_idx < self.gate_batches.len(),
+            "gate index {gate_idx} out of bounds"
+        );
+        self.batch_attrs[gate_idx]
+            .get_or_insert_with(BTreeMap::new)
             .insert(key.to_string(), value);
         gate_idx
     }
@@ -650,14 +655,25 @@ impl Tick {
     ///
     /// Returns the gate index.
     pub fn set_gate_attrs(&mut self, gate_idx: usize, attrs: BTreeMap<String, Attribute>) -> usize {
-        self.gate_attrs.entry(gate_idx).or_default().extend(attrs);
+        assert!(
+            gate_idx < self.gate_batches.len(),
+            "gate index {gate_idx} out of bounds"
+        );
+        if !attrs.is_empty() {
+            self.batch_attrs[gate_idx]
+                .get_or_insert_with(BTreeMap::new)
+                .extend(attrs);
+        }
         gate_idx
     }
 
     /// Get metadata from a gate.
     #[must_use]
     pub fn get_gate_attr(&self, gate_idx: usize, key: &str) -> Option<&Attribute> {
-        self.gate_attrs.get(&gate_idx).and_then(|m| m.get(key))
+        self.batch_attrs
+            .get(gate_idx)
+            .and_then(Option::as_ref)
+            .and_then(|m| m.get(key))
     }
 
     /// Set tick-level metadata.
@@ -678,8 +694,9 @@ impl Tick {
 
     /// Get all attributes for a gate.
     pub fn gate_attrs(&self, gate_idx: usize) -> impl Iterator<Item = (&String, &Attribute)> {
-        self.gate_attrs
-            .get(&gate_idx)
+        self.batch_attrs
+            .get(gate_idx)
+            .and_then(Option::as_ref)
             .into_iter()
             .flat_map(|m| m.iter())
     }
@@ -892,17 +909,7 @@ impl Tick {
 
         // Remove gates in reverse order to preserve indices
         for &idx in indices_to_remove.iter().rev() {
-            self.gate_batches.remove(idx);
-        }
-
-        // Rebuild gate_attrs with updated indices
-        let old_attrs = std::mem::take(&mut self.gate_attrs);
-        for (old_idx, attrs) in old_attrs {
-            // Count how many removed indices are before this one
-            let shift = indices_to_remove.iter().filter(|&&i| i < old_idx).count();
-            if !indices_to_remove.contains(&old_idx) {
-                self.gate_attrs.insert(old_idx - shift, attrs);
-            }
+            let _ = self.remove_gate(idx);
         }
 
         removed_count
@@ -932,17 +939,7 @@ impl Tick {
         }
 
         let gate = self.gate_batches.remove(idx);
-
-        // Rebuild gate_attrs with updated indices
-        let old_attrs = std::mem::take(&mut self.gate_attrs);
-        for (old_idx, attrs) in old_attrs {
-            if old_idx < idx {
-                self.gate_attrs.insert(old_idx, attrs);
-            } else if old_idx > idx {
-                self.gate_attrs.insert(old_idx - 1, attrs);
-            }
-            // Skip old_idx == idx (removed gate's attrs)
-        }
+        self.batch_attrs.remove(idx);
 
         Some(gate)
     }
@@ -1783,7 +1780,7 @@ impl TickCircuit {
     /// Iterate over full-fidelity gate batches in the circuit.
     ///
     /// This is the preferred API for consumers that execute or analyze batched
-    /// commands. Each yielded [`Gate`] may represent multiple gate applications
+    /// commands. Each yielded [`Gate`] may represent multiple individual gates
     /// on disjoint qubits, and carries the full gate payload.
     pub fn iter_gate_batches(&self) -> impl Iterator<Item = &Gate> {
         self.ticks.iter().flat_map(Tick::gate_batches)
@@ -2106,7 +2103,7 @@ impl TickCircuit {
                     if all_clear {
                         // Move gates and their per-gate metadata into the target tick.
                         for (gi, gate) in tick.gate_batches.iter().enumerate() {
-                            if let Some(attrs) = tick.gate_attrs.get(&gi) {
+                            if let Some(attrs) = tick.normalized_gate_attrs(gi) {
                                 let new_idx = compacted[target_idx]
                                     .try_add_gate_preserving_command(gate.clone())
                                     .unwrap_or_else(|err| panic!("{err}"));
@@ -3293,6 +3290,25 @@ mod tests {
         assert_eq!(
             tick.gate_batches()[0].qubits.as_slice(),
             &[QubitId::from(0), QubitId::from(1)]
+        );
+    }
+
+    #[test]
+    fn test_tick_replace_gate_batch_preserves_aligned_attrs() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0, 1])
+            .meta("calibration", Attribute::String("old".into()));
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        tick.replace_gate_batch(0, Gate::x(&[0, 1]))
+            .expect("same support replacement should be valid");
+
+        assert_eq!(tick.len(), 1);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::X);
+        assert_eq!(
+            tick.get_gate_attr(0, "calibration"),
+            Some(&Attribute::String("old".into()))
         );
     }
 
@@ -5352,6 +5368,35 @@ mod tests {
     }
 
     #[test]
+    fn test_tick_remove_gate_preserves_aligned_attrs() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0])
+            .meta("h_attr", Attribute::Int(1))
+            .x(&[1])
+            .meta("x_attr", Attribute::Int(2))
+            .z(&[2])
+            .meta("z_attr", Attribute::Int(3));
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        let removed = tick.remove_gate(0).expect("H batch should exist");
+
+        assert_eq!(removed.gate_type, GateType::H);
+        assert_eq!(tick.len(), 2);
+        assert_eq!(tick.gate_batches()[0].gate_type, GateType::X);
+        assert_eq!(tick.gate_batches()[1].gate_type, GateType::Z);
+        assert_eq!(
+            tick.get_gate_attr(0, "x_attr"),
+            Some(&Attribute::Int(2))
+        );
+        assert_eq!(
+            tick.get_gate_attr(1, "z_attr"),
+            Some(&Attribute::Int(3))
+        );
+        assert!(tick.get_gate_attr(0, "h_attr").is_none());
+    }
+
+    #[test]
     fn test_tick_remove_gate() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[0]).x(&[1]).z(&[2]);
@@ -5378,6 +5423,60 @@ mod tests {
         let removed = tick.remove_gate(5);
         assert!(removed.is_none());
         assert_eq!(tick.len(), 1);
+    }
+
+    #[test]
+    fn test_compact_ticks_preserves_and_merges_aligned_batch_attrs() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0])
+            .meta("calibration", Attribute::String("shared".into()));
+        tc.tick()
+            .h(&[1])
+            .meta("calibration", Attribute::String("shared".into()));
+
+        tc.compact_ticks();
+
+        assert_eq!(tc.num_ticks(), 1);
+        let tick = tc.get_tick(0).unwrap();
+        assert_eq!(tick.len(), 1);
+        assert_eq!(tick.gate_count(), 2);
+        assert_eq!(tick.gate_batch_count(), 1);
+        assert_eq!(
+            tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(0), QubitId::from(1)]
+        );
+        assert_eq!(
+            tick.get_gate_attr(0, "calibration"),
+            Some(&Attribute::String("shared".into()))
+        );
+    }
+
+    #[test]
+    fn test_compact_ticks_keeps_different_batch_attrs_separate() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0])
+            .meta("calibration", Attribute::String("a".into()));
+        tc.tick()
+            .h(&[1])
+            .meta("calibration", Attribute::String("b".into()));
+
+        tc.compact_ticks();
+
+        assert_eq!(tc.num_ticks(), 1);
+        let tick = tc.get_tick(0).unwrap();
+        assert_eq!(tick.len(), 2);
+        assert_eq!(tick.gate_count(), 2);
+        assert_eq!(tick.gate_batch_count(), 2);
+        assert_eq!(
+            tick.get_gate_attr(0, "calibration"),
+            Some(&Attribute::String("a".into()))
+        );
+        assert_eq!(
+            tick.get_gate_attr(1, "calibration"),
+            Some(&Attribute::String("b".into()))
+        );
     }
 
     #[test]

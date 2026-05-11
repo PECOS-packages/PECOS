@@ -12,9 +12,10 @@
 
 //! Batched circuit execution for Clifford simulators.
 //!
-//! This module provides efficient circuit execution using the batched gate groups
-//! from `TickCircuitSoA`. Instead of dispatching each gate individually, gates of
-//! the same type are applied as a single batch call.
+//! This module provides efficient circuit execution using the full-fidelity
+//! batched gate commands stored by `TickCircuit`. Instead of dispatching each
+//! individual gate application, stored batched commands are applied as one
+//! simulator call.
 //!
 //! # Performance Benefits
 //!
@@ -26,15 +27,13 @@
 //!
 //! ```
 //! use pecos_simulators::{SparseStab, CircuitExecutor};
-//! use pecos_quantum::TickCircuitSoA;
+//! use pecos_quantum::TickCircuit;
 //!
-//! let mut builder = TickCircuitSoA::builder();
-//! builder
-//!     .tick().pz(&[0, 1, 2, 3])
-//!     .tick().h(&[0, 1, 2, 3])
-//!     .tick().cx(&[(0, 1), (2, 3)])
-//!     .tick().mz(&[0, 1, 2, 3]);
-//! let circuit = builder.build();
+//! let mut circuit = TickCircuit::new();
+//! circuit.tick().pz(&[0, 1, 2, 3]);
+//! circuit.tick().h(&[0, 1, 2, 3]);
+//! circuit.tick().cx(&[(0, 1), (2, 3)]);
+//! circuit.tick().mz(&[0, 1, 2, 3]);
 //!
 //! let mut sim = SparseStab::new(4);
 //! let executor = CircuitExecutor::new(&circuit);
@@ -42,9 +41,9 @@
 //! ```
 
 use crate::{CliffordGateable, MeasurementResult};
-use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
-use pecos_quantum::{GateBatch, TickBatches, TickCircuitSoA, TickGateGroups};
+use pecos_core::{Gate, QubitId};
+use pecos_quantum::{GateBatch, TickCircuit, TickGateGroups};
 use smallvec::SmallVec;
 
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
@@ -55,20 +54,20 @@ fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
         .collect()
 }
 
-/// Executes a `TickCircuitSoA` on a Clifford simulator using batched operations.
+/// Executes a `TickCircuit` on a Clifford simulator using batched operations.
 ///
-/// This executor leverages the pre-grouped gate batches in `TickCircuitSoA` for
-/// efficient execution with minimal dispatch overhead.
+/// This executor leverages the full-fidelity batched gate commands in
+/// `TickCircuit` for efficient execution with minimal dispatch overhead.
 pub struct CircuitExecutor<'a> {
     /// The circuit to execute.
-    circuit: &'a TickCircuitSoA,
+    circuit: &'a TickCircuit,
 }
 
 impl<'a> CircuitExecutor<'a> {
     /// Creates a new executor for the given circuit.
     #[inline]
     #[must_use]
-    pub fn new(circuit: &'a TickCircuitSoA) -> Self {
+    pub fn new(circuit: &'a TickCircuit) -> Self {
         Self { circuit }
     }
 
@@ -79,34 +78,24 @@ impl<'a> CircuitExecutor<'a> {
         let mut measurements = Vec::new();
 
         for (_tick_idx, tick) in self.circuit.iter_ticks_batched() {
-            Self::execute_tick(sim, tick, &mut measurements);
+            for batch in tick.gate_batches() {
+                Self::execute_gate_batch(sim, batch, &mut measurements);
+            }
         }
 
         measurements
     }
 
-    /// Runs a single tick on the simulator.
-    #[inline]
-    fn execute_tick<S: CliffordGateable>(
-        sim: &mut S,
-        tick: &TickBatches,
-        measurements: &mut Vec<MeasurementResult>,
-    ) {
-        for batch in tick.iter() {
-            Self::execute_batch(sim, batch, measurements);
-        }
-    }
-
-    /// Executes a single batch of gates.
+    /// Executes a single full-fidelity batched gate command.
     ///
     /// This is the core dispatch function - one match per batch, not per gate.
     #[inline]
-    fn execute_batch<S: CliffordGateable>(
+    fn execute_gate_batch<S: CliffordGateable>(
         sim: &mut S,
-        batch: &GateBatch,
+        batch: &Gate,
         measurements: &mut Vec<MeasurementResult>,
     ) {
-        execute_single_batch(sim, batch, measurements);
+        execute_gate_command(sim, batch, measurements);
     }
 }
 
@@ -138,6 +127,108 @@ fn execute_single_batch<S: CliffordGateable>(
     let qubits = batch.qubits();
 
     match batch.gate_type {
+        GateType::I => {
+            sim.identity(qubits);
+        }
+        GateType::X => {
+            sim.x(qubits);
+        }
+        GateType::Y => {
+            sim.y(qubits);
+        }
+        GateType::Z => {
+            sim.z(qubits);
+        }
+        GateType::H => {
+            sim.h(qubits);
+        }
+        GateType::F => {
+            sim.f(qubits);
+        }
+        GateType::Fdg => {
+            sim.fdg(qubits);
+        }
+        GateType::SX => {
+            sim.sx(qubits);
+        }
+        GateType::SXdg => {
+            sim.sxdg(qubits);
+        }
+        GateType::SY => {
+            sim.sy(qubits);
+        }
+        GateType::SYdg => {
+            sim.sydg(qubits);
+        }
+        GateType::SZ => {
+            sim.sz(qubits);
+        }
+        GateType::SZdg => {
+            sim.szdg(qubits);
+        }
+        GateType::CX => {
+            let pairs = flat_to_pairs(qubits);
+            sim.cx(&pairs);
+        }
+        GateType::CY => {
+            let pairs = flat_to_pairs(qubits);
+            sim.cy(&pairs);
+        }
+        GateType::CZ => {
+            let pairs = flat_to_pairs(qubits);
+            sim.cz(&pairs);
+        }
+        GateType::SXX => {
+            let pairs = flat_to_pairs(qubits);
+            sim.sxx(&pairs);
+        }
+        GateType::SXXdg => {
+            let pairs = flat_to_pairs(qubits);
+            sim.sxxdg(&pairs);
+        }
+        GateType::SYY => {
+            let pairs = flat_to_pairs(qubits);
+            sim.syy(&pairs);
+        }
+        GateType::SYYdg => {
+            let pairs = flat_to_pairs(qubits);
+            sim.syydg(&pairs);
+        }
+        GateType::SZZ => {
+            let pairs = flat_to_pairs(qubits);
+            sim.szz(&pairs);
+        }
+        GateType::SZZdg => {
+            let pairs = flat_to_pairs(qubits);
+            sim.szzdg(&pairs);
+        }
+        GateType::SWAP => {
+            let pairs = flat_to_pairs(qubits);
+            sim.swap(&pairs);
+        }
+        GateType::PZ | GateType::QAlloc => {
+            sim.pz(qubits);
+        }
+        GateType::MZ | GateType::MeasureFree => {
+            measurements.extend(sim.mz(qubits));
+        }
+        GateType::Idle => {}
+        other => {
+            panic!("Unsupported gate type in circuit executor: {other:?}");
+        }
+    }
+}
+
+/// Executes one full-fidelity `TickCircuit` gate command on a simulator.
+#[inline]
+fn execute_gate_command<S: CliffordGateable>(
+    sim: &mut S,
+    gate: &Gate,
+    measurements: &mut Vec<MeasurementResult>,
+) {
+    let qubits = gate.qubits.as_slice();
+
+    match gate.gate_type {
         GateType::I => {
             sim.identity(qubits);
         }
@@ -287,22 +378,15 @@ impl<S: CliffordGateable> GateSystemRegistry<S> {
 mod tests {
     use super::*;
     use crate::SparseStab;
-    use pecos_quantum::TickCircuitSoA;
+    use pecos_quantum::{TickCircuit, TickCircuitSoA};
 
     #[test]
     fn test_circuit_executor_basic() {
-        let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .pz(&[0, 1])
-            .tick()
-            .h(&[0])
-            .tick()
-            .cx(&[(0, 1)])
-            .tick()
-            .mz(&[0, 1]);
-
-        let circuit = builder.build();
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1]);
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().mz(&[0, 1]);
 
         let mut sim = SparseStab::new(2);
         let executor = CircuitExecutor::new(&circuit);
@@ -315,18 +399,11 @@ mod tests {
     #[test]
     fn test_circuit_executor_batched_gates() {
         // Create a circuit with multiple gates of same type per tick
-        let mut builder = TickCircuitSoA::builder();
-        builder
-            .tick()
-            .pz(&[0, 1, 2, 3]) // 4 preps in one batch
-            .tick()
-            .h(&[0, 1, 2, 3]) // 4 H gates in one batch
-            .tick()
-            .cx(&[(0, 1), (2, 3)]) // 2 CX gates in one batch
-            .tick()
-            .mz(&[0, 1, 2, 3]); // 4 measurements in one batch
-
-        let circuit = builder.build();
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2, 3]); // 4 preps in one batch
+        circuit.tick().h(&[0, 1, 2, 3]); // 4 H gates in one batch
+        circuit.tick().cx(&[(0, 1), (2, 3)]); // 2 CX gates in one batch
+        circuit.tick().mz(&[0, 1, 2, 3]); // 4 measurements in one batch
 
         let mut sim = SparseStab::new(4);
         let executor = CircuitExecutor::new(&circuit);

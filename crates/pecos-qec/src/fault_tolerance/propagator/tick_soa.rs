@@ -1,20 +1,20 @@
-//! Optimized DOD-based tick fault analyzer using `TickCircuitSoA`.
+//! Optimized tick fault analyzer using batched `TickCircuit` access.
 //!
-//! This module provides [`TickFaultAnalyzerSoA`] which leverages the Structure of Arrays
-//! layout of [`TickCircuitSoA`] for more cache-efficient fault analysis.
+//! This module provides [`TickFaultAnalyzerSoA`] which uses the batched
+//! full-fidelity command view of [`TickCircuit`] for cache-efficient fault
+//! analysis without requiring a converted circuit representation.
 //!
 //! # Optimizations
 //!
-//! 1. **Raw index access**: Uses u32 indices instead of `GateId` validation
+//! 1. **Raw index access**: Uses local flattened gate indices
 //! 2. **Bitset for visited tracking**: O(1) membership check instead of `Vec::contains`
 //! 3. **Pre-computed tick indexes**: O(1) lookup for gates in each tick
-//! 4. **Sorted qubit gates**: Gates per qubit sorted by tick for efficient backward traversal
-//! 5. **Direct array access**: Skips Option-returning methods in hot loops
+//! 4. **Direct array access**: Skips Option-returning methods in hot loops
 
 use super::SpacetimeLocation;
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, MeasurementId, TrackedOpId};
 use pecos_core::{QubitId, gate_type::GateType};
-use pecos_quantum::tick_circuit_soa::TickCircuitSoA;
+use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 
 // ============================================================================
@@ -29,7 +29,7 @@ pub struct AnalyzerWorkBuffers {
     /// Bitset for tracking processed gates in current tick
     processed_gates: Vec<bool>,
     /// Temporary storage for gates to process
-    gates_to_process: Vec<u32>,
+    gates_to_process: Vec<usize>,
 }
 
 impl AnalyzerWorkBuffers {
@@ -65,11 +65,24 @@ impl AnalyzerWorkBuffers {
 // Optimized SOA-Based Fault Analyzer
 // ============================================================================
 
-/// Optimized fault analyzer for `TickCircuitSoA`.
+#[derive(Debug, Clone)]
+struct AnalyzerGate {
+    tick: usize,
+    gate_type: GateType,
+    qubits: Vec<QubitId>,
+}
+
+/// Optimized fault analyzer for `TickCircuit`.
 ///
 /// Uses raw indices and bitsets for minimal overhead in hot paths.
 pub struct TickFaultAnalyzerSoA<'a> {
-    circuit: &'a TickCircuitSoA,
+    circuit: &'a TickCircuit,
+    /// Flattened full-fidelity gate command view.
+    gates: Vec<AnalyzerGate>,
+    /// Pre-computed index: tick -> gate indices
+    tick_gates: Vec<Vec<usize>>,
+    /// Maximum qubit index seen.
+    max_qubit: usize,
     /// Fault locations extracted from the circuit.
     locations: Vec<SpacetimeLocation>,
     /// Pre-computed index: tick -> (`location_index`, before) pairs
@@ -77,10 +90,11 @@ pub struct TickFaultAnalyzerSoA<'a> {
 }
 
 impl<'a> TickFaultAnalyzerSoA<'a> {
-    /// Creates a new analyzer for the given `SoA` circuit.
+    /// Creates a new analyzer for the given circuit.
     #[must_use]
-    pub fn new(circuit: &'a TickCircuitSoA) -> Self {
-        let locations = Self::extract_spacetime_locations(circuit);
+    pub fn new(circuit: &'a TickCircuit) -> Self {
+        let (gates, tick_gates, max_qubit) = Self::flatten_circuit(circuit);
+        let locations = Self::extract_spacetime_locations(&gates);
 
         // Build tick index for O(1) lookup
         let num_ticks = circuit.num_ticks();
@@ -93,41 +107,60 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
 
         Self {
             circuit,
+            gates,
+            tick_gates,
+            max_qubit,
             locations,
             tick_locations,
         }
     }
 
-    /// Extracts spacetime locations using raw index access.
-    fn extract_spacetime_locations(circuit: &TickCircuitSoA) -> Vec<SpacetimeLocation> {
-        let mut locations = Vec::new();
-        let storage = &circuit.storage;
+    fn flatten_circuit(circuit: &TickCircuit) -> (Vec<AnalyzerGate>, Vec<Vec<usize>>, usize) {
+        let mut gates = Vec::new();
+        let mut tick_gates = vec![Vec::new(); circuit.num_ticks()];
+        let mut max_qubit = 0usize;
 
-        for idx in 0..storage.slot_count() {
-            if !storage.is_occupied(idx) {
-                continue;
+        for (tick, gate) in circuit.iter_gate_batches_with_tick() {
+            let idx = gates.len();
+            let qubits = gate.qubits.to_vec();
+            for qubit in &qubits {
+                max_qubit = max_qubit.max(qubit.index());
             }
+            if tick >= tick_gates.len() {
+                tick_gates.resize_with(tick + 1, Vec::new);
+            }
+            tick_gates[tick].push(idx);
+            gates.push(AnalyzerGate {
+                tick,
+                gate_type: gate.gate_type,
+                qubits,
+            });
+        }
 
-            let gate_type = storage.type_unchecked(idx);
-            let qubits = storage.qubits_unchecked(idx).to_vec();
-            let tick = storage.tick_id_unchecked(idx) as usize;
+        (gates, tick_gates, max_qubit)
+    }
 
+    /// Extracts spacetime locations using raw index access.
+    fn extract_spacetime_locations(gates: &[AnalyzerGate]) -> Vec<SpacetimeLocation> {
+        let mut locations = Vec::new();
+
+        for (idx, gate) in gates.iter().enumerate() {
             // Before location (fault before gate)
             locations.push(SpacetimeLocation {
-                tick,
-                qubits: qubits.clone(),
+                tick: gate.tick,
+                qubits: gate.qubits.clone(),
                 before: true,
-                gate_type,
+                gate_type: gate.gate_type,
                 gate_index: idx,
             });
 
             // After location for most gates (except prep which resets)
-            if !matches!(gate_type, GateType::PZ | GateType::QAlloc) {
+            if !matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
                 locations.push(SpacetimeLocation {
-                    tick,
-                    qubits,
+                    tick: gate.tick,
+                    qubits: gate.qubits.clone(),
                     before: false,
-                    gate_type,
+                    gate_type: gate.gate_type,
                     gate_index: idx,
                 });
             }
@@ -180,8 +213,8 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         }
 
         // Create work buffers
-        let max_qubit = self.circuit.max_qubit();
-        let max_gate = self.circuit.storage.slot_count();
+        let max_qubit = self.max_qubit;
+        let max_gate = self.gates.len();
         let mut buffers = AnalyzerWorkBuffers::new(max_qubit, max_gate);
 
         // Backward propagate from each measurement
@@ -213,25 +246,16 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
     /// Extracts all measurements using raw index access.
     fn extract_measurements(&self) -> Vec<MeasurementId> {
         let mut measurements = Vec::new();
-        let storage = &self.circuit.storage;
 
-        for idx in 0..storage.slot_count() {
-            if !storage.is_occupied(idx) {
-                continue;
-            }
-
-            let gate_type = storage.type_unchecked(idx);
-            let basis = match gate_type {
+        for gate in &self.gates {
+            let basis = match gate.gate_type {
                 GateType::MZ | GateType::MeasureFree => 0, // Z-basis
                 _ => continue,
             };
 
-            let tick = storage.tick_id_unchecked(idx) as usize;
-            let qubits = storage.qubits_unchecked(idx);
-
-            for qubit in qubits {
+            for qubit in &gate.qubits {
                 measurements.push(MeasurementId {
-                    tick,
+                    tick: gate.tick,
                     qubit: qubit.index(),
                     basis,
                 });
@@ -297,25 +321,21 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         prop: &mut PauliProp,
         buffers: &mut AnalyzerWorkBuffers,
     ) {
-        let storage = &self.circuit.storage;
-
         // Clear processed gates bitset for this tick
         buffers.gates_to_process.clear();
 
         // Get gates in this tick directly from pre-computed index
-        let tick_gates = self.circuit.gates_in_tick_raw(tick_idx);
+        let tick_gates = self
+            .tick_gates
+            .get(tick_idx)
+            .map_or([].as_slice(), Vec::as_slice);
 
         // Find gates that touch active qubits
         for &gate_idx in tick_gates {
-            let idx = gate_idx as usize;
-            if !storage.is_occupied(idx) {
-                continue;
-            }
-
-            let qubits = storage.qubits_unchecked(idx);
+            let gate = &self.gates[gate_idx];
 
             // Check if any qubit is active
-            let touches_active = qubits.iter().any(|q| {
+            let touches_active = gate.qubits.iter().any(|q| {
                 let qi = q.index();
                 qi < buffers.active_qubits.len() && buffers.active_qubits[qi]
             });
@@ -329,7 +349,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         // Note: We iterate by index to avoid borrow conflict
         let num_gates = buffers.gates_to_process.len();
         for i in 0..num_gates {
-            let gate_idx = buffers.gates_to_process[i] as usize;
+            let gate_idx = buffers.gates_to_process[i];
             self.apply_gate_backward_raw(gate_idx, prop, buffers);
         }
     }
@@ -342,46 +362,50 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
         prop: &mut PauliProp,
         buffers: &mut AnalyzerWorkBuffers,
     ) {
-        let storage = &self.circuit.storage;
-        let gate_type = storage.type_unchecked(idx);
-        let qubits = storage.qubits_unchecked(idx);
+        let gate = &self.gates[idx];
+        let gate_type = gate.gate_type;
+        let qubits = gate.qubits.as_slice();
 
         match gate_type {
             GateType::CX if qubits.len() >= 2 => {
-                let control = qubits[0].index();
-                let target = qubits[1].index();
+                for pair in qubits.chunks_exact(2) {
+                    let control = pair[0].index();
+                    let target = pair[1].index();
 
-                let ctrl_x = prop.contains_x(control);
-                let tgt_z = prop.contains_z(target);
+                    let ctrl_x = prop.contains_x(control);
+                    let tgt_z = prop.contains_z(target);
 
-                if ctrl_x {
-                    prop.track_x(&[target]);
+                    if ctrl_x {
+                        prop.track_x(&[target]);
+                    }
+                    if tgt_z {
+                        prop.track_z(&[control]);
+                    }
+
+                    // Update active qubits
+                    Self::update_active_qubit(control, prop, buffers);
+                    Self::update_active_qubit(target, prop, buffers);
                 }
-                if tgt_z {
-                    prop.track_z(&[control]);
-                }
-
-                // Update active qubits
-                Self::update_active_qubit(control, prop, buffers);
-                Self::update_active_qubit(target, prop, buffers);
             }
 
             GateType::CZ if qubits.len() >= 2 => {
-                let q0 = qubits[0].index();
-                let q1 = qubits[1].index();
+                for pair in qubits.chunks_exact(2) {
+                    let q0 = pair[0].index();
+                    let q1 = pair[1].index();
 
-                let x0 = prop.contains_x(q0);
-                let x1 = prop.contains_x(q1);
+                    let x0 = prop.contains_x(q0);
+                    let x1 = prop.contains_x(q1);
 
-                if x0 {
-                    prop.track_z(&[q1]);
+                    if x0 {
+                        prop.track_z(&[q1]);
+                    }
+                    if x1 {
+                        prop.track_z(&[q0]);
+                    }
+
+                    Self::update_active_qubit(q0, prop, buffers);
+                    Self::update_active_qubit(q1, prop, buffers);
                 }
-                if x1 {
-                    prop.track_z(&[q0]);
-                }
-
-                Self::update_active_qubit(q0, prop, buffers);
-                Self::update_active_qubit(q1, prop, buffers);
             }
 
             GateType::CY
@@ -394,42 +418,44 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
             | GateType::SZZdg
                 if qubits.len() >= 2 =>
             {
-                let q0 = qubits[0];
-                let q1 = qubits[1];
-                let pair = [(q0, q1)];
-                match gate_type {
-                    GateType::CY => {
-                        prop.cy(&pair);
+                for pair in qubits.chunks_exact(2) {
+                    let q0 = pair[0];
+                    let q1 = pair[1];
+                    let pair = [(q0, q1)];
+                    match gate_type {
+                        GateType::CY => {
+                            prop.cy(&pair);
+                        }
+                        GateType::SWAP => {
+                            prop.swap(&pair);
+                        }
+                        GateType::SXX => {
+                            prop.sxxdg(&pair);
+                        }
+                        GateType::SXXdg => {
+                            prop.sxx(&pair);
+                        }
+                        GateType::SYY => {
+                            prop.syydg(&pair);
+                        }
+                        GateType::SYYdg => {
+                            prop.syy(&pair);
+                        }
+                        GateType::SZZ => {
+                            prop.szzdg(&pair);
+                        }
+                        GateType::SZZdg => {
+                            prop.szz(&pair);
+                        }
+                        _ => unreachable!(),
                     }
-                    GateType::SWAP => {
-                        prop.swap(&pair);
-                    }
-                    GateType::SXX => {
-                        prop.sxxdg(&pair);
-                    }
-                    GateType::SXXdg => {
-                        prop.sxx(&pair);
-                    }
-                    GateType::SYY => {
-                        prop.syydg(&pair);
-                    }
-                    GateType::SYYdg => {
-                        prop.syy(&pair);
-                    }
-                    GateType::SZZ => {
-                        prop.szzdg(&pair);
-                    }
-                    GateType::SZZdg => {
-                        prop.szz(&pair);
-                    }
-                    _ => unreachable!(),
+                    Self::update_active_qubit(q0.index(), prop, buffers);
+                    Self::update_active_qubit(q1.index(), prop, buffers);
                 }
-                Self::update_active_qubit(q0.index(), prop, buffers);
-                Self::update_active_qubit(q1.index(), prop, buffers);
             }
 
             GateType::H => {
-                if let Some(qid) = qubits.first() {
+                for qid in qubits {
                     let q = qid.index();
                     let has_x = prop.contains_x(q);
                     let has_z = prop.contains_z(q);
@@ -452,7 +478,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
             | GateType::SYdg
             | GateType::F
             | GateType::Fdg => {
-                if let Some(qid) = qubits.first() {
+                for qid in qubits {
                     let q = [QubitId(qid.index())];
                     match gate_type {
                         GateType::SX => {
@@ -480,7 +506,7 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
             }
 
             GateType::SZ | GateType::SZdg => {
-                if let Some(qid) = qubits.first() {
+                for qid in qubits {
                     let q = qid.index();
                     let has_x = prop.contains_x(q);
 
@@ -689,22 +715,15 @@ impl<'a> TickFaultAnalyzerSoA<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_quantum::tick_circuit_soa::TickCircuitSoABuilder;
+    use pecos_quantum::TickCircuit;
 
     #[test]
     fn test_basic_analysis() {
-        let mut builder = TickCircuitSoABuilder::new();
-        builder
-            .tick()
-            .pz(&[0, 1])
-            .tick()
-            .h(&[0])
-            .tick()
-            .cx(&[(0, 1)])
-            .tick()
-            .mz(&[0, 1]);
-
-        let circuit = builder.build();
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1]);
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().mz(&[0, 1]);
         let analyzer = TickFaultAnalyzerSoA::new(&circuit);
 
         assert!(!analyzer.locations().is_empty());
@@ -717,20 +736,11 @@ mod tests {
 
     #[test]
     fn test_sparse_traversal() {
-        let mut builder = TickCircuitSoABuilder::new();
-        builder
-            .tick()
-            .pz(&[0, 1, 2, 3])
-            .tick()
-            .h(&[0])
-            .h(&[2])
-            .tick()
-            .cx(&[(0, 1)])
-            .cx(&[(2, 3)])
-            .tick()
-            .mz(&[0, 1, 2, 3]);
-
-        let circuit = builder.build();
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2, 3]);
+        circuit.tick().h(&[0]).h(&[2]);
+        circuit.tick().cx(&[(0, 1)]).cx(&[(2, 3)]);
+        circuit.tick().mz(&[0, 1, 2, 3]);
         let analyzer = TickFaultAnalyzerSoA::new(&circuit);
 
         let map = analyzer.build_influence_map();
@@ -741,18 +751,11 @@ mod tests {
 
     #[test]
     fn test_tracked_op_propagation() {
-        let mut builder = TickCircuitSoABuilder::new();
-        builder
-            .tick()
-            .pz(&[0, 1])
-            .tick()
-            .h(&[0])
-            .tick()
-            .cx(&[(0, 1)])
-            .tick()
-            .mz(&[0, 1]);
-
-        let circuit = builder.build();
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1]);
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().mz(&[0, 1]);
         let analyzer = TickFaultAnalyzerSoA::new(&circuit);
 
         let tracked_ops = [(&[] as &[usize], &[1usize] as &[usize])];

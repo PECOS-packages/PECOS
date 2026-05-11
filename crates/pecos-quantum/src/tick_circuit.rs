@@ -399,6 +399,21 @@ impl Tick {
         &self.gates
     }
 
+    /// Get the full-fidelity gate batches in this tick.
+    ///
+    /// In `TickCircuit`, a stored [`Gate`] command may represent one or more
+    /// gate applications on disjoint qubits. For example,
+    /// `cx(&[(0, 1), (2, 3)])` is one batch and two gate applications.
+    ///
+    /// This is intentionally the same data as [`gates`](Self::gates) today: the
+    /// batches preserve the complete [`Gate`] payload, including measurement
+    /// IDs and typed channel payloads. Future internal storage can make this
+    /// view cheaper or more data-oriented without changing consumers.
+    #[must_use]
+    pub fn gate_batches(&self) -> &[Gate] {
+        &self.gates
+    }
+
     /// Get mutable access to the gates in this tick.
     pub fn gates_mut(&mut self) -> &mut [Gate] {
         &mut self.gates
@@ -1662,6 +1677,15 @@ impl TickCircuit {
         self.ticks.iter().flat_map(Tick::gates)
     }
 
+    /// Iterate over full-fidelity gate batches in the circuit.
+    ///
+    /// This is the preferred API for consumers that execute or analyze batched
+    /// commands. Each yielded [`Gate`] may represent multiple gate applications
+    /// on disjoint qubits, and carries the full gate payload.
+    pub fn iter_gate_batches(&self) -> impl Iterator<Item = &Gate> {
+        self.ticks.iter().flat_map(Tick::gate_batches)
+    }
+
     /// Returns true if any tick contains an explicit channel operation.
     #[must_use]
     pub fn has_channel_operations(&self) -> bool {
@@ -1692,6 +1716,13 @@ impl TickCircuit {
             .flat_map(|(tick_idx, tick)| tick.gates().iter().map(move |gate| (tick_idx, gate)))
     }
 
+    /// Iterate over full-fidelity gate batches with their tick index.
+    pub fn iter_gate_batches_with_tick(&self) -> impl Iterator<Item = (usize, &Gate)> {
+        self.ticks.iter().enumerate().flat_map(|(tick_idx, tick)| {
+            tick.gate_batches().iter().map(move |gate| (tick_idx, gate))
+        })
+    }
+
     /// Iterate over ticks with their index.
     ///
     /// # Examples
@@ -1710,6 +1741,16 @@ impl TickCircuit {
     /// ```
     pub fn iter_ticks(&self) -> impl Iterator<Item = (usize, &Tick)> {
         self.ticks.iter().enumerate()
+    }
+
+    /// Iterate over ticks through the batched command view.
+    ///
+    /// This is currently equivalent to [`iter_ticks`](Self::iter_ticks), because
+    /// each [`Tick`] stores full-fidelity batched gate commands. It exists so
+    /// batched consumers can depend on `TickCircuit` directly instead of a
+    /// converted execution-only circuit representation.
+    pub fn iter_ticks_batched(&self) -> impl Iterator<Item = (usize, &Tick)> {
+        self.iter_ticks()
     }
 
     /// Iterate over gates filtered by gate type.
@@ -4821,15 +4862,31 @@ mod tests {
         let gates: Vec<_> = tc.iter_gates().collect();
         assert_eq!(gates.len(), 3);
 
+        // Test explicit batched views. These currently mirror the stored gate
+        // commands and preserve full Gate payloads.
+        let batches: Vec<_> = tc.iter_gate_batches().collect();
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].gate_type, GateType::H);
+        assert_eq!(batches[0].num_gates(), 4);
+        assert_eq!(tc.get_tick(0).unwrap().gate_batches()[0].num_gates(), 4);
+
         // Test iter_gates_with_tick
         let gates_with_tick: Vec<_> = tc.iter_gates_with_tick().collect();
         assert_eq!(gates_with_tick.len(), 3);
         assert_eq!(gates_with_tick[0].0, 0); // First gate is in tick 0
         assert_eq!(gates_with_tick[1].0, 1); // Second gate is in tick 1
 
+        let batches_with_tick: Vec<_> = tc.iter_gate_batches_with_tick().collect();
+        assert_eq!(batches_with_tick.len(), 3);
+        assert_eq!(batches_with_tick[2].0, 2); // Third batch is in tick 2
+
         // Test iter_ticks
         let ticks: Vec<_> = tc.iter_ticks().collect();
         assert_eq!(ticks.len(), 3);
+
+        let batched_ticks: Vec<_> = tc.iter_ticks_batched().collect();
+        assert_eq!(batched_ticks.len(), 3);
+        assert_eq!(batched_ticks[1].1.gate_batches()[0].gate_type, GateType::CX);
 
         // Test iter_gates_by_type
         let h_gates: Vec<_> = tc.iter_gates_by_type(GateType::H).collect();

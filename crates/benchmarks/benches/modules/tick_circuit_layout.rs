@@ -22,7 +22,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos_core::gate_type::GateType;
 use pecos_quantum::{Gate, QubitId, TickCircuit, TickCircuitSoA};
-use pecos_simulators::{CircuitExecutor, CliffordGateable, SparseStab};
+use pecos_simulators::{CliffordGateable, SparseStab, execute_batched};
 use std::hint::black_box;
 
 const DISTANCES: &[usize] = &[3, 5, 7, 9, 11];
@@ -354,5 +354,5 @@ fn execute_gate_direct<S: CliffordGateable>(sim: &mut S, gate: &Gate) -> usize {
 
 fn run_tick_circuit_soa(circuit: &TickCircuitSoA, num_qubits: usize) -> usize {
     let mut sim = SparseStab::new(num_qubits);
-    CircuitExecutor::new(circuit).run(&mut sim).len()
+    execute_batched(&circuit.batched, &mut sim).len()
 }

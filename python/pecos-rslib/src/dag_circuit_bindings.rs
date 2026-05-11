@@ -2447,7 +2447,7 @@ impl PyTickCircuit {
                 (
                     tick_idx,
                     PyGate {
-                        inner: gate.clone(),
+                        inner: gate.as_gate().clone(),
                     },
                 )
             })

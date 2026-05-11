@@ -414,6 +414,185 @@ struct GateBatchPiece {
     meas_id_len: usize,
 }
 
+/// Borrowed view of one stored same-type gate batch in a [`Tick`].
+#[derive(Debug, Clone, Copy)]
+pub struct GateBatchRef<'a> {
+    batch_index: usize,
+    gate: &'a Gate,
+    attrs: Option<&'a BTreeMap<String, Attribute>>,
+}
+
+impl<'a> GateBatchRef<'a> {
+    fn new(
+        batch_index: usize,
+        gate: &'a Gate,
+        attrs: Option<&'a BTreeMap<String, Attribute>>,
+    ) -> Self {
+        Self {
+            batch_index,
+            gate,
+            attrs,
+        }
+    }
+
+    /// Return this batch's index within its tick.
+    #[must_use]
+    pub fn batch_index(self) -> usize {
+        self.batch_index
+    }
+
+    /// Return the underlying stored [`Gate`] batch.
+    #[must_use]
+    pub fn as_gate(self) -> &'a Gate {
+        self.gate
+    }
+
+    /// Return the number of individual gates represented by this batch.
+    #[must_use]
+    pub fn gate_count(self) -> usize {
+        self.gate.num_gates()
+    }
+
+    /// Return the metadata attribute with the given key, if present.
+    #[must_use]
+    pub fn get_attr(self, key: &str) -> Option<&'a Attribute> {
+        self.attrs.and_then(|attrs| attrs.get(key))
+    }
+
+    /// Iterate over metadata attributes attached to this batch.
+    pub fn attrs(self) -> impl Iterator<Item = (&'a String, &'a Attribute)> {
+        self.attrs.into_iter().flat_map(|attrs| attrs.iter())
+    }
+
+    /// Return one individual gate from this batch.
+    #[must_use]
+    pub fn instance(self, instance_index: usize) -> Option<GateInstanceRef<'a>> {
+        let gate_count = self.gate_count();
+        if instance_index >= gate_count {
+            return None;
+        }
+
+        let qubits = if gate_count == 1 {
+            self.gate.qubits.as_slice()
+        } else {
+            let arity = self.gate.quantum_arity();
+            let start = instance_index * arity;
+            let end = start + arity;
+            self.gate.qubits.get(start..end)?
+        };
+
+        let meas_ids = if self.gate.meas_ids.is_empty() {
+            &self.gate.meas_ids[0..0]
+        } else if gate_count == 1 {
+            self.gate.meas_ids.as_slice()
+        } else {
+            if !self.gate.meas_ids.len().is_multiple_of(gate_count) {
+                return None;
+            }
+            let arity = self.gate.meas_ids.len() / gate_count;
+            let start = instance_index * arity;
+            let end = start + arity;
+            self.gate.meas_ids.get(start..end)?
+        };
+
+        Some(GateInstanceRef {
+            batch: self,
+            instance_index,
+            qubits,
+            meas_ids,
+        })
+    }
+
+    /// Iterate over individual gates represented by this batch.
+    pub fn iter_gate_instances(self) -> impl Iterator<Item = GateInstanceRef<'a>> {
+        (0..self.gate_count()).filter_map(move |idx| self.instance(idx))
+    }
+}
+
+impl Deref for GateBatchRef<'_> {
+    type Target = Gate;
+
+    fn deref(&self) -> &Self::Target {
+        self.gate
+    }
+}
+
+/// Borrowed view of one individual gate inside a [`GateBatchRef`].
+#[derive(Debug, Clone, Copy)]
+pub struct GateInstanceRef<'a> {
+    batch: GateBatchRef<'a>,
+    instance_index: usize,
+    qubits: &'a [QubitId],
+    meas_ids: &'a [MeasId],
+}
+
+impl<'a> GateInstanceRef<'a> {
+    /// Return the stored batch this individual gate came from.
+    #[must_use]
+    pub fn batch(self) -> GateBatchRef<'a> {
+        self.batch
+    }
+
+    /// Return the parent batch's index within its tick.
+    #[must_use]
+    pub fn batch_index(self) -> usize {
+        self.batch.batch_index()
+    }
+
+    /// Return this gate's position within its stored batch.
+    #[must_use]
+    pub fn instance_index(self) -> usize {
+        self.instance_index
+    }
+
+    /// Return this individual gate's type.
+    #[must_use]
+    pub fn gate_type(self) -> GateType {
+        self.batch.gate_type
+    }
+
+    /// Return this individual gate's qubit support.
+    #[must_use]
+    pub fn qubits(self) -> &'a [QubitId] {
+        self.qubits
+    }
+
+    /// Return this individual gate's measurement ids, if any.
+    #[must_use]
+    pub fn meas_ids(self) -> &'a [MeasId] {
+        self.meas_ids
+    }
+
+    /// Return this individual gate's rotation angles.
+    #[must_use]
+    pub fn angles(self) -> &'a [Angle64] {
+        self.batch.gate.angles.as_slice()
+    }
+
+    /// Return this individual gate's non-angle parameters.
+    #[must_use]
+    pub fn params(self) -> &'a [f64] {
+        self.batch.gate.params.as_slice()
+    }
+
+    /// Return this individual gate's channel payload, if this is a channel.
+    #[must_use]
+    pub fn channel(self) -> Option<&'a ChannelExpr> {
+        self.batch.gate.channel.as_ref()
+    }
+
+    /// Return the metadata attribute with the given key, if present.
+    #[must_use]
+    pub fn get_attr(self, key: &str) -> Option<&'a Attribute> {
+        self.batch.get_attr(key)
+    }
+
+    /// Iterate over metadata attributes attached to the parent batch.
+    pub fn attrs(self) -> impl Iterator<Item = (&'a String, &'a Attribute)> {
+        self.batch.attrs()
+    }
+}
+
 impl Tick {
     /// Create a new empty tick.
     #[must_use]
@@ -473,6 +652,19 @@ impl Tick {
     #[must_use]
     pub fn gate_batches(&self) -> &[Gate] {
         self.gate_batches.as_slice()
+    }
+
+    /// Iterate over full-fidelity borrowed gate-batch views in this tick.
+    pub fn iter_gate_batches(&self) -> impl Iterator<Item = GateBatchRef<'_>> {
+        self.gate_batches.iter().enumerate().map(|(idx, gate)| {
+            GateBatchRef::new(idx, gate, self.normalized_gate_attrs(idx))
+        })
+    }
+
+    /// Iterate over individual gates expanded from this tick's stored batches.
+    pub fn iter_gate_instances(&self) -> impl Iterator<Item = GateInstanceRef<'_>> {
+        self.iter_gate_batches()
+            .flat_map(GateBatchRef::iter_gate_instances)
     }
 
     /// Add a gate to this tick.
@@ -1782,20 +1974,34 @@ impl TickCircuit {
     /// This is the preferred API for consumers that execute or analyze batched
     /// commands. Each yielded [`Gate`] may represent multiple individual gates
     /// on disjoint qubits, and carries the full gate payload.
-    pub fn iter_gate_batches(&self) -> impl Iterator<Item = &Gate> {
-        self.ticks.iter().flat_map(Tick::gate_batches)
+    pub fn iter_gate_batches(&self) -> impl Iterator<Item = GateBatchRef<'_>> {
+        self.ticks.iter().flat_map(Tick::iter_gate_batches)
     }
 
     /// Returns true if any tick contains an explicit channel operation.
     #[must_use]
     pub fn has_channel_operations(&self) -> bool {
-        self.iter_gate_batches().any(Gate::is_channel)
+        self.iter_gate_batches().any(|gate| gate.is_channel())
     }
 
     /// Iterate over full-fidelity gate batches with their tick index.
-    pub fn iter_gate_batches_with_tick(&self) -> impl Iterator<Item = (usize, &Gate)> {
+    pub fn iter_gate_batches_with_tick(&self) -> impl Iterator<Item = (usize, GateBatchRef<'_>)> {
         self.ticks.iter().enumerate().flat_map(|(tick_idx, tick)| {
-            tick.gate_batches().iter().map(move |gate| (tick_idx, gate))
+            tick.iter_gate_batches().map(move |gate| (tick_idx, gate))
+        })
+    }
+
+    /// Iterate over individual gates expanded from stored batches.
+    pub fn iter_gate_instances(&self) -> impl Iterator<Item = GateInstanceRef<'_>> {
+        self.ticks.iter().flat_map(Tick::iter_gate_instances)
+    }
+
+    /// Iterate over individual gates with their tick index.
+    pub fn iter_gate_instances_with_tick(
+        &self,
+    ) -> impl Iterator<Item = (usize, GateInstanceRef<'_>)> {
+        self.ticks.iter().enumerate().flat_map(|(tick_idx, tick)| {
+            tick.iter_gate_instances().map(move |gate| (tick_idx, gate))
         })
     }
 
@@ -1843,9 +2049,12 @@ impl TickCircuit {
     ///
     /// // Get all H gates
     /// let h_gates: Vec<_> = circuit.iter_gates_by_type(GateType::H).collect();
-    /// assert_eq!(h_gates.len(), 1);  // One Gate object with 3 qubits
+    /// assert_eq!(h_gates.len(), 1);  // One H batch with 3 qubits
     /// ```
-    pub fn iter_gates_by_type(&self, gate_type: GateType) -> impl Iterator<Item = &Gate> {
+    pub fn iter_gates_by_type(
+        &self,
+        gate_type: GateType,
+    ) -> impl Iterator<Item = GateBatchRef<'_>> {
         self.iter_gate_batches()
             .filter(move |g| g.gate_type == gate_type)
     }
@@ -1867,7 +2076,7 @@ impl TickCircuit {
     #[must_use]
     pub fn all_qubits(&self) -> BTreeSet<QubitId> {
         self.iter_gate_batches()
-            .flat_map(|gate| gate.qubits.iter().copied())
+            .flat_map(|gate| gate.as_gate().qubits.iter().copied())
             .collect()
     }
 
@@ -4223,7 +4432,7 @@ mod tests {
         fn measurement_ids(circuit: &TickCircuit) -> Vec<MeasId> {
             circuit
                 .iter_gate_batches()
-                .flat_map(|gate| gate.meas_ids.iter().copied())
+                .flat_map(|gate| gate.as_gate().meas_ids.iter().copied())
                 .collect()
         }
 
@@ -5031,20 +5240,59 @@ mod tests {
     #[test]
     fn test_iteration_helpers() {
         let mut tc = TickCircuit::new();
-        tc.tick().h(&[0, 1, 2, 3]);
+        tc.tick()
+            .h(&[0, 1, 2, 3])
+            .meta("calibration", Attribute::String("h-cal".into()));
         tc.tick().cx(&[(0, 1), (2, 3)]);
         tc.tick().mz(&[0, 1, 2, 3]);
 
         // Test explicit batched views. These preserve full Gate payloads.
         let batches: Vec<_> = tc.iter_gate_batches().collect();
         assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].batch_index(), 0);
         assert_eq!(batches[0].gate_type, GateType::H);
         assert_eq!(batches[0].num_gates(), 4);
+        assert_eq!(batches[0].gate_count(), 4);
+        assert_eq!(
+            batches[0].get_attr("calibration"),
+            Some(&Attribute::String("h-cal".into()))
+        );
         assert_eq!(tc.get_tick(0).unwrap().gate_batches()[0].num_gates(), 4);
 
         let batches_with_tick: Vec<_> = tc.iter_gate_batches_with_tick().collect();
         assert_eq!(batches_with_tick.len(), 3);
         assert_eq!(batches_with_tick[2].0, 2); // Third batch is in tick 2
+        assert_eq!(batches_with_tick[2].1.gate_type, GateType::MZ);
+
+        let instances_with_tick: Vec<_> = tc.iter_gate_instances_with_tick().collect();
+        assert_eq!(instances_with_tick.len(), 10);
+        assert_eq!(instances_with_tick[0].0, 0);
+        assert_eq!(instances_with_tick[0].1.batch_index(), 0);
+        assert_eq!(instances_with_tick[0].1.instance_index(), 0);
+        assert_eq!(instances_with_tick[0].1.gate_type(), GateType::H);
+        assert_eq!(instances_with_tick[0].1.qubits(), &[QubitId::from(0)]);
+        assert_eq!(
+            instances_with_tick[0].1.get_attr("calibration"),
+            Some(&Attribute::String("h-cal".into()))
+        );
+        assert_eq!(instances_with_tick[3].1.qubits(), &[QubitId::from(3)]);
+        assert_eq!(instances_with_tick[4].0, 1);
+        assert_eq!(instances_with_tick[4].1.instance_index(), 0);
+        assert_eq!(instances_with_tick[4].1.gate_type(), GateType::CX);
+        assert_eq!(
+            instances_with_tick[4].1.qubits(),
+            &[QubitId::from(0), QubitId::from(1)]
+        );
+        assert_eq!(
+            instances_with_tick[5].1.qubits(),
+            &[QubitId::from(2), QubitId::from(3)]
+        );
+        assert_eq!(instances_with_tick[5].1.instance_index(), 1);
+        assert_eq!(instances_with_tick[6].0, 2);
+        assert_eq!(instances_with_tick[6].1.gate_type(), GateType::MZ);
+        assert_eq!(instances_with_tick[6].1.qubits(), &[QubitId::from(0)]);
+        assert_eq!(instances_with_tick[6].1.meas_ids(), &[MeasId(0)]);
+        assert_eq!(instances_with_tick[9].1.meas_ids(), &[MeasId(3)]);
 
         // Test iter_ticks
         let ticks: Vec<_> = tc.iter_ticks().collect();
@@ -5071,6 +5319,20 @@ mod tests {
         assert_eq!(counts.get(&GateType::H), Some(&4));
         assert_eq!(counts.get(&GateType::CX), Some(&2));
         assert_eq!(counts.get(&GateType::MZ), Some(&4));
+    }
+
+    #[test]
+    fn test_gate_instance_iteration_skips_annotation_batches() {
+        let mut tick = Tick::new();
+        tick.add_gate(Gate::simple(
+            GateType::PauliOperatorMeta,
+            vec![QubitId::from(0), QubitId::from(1)],
+        ));
+
+        let batches: Vec<_> = tick.iter_gate_batches().collect();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].gate_count(), 0);
+        assert_eq!(tick.iter_gate_instances().count(), 0);
     }
 
     #[test]

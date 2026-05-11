@@ -231,7 +231,7 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
         let mut new_ticks = Vec::with_capacity(circuit.ticks().len() * 2);
 
         // Drain ticks from circuit and rebuild with idle insertions
-        let old_ticks: Vec<_> = std::mem::take(circuit.ticks_vec_mut());
+        let old_ticks = circuit.take_ticks();
 
         for tick in old_ticks {
             let mut idle_qubits: Vec<QubitId> = Vec::new();
@@ -256,7 +256,7 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
             }
         }
 
-        *circuit.ticks_vec_mut() = new_ticks;
+        circuit.replace_ticks(new_ticks);
     }
 
     fn apply_dag(&self, _circuit: &mut DagCircuit) {
@@ -443,7 +443,7 @@ fn peephole_conjugation(middle: &Gate, h_qubit: QubitId) -> Option<(GateType, Ga
 }
 
 fn split_batched_tick_commands(circuit: &mut TickCircuit) {
-    let old_ticks = std::mem::take(circuit.ticks_vec_mut());
+    let old_ticks = circuit.take_ticks();
     let mut new_ticks = Vec::with_capacity(old_ticks.len());
 
     for old_tick in old_ticks {
@@ -459,9 +459,22 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
 
-            if gate.num_gates() <= 1 {
+            let split_gates: Vec<Gate> = if batch.gate_count() == 0 {
+                vec![gate.clone()]
+            } else {
+                batch
+                    .iter_gate_instances()
+                    .map(super::tick_circuit::GateInstanceRef::to_gate)
+                    .collect()
+            };
+
+            if split_gates.is_empty() {
+                continue;
+            }
+
+            if split_gates.len() == 1 {
                 let new_idx = new_tick
-                    .try_add_gate_preserving_command(gate.clone())
+                    .try_add_gate_preserving_command(split_gates[0].clone())
                     .unwrap_or_else(|err| panic!("{err}"));
                 if !attrs.is_empty() {
                     new_tick.set_gate_attrs(new_idx, attrs);
@@ -469,25 +482,7 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
                 continue;
             }
 
-            let arity = gate.gate_type.quantum_arity();
-            for (instance_idx, qubits) in gate.qubits.chunks(arity).enumerate() {
-                if qubits.len() != arity {
-                    continue;
-                }
-
-                let mut split_gate = gate.clone();
-                split_gate.qubits = qubits.iter().copied().collect();
-                if gate.meas_ids.is_empty() {
-                    split_gate.meas_ids.clear();
-                } else {
-                    let meas_start = instance_idx * arity;
-                    let meas_end = meas_start + arity;
-                    split_gate.meas_ids = gate.meas_ids[meas_start..meas_end]
-                        .iter()
-                        .copied()
-                        .collect();
-                }
-
+            for split_gate in split_gates {
                 let new_idx = new_tick
                     .try_add_gate_preserving_command(split_gate)
                     .unwrap_or_else(|err| panic!("{err}"));
@@ -500,7 +495,7 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
         new_ticks.push(new_tick);
     }
 
-    *circuit.ticks_vec_mut() = new_ticks;
+    circuit.replace_ticks(new_ticks);
 }
 
 impl CircuitPass for SimplifyRotations {
@@ -1190,10 +1185,8 @@ impl CircuitPass for CompactTicks {
         let mut entries: Vec<(Gate, BTreeMap<String, Attribute>)> = Vec::new();
         for tick in circuit.ticks() {
             for gate in tick.iter_gate_batches() {
-                let attrs: BTreeMap<String, Attribute> = gate
-                    .attrs()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                let attrs: BTreeMap<String, Attribute> =
+                    gate.attrs().map(|(k, v)| (k.clone(), v.clone())).collect();
                 entries.push((gate.as_gate().clone(), attrs));
             }
         }

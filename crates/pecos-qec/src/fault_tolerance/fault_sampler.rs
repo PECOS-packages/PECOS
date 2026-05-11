@@ -251,64 +251,36 @@ fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
     Ok(())
 }
 
-/// Flatten a `TickCircuit` into a gate list with measurement position tracking.
+/// Flatten a `TickCircuit` into individual gate applications with measurement
+/// position tracking.
 ///
-/// Multi-qubit gates are split into individual entries so each measurement/pair
-/// gets its own position for fault injection. Returns the gate list and a map
-/// from gate-list index to measurement index.
+/// Stored batches are expanded through `TickCircuit`'s `GateInstanceRef`
+/// iterator so the qubit/measurement-id slicing semantics are shared with
+/// other consumers. Each measurement and each multi-qubit pair gets its own
+/// position for fault injection. Returns the gate list and a map from gate-list
+/// index to measurement index.
 pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<usize, usize>) {
     let mut gates = Vec::new();
     let mut meas_positions = HashMap::new();
     let mut meas_count = 0usize;
 
     for (tick_idx, tick) in tc.iter_ticks() {
-        for gate in tick.iter_gate_batches() {
-            let gate_idx = gate.batch_index();
-            let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-            let is_mz = is_supported_measurement_gate(gate.gate_type);
-            let is_2q = is_standard_2q_clifford_gate(gate.gate_type);
-
-            if is_mz && qs.len() > 1 {
-                for &q in &qs {
-                    meas_positions.insert(gates.len(), meas_count);
-                    meas_count += 1;
-                    gates.push(GateLoc {
-                        tick: tick_idx,
-                        gate_index: gate_idx,
-                        gate_type: gate.gate_type,
-                        qubits: vec![q],
-                    });
-                }
-            } else if is_2q && qs.len() > 2 {
-                for pair in qs.chunks(2).filter(|c| c.len() == 2) {
-                    gates.push(GateLoc {
-                        tick: tick_idx,
-                        gate_index: gate_idx,
-                        gate_type: gate.gate_type,
-                        qubits: vec![pair[0], pair[1]],
-                    });
-                }
-            } else if qs.len() > 1 && !is_2q && !is_mz {
-                for &q in &qs {
-                    gates.push(GateLoc {
-                        tick: tick_idx,
-                        gate_index: gate_idx,
-                        gate_type: gate.gate_type,
-                        qubits: vec![q],
-                    });
-                }
-            } else {
-                if is_mz {
-                    meas_positions.insert(gates.len(), meas_count);
-                    meas_count += 1;
-                }
-                gates.push(GateLoc {
-                    tick: tick_idx,
-                    gate_index: gate_idx,
-                    gate_type: gate.gate_type,
-                    qubits: qs,
-                });
+        for gate in tick.iter_gate_instances() {
+            let qs: Vec<usize> = gate
+                .qubits()
+                .iter()
+                .map(pecos_core::QubitId::index)
+                .collect();
+            if is_supported_measurement_gate(gate.gate_type()) {
+                meas_positions.insert(gates.len(), meas_count);
+                meas_count += 1;
             }
+            gates.push(GateLoc {
+                tick: tick_idx,
+                gate_index: gate.batch_index(),
+                gate_type: gate.gate_type(),
+                qubits: qs,
+            });
         }
     }
 
@@ -2070,6 +2042,27 @@ mod tests {
         assert_eq!(gates[5].gate_index, 0);
         assert_eq!(gates[5].gate_type, GateType::MZ);
         assert_eq!(gates[5].qubits, vec![1]);
+    }
+
+    #[test]
+    fn test_flatten_tick_circuit_skips_zero_gate_metadata_batches() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.insert_tick(1);
+        tc.get_tick_mut(1)
+            .unwrap()
+            .add_gate(pecos_core::Gate::simple(
+                GateType::PauliOperatorMeta,
+                vec![QubitId(1), QubitId(2)],
+            ));
+        tc.tick().mz(&[QubitId(0)]);
+
+        let (gates, meas_positions) = flatten_tick_circuit(&tc);
+
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].gate_type, GateType::H);
+        assert_eq!(gates[1].gate_type, GateType::MZ);
+        assert_eq!(meas_positions.get(&1), Some(&0));
     }
 
     // ---- Direct propagation tests using propagate_single ----

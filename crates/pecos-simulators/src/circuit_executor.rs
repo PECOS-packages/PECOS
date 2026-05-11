@@ -77,7 +77,7 @@ impl<'a> CircuitExecutor<'a> {
     pub fn run<S: CliffordGateable>(&self, sim: &mut S) -> Vec<MeasurementResult> {
         let mut measurements = Vec::new();
 
-        for (_tick_idx, tick) in self.circuit.iter_ticks_batched() {
+        for (_tick_idx, tick) in self.circuit.iter_ticks() {
             for batch in tick.iter_gate_batches() {
                 Self::execute_gate_batch(sim, batch.as_gate(), &mut measurements);
             }

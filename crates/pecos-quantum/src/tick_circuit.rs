@@ -60,6 +60,9 @@
 //! circuit3.tick().h(&[0, 1, 2, 3]);       // H on 4 qubits at once
 //! circuit3.tick().cx(&[(0, 1), (2, 3)]);  // 2 CX gates in parallel
 //! circuit3.tick().mz(&[0, 1, 2, 3]);      // Measure all 4 qubits
+//!
+//! assert_eq!(circuit3.gate_count(), 14);       // individual gate applications
+//! assert_eq!(circuit3.gate_batch_count(), 4);  // stored same-type batches
 //! ```
 
 use pecos_core::gate_type::GateType;
@@ -591,6 +594,25 @@ impl<'a> GateInstanceRef<'a> {
     pub fn attrs(self) -> impl Iterator<Item = (&'a String, &'a Attribute)> {
         self.batch.attrs()
     }
+
+    /// Materialize this individual gate as an owned [`Gate`].
+    ///
+    /// The returned gate carries this instance's sliced qubits and measurement
+    /// ids, plus the parent batch's gate type, angles, parameters, and channel
+    /// payload. Batch metadata is intentionally not copied into the `Gate`;
+    /// use [`attrs`](Self::attrs) when metadata needs to travel alongside the
+    /// materialized operation.
+    #[must_use]
+    pub fn to_gate(self) -> Gate {
+        Gate {
+            gate_type: self.gate_type(),
+            qubits: self.qubits.iter().copied().collect::<GateQubits>(),
+            angles: self.batch.gate.angles.clone(),
+            params: self.batch.gate.params.clone(),
+            meas_ids: self.meas_ids.iter().copied().collect::<GateMeasIds>(),
+            channel: self.batch.gate.channel.clone(),
+        }
+    }
 }
 
 impl Tick {
@@ -600,7 +622,7 @@ impl Tick {
         Self::default()
     }
 
-    /// Get the number of gates in this tick.
+    /// Get the number of stored gate batches in this tick.
     ///
     /// This is the number of stored gate batches. Batched commands such as
     /// `cx(&[(0, 1), (2, 3)])` count as one stored batch.
@@ -609,7 +631,11 @@ impl Tick {
         self.gate_batches.len()
     }
 
-    /// Get the number of individual gates in this tick.
+    /// Get the number of individual gate applications in this tick.
+    ///
+    /// Batched commands count by the number of gates they represent:
+    /// `h(&[0, 1, 2])` counts as three H gates, and
+    /// `cx(&[(0, 1), (2, 3)])` counts as two CX gates.
     #[must_use]
     pub fn gate_count(&self) -> usize {
         self.gate_batches.iter().map(Gate::num_gates).sum()
@@ -641,7 +667,7 @@ impl Tick {
         self.gate_batches.is_empty()
     }
 
-    /// Get the full-fidelity gate batches in this tick.
+    /// Get the raw stored gate batches in this tick.
     ///
     /// In `TickCircuit`, a stored [`Gate`] command may represent one or more
     /// individual gates on disjoint qubits. For example,
@@ -649,6 +675,12 @@ impl Tick {
     ///
     /// The batches preserve the complete [`Gate`] payload, including
     /// measurement IDs and typed channel payloads.
+    ///
+    /// Prefer [`iter_gate_batches`](Self::iter_gate_batches) for new read-only
+    /// consumers; it returns [`GateBatchRef`] values that carry the batch index
+    /// and metadata alongside the underlying `Gate`. This raw slice accessor is
+    /// kept for compatibility, storage inspection, and code that intentionally
+    /// needs stable batch indices.
     #[must_use]
     pub fn gate_batches(&self) -> &[Gate] {
         self.gate_batches.as_slice()
@@ -656,9 +688,10 @@ impl Tick {
 
     /// Iterate over full-fidelity borrowed gate-batch views in this tick.
     pub fn iter_gate_batches(&self) -> impl Iterator<Item = GateBatchRef<'_>> {
-        self.gate_batches.iter().enumerate().map(|(idx, gate)| {
-            GateBatchRef::new(idx, gate, self.normalized_gate_attrs(idx))
-        })
+        self.gate_batches
+            .iter()
+            .enumerate()
+            .map(|(idx, gate)| GateBatchRef::new(idx, gate, self.normalized_gate_attrs(idx)))
     }
 
     /// Iterate over individual gates expanded from this tick's stored batches.
@@ -832,6 +865,10 @@ impl Tick {
     /// Set metadata on a gate.
     ///
     /// Returns the gate index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `gate_idx` is not a valid stored batch index in this tick.
     pub fn set_gate_attr(&mut self, gate_idx: usize, key: &str, value: Attribute) -> usize {
         assert!(
             gate_idx < self.gate_batches.len(),
@@ -846,6 +883,10 @@ impl Tick {
     /// Set multiple metadata attributes on a gate at once.
     ///
     /// Returns the gate index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `gate_idx` is not a valid stored batch index in this tick.
     pub fn set_gate_attrs(&mut self, gate_idx: usize, attrs: BTreeMap<String, Attribute>) -> usize {
         assert!(
             gate_idx < self.gate_batches.len(),
@@ -1336,7 +1377,7 @@ impl TickCircuit {
         self.next_meas_record += n;
     }
 
-    /// Get the total number of gates across all ticks.
+    /// Get the total number of individual gate applications across all ticks.
     ///
     /// Batched commands count by individual gate. For example,
     /// `cx(&[(0, 1), (2, 3)])` contributes two gates.
@@ -1396,6 +1437,13 @@ impl TickCircuit {
     }
 
     /// Get a mutable tick by index.
+    ///
+    /// Mutating a tick through this handle must preserve the usual
+    /// `TickCircuit` invariants: each stored [`Gate`] must validate, qubits may
+    /// not overlap within a tick, and gate metadata must stay aligned with the
+    /// stored batches. Prefer `Tick` methods such as
+    /// [`Tick::add_gate`], [`Tick::remove_gate`], and
+    /// [`Tick::replace_gate_batch`] over direct structural rewrites.
     pub fn get_tick_mut(&mut self, idx: usize) -> Option<&mut Tick> {
         self.ticks.get_mut(idx)
     }
@@ -1406,15 +1454,35 @@ impl TickCircuit {
         &self.ticks
     }
 
-    /// Get mutable access to all ticks (slice).
+    /// Get mutable access to all ticks as a slice.
+    ///
+    /// This is an escape hatch for passes that need to mutate existing ticks in
+    /// place. Do not reorder, insert, or remove ticks through this slice. Keep
+    /// each tick's gate/metadata invariants intact by using `Tick` mutation
+    /// methods rather than editing stored batches directly.
     pub fn ticks_mut(&mut self) -> &mut [Tick] {
         &mut self.ticks
     }
 
-    /// Get mutable access to the ticks vector (for structural passes that
-    /// need to insert/remove ticks).
-    pub fn ticks_vec_mut(&mut self) -> &mut Vec<Tick> {
-        &mut self.ticks
+    /// Remove all ticks from this circuit for an internal structural rewrite.
+    ///
+    /// This is crate-private because a partially drained circuit has
+    /// temporarily invalid tick structure. Pair it with
+    /// [`replace_ticks`](Self::replace_ticks) in the same transformation.
+    pub(crate) fn take_ticks(&mut self) -> Vec<Tick> {
+        let ticks = std::mem::take(&mut self.ticks);
+        self.next_tick = 0;
+        ticks
+    }
+
+    /// Replace all ticks after an internal structural rewrite.
+    ///
+    /// Updates `next_tick` to match the replacement length. The caller remains
+    /// responsible for preserving measurement record numbering, annotation
+    /// references, tick ordering, and each tick's gate/metadata alignment.
+    pub(crate) fn replace_ticks(&mut self, ticks: Vec<Tick>) {
+        self.ticks = ticks;
+        self.next_tick = self.ticks.len();
     }
 
     /// Export as a plain ASCII circuit diagram.
@@ -1734,9 +1802,10 @@ impl TickCircuit {
     /// Returns an error if the source circuit already contains channel
     /// operations. Apply either inline channels or a noise model, not both.
     pub fn try_with_noise<N: GateNoiseModel>(&self, noise: &N) -> Result<Self, String> {
-        for (tick_idx, tick) in self.ticks.iter().enumerate() {
-            for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
+        for (tick_idx, tick) in self.iter_ticks() {
+            for gate in tick.iter_gate_batches() {
                 if gate.is_channel() {
+                    let gate_idx = gate.batch_index();
                     return Err(format!(
                         "with_noise cannot apply a noise model to a circuit that already contains channel operations (first channel at tick {tick_idx} gate {gate_idx})"
                     ));
@@ -1754,8 +1823,8 @@ impl TickCircuit {
             out.ticks.push(tick.clone());
 
             let mut noise_ticks = Vec::new();
-            for gate in tick.gate_batches() {
-                for channel in noise.channels_after(gate) {
+            for gate in tick.iter_gate_batches() {
+                for channel in noise.channels_after(gate.as_gate()) {
                     schedule_channel_gate(&mut noise_ticks, Gate::channel(channel));
                 }
             }
@@ -1986,9 +2055,10 @@ impl TickCircuit {
 
     /// Iterate over full-fidelity gate batches with their tick index.
     pub fn iter_gate_batches_with_tick(&self) -> impl Iterator<Item = (usize, GateBatchRef<'_>)> {
-        self.ticks.iter().enumerate().flat_map(|(tick_idx, tick)| {
-            tick.iter_gate_batches().map(move |gate| (tick_idx, gate))
-        })
+        self.ticks
+            .iter()
+            .enumerate()
+            .flat_map(|(tick_idx, tick)| tick.iter_gate_batches().map(move |gate| (tick_idx, gate)))
     }
 
     /// Iterate over individual gates expanded from stored batches.
@@ -2023,16 +2093,6 @@ impl TickCircuit {
     /// ```
     pub fn iter_ticks(&self) -> impl Iterator<Item = (usize, &Tick)> {
         self.ticks.iter().enumerate()
-    }
-
-    /// Iterate over ticks through the batched command view.
-    ///
-    /// This is currently equivalent to [`iter_ticks`](Self::iter_ticks), because
-    /// each [`Tick`] stores full-fidelity gate batches. It exists so
-    /// batched consumers can depend on `TickCircuit` directly instead of a
-    /// converted execution-only circuit representation.
-    pub fn iter_ticks_batched(&self) -> impl Iterator<Item = (usize, &Tick)> {
-        self.iter_ticks()
     }
 
     /// Iterate over gates filtered by gate type.
@@ -3256,71 +3316,18 @@ impl From<&TickCircuit> for DagCircuit {
         let mut meas_record_idx = 0usize;
 
         for (tick_idx, tick) in tc.iter_ticks() {
-            for (gate_idx, gate) in tick.gate_batches().iter().enumerate() {
-                // Split batched gates into individual operations.
-                //
-                // TickCircuit batches gates for efficiency:
-                //   - 1q gates: H([0,1,2]) = one gate with 3 qubits
-                //   - 2q gates: CX([0,1, 2,3]) = one gate with 4 qubits (2 pairs)
-                //
-                // DagCircuit needs individual gates for correct fault analysis.
-                // Without splitting, a 4-qubit MZ generates 2^4-1=15 fault combos
-                // instead of 4 independent X faults. A 12-qubit CX generates
-                // 4^12=16M combos instead of 6×15=90.
-                let is_two_qubit = matches!(
-                    gate.gate_type,
-                    GateType::CX
-                        | GateType::CY
-                        | GateType::CZ
-                        | GateType::SWAP
-                        | GateType::RXX
-                        | GateType::RYY
-                        | GateType::RZZ
-                        | GateType::SXX
-                        | GateType::SXXdg
-                        | GateType::SYY
-                        | GateType::SYYdg
-                        | GateType::SZZ
-                        | GateType::SZZdg
-                );
-                let needs_split = if gate.is_channel() {
-                    false
-                } else if is_two_qubit {
-                    gate.qubits.len() > 2
+            for batch in tick.iter_gate_batches() {
+                // DagCircuit stores individual gate applications. Use the
+                // TickCircuit instance view so qubit/meas-id slicing has one
+                // implementation. Zero-gate metadata batches do not have gate
+                // instances, so keep their stored command as a single DAG node.
+                let split_gates: Vec<Gate> = if batch.gate_count() == 0 {
+                    vec![batch.as_gate().clone()]
                 } else {
-                    gate.qubits.len() > 1
-                };
-
-                let split_gates: Vec<Gate> = if needs_split {
-                    let chunk_size = if is_two_qubit { 2 } else { 1 };
-                    gate.qubits
-                        .chunks(chunk_size)
-                        .filter(|chunk| chunk.len() == chunk_size)
-                        .enumerate()
-                        .map(|(chunk_idx, qs)| {
-                            // For measurement gates, distribute MeasId values
-                            // to the split gates (one per qubit).
-                            let mr = if gate.meas_ids.is_empty() {
-                                GateMeasIds::new()
-                            } else {
-                                let start = chunk_idx * chunk_size;
-                                gate.meas_ids
-                                    .get(start..start + chunk_size)
-                                    .map(|s| s.iter().copied().collect::<GateMeasIds>())
-                                    .unwrap_or_default()
-                            };
-                            Gate {
-                                gate_type: gate.gate_type,
-                                qubits: qs.iter().copied().collect::<GateQubits>(),
-                                angles: gate.angles.clone(),
-                                params: gate.params.clone(),
-                                meas_ids: mr,
-                                channel: gate.channel.clone(),
-                            }
-                        })
+                    batch
+                        .iter_gate_instances()
+                        .map(GateInstanceRef::to_gate)
                         .collect()
-                } else {
-                    vec![gate.clone()]
                 };
 
                 let mut split_nodes = Vec::with_capacity(split_gates.len());
@@ -3346,7 +3353,7 @@ impl From<&TickCircuit> for DagCircuit {
                 }
 
                 // Copy batch-level gate attributes to every split gate.
-                for (key, value) in tick.gate_attrs(gate_idx) {
+                for (key, value) in batch.attrs() {
                     for &node in &split_nodes {
                         dag.set_gate_attr(node, key, value.clone());
                     }
@@ -5272,6 +5279,10 @@ mod tests {
         assert_eq!(instances_with_tick[0].1.gate_type(), GateType::H);
         assert_eq!(instances_with_tick[0].1.qubits(), &[QubitId::from(0)]);
         assert_eq!(
+            instances_with_tick[0].1.to_gate().qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+        assert_eq!(
             instances_with_tick[0].1.get_attr("calibration"),
             Some(&Attribute::String("h-cal".into()))
         );
@@ -5292,15 +5303,15 @@ mod tests {
         assert_eq!(instances_with_tick[6].1.gate_type(), GateType::MZ);
         assert_eq!(instances_with_tick[6].1.qubits(), &[QubitId::from(0)]);
         assert_eq!(instances_with_tick[6].1.meas_ids(), &[MeasId(0)]);
+        assert_eq!(
+            instances_with_tick[6].1.to_gate().meas_ids.as_slice(),
+            &[MeasId(0)]
+        );
         assert_eq!(instances_with_tick[9].1.meas_ids(), &[MeasId(3)]);
 
         // Test iter_ticks
         let ticks: Vec<_> = tc.iter_ticks().collect();
         assert_eq!(ticks.len(), 3);
-
-        let batched_ticks: Vec<_> = tc.iter_ticks_batched().collect();
-        assert_eq!(batched_ticks.len(), 3);
-        assert_eq!(batched_ticks[1].1.gate_batches()[0].gate_type, GateType::CX);
 
         // Test iter_gates_by_type
         let h_gates: Vec<_> = tc.iter_gates_by_type(GateType::H).collect();
@@ -5647,14 +5658,8 @@ mod tests {
         assert_eq!(tick.len(), 2);
         assert_eq!(tick.gate_batches()[0].gate_type, GateType::X);
         assert_eq!(tick.gate_batches()[1].gate_type, GateType::Z);
-        assert_eq!(
-            tick.get_gate_attr(0, "x_attr"),
-            Some(&Attribute::Int(2))
-        );
-        assert_eq!(
-            tick.get_gate_attr(1, "z_attr"),
-            Some(&Attribute::Int(3))
-        );
+        assert_eq!(tick.get_gate_attr(0, "x_attr"), Some(&Attribute::Int(2)));
+        assert_eq!(tick.get_gate_attr(1, "z_attr"), Some(&Attribute::Int(3)));
         assert!(tick.get_gate_attr(0, "h_attr").is_none());
     }
 

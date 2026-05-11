@@ -10,11 +10,11 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! TickCircuit batched layout benchmarks.
+//! `TickCircuit` batched layout benchmarks.
 //!
 //! These benchmarks measure the current batched `TickCircuit` access patterns:
-//! - direct TickCircuit traversal,
-//! - explicit batched TickCircuit traversal, and
+//! - direct `TickCircuit` traversal,
+//! - explicit batched `TickCircuit` traversal, and
 //! - direct vs `CircuitExecutor` simulator execution.
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};

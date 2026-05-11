@@ -449,6 +449,24 @@ mod tests {
     }
 
     #[test]
+    fn pauli_channel_diamond_norm_handles_sparse_three_qubit_channels() {
+        let mut left_probs = BTreeMap::new();
+        left_probs.insert(basis_bitmask(3, 0).unwrap(), 0.7);
+        left_probs.insert(basis_bitmask(3, 1).unwrap(), 0.1);
+        left_probs.insert(basis_bitmask(3, 17).unwrap(), 0.2);
+        let left = PauliChannel::try_new(3, left_probs).unwrap();
+
+        let mut right_probs = BTreeMap::new();
+        right_probs.insert(basis_bitmask(3, 0).unwrap(), 0.6);
+        right_probs.insert(basis_bitmask(3, 17).unwrap(), 0.1);
+        right_probs.insert(basis_bitmask(3, 63).unwrap(), 0.3);
+        let right = PauliChannel::try_new(3, right_probs).unwrap();
+
+        assert_close(pauli_channel_diamond_norm(&left, &right).unwrap(), 0.6);
+        assert_close(pauli_channel_diamond_distance(&left, &right).unwrap(), 0.3);
+    }
+
+    #[test]
     fn pauli_channel_diamond_norm_rejects_qubit_count_mismatch() {
         let left = PauliChannel::one_qubit(0.1, 0.0, 0.0).unwrap();
         let mut right_probs = BTreeMap::new();

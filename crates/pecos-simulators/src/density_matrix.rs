@@ -1506,6 +1506,41 @@ mod tests {
     }
 
     #[test]
+    fn tensor_channel_expr_applies_to_noncontiguous_density_matrix_qubits() {
+        let mut dm = DensityMatrix::new(3);
+        let channel = ChannelExpr::Tensor(vec![
+            pecos_core::channel::BitFlip(1.0, 0),
+            pecos_core::channel::BitFlip(1.0, 2),
+        ]);
+
+        dm.apply_channel_expr(&channel).unwrap();
+
+        assert!(dm.probability(0) < 1e-10);
+        assert!((dm.probability(5) - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn out_of_range_channel_expr_is_rejected_without_mutating_state() {
+        let mut dm = DensityMatrix::new(2);
+        dm.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
+        let before = dm.get_flattened_density_matrix();
+
+        let err = dm
+            .apply_channel_expr(&pecos_core::channel::BitFlip(0.5, 2))
+            .expect_err("channel should not apply outside the simulator range");
+
+        assert!(matches!(
+            err,
+            ChannelError::QubitOutOfRange {
+                num_qubits: 2,
+                qubit: 2
+            }
+        ));
+        let after = dm.get_flattened_density_matrix();
+        assert_eq!(after, before);
+    }
+
+    #[test]
     fn state_vector_converts_to_density_matrix_and_back() {
         let mut state = StateVecSoA::new(2);
         state.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);

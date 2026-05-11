@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import pytest
-from pecos_rslib import Pauli, PauliString, X, Z
+from pecos_rslib import Pauli, PauliString, X, Y, Z
 
 
 def test_pauli_string_from_str_accepts_dense_and_sparse_formats() -> None:
@@ -12,6 +12,36 @@ def test_pauli_string_from_str_accepts_dense_and_sparse_formats() -> None:
     assert PauliString.from_str("XXIZ") == expected
     assert PauliString.from_str("X0 X1 Z3") == expected
     assert PauliString.from_str("X 0 X 1 Z 3") == expected
+
+
+def test_pauli_string_common_representations_are_interchangeable_and_hash_equal() -> None:
+    from_constructors = X(0) & Y(2) & Z(5)
+    from_class_constructors = PauliString.X(0) & PauliString.Y(2) & PauliString.Z(5)
+    from_sparse = PauliString.from_str("X0 Y2 Z5")
+    from_explicit_sparse = PauliString.from_sparse_str("X0 Y2 Z5")
+    from_dense = PauliString.from_str("XIYIIZ")
+    from_explicit_dense = PauliString.from_dense_str("XIYIIZ")
+    from_tuples = PauliString([(Pauli.Z, 5), (Pauli.X, 0), (Pauli.Y, 2)])
+
+    forms = [
+        from_constructors,
+        from_class_constructors,
+        from_sparse,
+        from_explicit_sparse,
+        from_dense,
+        from_explicit_dense,
+        from_tuples,
+    ]
+    assert all(form == from_constructors for form in forms)
+    assert len({hash(form) for form in forms}) == 1
+    assert {form: idx for idx, form in enumerate(forms)} == {from_constructors: len(forms) - 1}
+
+
+def test_pauli_string_tensor_result_is_pauli_string() -> None:
+    tensor = X(0) & Y(3)
+
+    assert isinstance(tensor, PauliString)
+    assert tensor.get_paulis() == [(Pauli.X, 0), (Pauli.Y, 3)]
 
 
 def test_pauli_string_explicit_from_dense_and_sparse_formats() -> None:
@@ -54,6 +84,37 @@ def test_pauli_string_tuple_constructor_rejects_duplicate_qubits() -> None:
         PauliString([(Pauli.X, 0), (Pauli.Z, 0)])
 
     assert PauliString([(Pauli.I, 0), (Pauli.X, 0)]) == X(0)
+
+
+def test_pauli_string_tensor_rejects_overlapping_qubits() -> None:
+    with pytest.raises(ValueError, match="tensor product requires disjoint Pauli support"):
+        _ = X(0) & Z(0)
+
+    with pytest.raises(ValueError, match=r"overlapping qubits: \[2\]"):
+        _ = (X(0) & Y(2)) & Z(2)
+
+
+def test_pauli_string_composition_allows_same_qubit() -> None:
+    composed = X(0) * Z(0)
+
+    assert composed.get_paulis() == [(Pauli.Y, 0)]
+    assert composed.get_phase() == 3
+
+
+def test_pauli_string_tensor_result_is_hashable() -> None:
+    tensor = X(0) & Y(3)
+
+    assert {tensor: "xy"}[PauliString.from_sparse_str("X0 Y3")] == "xy"
+
+
+def test_pauli_string_tensor_preserves_phase_through_string_roundtrip() -> None:
+    tensor = -X(0) & Z(1)
+
+    assert tensor.get_phase() == 2
+    assert tensor.to_sparse_str() == "-X0 Z1"
+    assert tensor.to_dense_str() == "-XZ"
+    assert PauliString.from_sparse_str(tensor.to_sparse_str()) == tensor
+    assert PauliString.from_dense_str(tensor.to_dense_str()) == tensor
 
 
 def test_quantum_namespace_exports_pauli_constructors() -> None:

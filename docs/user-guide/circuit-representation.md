@@ -400,6 +400,7 @@ A time-sliced circuit representation where gates are organized into discrete tim
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
+    use pecos::core::Gate;
     use pecos::quantum::TickCircuit;
 
     let mut circuit = TickCircuit::new();
@@ -445,7 +446,9 @@ TickCircuit prevents scheduling conflicting gates in the same tick:
     // tick.cx(&[(0, 1)]);
 
     // Use try_add_gate for fallible operations
-    if let Err(e) = tick.try_add_gate(Gate::cx(&[(0, 1)])) {
+    if let Err(pecos::quantum::TickGateError::QubitConflict(e)) =
+        tick.try_add_gate(Gate::cx(&[(0, 1)]))
+    {
         println!("Conflict on qubits: {:?}", e.conflicting_qubits);
     }
     ```
@@ -651,7 +654,7 @@ A directed acyclic graph with topological ordering and cycle prevention:
 | `cx(pairs)`, `szz(pairs)`, `rzz(theta, pairs)` | Two-qubit gates |
 | `mz(qubits)`, `pz(qubits)` | Measurement and preparation |
 | `meta(key, value)` | Attach metadata to last gate |
-| `gate_count()`, `depth()`, `width()` | Circuit metrics |
+| `gate_count()`, `gate_node_count()`, `depth()`, `width()` | Circuit metrics |
 | `qubits()` | List of qubits used |
 | `topological_order()` | Gates in dependency order |
 | `layers()` | Iterator over parallel gate layers |
@@ -665,6 +668,7 @@ A directed acyclic graph with topological ordering and cycle prevention:
 | `tick()` | Start a new time step |
 | `num_ticks()` | Number of time steps |
 | `gate_count()` | Total gates across all ticks |
+| `gate_batch_count()` | Total compatible gate batches across all ticks |
 | `set_meta(key, value)` | Circuit-level metadata |
 
 ### DAG Methods

@@ -5,7 +5,7 @@
 //!
 //! # Design Goals
 //!
-//! 1. **Batched gate application**: Gates grouped by type within each tick for batch execution
+//! 1. **Batched gate execution**: Gates grouped by type within each tick for batch execution
 //! 2. **Cache-friendly memory layout**: Qubits for same-type gates stored contiguously
 //! 3. **O(1) lookups**: Pre-computed indexes for qubit-to-gate and tick-to-gate queries
 //! 4. **Efficient simulation**: Direct batch calls to simulator without per-gate dispatch
@@ -85,7 +85,7 @@
 
 use crate::Attribute;
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, Gate, QubitId};
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
@@ -138,15 +138,11 @@ impl GateBatch {
         &self.angles
     }
 
-    /// Returns the number of gate instances in this batch.
+    /// Returns the number of gates in this batch.
     #[inline]
     #[must_use]
     pub fn gate_count(&self) -> usize {
-        let arity = self.gate_type.quantum_arity();
-        self.qubits
-            .len()
-            .checked_div(arity)
-            .unwrap_or(self.qubits.len())
+        self.gate_type.num_gates(self.qubits.len())
     }
 
     /// Returns true if the batch is empty.
@@ -434,6 +430,30 @@ impl GateStorage {
     #[must_use]
     pub fn active_count(&self) -> usize {
         self.occupied.iter().filter(|&&o| o).count()
+    }
+
+    /// Returns the number of active gates.
+    #[must_use]
+    pub fn active_gate_count(&self) -> usize {
+        (0..self.types.len())
+            .filter(|&idx| self.occupied[idx])
+            .map(|idx| {
+                let (qubit_start, qubit_end) = self.qubit_spans[idx];
+                self.types[idx].num_gates((qubit_end as usize).saturating_sub(qubit_start as usize))
+            })
+            .sum()
+    }
+
+    fn gate_from_index(&self, idx: usize) -> Gate {
+        let (qubit_start, qubit_end) = self.qubit_spans[idx];
+        let (angle_start, angle_end) = self.angle_spans[idx];
+        let (param_start, param_end) = self.param_spans[idx];
+        Gate::new(
+            self.types[idx],
+            self.angles[angle_start as usize..angle_end as usize].to_vec(),
+            self.params[param_start as usize..param_end as usize].to_vec(),
+            self.qubits[qubit_start as usize..qubit_end as usize].to_vec(),
+        )
     }
 
     /// Adds a gate and returns its ID.
@@ -860,6 +880,13 @@ impl MetadataStorage {
     }
 }
 
+fn normalized_attrs(
+    gate_attrs: &BTreeMap<GateId, BTreeMap<String, Attribute>>,
+    gate_id: GateId,
+) -> Option<&BTreeMap<String, Attribute>> {
+    gate_attrs.get(&gate_id).filter(|attrs| !attrs.is_empty())
+}
+
 // ============================================================================
 // TickCircuitSoA
 // ============================================================================
@@ -907,7 +934,46 @@ impl TickCircuitSoA {
     #[inline]
     #[must_use]
     pub fn gate_count(&self) -> usize {
-        self.storage.active_count()
+        self.storage.active_gate_count()
+    }
+
+    /// Returns the number of compatible gate batches across all ticks.
+    ///
+    /// This is a representation-level batch count: gates share a batch only
+    /// when they are identical except for disjoint qubits and have equivalent
+    /// per-gate metadata.
+    #[must_use]
+    pub fn gate_batch_count(&self) -> usize {
+        let mut total = 0;
+
+        for tick in 0..self.indexes.num_ticks {
+            let mut representative_indices: Vec<u32> = Vec::new();
+
+            'gate: for &gate_idx in self.indexes.gates_in_tick(tick) {
+                if !self.storage.is_occupied(gate_idx as usize) {
+                    continue;
+                }
+                let gate = self.storage.gate_from_index(gate_idx as usize);
+                let gate_id = GateId::new(gate_idx, self.storage.generations[gate_idx as usize]);
+
+                for &rep_idx in &representative_indices {
+                    let rep_gate = self.storage.gate_from_index(rep_idx as usize);
+                    let rep_id = GateId::new(rep_idx, self.storage.generations[rep_idx as usize]);
+                    if normalized_attrs(&self.metadata.gate_attrs, rep_id)
+                        == normalized_attrs(&self.metadata.gate_attrs, gate_id)
+                        && rep_gate.can_batch_with(&gate)
+                    {
+                        continue 'gate;
+                    }
+                }
+
+                representative_indices.push(gate_idx);
+            }
+
+            total += representative_indices.len();
+        }
+
+        total
     }
 
     /// Returns the maximum qubit index.
@@ -1246,8 +1312,9 @@ impl From<&crate::TickCircuit> for TickCircuitSoA {
                     builder
                         .storage
                         .add_gate(gate.gate_type, tick_num, &qubits, &angles, &params);
-                builder.indexes.register_gate(gate_id, &qubits);
-                builder.indexes.num_ticks = builder.indexes.num_ticks.max(tick_num as usize + 1);
+                builder
+                    .indexes
+                    .register_gate_raw(gate_id.index, tick_num, &qubits);
 
                 // Copy gate attributes
                 for (key, value) in tick_data.gate_attrs(gate_idx) {
@@ -1289,7 +1356,7 @@ mod tests {
         let circuit = builder.build();
 
         assert_eq!(circuit.num_ticks(), 3);
-        assert_eq!(circuit.gate_count(), 4); // pz, h, cx, mz
+        assert_eq!(circuit.gate_count(), 6); // 2 PZ, 1 H, 1 CX, 2 MZ
     }
 
     #[test]
@@ -1421,6 +1488,8 @@ mod tests {
 
         // Check tick count
         assert_eq!(circuit.num_ticks_batched(), 4);
+        assert_eq!(circuit.gate_count(), 14);
+        assert_eq!(circuit.gate_batch_count(), 5);
 
         // Check tick 0: preps batched together
         let tick0 = circuit.tick_batched(0).unwrap();
@@ -1450,6 +1519,33 @@ mod tests {
         let mz_batch = tick3.batch_for_type(GateType::MZ).unwrap();
         assert_eq!(mz_batch.qubits().len(), 4);
         assert_eq!(mz_batch.gate_count(), 4);
+    }
+
+    #[test]
+    fn test_gate_batch_count_respects_metadata() {
+        let mut same = crate::TickCircuit::new();
+        {
+            let mut tick = same.tick();
+            tick.h(&[0])
+                .meta("calibration", Attribute::String("a".into()));
+            tick.h(&[1])
+                .meta("calibration", Attribute::String("a".into()));
+        }
+        let same_soa = TickCircuitSoA::from(&same);
+        assert_eq!(same_soa.gate_count(), 2);
+        assert_eq!(same_soa.gate_batch_count(), 1);
+
+        let mut different = crate::TickCircuit::new();
+        {
+            let mut tick = different.tick();
+            tick.h(&[0])
+                .meta("calibration", Attribute::String("a".into()));
+            tick.h(&[1])
+                .meta("calibration", Attribute::String("b".into()));
+        }
+        let different_soa = TickCircuitSoA::from(&different);
+        assert_eq!(different_soa.gate_count(), 2);
+        assert_eq!(different_soa.gate_batch_count(), 2);
     }
 
     #[test]

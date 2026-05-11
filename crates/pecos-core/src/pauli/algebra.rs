@@ -45,6 +45,7 @@
 //! let ps = -PauliString::x(0);                            // -X
 //! ```
 
+use crate::qubit_support::overlapping_qubits;
 use crate::{Pauli, PauliString, Phase, QuarterPhase, QubitId};
 use std::ops::{BitAnd, Mul, Neg};
 
@@ -80,10 +81,16 @@ impl BitAnd for PauliString {
     type Output = PauliString;
 
     fn bitand(self, rhs: PauliString) -> PauliString {
+        let overlap = overlapping_qubits(self.qubits(), rhs.qubits());
+        assert!(
+            overlap.is_empty(),
+            "tensor product requires disjoint Pauli support; overlapping qubits: {overlap:?}"
+        );
+
         // Combine phases
         let new_phase = self.phase().multiply(&rhs.phase());
 
-        // Combine paulis (assuming no overlap - tensor product)
+        // Combine paulis.
         let mut paulis: Vec<(Pauli, QubitId)> = self.iter_pairs().collect();
         paulis.extend(rhs.iter_pairs());
 
@@ -287,6 +294,12 @@ mod tests {
         assert_eq!(ps.get(0), Pauli::X);
         assert_eq!(ps.get(1), Pauli::Z);
         assert_eq!(ps.weight(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint Pauli support")]
+    fn test_tensor_product_rejects_overlapping_qubits() {
+        let _ = PauliString::x(0) & PauliString::z(0);
     }
 
     #[test]

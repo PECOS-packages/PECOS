@@ -494,10 +494,39 @@ impl PauliString {
     // ---- Tensor product operator (&) ----
 
     /// Tensor product: `PauliString.X(0) & PauliString.Z(1)`
-    fn __and__(&self, other: &PauliString) -> Self {
-        PauliString {
-            inner: self.inner.clone() & other.inner.clone(),
+    fn __and__(&self, other: &PauliString) -> PyResult<Self> {
+        let mut lhs_qubits = self.inner.qubits();
+        lhs_qubits.sort_unstable();
+        lhs_qubits.dedup();
+
+        let mut rhs_qubits = other.inner.qubits();
+        rhs_qubits.sort_unstable();
+        rhs_qubits.dedup();
+
+        let mut overlap = Vec::new();
+        let mut lhs_idx = 0;
+        let mut rhs_idx = 0;
+        while lhs_idx < lhs_qubits.len() && rhs_idx < rhs_qubits.len() {
+            match lhs_qubits[lhs_idx].cmp(&rhs_qubits[rhs_idx]) {
+                std::cmp::Ordering::Less => lhs_idx += 1,
+                std::cmp::Ordering::Greater => rhs_idx += 1,
+                std::cmp::Ordering::Equal => {
+                    overlap.push(lhs_qubits[lhs_idx]);
+                    lhs_idx += 1;
+                    rhs_idx += 1;
+                }
+            }
         }
+
+        if !overlap.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "tensor product requires disjoint Pauli support; overlapping qubits: {overlap:?}"
+            )));
+        }
+
+        Ok(PauliString {
+            inner: self.inner.clone() & other.inner.clone(),
+        })
     }
 
     /// Pauli multiplication: `PauliString.X(0) * PauliString.Y(0)`

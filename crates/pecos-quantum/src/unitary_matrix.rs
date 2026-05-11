@@ -1265,6 +1265,24 @@ pub fn to_matrix_with_size(op: &UnitaryRep, num_qubits: usize) -> UnitaryMatrix 
     UnitaryMatrix(to_matrix_with_size_impl(op, num_qubits))
 }
 
+fn assert_tensor_parts_have_disjoint_support(parts: &[UnitaryRep]) {
+    let mut used = std::collections::BTreeSet::new();
+    for part in parts {
+        let mut overlap = Vec::new();
+        for q in part.qubits() {
+            if used.contains(&q) {
+                overlap.push(q);
+            } else {
+                used.insert(q);
+            }
+        }
+        assert!(
+            overlap.is_empty(),
+            "tensor product requires disjoint unitary support; overlapping qubits: {overlap:?}"
+        );
+    }
+}
+
 /// Internal implementation that returns raw `DMatrix` for recursive use.
 fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Complex64> {
     let dim = 1 << num_qubits; // 2^num_qubits
@@ -1306,6 +1324,8 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
         }
 
         UnitaryRep::Tensor(parts) => {
+            assert_tensor_parts_have_disjoint_support(parts);
+
             // Start with identity, combine each part
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
@@ -2138,6 +2158,40 @@ mod tests {
         let z_embedded = to_matrix_with_size(&Z(1), 2);
         let expected = &x_embedded * &z_embedded;
         assert!(matrices_equiv_up_to_phase(&mat, &expected, 1e-10));
+    }
+
+    fn assert_tensor_matrix_matches_embedded_product(
+        lhs: &pecos_core::unitary_rep::UnitaryRep,
+        rhs: &pecos_core::unitary_rep::UnitaryRep,
+        num_qubits: usize,
+    ) {
+        let tensor = lhs.clone() & rhs.clone();
+        let tensor_matrix = to_matrix_with_size(&tensor, num_qubits);
+        let lhs_matrix = to_matrix_with_size(lhs, num_qubits);
+        let rhs_matrix = to_matrix_with_size(rhs, num_qubits);
+        let expected = &lhs_matrix * &rhs_matrix;
+
+        assert!(
+            matrices_equiv_up_to_phase(&tensor_matrix, &expected, 1e-10),
+            "{tensor:?} matrix did not match embedded product"
+        );
+    }
+
+    #[test]
+    fn test_disjoint_tensor_matrix_semantics_across_operator_levels() {
+        assert_tensor_matrix_matches_embedded_product(&X(0), &Z(1), 2);
+        assert_tensor_matrix_matches_embedded_product(&H(0), &SZ(1), 2);
+        assert_tensor_matrix_matches_embedded_product(&H(0), &T(1), 2);
+        assert_tensor_matrix_matches_embedded_product(&CX(0, 2), &T(1), 3);
+        assert_tensor_matrix_matches_embedded_product(&H(3), &CX(0, 2), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint unitary support")]
+    fn test_to_matrix_rejects_invalid_overlapping_tensor_node() {
+        let invalid = pecos_core::unitary_rep::UnitaryRep::Tensor(vec![X(0), Z(0)]);
+
+        let _ = to_matrix(&invalid);
     }
 
     #[test]

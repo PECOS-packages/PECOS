@@ -251,10 +251,10 @@ impl<'a> InfluenceBuilder<'a> {
 
     /// Run symbolic simulation to get measurement correlations.
     fn run_symbolic_simulation(&self) -> MeasurementInfo {
+        let topo_order = self.dag.topological_order();
+
         // Determine number of qubits from the circuit
-        let max_qubit = self
-            .dag
-            .topological_order()
+        let max_qubit = topo_order
             .iter()
             .filter_map(|&node| self.dag.gate(node))
             .flat_map(|op| op.qubits.iter())
@@ -266,11 +266,12 @@ impl<'a> InfluenceBuilder<'a> {
         let mut sim = SymbolicSparseStab::new(num_qubits);
 
         // Track node -> measurement index mapping
-        let mut node_to_meas_idx: Vec<Option<usize>> = vec![None; self.dag.gate_count() + 1];
+        let node_count = topo_order.iter().copied().max().map_or(0, |node| node + 1);
+        let mut node_to_meas_idx: Vec<Option<usize>> = vec![None; node_count];
         let mut meas_idx = 0;
 
         // Execute circuit symbolically
-        for &node in &self.dag.topological_order() {
+        for &node in &topo_order {
             if let Some(op) = self.dag.gate(node) {
                 let qubits: Vec<usize> = op.qubits.iter().map(pecos_core::QubitId::index).collect();
 

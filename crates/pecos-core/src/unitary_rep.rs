@@ -52,6 +52,7 @@
 use crate::gate_type::GateType;
 use crate::pauli::PauliOperator;
 use crate::phase::Phase;
+use crate::qubit_support::{assert_distinct_qubits, duplicate_qubits, overlapping_qubits};
 use crate::{Angle64, Pauli, PauliString, QuarterPhase, QubitId};
 use smallvec::SmallVec;
 use std::ops::{BitAnd, Mul, Neg};
@@ -487,11 +488,11 @@ impl Qubits {
     where
         F: Fn(usize) -> UnitaryRep,
     {
-        match self.0.len() {
-            0 => UnitaryRep::Pauli(PauliString::default()), // Identity
-            1 => gate_fn(self.0[0].0),
-            _ => UnitaryRep::Tensor(self.0.iter().map(|q| gate_fn(q.0)).collect()),
-        }
+        self.0
+            .iter()
+            .map(|q| gate_fn(q.0))
+            .reduce(|lhs, rhs| lhs & rhs)
+            .unwrap_or_else(|| UnitaryRep::Pauli(PauliString::default()))
     }
 }
 
@@ -594,11 +595,11 @@ impl QubitPairs {
     where
         F: Fn(usize, usize) -> UnitaryRep,
     {
-        match self.0.len() {
-            0 => UnitaryRep::Pauli(PauliString::default()), // Identity
-            1 => gate_fn(self.0[0].0.0, self.0[0].1.0),
-            _ => UnitaryRep::Tensor(self.0.iter().map(|(q0, q1)| gate_fn(q0.0, q1.0)).collect()),
-        }
+        self.0
+            .iter()
+            .map(|(q0, q1)| gate_fn(q0.0, q1.0))
+            .reduce(|lhs, rhs| lhs & rhs)
+            .unwrap_or_else(|| UnitaryRep::Pauli(PauliString::default()))
     }
 }
 
@@ -756,6 +757,22 @@ fn parse_qubits(tokens: &[&str]) -> Result<Vec<usize>, ParseUnitaryRepError> {
         .collect()
 }
 
+fn require_distinct_parsed_qubits(
+    context: &str,
+    qubits: &[usize],
+) -> Result<(), ParseUnitaryRepError> {
+    let duplicates = duplicate_qubits(qubits.iter().copied());
+    if duplicates.is_empty() {
+        Ok(())
+    } else {
+        Err(ParseUnitaryRepError {
+            message: format!(
+                "{context} requires distinct qubits; duplicated qubits: {duplicates:?}"
+            ),
+        })
+    }
+}
+
 impl FromStr for UnitaryRep {
     type Err = ParseUnitaryRepError;
 
@@ -840,6 +857,9 @@ impl FromStr for UnitaryRep {
                         ),
                     });
                 }
+                if expected > 1 {
+                    require_distinct_parsed_qubits(rot_name, &qubits)?;
+                }
                 return Ok(UnitaryRep::rotation(
                     rot_type,
                     angle,
@@ -876,6 +896,9 @@ impl FromStr for UnitaryRep {
                             qubits.len()
                         ),
                     });
+                }
+                if expected > 1 {
+                    require_distinct_parsed_qubits(gate_name, &qubits)?;
                 }
                 Ok(UnitaryRep::gate(gate_type, SmallVec::from_vec(qubits)))
             }
@@ -942,6 +965,7 @@ impl FromStr for UnitaryRep {
                         message: format!("{gate_name} requires 2 qubits, got {}", qubits.len()),
                     });
                 }
+                require_distinct_parsed_qubits(gate_name, &qubits)?;
                 Ok(UnitaryRep::gate(GateType::CX, SmallVec::from_vec(qubits)))
             }
             "CY" => {
@@ -951,6 +975,7 @@ impl FromStr for UnitaryRep {
                         message: format!("CY requires 2 qubits, got {}", qubits.len()),
                     });
                 }
+                require_distinct_parsed_qubits("CY", &qubits)?;
                 Ok(UnitaryRep::gate(GateType::CY, SmallVec::from_vec(qubits)))
             }
             "CZ" => {
@@ -960,6 +985,7 @@ impl FromStr for UnitaryRep {
                         message: format!("CZ requires 2 qubits, got {}", qubits.len()),
                     });
                 }
+                require_distinct_parsed_qubits("CZ", &qubits)?;
                 Ok(UnitaryRep::gate(GateType::CZ, SmallVec::from_vec(qubits)))
             }
             "SWAP" => {
@@ -969,6 +995,7 @@ impl FromStr for UnitaryRep {
                         message: format!("SWAP requires 2 qubits, got {}", qubits.len()),
                     });
                 }
+                require_distinct_parsed_qubits("SWAP", &qubits)?;
                 Ok(UnitaryRep::gate(GateType::SWAP, SmallVec::from_vec(qubits)))
             }
 
@@ -980,6 +1007,7 @@ impl FromStr for UnitaryRep {
                         message: format!("{gate_name} requires 3 qubits, got {}", qubits.len()),
                     });
                 }
+                require_distinct_parsed_qubits(gate_name, &qubits)?;
                 Ok(UnitaryRep::gate(GateType::CCX, SmallVec::from_vec(qubits)))
             }
 
@@ -994,25 +1022,61 @@ impl FromStr for UnitaryRep {
 
 impl UnitaryRep {
     /// Creates a rotation gate expression.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `qubits` does not match the rotation arity, or if a
+    /// multi-qubit rotation repeats a qubit.
     #[must_use]
     pub fn rotation(
         rotation_type: RotationType,
         angle: Angle64,
         qubits: impl Into<SmallVec<[usize; 3]>>,
     ) -> Self {
+        let qubits = qubits.into();
+        let expected = rotation_type.num_qubits();
+        assert_eq!(
+            qubits.len(),
+            expected,
+            "{:?} requires {expected} qubit(s), got {}",
+            rotation_type.to_gate_type(),
+            qubits.len()
+        );
+        if expected > 1 {
+            assert_distinct_qubits(
+                &format!("{:?}", rotation_type.to_gate_type()),
+                qubits.iter().copied(),
+            );
+        }
         Self::Gate(
             Unitary::Rotation {
                 rotation_type,
                 angle,
             },
-            qubits.into(),
+            qubits,
         )
     }
 
     /// Creates a fixed gate expression.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `qubits` does not match the gate arity, or if a
+    /// multi-qubit gate repeats a qubit.
     #[must_use]
     pub fn gate(gate_type: GateType, qubits: impl Into<SmallVec<[usize; 3]>>) -> Self {
-        Self::Gate(Unitary::Named(gate_type), qubits.into())
+        let qubits = qubits.into();
+        let expected = gate_type.quantum_arity();
+        assert_eq!(
+            qubits.len(),
+            expected,
+            "{gate_type:?} requires {expected} qubit(s), got {}",
+            qubits.len()
+        );
+        if expected > 1 {
+            assert_distinct_qubits(&format!("{gate_type:?}"), qubits.iter().copied());
+        }
+        Self::Gate(Unitary::Named(gate_type), qubits)
     }
 
     /// Returns the adjoint (Hermitian conjugate) of this expression.
@@ -1402,10 +1466,10 @@ impl UnitaryRep {
                 let mut result = PauliString::new();
                 for part in parts {
                     let ps = part.try_to_pauli_string()?;
-                    // Merge: combine the Pauli operators
-                    // For disjoint qubits, this is just concatenation
-                    // For overlapping qubits, we multiply the Paulis
-                    result = result * ps;
+                    if !overlapping_qubits(result.qubits(), ps.qubits()).is_empty() {
+                        return None;
+                    }
+                    result = result & ps;
                 }
                 Some(result)
             }
@@ -2947,11 +3011,10 @@ pub fn RZs(angle: Angle64, qubits: impl Into<Qubits>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::rotation(
-        RotationType::RXX,
-        angle,
-        smallvec::smallvec![q0.into().0, q1.into().0],
-    )
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("RXX", [q0.0, q1.0]);
+    UnitaryRep::rotation(RotationType::RXX, angle, smallvec::smallvec![q0.0, q1.0])
 }
 
 /// RXX rotations on multiple qubit pairs.
@@ -2960,9 +3023,7 @@ pub fn RXX(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Un
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|q0, q1| UnitaryRep::rotation(RotationType::RXX, angle, smallvec::smallvec![q0, q1]))
+    pairs.into().apply(|q0, q1| RXX(angle, q0, q1))
 }
 
 /// Two-qubit YY rotation by the given angle.
@@ -2971,11 +3032,10 @@ pub fn RXXs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::rotation(
-        RotationType::RYY,
-        angle,
-        smallvec::smallvec![q0.into().0, q1.into().0],
-    )
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("RYY", [q0.0, q1.0]);
+    UnitaryRep::rotation(RotationType::RYY, angle, smallvec::smallvec![q0.0, q1.0])
 }
 
 /// RYY rotations on multiple qubit pairs.
@@ -2984,9 +3044,7 @@ pub fn RYY(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Un
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|q0, q1| UnitaryRep::rotation(RotationType::RYY, angle, smallvec::smallvec![q0, q1]))
+    pairs.into().apply(|q0, q1| RYY(angle, q0, q1))
 }
 
 /// Two-qubit ZZ rotation by the given angle.
@@ -2995,11 +3053,10 @@ pub fn RYYs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::rotation(
-        RotationType::RZZ,
-        angle,
-        smallvec::smallvec![q0.into().0, q1.into().0],
-    )
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("RZZ", [q0.0, q1.0]);
+    UnitaryRep::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0.0, q1.0])
 }
 
 /// RZZ rotations on multiple qubit pairs.
@@ -3008,9 +3065,7 @@ pub fn RZZ(angle: Angle64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Un
 #[must_use]
 #[allow(non_snake_case)]
 pub fn RZZs(angle: Angle64, pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|q0, q1| UnitaryRep::rotation(RotationType::RZZ, angle, smallvec::smallvec![q0, q1]))
+    pairs.into().apply(|q0, q1| RZZ(angle, q0, q1))
 }
 
 // --- Gate constructors - Named single-qubit Cliffords ---
@@ -3194,10 +3249,10 @@ pub fn Hs(qubits: impl Into<Qubits>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::gate(
-        GateType::CX,
-        smallvec::smallvec![control.into().0, target.into().0],
-    )
+    let control = control.into();
+    let target = target.into();
+    assert_distinct_qubits("CX", [control.0, target.0]);
+    UnitaryRep::gate(GateType::CX, smallvec::smallvec![control.0, target.0])
 }
 
 /// CX gates on multiple qubit pairs.
@@ -3206,9 +3261,7 @@ pub fn CX(control: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CXs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|ctrl, tgt| UnitaryRep::gate(GateType::CX, smallvec::smallvec![ctrl, tgt]))
+    pairs.into().apply(CX)
 }
 
 /// Controlled-Y gate.
@@ -3217,10 +3270,10 @@ pub fn CXs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::gate(
-        GateType::CY,
-        smallvec::smallvec![control.into().0, target.into().0],
-    )
+    let control = control.into();
+    let target = target.into();
+    assert_distinct_qubits("CY", [control.0, target.0]);
+    UnitaryRep::gate(GateType::CY, smallvec::smallvec![control.0, target.0])
 }
 
 /// CY gates on multiple qubit pairs.
@@ -3229,9 +3282,7 @@ pub fn CY(control: impl Into<QubitId>, target: impl Into<QubitId>) -> UnitaryRep
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CYs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|ctrl, tgt| UnitaryRep::gate(GateType::CY, smallvec::smallvec![ctrl, tgt]))
+    pairs.into().apply(CY)
 }
 
 /// Controlled-Z gate.
@@ -3240,7 +3291,10 @@ pub fn CYs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::gate(GateType::CZ, smallvec::smallvec![q0.into().0, q1.into().0])
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("CZ", [q0.0, q1.0]);
+    UnitaryRep::gate(GateType::CZ, smallvec::smallvec![q0.0, q1.0])
 }
 
 /// CZ gates on multiple qubit pairs.
@@ -3249,9 +3303,7 @@ pub fn CZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn CZs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|q0, q1| UnitaryRep::gate(GateType::CZ, smallvec::smallvec![q0, q1]))
+    pairs.into().apply(CZ)
 }
 
 /// SWAP gate.
@@ -3260,10 +3312,10 @@ pub fn CZs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
-    UnitaryRep::gate(
-        GateType::SWAP,
-        smallvec::smallvec![q0.into().0, q1.into().0],
-    )
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("SWAP", [q0.0, q1.0]);
+    UnitaryRep::gate(GateType::SWAP, smallvec::smallvec![q0.0, q1.0])
 }
 
 /// SWAP gates on multiple qubit pairs.
@@ -3272,9 +3324,7 @@ pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SWAPs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs
-        .into()
-        .apply(|q0, q1| UnitaryRep::gate(GateType::SWAP, smallvec::smallvec![q0, q1]))
+    pairs.into().apply(SWAP)
 }
 
 /// SZZ gate: RZZ(π/2)
@@ -3283,10 +3333,13 @@ pub fn SWAPs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("SZZ", [q0.0, q1.0]);
     UnitaryRep::rotation(
         RotationType::RZZ,
         Angle64::QUARTER_TURN,
-        smallvec::smallvec![q0.into().0, q1.into().0],
+        smallvec::smallvec![q0.0, q1.0],
     )
 }
 
@@ -3296,13 +3349,7 @@ pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SZZs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
-    pairs.into().apply(|q0, q1| {
-        UnitaryRep::rotation(
-            RotationType::RZZ,
-            Angle64::QUARTER_TURN,
-            smallvec::smallvec![q0, q1],
-        )
-    })
+    pairs.into().apply(SZZ)
 }
 
 // --- Gate constructors - Three-qubit gates ---
@@ -3315,19 +3362,25 @@ pub fn CCX(
     c1: impl Into<QubitId>,
     target: impl Into<QubitId>,
 ) -> UnitaryRep {
-    UnitaryRep::gate(
-        GateType::CCX,
-        smallvec::smallvec![c0.into().0, c1.into().0, target.into().0],
-    )
+    let c0 = c0.into();
+    let c1 = c1.into();
+    let target = target.into();
+    assert_distinct_qubits("CCX", [c0.0, c1.0, target.0]);
+    UnitaryRep::gate(GateType::CCX, smallvec::smallvec![c0.0, c1.0, target.0])
 }
 
 // --- UnitaryRep implementations ---
 
-// Tensor product: &
 impl BitAnd for UnitaryRep {
     type Output = UnitaryRep;
 
     fn bitand(self, rhs: UnitaryRep) -> UnitaryRep {
+        let overlap = overlapping_qubits(self.qubits(), rhs.qubits());
+        assert!(
+            overlap.is_empty(),
+            "tensor product requires disjoint unitary support; overlapping qubits: {overlap:?}"
+        );
+
         match (self, rhs) {
             // Pauli & Pauli: use PauliString tensor product
             (UnitaryRep::Pauli(a), UnitaryRep::Pauli(b)) => UnitaryRep::Pauli(a & b),
@@ -3658,6 +3711,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "tensor product requires disjoint unitary support")]
+    fn test_tensor_product_rejects_overlapping_qubits() {
+        let _ = X(0) & H(0);
+    }
+
+    #[test]
     fn test_composition() {
         let circuit = T(0) * H(0);
         assert!(!circuit.is_clifford()); // T is not Clifford
@@ -3673,6 +3732,22 @@ mod tests {
 
         assert!(cx.is_clifford());
         assert!(cz.is_clifford());
+    }
+
+    #[test]
+    #[should_panic(expected = "CX requires 2 qubit(s), got 1")]
+    fn test_low_level_gate_constructor_rejects_wrong_arity() {
+        let _ = UnitaryRep::gate(GateType::CX, smallvec::smallvec![0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "RXX requires 2 qubit(s), got 1")]
+    fn test_low_level_rotation_constructor_rejects_wrong_arity() {
+        let _ = UnitaryRep::rotation(
+            RotationType::RXX,
+            Angle64::QUARTER_TURN,
+            smallvec::smallvec![0],
+        );
     }
 
     #[test]
@@ -4238,6 +4313,13 @@ mod tests {
     }
 
     #[test]
+    fn test_try_to_pauli_string_rejects_overlapping_tensor_node() {
+        let invalid_tensor = UnitaryRep::Tensor(vec![X(0), Z(0)]);
+
+        assert!(invalid_tensor.try_to_pauli_string().is_none());
+    }
+
+    #[test]
     fn test_try_to_pauli_non_pauli() {
         // Quarter-turn rotations should not convert
         assert!(RX(Angle64::QUARTER_TURN, 0).try_to_pauli().is_none());
@@ -4371,6 +4453,100 @@ mod tests {
     fn test_empty_range_inclusive_panics() {
         // 1..=0 is empty
         let _ = Zs(1..=0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint unitary support")]
+    fn test_plural_single_qubit_tensor_rejects_duplicate_qubits() {
+        let _ = Hs([0, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint unitary support")]
+    fn test_plural_two_qubit_tensor_rejects_overlapping_pairs() {
+        let _ = CXs([(0, 1), (1, 2)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "CX requires distinct qubits")]
+    fn test_two_qubit_gate_rejects_repeated_qubit() {
+        let _ = CX(0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RZZ requires distinct qubits")]
+    fn test_two_qubit_rotation_rejects_repeated_qubit() {
+        let _ = RZZ(Angle64::QUARTER_TURN, 1, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "CCX requires distinct qubits")]
+    fn test_three_qubit_gate_rejects_repeated_qubit() {
+        let _ = CCX(0, 1, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "CX requires distinct qubits")]
+    fn test_low_level_gate_constructor_rejects_repeated_qubit() {
+        let _ = UnitaryRep::gate(GateType::CX, smallvec::smallvec![0, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "RXX requires distinct qubits")]
+    fn test_low_level_rotation_constructor_rejects_repeated_qubit() {
+        let _ = UnitaryRep::rotation(
+            RotationType::RXX,
+            Angle64::QUARTER_TURN,
+            smallvec::smallvec![2, 2],
+        );
+    }
+
+    #[test]
+    fn test_plural_helpers_match_chained_tensor_forms() {
+        assert_eq!(Xs([0, 2, 5]), X(0) & X(2) & X(5));
+        assert_eq!(Ys([0, 2, 5]), Y(0) & Y(2) & Y(5));
+        assert_eq!(Zs([0, 2, 5]), Z(0) & Z(2) & Z(5));
+        assert_eq!(Ts([0, 1, 2]), T(0) & T(1) & T(2));
+        assert_eq!(CXs([(0, 1), (2, 3)]), CX(0, 1) & CX(2, 3));
+        assert_eq!(CZs([(0, 1), (2, 3)]), CZ(0, 1) & CZ(2, 3));
+        assert_eq!(SWAPs([(0, 1), (2, 3)]), SWAP(0, 1) & SWAP(2, 3));
+        assert_eq!(SZZs([(0, 1), (2, 3)]), SZZ(0, 1) & SZZ(2, 3));
+        assert_eq!(
+            RZZs(Angle64::QUARTER_TURN, [(0, 1), (2, 3)]),
+            RZZ(Angle64::QUARTER_TURN, 0, 1) & RZZ(Angle64::QUARTER_TURN, 2, 3)
+        );
+    }
+
+    #[test]
+    fn test_plural_helpers_reject_duplicate_and_overlapping_supports() {
+        fn assert_tensor_overlap_panic(f: impl FnOnce() + std::panic::UnwindSafe) {
+            let err = std::panic::catch_unwind(f).expect_err("expected tensor overlap panic");
+            let message = err
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| err.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            assert!(
+                message.contains("tensor product requires disjoint"),
+                "unexpected panic message: {message}"
+            );
+        }
+
+        assert_tensor_overlap_panic(|| {
+            let _ = Xs([0, 0]);
+        });
+        assert_tensor_overlap_panic(|| {
+            let _ = Ts([1, 1]);
+        });
+        assert_tensor_overlap_panic(|| {
+            let _ = SWAPs([(0, 1), (1, 2)]);
+        });
+        assert_tensor_overlap_panic(|| {
+            let _ = SZZs([(0, 2), (2, 3)]);
+        });
+        assert_tensor_overlap_panic(|| {
+            let _ = RZZs(Angle64::QUARTER_TURN, [(0, 2), (2, 3)]);
+        });
     }
 
     #[test]
@@ -5188,6 +5364,27 @@ mod tests {
         assert!("H 0 1".parse::<UnitaryRep>().is_err());
         assert!("CX 0".parse::<UnitaryRep>().is_err());
         assert!("CCX 0 1".parse::<UnitaryRep>().is_err());
+    }
+
+    #[test]
+    fn from_str_rejects_repeated_multi_qubit_gate_args() {
+        for (text, expected) in [
+            ("CX 0 0", "CX requires distinct qubits"),
+            ("CY 0 0", "CY requires distinct qubits"),
+            ("CH 0 0", "CH requires distinct qubits"),
+            ("SWAP 2 2", "SWAP requires distinct qubits"),
+            ("RXX(pi/2) 1 1", "RXX requires distinct qubits"),
+            ("RYY(pi/2) 1 1", "RYY requires distinct qubits"),
+            ("RZZ(pi/2) 1 1", "RZZ requires distinct qubits"),
+            ("CCX 0 1 0", "CCX requires distinct qubits"),
+            ("TOFFOLI 0 0 1", "TOFFOLI requires distinct qubits"),
+        ] {
+            let err = text.parse::<UnitaryRep>().unwrap_err();
+            assert!(
+                err.message.contains(expected),
+                "{text} produced unexpected error: {err}"
+            );
+        }
     }
 
     #[test]

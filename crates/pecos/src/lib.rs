@@ -57,7 +57,7 @@ pub mod quantum {
     };
     pub use pecos_quantum::{
         Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagWouldCycleError, Gate,
-        GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
+        GateHandle, GateType, GateView, QubitId, Tick, TickCircuit, TickGateError,
     };
     pub use pecos_quantum::{F2Matrix, PauliSequence, PauliSet, PauliStabilizerGroup};
 }

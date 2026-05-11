@@ -132,6 +132,58 @@ def test_choi_and_kraus_wrappers_round_trip_identity_channel() -> None:
     assert_close(process_fidelity(stinespring.to_kraus().to_ptm(), identity), 1.0)
 
 
+def test_superop_compose_and_tensor_wrappers() -> None:
+    identity = Ptm.identity(1).to_superop()
+    x_channel = PauliChannel.one_qubit(1.0, 0.0, 0.0).to_ptm().to_superop()
+
+    composed = x_channel.compose(x_channel)
+    assert isinstance(composed, SuperOp)
+    assert composed.num_qubits() == 1
+    assert_matrix_close(composed.matrix(), identity.matrix())
+
+    tensor = identity.tensor(identity)
+    assert tensor.num_qubits() == 2
+    assert_matrix_close(
+        tensor.matrix(),
+        [[1.0 + 0.0j if row == col else 0.0 + 0.0j for col in range(16)] for row in range(16)],
+    )
+
+    scalar_identity = Ptm.identity(0).to_superop()
+    assert scalar_identity.num_qubits() == 0
+    assert_matrix_close(scalar_identity.matrix(), [[1.0 + 0.0j]])
+
+    with pytest.raises(ValueError, match="channel qubit count mismatch"):
+        identity.compose(tensor)
+
+
+def test_zero_qubit_channel_wrappers_round_trip_scalar_identity() -> None:
+    identity = Ptm.identity(0)
+
+    assert identity.num_qubits() == 0
+    assert identity.matrix() == [[1.0]]
+
+    choi = identity.to_choi()
+    assert choi.num_qubits() == 0
+    assert_matrix_close(choi.matrix(), [[1.0 + 0.0j]])
+
+    kraus = identity.to_kraus()
+    assert kraus.num_qubits() == 0
+    assert kraus.operators() == [[[1.0 + 0.0j]]]
+
+    superop = identity.to_superop()
+    assert superop.num_qubits() == 0
+    assert_matrix_close(superop.matrix(), [[1.0 + 0.0j]])
+
+    chi = identity.to_chi()
+    assert chi.num_qubits() == 0
+    assert_matrix_close(chi.matrix(), [[1.0 + 0.0j]])
+
+    stinespring = kraus.to_stinespring()
+    assert stinespring.num_qubits() == 0
+    assert stinespring.environment_dim() == 1
+    assert_matrix_close(stinespring.isometry(), [[1.0 + 0.0j]])
+
+
 def test_process_tomography_design_reconstructs_identity_channel() -> None:
     design = ProcessTomographyDesign.matrix_unit(1)
 
@@ -152,6 +204,21 @@ def test_process_tomography_design_reconstructs_identity_channel() -> None:
     assert_matrix_close(reconstructed.matrix(), choi.matrix())
     assert reconstructed.is_cptp()
     assert reconstructed.is_unital()
+
+
+def test_process_tomography_design_reconstructs_random_two_qubit_channel() -> None:
+    channel = random_quantum_channel(2, 2, 321)
+    choi = channel.to_choi()
+    design = ProcessTomographyDesign.matrix_unit(2)
+
+    assert design.dim() == 4
+    assert design.num_inputs() == 16
+
+    outputs = design.simulate_outputs(choi)
+    reconstructed = design.reconstruct_choi(outputs)
+
+    assert_matrix_close(reconstructed.matrix(), choi.matrix())
+    assert reconstructed.is_cptp()
 
 
 def test_choi_from_matrix_unit_outputs_static_constructor() -> None:
@@ -191,6 +258,45 @@ def test_state_measure_wrappers() -> None:
     assert_close(schmidt[1][0], 2.0**-0.5)
 
 
+def test_quantum_info_wrappers_raise_value_errors_for_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="vector length mismatch"):
+        state_fidelity([1.0 + 0.0j], [1.0 + 0.0j, 0.0 + 0.0j])
+
+    with pytest.raises(ValueError, match="state vector squared norm"):
+        state_fidelity([1.0 + 0.0j, 1.0 + 0.0j], [1.0 + 0.0j, 0.0 + 0.0j])
+
+    with pytest.raises(ValueError, match="matrix must be square"):
+        purity([[1.0 + 0.0j, 0.0 + 0.0j]])
+
+    with pytest.raises(ValueError, match="probability distribution must sum"):
+        shannon_entropy([0.25, 0.25], 2.0)
+
+    rho = [[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 0.0j]]
+    with pytest.raises(ValueError, match="duplicate subsystem"):
+        partial_trace_subsystems(rho, [2], [0, 0])
+
+    with pytest.raises(ValueError, match="outside"):
+        partial_trace_subsystems(rho, [2], [1])
+
+    with pytest.raises(ValueError, match="invalid subsystem dimensions"):
+        schmidt_decomposition([1.0 + 0.0j, 0.0 + 0.0j], [2, 2], [0])
+
+    with pytest.raises(ValueError, match="invalid matrix shape"):
+        SuperOp(1, [[1.0 + 0.0j]])
+
+    with pytest.raises(ValueError, match="not an isometry"):
+        Stinespring(1, [[2.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 2.0 + 0.0j]])
+
+    with pytest.raises(ValueError, match="qubit count mismatch"):
+        process_fidelity(Ptm.identity(1), Ptm.identity(2))
+
+    with pytest.raises(ValueError, match="qubit count mismatch"):
+        average_gate_fidelity(Ptm.identity(1), Ptm.identity(2))
+
+    with pytest.raises(ValueError, match="qubit count mismatch"):
+        gate_error(Ptm.identity(1), Ptm.identity(2))
+
+
 def test_random_generators_are_seed_reproducible_and_valid() -> None:
     rho = random_density_matrix(1, 123)
     same_rho = random_density_matrix(1, 123)
@@ -204,3 +310,9 @@ def test_random_generators_are_seed_reproducible_and_valid() -> None:
     same_channel = random_quantum_channel(1, 2, 123)
     assert channel.operators() == same_channel.operators()
     assert channel.is_trace_preserving()
+
+    two_qubit = random_quantum_channel(2, 2, 125)
+    assert two_qubit.num_qubits() == 2
+    assert two_qubit.is_trace_preserving()
+    assert two_qubit.to_superop().num_qubits() == 2
+    assert len(two_qubit.to_superop().matrix()) == 16

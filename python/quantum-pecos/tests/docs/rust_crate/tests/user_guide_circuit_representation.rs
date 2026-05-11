@@ -8,7 +8,7 @@ fn test_user_guide_circuit_representation_rust_1() {
     use pecos::core::{Gate, QubitId};
     use pecos::dag::DAG;
     use pecos::digraph::DiGraph;
-    use pecos::quantum::{Attribute, DagCircuit, TickCircuit};
+    use pecos::quantum::{Attribute, DagCircuit, TickCircuit, TickGateError};
 
 // Fluent builder API
 let mut circuit = DagCircuit::new();
@@ -182,7 +182,9 @@ tick.h(&[0]);
 // tick.cx(&[(0, 1)]);
 
 // Use try_add_gate for fallible operations
-if let Err(e) = tick.try_add_gate(Gate::cx(&[(0, 1)])) {
+if let Err(pecos::quantum::TickGateError::QubitConflict(e)) =
+    tick.try_add_gate(Gate::cx(&[(0, 1)]))
+{
     println!("Conflict on qubits: {:?}", e.conflicting_qubits);
 }
 

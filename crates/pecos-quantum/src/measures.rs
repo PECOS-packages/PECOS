@@ -63,10 +63,24 @@ pub enum MeasureError {
         /// Actual column count.
         cols: usize,
     },
+    /// Two channel/process representations have incompatible qubit counts.
+    QubitCountMismatch {
+        /// Expected qubit count.
+        expected: usize,
+        /// Actual qubit count.
+        actual: usize,
+    },
     /// A value is not finite.
     NonFiniteValue {
         /// Offending value.
         value: Complex64,
+    },
+    /// A finite complex value was expected to be real within tolerance.
+    NonRealValue {
+        /// Offending value.
+        value: Complex64,
+        /// Allowed imaginary-part tolerance.
+        tolerance: f64,
     },
     /// A state vector is not normalized.
     InvalidStateNorm {
@@ -161,7 +175,14 @@ impl fmt::Display for MeasureError {
                 f,
                 "invalid matrix shape {rows}x{cols}; expected {expected_rows}x{expected_cols}"
             ),
+            Self::QubitCountMismatch { expected, actual } => {
+                write!(f, "qubit count mismatch: expected {expected}, got {actual}")
+            }
             Self::NonFiniteValue { value } => write!(f, "non-finite value: {value}"),
+            Self::NonRealValue { value, tolerance } => write!(
+                f,
+                "value must be real within tolerance {tolerance}, got {value}"
+            ),
             Self::InvalidStateNorm {
                 norm_sqr,
                 tolerance,
@@ -336,7 +357,10 @@ pub fn state_fidelity_with_density_matrix(
         .map(|(left, right)| left.conj() * right)
         .sum();
     if value.im.abs() > DEFAULT_TOLERANCE {
-        return Err(MeasureError::NonFiniteValue { value });
+        return Err(MeasureError::NonRealValue {
+            value,
+            tolerance: DEFAULT_TOLERANCE,
+        });
     }
     Ok(value.re)
 }
@@ -350,7 +374,10 @@ pub fn purity(rho: &DMatrix<Complex64>) -> Result<f64, MeasureError> {
     validate_density_matrix(rho)?;
     let value = trace(&(rho * rho));
     if value.im.abs() > DEFAULT_TOLERANCE {
-        return Err(MeasureError::NonFiniteValue { value });
+        return Err(MeasureError::NonRealValue {
+            value,
+            tolerance: DEFAULT_TOLERANCE,
+        });
     }
     Ok(value.re)
 }
@@ -422,11 +449,9 @@ pub fn shannon_entropy(probabilities: &[f64], base: f64) -> Result<f64, MeasureE
 /// Returns an error when the PTMs have different qubit counts.
 pub fn process_fidelity(left: &Ptm, right: &Ptm) -> Result<f64, MeasureError> {
     if left.num_qubits() != right.num_qubits() {
-        return Err(MeasureError::InvalidMatrixShape {
-            expected_rows: left.matrix().nrows(),
-            expected_cols: left.matrix().ncols(),
-            rows: right.matrix().nrows(),
-            cols: right.matrix().ncols(),
+        return Err(MeasureError::QubitCountMismatch {
+            expected: left.num_qubits(),
+            actual: right.num_qubits(),
         });
     }
     #[allow(clippy::cast_precision_loss)]
@@ -1110,6 +1135,17 @@ mod tests {
         psi * psi.adjoint()
     }
 
+    fn werner_state(p: f64) -> DMatrix<Complex64> {
+        let bell = ket(&[
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
+        ]);
+        pure_density(&bell) * Complex64::new(p, 0.0)
+            + DMatrix::identity(4, 4) * Complex64::new((1.0 - p) / 4.0, 0.0)
+    }
+
     #[test]
     fn pure_state_fidelity_matches_known_values() {
         let zero = ket(&[Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]);
@@ -1196,19 +1232,18 @@ mod tests {
 
     #[test]
     fn concurrence_matches_werner_state_threshold_formula() {
-        fn werner_state(p: f64) -> DMatrix<Complex64> {
-            let bell = ket(&[
-                Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0),
-            ]);
-            pure_density(&bell) * Complex64::new(p, 0.0)
-                + DMatrix::identity(4, 4) * Complex64::new((1.0 - p) / 4.0, 0.0)
-        }
-
         assert_close(concurrence(&werner_state(0.5)).unwrap(), 0.25);
         assert_close(concurrence(&werner_state(0.3)).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn entanglement_of_formation_matches_intermediate_werner_state() {
+        let rho = werner_state(0.5);
+        assert_close(concurrence(&rho).unwrap(), 0.25);
+        assert_close(
+            entanglement_of_formation(&rho).unwrap(),
+            0.117_618_873_770_917_81,
+        );
     }
 
     #[test]
@@ -1255,6 +1290,20 @@ mod tests {
         let product_terms = schmidt_decomposition(&product, &[2, 2], &[0]).unwrap();
         assert_eq!(product_terms.len(), 1);
         assert_close(product_terms[0].0, 1.0);
+    }
+
+    #[test]
+    fn schmidt_decomposition_supports_unequal_bipartition() {
+        let mut ghz = DVector::zeros(8);
+        ghz[0] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        ghz[7] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+
+        let terms = schmidt_decomposition(&ghz, &[2, 4], &[0]).unwrap();
+        assert_eq!(terms.len(), 2);
+        assert_close(terms[0].0, 1.0 / 2.0_f64.sqrt());
+        assert_close(terms[1].0, 1.0 / 2.0_f64.sqrt());
+        assert_eq!(terms[0].1.len(), 2);
+        assert_eq!(terms[0].2.len(), 4);
     }
 
     #[test]
@@ -1327,6 +1376,45 @@ mod tests {
     }
 
     #[test]
+    fn partial_trace_subsystems_can_trace_noncontiguous_factors() {
+        let mut state = DVector::zeros(12);
+        state[0] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        state[11] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        let rho = pure_density(&state);
+
+        let reduced = partial_trace_subsystems(&rho, &[2, 3, 2], &[0, 2]).unwrap();
+        let mut expected = DMatrix::zeros(3, 3);
+        expected[(0, 0)] = Complex64::new(0.5, 0.0);
+        expected[(2, 2)] = Complex64::new(0.5, 0.0);
+
+        assert_close((reduced - expected).norm(), 0.0);
+    }
+
+    #[test]
+    fn three_qubit_ghz_reductions_have_expected_information() {
+        let mut ghz = DVector::zeros(8);
+        ghz[0] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        ghz[7] = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
+        let rho = pure_density(&ghz);
+
+        let two_qubit_reduction = partial_trace_qubits(&rho, 3, &[2]).unwrap();
+        let mut expected_two_qubit = DMatrix::zeros(4, 4);
+        expected_two_qubit[(0, 0)] = Complex64::new(0.5, 0.0);
+        expected_two_qubit[(3, 3)] = Complex64::new(0.5, 0.0);
+        assert_close((&two_qubit_reduction - &expected_two_qubit).norm(), 0.0);
+        assert_close(entropy(&two_qubit_reduction).unwrap(), 1.0);
+        assert_close(
+            mutual_information(&two_qubit_reduction, (2, 2)).unwrap(),
+            1.0,
+        );
+
+        let one_qubit_reduction = partial_trace_qubits(&rho, 3, &[1, 2]).unwrap();
+        let expected_one_qubit = DMatrix::from_diagonal_element(2, 2, Complex64::new(0.5, 0.0));
+        assert_close((&one_qubit_reduction - expected_one_qubit).norm(), 0.0);
+        assert_close(entropy(&one_qubit_reduction).unwrap(), 1.0);
+    }
+
+    #[test]
     fn partial_trace_rejects_repeated_or_out_of_range_subsystems() {
         let mixed = DMatrix::from_diagonal_element(4, 4, Complex64::new(0.25, 0.0));
         assert!(matches!(
@@ -1370,5 +1458,33 @@ mod tests {
             0.8,
         );
         assert_close(gate_error(&depolarizing, &identity).unwrap(), 0.2);
+    }
+
+    #[test]
+    fn process_fidelity_reports_qubit_count_mismatch() {
+        let one_qubit = Ptm::identity(1).unwrap();
+        let two_qubit = Ptm::identity(2).unwrap();
+
+        assert_eq!(
+            process_fidelity(&one_qubit, &two_qubit).unwrap_err(),
+            MeasureError::QubitCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        );
+        assert_eq!(
+            average_gate_fidelity(&one_qubit, &two_qubit).unwrap_err(),
+            MeasureError::QubitCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        );
+        assert_eq!(
+            gate_error(&one_qubit, &two_qubit).unwrap_err(),
+            MeasureError::QubitCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        );
     }
 }

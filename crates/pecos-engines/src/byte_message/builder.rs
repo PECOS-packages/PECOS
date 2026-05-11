@@ -330,6 +330,8 @@ impl ByteMessageBuilder {
     /// This function will panic if the number of qubits in the gate exceeds 255,
     /// as the protocol uses a u8 to represent the qubit count.
     pub fn add_gate_command(&mut self, gate: &Gate) -> &mut Self {
+        gate.validate()
+            .unwrap_or_else(|err| panic!("Invalid gate command: {err}"));
         assert!(
             !gate.is_channel(),
             "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
@@ -986,6 +988,16 @@ mod tests {
         let _ = builder.for_quantum_operations();
 
         let gate = Gate::channel(pecos_core::channel::Depolarizing(0.01, 0));
+        builder.add_gate_command(&gate);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid gate command")]
+    fn test_add_gate_command_rejects_invalid_gate_payload() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+
+        let gate = Gate::cx(&[(0, 0)]);
         builder.add_gate_command(&gate);
     }
 

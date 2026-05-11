@@ -126,10 +126,14 @@ impl DagTraversalIndex {
         self.max_qubit + 1
     }
 
-    /// Returns the number of gates.
+    /// Returns the number of gate nodes in the traversal index.
+    ///
+    /// A batched DAG node still contributes one node here. Use
+    /// [`DagCircuit::gate_count`] when you need the number of individual gates
+    /// represented by batched gate nodes.
     #[inline]
     #[must_use]
-    pub fn num_gates(&self) -> usize {
+    pub fn num_gate_nodes(&self) -> usize {
         self.topo_order.len()
     }
 
@@ -473,7 +477,7 @@ impl DagCircuit {
 
     // ==================== Gate operations ====================
 
-    /// Adds a gate to the circuit.
+    /// Adds a validated gate to the circuit.
     ///
     /// Returns the node index of the newly added gate.
     /// The gate is not connected to any other gates yet - use [`connect`](Self::connect)
@@ -482,7 +486,27 @@ impl DagCircuit {
     /// # Arguments
     ///
     /// * `gate` - The gate to add
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Gate::validate`] rejects the gate payload. Use
+    /// [`try_add_gate`](Self::try_add_gate) for fallible insertion.
     pub fn add_gate(&mut self, gate: Gate) -> usize {
+        self.try_add_gate(gate)
+            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+    }
+
+    /// Try to add a validated gate to the circuit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if [`Gate::validate`] rejects the gate payload.
+    pub fn try_add_gate(&mut self, gate: Gate) -> Result<usize, String> {
+        gate.validate()?;
+        Ok(self.add_gate_unchecked(gate))
+    }
+
+    fn add_gate_unchecked(&mut self, gate: Gate) -> usize {
         let node_idx = self.dag.add_node();
         // Ensure gates vector is large enough
         if node_idx >= self.gates.len() {
@@ -531,8 +555,20 @@ impl DagCircuit {
     }
 
     /// Returns the number of gates in the circuit.
+    ///
+    /// Batched gate nodes count by individual gate. For example, a node carrying
+    /// `Gate::cx(&[(0, 1), (2, 3)])` contributes two gates.
     #[must_use]
     pub fn gate_count(&self) -> usize {
+        self.gates.iter().flatten().map(Gate::num_gates).sum()
+    }
+
+    /// Returns the number of gate nodes stored in the DAG.
+    ///
+    /// A batched node carrying `Gate::cx(&[(0, 1), (2, 3)])` contributes one
+    /// gate node and two gates.
+    #[must_use]
+    pub fn gate_node_count(&self) -> usize {
         self.dag.node_count()
     }
 
@@ -759,7 +795,8 @@ impl DagCircuit {
             .iter()
             .flatten()
             .filter(|g| g.is_single_qubit())
-            .count()
+            .map(Gate::num_gates)
+            .sum()
     }
 
     /// Returns the count of two-qubit gates.
@@ -769,7 +806,8 @@ impl DagCircuit {
             .iter()
             .flatten()
             .filter(|g| g.is_two_qubit())
-            .count()
+            .map(Gate::num_gates)
+            .sum()
     }
 
     /// Returns the count of gates of a specific type.
@@ -779,7 +817,8 @@ impl DagCircuit {
             .iter()
             .flatten()
             .filter(|g| g.gate_type == gate_type)
-            .count()
+            .map(Gate::num_gates)
+            .sum()
     }
 
     // ==================== Topological operations ====================
@@ -2174,6 +2213,44 @@ mod tests {
     }
 
     #[test]
+    fn test_batched_gate_nodes_count_gates() {
+        let mut circuit = DagCircuit::new();
+
+        circuit.add_gate(Gate::h(&[0, 1, 2, 3]));
+        circuit.add_gate(Gate::cx(&[(0, 1), (2, 3)]));
+
+        assert_eq!(circuit.nodes().len(), 2);
+        assert_eq!(circuit.gate_node_count(), 2);
+        assert_eq!(circuit.gate_count(), 6);
+        assert_eq!(circuit.build_traversal_index().num_gate_nodes(), 2);
+        assert_eq!(circuit.single_qubit_gate_count(), 4);
+        assert_eq!(circuit.two_qubit_gate_count(), 2);
+        assert_eq!(circuit.gate_type_count(GateType::H), 4);
+        assert_eq!(circuit.gate_type_count(GateType::CX), 2);
+    }
+
+    #[test]
+    fn test_separate_compatible_nodes_remain_separate_nodes() {
+        let mut circuit = DagCircuit::new();
+
+        circuit.add_gate(Gate::h(&[0]));
+        circuit.add_gate(Gate::h(&[1]));
+        circuit.add_gate(Gate::cx(&[(2, 3)]));
+        circuit.add_gate(Gate::cx(&[(4, 5)]));
+
+        assert_eq!(circuit.gate_node_count(), 4);
+        assert_eq!(circuit.gate_count(), 4);
+        assert_eq!(circuit.build_traversal_index().num_gate_nodes(), 4);
+        assert_eq!(circuit.gate_type_count(GateType::H), 2);
+        assert_eq!(circuit.gate_type_count(GateType::CX), 2);
+
+        let ticks = crate::TickCircuit::from(&circuit);
+        assert_eq!(ticks.gate_count(), 4);
+        assert_eq!(ticks.gate_batch_count(), 2);
+        assert_eq!(ticks.get_tick(0).unwrap().gate_batch_count(), 2);
+    }
+
+    #[test]
     fn test_two_qubit_gate_multiple_wires() {
         let mut circuit = DagCircuit::new();
 
@@ -2816,5 +2893,23 @@ mod tests {
             .expect("gate should have attributes");
         assert_eq!(gate_attrs.get("duration"), Some(&Attribute::Float(50.0)));
         assert_eq!(gate_attrs.get("fidelity"), Some(&Attribute::Float(0.999)));
+    }
+
+    #[test]
+    fn test_try_add_gate_rejects_invalid_gate_payload() {
+        let mut circuit = DagCircuit::new();
+        let err = circuit
+            .try_add_gate(Gate::cx(&[(0, 0)]))
+            .expect_err("DAG should reject invalid gate payloads");
+
+        assert!(err.contains("requires distinct qubits"));
+        assert!(circuit.nodes().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid gate")]
+    fn test_add_gate_panics_on_invalid_gate_payload() {
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate(Gate::cx(&[(0, 0)]));
     }
 }

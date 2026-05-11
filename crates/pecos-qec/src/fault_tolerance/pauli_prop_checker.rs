@@ -3601,7 +3601,8 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]); // Prepare all qubits
         circuit.tick().h(&[0]);
-        circuit.tick().cx(&[(0, 1), (0, 2)]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().cx(&[(0, 2)]);
 
         let input_qubits = detect_input_qubits(&circuit);
         assert!(
@@ -4098,7 +4099,8 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]); // All qubits prepared
         circuit.tick().h(&[0]);
-        circuit.tick().cx(&[(0, 1), (0, 2)]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().cx(&[(0, 2)]);
         circuit.tick().mz(&[0, 1, 2]); // All measured
 
         let checker = PauliPropChecker::new(&circuit);
@@ -4122,7 +4124,8 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]); // All qubits prepared
         circuit.tick().h(&[0]);
-        circuit.tick().cx(&[(0, 1), (0, 2)]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().cx(&[(0, 2)]);
         // No measurement - outputs go to next stage
 
         let checker = PauliPropChecker::new(&circuit);
@@ -4194,7 +4197,8 @@ mod tests {
         // Use a simple circuit where we know failures will occur
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[2]); // Ancilla
-        circuit.tick().cx(&[(0, 2), (1, 2)]);
+        circuit.tick().cx(&[(0, 2)]);
+        circuit.tick().cx(&[(1, 2)]);
         circuit.tick().mz(&[2]);
 
         let config = FaultCheckConfig::new().with_weight(1).all_paulis();

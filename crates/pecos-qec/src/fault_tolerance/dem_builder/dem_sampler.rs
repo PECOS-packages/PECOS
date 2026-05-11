@@ -3217,6 +3217,25 @@ mod tests {
     }
 
     #[test]
+    fn test_selected_observable_statistics_ignore_unselected_tracked_outputs() {
+        // L0 is the measured observable column; L1 represents a tracked
+        // operator column. The mechanism flips only L1, so observable-only
+        // logical statistics for L0 must stay zero while per-output counts
+        // still report the tracked-column flips.
+        let mechanisms = vec![(1.0, vec![], vec![1u32])];
+        let sampler = SamplingEngine::from_mechanisms(mechanisms, 0, 2);
+
+        let stats = sampler.sample_statistics_for_observable_indices(32, 42, &[0]);
+
+        assert_eq!(stats.total_shots, 32);
+        assert_eq!(stats.per_dem_output, vec![0, 32]);
+        assert_eq!(stats.logical_error_count, 0);
+        assert_eq!(stats.undetectable_count, 0);
+        assert_eq!(stats.observable_counts(&[0]), vec![0]);
+        assert_eq!(stats.observable_counts(&[1]), vec![32]);
+    }
+
+    #[test]
     fn test_from_mechanisms_very_low_error_rate() {
         // Test geometric sampling efficiency with low error rate
         let mechanisms = vec![(0.0001, vec![0u32], vec![])];

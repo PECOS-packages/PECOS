@@ -29,6 +29,7 @@
 //! ```
 
 use crate::pauli::algebra::i;
+use crate::qubit_support::{assert_distinct_qubits, overlapping_qubits};
 use crate::unitary_rep::UnitaryRep;
 use crate::{Pauli, PauliString, Phase, QuarterPhase};
 use rand::RngExt;
@@ -68,6 +69,27 @@ impl CliffordRep {
     #[must_use]
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
+    }
+
+    /// Returns qubits where this Clifford acts non-trivially.
+    ///
+    /// This is the operator support, not the tableau span. Identity action on
+    /// spectator qubits is omitted.
+    #[must_use]
+    pub fn support_qubits(&self) -> Vec<usize> {
+        let mut support = Vec::new();
+        for q in 0..self.num_qubits {
+            let x_image = self.x_image(q);
+            let z_image = self.z_image(q);
+            if *x_image != PauliString::x(q) || *z_image != PauliString::z(q) {
+                support.push(q);
+                support.extend(x_image.qubits());
+                support.extend(z_image.qubits());
+            }
+        }
+        support.sort_unstable();
+        support.dedup();
+        support
     }
 
     /// Returns how X on the given qubit transforms.
@@ -551,6 +573,7 @@ impl CliffordRep {
     ///     `X_t` -> `X_t`,     `Z_t` -> `Z_c` `Z_t`
     #[must_use]
     pub fn cx(control: usize, target: usize) -> Self {
+        assert_distinct_qubits("CX", [control, target]);
         let num_qubits = control.max(target) + 1;
         let mut cliff = Self::identity(num_qubits);
 
@@ -569,6 +592,7 @@ impl CliffordRep {
     ///     `X_1` -> `Z_0` `X_1`, `Z_1` -> `Z_1`
     #[must_use]
     pub fn cz(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("CZ", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
 
@@ -587,6 +611,7 @@ impl CliffordRep {
     ///       `X_1` -> `X_0`, `Z_1` -> `Z_0`
     #[must_use]
     pub fn swap(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SWAP", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
 
@@ -606,6 +631,7 @@ impl CliffordRep {
     ///     `X_t` -> `Z_c` `X_t`, `Z_t` -> `Z_c` `Z_t`
     #[must_use]
     pub fn cy(control: usize, target: usize) -> Self {
+        assert_distinct_qubits("CY", [control, target]);
         let num_qubits = control.max(target) + 1;
         let mut cliff = Self::identity(num_qubits);
 
@@ -624,6 +650,7 @@ impl CliffordRep {
     /// SXX gate (sqrt XX): XI -> XI, IX -> IX, ZI -> -YX, IZ -> -XY
     #[must_use]
     pub fn sxx(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SXX", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.z_images[q0] = -(PauliString::y(q0) & PauliString::x(q1));
@@ -634,6 +661,7 @@ impl CliffordRep {
     /// SXX† gate: XI -> XI, IX -> IX, ZI -> YX, IZ -> XY
     #[must_use]
     pub fn sxxdg(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SXXdg", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.z_images[q0] = PauliString::y(q0) & PauliString::x(q1);
@@ -644,6 +672,7 @@ impl CliffordRep {
     /// SYY gate (sqrt YY): XI -> -ZY, IX -> -YZ, ZI -> XY, IZ -> YX
     #[must_use]
     pub fn syy(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SYY", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = -(PauliString::z(q0) & PauliString::y(q1));
@@ -656,6 +685,7 @@ impl CliffordRep {
     /// SYY† gate: XI -> ZY, IX -> YZ, ZI -> -XY, IZ -> -YX
     #[must_use]
     pub fn syydg(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SYYdg", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = PauliString::z(q0) & PauliString::y(q1);
@@ -668,6 +698,7 @@ impl CliffordRep {
     /// SZZ gate (sqrt ZZ): XI -> YZ, IX -> ZY, ZI -> ZI, IZ -> IZ
     #[must_use]
     pub fn szz(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SZZ", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = PauliString::y(q0) & PauliString::z(q1);
@@ -678,6 +709,7 @@ impl CliffordRep {
     /// SZZ† gate: XI -> -YZ, IX -> -ZY, ZI -> ZI, IZ -> IZ
     #[must_use]
     pub fn szzdg(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("SZZdg", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = -(PauliString::y(q0) & PauliString::z(q1));
@@ -688,6 +720,7 @@ impl CliffordRep {
     /// iSWAP gate: XI -> ZY, IX -> YZ, ZI -> IZ, IZ -> ZI
     #[must_use]
     pub fn iswap(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("ISWAP", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = PauliString::z(q0) & PauliString::y(q1);
@@ -700,6 +733,7 @@ impl CliffordRep {
     /// G gate: XI -> IX, IX -> XI, ZI -> XZ, IZ -> ZX
     #[must_use]
     pub fn g(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("G", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = PauliString::x(q1);
@@ -714,6 +748,7 @@ impl CliffordRep {
     /// Both X images have opposite signs from iSWAP (the Z images are the same).
     #[must_use]
     pub fn iswapdg(q0: usize, q1: usize) -> Self {
+        assert_distinct_qubits("ISWAPdg", [q0, q1]);
         let num_qubits = q0.max(q1) + 1;
         let mut cliff = Self::identity(num_qubits);
         cliff.x_images[q0] = -(PauliString::z(q0) & PauliString::y(q1));
@@ -889,11 +924,22 @@ impl Mul<&CliffordRep> for &CliffordRep {
 
 // --- BitAnd trait: & operator for tensor product ---
 
+fn assert_disjoint_clifford_support(lhs: &CliffordRep, rhs: &CliffordRep) {
+    let lhs_support = lhs.support_qubits();
+    let rhs_support = rhs.support_qubits();
+    let overlap = overlapping_qubits(lhs_support, rhs_support);
+    assert!(
+        overlap.is_empty(),
+        "tensor product requires disjoint Clifford support; overlapping qubits: {overlap:?}"
+    );
+}
+
 impl BitAnd for CliffordRep {
     type Output = CliffordRep;
 
     /// Tensor product of two `CliffordReps` acting on disjoint qubits.
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
+        assert_disjoint_clifford_support(&self, &rhs);
         // Since compose auto-extends with identity on extra qubits,
         // and these CliffordReps act on disjoint qubits, composing gives the tensor.
         self.compose(&rhs)
@@ -904,6 +950,7 @@ impl BitAnd<&CliffordRep> for CliffordRep {
     type Output = CliffordRep;
 
     fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
+        assert_disjoint_clifford_support(&self, rhs);
         self.compose(rhs)
     }
 }
@@ -912,6 +959,7 @@ impl BitAnd<CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
+        assert_disjoint_clifford_support(self, &rhs);
         self.compose(&rhs)
     }
 }
@@ -920,6 +968,7 @@ impl BitAnd<&CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
     fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
+        assert_disjoint_clifford_support(self, rhs);
         self.compose(rhs)
     }
 }
@@ -1877,6 +1926,61 @@ mod tests {
         assert_eq!(cliff.apply(&z0), composed.apply(&z0));
         assert_eq!(cliff.apply(&x1), composed.apply(&x1));
         assert_eq!(cliff.apply(&z1), composed.apply(&z1));
+    }
+
+    #[test]
+    fn clifford_tensor_accepts_disjoint_support() {
+        let tensor = CliffordRep::h(0) & CliffordRep::sz(1);
+
+        assert_eq!(tensor.apply(&PauliString::x(0)), PauliString::z(0));
+        assert_eq!(tensor.apply(&PauliString::z(0)), PauliString::x(0));
+        assert_eq!(tensor.apply(&PauliString::x(1)), PauliString::y(1));
+        assert_eq!(tensor.apply(&PauliString::z(1)), PauliString::z(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint Clifford support")]
+    fn clifford_tensor_rejects_overlapping_support() {
+        let _ = CliffordRep::h(0) & CliffordRep::sz(0);
+    }
+
+    #[test]
+    fn support_qubits_omits_identity_spectators() {
+        assert!(CliffordRep::identity(10).support_qubits().is_empty());
+        assert_eq!(CliffordRep::h(3).extended_to(10).support_qubits(), vec![3]);
+        assert_eq!(
+            CliffordRep::cx(0, 2).extended_to(5).support_qubits(),
+            vec![0, 2]
+        );
+    }
+
+    #[test]
+    fn clifford_tensor_accepts_interleaved_disjoint_support() {
+        let tensor = CliffordRep::cx(0, 2) & CliffordRep::h(1);
+
+        assert!(tensor.is_valid());
+        assert_eq!(tensor.support_qubits(), vec![0, 1, 2]);
+        assert_eq!(
+            tensor.apply(&PauliString::x(0)),
+            PauliString::x(0) & PauliString::x(2)
+        );
+        assert_eq!(
+            tensor.apply(&PauliString::z(2)),
+            PauliString::z(0) & PauliString::z(2)
+        );
+        assert_eq!(tensor.apply(&PauliString::x(1)), PauliString::z(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint Clifford support")]
+    fn clifford_tensor_rejects_nonadjacent_partial_overlap() {
+        let _ = CliffordRep::cx(0, 2) & CliffordRep::z(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "SWAP requires distinct qubits")]
+    fn clifford_two_qubit_gate_rejects_repeated_qubit() {
+        let _ = CliffordRep::swap(2, 2);
     }
 
     #[test]

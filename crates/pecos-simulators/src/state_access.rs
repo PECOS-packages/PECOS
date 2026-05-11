@@ -190,6 +190,10 @@ where
     R: Rng + ?Sized,
 {
     let dim = hilbert_dim(num_qubits)?;
+    if dim == 1 {
+        return Ok(vec![Complex64::new(1.0, 0.0)]);
+    }
+
     loop {
         let mut state: Vec<Complex64> = (0..dim).map(|_| standard_complex_normal(rng)).collect();
         let norm_sqr = state_norm_sqr(&state);
@@ -236,6 +240,10 @@ pub trait DensityMatrixAccess: StateInfo {
     fn density_matrix(&mut self) -> Result<Vec<Vec<Complex64>>, StateAccessError>;
 
     /// Returns one density-matrix element.
+    ///
+    /// The default implementation materializes the full dense density matrix
+    /// and then reads one entry. Backends with cheaper direct element access
+    /// should override this method.
     ///
     /// # Errors
     ///
@@ -405,6 +413,15 @@ where
 impl<R> StabilizerStateVectorConversion for SparseStabHybrid<R>
 where
     R: Rng + SeedableRng + Debug,
+{
+    fn to_state_vector(&self) -> Result<Vec<Complex64>, StateAccessError> {
+        stabilizer_group_to_state_vector(&self.to_stabilizer_group())
+    }
+}
+
+impl<R> StabilizerStateVectorConversion for DenseStab<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
 {
     fn to_state_vector(&self) -> Result<Vec<Complex64>, StateAccessError> {
         stabilizer_group_to_state_vector(&self.to_stabilizer_group())
@@ -1010,6 +1027,13 @@ mod tests {
     }
 
     #[test]
+    fn random_statevector_zero_qubits_is_scalar_identity_state() {
+        let mut rng = PecosRng::seed_from_u64(123);
+        let state = random_statevector(&mut rng, 0).unwrap();
+        assert_state_vectors_close(&state, &[Complex64::new(1.0, 0.0)]);
+    }
+
+    #[test]
     fn random_statevector_haar_marginal_is_reasonable() {
         let mut rng = PecosRng::seed_from_u64(123);
         let samples = 2_000;
@@ -1128,7 +1152,16 @@ mod tests {
         state_vec.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         stab.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
-        for pauli in [X(0) & X(1), Y(0) & Y(1), Z(0) & Z(1), X(0), Z(0)] {
+        for pauli in [
+            X(0) & X(1),
+            Y(0) & Y(1),
+            Z(0) & Z(1),
+            X(0) & Z(1),
+            Y(0) & Z(1),
+            X(0) & Y(1),
+            X(0),
+            Z(0),
+        ] {
             let expected = state_vec.pauli_expectation(&pauli).unwrap();
             let actual = stab.pauli_expectation(&pauli).unwrap();
             assert_close(actual, expected);
@@ -1142,10 +1175,46 @@ mod tests {
         state_vec.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
         dense.h(&qid(0)).cx(&[(QubitId(0), QubitId(1))]);
 
-        for pauli in [X(0) & X(1), Y(0) & Y(1), Z(0) & Z(1), X(0), Z(0)] {
+        for pauli in [
+            X(0) & X(1),
+            Y(0) & Y(1),
+            Z(0) & Z(1),
+            X(0) & Z(1),
+            Y(0) & Z(1),
+            X(0) & Y(1),
+            X(0),
+            Z(0),
+        ] {
             let expected = state_vec.pauli_expectation(&pauli).unwrap();
             let actual = dense.pauli_expectation(&pauli).unwrap();
             assert_close(actual, expected);
+        }
+    }
+
+    #[test]
+    fn stabilizer_pauli_expectations_match_state_vector_for_three_qubit_ghz() {
+        let mut state_vec = StateVec::new(3);
+        let mut sparse = SparseStab::new(3);
+        let mut dense = DenseStab::new(3);
+        let pairs = [(QubitId(0), QubitId(1)), (QubitId(0), QubitId(2))];
+        state_vec.h(&qid(0)).cx(&pairs);
+        sparse.h(&qid(0)).cx(&pairs);
+        dense.h(&qid(0)).cx(&pairs);
+
+        for pauli in [
+            X(0) & X(1) & X(2),
+            Z(0) & Z(1),
+            Z(1) & Z(2),
+            Z(0) & Z(2),
+            Y(0) & Y(1) & X(2),
+            X(0),
+            Z(0),
+        ] {
+            let expected = state_vec.pauli_expectation(&pauli).unwrap();
+            let sparse_actual = sparse.pauli_expectation(&pauli).unwrap();
+            let dense_actual = dense.pauli_expectation(&pauli).unwrap();
+            assert_close(sparse_actual, expected);
+            assert_close(dense_actual, expected);
         }
     }
 
@@ -1371,6 +1440,18 @@ mod tests {
 
         let dense = sparse.to_state_vector().unwrap();
         assert_state_vectors_close(&dense, &state_vec.state_vector().unwrap());
+    }
+
+    #[test]
+    fn dense_stabilizer_to_state_vector_matches_ghz_statevec() {
+        let mut dense = DenseStab::new(3);
+        let mut state_vec = StateVec::new(3);
+        let pairs = [(QubitId(0), QubitId(1)), (QubitId(0), QubitId(2))];
+        dense.h(&qid(0)).cx(&pairs);
+        state_vec.h(&qid(0)).cx(&pairs);
+
+        let dense_state = dense.to_state_vector().unwrap();
+        assert_state_vectors_close(&dense_state, &state_vec.state_vector().unwrap());
     }
 
     #[test]

@@ -26,6 +26,7 @@
 //! channel-level expression is needed.
 
 use crate::op::Op;
+use crate::qubit_support::overlapping_qubits;
 use crate::{GateExpr, PauliString, QubitId, UnitaryRep, op};
 use std::ops::{BitAnd, Mul};
 
@@ -139,6 +140,11 @@ impl BitAnd for ChannelExpr {
     type Output = ChannelExpr;
 
     fn bitand(self, rhs: ChannelExpr) -> ChannelExpr {
+        let overlap = overlapping_qubits(self.qubits(), rhs.qubits());
+        assert!(
+            overlap.is_empty(),
+            "tensor product requires disjoint channel support; overlapping qubits: {overlap:?}"
+        );
         ChannelExpr::Tensor(vec![self, rhs])
     }
 }
@@ -263,6 +269,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Depolarizing2 requires distinct qubits")]
+    fn channel_namespace_two_qubit_channel_rejects_repeated_qubit() {
+        let _ = Depolarizing2(0.1, 0, 0);
+    }
+
+    #[test]
     fn ideal_gate_lifts_to_channel_expr() {
         let channel = from_gate(gate::MZ(0));
         assert!(matches!(
@@ -278,6 +290,25 @@ mod tests {
 
         let sequence = AmplitudeDamping(0.1, 0) * PhaseDamping(0.2, 0);
         assert!(matches!(sequence, ChannelExpr::Compose(parts) if parts.len() == 2));
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint channel support")]
+    fn channel_tensor_rejects_overlapping_qubits() {
+        let _ = Depolarizing(0.1, 0) & BitFlip(0.2, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint channel support")]
+    fn channel_tensor_rejects_partial_overlap_with_multi_qubit_support() {
+        let _ = Depolarizing2(0.1, 0, 2) & BitFlip(0.2, 2);
+    }
+
+    #[test]
+    fn channel_tensor_uses_sparse_support_not_dense_span() {
+        let tensor = Depolarizing2(0.1, 0, 2) & BitFlip(0.2, 1);
+        assert!(matches!(tensor, ChannelExpr::Tensor(ref parts) if parts.len() == 2));
+        assert_eq!(tensor.qubits(), vec![0, 1, 2]);
     }
 
     #[test]

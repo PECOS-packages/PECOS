@@ -32,6 +32,7 @@ pub mod pauli;
 pub mod phase;
 pub mod prelude;
 pub mod qubit_id;
+mod qubit_support;
 pub mod rng;
 pub mod sets;
 pub mod signal;

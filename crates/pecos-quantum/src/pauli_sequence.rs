@@ -1240,6 +1240,24 @@ mod tests {
     }
 
     #[test]
+    fn group_commuting_handles_empty_single_and_all_commuting_inputs() {
+        let empty = PauliSequence::new(Vec::new());
+        assert!(empty.group_commuting().is_empty());
+
+        let single = PauliSequence::new(vec![X(3)]);
+        let single_groups = single.group_commuting();
+        assert_eq!(single_groups.len(), 1);
+        assert_eq!(single_groups[0].paulis(), &[X(3)]);
+        assert!(single_groups[0].is_abelian());
+
+        let commuting = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1]), X(2)]);
+        let commuting_groups = commuting.group_commuting();
+        assert_eq!(commuting_groups.len(), 1);
+        assert_eq!(commuting_groups[0].paulis(), commuting.paulis());
+        assert!(commuting_groups[0].is_abelian());
+    }
+
+    #[test]
     fn test_row_reduce() {
         // ZIZ = ZZI * IZZ, so one generator is redundant
         let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]);

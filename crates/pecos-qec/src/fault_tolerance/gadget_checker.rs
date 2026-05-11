@@ -2026,7 +2026,8 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]); // Initialize all data qubits
         circuit.tick().h(&[0]); // Some operations
-        circuit.tick().cx(&[(0, 1), (0, 2)]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().cx(&[(0, 2)]);
         // Data qubits are OUTPUT (not measured)
         circuit
     }
@@ -2431,7 +2432,8 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]); // All qubits prepared
         circuit.tick().h(&[0]);
-        circuit.tick().cx(&[(0, 1), (0, 2)]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().cx(&[(0, 2)]);
         // No measurement - outputs go to next stage
 
         let checker = GadgetChecker::from_circuit(&circuit);

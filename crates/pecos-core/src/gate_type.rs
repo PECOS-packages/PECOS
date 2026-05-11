@@ -338,6 +338,29 @@ impl GateType {
         }
     }
 
+    /// Returns the number of gates represented by a command with `qubit_count`
+    /// qubits.
+    ///
+    /// Most gate commands are batchable: a command with 4 qubits and arity 2
+    /// represents two gates. Payload/meta gates are annotations, not physical
+    /// gates. Variable-arity custom/channel gates are counted as one
+    /// command-level gate.
+    #[must_use]
+    pub const fn num_gates(self, qubit_count: usize) -> usize {
+        if matches!(
+            self,
+            GateType::MeasCrosstalkGlobalPayload
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::PauliOperatorMeta
+        ) {
+            return 0;
+        }
+        if matches!(self, GateType::Custom | GateType::Channel) {
+            return 1;
+        }
+        qubit_count / self.quantum_arity()
+    }
+
     /// Returns the number of angle parameters this gate type requires.
     ///
     /// This is separate from `classical_arity()` which includes all classical parameters.
@@ -675,6 +698,18 @@ mod tests {
         assert_eq!(GateType::SZZ.quantum_arity(), 2);
         assert_eq!(GateType::SZZdg.quantum_arity(), 2);
         assert_eq!(GateType::RZZ.quantum_arity(), 2);
+    }
+
+    #[test]
+    fn test_num_gates() {
+        assert_eq!(GateType::H.num_gates(4), 4);
+        assert_eq!(GateType::CX.num_gates(4), 2);
+        assert_eq!(GateType::CCX.num_gates(6), 2);
+        assert_eq!(GateType::Custom.num_gates(2), 1);
+        assert_eq!(GateType::Channel.num_gates(2), 1);
+        assert_eq!(GateType::PauliOperatorMeta.num_gates(3), 0);
+        assert_eq!(GateType::MeasCrosstalkGlobalPayload.num_gates(3), 0);
+        assert_eq!(GateType::MeasCrosstalkLocalPayload.num_gates(3), 0);
     }
 
     #[test]

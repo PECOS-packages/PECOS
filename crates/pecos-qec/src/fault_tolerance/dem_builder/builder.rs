@@ -1465,6 +1465,66 @@ mod tests {
     }
 
     #[test]
+    fn test_tick_dag_tick_dem_keeps_detector_observable_and_tracked_operator_distinct() {
+        use pecos_core::pauli::Z;
+        use pecos_quantum::{DagCircuit, TickCircuit};
+
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1]);
+        circuit.tick().h(&[0]);
+        circuit.tick().mz(&[0, 1]);
+        circuit.set_meta(
+            "num_measurements",
+            pecos_quantum::Attribute::String(circuit.num_measurements().to_string()),
+        );
+        circuit
+            .add_detector_metadata(&[-2], None, Some("D0"), Some(0))
+            .unwrap();
+        circuit
+            .add_observable_metadata(&[-1], Some(0), Some("L0"))
+            .unwrap();
+        circuit.tracked_operator_labeled("tracked_z0", Z(0));
+
+        let round_tripped = TickCircuit::from(&DagCircuit::from(&circuit));
+        let dem = DemBuilder::from_tick_circuit(&round_tripped, 0.03, 0.0, 0.02, 0.0);
+
+        assert_eq!(dem.num_detectors(), 1);
+        assert_eq!(dem.num_observables(), 1);
+        assert_eq!(dem.num_dem_outputs(), 1);
+        assert_eq!(dem.dem_outputs()[0].id, 0);
+        assert_eq!(dem.num_tracked_ops(), 1);
+        assert_eq!(dem.tracked_ops()[0].id, 0);
+        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("tracked_z0"));
+        assert_eq!(
+            dem.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            "+Z0"
+        );
+
+        let standard_text = dem.to_string();
+        assert!(standard_text.contains("logical_observable L0"));
+        assert!(!standard_text.contains("logical_observable L1"));
+        assert!(!standard_text.contains("pecos_tracked_op"));
+
+        let pecos_text = dem.to_pecos_string();
+        assert!(pecos_text.contains("pecos_observable"));
+        assert!(pecos_text.contains("pecos_tracked_op"));
+
+        let summaries = dem.contribution_effect_summaries();
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary.effect.detectors.as_slice() == [0]),
+            "detector effects should survive Tick -> DAG -> Tick"
+        );
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary.effect.dem_outputs.as_slice() == [0]),
+            "observable effects should remain in L0"
+        );
+    }
+
+    #[test]
     fn test_circuit_observable_annotation_is_not_double_counted() {
         use pecos_quantum::DagCircuit;
 

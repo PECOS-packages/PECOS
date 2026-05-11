@@ -25,7 +25,9 @@
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
-use pecos_quantum::{Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit};
+use pecos_quantum::{
+    Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit, TickGateError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
@@ -1014,8 +1016,10 @@ impl PyDagCircuit {
     /// Add a gate to the circuit.
     ///
     /// Returns the node index of the newly added gate.
-    fn add_gate(&mut self, gate: PyGate) -> usize {
-        self.inner.add_gate(gate.inner)
+    fn add_gate(&mut self, gate: PyGate) -> PyResult<usize> {
+        self.inner
+            .try_add_gate(gate.inner)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Remove a gate from the circuit.
@@ -1724,6 +1728,28 @@ pyo3::create_exception!(
     pyo3::exceptions::PyValueError
 );
 
+fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyErr {
+    match err {
+        TickGateError::QubitConflict(mut err) => {
+            if let Some(tick_idx) = tick_idx {
+                err.tick_idx = Some(tick_idx);
+            }
+            PyErr::new::<QubitConflictError, _>(err.to_string())
+        }
+        TickGateError::InvalidGate {
+            message,
+            tick_idx: err_tick_idx,
+        } => {
+            let tick_idx = tick_idx.or(err_tick_idx);
+            let msg = match tick_idx {
+                Some(tick_idx) => format!("Invalid gate in tick {tick_idx}: {message}"),
+                None => format!("Invalid gate: {message}"),
+            };
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
+        }
+    }
+}
+
 /// Convert HUGR bytes to a `DagCircuit`.
 ///
 /// This function takes serialized HUGR data (JSON or binary envelope format)
@@ -2132,8 +2158,10 @@ impl PyTick {
     /// Add a gate to this tick.
     ///
     /// Returns the index of the added gate within this tick.
-    fn add_gate(&mut self, gate: &PyGate) -> usize {
-        self.inner.add_gate(gate.inner.clone())
+    fn add_gate(&mut self, gate: &PyGate) -> PyResult<usize> {
+        self.inner
+            .try_add_gate(gate.inner.clone())
+            .map_err(|e| tick_gate_error_to_pyerr(e, None))
     }
 
     /// Try to add a gate to this tick, returning an error if any qubit is already in use.
@@ -2145,7 +2173,7 @@ impl PyTick {
     fn try_add_gate(&mut self, gate: &PyGate) -> PyResult<usize> {
         self.inner
             .try_add_gate(gate.inner.clone())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+            .map_err(|e| tick_gate_error_to_pyerr(e, None))
     }
 
     /// Remove all gates that use any of the specified qubits.
@@ -2877,17 +2905,7 @@ impl PyTickHandle {
                     self.last_gate_idx = Some(idx);
                     Ok(())
                 }
-                Err(err) => {
-                    let msg = format!(
-                        "Qubit(s) {:?} already in use in tick {}",
-                        err.conflicting_qubits
-                            .iter()
-                            .map(std::string::ToString::to_string)
-                            .collect::<Vec<_>>(),
-                        self.tick_idx
-                    );
-                    Err(PyErr::new::<QubitConflictError, _>(msg))
-                }
+                Err(err) => Err(tick_gate_error_to_pyerr(err, Some(self.tick_idx))),
             }
         } else {
             Ok(())
@@ -2902,17 +2920,7 @@ impl PyTickHandle {
                     self.last_gate_idx = Some(idx);
                     Ok(idx)
                 }
-                Err(err) => {
-                    let msg = format!(
-                        "Qubit(s) {:?} already in use in tick {}",
-                        err.conflicting_qubits
-                            .iter()
-                            .map(std::string::ToString::to_string)
-                            .collect::<Vec<_>>(),
-                        self.tick_idx
-                    );
-                    Err(PyErr::new::<QubitConflictError, _>(msg))
-                }
+                Err(err) => Err(tick_gate_error_to_pyerr(err, Some(self.tick_idx))),
             }
         } else {
             Ok(0)
@@ -3443,17 +3451,7 @@ impl PyTickHandle {
                                 );
                                 last_idx = Some(idx);
                             }
-                            Err(err) => {
-                                let msg = format!(
-                                    "Qubit(s) {:?} already in use in tick {}",
-                                    err.conflicting_qubits
-                                        .iter()
-                                        .map(std::string::ToString::to_string)
-                                        .collect::<Vec<_>>(),
-                                    tick_idx
-                                );
-                                return Err(PyErr::new::<QubitConflictError, _>(msg));
-                            }
+                            Err(err) => return Err(tick_gate_error_to_pyerr(err, Some(tick_idx))),
                         }
                     }
                     drop(circuit);
@@ -3472,17 +3470,7 @@ impl PyTickHandle {
                             slf.borrow_mut(py).last_gate_idx = Some(idx);
                             Ok(slf)
                         }
-                        Err(err) => {
-                            let msg = format!(
-                                "Qubit(s) {:?} already in use in tick {}",
-                                err.conflicting_qubits
-                                    .iter()
-                                    .map(std::string::ToString::to_string)
-                                    .collect::<Vec<_>>(),
-                                tick_idx
-                            );
-                            Err(PyErr::new::<QubitConflictError, _>(msg))
-                        }
+                        Err(err) => Err(tick_gate_error_to_pyerr(err, Some(tick_idx))),
                     }
                 }
             }
@@ -3559,17 +3547,7 @@ impl PyTickHandle {
                     slf.borrow_mut(py).last_gate_idx = Some(idx);
                     Ok(slf)
                 }
-                Err(err) => {
-                    let msg = format!(
-                        "Qubit(s) {:?} already in use in tick {}",
-                        err.conflicting_qubits
-                            .iter()
-                            .map(std::string::ToString::to_string)
-                            .collect::<Vec<_>>(),
-                        tick_idx
-                    );
-                    Err(PyErr::new::<QubitConflictError, _>(msg))
-                }
+                Err(err) => Err(tick_gate_error_to_pyerr(err, Some(tick_idx))),
             }
         } else {
             drop(circuit);

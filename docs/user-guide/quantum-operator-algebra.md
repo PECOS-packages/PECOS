@@ -303,8 +303,8 @@ assert!(m.try_dg().is_none());
 use pecos_core::op::*;
 
 let circuit = CX(0, 3) & H(5);
-assert_eq!(circuit.num_qubits(), 6);     // spans qubits 0..5
-assert_eq!(circuit.qubits(), vec![0, 1, 2, 3, 4, 5]);  // full range
+assert_eq!(circuit.num_qubits(), 6);     // matrix span is qubits 0..5
+assert_eq!(circuit.qubits(), vec![0, 3, 5]);  // actual support
 ```
 
 ---

@@ -467,6 +467,38 @@ mod tests {
         }
     }
 
+    fn assert_matches_sparse_2q_at_pair<F, G>(
+        name: &str,
+        pair: (QubitId, QubitId),
+        num_qubits: usize,
+        mut apply_sparse: F,
+        mut apply_bitmask: G,
+    ) where
+        F: FnMut(&mut PauliProp, &[(QubitId, QubitId)]),
+        G: FnMut(&mut BitmaskPauliProp, &[(QubitId, QubitId)]),
+    {
+        let labels = ['I', 'X', 'Y', 'Z'];
+        let pairs = [pair];
+        for lhs in labels {
+            for rhs in labels {
+                let mut input = vec!['I'; num_qubits];
+                input[pair.0.0] = lhs;
+                input[pair.1.0] = rhs;
+                let input = input.into_iter().collect::<String>();
+
+                let mut sparse = sparse_prop_from_dense(&input);
+                let mut bitmask = bitmask_prop_from_dense(&input);
+                apply_sparse(&mut sparse, &pairs);
+                apply_bitmask(&mut bitmask, &pairs);
+                assert_eq!(
+                    bitmask.dense_string(),
+                    sparse.dense_string(),
+                    "{name}: pair {pair:?}, input {input}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn single_qubit_cliffords_match_sparse_pauli_prop() {
         assert_matches_sparse_1q(
@@ -644,6 +676,233 @@ mod tests {
                 p.swap(qs);
             },
         );
+        assert_matches_sparse_2q(
+            "ISWAP",
+            |p, qs| {
+                p.iswap(qs);
+            },
+            |p, qs| {
+                p.iswap(qs);
+            },
+        );
+        assert_matches_sparse_2q(
+            "ISWAPdg",
+            |p, qs| {
+                p.iswapdg(qs);
+            },
+            |p, qs| {
+                p.iswapdg(qs);
+            },
+        );
+    }
+
+    #[test]
+    fn two_qubit_cliffords_match_sparse_pauli_prop_across_word_boundaries() {
+        for pair in [
+            (QubitId(63), QubitId(64)),
+            (QubitId(64), QubitId(63)),
+            (QubitId(64), QubitId(65)),
+        ] {
+            assert_matches_sparse_2q_at_pair(
+                "CX",
+                pair,
+                66,
+                |p, qs| {
+                    p.cx(qs);
+                },
+                |p, qs| {
+                    p.cx(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "CY",
+                pair,
+                66,
+                |p, qs| {
+                    p.cy(qs);
+                },
+                |p, qs| {
+                    p.cy(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "CZ",
+                pair,
+                66,
+                |p, qs| {
+                    p.cz(qs);
+                },
+                |p, qs| {
+                    p.cz(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SXX",
+                pair,
+                66,
+                |p, qs| {
+                    p.sxx(qs);
+                },
+                |p, qs| {
+                    p.sxx(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SXXdg",
+                pair,
+                66,
+                |p, qs| {
+                    p.sxxdg(qs);
+                },
+                |p, qs| {
+                    p.sxxdg(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SYY",
+                pair,
+                66,
+                |p, qs| {
+                    p.syy(qs);
+                },
+                |p, qs| {
+                    p.syy(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SYYdg",
+                pair,
+                66,
+                |p, qs| {
+                    p.syydg(qs);
+                },
+                |p, qs| {
+                    p.syydg(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SZZ",
+                pair,
+                66,
+                |p, qs| {
+                    p.szz(qs);
+                },
+                |p, qs| {
+                    p.szz(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SZZdg",
+                pair,
+                66,
+                |p, qs| {
+                    p.szzdg(qs);
+                },
+                |p, qs| {
+                    p.szzdg(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "SWAP",
+                pair,
+                66,
+                |p, qs| {
+                    p.swap(qs);
+                },
+                |p, qs| {
+                    p.swap(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "ISWAP",
+                pair,
+                66,
+                |p, qs| {
+                    p.iswap(qs);
+                },
+                |p, qs| {
+                    p.iswap(qs);
+                },
+            );
+            assert_matches_sparse_2q_at_pair(
+                "ISWAPdg",
+                pair,
+                66,
+                |p, qs| {
+                    p.iswapdg(qs);
+                },
+                |p, qs| {
+                    p.iswapdg(qs);
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn word_boundary_propagation_matches_sparse_pauli_prop() {
+        let qubits = [63, 64, 65];
+        let qids = qubits.map(QubitId);
+        let mut sparse = PauliProp::with_sign_tracking(66);
+        let mut bitmask = BitmaskPauliProp::with_num_qubits(66);
+
+        sparse.track_z(&qubits);
+        bitmask.track_z(&qubits);
+        sparse.h(&qids);
+        bitmask.h(&qids);
+
+        assert_eq!(bitmask.dense_string(), sparse.dense_string());
+
+        let sparse_meas = sparse.mz(&qids);
+        let bitmask_meas = bitmask.mz(&qids);
+        assert_eq!(
+            bitmask_meas.iter().map(|m| m.outcome).collect::<Vec<_>>(),
+            sparse_meas.iter().map(|m| m.outcome).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            bitmask_meas
+                .iter()
+                .map(|m| m.is_deterministic)
+                .collect::<Vec<_>>(),
+            sparse_meas
+                .iter()
+                .map(|m| m.is_deterministic)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn sequential_gate_composition_matches_sparse_pauli_prop() {
+        let sequence = |sparse: &mut PauliProp, bitmask: &mut BitmaskPauliProp| {
+            sparse
+                .h(&[QubitId(0)])
+                .sz(&[QubitId(1)])
+                .cx(&[(QubitId(0), QubitId(1))])
+                .sxx(&[(QubitId(1), QubitId(2))])
+                .iswap(&[(QubitId(0), QubitId(2))])
+                .sydg(&[QubitId(2)])
+                .cz(&[(QubitId(2), QubitId(1))])
+                .swap(&[(QubitId(0), QubitId(1))]);
+            bitmask
+                .h(&[QubitId(0)])
+                .sz(&[QubitId(1)])
+                .cx(&[(QubitId(0), QubitId(1))])
+                .sxx(&[(QubitId(1), QubitId(2))])
+                .iswap(&[(QubitId(0), QubitId(2))])
+                .sydg(&[QubitId(2)])
+                .cz(&[(QubitId(2), QubitId(1))])
+                .swap(&[(QubitId(0), QubitId(1))]);
+        };
+
+        for input in all_paulis(3) {
+            let mut sparse = sparse_prop_from_dense(&input);
+            let mut bitmask = bitmask_prop_from_dense(&input);
+            sequence(&mut sparse, &mut bitmask);
+            assert_eq!(
+                bitmask.dense_string(),
+                sparse.dense_string(),
+                "sequential composition: {input}"
+            );
+        }
     }
 
     #[test]

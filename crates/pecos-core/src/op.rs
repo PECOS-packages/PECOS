@@ -54,6 +54,7 @@
 //! ```
 
 use crate::clifford_rep::CliffordRep;
+use crate::qubit_support::{assert_distinct_qubits, overlapping_qubits};
 use crate::unitary_rep::{PhaseValue, UnitaryRep};
 use crate::{Angle64, PauliString, QubitId};
 use std::fmt;
@@ -94,6 +95,32 @@ pub enum Level {
     Gate = 3,
     Channel = 4,
 }
+
+/// Error returned by fallible tensor-product constructors when supports overlap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TensorProductError {
+    overlapping_qubits: Vec<usize>,
+}
+
+impl TensorProductError {
+    /// Qubits touched by both operands.
+    #[must_use]
+    pub fn overlapping_qubits(&self) -> &[usize] {
+        &self.overlapping_qubits
+    }
+}
+
+impl fmt::Display for TensorProductError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "tensor product requires disjoint operator support; overlapping qubits: {:?}",
+            self.overlapping_qubits
+        )
+    }
+}
+
+impl std::error::Error for TensorProductError {}
 
 /// An ideal circuit operation expression.
 ///
@@ -177,6 +204,15 @@ pub enum Basis {
 
 fn cliff(cr: CliffordRep, ur: UnitaryRep) -> Op {
     Op::Clifford(cr, ur)
+}
+
+fn require_disjoint_support(lhs: &[usize], rhs: &[usize]) -> Result<(), TensorProductError> {
+    let overlapping_qubits = overlapping_qubits(lhs.iter().copied(), rhs.iter().copied());
+    if overlapping_qubits.is_empty() {
+        Ok(())
+    } else {
+        Err(TensorProductError { overlapping_qubits })
+    }
 }
 
 // --- Core methods ---
@@ -355,6 +391,60 @@ impl Op {
         Op::Channel(self.into_channel())
     }
 
+    /// Returns the tensor product of two operations.
+    ///
+    /// This is the fallible form of the `&` operator. Tensor products require
+    /// disjoint qubit support; use `*` for sequential composition on the same
+    /// qubits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorProductError`] when the two operations touch any of the
+    /// same qubits.
+    pub fn try_tensor(self, rhs: Op) -> Result<Op, TensorProductError> {
+        require_disjoint_support(&self.qubits(), &rhs.qubits())?;
+        Ok(self.tensor_unchecked(rhs))
+    }
+
+    fn tensor_unchecked(self, rhs: Op) -> Op {
+        let max_level = self.level().max(rhs.level());
+        match max_level {
+            Level::Pauli => {
+                let a = self.into_pauli().expect("max_level is Pauli");
+                let b = rhs.into_pauli().expect("max_level is Pauli");
+                Op::Pauli(&a & &b)
+            }
+            Level::Clifford => {
+                let (cr_a, ur_a) = match self {
+                    Op::Pauli(ps) => pauli_to_cliff_pair(ps),
+                    Op::Clifford(cr, ur) => (cr, ur),
+                    _ => unreachable!(),
+                };
+                let (cr_b, ur_b) = match rhs {
+                    Op::Pauli(ps) => pauli_to_cliff_pair(ps),
+                    Op::Clifford(cr, ur) => (cr, ur),
+                    _ => unreachable!(),
+                };
+                cliff(cr_a.compose(&cr_b), ur_a & ur_b)
+            }
+            Level::Unitary => {
+                let a = self.into_unitary().expect("max_level is Unitary");
+                let b = rhs.into_unitary().expect("max_level is Unitary");
+                Op::Unitary(a & b)
+            }
+            Level::Gate => {
+                let a = self.into_gate().expect("max_level is Gate");
+                let b = rhs.into_gate().expect("max_level is Gate");
+                Op::Gate(GateExpr::Tensor(vec![a, b]))
+            }
+            Level::Channel => {
+                let a = self.into_channel();
+                let b = rhs.into_channel();
+                Op::Channel(ChannelExpr::Tensor(vec![a, b]))
+            }
+        }
+    }
+
     /// Returns the adjoint (dagger) of this expression.
     ///
     /// # Panics
@@ -386,7 +476,13 @@ impl Op {
     pub fn qubits(&self) -> Vec<usize> {
         match self {
             Op::Pauli(ps) => ps.qubits(),
-            Op::Clifford(cr, _) => (0..cr.num_qubits()).collect(),
+            Op::Clifford(cr, ur) => {
+                let mut qs = cr.support_qubits();
+                qs.extend(ur.qubits());
+                qs.sort_unstable();
+                qs.dedup();
+                qs
+            }
             Op::Unitary(ur) => ur.qubits(),
             Op::Gate(gate) => gate.qubits(),
             Op::Channel(ch) => ch.qubits(),
@@ -569,42 +665,7 @@ impl BitAnd for Op {
     type Output = Op;
 
     fn bitand(self, rhs: Op) -> Op {
-        let max_level = self.level().max(rhs.level());
-        match max_level {
-            Level::Pauli => {
-                let a = self.into_pauli().expect("max_level is Pauli");
-                let b = rhs.into_pauli().expect("max_level is Pauli");
-                Op::Pauli(&a & &b)
-            }
-            Level::Clifford => {
-                let (cr_a, ur_a) = match self {
-                    Op::Pauli(ps) => pauli_to_cliff_pair(ps),
-                    Op::Clifford(cr, ur) => (cr, ur),
-                    _ => unreachable!(),
-                };
-                let (cr_b, ur_b) = match rhs {
-                    Op::Pauli(ps) => pauli_to_cliff_pair(ps),
-                    Op::Clifford(cr, ur) => (cr, ur),
-                    _ => unreachable!(),
-                };
-                cliff(cr_a.compose(&cr_b), ur_a & ur_b)
-            }
-            Level::Unitary => {
-                let a = self.into_unitary().expect("max_level is Unitary");
-                let b = rhs.into_unitary().expect("max_level is Unitary");
-                Op::Unitary(a & b)
-            }
-            Level::Gate => {
-                let a = self.into_gate().expect("max_level is Gate");
-                let b = rhs.into_gate().expect("max_level is Gate");
-                Op::Gate(GateExpr::Tensor(vec![a, b]))
-            }
-            Level::Channel => {
-                let a = self.into_channel();
-                let b = rhs.into_channel();
-                Op::Channel(ChannelExpr::Tensor(vec![a, b]))
-            }
-        }
+        self.try_tensor(rhs).unwrap_or_else(|err| panic!("{err}"))
     }
 }
 
@@ -1518,6 +1579,7 @@ pub fn Depolarizing2(p: f64, q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> 
     assert!((0.0..=1.0).contains(&p), "probability p must be in [0, 1]");
     let a = q0.into();
     let b = q1.into();
+    assert_distinct_qubits("Depolarizing2", [a.0, b.0]);
     let p15 = p / 15.0;
     let paulis_1q = [
         unitary_rep::I,
@@ -1700,6 +1762,18 @@ mod tests {
     }
 
     #[test]
+    fn clifford_tensor_uses_actual_support_not_span() {
+        let op = H(0) & SZ(3);
+        let cr = op.as_clifford().unwrap();
+
+        assert_eq!(op.qubits(), vec![0, 3]);
+        assert_eq!(cr.apply(&PauliString::x(0)), PauliString::z(0));
+        assert_eq!(cr.apply(&PauliString::z(0)), PauliString::x(0));
+        assert_eq!(cr.apply(&PauliString::x(3)), PauliString::y(3));
+        assert_eq!(cr.apply(&PauliString::z(3)), PauliString::z(3));
+    }
+
+    #[test]
     fn pauli_unitary_tensor_promotes() {
         let op = X(0) & T(3);
         assert!(op.is_unitary());
@@ -1715,6 +1789,131 @@ mod tests {
     fn three_way_promotion() {
         let op = X(0) & H(3) & T(5);
         assert!(op.is_unitary());
+    }
+
+    #[test]
+    fn try_tensor_reports_overlapping_qubits() {
+        let err = X(0).try_tensor(Z(0)).unwrap_err();
+        assert_eq!(err.overlapping_qubits(), &[0]);
+    }
+
+    #[test]
+    fn try_tensor_rejects_mixed_level_overlaps() {
+        let cases = [
+            ("pauli-clifford", X(0), H(0), vec![0]),
+            ("pauli-unitary", X(0), T(0), vec![0]),
+            ("pauli-gate", X(0), MZ(0), vec![0]),
+            ("pauli-channel", X(0), Depolarizing(0.01, 0), vec![0]),
+            ("clifford-gate", H(0), MZ(0), vec![0]),
+            ("gate-channel", MZ(0), Depolarizing(0.01, 0), vec![0]),
+            ("partial-multi-qubit", CX(0, 2), H(2), vec![2]),
+        ];
+
+        for (name, lhs, rhs, expected_overlap) in cases {
+            let err = lhs.try_tensor(rhs).unwrap_err();
+            assert_eq!(
+                err.overlapping_qubits(),
+                expected_overlap.as_slice(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn tensor_operator_panics_are_consistent_across_levels() {
+        fn assert_overlap_panic(f: impl FnOnce() + std::panic::UnwindSafe, expected: &str) {
+            let err = std::panic::catch_unwind(f).expect_err("expected tensor overlap panic");
+            let message = if let Some(message) = err.downcast_ref::<String>() {
+                message.as_str()
+            } else if let Some(message) = err.downcast_ref::<&str>() {
+                message
+            } else {
+                panic!("unexpected non-string panic payload");
+            };
+            assert!(
+                message.contains("tensor product requires disjoint operator support"),
+                "{message}"
+            );
+            assert!(message.contains(expected), "{message}");
+        }
+
+        assert_overlap_panic(
+            || {
+                let _ = X(0) & Z(0);
+            },
+            "[0]",
+        );
+        assert_overlap_panic(
+            || {
+                let _ = H(0) & T(0);
+            },
+            "[0]",
+        );
+        assert_overlap_panic(
+            || {
+                let _ = T(0) & MZ(0);
+            },
+            "[0]",
+        );
+        assert_overlap_panic(
+            || {
+                let _ = MZ(0) & Depolarizing(0.01, 0);
+            },
+            "[0]",
+        );
+        assert_overlap_panic(
+            || {
+                let _ = CX(0, 2) & Depolarizing(0.01, 2);
+            },
+            "[2]",
+        );
+    }
+
+    #[test]
+    fn try_tensor_accepts_mixed_level_disjoint_support() {
+        assert!((X(0).try_tensor(H(1))).unwrap().is_clifford());
+        assert!((H(0).try_tensor(T(1))).unwrap().is_unitary());
+        assert!(
+            (MZ(0).try_tensor(Depolarizing(0.01, 1)))
+                .unwrap()
+                .is_channel()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint operator support")]
+    fn pauli_tensor_rejects_overlapping_qubits() {
+        let _ = X(0) & Z(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint operator support")]
+    fn clifford_tensor_rejects_overlapping_qubits() {
+        let _ = H(0) & SZ(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint operator support")]
+    fn gate_tensor_rejects_overlapping_qubits() {
+        let _ = H(0) & MZ(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint operator support")]
+    fn channel_tensor_rejects_overlapping_qubits() {
+        let _ = H(0) & Depolarizing(0.01, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "SWAP requires distinct qubits")]
+    fn op_two_qubit_gate_rejects_repeated_qubit() {
+        let _ = SWAP(0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Depolarizing2 requires distinct qubits")]
+    fn op_two_qubit_channel_rejects_repeated_qubit() {
+        let _ = Depolarizing2(0.01, 2, 2);
     }
 
     // --- Composition promotion ---
@@ -2113,6 +2312,13 @@ mod tests {
     }
 
     #[test]
+    fn non_clifford_unitary_gate_tensor_promotes_to_gate_tensor() {
+        let op = T(0) & MZ(1);
+        assert!(op.is_gate());
+        assert!(matches!(op, Op::Gate(GateExpr::Tensor(parts)) if parts.len() == 2));
+    }
+
+    #[test]
     fn pauli_gate_tensor_promotes() {
         let op = X(0) & MZ(1);
         assert!(op.is_gate());
@@ -2122,6 +2328,13 @@ mod tests {
     fn unitary_gate_compose_promotes() {
         let op = H(0) * MZ(0);
         assert!(op.is_gate());
+    }
+
+    #[test]
+    fn non_clifford_unitary_gate_compose_promotes_to_gate_compose() {
+        let op = T(0) * MZ(0);
+        assert!(op.is_gate());
+        assert!(matches!(op, Op::Gate(GateExpr::Compose(parts)) if parts.len() == 2));
     }
 
     #[test]
@@ -2285,9 +2498,23 @@ mod tests {
     }
 
     #[test]
+    fn non_clifford_unitary_channel_tensor_promotes_to_channel_tensor() {
+        let op = T(0) & Depolarizing(0.1, 1);
+        assert!(op.is_channel());
+        assert!(matches!(op, Op::Channel(ChannelExpr::Tensor(parts)) if parts.len() == 2));
+    }
+
+    #[test]
     fn noise_compose_with_gate() {
         let op = H(0) * Dephasing(0.05, 0);
         assert!(op.is_channel());
+    }
+
+    #[test]
+    fn non_clifford_unitary_channel_compose_promotes_to_channel_compose() {
+        let op = T(0) * Dephasing(0.05, 0);
+        assert!(op.is_channel());
+        assert!(matches!(op, Op::Channel(ChannelExpr::Compose(parts)) if parts.len() == 2));
     }
 
     #[test]

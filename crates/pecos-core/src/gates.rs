@@ -8,6 +8,7 @@ use crate::ChannelExpr;
 use crate::MeasId;
 use crate::QubitId;
 use crate::gate_type::GateType;
+use crate::qubit_support::duplicate_qubits;
 use smallvec::SmallVec;
 
 /// Stack-allocated qubit buffer for gates (up to 4 qubits inline).
@@ -116,7 +117,66 @@ impl Gate {
     #[inline]
     #[must_use]
     pub fn num_gates(&self) -> usize {
-        self.num_qubits() / self.quantum_arity()
+        self.gate_type.num_gates(self.num_qubits())
+    }
+
+    /// Returns true if `self` and `other` can be represented as one batched gate
+    /// command by concatenating qubit and measurement-id payloads.
+    ///
+    /// Batch-compatible gates are identical except for disjoint qubit support
+    /// and, for measurement gates, their corresponding measurement ids.
+    #[must_use]
+    pub fn can_batch_with(&self, other: &Self) -> bool {
+        if self.gate_type != other.gate_type
+            || self.angles != other.angles
+            || self.params != other.params
+            || self.channel != other.channel
+        {
+            return false;
+        }
+
+        if matches!(
+            self.gate_type,
+            GateType::Custom
+                | GateType::Channel
+                | GateType::PauliOperatorMeta
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::MeasCrosstalkLocalPayload
+        ) {
+            return false;
+        }
+
+        if self.qubits.iter().any(|q| other.qubits.contains(q)) {
+            return false;
+        }
+
+        let self_has_meas_ids = !self.meas_ids.is_empty();
+        let other_has_meas_ids = !other.meas_ids.is_empty();
+        if self_has_meas_ids != other_has_meas_ids {
+            return false;
+        }
+        if self_has_meas_ids
+            && (self.meas_ids.len() != self.qubits.len()
+                || other.meas_ids.len() != other.qubits.len())
+        {
+            return false;
+        }
+
+        true
+    }
+
+    /// Appends a compatible gate command into this batch.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `other` is not batch-compatible with `self`.
+    pub fn append_batch(&mut self, other: Self) {
+        assert!(
+            self.can_batch_with(&other),
+            "cannot batch incompatible gate commands"
+        );
+        self.qubits.extend(other.qubits);
+        self.meas_ids.extend(other.meas_ids);
     }
 
     /// Helper function to flatten qubit pairs into a `GateQubits` buffer
@@ -1037,6 +1097,7 @@ impl Gate {
     /// Returns an error if:
     /// - The number of angles doesn't match the gate's angle arity
     /// - The number of qubits is not a multiple of the gate's quantum arity
+    /// - Any qubit is repeated within the gate command
     pub fn validate(&self) -> Result<(), String> {
         if self.is_channel() {
             let Some(channel) = &self.channel else {
@@ -1064,6 +1125,19 @@ impl Gate {
         if self.channel.is_some() {
             return Err("Only GateType::Channel can carry a channel payload".to_string());
         }
+        if self.gate_type == GateType::Custom {
+            let duplicates = duplicate_qubits(self.qubits.iter().map(|q| q.0));
+            if !duplicates.is_empty() {
+                return Err(format!(
+                    "Gate {:?} requires distinct qubits within one gate command; duplicated qubits: {:?}",
+                    self.gate_type, duplicates
+                ));
+            }
+            if !self.meas_ids.is_empty() {
+                return Err("Custom gates cannot carry measurement-id payloads".to_string());
+            }
+            return Ok(());
+        }
         // Check angle parameters
         if self.angles.len() != self.angle_arity() {
             return Err(format!(
@@ -1080,6 +1154,41 @@ impl Gate {
                 self.gate_type,
                 self.quantum_arity(),
                 self.qubits.len()
+            ));
+        }
+        let expected_params = self.classical_arity() - self.angle_arity();
+        if self.params.len() != expected_params {
+            return Err(format!(
+                "Gate {:?} expected {} non-angle parameters, got {}",
+                self.gate_type,
+                expected_params,
+                self.params.len()
+            ));
+        }
+        let duplicates = duplicate_qubits(self.qubits.iter().map(|q| q.0));
+        if !duplicates.is_empty() {
+            return Err(format!(
+                "Gate {:?} requires distinct qubits within one gate command; duplicated qubits: {:?}",
+                self.gate_type, duplicates
+            ));
+        }
+        let is_measurement = matches!(
+            self.gate_type,
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+        );
+        if is_measurement {
+            if !self.meas_ids.is_empty() && self.meas_ids.len() != self.qubits.len() {
+                return Err(format!(
+                    "Measurement gate {:?} expected measurement-id count to be 0 or {}, got {}",
+                    self.gate_type,
+                    self.qubits.len(),
+                    self.meas_ids.len()
+                ));
+            }
+        } else if !self.meas_ids.is_empty() {
+            return Err(format!(
+                "Gate {:?} cannot carry measurement-id payloads",
+                self.gate_type
             ));
         }
         Ok(())
@@ -1151,8 +1260,64 @@ mod tests {
             &[QubitId::from(0), QubitId::from(1)]
         );
         assert_eq!(two_qubit_gate.quantum_arity(), 2);
+        assert_eq!(two_qubit_gate.num_gates(), 1);
         assert!(two_qubit_gate.is_two_qubit());
         assert!(two_qubit_gate.validate().is_ok());
+    }
+
+    #[test]
+    fn test_num_gates_counts_batched_gates() {
+        assert_eq!(Gate::h(&[0, 1, 2, 3]).num_gates(), 4);
+        assert_eq!(Gate::cx(&[(0, 1), (2, 3)]).num_gates(), 2);
+        assert_eq!(Gate::ccx(&[(0, 1, 2), (3, 4, 5)]).num_gates(), 2);
+
+        assert_eq!(
+            Gate::custom(vec![QubitId::from(0), QubitId::from(1)]).num_gates(),
+            1
+        );
+        assert_eq!(
+            Gate::simple(
+                GateType::PauliOperatorMeta,
+                vec![QubitId::from(0), QubitId::from(1)]
+            )
+            .num_gates(),
+            0
+        );
+        assert_eq!(Gate::meas_crosstalk_global_payload(&[0, 1]).num_gates(), 0);
+    }
+
+    #[test]
+    fn test_gate_batch_compatibility_and_append() {
+        let mut h0 = Gate::h(&[0]);
+        let h1 = Gate::h(&[1]);
+        assert!(h0.can_batch_with(&h1));
+        h0.append_batch(h1);
+        assert_eq!(h0.qubits.as_slice(), &[QubitId::from(0), QubitId::from(1)]);
+        assert_eq!(h0.num_gates(), 2);
+
+        assert!(!Gate::h(&[0]).can_batch_with(&Gate::h(&[0])));
+        assert!(
+            !Gate::rz(Angle64::from_turns(0.25), &[0])
+                .can_batch_with(&Gate::rz(Angle64::from_turns(0.5), &[1]))
+        );
+        assert!(
+            !Gate::custom(vec![QubitId::from(0)])
+                .can_batch_with(&Gate::custom(vec![QubitId::from(1)]))
+        );
+    }
+
+    #[test]
+    fn test_measurement_batch_compatibility_preserves_measurement_ids() {
+        let mut m0 = Gate::mz(&[0]);
+        m0.meas_ids.push(MeasId(4));
+        let mut m1 = Gate::mz(&[1]);
+        m1.meas_ids.push(MeasId(5));
+
+        assert!(m0.can_batch_with(&m1));
+        m0.append_batch(m1);
+
+        assert_eq!(m0.qubits.as_slice(), &[QubitId::from(0), QubitId::from(1)]);
+        assert_eq!(m0.meas_ids.as_slice(), &[MeasId(4), MeasId(5)]);
     }
 
     #[test]
@@ -1191,6 +1356,45 @@ mod tests {
     #[should_panic(expected = "CX gate requires an even number of qubits")]
     fn test_cx_vec_odd_qubits() {
         let _ = Gate::cx_vec(&[0, 1, 2]);
+    }
+
+    #[test]
+    fn test_gate_validate_rejects_repeated_qubits_within_pair() {
+        let err = Gate::cx(&[(0, 0)]).validate().unwrap_err();
+        assert!(err.contains("requires distinct qubits"));
+        assert!(err.contains("[0]"));
+    }
+
+    #[test]
+    fn test_gate_validate_rejects_repeated_qubits_across_batched_pairs() {
+        let err = Gate::swap(&[(0, 1), (1, 2)]).validate().unwrap_err();
+        assert!(err.contains("requires distinct qubits"));
+        assert!(err.contains("[1]"));
+    }
+
+    #[test]
+    fn test_gate_validate_rejects_repeated_qubits_in_three_qubit_gate() {
+        let err = Gate::ccx(&[(0, 1, 1)]).validate().unwrap_err();
+        assert!(err.contains("requires distinct qubits"));
+        assert!(err.contains("[1]"));
+    }
+
+    #[test]
+    fn test_gate_validate_rejects_repeated_qubits_in_parameterized_two_qubit_gates() {
+        let angle = Angle64::from_turns(0.25);
+        let kak_angles = [[Angle64::ZERO; 3]; 2];
+        let interaction = [Angle64::ZERO; 3];
+
+        let cases = [
+            Gate::rzz(angle, &[(2, 2)]),
+            Gate::rxxryyrzz(angle, angle, angle, &[(3, 3)]),
+            Gate::u2q(kak_angles, interaction, kak_angles, &[(4, 4)]),
+        ];
+
+        for gate in cases {
+            let err = gate.validate().unwrap_err();
+            assert!(err.contains("requires distinct qubits"), "{err}");
+        }
     }
 
     #[test]
@@ -1404,5 +1608,84 @@ mod tests {
             ],
         );
         assert!(multi_cx_gates.validate().is_ok()); // Multiple CX gates
+    }
+
+    #[test]
+    fn test_gate_validation_rejects_duplicate_qubits_for_batched_commands() {
+        let duplicate_x = Gate::x(&[0, 0]);
+        let err = duplicate_x.validate().unwrap_err();
+        assert!(err.contains("requires distinct qubits"));
+        assert!(err.contains("[0]"));
+
+        let duplicate_mz = Gate::mz(&[1, 1]);
+        let err = duplicate_mz.validate().unwrap_err();
+        assert!(err.contains("requires distinct qubits"));
+        assert!(err.contains("[1]"));
+    }
+
+    #[test]
+    fn test_gate_validation_checks_non_angle_parameters_and_measurement_ids() {
+        let missing_idle_duration = Gate::new(
+            GateType::Idle,
+            Vec::<Angle64>::new(),
+            Vec::<f64>::new(),
+            vec![QubitId::from(0)],
+        );
+        assert!(
+            missing_idle_duration
+                .validate()
+                .unwrap_err()
+                .contains("expected 1 non-angle parameters, got 0")
+        );
+
+        let mut measured = Gate::mz(&[0, 1]);
+        measured.meas_ids.push(MeasId(0));
+        assert!(
+            measured
+                .validate()
+                .unwrap_err()
+                .contains("expected measurement-id count to be 0 or 2, got 1")
+        );
+
+        let mut non_measurement = Gate::x(&[0]);
+        non_measurement.meas_ids.push(MeasId(0));
+        assert!(
+            non_measurement
+                .validate()
+                .unwrap_err()
+                .contains("cannot carry measurement-id payloads")
+        );
+    }
+
+    #[test]
+    fn test_channel_gate_validation_rejects_stale_payloads() {
+        use crate::channel::{BitFlip, Depolarizing};
+
+        let mut stale_qubits = Gate::channel(Depolarizing(0.25, 0));
+        stale_qubits.qubits = vec![QubitId::from(1)].into();
+        assert!(
+            stale_qubits
+                .validate()
+                .unwrap_err()
+                .contains("do not match channel payload qubits")
+        );
+
+        let mut stale_angles = Gate::channel(BitFlip(0.1, 0));
+        stale_angles.angles.push(Angle64::from_turns(0.25));
+        assert!(
+            stale_angles
+                .validate()
+                .unwrap_err()
+                .contains("cannot carry angle, parameter, or measurement-id payloads")
+        );
+
+        let mut channel_payload_on_ideal_gate = Gate::x(&[0]);
+        channel_payload_on_ideal_gate.channel = Some(BitFlip(0.1, 0));
+        assert!(
+            channel_payload_on_ideal_gate
+                .validate()
+                .unwrap_err()
+                .contains("Only GateType::Channel can carry a channel payload")
+        );
     }
 }

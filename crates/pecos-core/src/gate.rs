@@ -27,6 +27,7 @@
 //! noise and open-system maps, use [`crate::channel`].
 
 use crate::op::Op;
+use crate::qubit_support::overlapping_qubits;
 use crate::unitary_rep::{QubitPairs, Qubits};
 use crate::{Angle64, PauliString, QubitId, UnitaryRep, op, unitary_rep};
 use std::ops::{BitAnd, Mul};
@@ -343,6 +344,11 @@ impl BitAnd for GateExpr {
     type Output = GateExpr;
 
     fn bitand(self, rhs: GateExpr) -> GateExpr {
+        let overlap = overlapping_qubits(self.qubits(), rhs.qubits());
+        assert!(
+            overlap.is_empty(),
+            "tensor product requires disjoint gate support; overlapping qubits: {overlap:?}"
+        );
         GateExpr::Tensor(vec![self, rhs])
     }
 }
@@ -462,11 +468,86 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "CX requires distinct qubits")]
+    fn gate_namespace_two_qubit_gate_rejects_repeated_qubit() {
+        let _ = CX(0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RZZ requires distinct qubits")]
+    fn gate_namespace_two_qubit_rotation_rejects_repeated_qubit() {
+        let _ = RZZ(Angle64::QUARTER_TURN, 1, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "CCX requires distinct qubits")]
+    fn gate_namespace_three_qubit_gate_rejects_repeated_qubit() {
+        let _ = CCX(0, 1, 1);
+    }
+
+    #[test]
     fn gate_tensor_and_composition_stay_gate_level() {
         let tensor = H(0) & MZ(1);
         assert!(matches!(tensor, GateExpr::Tensor(parts) if parts.len() == 2));
 
         let sequence = PZ(0) * H(0) * MZ(0);
         assert!(matches!(sequence, GateExpr::Compose(parts) if parts.len() == 2));
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint gate support")]
+    fn gate_tensor_rejects_overlapping_qubits() {
+        let _ = H(0) & MZ(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor product requires disjoint gate support")]
+    fn gate_tensor_rejects_partial_overlap_with_multi_qubit_support() {
+        let _ = CX(0, 2) & H(2);
+    }
+
+    #[test]
+    fn gate_tensor_uses_sparse_support_not_dense_span() {
+        let tensor = CX(0, 2) & MZ(1);
+        assert!(matches!(tensor, GateExpr::Tensor(ref parts) if parts.len() == 2));
+        assert_eq!(tensor.qubits(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn gate_namespace_plural_helpers_match_tensor_forms() {
+        let cxs = CXs([(0, 1), (2, 3)]);
+        assert!(matches!(cxs, GateExpr::Unitary(_)));
+        assert_eq!(cxs.qubits(), vec![0, 1, 2, 3]);
+
+        let rzzs = RZZs(Angle64::QUARTER_TURN, [(0, 1), (2, 3)]);
+        assert!(matches!(rzzs, GateExpr::Unitary(_)));
+        assert_eq!(rzzs.qubits(), vec![0, 1, 2, 3]);
+
+        let tensor = CX(0, 1) & CX(2, 3);
+        assert!(matches!(tensor, GateExpr::Tensor(_)));
+        assert_eq!(tensor.qubits(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn gate_namespace_plural_helpers_reject_overlapping_support() {
+        fn assert_tensor_overlap_panic(f: impl FnOnce() + std::panic::UnwindSafe) {
+            let err = std::panic::catch_unwind(f).expect_err("expected tensor overlap panic");
+            let message = err
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| err.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic>");
+            assert!(
+                message.contains("tensor product requires disjoint"),
+                "unexpected panic message: {message}"
+            );
+        }
+
+        assert_tensor_overlap_panic(|| {
+            let _ = CXs([(0, 1), (1, 2)]);
+        });
+        assert_tensor_overlap_panic(|| {
+            let _ = RZZs(Angle64::QUARTER_TURN, [(0, 2), (2, 3)]);
+        });
     }
 }

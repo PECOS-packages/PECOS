@@ -87,8 +87,8 @@ pub use dag_circuit::{
     TraversalWorkBuffers,
 };
 pub use tick_circuit::{
-    CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit, TickHandle,
-    TickMeasRef, TickMeasureHandle, TickPrepHandle,
+    CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit,
+    TickGateError, TickHandle, TickMeasRef, TickMeasureHandle, TickPrepHandle,
 };
 pub use tick_circuit_soa::{
     CircuitIndexes, GateBatch, GateId, GateStorage, MetadataStorage, TickBatches, TickCircuitSoA,

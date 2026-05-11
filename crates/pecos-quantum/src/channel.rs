@@ -614,20 +614,43 @@ impl PauliSum {
         })
     }
 
+    /// Adds two Pauli sums after validating that they act on the same number
+    /// of qubits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::QubitCountMismatch`] when the two sums have
+    /// different qubit counts.
+    pub fn try_add(mut self, rhs: Self) -> Result<Self, ChannelError> {
+        if self.num_qubits != rhs.num_qubits {
+            return Err(ChannelError::QubitCountMismatch {
+                expected: self.num_qubits,
+                actual: rhs.num_qubits,
+            });
+        }
+        for (pauli, coefficient) in rhs.terms {
+            self.add_term(pauli, coefficient)?;
+        }
+        Ok(self)
+    }
+
     /// Returns the trace of the represented operator.
     ///
     /// The trace is `identity_coefficient * 2^num_qubits`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::DimensionOverflow`] when `2^num_qubits` cannot
+    /// fit in `usize`.
     #[allow(clippy::cast_precision_loss)]
-    #[must_use]
-    pub fn trace(&self) -> Complex64 {
-        let dim = 2usize
-            .checked_pow(self.num_qubits.try_into().unwrap_or(u32::MAX))
-            .unwrap_or(usize::MAX);
-        self.terms
+    pub fn trace(&self) -> Result<Complex64, ChannelError> {
+        let dim = hilbert_dim(self.num_qubits)?;
+        Ok(self
+            .terms
             .get(&PauliBitmaskSmall::identity())
             .copied()
             .unwrap_or_else(|| Complex64::new(0.0, 0.0))
-            * dim as f64
+            * dim as f64)
     }
 }
 
@@ -650,16 +673,15 @@ impl fmt::Display for PauliSum {
 impl Add for PauliSum {
     type Output = Self;
 
-    fn add(mut self, rhs: Self) -> Self::Output {
-        assert_eq!(
-            self.num_qubits, rhs.num_qubits,
-            "cannot add PauliSum values with different qubit counts"
-        );
-        for (pauli, coefficient) in rhs.terms {
-            self.add_term(pauli, coefficient)
-                .expect("validated RHS term must remain valid");
-        }
-        self
+    /// Adds two Pauli sums.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the sums have different qubit counts. Use
+    /// [`PauliSum::try_add`] to handle this case without panicking.
+    fn add(self, rhs: Self) -> Self::Output {
+        self.try_add(rhs)
+            .expect("cannot add PauliSum values with different qubit counts")
     }
 }
 
@@ -695,24 +717,6 @@ impl Mul<PauliSum> for f64 {
 
     fn mul(self, rhs: PauliSum) -> Self::Output {
         rhs * self
-    }
-}
-
-impl Mul<PauliSum> for PauliString {
-    type Output = PauliSum;
-
-    fn mul(self, rhs: PauliSum) -> Self::Output {
-        rhs.conjugated_by_pauli_string(&self)
-            .expect("PauliString touches outside PauliSum qubit range")
-    }
-}
-
-impl Mul<&PauliSum> for &PauliString {
-    type Output = PauliSum;
-
-    fn mul(self, rhs: &PauliSum) -> Self::Output {
-        rhs.conjugated_by_pauli_string(self)
-            .expect("PauliString touches outside PauliSum qubit range")
     }
 }
 
@@ -2051,11 +2055,9 @@ impl SuperOp {
     /// Returns an error when qubit counts differ.
     pub fn compose(&self, other: &Self) -> Result<Self, ChannelError> {
         if self.num_qubits != other.num_qubits {
-            return Err(ChannelError::InvalidMatrixShape {
-                expected_rows: self.matrix.nrows(),
-                expected_cols: self.matrix.ncols(),
-                rows: other.matrix.nrows(),
-                cols: other.matrix.ncols(),
+            return Err(ChannelError::QubitCountMismatch {
+                expected: self.num_qubits,
+                actual: other.num_qubits,
             });
         }
         Self::try_new(self.num_qubits, &self.matrix * &other.matrix)
@@ -3209,6 +3211,69 @@ mod tests {
         }
     }
 
+    fn apply_kraus_direct(kraus: &KrausOps, operator: &DMatrix<Complex64>) -> DMatrix<Complex64> {
+        let mut output = DMatrix::zeros(operator.nrows(), operator.ncols());
+        for k in kraus.operators() {
+            output += k * operator * k.adjoint();
+        }
+        output
+    }
+
+    fn direct_superop_from_kraus(kraus: &KrausOps) -> DMatrix<Complex64> {
+        let dim = hilbert_dim(kraus.num_qubits()).unwrap();
+        let dim_squared = dim * dim;
+        let mut matrix = DMatrix::zeros(dim_squared, dim_squared);
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let mut input = DMatrix::zeros(dim, dim);
+                input[(input_row, input_col)] = Complex64::new(1.0, 0.0);
+                let output = apply_kraus_direct(kraus, &input);
+                let input_idx = matrix_unit_index(dim, input_row, input_col);
+                for output_col in 0..dim {
+                    for output_row in 0..dim {
+                        let output_idx = matrix_unit_index(dim, output_row, output_col);
+                        matrix[(output_idx, input_idx)] = output[(output_row, output_col)];
+                    }
+                }
+            }
+        }
+        matrix
+    }
+
+    fn direct_ptm_from_kraus(kraus: &KrausOps) -> DMatrix<f64> {
+        let num_qubits = kraus.num_qubits();
+        let basis = pauli_basis_matrices(num_qubits).unwrap();
+        let dim = hilbert_dim(num_qubits).unwrap();
+        #[allow(clippy::cast_precision_loss)]
+        let dim_f = dim as f64;
+        let mut matrix = DMatrix::zeros(basis.len(), basis.len());
+        for input_idx in 0..basis.len() {
+            let evolved = apply_kraus_direct(kraus, &basis[input_idx]);
+            for output_idx in 0..basis.len() {
+                let entry = trace_complex(&(&basis[output_idx] * &evolved)) / dim_f;
+                assert!(
+                    entry.im.abs() < 1e-10,
+                    "PTM oracle produced complex entry {entry}"
+                );
+                matrix[(output_idx, input_idx)] = entry.re;
+            }
+        }
+        matrix
+    }
+
+    fn direct_matrix_unit_outputs(kraus: &KrausOps) -> Vec<DMatrix<Complex64>> {
+        let dim = hilbert_dim(kraus.num_qubits()).unwrap();
+        let mut outputs = Vec::with_capacity(dim * dim);
+        for input_col in 0..dim {
+            for input_row in 0..dim {
+                let mut input = DMatrix::zeros(dim, dim);
+                input[(input_row, input_col)] = Complex64::new(1.0, 0.0);
+                outputs.push(apply_kraus_direct(kraus, &input));
+            }
+        }
+        outputs
+    }
+
     fn assert_ptm_entry(ptm: &Ptm, output: &str, input: &str, expected: f64) {
         let output_idx = labels(ptm.num_qubits())
             .iter()
@@ -3262,6 +3327,42 @@ mod tests {
     }
 
     #[test]
+    fn zero_qubit_channel_representations_are_scalar_identity() {
+        let ptm = Ptm::identity(0).unwrap();
+        assert_eq!(ptm.matrix().shape(), (1, 1));
+        assert_close(ptm.entry(0, 0), 1.0);
+
+        let mut probabilities = BTreeMap::new();
+        probabilities.insert(PauliBitmaskSmall::identity(), 1.0);
+        let pauli_channel = PauliChannel::try_new(0, probabilities).unwrap();
+        assert_close(pauli_channel.total_error_rate(), 0.0);
+        assert_matrix_close(pauli_channel.to_ptm().unwrap().matrix(), ptm.matrix());
+
+        let kraus = KrausOps::try_new(
+            0,
+            vec![DMatrix::from_element(1, 1, Complex64::new(1.0, 0.0))],
+        )
+        .unwrap();
+        assert!(kraus.is_trace_preserving());
+
+        let choi = kraus.to_choi().unwrap();
+        assert_eq!(choi.matrix().shape(), (1, 1));
+        assert_complex_close(choi.matrix()[(0, 0)], Complex64::new(1.0, 0.0));
+        assert!(choi.is_cptp());
+
+        let superop = kraus.to_superop().unwrap();
+        assert_eq!(superop.num_qubits(), 0);
+        assert_complex_close(superop.matrix()[(0, 0)], Complex64::new(1.0, 0.0));
+
+        let chi = kraus.to_chi().unwrap();
+        assert_complex_close(chi.matrix()[(0, 0)], Complex64::new(1.0, 0.0));
+
+        let stinespring = kraus.to_stinespring().unwrap();
+        assert_eq!(stinespring.environment_dim(), 1);
+        assert_complex_close(stinespring.isometry()[(0, 0)], Complex64::new(1.0, 0.0));
+    }
+
+    #[test]
     fn pauli_sum_add_scalar_simplify_and_trace() {
         let identity = PauliBitmaskSmall::identity();
         let x0 = PauliBitmaskSmall::x(0);
@@ -3279,7 +3380,57 @@ mod tests {
         let c = (a + b) * 2.0;
         assert_eq!(c.terms().len(), 2);
         assert_complex_close(*c.terms().get(&identity).unwrap(), Complex64::new(4.0, 0.0));
-        assert_complex_close(c.trace(), Complex64::new(8.0, 0.0));
+        assert_complex_close(c.trace().unwrap(), Complex64::new(8.0, 0.0));
+    }
+
+    #[test]
+    fn pauli_sum_trace_reports_dimension_overflow() {
+        let sum = PauliSum::new(usize::MAX);
+        assert_eq!(
+            sum.trace().unwrap_err(),
+            ChannelError::DimensionOverflow {
+                num_qubits: usize::MAX
+            }
+        );
+    }
+
+    #[test]
+    fn pauli_sum_try_add_reports_qubit_mismatch() {
+        let a = PauliSum::new(1);
+        let b = PauliSum::new(2);
+
+        assert_eq!(
+            a.try_add(b).unwrap_err(),
+            ChannelError::QubitCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        );
+    }
+
+    #[test]
+    fn pauli_sum_try_add_merges_terms_and_drops_cancellations() {
+        let identity = PauliBitmaskSmall::identity();
+        let x0 = PauliBitmaskSmall::x(0);
+        let z0 = PauliBitmaskSmall::z(0);
+
+        let mut a = PauliSum::new(1);
+        a.add_term(identity.clone(), Complex64::new(2.0, 0.0))
+            .unwrap();
+        a.add_term(x0.clone(), Complex64::new(1.0, 0.0)).unwrap();
+
+        let mut b = PauliSum::new(1);
+        b.add_term(x0.clone(), Complex64::new(-1.0, 0.0)).unwrap();
+        b.add_term(z0.clone(), Complex64::new(0.5, 0.0)).unwrap();
+
+        let sum = a.try_add(b).unwrap();
+        assert_eq!(sum.terms().len(), 2);
+        assert!(sum.terms().get(&x0).is_none());
+        assert_complex_close(
+            *sum.terms().get(&identity).unwrap(),
+            Complex64::new(2.0, 0.0),
+        );
+        assert_complex_close(*sum.terms().get(&z0).unwrap(), Complex64::new(0.5, 0.0));
     }
 
     #[test]
@@ -3302,7 +3453,7 @@ mod tests {
         sum.add_term(PauliBitmaskSmall::z(0), Complex64::new(3.0, 0.0))
             .unwrap();
 
-        let conjugated = PauliString::z(0) * sum;
+        let conjugated = sum.conjugated_by_pauli_string(&PauliString::z(0)).unwrap();
         assert_complex_close(
             *conjugated.terms().get(&PauliBitmaskSmall::x(0)).unwrap(),
             Complex64::new(-2.0, 0.0),
@@ -3693,6 +3844,34 @@ mod tests {
     }
 
     #[test]
+    fn kraus_tensor_rejects_manually_constructed_overlapping_subsystems() {
+        let tensor = ChannelExpr::Tensor(vec![
+            pecos_core::channel::BitFlip(0.1, 0),
+            pecos_core::channel::Dephasing(0.2, 0),
+        ]);
+
+        assert!(matches!(
+            KrausOps::from_channel_expr(&tensor),
+            Err(ChannelError::DuplicateSubsystem { qubit: 0 })
+        ));
+    }
+
+    #[test]
+    fn kraus_tensor_and_compose_reject_empty_manual_exprs() {
+        let tensor = ChannelExpr::Tensor(Vec::new());
+        let compose = ChannelExpr::Compose(Vec::new());
+
+        assert!(matches!(
+            KrausOps::from_channel_expr(&tensor),
+            Err(ChannelError::UnsupportedChannelExpr { .. })
+        ));
+        assert!(matches!(
+            KrausOps::from_channel_expr(&compose),
+            Err(ChannelError::UnsupportedChannelExpr { .. })
+        ));
+    }
+
+    #[test]
     fn kraus_from_channel_expr_can_embed_in_larger_system() {
         let expr = pecos_core::channel::BitFlip(0.25, 2);
         let kraus = KrausOps::from_channel_expr_with_num_qubits(&expr, 3).unwrap();
@@ -3884,6 +4063,90 @@ mod tests {
     }
 
     #[test]
+    fn superop_choi_round_trip_for_amplitude_damping() {
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let kraus = KrausOps::from_channel_expr(&expr).unwrap();
+        let choi = kraus.to_choi().unwrap();
+
+        let superop = SuperOp::from_choi(&choi).unwrap();
+        let recovered = superop.to_choi().unwrap();
+
+        assert_complex_matrix_close(recovered.matrix(), choi.matrix());
+        assert_matrix_close(
+            superop.to_ptm().unwrap().matrix(),
+            kraus.to_ptm().unwrap().matrix(),
+        );
+    }
+
+    #[test]
+    fn superop_ptm_round_trip_for_depolarizing() {
+        let Op::Channel(expr) = op::Depolarizing(0.3, 0) else {
+            panic!("expected channel");
+        };
+        let ptm = Ptm::from_channel_expr(&expr).unwrap();
+
+        let superop = SuperOp::from_ptm(&ptm).unwrap();
+        let recovered = superop.to_ptm().unwrap();
+
+        assert_matrix_close(recovered.matrix(), ptm.matrix());
+    }
+
+    #[test]
+    fn random_channels_match_direct_kraus_oracles_for_small_systems() {
+        for (num_qubits, num_kraus, seed) in [(1, 1, 11), (1, 3, 12), (2, 2, 21), (2, 4, 22)] {
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let kraus = random_quantum_channel(&mut rng, num_qubits, num_kraus).unwrap();
+            assert!(kraus.is_trace_preserving());
+
+            let superop = kraus.to_superop().unwrap();
+            assert_complex_matrix_close(superop.matrix(), &direct_superop_from_kraus(&kraus));
+
+            let ptm = kraus.to_ptm().unwrap();
+            assert_matrix_close(ptm.matrix(), &direct_ptm_from_kraus(&kraus));
+
+            let choi = kraus.to_choi().unwrap();
+            let outputs = direct_matrix_unit_outputs(&kraus);
+            let reconstructed = ChoiMatrix::from_matrix_unit_outputs(num_qubits, &outputs).unwrap();
+            assert_complex_matrix_close(choi.matrix(), reconstructed.matrix());
+
+            for input in matrix_unit_basis(num_qubits).unwrap() {
+                assert_complex_matrix_close(
+                    &choi.apply_to_operator(&input).unwrap(),
+                    &apply_kraus_direct(&kraus, &input),
+                );
+            }
+
+            let stinespring_superop = kraus.to_stinespring().unwrap().to_superop().unwrap();
+            assert_complex_matrix_close(stinespring_superop.matrix(), superop.matrix());
+        }
+    }
+
+    #[test]
+    fn three_qubit_random_channel_matches_direct_oracles() {
+        let mut rng = PecosRng::seed_from_u64(1234);
+        let kraus = random_quantum_channel(&mut rng, 3, 2).unwrap();
+        assert!(kraus.is_trace_preserving());
+
+        let superop = kraus.to_superop().unwrap();
+        assert_eq!(superop.matrix().shape(), (64, 64));
+        assert_complex_matrix_close(superop.matrix(), &direct_superop_from_kraus(&kraus));
+
+        let ptm = kraus.to_ptm().unwrap();
+        assert_eq!(ptm.matrix().shape(), (64, 64));
+        assert_matrix_close(ptm.matrix(), &direct_ptm_from_kraus(&kraus));
+
+        let choi = kraus.to_choi().unwrap();
+        assert_eq!(choi.matrix().shape(), (64, 64));
+        assert!(choi.is_cptp());
+        assert_complex_matrix_close(
+            &choi.partial_trace_output().unwrap(),
+            &DMatrix::identity(8, 8),
+        );
+    }
+
+    #[test]
     fn superop_compose_and_tensor_follow_matrix_semantics() {
         let x = KrausOps::from_unitary(&unitary::X(0), 1)
             .unwrap()
@@ -3899,6 +4162,28 @@ mod tests {
         let tensor = identity.tensor(&identity).unwrap();
         assert_eq!(tensor.num_qubits(), 2);
         assert_complex_matrix_close(tensor.matrix(), &DMatrix::<Complex64>::identity(16, 16));
+
+        assert_eq!(
+            identity.compose(&tensor).unwrap_err(),
+            ChannelError::QubitCountMismatch {
+                expected: 1,
+                actual: 2
+            }
+        );
+    }
+
+    #[test]
+    fn stinespring_try_new_rejects_non_isometric_matrix() {
+        let err = Stinespring::try_new(
+            1,
+            DMatrix::from_diagonal_element(2, 2, Complex64::new(2.0, 0.0)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ChannelError::DecompositionFailed { reason } if reason.contains("not an isometry")
+        ));
     }
 
     #[test]
@@ -3921,6 +4206,41 @@ mod tests {
         let recovered = chi.to_ptm().unwrap();
         let expected = Ptm::from_channel_expr(&expr).unwrap();
         assert_matrix_close(recovered.matrix(), expected.matrix());
+    }
+
+    #[test]
+    fn chi_matrix_amplitude_damping_has_off_diagonal_terms_and_matches_ptm() {
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let kraus = KrausOps::from_channel_expr(&expr).unwrap();
+        let chi = ChiMatrix::from_kraus(&kraus).unwrap();
+
+        let has_off_diagonal = (0..chi.matrix().nrows()).any(|row| {
+            (0..chi.matrix().ncols())
+                .any(|col| row != col && chi.matrix()[(row, col)].norm() > 1e-10)
+        });
+        assert!(
+            has_off_diagonal,
+            "amplitude damping should have off-diagonal chi entries"
+        );
+
+        let recovered = chi.to_ptm().unwrap();
+        let expected = Ptm::from_channel_expr(&expr).unwrap();
+        assert_matrix_close(recovered.matrix(), expected.matrix());
+    }
+
+    #[test]
+    fn chi_choi_round_trip_for_amplitude_damping() {
+        let Op::Channel(expr) = op::AmplitudeDamping(0.25, 0) else {
+            panic!("expected channel");
+        };
+        let kraus = KrausOps::from_channel_expr(&expr).unwrap();
+        let chi = ChiMatrix::from_kraus(&kraus).unwrap();
+
+        let recovered = chi.to_choi().unwrap().to_chi().unwrap();
+
+        assert_complex_matrix_close(recovered.matrix(), chi.matrix());
     }
 
     #[test]
@@ -4041,6 +4361,26 @@ mod tests {
         assert_complex_matrix_close(reconstructed.matrix(), expected.matrix());
         assert!(reconstructed.is_cptp());
         assert!(!reconstructed.is_unital());
+    }
+
+    #[test]
+    fn process_tomography_design_reconstructs_two_qubit_tensor_channel() {
+        let tensor = ChannelExpr::Tensor(vec![
+            pecos_core::channel::AmplitudeDamping(0.25, 0),
+            pecos_core::channel::PhaseDamping(0.4, 1),
+        ]);
+        let kraus = KrausOps::from_channel_expr(&tensor).unwrap();
+        let expected = kraus.to_choi().unwrap();
+        let design = ProcessTomographyDesign::matrix_unit(2).unwrap();
+
+        let outputs = direct_matrix_unit_outputs(&kraus);
+        let reconstructed = design.reconstruct_choi(&outputs).unwrap();
+        assert_complex_matrix_close(reconstructed.matrix(), expected.matrix());
+
+        let simulated_outputs = design.simulate_outputs(&expected).unwrap();
+        for (direct, simulated) in outputs.iter().zip(simulated_outputs.iter()) {
+            assert_complex_matrix_close(simulated, direct);
+        }
     }
 
     #[test]
@@ -4181,6 +4521,22 @@ mod tests {
             random_density_matrix_with_rank(&mut rng, 1, 0).unwrap_err(),
             ChannelError::EmptyKrausSet
         ));
+    }
+
+    #[test]
+    fn random_density_matrix_three_qubit_rank_limited_is_stable() {
+        let mut rng = PecosRng::seed_from_u64(789);
+        let rho = random_density_matrix_with_rank(&mut rng, 3, 3).unwrap();
+        assert_eq!(rho.shape(), (8, 8));
+        assert_complex_close(trace_complex(&rho), Complex64::new(1.0, 0.0));
+        assert_complex_matrix_close(&rho, &rho.adjoint());
+
+        let purity = trace_complex(&(&rho * &rho));
+        assert!(purity.im.abs() < 1e-10);
+        assert!(
+            purity.re > 1.0 / 8.0 - 1e-10 && purity.re <= 1.0 + 1e-10,
+            "unexpected 3-qubit density-matrix purity: {purity}"
+        );
     }
 
     #[test]

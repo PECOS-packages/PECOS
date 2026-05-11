@@ -986,6 +986,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "SWAP requires distinct qubits")]
+    fn test_2q_on_qubits_rejects_repeated_qubit() {
+        let _ = Clifford::SWAP.on_qubits(0, 0);
+    }
+
+    #[test]
     fn test_on_qubits_noncontiguous() {
         let rep = Clifford::CX.on_qubits(0, 3);
         assert!(rep.is_valid());

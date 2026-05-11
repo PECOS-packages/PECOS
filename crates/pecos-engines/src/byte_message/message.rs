@@ -765,7 +765,13 @@ impl ByteMessage {
             );
         }
 
-        Ok(Gate::new(gate_type, angles, params, qubits))
+        let gate = Gate::new(gate_type, angles, params, qubits);
+        gate.validate().map_err(|err| {
+            PecosError::Input(format!(
+                "Invalid gate command payload for {gate_type:?}: {err}"
+            ))
+        })?;
+        Ok(gate)
     }
 
     // The parse_simple_measurement method has been removed as part of simplifying the protocol.
@@ -824,6 +830,39 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Channel gates carry typed payloads")
+        );
+    }
+
+    #[test]
+    fn test_raw_invalid_gate_payload_is_rejected_after_parse() {
+        use crate::byte_message::protocol::{GateHeader, MessageFlags, MessageType};
+
+        let header = GateHeader {
+            gate_type: GateType::CX as u8,
+            num_qubits: 2,
+            has_params: 0,
+            reserved: 0,
+        };
+        let mut payload = Vec::new();
+        payload.extend_from_slice(bytemuck::bytes_of(&header));
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+
+        let mut builder = ByteMessage::quantum_operations_builder();
+        builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
+        let message = builder.build();
+
+        let err = message
+            .quantum_ops()
+            .expect_err("raw CX payload cannot use the same qubit twice");
+
+        assert!(
+            err.to_string().contains("Invalid gate command payload"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("requires distinct qubits"),
+            "unexpected error: {err}"
         );
     }
 

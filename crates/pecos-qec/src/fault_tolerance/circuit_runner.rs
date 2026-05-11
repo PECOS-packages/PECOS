@@ -1315,7 +1315,8 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]); // All prepared
         circuit.tick().h(&[0]);
-        circuit.tick().cx(&[(0, 1), (0, 2)]);
+        circuit.tick().cx(&[(0, 1)]);
+        circuit.tick().cx(&[(0, 2)]);
         // No measurement - outputs go to next stage
 
         let checker = FaultChecker::new(&circuit);
@@ -1527,9 +1528,13 @@ mod tests {
         circuit.tick().h(&[0, 1, 3]);
 
         // Entangle to create logical |0>
-        circuit.tick().cx(&[(0, 2), (1, 2)]);
-        circuit.tick().cx(&[(0, 4), (1, 5), (3, 5)]);
-        circuit.tick().cx(&[(0, 6), (1, 6), (3, 6)]);
+        circuit.tick().cx(&[(0, 2)]);
+        circuit.tick().cx(&[(1, 2)]);
+        circuit.tick().cx(&[(0, 4), (1, 5)]);
+        circuit.tick().cx(&[(3, 5)]);
+        circuit.tick().cx(&[(0, 6)]);
+        circuit.tick().cx(&[(1, 6)]);
+        circuit.tick().cx(&[(3, 6)]);
         circuit.tick().cx(&[(3, 4)]);
 
         circuit

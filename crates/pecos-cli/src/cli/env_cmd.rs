@@ -53,16 +53,15 @@ pub fn collect_env() -> BTreeMap<String, String> {
     #[cfg(target_os = "macos")]
     {
         // SDKROOT — needed for bindgen/clang to find system headers
-        if std::env::var("SDKROOT").is_err() {
-            if let Ok(output) = std::process::Command::new("xcrun")
+        if std::env::var("SDKROOT").is_err()
+            && let Ok(output) = std::process::Command::new("xcrun")
                 .args(["--show-sdk-path"])
                 .output()
-                && output.status.success()
-            {
-                let sdk = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !sdk.is_empty() {
-                    env.insert("SDKROOT".into(), sdk);
-                }
+            && output.status.success()
+        {
+            let sdk = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !sdk.is_empty() {
+                env.insert("SDKROOT".into(), sdk);
             }
         }
 

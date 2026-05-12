@@ -22,23 +22,23 @@
 //!   pecos env --format json     # machine-readable output
 //!   pecos env --show            # human-readable display
 
-use pecos_build::Result;
 use std::collections::BTreeMap;
+use std::fmt::Write;
 
 /// Collect the build environment for the current platform.
 ///
 /// Returns a map of environment variable names to values. Only includes
 /// variables that PECOS needs to set — does not duplicate the entire shell
 /// environment.
-pub fn collect_env() -> Result<BTreeMap<String, String>> {
+pub fn collect_env() -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
 
     // LLVM
     if let Some(llvm_path) = pecos_build::llvm::find_llvm_14(None) {
         let llvm_str = llvm_path.display().to_string();
-        env.insert("LLVM_SYS_140_PREFIX".into(), llvm_str.clone());
+        env.insert("LLVM_SYS_140_PREFIX".into(), llvm_str);
 
-        // Add LLVM bin to PATH suggestion
+        // Add LLVM bin to PATH
         let bin_path = llvm_path.join("bin");
         if bin_path.exists() {
             let current_path = std::env::var("PATH").unwrap_or_default();
@@ -83,7 +83,7 @@ pub fn collect_env() -> Result<BTreeMap<String, String>> {
         );
     }
 
-    Ok(env)
+    env
 }
 
 /// Print environment in shell-eval format: `export KEY="VALUE"`
@@ -95,23 +95,17 @@ pub fn print_shell(env: &BTreeMap<String, String>) {
 
 /// Print environment in JSON format.
 pub fn print_json(env: &BTreeMap<String, String>) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(env).unwrap_or_else(|_| {
-            // Fallback if serde_json isn't available — manual JSON
-            let mut out = String::from("{\n");
-            for (i, (key, value)) in env.iter().enumerate() {
-                let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-                out.push_str(&format!("  \"{key}\": \"{escaped}\""));
-                if i + 1 < env.len() {
-                    out.push(',');
-                }
-                out.push('\n');
-            }
-            out.push('}');
-            out
-        })
-    );
+    let mut out = String::from("{\n");
+    for (i, (key, value)) in env.iter().enumerate() {
+        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+        let _ = write!(out, "  \"{key}\": \"{escaped}\"");
+        if i + 1 < env.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push('}');
+    println!("{out}");
 }
 
 /// Print environment in human-readable format.
@@ -127,13 +121,11 @@ pub fn print_show(env: &BTreeMap<String, String>) {
 }
 
 /// Run the env subcommand.
-pub fn run(format: &str) -> Result<()> {
-    let env = collect_env()?;
+pub fn run(format: &str) {
+    let env = collect_env();
     match format {
-        "shell" => print_shell(&env),
         "json" => print_json(&env),
         "show" => print_show(&env),
         _ => print_shell(&env),
     }
-    Ok(())
 }

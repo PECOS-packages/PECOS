@@ -692,7 +692,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Llvm { command } => cli::llvm_cmd::run(command.clone())?,
         Commands::Selene { command } => cli::selene_cmd::run(command.clone())?,
         Commands::Deps { command } => cli::manifest_cmd::run(command.clone())?,
-        Commands::Env { format } => cli::env_cmd::run(format)?,
+        Commands::Env { format } => cli::env_cmd::run(format),
         Commands::Setup {
             yes,
             no,

@@ -95,20 +95,23 @@ pub fn print_shell(env: &BTreeMap<String, String>) {
 
 /// Print environment in JSON format.
 pub fn print_json(env: &BTreeMap<String, String>) {
-    println!("{}", serde_json::to_string_pretty(env).unwrap_or_else(|_| {
-        // Fallback if serde_json isn't available — manual JSON
-        let mut out = String::from("{\n");
-        for (i, (key, value)) in env.iter().enumerate() {
-            let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-            out.push_str(&format!("  \"{key}\": \"{escaped}\""));
-            if i + 1 < env.len() {
-                out.push(',');
+    println!(
+        "{}",
+        serde_json::to_string_pretty(env).unwrap_or_else(|_| {
+            // Fallback if serde_json isn't available — manual JSON
+            let mut out = String::from("{\n");
+            for (i, (key, value)) in env.iter().enumerate() {
+                let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+                out.push_str(&format!("  \"{key}\": \"{escaped}\""));
+                if i + 1 < env.len() {
+                    out.push(',');
+                }
+                out.push('\n');
             }
-            out.push('\n');
-        }
-        out.push('}');
-        out
-    }));
+            out.push('}');
+            out
+        })
+    );
 }
 
 /// Print environment in human-readable format.

@@ -26,8 +26,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Import shared extraction function from test_code_examples
-from test_code_examples import extract_code_blocks
+# Import shared functions from test_code_examples
+from test_code_examples import _uses_guppy_decorator, extract_code_blocks
 
 # Files to test (relative to the docs directory)
 TEST_FILES = [
@@ -52,15 +52,36 @@ def test_python_block(
     print(f"Testing Python block #{block_number} from {file_path}...")
 
     try:
-        # Execute the code block and capture output
-        result = subprocess.run(
-            [sys.executable, "-c", code_block],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            shell=False,
-        )
+        # Guppy code needs to be in a file for inspect.getsourcelines() to work
+        if _uses_guppy_decorator(code_block):
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".py",
+                delete=False,
+                encoding="utf-8",
+            ) as f:
+                f.write(code_block)
+                temp_path = f.name
+            try:
+                result = subprocess.run(
+                    [sys.executable, temp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                    shell=False,
+                )
+            finally:
+                Path(temp_path).unlink(missing_ok=True)
+        else:
+            result = subprocess.run(
+                [sys.executable, "-c", code_block],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                shell=False,
+            )
 
         if result.returncode != 0:
             print(f"FAIL: Error in Python block #{block_number} from {file_path}:")

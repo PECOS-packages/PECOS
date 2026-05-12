@@ -248,7 +248,7 @@ check:
 # Check Python workspace metadata
 [group('lint')]
 python-workspace-check:
-    @if command -v python3 >/dev/null 2>&1; then python3 scripts/check_python_workspace.py; else python scripts/check_python_workspace.py; fi
+    @uv run python scripts/check_python_workspace.py
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]

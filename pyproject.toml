@@ -38,6 +38,7 @@ dev = [
   "pre-commit",                             # Git hooks
   "black",                                  # Code formatting
   "ruff",                                   # Fast Python linting
+  "tomli>=1.1.0; python_version < '3.11'",  # TOML parsing (stdlib in 3.11+)
   "mkdocs",                                 # Documentation framework
   "mkdocs-material",                        # Material theme for MkDocs
   "mkdocstrings[python]",                   # Code documentation extraction

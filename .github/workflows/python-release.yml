@@ -182,6 +182,7 @@ jobs:
           # Build configuration
           CIBW_BUILD: "cp310-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
+          CIBW_BUILD_VERBOSITY: "1"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
@@ -269,6 +270,7 @@ jobs:
         env:
           CIBW_BUILD: "cp310-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
+          CIBW_BUILD_VERBOSITY: "1"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"

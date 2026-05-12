@@ -8,17 +8,24 @@ from pathlib import Path
 import pytest
 
 
-def test_main_pecos_namespace_exports_sim_neo_stack() -> None:
-    from pecos import depolarizing, fault_catalog, meas_sampling, sim_neo, stabilizer
+def test_sim_neo_stack_runs_from_exp() -> None:
+    pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
     from pecos.quantum import TickCircuit
 
     tc = TickCircuit()
     tc.tick().mz([0])
 
-    result = sim_neo(tc).quantum(stabilizer()).noise(depolarizing()).shots(2).seed(123).run()
+    result = (
+        pecos_rslib_exp.sim_neo(tc)
+        .quantum(pecos_rslib_exp.stabilizer())
+        .noise(pecos_rslib_exp.depolarizing())
+        .shots(2)
+        .seed(123)
+        .run()
+    )
     assert result.num_shots == 2
-    assert meas_sampling() is not None
-    assert callable(fault_catalog)
+    assert pecos_rslib_exp.meas_sampling() is not None
+    assert callable(pecos_rslib_exp.fault_catalog)
 
 
 def test_build_memory_circuit_is_public_surface_helper() -> None:

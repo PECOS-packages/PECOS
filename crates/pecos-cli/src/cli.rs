@@ -11,6 +11,7 @@
 
 pub mod cuda_cmd;
 pub mod cuquantum_cmd;
+pub mod env_cmd;
 pub mod gpu_cmd;
 pub mod info;
 pub mod install_cmd;

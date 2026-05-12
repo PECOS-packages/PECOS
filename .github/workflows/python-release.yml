@@ -221,6 +221,7 @@ jobs:
             PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             MACOSX_DEPLOYMENT_TARGET=13.2
+            SDKROOT=$(xcrun --show-sdk-path)
           CIBW_BEFORE_ALL_MACOS: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -289,6 +290,7 @@ jobs:
             PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             MACOSX_DEPLOYMENT_TARGET=13.2
+            SDKROOT=$(xcrun --show-sdk-path)
           CIBW_BEFORE_ALL_MACOS: |
             source $HOME/.cargo/env 2>/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env; }
             if [ ! -d "$HOME/.pecos/deps/llvm-14/bin" ]; then

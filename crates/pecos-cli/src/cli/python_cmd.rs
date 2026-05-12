@@ -151,6 +151,18 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             cmd.env("LIBRARY_PATH", "/usr/lib");
         }
 
+        // Apply PECOS build environment (SDKROOT, LLVM, CUDA, etc.)
+        // This is the single source of truth — same logic as `pecos env`.
+        if let Ok(build_env) = super::env_cmd::collect_env() {
+            for (key, value) in &build_env {
+                // Don't override PATH — we already set it above with venv
+                // Don't override LLVM_SYS_140_PREFIX if already in flags
+                if key != "PATH" {
+                    cmd.env(key, value);
+                }
+            }
+        }
+
         let status = cmd.status();
         match status {
             Ok(s) if s.success() => {}

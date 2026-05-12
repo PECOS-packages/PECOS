@@ -112,6 +112,21 @@ enum Commands {
         #[command(subcommand)]
         command: DepsCommands,
     },
+    /// Print build environment variables for the current platform
+    ///
+    /// Use `eval $(pecos env)` in bash/zsh to set variables in the current
+    /// shell. All platform-specific build configuration (LLVM paths, SDKROOT,
+    /// CUDA, cuQuantum) is detected and printed.
+    ///
+    /// Example: eval $(pecos env)
+    /// Example: pecos env --format show
+    /// Example: pecos env --format json
+    Env {
+        /// Output format: shell (default), json, show
+        #[arg(long, default_value = "shell")]
+        format: String,
+    },
+
     /// Set up build environment (detect and install missing dependencies)
     ///
     /// Interactively checks for LLVM, CUDA, and cuQuantum and offers to
@@ -677,6 +692,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Llvm { command } => cli::llvm_cmd::run(command.clone())?,
         Commands::Selene { command } => cli::selene_cmd::run(command.clone())?,
         Commands::Deps { command } => cli::manifest_cmd::run(command.clone())?,
+        Commands::Env { format } => cli::env_cmd::run(&format)?,
         Commands::Setup {
             yes,
             no,

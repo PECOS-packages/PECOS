@@ -58,7 +58,7 @@ pub use pauli_prop_checker::{
 pub use propagator::{
     DagFaultAnalyzer, DagFaultInfluenceMap, DagPropagator, DagSpacetimeLocation, DemOutputKind,
     DemOutputMetadata, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
-    InfluenceBasedChecker, MeasurementId, TickFaultAnalyzer, TrackedOpId, apply_gate,
+    InfluenceBasedChecker, MeasurementId, TickFaultAnalyzer, TrackedPauliId, apply_gate,
     propagate_backward_from_node, propagate_backward_from_tick, propagate_fault_backward,
     propagate_observable_backward, propagate_sparse_dag, propagate_through_circuit,
     propagate_through_dag, propagate_tick_range,

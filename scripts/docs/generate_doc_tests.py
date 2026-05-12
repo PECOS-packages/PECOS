@@ -21,7 +21,7 @@ test files. This allows running doc tests with standard pytest commands:
 Supported markers in markdown:
     <!--skip--> or <!--skip: reason-->     - Skip this block
     <!--skip-if-no-cuda-->                 - Skip if CUDA+cupy not available
-    <!--skip-if-no-cuda-rust-->            - Skip if CUDA Rust bindings not available
+    <!--skip-if-no-cuda-rust-->            - Skip if CUDA Rust simulators cannot initialize
     <!--expect-error: pattern-->           - Expect error matching regex pattern
     <!--expect-output: text-->             - Expect stdout to contain text
     <!--requires-module: package[, ...]--> - Skip if Python module is unavailable
@@ -468,7 +468,7 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
         )
     elif block.skip_if_no_cuda_rust:
         lines.append(
-            '@pytest.mark.skipif(not cuda_rust_available(), reason="CUDA Rust bindings not available")',
+            '@pytest.mark.skipif(not cuda_rust_available(), reason="CUDA Rust simulator runtime not available")',
         )
 
     lines.extend(f"@pytest.mark.{mark}" for mark in block.marks)
@@ -899,10 +899,10 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
             [
                 "",
                 "def _check_cuda_rust() -> bool:",
-                '    """Return True if CUDA Rust bindings (pecos_rslib_cuda) are available."""',
+                '    """Return True if CUDA Rust simulators can initialize."""',
                 "    try:",
-                "        from pecos_rslib_cuda import is_cuquantum_available",
-                "        return is_cuquantum_available()",
+                "        from pecos_rslib_cuda import is_custabilizer_usable, is_custatevec_usable",
+                "        return is_custatevec_usable() and is_custabilizer_usable()",
                 "    except ImportError:",
                 "        return False",
                 "",

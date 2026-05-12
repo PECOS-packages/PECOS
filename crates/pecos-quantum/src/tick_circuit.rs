@@ -2225,25 +2225,21 @@ impl TickCircuit {
         idx
     }
 
-    /// Place a tracked-operator annotation.
-    pub fn tracked_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
+    /// Place a tracked-Pauli annotation.
+    pub fn tracked_pauli(&mut self, mut pauli: pecos_core::PauliString) -> usize {
         pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::TrackedOperator,
+            kind: AnnotationKind::TrackedPauli,
             label: None,
         });
         idx
     }
 
-    /// Place a labeled tracked-operator annotation.
-    pub fn tracked_operator_labeled(
-        &mut self,
-        label: &str,
-        pauli: pecos_core::PauliString,
-    ) -> usize {
-        let idx = self.tracked_operator(pauli);
+    /// Place a labeled tracked-Pauli annotation.
+    pub fn tracked_pauli_labeled(&mut self, label: &str, pauli: pecos_core::PauliString) -> usize {
+        let idx = self.tracked_pauli(pauli);
         self.annotations[idx].label = Some(label.to_string());
         idx
     }
@@ -3225,7 +3221,7 @@ impl From<&DagCircuit> for TickCircuit {
         }
 
         // Transfer annotations, remapping DAG measurement nodes to TickCircuit
-        // measurement record indices. Tracked operators have no measurement
+        // measurement record indices. Tracked Paulis have no measurement
         // readout and keep their Pauli role unchanged.
         tc.annotations = dag
             .annotations()
@@ -3250,7 +3246,7 @@ impl From<&DagCircuit> for TickCircuit {
                             ),
                         }
                     }
-                    AnnotationKind::TrackedOperator => AnnotationKind::TrackedOperator,
+                    AnnotationKind::TrackedPauli => AnnotationKind::TrackedPauli,
                 };
                 PauliAnnotation {
                     pauli: ann.pauli.clone(),
@@ -3397,7 +3393,7 @@ impl From<&TickCircuit> for DagCircuit {
                         measurement_nodes: dag_nodes,
                     }
                 }
-                AnnotationKind::TrackedOperator => AnnotationKind::TrackedOperator,
+                AnnotationKind::TrackedPauli => AnnotationKind::TrackedPauli,
             };
             dag.add_annotation(PauliAnnotation {
                 pauli: ann.pauli.clone(),
@@ -4381,7 +4377,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detector_observable_and_tracked_operator_remain_distinct_after_round_trip() {
+    fn test_detector_observable_and_tracked_pauli_remain_distinct_after_round_trip() {
         use pecos_core::pauli::{X, Z};
 
         let mut tc1 = TickCircuit::new();
@@ -4389,7 +4385,7 @@ mod tests {
         let ms = tc1.tick().mz(&[0, 1]);
         tc1.detector_labeled("detector", &[ms[0]]);
         tc1.observable_labeled("observable", &[ms[1]]);
-        tc1.tracked_operator_labeled("tracked", X(0) & Z(2));
+        tc1.tracked_pauli_labeled("tracked", X(0) & Z(2));
 
         let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
         assert_eq!(tc2.annotations().len(), 3);
@@ -4413,7 +4409,7 @@ mod tests {
         assert_eq!(tc2.annotations()[2].label.as_deref(), Some("tracked"));
         assert!(matches!(
             tc2.annotations()[2].kind,
-            AnnotationKind::TrackedOperator
+            AnnotationKind::TrackedPauli
         ));
         assert_eq!(tc2.annotations()[2].pauli, X(0) & Z(2));
     }
@@ -4532,7 +4528,7 @@ mod tests {
 
             tc1.detector_labeled(&format!("det-{case_idx}"), &detector_records);
             tc1.observable_labeled(&format!("obs-{case_idx}"), &observable_records);
-            tc1.tracked_operator_labeled(&format!("track-{case_idx}"), tracked.clone());
+            tc1.tracked_pauli_labeled(&format!("track-{case_idx}"), tracked.clone());
 
             let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
             assert_eq!(tc2.gate_count(), tc1.gate_count(), "case {case_idx}");
@@ -4572,7 +4568,7 @@ mod tests {
             }
 
             let track = annotation_by_label(&tc2, &format!("track-{case_idx}"));
-            assert!(matches!(track.kind, AnnotationKind::TrackedOperator));
+            assert!(matches!(track.kind, AnnotationKind::TrackedPauli));
             assert_eq!(track.pauli, tracked, "case {case_idx}");
         }
     }
@@ -4644,7 +4640,7 @@ mod tests {
         let ms = tc1.tick().mz(&[70, 71]);
         tc1.detector_labeled("det-all-gates", &[ms[0]]);
         tc1.observable_labeled("obs-all-gates", &[ms[1]]);
-        tc1.tracked_operator_labeled("tracked-all-gates", X(70) & Z(71));
+        tc1.tracked_pauli_labeled("tracked-all-gates", X(70) & Z(71));
 
         let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
 
@@ -4673,7 +4669,7 @@ mod tests {
         ));
         assert!(matches!(
             tc2.annotations()[2].kind,
-            AnnotationKind::TrackedOperator
+            AnnotationKind::TrackedPauli
         ));
         assert!(tc2.has_channel_operations());
     }
@@ -4847,7 +4843,7 @@ mod tests {
             } else {
                 Y(base + 2)
             };
-            tc1.tracked_operator_labeled(&format!("tracked-{case_idx}"), tracked.clone());
+            tc1.tracked_pauli_labeled(&format!("tracked-{case_idx}"), tracked.clone());
 
             let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
 
@@ -4889,7 +4885,7 @@ mod tests {
             ));
             assert!(matches!(
                 tc2.annotations()[2].kind,
-                AnnotationKind::TrackedOperator
+                AnnotationKind::TrackedPauli
             ));
             assert_eq!(tc2.annotations()[2].pauli, tracked, "case {case_idx}");
             assert!(tc2.has_channel_operations(), "case {case_idx}");
@@ -5333,10 +5329,77 @@ mod tests {
     }
 
     #[test]
+    fn test_gate_instance_to_gate_preserves_payloads_without_attrs() {
+        let angle = Angle64::from_turn_ratio(1, 8);
+        let mut rzz_tick = Tick::new();
+        rzz_tick.add_gate(Gate::rzz(angle, &[(0, 1), (2, 3)]));
+        rzz_tick.set_gate_attr(0, "calibration", Attribute::String("rzz-cal".into()));
+
+        let rzz_instances: Vec<_> = rzz_tick.iter_gate_instances().collect();
+        assert_eq!(rzz_instances.len(), 2);
+        assert_eq!(
+            rzz_instances[0].get_attr("calibration"),
+            Some(&Attribute::String("rzz-cal".into()))
+        );
+        assert_eq!(
+            rzz_instances[0].attrs().count(),
+            1,
+            "batch metadata remains available through the instance view"
+        );
+        assert_eq!(rzz_instances[0].angles(), &[angle]);
+        assert_eq!(
+            rzz_instances[0].to_gate(),
+            Gate::rzz(angle, &[(0usize, 1usize)]),
+            "materialized gates carry sliced support and payload, not attrs"
+        );
+        assert_eq!(
+            rzz_instances[1].to_gate(),
+            Gate::rzz(angle, &[(2usize, 3usize)])
+        );
+
+        let duration = 8.0_f64;
+        let mut idle_tick = Tick::new();
+        idle_tick.add_gate(Gate::idle(
+            duration,
+            vec![QubitId::from(4), QubitId::from(5)],
+        ));
+        let idle_instances: Vec<_> = idle_tick.iter_gate_instances().collect();
+        assert_eq!(idle_instances.len(), 2);
+        let idle_gate = idle_instances[1].to_gate();
+        assert_eq!(idle_gate.gate_type, GateType::Idle);
+        assert_eq!(idle_gate.qubits.as_slice(), &[QubitId::from(5)]);
+        assert_eq!(idle_gate.params.len(), 1);
+        assert_eq!(idle_gate.params[0].to_bits(), duration.to_bits());
+
+        let mut meas_tc = TickCircuit::new();
+        meas_tc.tick().mz(&[8, 9]);
+        let meas_instances: Vec<_> = meas_tc.get_tick(0).unwrap().iter_gate_instances().collect();
+        assert_eq!(meas_instances.len(), 2);
+        assert_eq!(
+            meas_instances[0].to_gate().meas_ids.as_slice(),
+            &[MeasId(0)]
+        );
+        assert_eq!(
+            meas_instances[1].to_gate().meas_ids.as_slice(),
+            &[MeasId(1)]
+        );
+
+        let channel = pecos_core::channel::Depolarizing(0.125, 6);
+        let mut channel_tick = Tick::new();
+        channel_tick.add_gate(Gate::channel(channel.clone()));
+        let channel_instances: Vec<_> = channel_tick.iter_gate_instances().collect();
+        assert_eq!(channel_instances.len(), 1);
+        let channel_gate = channel_instances[0].to_gate();
+        assert_eq!(channel_gate.gate_type, GateType::Channel);
+        assert_eq!(channel_gate.qubits.as_slice(), &[QubitId::from(6)]);
+        assert_eq!(channel_gate.channel.as_ref(), Some(&channel));
+    }
+
+    #[test]
     fn test_gate_instance_iteration_skips_annotation_batches() {
         let mut tick = Tick::new();
         tick.add_gate(Gate::simple(
-            GateType::PauliOperatorMeta,
+            GateType::TrackedPauliMeta,
             vec![QubitId::from(0), QubitId::from(1)],
         ));
 
@@ -5344,6 +5407,36 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].gate_count(), 0);
         assert_eq!(tick.iter_gate_instances().count(), 0);
+    }
+
+    #[test]
+    fn test_tick_to_dag_keeps_zero_gate_metadata_nodes_from_gate_count() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.tick();
+        tc.get_tick_mut(1).unwrap().add_gate(Gate::simple(
+            GateType::TrackedPauliMeta,
+            vec![QubitId::from(1), QubitId::from(2)],
+        ));
+        tc.tick().mz(&[0]);
+
+        let dag = DagCircuit::from(&tc);
+
+        assert_eq!(
+            dag.gate_count(),
+            2,
+            "metadata nodes are not gate applications"
+        );
+        let metadata_nodes: Vec<_> = dag
+            .nodes()
+            .into_iter()
+            .filter(|&node| {
+                dag.gate(node)
+                    .is_some_and(|gate| gate.gate_type == GateType::TrackedPauliMeta)
+            })
+            .collect();
+        assert_eq!(metadata_nodes.len(), 1);
+        assert_eq!(dag.gate(metadata_nodes[0]).unwrap().num_gates(), 0);
     }
 
     #[test]
@@ -5391,7 +5484,7 @@ mod tests {
         let first_measurement = tc.tick().mz(&[0]);
         tc.detector(&first_measurement);
         tc.observable(&first_measurement);
-        tc.tracked_operator(pecos_core::pauli::Z(0));
+        tc.tracked_pauli(pecos_core::pauli::Z(0));
 
         assert_eq!(tc.num_measurements(), 1);
         assert_eq!(tc.annotations().len(), 3);
@@ -5914,7 +6007,7 @@ mod tests {
 
         tc.detector_labeled("Z_check", &ms);
         tc.observable_labeled("logical_Z", &ms);
-        tc.tracked_operator_labeled("logical_X", X(0) & X(1));
+        tc.tracked_pauli_labeled("logical_X", X(0) & X(1));
 
         assert_eq!(tc.annotations().len(), 3);
         assert_eq!(tc.annotations()[0].label.as_deref(), Some("Z_check"));
@@ -5933,7 +6026,7 @@ mod tests {
         let ms = tc.tick().mz(&[2]);
         tc.detector_labeled("det0", &ms);
         tc.observable_labeled("obs0", &ms);
-        tc.tracked_operator_labeled("op0", Z(0) & Z(1));
+        tc.tracked_pauli_labeled("op0", Z(0) & Z(1));
 
         let dag = DagCircuit::from(&tc);
 
@@ -5954,7 +6047,7 @@ mod tests {
         ));
         assert!(matches!(
             dag.annotations()[2].kind,
-            crate::dag_circuit::AnnotationKind::TrackedOperator
+            crate::dag_circuit::AnnotationKind::TrackedPauli
         ));
     }
 
@@ -5968,7 +6061,7 @@ mod tests {
         let ms = dag.mz(&[0, 1]);
         dag.detector_labeled("d0", &[ms[0]]);
         dag.observable_labeled("o0", &[ms[0], ms[1]]);
-        dag.tracked_operator_labeled("p0", X(0) & X(1));
+        dag.tracked_pauli_labeled("p0", X(0) & X(1));
 
         let tc = TickCircuit::from(&dag);
 
@@ -5991,7 +6084,7 @@ mod tests {
         tc1.detector_labeled("syndr", &ms);
         let ms_data = tc1.tick().mz(&[0, 1]);
         tc1.observable_labeled("log_Z", &ms_data);
-        tc1.tracked_operator_labeled("log_X", X(0) & X(1));
+        tc1.tracked_pauli_labeled("log_X", X(0) & X(1));
 
         // TickCircuit -> DagCircuit -> TickCircuit
         let dag = DagCircuit::from(&tc1);

@@ -89,7 +89,7 @@ class TestFaultCatalogStructure:
         assert hasattr(fault, "pauli")
         assert hasattr(fault, "detectors")
         assert hasattr(fault, "observables")
-        assert hasattr(fault, "tracked_ops")
+        assert hasattr(fault, "tracked_paulis")
         assert hasattr(fault, "measurements")
         assert hasattr(fault, "conditional_probability")
         assert hasattr(fault, "absolute_probability")
@@ -479,7 +479,7 @@ class TestFaultConfigurations:
         assert hasattr(first, "location_indices")
         assert hasattr(first, "locations")
         assert hasattr(first, "faults")
-        assert hasattr(first, "tracked_ops")
+        assert hasattr(first, "tracked_paulis")
 
     def test_yielded_locations_and_faults(self):
         tc = build_h_mz()
@@ -495,10 +495,10 @@ class TestFaultConfigurations:
         loc = catalog.locations[first.location_indices[0]]
         assert first.faults[0] is loc.faults[first.alternative_indices[0]]
 
-    def test_tracked_ops_are_distinct_from_observables(self):
+    def test_tracked_paulis_are_distinct_from_observables(self):
         tc = TickCircuit()
         tc.tick().h([0])
-        tc.tracked_operator(PauliString.from_str("Z"), label="tracked_z")
+        tc.tracked_pauli(PauliString.from_str("Z"), label="tracked_z")
         tc.set_meta("detectors", "[]")
         tc.set_meta("observables", "[]")
 
@@ -506,10 +506,10 @@ class TestFaultConfigurations:
         catalog = fault_catalog(tc, noise)
 
         h_loc = next(loc for loc in catalog if loc.gate_type == "H")
-        tracked = [fault.tracked_ops for fault in h_loc.faults]
+        tracked = [fault.tracked_paulis for fault in h_loc.faults]
         assert tracked.count([0]) == 2
         assert tracked.count([]) == 1
         assert all(fault.observables == [] for fault in h_loc.faults)
 
         configs = list(catalog.fault_configurations(1))
-        assert any(c.tracked_ops == [0] and c.observables == [] for c in configs)
+        assert any(c.tracked_paulis == [0] and c.observables == [] for c in configs)

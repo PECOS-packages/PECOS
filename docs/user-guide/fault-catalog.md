@@ -57,7 +57,7 @@ JSON strings by hand.
   single-qubit depolarizing channel, 15 alternatives for two-qubit).
 - When the location fires, exactly one alternative is chosen uniformly.
 - Each alternative records which measurements, detectors, observables, and
-  tracked operators it flips.
+  tracked Paulis it flips.
 - Multi-fault effects combine by XOR parity.
 
 ## Structural vs Parameterized Catalogs
@@ -187,13 +187,13 @@ Each `FaultAlternative` is one possible outcome when its parent location fires.
 | `measurements` | Raw measurement indices flipped |
 | `detectors` | Detector indices flipped |
 | `observables` | Observable indices flipped |
-| `tracked_ops` | Tracked operator indices flipped |
+| `tracked_paulis` | Tracked Pauli indices flipped |
 | `conditional_probability` | `1 / k_i` (structural, does not depend on noise) |
 | `absolute_probability` | `p_i / k_i` (0 if unparameterized) |
 | `channel_probability` | Same `p_i` as the parent location |
 
 The four effect fields (`measurements`, `detectors`, `observables`,
-`tracked_ops`) are structural -- they depend on the circuit topology, not the
+`tracked_paulis`) are structural -- they depend on the circuit topology, not the
 noise model. They are populated during construction and never change when
 noise is re-parameterized.
 
@@ -206,7 +206,7 @@ for loc in catalog:
         print(f"    measurements: {fault.measurements}")
         print(f"    detectors:    {fault.detectors}")
         print(f"    observables:  {fault.observables}")
-        print(f"    tracked_ops:  {fault.tracked_ops}")
+        print(f"    tracked_paulis:  {fault.tracked_paulis}")
 ```
 
 `fault.absolute_probability` is local to one fault location. It is not the
@@ -437,7 +437,7 @@ for loc in &catalog.locations {
             fault.kind,
             fault.affected_detectors,
             fault.affected_observables,
-            fault.affected_tracked_ops,
+            fault.affected_tracked_paulis,
             fault.absolute_probability
         );
     }
@@ -492,13 +492,13 @@ D0 flipped by None at MZ([0])
 
 ## Tracked Operators
 
-Tracked operators are Pauli operators that the catalog monitors for
+Tracked Paulis are Pauli strings that the catalog monitors for
 anticommutation with fault events. Unlike observables, they have no
 measurement records -- they are detected by forward Pauli propagation.
 See [PECOS Concepts](pecos-concepts.md) for the full detector, observable,
-and tracked-operator distinction.
+and tracked-Pauli distinction.
 
-Add tracked operators to a circuit via `tracked_operator`:
+Add tracked Paulis to a circuit via `tracked_pauli`:
 
 <!--expect-output-block-->
 ```python
@@ -508,21 +508,21 @@ tc2.set_meta("num_measurements", "0")
 tc2.set_meta("detectors", "[]")
 tc2.set_meta("observables", "[]")
 # Track Z on qubit 0 -- X and Y faults after H anticommute with Z
-tc2.tracked_operator(Z(0), label="track_Z0")
+tc2.tracked_pauli(Z(0), label="track_Z0")
 
 cat2 = fault_catalog(tc2, p1=0.01, p2=0.0, p_meas=0.0, p_prep=0.0)
 for loc in cat2:
     for alt in loc.faults:
-        if alt.tracked_ops:
-            print(f"{alt.pauli} flips tracked ops {alt.tracked_ops}")
+        if alt.tracked_paulis:
+            print(f"{alt.pauli} flips tracked Paulis {alt.tracked_paulis}")
 ```
 ```output
-X_0 flips tracked ops [0]
-Y_0 flips tracked ops [0]
+X_0 flips tracked Paulis [0]
+Y_0 flips tracked Paulis [0]
 ```
 
 No measurement is needed -- the catalog detects that X and Y faults after H
-anticommute with the tracked Z operator. This is useful for studying logical
+anticommute with the tracked Z Pauli. This is useful for studying logical
 operator propagation independently of measurement outcomes.
 
 ## Raw Measurement Sampling

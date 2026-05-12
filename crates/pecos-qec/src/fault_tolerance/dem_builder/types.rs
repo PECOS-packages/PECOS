@@ -13,7 +13,7 @@
 //! Types for Detector Error Model (DEM) generation.
 //!
 //! This module provides data structures for representing fault mechanisms,
-//! detectors, observables, and PECOS tracked operators.
+//! detectors, observables, and PECOS tracked Paulis.
 //!
 //! # Terminology
 //!
@@ -21,14 +21,14 @@
 //! - **Observables** are values observed through measurements. In a DEM they are
 //!   defined by measurement records and rendered as standard `L<n>` observable
 //!   outputs.
-//! - **Tracked operators** are not measured values and are not applied to the
+//! - **Tracked Paulis** are not measured values and are not applied to the
 //!   simulated computation. They are Pauli operators annotated at a circuit point
 //!   (for example a logical operator, stabilizer, or other Pauli of interest);
 //!   PECOS reports whether each fault event anticommutes with, and therefore
 //!   would flip, that operator under propagation.
 //!
 //! PECOS keeps the standard `L<n>` namespace reserved for measurement-record
-//! observables only. Tracked Pauli operators are PECOS metadata with their own
+//! observables only. Tracked Paulis are PECOS metadata with their own
 //! ID space, so decoders can ignore them while PECOS tools can still inspect
 //! them.
 //!
@@ -524,11 +524,11 @@ pub struct FaultMechanism {
     ///
     /// New code should treat these as standard observable `L<n>` output channels.
     pub dem_outputs: SmallVec<[u32; 2]>,
-    /// PECOS tracked-Pauli operator indices that flip together (sorted).
+    /// PECOS tracked-Pauli indices that flip together (sorted).
     ///
     /// These are rendered as `TP<n>` only in PECOS DEM text. Standard DEM text
     /// and decoder-facing mechanism tables intentionally ignore them.
-    pub tracked_ops: SmallVec<[u32; 2]>,
+    pub tracked_paulis: SmallVec<[u32; 2]>,
 }
 
 impl FaultMechanism {
@@ -544,41 +544,41 @@ impl FaultMechanism {
         detectors: impl IntoIterator<Item = u32>,
         dem_outputs: impl IntoIterator<Item = u32>,
     ) -> Self {
-        Self::from_unsorted_with_tracked_ops(detectors, dem_outputs, std::iter::empty())
+        Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
     }
 
     /// Creates a mechanism from unsorted detector, DEM-output, and tracked-Pauli indices.
     #[must_use]
-    pub fn from_unsorted_with_tracked_ops(
+    pub fn from_unsorted_with_tracked_paulis(
         detectors: impl IntoIterator<Item = u32>,
         dem_outputs: impl IntoIterator<Item = u32>,
-        tracked_ops: impl IntoIterator<Item = u32>,
+        tracked_paulis: impl IntoIterator<Item = u32>,
     ) -> Self {
         let mut dets: SmallVec<[u32; 4]> = detectors.into_iter().collect();
         let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
-        let mut tracked_ops: SmallVec<[u32; 2]> = tracked_ops.into_iter().collect();
+        let mut tracked_paulis: SmallVec<[u32; 2]> = tracked_paulis.into_iter().collect();
         dets.sort_unstable();
         dem_outputs.sort_unstable();
-        tracked_ops.sort_unstable();
+        tracked_paulis.sort_unstable();
         Self {
             detectors: dets,
             dem_outputs,
-            tracked_ops,
+            tracked_paulis,
         }
     }
 
     /// Creates a mechanism from pre-sorted detector and DEM-output indices.
     #[must_use]
     pub fn from_sorted(detectors: SmallVec<[u32; 4]>, dem_outputs: SmallVec<[u32; 2]>) -> Self {
-        Self::from_sorted_with_tracked_ops(detectors, dem_outputs, SmallVec::new())
+        Self::from_sorted_with_tracked_paulis(detectors, dem_outputs, SmallVec::new())
     }
 
     /// Creates a mechanism from pre-sorted detector, DEM-output, and tracked-Pauli indices.
     #[must_use]
-    pub fn from_sorted_with_tracked_ops(
+    pub fn from_sorted_with_tracked_paulis(
         detectors: SmallVec<[u32; 4]>,
         dem_outputs: SmallVec<[u32; 2]>,
-        tracked_ops: SmallVec<[u32; 2]>,
+        tracked_paulis: SmallVec<[u32; 2]>,
     ) -> Self {
         debug_assert!(
             detectors.windows(2).all(|w| w[0] <= w[1]),
@@ -589,13 +589,13 @@ impl FaultMechanism {
             "dem_outputs must be sorted"
         );
         debug_assert!(
-            tracked_ops.windows(2).all(|w| w[0] <= w[1]),
-            "tracked_ops must be sorted"
+            tracked_paulis.windows(2).all(|w| w[0] <= w[1]),
+            "tracked_paulis must be sorted"
         );
         Self {
             detectors,
             dem_outputs,
-            tracked_ops,
+            tracked_paulis,
         }
     }
 
@@ -603,7 +603,7 @@ impl FaultMechanism {
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.detectors.is_empty() && self.dem_outputs.is_empty() && self.tracked_ops.is_empty()
+        self.detectors.is_empty() && self.dem_outputs.is_empty() && self.tracked_paulis.is_empty()
     }
 
     /// Returns true if this mechanism has no decoder-facing effect.
@@ -622,7 +622,7 @@ impl FaultMechanism {
         Self {
             detectors: self.detectors.clone(),
             dem_outputs: self.dem_outputs.clone(),
-            tracked_ops: SmallVec::new(),
+            tracked_paulis: SmallVec::new(),
         }
     }
 
@@ -640,11 +640,11 @@ impl FaultMechanism {
         self.dem_outputs.len()
     }
 
-    /// Returns the number of tracked Pauli operator outputs in this mechanism.
+    /// Returns the number of tracked Pauli outputs in this mechanism.
     #[inline]
     #[must_use]
-    pub fn num_tracked_ops(&self) -> usize {
-        self.tracked_ops.len()
+    pub fn num_tracked_paulis(&self) -> usize {
+        self.tracked_paulis.len()
     }
 
     /// XOR this mechanism with another, returning the combined effect.
@@ -655,7 +655,7 @@ impl FaultMechanism {
         Self {
             detectors: symmetric_difference_4(&self.detectors, &other.detectors),
             dem_outputs: symmetric_difference_2(&self.dem_outputs, &other.dem_outputs),
-            tracked_ops: symmetric_difference_2(&self.tracked_ops, &other.tracked_ops),
+            tracked_paulis: symmetric_difference_2(&self.tracked_paulis, &other.tracked_paulis),
         }
     }
 
@@ -743,7 +743,7 @@ impl PartialEq for FaultMechanism {
     fn eq(&self, other: &Self) -> bool {
         self.detectors == other.detectors
             && self.dem_outputs == other.dem_outputs
-            && self.tracked_ops == other.tracked_ops
+            && self.tracked_paulis == other.tracked_paulis
     }
 }
 
@@ -753,7 +753,7 @@ impl Hash for FaultMechanism {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.detectors.hash(state);
         self.dem_outputs.hash(state);
-        self.tracked_ops.hash(state);
+        self.tracked_paulis.hash(state);
     }
 }
 
@@ -768,7 +768,7 @@ impl Ord for FaultMechanism {
         self.detectors
             .cmp(&other.detectors)
             .then_with(|| self.dem_outputs.cmp(&other.dem_outputs))
-            .then_with(|| self.tracked_ops.cmp(&other.tracked_ops))
+            .then_with(|| self.tracked_paulis.cmp(&other.tracked_paulis))
     }
 }
 
@@ -776,10 +776,10 @@ impl fmt::Debug for FaultMechanism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "FaultMechanism(dets={:?}, dem_outputs={:?}, tracked_ops={:?})",
+            "FaultMechanism(dets={:?}, dem_outputs={:?}, tracked_paulis={:?})",
             self.detectors.as_slice(),
             self.dem_outputs.as_slice(),
-            self.tracked_ops.as_slice()
+            self.tracked_paulis.as_slice()
         )
     }
 }
@@ -1239,7 +1239,7 @@ impl DetectorDef {
 
 /// Metadata for a non-detector output definition.
 ///
-/// Observables are rendered as standard `L<n>` targets. Tracked operators
+/// Observables are rendered as standard `L<n>` targets. Tracked Paulis
 /// use the same metadata shape but live in a separate PECOS-only ID space and
 /// are never rendered as `L<n>` because they are unmeasured Pauli-operator
 /// annotations, not measurement-record observables.
@@ -1324,16 +1324,16 @@ impl DemOutput {
     pub fn is_observable(&self) -> bool {
         match self.kind {
             Some(DemOutputKind::Observable) => true,
-            Some(DemOutputKind::TrackedOperator) => false,
+            Some(DemOutputKind::TrackedPauli) => false,
             None => !self.records.is_empty(),
         }
     }
 
-    /// Returns true when this DEM output is a tracked Pauli operator.
+    /// Returns true when this DEM output is a tracked Pauli.
     #[must_use]
-    pub fn is_tracked_operator(&self) -> bool {
+    pub fn is_tracked_pauli(&self) -> bool {
         match self.kind {
-            Some(DemOutputKind::TrackedOperator) => true,
+            Some(DemOutputKind::TrackedPauli) => true,
             Some(DemOutputKind::Observable) => false,
             None => self.pauli.is_some() && self.records.is_empty(),
         }
@@ -1790,7 +1790,7 @@ fn pecos_metadata_dem_output_value(target: &DemOutput) -> serde_json::Value {
 #[derive(Debug, Clone, Default)]
 struct ParsedPecosDemMetadata {
     observables: Vec<DemOutput>,
-    tracked_ops: Vec<DemOutput>,
+    tracked_paulis: Vec<DemOutput>,
 }
 
 pub(crate) fn parse_pecos_dem_metadata_line(
@@ -1798,11 +1798,11 @@ pub(crate) fn parse_pecos_dem_metadata_line(
 ) -> Result<DemOutput, PecosDemMetadataError> {
     let line = line.trim();
     let (prefix, payload, forced_kind) =
-        if let Some(payload) = line.strip_prefix("pecos_tracked_op") {
+        if let Some(payload) = line.strip_prefix("pecos_tracked_pauli") {
             (
-                "pecos_tracked_op",
+                "pecos_tracked_pauli",
                 payload.trim(),
-                Some(DemOutputKind::TrackedOperator),
+                Some(DemOutputKind::TrackedPauli),
             )
         } else if let Some(payload) = line.strip_prefix("pecos_observable") {
             (
@@ -1828,9 +1828,9 @@ pub(crate) fn parse_pecos_dem_metadata_line(
     if let Some(kind) = forced_kind {
         output.kind = Some(kind);
     }
-    if output.is_tracked_operator() && !output.records.is_empty() {
+    if output.is_tracked_pauli() && !output.records.is_empty() {
         return Err(PecosDemMetadataError::new(
-            "tracked operator metadata cannot have measurement records",
+            "tracked Pauli metadata cannot have measurement records",
         ));
     }
     Ok(output)
@@ -1861,6 +1861,14 @@ fn parse_pecos_metadata_json(json: &str) -> Result<ParsedPecosDemMetadata, Pecos
         )));
     }
 
+    for old_name in ["tracked_ops", "tracked_operators", "pauli_operators"] {
+        if root.get(old_name).is_some() {
+            return Err(PecosDemMetadataError::new(format!(
+                "unsupported legacy metadata field: {old_name}; use tracked_paulis"
+            )));
+        }
+    }
+
     let parse_array =
         |name: &str, kind: DemOutputKind| -> Result<Vec<DemOutput>, PecosDemMetadataError> {
             let Some(values) = root.get(name) else {
@@ -1875,9 +1883,9 @@ fn parse_pecos_metadata_json(json: &str) -> Result<ParsedPecosDemMetadata, Pecos
                 .map(|(idx, value)| {
                     let mut output = parse_pecos_metadata_dem_output(idx, value)?;
                     output.kind = Some(kind);
-                    if kind == DemOutputKind::TrackedOperator && !output.records.is_empty() {
+                    if kind == DemOutputKind::TrackedPauli && !output.records.is_empty() {
                         return Err(PecosDemMetadataError::new(format!(
-                            "tracked operator metadata {idx} cannot have measurement records"
+                            "tracked Pauli metadata {idx} cannot have measurement records"
                         )));
                     }
                     Ok(output)
@@ -1887,12 +1895,12 @@ fn parse_pecos_metadata_json(json: &str) -> Result<ParsedPecosDemMetadata, Pecos
 
     let parsed = ParsedPecosDemMetadata {
         observables: parse_array("observables", DemOutputKind::Observable)?,
-        tracked_ops: parse_array("tracked_ops", DemOutputKind::TrackedOperator)?,
+        tracked_paulis: parse_array("tracked_paulis", DemOutputKind::TrackedPauli)?,
     };
 
-    if root.get("observables").is_none() && root.get("tracked_ops").is_none() {
+    if root.get("observables").is_none() && root.get("tracked_paulis").is_none() {
         return Err(PecosDemMetadataError::new(
-            "missing observables or tracked_ops metadata arrays",
+            "missing observables or tracked_paulis metadata arrays",
         ));
     }
 
@@ -1982,9 +1990,9 @@ fn parse_pecos_metadata_dem_output(
         Vec::new()
     };
 
-    if explicit_kind == Some(DemOutputKind::TrackedOperator) && !records.is_empty() {
+    if explicit_kind == Some(DemOutputKind::TrackedPauli) && !records.is_empty() {
         return Err(PecosDemMetadataError::new(format!(
-            "tracked operator DEM output {idx} cannot have measurement records"
+            "tracked Pauli DEM output {idx} cannot have measurement records"
         )));
     }
 
@@ -2539,10 +2547,10 @@ pub struct DetectorErrorModel {
     pub detectors: Vec<DetectorDef>,
     /// Measurement-record observables rendered as standard `L<n>` outputs.
     pub observables: Vec<DemOutput>,
-    /// PECOS tracked Pauli operators.
+    /// PECOS tracked Paulis.
     ///
     /// These have their own ID space and are emitted only as PECOS metadata.
-    pub tracked_ops: Vec<DemOutput>,
+    pub tracked_paulis: Vec<DemOutput>,
     /// Error contributions with source tracking.
     /// Each contribution tracks whether it came from a direct (X, Z) or decomposable (Y) source.
     contributions: Vec<FaultContribution>,
@@ -2566,7 +2574,7 @@ impl DetectorErrorModel {
         Self {
             detectors: Vec::new(),
             observables: Vec::new(),
-            tracked_ops: Vec::new(),
+            tracked_paulis: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
         }
@@ -2578,7 +2586,7 @@ impl DetectorErrorModel {
         Self {
             detectors: Vec::with_capacity(num_detectors),
             observables: Vec::with_capacity(num_observables),
-            tracked_ops: Vec::new(),
+            tracked_paulis: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
         }
@@ -2605,18 +2613,18 @@ impl DetectorErrorModel {
     /// Returns the number of standard DEM `L<n>` observable outputs.
     ///
     /// This is a DEM-output alias for [`Self::num_observables`]. It does
-    /// not include PECOS tracked operators.
+    /// not include PECOS tracked Paulis.
     #[inline]
     #[must_use]
     pub fn num_dem_outputs(&self) -> usize {
         self.num_observables()
     }
 
-    /// Returns the number of tracked operators.
+    /// Returns the number of tracked Paulis.
     #[inline]
     #[must_use]
-    pub fn num_tracked_ops(&self) -> usize {
-        self.tracked_ops
+    pub fn num_tracked_paulis(&self) -> usize {
+        self.tracked_paulis
             .iter()
             .map(|op| op.id as usize + 1)
             .max()
@@ -2625,8 +2633,8 @@ impl DetectorErrorModel {
 
     /// Returns standard DEM output definitions (`L<n>` observables).
     ///
-    /// This DEM-output accessor does not include PECOS tracked operators;
-    /// use [`Self::tracked_ops`] for those.
+    /// This DEM-output accessor does not include PECOS tracked Paulis;
+    /// use [`Self::tracked_paulis`] for those.
     #[inline]
     #[must_use]
     pub fn dem_outputs(&self) -> &[DemOutput] {
@@ -2635,7 +2643,7 @@ impl DetectorErrorModel {
 
     /// Returns mutable standard DEM output definitions (`L<n>` observables).
     ///
-    /// This DEM-output accessor does not include PECOS tracked operators.
+    /// This DEM-output accessor does not include PECOS tracked Paulis.
     #[inline]
     #[must_use]
     pub fn dem_outputs_mut(&mut self) -> &mut [DemOutput] {
@@ -2647,16 +2655,16 @@ impl DetectorErrorModel {
         self.observables.iter()
     }
 
-    /// Returns all tracked operator definitions.
+    /// Returns all tracked Pauli definitions.
     #[inline]
     #[must_use]
-    pub fn tracked_ops(&self) -> &[DemOutput] {
-        &self.tracked_ops
+    pub fn tracked_paulis(&self) -> &[DemOutput] {
+        &self.tracked_paulis
     }
 
-    /// Iterates over tracked operators.
-    pub fn tracked_operators(&self) -> impl Iterator<Item = &DemOutput> {
-        self.tracked_ops.iter()
+    /// Iterates over tracked Paulis.
+    pub fn iter_tracked_paulis(&self) -> impl Iterator<Item = &DemOutput> {
+        self.tracked_paulis.iter()
     }
 
     /// Returns the number of tracked contributions.
@@ -2670,7 +2678,7 @@ impl DetectorErrorModel {
     ///
     /// The standard DEM string remains decoder-compatible and uses ordinary
     /// `logical_observable L<n>` declarations. This JSON form preserves the
-    /// richer PECOS DEM-output information, including tracked Pauli operators.
+    /// richer PECOS DEM-output information, including tracked Paulis.
     ///
     /// # Panics
     ///
@@ -2682,8 +2690,8 @@ impl DetectorErrorModel {
             .iter()
             .map(pecos_metadata_dem_output_value)
             .collect();
-        let tracked_ops: Vec<serde_json::Value> = self
-            .tracked_ops
+        let tracked_paulis: Vec<serde_json::Value> = self
+            .tracked_paulis
             .iter()
             .map(pecos_metadata_dem_output_value)
             .collect();
@@ -2692,7 +2700,7 @@ impl DetectorErrorModel {
             "format": "pecos.dem.metadata",
             "version": 1,
             "observables": observables,
-            "tracked_ops": tracked_ops,
+            "tracked_paulis": tracked_paulis,
         }))
         .expect("serializing PECOS DEM metadata should not fail")
     }
@@ -2713,8 +2721,8 @@ impl DetectorErrorModel {
         for observable in metadata.observables {
             self.apply_observable_metadata(observable);
         }
-        for tracked_op in metadata.tracked_ops {
-            self.apply_tracked_op_metadata(tracked_op);
+        for tracked_pauli in metadata.tracked_paulis {
+            self.apply_tracked_pauli_metadata(tracked_pauli);
         }
         Ok(())
     }
@@ -2735,7 +2743,7 @@ impl DetectorErrorModel {
     /// detector targets and `L<n>` measurement-defined observable targets as
     /// usual, and adds PECOS-only `TP<n>` tracked-Pauli targets for tracked
     /// operator flips. Metadata follows as `pecos_observable {json}` and
-    /// `pecos_tracked_op {json}` statements.
+    /// `pecos_tracked_pauli {json}` statements.
     ///
     /// # Panics
     ///
@@ -2795,19 +2803,19 @@ impl DetectorErrorModel {
                 .expect("serializing PECOS observable metadata should not fail");
             format!("pecos_observable {payload}")
         });
-        let tracked_op_lines = self.tracked_ops.iter().map(|tracked_op| {
-            let value = pecos_metadata_dem_output_value(tracked_op);
+        let tracked_pauli_lines = self.tracked_paulis.iter().map(|tracked_pauli| {
+            let value = pecos_metadata_dem_output_value(tracked_pauli);
             let payload = serde_json::to_string(&value)
-                .expect("serializing PECOS tracked-op metadata should not fail");
-            format!("pecos_tracked_op {payload}")
+                .expect("serializing PECOS tracked-Pauli metadata should not fail");
+            format!("pecos_tracked_pauli {payload}")
         });
-        observable_lines.chain(tracked_op_lines).collect()
+        observable_lines.chain(tracked_pauli_lines).collect()
     }
 
     /// Applies PECOS metadata embedded in extended DEM text.
     ///
     /// Standard DEM lines are ignored by this method. PECOS extension lines
-    /// are parsed and merged into the observable/tracked-op definitions.
+    /// are parsed and merged into the observable/tracked-Pauli definitions.
     ///
     /// # Errors
     ///
@@ -2821,7 +2829,7 @@ impl DetectorErrorModel {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_op") {
+            if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_pauli") {
                 self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(line)?);
             } else if line.starts_with("pecos_") {
                 return Err(PecosDemMetadataError::new(format!(
@@ -2847,8 +2855,8 @@ impl DetectorErrorModel {
     }
 
     fn apply_dem_output_metadata(&mut self, target: DemOutput) {
-        if target.is_tracked_operator() {
-            self.apply_tracked_op_metadata(target);
+        if target.is_tracked_pauli() {
+            self.apply_tracked_pauli_metadata(target);
         } else {
             self.apply_observable_metadata(target);
         }
@@ -2867,16 +2875,16 @@ impl DetectorErrorModel {
         }
     }
 
-    fn apply_tracked_op_metadata(&mut self, mut target: DemOutput) {
-        target.kind = Some(DemOutputKind::TrackedOperator);
+    fn apply_tracked_pauli_metadata(&mut self, mut target: DemOutput) {
+        target.kind = Some(DemOutputKind::TrackedPauli);
         if let Some(existing) = self
-            .tracked_ops
+            .tracked_paulis
             .iter_mut()
             .find(|existing| existing.id == target.id)
         {
             *existing = target;
         } else {
-            self.add_tracked_operator(target);
+            self.add_tracked_pauli(target);
         }
     }
 
@@ -3442,10 +3450,10 @@ impl DetectorErrorModel {
     /// Adds a non-detector DEM output definition.
     ///
     /// Observables are stored in the standard `L<n>` namespace. Tracked
-    /// operators are stored in PECOS metadata with a separate ID space.
+    /// Paulis are stored in PECOS metadata with a separate ID space.
     pub fn add_dem_output(&mut self, output: DemOutput) {
-        if output.is_tracked_operator() {
-            self.add_tracked_operator(output);
+        if output.is_tracked_pauli() {
+            self.add_tracked_pauli(output);
         } else {
             self.add_observable(output);
         }
@@ -3494,10 +3502,10 @@ impl DetectorErrorModel {
         }
     }
 
-    /// Adds a PECOS tracked operator definition.
-    pub fn add_tracked_operator(&mut self, mut tracked_op: DemOutput) {
-        tracked_op.kind = Some(DemOutputKind::TrackedOperator);
-        self.tracked_ops.push(tracked_op);
+    /// Adds a PECOS tracked Pauli definition.
+    pub fn add_tracked_pauli(&mut self, mut tracked_pauli: DemOutput) {
+        tracked_pauli.kind = Some(DemOutputKind::TrackedPauli);
+        self.tracked_paulis.push(tracked_pauli);
     }
 
     /// Converts the DEM to a string in standard DEM format.
@@ -4008,8 +4016,8 @@ fn format_pecos_mechanism_targets(mechanism: &FaultMechanism) -> String {
     for &dem_output in &mechanism.dem_outputs {
         targets.push(format!("L{dem_output}"));
     }
-    for &tracked_op in &mechanism.tracked_ops {
-        targets.push(format!("TP{tracked_op}"));
+    for &tracked_pauli in &mechanism.tracked_paulis {
+        targets.push(format!("TP{tracked_pauli}"));
     }
     targets.join(" ")
 }
@@ -4092,9 +4100,9 @@ mod tests {
     }
 
     #[test]
-    fn test_error_mechanism_equality_and_hash_include_tracked_ops() {
+    fn test_error_mechanism_equality_and_hash_include_tracked_paulis() {
         let standard = FaultMechanism::from_unsorted([0], []);
-        let with_tracked = FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]);
+        let with_tracked = FaultMechanism::from_unsorted_with_tracked_paulis([0], [], [0]);
 
         assert_ne!(standard, with_tracked);
         assert_eq!(standard.standard_effect(), with_tracked.standard_effect());
@@ -4105,13 +4113,13 @@ mod tests {
         assert_eq!(
             set.len(),
             2,
-            "internal mechanism identity must keep tracked operators distinct"
+            "internal mechanism identity must keep tracked Paulis distinct"
         );
     }
 
     #[test]
-    fn test_pecos_target_format_canonicalizes_tracked_ops() {
-        let mechanism = FaultMechanism::from_unsorted_with_tracked_ops([], [], [2, 0]);
+    fn test_pecos_target_format_canonicalizes_tracked_paulis() {
+        let mechanism = FaultMechanism::from_unsorted_with_tracked_paulis([], [], [2, 0]);
         assert_eq!(
             DecomposedFault::single(mechanism).to_pecos_targets(),
             "TP0 TP2"
@@ -4134,13 +4142,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pecos_metadata_json_preserves_tracked_operator_ops() {
+    fn test_pecos_metadata_json_preserves_tracked_paulis() {
         use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_dem_output(
             DemOutput::new(0)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(X(0) & Z(2))
                 .with_label("track_check"),
         );
@@ -4149,21 +4157,21 @@ mod tests {
         let metadata: serde_json::Value =
             serde_json::from_str(&dem.to_pecos_metadata_json()).unwrap();
         let observables = metadata["observables"].as_array().unwrap();
-        let tracked_ops = metadata["tracked_ops"].as_array().unwrap();
+        let tracked_paulis = metadata["tracked_paulis"].as_array().unwrap();
 
         assert_eq!(metadata["format"], "pecos.dem.metadata");
         assert_eq!(metadata["version"], 1);
-        assert_eq!(tracked_ops[0]["id"], 0);
-        assert_eq!(tracked_ops[0]["kind"], "tracked_operator");
-        assert_eq!(tracked_ops[0]["label"], "track_check");
-        assert_eq!(tracked_ops[0]["pauli"], "+X0 Z2");
+        assert_eq!(tracked_paulis[0]["id"], 0);
+        assert_eq!(tracked_paulis[0]["kind"], "tracked_pauli");
+        assert_eq!(tracked_paulis[0]["label"], "track_check");
+        assert_eq!(tracked_paulis[0]["pauli"], "+X0 Z2");
         assert_eq!(observables[0]["id"], 1);
         assert_eq!(observables[0]["kind"], "observable");
         assert_eq!(observables[0]["records"], serde_json::json!([-1, -3]));
     }
 
     #[test]
-    fn test_dem_counts_keep_detectors_observables_and_tracked_operators_distinct() {
+    fn test_dem_counts_keep_detectors_observables_and_tracked_paulis_distinct() {
         use pecos_core::pauli::X;
 
         let mut dem = DetectorErrorModel::new();
@@ -4171,17 +4179,20 @@ mod tests {
         dem.add_dem_output(DemOutput::new(0).with_records([-1, -3]));
         dem.add_dem_output(
             DemOutput::new(0)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(X(0)),
         );
 
         assert_eq!(dem.num_detectors(), 1);
         assert_eq!(dem.num_dem_outputs(), 1);
         assert_eq!(dem.num_observables(), 1);
-        assert_eq!(dem.num_tracked_ops(), 1);
+        assert_eq!(dem.num_tracked_paulis(), 1);
         assert_eq!(dem.observables().map(|op| op.id).collect::<Vec<_>>(), [0]);
         assert_eq!(
-            dem.tracked_operators().map(|op| op.id).collect::<Vec<_>>(),
+            dem.tracked_paulis()
+                .iter()
+                .map(|op| op.id)
+                .collect::<Vec<_>>(),
             [0]
         );
     }
@@ -4247,21 +4258,21 @@ mod tests {
             .with_kind(DemOutputKind::Observable)
             .with_pauli(X(0));
         assert!(observable.is_observable());
-        assert!(!observable.is_tracked_operator());
+        assert!(!observable.is_tracked_pauli());
 
         let tracked = DemOutput::new(0)
-            .with_kind(DemOutputKind::TrackedOperator)
+            .with_kind(DemOutputKind::TrackedPauli)
             .with_records([-1]);
         assert!(!tracked.is_observable());
-        assert!(tracked.is_tracked_operator());
+        assert!(tracked.is_tracked_pauli());
 
         let inferred_observable = DemOutput::new(1).with_records([-1]);
         assert!(inferred_observable.is_observable());
-        assert!(!inferred_observable.is_tracked_operator());
+        assert!(!inferred_observable.is_tracked_pauli());
 
         let inferred_tracked = DemOutput::new(1).with_pauli(X(1));
         assert!(!inferred_tracked.is_observable());
-        assert!(inferred_tracked.is_tracked_operator());
+        assert!(inferred_tracked.is_tracked_pauli());
     }
 
     #[test]
@@ -4279,7 +4290,7 @@ mod tests {
             .with_pecos_metadata_json(&dem.to_pecos_metadata_json())
             .unwrap();
         assert_eq!(recovered.num_dem_outputs(), 1);
-        assert_eq!(recovered.num_tracked_ops(), 0);
+        assert_eq!(recovered.num_tracked_paulis(), 0);
         assert_eq!(recovered.dem_outputs()[0].id, 0);
         assert_eq!(
             recovered.dem_outputs()[0].kind,
@@ -4288,7 +4299,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pecos_metadata_json_round_trips_tracked_operator_metadata() {
+    fn test_pecos_metadata_json_round_trips_tracked_pauli_metadata() {
         use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
@@ -4298,7 +4309,7 @@ mod tests {
         let mut source = DetectorErrorModel::new();
         source.add_dem_output(
             DemOutput::new(0)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(X(0) & Z(2))
                 .with_label("track_check"),
         );
@@ -4308,12 +4319,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            dem.tracked_ops()[0].kind,
-            Some(DemOutputKind::TrackedOperator)
+            dem.tracked_paulis()[0].kind,
+            Some(DemOutputKind::TrackedPauli)
         );
-        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("track_check"));
         assert_eq!(
-            dem.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            dem.tracked_paulis()[0].label.as_deref(),
+            Some("track_check")
+        );
+        assert_eq!(
+            dem.tracked_paulis()[0]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
             "+X0 Z2"
         );
         assert_eq!(dem.dem_outputs()[1].kind, Some(DemOutputKind::Observable));
@@ -4341,7 +4359,34 @@ mod tests {
             .unwrap_err();
         assert!(
             err.message()
-                .contains("missing observables or tracked_ops metadata arrays")
+                .contains("missing observables or tracked_paulis metadata arrays")
+        );
+    }
+
+    #[test]
+    fn test_pecos_metadata_json_parser_rejects_legacy_tracked_fields() {
+        let json = r#"{
+            "format": "pecos.dem.metadata",
+            "version": 1,
+            "observables": [],
+            "tracked_paulis": [],
+            "tracked_ops": [
+                {
+                    "id": 0,
+                    "kind": "tracked_op",
+                    "label": "old_name",
+                    "pauli": "+X0",
+                    "records": []
+                }
+            ]
+        }"#;
+
+        let err = DetectorErrorModel::new()
+            .with_pecos_metadata_json(json)
+            .unwrap_err();
+        assert!(
+            err.message()
+                .contains("unsupported legacy metadata field: tracked_ops; use tracked_paulis")
         );
     }
 
@@ -4350,7 +4395,7 @@ mod tests {
         let json = r#"{
             "format": "pecos.dem.metadata",
             "version": 1,
-            "tracked_ops": [
+            "tracked_paulis": [
                 {
                     "id": 4,
                     "kind": "old_kind",
@@ -4372,7 +4417,7 @@ mod tests {
         let alias_json = r#"{
             "format": "pecos.dem.metadata",
             "version": 1,
-            "tracked_ops": [
+            "tracked_paulis": [
                 {
                     "id": 4,
                     "kind": "pauli_operator",
@@ -4392,14 +4437,14 @@ mod tests {
     }
 
     #[test]
-    fn test_pecos_metadata_json_rejects_records_on_tracked_operator() {
+    fn test_pecos_metadata_json_rejects_records_on_tracked_pauli() {
         let json = r#"{
             "format": "pecos.dem.metadata",
             "version": 1,
-            "tracked_ops": [
+            "tracked_paulis": [
                 {
                     "id": 0,
-                    "kind": "tracked_operator",
+                    "kind": "tracked_pauli",
                     "pauli": "X0",
                     "records": [-1]
                 }
@@ -4411,7 +4456,7 @@ mod tests {
             .unwrap_err();
         assert!(
             err.message()
-                .contains("tracked operator DEM output 0 cannot have measurement records")
+                .contains("tracked Pauli DEM output 0 cannot have measurement records")
         );
     }
 
@@ -4423,12 +4468,12 @@ mod tests {
         dem.add_detector(DetectorDef::new(0));
         dem.add_dem_output(
             DemOutput::new(0)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(X(0) & Z(2))
                 .with_label("track_check"),
         );
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [], [0]),
             0.01,
         );
 
@@ -4440,21 +4485,21 @@ mod tests {
 
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("error(0.01) D0 TP0"));
-        assert!(pecos_text.contains("pecos_tracked_op"));
-        assert!(pecos_text.contains(r#""kind":"tracked_operator""#));
+        assert!(pecos_text.contains("pecos_tracked_pauli"));
+        assert!(pecos_text.contains(r#""kind":"tracked_pauli""#));
         assert!(pecos_text.contains(r#""pauli":"+X0 Z2""#));
 
         let recovered = DetectorErrorModel::new()
             .with_pecos_dem_metadata(&pecos_text)
             .unwrap();
         assert_eq!(recovered.num_dem_outputs(), 0);
-        assert_eq!(recovered.num_tracked_ops(), 1);
+        assert_eq!(recovered.num_tracked_paulis(), 1);
         assert_eq!(
-            recovered.tracked_ops()[0].kind,
-            Some(DemOutputKind::TrackedOperator)
+            recovered.tracked_paulis()[0].kind,
+            Some(DemOutputKind::TrackedPauli)
         );
         assert_eq!(
-            recovered.tracked_ops()[0]
+            recovered.tracked_paulis()[0]
                 .pauli
                 .as_ref()
                 .unwrap()
@@ -4462,13 +4507,13 @@ mod tests {
             "+X0 Z2"
         );
         assert_eq!(
-            recovered.tracked_ops()[0].label.as_deref(),
+            recovered.tracked_paulis()[0].label.as_deref(),
             Some("track_check")
         );
     }
 
     #[test]
-    fn test_pecos_dem_text_round_trips_observables_and_tracked_ops() {
+    fn test_pecos_dem_text_round_trips_observables_and_tracked_paulis() {
         use pecos_core::pauli::Z;
 
         let mut dem = DetectorErrorModel::new();
@@ -4477,12 +4522,12 @@ mod tests {
         dem.add_dem_output(DemOutput::new(1).with_records([-2]));
         dem.add_dem_output(
             DemOutput::new(0)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(Z(3))
                 .with_label("tracked_z3"),
         );
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [0], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [0], [0]),
             0.01,
         );
         dem.add_direct_contribution(FaultMechanism::from_unsorted([], [1]), 0.02);
@@ -4492,19 +4537,19 @@ mod tests {
         assert!(stim_text.contains("logical_observable L1"));
         assert!(!stim_text.contains("logical_observable L2"));
         assert!(!stim_text.contains("TP0"));
-        assert!(!stim_text.contains("pecos_tracked_op"));
+        assert!(!stim_text.contains("pecos_tracked_pauli"));
 
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("error(0.01) D0 L0 TP0"));
         assert!(pecos_text.contains("pecos_observable"));
-        assert!(pecos_text.contains("pecos_tracked_op"));
+        assert!(pecos_text.contains("pecos_tracked_pauli"));
 
         let recovered = DetectorErrorModel::new()
             .with_pecos_dem_metadata(&pecos_text)
             .unwrap();
         assert_eq!(recovered.num_observables(), 2);
         assert_eq!(recovered.num_dem_outputs(), 2);
-        assert_eq!(recovered.num_tracked_ops(), 1);
+        assert_eq!(recovered.num_tracked_paulis(), 1);
         assert_eq!(
             recovered
                 .dem_outputs()
@@ -4515,14 +4560,14 @@ mod tests {
         );
         assert_eq!(
             recovered
-                .tracked_ops()
+                .tracked_paulis()
                 .iter()
                 .map(|op| op.id)
                 .collect::<Vec<_>>(),
             [0]
         );
         assert_eq!(
-            recovered.tracked_ops()[0]
+            recovered.tracked_paulis()[0]
                 .pauli
                 .as_ref()
                 .unwrap()
@@ -4530,7 +4575,7 @@ mod tests {
             "+Z3"
         );
         assert_eq!(
-            recovered.tracked_ops()[0].label.as_deref(),
+            recovered.tracked_paulis()[0].label.as_deref(),
             Some("tracked_z3")
         );
     }
@@ -4543,13 +4588,13 @@ mod tests {
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0]));
         dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
-        dem.add_tracked_operator(
+        dem.add_tracked_pauli(
             DemOutput::new(0)
                 .with_pauli(X(0) & Z(2))
                 .with_label("tracked_x0_z2"),
         );
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [0], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [0], [0]),
             0.25,
         );
 
@@ -4558,18 +4603,18 @@ mod tests {
 
         assert_eq!(parsed.num_detectors, 1);
         assert_eq!(parsed.num_dem_outputs(), 1);
-        assert_eq!(parsed.num_tracked_ops(), 1);
+        assert_eq!(parsed.num_tracked_paulis(), 1);
         assert_eq!(parsed.mechanisms.len(), 1);
         assert_eq!(parsed.mechanisms[0].format_targets(), "D0 L0 TP0");
         assert_eq!(parsed.mechanisms[0].components[0].detectors, vec![0]);
         assert_eq!(parsed.mechanisms[0].components[0].observables, vec![0]);
-        assert_eq!(parsed.mechanisms[0].components[0].tracked_ops, vec![0]);
+        assert_eq!(parsed.mechanisms[0].components[0].tracked_paulis, vec![0]);
         assert_eq!(
             parsed.dem_outputs[0].as_ref().unwrap().label.as_deref(),
             Some("L0")
         );
         assert_eq!(
-            parsed.tracked_ops[0]
+            parsed.tracked_paulis[0]
                 .as_ref()
                 .unwrap()
                 .pauli
@@ -4585,20 +4630,20 @@ mod tests {
         use pecos_core::pauli::X;
 
         let mut dem = DetectorErrorModel::new();
-        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_tracked_pauli(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([], [], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([], [], [0]),
             0.25,
         );
 
         let standard_text = dem.to_string();
         assert!(!standard_text.contains("error("));
         assert!(!standard_text.contains("TP0"));
-        assert!(!standard_text.contains("pecos_tracked_op"));
+        assert!(!standard_text.contains("pecos_tracked_pauli"));
 
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("error(0.25) TP0"));
-        assert!(pecos_text.contains("pecos_tracked_op"));
+        assert!(pecos_text.contains("pecos_tracked_pauli"));
 
         let (mechanisms, coords) = dem.to_mechanisms();
         assert!(mechanisms.is_empty());
@@ -4606,19 +4651,19 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_projection_merges_effects_that_differ_only_by_tracked_ops() {
+    fn test_standard_projection_merges_effects_that_differ_only_by_tracked_paulis() {
         use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0));
-        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
-        dem.add_tracked_operator(DemOutput::new(1).with_pauli(Z(0)).with_label("tracked_z0"));
+        dem.add_tracked_pauli(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_tracked_pauli(DemOutput::new(1).with_pauli(Z(0)).with_label("tracked_z0"));
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [], [0]),
             0.1,
         );
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [1]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [], [1]),
             0.2,
         );
 
@@ -4639,19 +4684,19 @@ mod tests {
     }
 
     #[test]
-    fn test_pecos_dem_preserves_effects_that_differ_by_tracked_ops() {
+    fn test_pecos_dem_preserves_effects_that_differ_by_tracked_paulis() {
         use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0));
-        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
-        dem.add_tracked_operator(DemOutput::new(1).with_pauli(Z(0)).with_label("tracked_z0"));
+        dem.add_tracked_pauli(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_tracked_pauli(DemOutput::new(1).with_pauli(Z(0)).with_label("tracked_z0"));
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [], [0]),
             0.1,
         );
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [], [1]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [], [1]),
             0.2,
         );
 
@@ -4666,33 +4711,33 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_dem_serialization_never_shifts_observable_ids_for_tracked_ops() {
+    fn test_standard_dem_serialization_never_shifts_observable_ids_for_tracked_paulis() {
         use pecos_core::pauli::{X, Z};
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0));
         dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
         dem.add_observable(DemOutput::new(2).with_records([-2]).with_label("L2"));
-        dem.add_tracked_operator(
+        dem.add_tracked_pauli(
             DemOutput::new(0)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(X(0))
                 .with_label("tracked_x0"),
         );
-        dem.add_tracked_operator(
+        dem.add_tracked_pauli(
             DemOutput::new(1)
-                .with_kind(DemOutputKind::TrackedOperator)
+                .with_kind(DemOutputKind::TrackedPauli)
                 .with_pauli(Z(3))
                 .with_label("tracked_z3"),
         );
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [0, 2], [1]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [0, 2], [1]),
             0.01,
         );
 
         assert_eq!(dem.num_observables(), 3);
         assert_eq!(dem.num_dem_outputs(), 3);
-        assert_eq!(dem.num_tracked_ops(), 2);
+        assert_eq!(dem.num_tracked_paulis(), 2);
 
         let standard_text = dem.to_string();
         assert!(standard_text.contains("logical_observable L0"));
@@ -4702,12 +4747,12 @@ mod tests {
         assert!(standard_text.contains("error(0.01) D0 L0 L2"));
         assert!(!standard_text.contains("TP1"));
         assert!(!standard_text.contains("pecos_observable"));
-        assert!(!standard_text.contains("pecos_tracked_op"));
+        assert!(!standard_text.contains("pecos_tracked_pauli"));
 
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("error(0.01) D0 L0 L2 TP1"));
         assert!(pecos_text.contains(r#""kind":"observable""#));
-        assert!(pecos_text.contains(r#""kind":"tracked_operator""#));
+        assert!(pecos_text.contains(r#""kind":"tracked_pauli""#));
         assert!(pecos_text.contains(r#""id":0"#));
         assert!(pecos_text.contains(r#""id":2"#));
         assert!(pecos_text.contains(r#""pauli":"+X0""#));
@@ -4717,7 +4762,7 @@ mod tests {
             .with_pecos_dem_metadata(&pecos_text)
             .unwrap();
         assert_eq!(recovered.num_dem_outputs(), 3);
-        assert_eq!(recovered.num_tracked_ops(), 2);
+        assert_eq!(recovered.num_tracked_paulis(), 2);
         assert_eq!(
             recovered
                 .dem_outputs()
@@ -4728,7 +4773,7 @@ mod tests {
         );
         assert_eq!(
             recovered
-                .tracked_ops()
+                .tracked_paulis()
                 .iter()
                 .map(|op| op.id)
                 .collect::<Vec<_>>(),
@@ -4749,14 +4794,14 @@ mod tests {
                 .with_records([-2, -1])
                 .with_label("logical_aux"),
         );
-        dem.add_tracked_operator(
+        dem.add_tracked_pauli(
             DemOutput::new(0)
                 .with_pauli(X(0) & Z(2))
                 .with_label("tracked_x0_z2"),
         );
-        dem.add_tracked_operator(DemOutput::new(2).with_pauli(Y(5)).with_label("tracked_y5"));
+        dem.add_tracked_pauli(DemOutput::new(2).with_pauli(Y(5)).with_label("tracked_y5"));
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0, 1], [3], [2]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0, 1], [3], [2]),
             0.125,
         );
 
@@ -4767,7 +4812,7 @@ mod tests {
         assert!(standard_text.contains("logical_observable L3"));
         assert!(standard_text.contains("error(0.125) D0 D1 L3"));
         assert!(!standard_text.contains("TP2"));
-        assert!(!standard_text.contains("pecos_tracked_op"));
+        assert!(!standard_text.contains("pecos_tracked_pauli"));
 
         let pecos_text = format!(
             "# ordinary comments and standard DEM lines are allowed\n{}\n",
@@ -4778,7 +4823,7 @@ mod tests {
             .unwrap();
         assert_eq!(recovered.num_observables(), 4);
         assert_eq!(recovered.num_dem_outputs(), 4);
-        assert_eq!(recovered.num_tracked_ops(), 3);
+        assert_eq!(recovered.num_tracked_paulis(), 3);
         assert_eq!(
             recovered
                 .dem_outputs()
@@ -4789,14 +4834,14 @@ mod tests {
         );
         assert_eq!(
             recovered
-                .tracked_ops()
+                .tracked_paulis()
                 .iter()
                 .map(|op| (op.id, op.label.as_deref()))
                 .collect::<Vec<_>>(),
             [(0, Some("tracked_x0_z2")), (2, Some("tracked_y5"))]
         );
         assert_eq!(
-            recovered.tracked_ops()[0]
+            recovered.tracked_paulis()[0]
                 .pauli
                 .as_ref()
                 .unwrap()
@@ -4804,7 +4849,7 @@ mod tests {
             "+X0 Z2"
         );
         assert_eq!(
-            recovered.tracked_ops()[1]
+            recovered.tracked_paulis()[1]
                 .pauli
                 .as_ref()
                 .unwrap()
@@ -4818,7 +4863,7 @@ mod tests {
         assert!(!reserialized.contains("logical_observable L2"));
         assert!(reserialized.contains("logical_observable L3"));
         assert!(reserialized.contains(r#""kind":"observable""#));
-        assert!(reserialized.contains(r#""kind":"tracked_operator""#));
+        assert!(reserialized.contains(r#""kind":"tracked_pauli""#));
         assert!(reserialized.contains(r#""pauli":"+X0 Z2""#));
         assert!(reserialized.contains(r#""pauli":"+Y5""#));
         assert!(
@@ -4836,14 +4881,14 @@ mod tests {
         dem.add_detector(DetectorDef::new(0).with_records([-1]));
         dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
         dem.add_observable(DemOutput::new(3).with_records([-2]).with_label("L3"));
-        dem.add_tracked_operator(
+        dem.add_tracked_pauli(
             DemOutput::new(0)
                 .with_pauli(X(0) & Z(2))
                 .with_label("tracked_x0_z2"),
         );
-        dem.add_tracked_operator(DemOutput::new(3).with_pauli(Y(5)).with_label("tracked_y5"));
+        dem.add_tracked_pauli(DemOutput::new(3).with_pauli(Y(5)).with_label("tracked_y5"));
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([0], [3], [3]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([0], [3], [3]),
             0.125,
         );
 
@@ -4866,10 +4911,10 @@ mod tests {
 
         let parsed: ParsedDem = dem.to_pecos_string().parse().unwrap();
         assert_eq!(parsed.num_dem_outputs(), 4);
-        assert_eq!(parsed.num_tracked_ops(), 4);
+        assert_eq!(parsed.num_tracked_paulis(), 4);
         assert_eq!(parsed.mechanisms[0].format_targets(), "D0 L3 TP3");
         assert_eq!(parsed.mechanisms[0].components[0].observables, vec![3]);
-        assert_eq!(parsed.mechanisms[0].components[0].tracked_ops, vec![3]);
+        assert_eq!(parsed.mechanisms[0].components[0].tracked_paulis, vec![3]);
         assert_eq!(
             parsed.dem_outputs[0].as_ref().unwrap().label.as_deref(),
             Some("L0")
@@ -4879,7 +4924,7 @@ mod tests {
             Some("L3")
         );
         assert_eq!(
-            parsed.tracked_ops[0]
+            parsed.tracked_paulis[0]
                 .as_ref()
                 .unwrap()
                 .pauli
@@ -4889,7 +4934,7 @@ mod tests {
             "+X0 Z2"
         );
         assert_eq!(
-            parsed.tracked_ops[3].as_ref().unwrap().label.as_deref(),
+            parsed.tracked_paulis[3].as_ref().unwrap().label.as_deref(),
             Some("tracked_y5")
         );
     }
@@ -4897,11 +4942,11 @@ mod tests {
     #[test]
     fn test_pecos_dem_metadata_parser_rejects_malformed_extension_line() {
         let err = DetectorErrorModel::new()
-            .with_pecos_dem_metadata("error(0.01) D0\npecos_tracked_op not-json")
+            .with_pecos_dem_metadata("error(0.01) D0\npecos_tracked_pauli not-json")
             .unwrap_err();
         assert!(
             err.message()
-                .contains("invalid pecos_tracked_op JSON payload")
+                .contains("invalid pecos_tracked_pauli JSON payload")
         );
     }
 
@@ -4918,8 +4963,20 @@ mod tests {
     }
 
     #[test]
+    fn test_pecos_dem_metadata_parser_rejects_legacy_tracked_extension_line() {
+        let err = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(r#"pecos_tracked_op {"id":0,"pauli":"+X0"}"#)
+            .unwrap_err();
+
+        assert!(
+            err.message()
+                .contains("unsupported PECOS DEM extension line: pecos_tracked_op")
+        );
+    }
+
+    #[test]
     fn test_decomposed_error_single() {
-        let mechanism = FaultMechanism::from_unsorted_with_tracked_ops([0, 1], [0], [2]);
+        let mechanism = FaultMechanism::from_unsorted_with_tracked_paulis([0, 1], [0], [2]);
         let decomposed = DecomposedFault::single(mechanism.clone());
 
         assert_eq!(decomposed.components.len(), 1);

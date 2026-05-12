@@ -150,14 +150,14 @@ impl BenchmarkResult {
 fn benchmark_circuit(
     name: &str,
     circuit: &DagCircuit,
-    tracked_op_qubits: &[usize],
+    tracked_pauli_qubits: &[usize],
     num_shots: u32,
     p_error: f64,
     seed: u64,
 ) -> BenchmarkResult {
     // Build influence map (common to both pipelines)
     let build_start = Instant::now();
-    let builder = InfluenceBuilder::new(circuit).with_z(tracked_op_qubits);
+    let builder = InfluenceBuilder::new(circuit).with_z(tracked_pauli_qubits);
     let influence_map = builder.build();
     let build_time = build_start.elapsed();
 
@@ -296,13 +296,13 @@ fn main() {
 
     for (num_data, num_rounds) in [(3, 2), (5, 3), (7, 4), (9, 5), (11, 6), (15, 8)] {
         let circuit = build_repetition_code(num_data, num_rounds);
-        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
+        let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
         let name = format!("rep_d{num_data}r{num_rounds}");
 
         let result = benchmark_circuit(
             &name,
             &circuit,
-            &tracked_op_qubits,
+            &tracked_pauli_qubits,
             num_shots,
             p_error,
             seed,
@@ -318,7 +318,7 @@ fn main() {
     println!("\nTest 2: Fixed Circuit (rep_d7r4) - Varying Shots\n");
 
     let circuit = build_repetition_code(7, 4);
-    let tracked_op_qubits: Vec<usize> = (0..7).collect();
+    let tracked_pauli_qubits: Vec<usize> = (0..7).collect();
 
     let mut shot_results = Vec::new();
 
@@ -327,7 +327,7 @@ fn main() {
         let result = benchmark_circuit(
             &name,
             &circuit,
-            &tracked_op_qubits,
+            &tracked_pauli_qubits,
             num_shots,
             p_error,
             seed,
@@ -348,13 +348,13 @@ fn main() {
     for (distance, rounds) in [(3, 2), (4, 2), (5, 3), (6, 3), (7, 4)] {
         let circuit = build_surface_code_grid(distance, rounds);
         let num_data = distance * distance;
-        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
+        let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
         let name = format!("surf_d{distance}r{rounds}");
 
         let result = benchmark_circuit(
             &name,
             &circuit,
-            &tracked_op_qubits,
+            &tracked_pauli_qubits,
             num_shots,
             p_error,
             seed,

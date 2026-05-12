@@ -394,19 +394,19 @@ pub enum AnnotationKind {
     /// Logical observable: the Pauli's flip determines a logical outcome.
     /// Stores measurement node indices for classical readout via XOR.
     Observable { measurement_nodes: Vec<usize> },
-    /// Tracked operator: no measurement readout.
-    /// Position is determined by a `PauliOperatorMeta` node in the DAG.
-    TrackedOperator,
+    /// Tracked Pauli: no measurement readout.
+    /// Position is determined by a `TrackedPauliMeta` node in the DAG.
+    TrackedPauli,
 }
 
-/// A unified Pauli annotation: detectors, observables, and tracked operators
+/// A unified Pauli annotation: detectors, observables, and tracked Paulis
 /// are all Pauli strings tracked for flipping via backward propagation.
 ///
 /// - **Detectors** are stabilizer checks that should be +1 (noiseless).
 ///   Their Pauli is Z on the measured qubits.
 /// - **Observables** are logical operators read out via measurements.
 ///   Their Pauli is Z on the measured qubits.
-/// - **Tracked operators** are arbitrary Pauli strings with no measurement readout.
+/// - **Tracked Paulis** are arbitrary Pauli strings with no measurement readout.
 ///   Their Pauli is user-specified and their position comes from a meta-gate node.
 #[derive(Debug, Clone)]
 pub struct PauliAnnotation {
@@ -432,7 +432,7 @@ pub struct DagCircuit {
     last_node: Option<usize>,
     /// Maximum qubit index seen so far (updated incrementally on gate addition).
     max_qubit: usize,
-    /// Unified Pauli annotations (detectors, observables, and tracked operators).
+    /// Unified Pauli annotations (detectors, observables, and tracked Paulis).
     annotations: Vec<PauliAnnotation>,
     /// Measurement labels (`node_index` → label).
     measurement_labels: BTreeMap<usize, String>,
@@ -1757,10 +1757,10 @@ impl DagCircuit {
         pecos_core::PauliString::zs(&qubits)
     }
 
-    /// Place a tracked-operator meta-gate at this point in the circuit.
+    /// Place a tracked-Pauli meta-gate at this point in the circuit.
     ///
     /// This is a **positional** annotation: only faults BEFORE this node
-    /// can flip the tracked operator. The meta-gate does not affect quantum state
+    /// can flip the tracked Pauli. The meta-gate does not affect quantum state
     /// -- simulators ignore it.
     ///
     /// Accepts a [`PauliString`](pecos_core::PauliString), which supports
@@ -1777,24 +1777,24 @@ impl DagCircuit {
     /// c.pz(&[0, 1, 2]);
     /// c.cx(&[(0, 1)]);
     /// // Place X_0 & Z_1 & Z_2 check HERE -- only faults above can flip it
-    /// c.tracked_operator(X(0) & Z(1) & Z(2));
+    /// c.tracked_pauli(X(0) & Z(1) & Z(2));
     /// c.cx(&[(1, 2)]);  // faults here don't affect the check
     /// ```
-    pub fn tracked_operator(&mut self, mut pauli: pecos_core::PauliString) -> usize {
+    pub fn tracked_pauli(&mut self, mut pauli: pecos_core::PauliString) -> usize {
         // Phase is irrelevant for flip tracking -- normalize to +1
         pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
         let idx = self.annotations.len();
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::TrackedOperator,
+            kind: AnnotationKind::TrackedPauli,
             label: None,
         });
         idx
     }
 
-    /// Place a labeled tracked-operator meta-gate.
-    pub fn tracked_operator_labeled(
+    /// Place a labeled tracked-Pauli meta-gate.
+    pub fn tracked_pauli_labeled(
         &mut self,
         label: &str,
         mut pauli: pecos_core::PauliString,
@@ -1804,16 +1804,16 @@ impl DagCircuit {
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::TrackedOperator,
+            kind: AnnotationKind::TrackedPauli,
             label: Some(label.to_string()),
         });
         idx
     }
 
-    /// Insert a `PauliOperatorMeta` gate node into the DAG.
+    /// Insert a `TrackedPauliMeta` gate node into the DAG.
     fn insert_pauli_meta_gate(&mut self, pauli: &pecos_core::PauliString) {
         let qubits: Vec<QubitId> = pauli.qubits().into_iter().map(QubitId::from).collect();
-        let gate = Gate::simple(GateType::PauliOperatorMeta, qubits);
+        let gate = Gate::simple(GateType::TrackedPauliMeta, qubits);
         self.add_gate_auto_wire(gate);
     }
 
@@ -1825,8 +1825,8 @@ impl DagCircuit {
 
     /// Add a pre-built annotation (used for conversion from `TickCircuit`).
     pub fn add_annotation(&mut self, ann: PauliAnnotation) {
-        // For tracked-operator annotations, insert the meta-gate node.
-        if matches!(ann.kind, AnnotationKind::TrackedOperator) {
+        // For tracked-Pauli annotations, insert the meta-gate node.
+        if matches!(ann.kind, AnnotationKind::TrackedPauli) {
             self.insert_pauli_meta_gate(&ann.pauli);
         }
         self.annotations.push(ann);
@@ -1846,11 +1846,11 @@ impl DagCircuit {
             .filter(|a| matches!(a.kind, AnnotationKind::Observable { .. }))
     }
 
-    /// Get tracked-operator annotations.
-    pub fn tracked_operators(&self) -> impl Iterator<Item = &PauliAnnotation> {
+    /// Get tracked-Pauli annotations.
+    pub fn tracked_paulis(&self) -> impl Iterator<Item = &PauliAnnotation> {
         self.annotations
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::TrackedOperator))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli))
     }
 
     // ========================================================================

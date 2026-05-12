@@ -624,7 +624,7 @@ impl QASMEngine {
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::QFree
             | GateType::Custom
-            | GateType::PauliOperatorMeta => Ok(()), // No-op gates
+            | GateType::TrackedPauliMeta => Ok(()), // No-op gates
             GateType::X
             | GateType::Z
             | GateType::Y

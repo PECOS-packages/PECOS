@@ -98,47 +98,47 @@ impl std::fmt::Display for DetectorValidationError {
 impl std::error::Error for DetectorValidationError {}
 
 /// Error returned when a sampler backend is asked to directly evaluate tracked
-/// operators it only preserves as metadata.
+/// Paulis it only preserves as metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TrackedOperatorSamplingError {
+pub struct TrackedPauliSamplingError {
     backend: &'static str,
-    num_tracked_ops: usize,
+    num_tracked_paulis: usize,
 }
 
-impl TrackedOperatorSamplingError {
-    fn new(backend: &'static str, num_tracked_ops: usize) -> Self {
+impl TrackedPauliSamplingError {
+    fn new(backend: &'static str, num_tracked_paulis: usize) -> Self {
         Self {
             backend,
-            num_tracked_ops,
+            num_tracked_paulis,
         }
     }
 
-    /// Backend that rejected direct tracked-operator sampling.
+    /// Backend that rejected direct tracked-Pauli sampling.
     #[must_use]
     pub fn backend(&self) -> &'static str {
         self.backend
     }
 
-    /// Number of tracked operators carried as metadata by that backend.
+    /// Number of tracked Paulis carried as metadata by that backend.
     #[must_use]
-    pub fn num_tracked_ops(&self) -> usize {
-        self.num_tracked_ops
+    pub fn num_tracked_paulis(&self) -> usize {
+        self.num_tracked_paulis
     }
 }
 
-impl std::fmt::Display for TrackedOperatorSamplingError {
+impl std::fmt::Display for TrackedPauliSamplingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} cannot directly sample tracked operator flips for {} tracked operator(s). \
+            "{} cannot directly sample tracked Pauli flips for {} tracked Pauli(s). \
              This backend samples decoder-facing detectors and observables only; tracked \
-             operators are preserved as PECOS metadata and fault effects.",
-            self.backend, self.num_tracked_ops
+             Paulis are preserved as PECOS metadata and fault effects.",
+            self.backend, self.num_tracked_paulis
         )
     }
 }
 
-impl std::error::Error for TrackedOperatorSamplingError {}
+impl std::error::Error for TrackedPauliSamplingError {}
 
 /// Output mode for the unified sampler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,10 +175,10 @@ pub struct SamplerLabels {
     pub dem_output_labels: Vec<Option<String>>,
     /// Full PECOS metadata for standard DEM `L<n>` observables.
     pub dem_outputs: Vec<Option<DemOutput>>,
-    /// Labels for PECOS tracked operators.
-    pub tracked_op_labels: Vec<Option<String>>,
-    /// Full PECOS metadata for tracked operators in their own ID space.
-    pub tracked_ops: Vec<Option<DemOutput>>,
+    /// Labels for PECOS tracked Paulis.
+    pub tracked_pauli_labels: Vec<Option<String>>,
+    /// Full PECOS metadata for tracked Paulis in their own ID space.
+    pub tracked_paulis: Vec<Option<DemOutput>>,
     /// Labels for dual-output detector channels.
     pub dual_detectors: Vec<Option<String>>,
 }
@@ -222,16 +222,18 @@ fn dem_outputs_from_influence_map(
     targets
 }
 
-fn tracked_ops_from_influence_map(influence_map: &DagFaultInfluenceMap) -> Vec<Option<DemOutput>> {
-    let mut tracked_ops = Vec::new();
+fn tracked_paulis_from_influence_map(
+    influence_map: &DagFaultInfluenceMap,
+) -> Vec<Option<DemOutput>> {
+    let mut tracked_paulis = Vec::new();
     for metadata in &influence_map.dem_output_metadata {
-        if metadata.kind == DemOutputKind::TrackedOperator {
-            #[allow(clippy::cast_possible_truncation)] // tracked-op count fits in u32
-            let id = tracked_ops.len() as u32;
-            tracked_ops.push(Some(DemOutput::from_metadata(id, metadata)));
+        if metadata.kind == DemOutputKind::TrackedPauli {
+            #[allow(clippy::cast_possible_truncation)] // tracked-Pauli count fits in u32
+            let id = tracked_paulis.len() as u32;
+            tracked_paulis.push(Some(DemOutput::from_metadata(id, metadata)));
         }
     }
-    tracked_ops
+    tracked_paulis
 }
 
 fn dem_outputs_from_records(
@@ -268,7 +270,7 @@ fn dem_outputs_from_records(
 fn merge_dem_output_metadata(
     mut labels: SamplerLabels,
     targets: Vec<Option<DemOutput>>,
-    tracked_ops: Vec<Option<DemOutput>>,
+    tracked_paulis: Vec<Option<DemOutput>>,
 ) -> SamplerLabels {
     if labels.dem_outputs.len() < targets.len() {
         labels.dem_outputs.resize(targets.len(), None);
@@ -289,24 +291,24 @@ fn merge_dem_output_metadata(
         }
     }
 
-    if labels.tracked_ops.len() < tracked_ops.len() {
-        labels.tracked_ops.resize(tracked_ops.len(), None);
+    if labels.tracked_paulis.len() < tracked_paulis.len() {
+        labels.tracked_paulis.resize(tracked_paulis.len(), None);
     }
-    for (idx, tracked_op) in tracked_ops.into_iter().enumerate() {
-        if labels.tracked_ops[idx].is_none() {
-            labels.tracked_ops[idx] = tracked_op;
+    for (idx, tracked_pauli) in tracked_paulis.into_iter().enumerate() {
+        if labels.tracked_paulis[idx].is_none() {
+            labels.tracked_paulis[idx] = tracked_pauli;
         }
     }
 
-    let tracked_op_labels = labels_from_dem_outputs(&labels.tracked_ops);
-    if labels.tracked_op_labels.len() < tracked_op_labels.len() {
+    let tracked_pauli_labels = labels_from_dem_outputs(&labels.tracked_paulis);
+    if labels.tracked_pauli_labels.len() < tracked_pauli_labels.len() {
         labels
-            .tracked_op_labels
-            .resize(tracked_op_labels.len(), None);
+            .tracked_pauli_labels
+            .resize(tracked_pauli_labels.len(), None);
     }
-    for (idx, label) in tracked_op_labels.into_iter().enumerate() {
-        if labels.tracked_op_labels[idx].is_none() {
-            labels.tracked_op_labels[idx] = label;
+    for (idx, label) in tracked_pauli_labels.into_iter().enumerate() {
+        if labels.tracked_pauli_labels[idx].is_none() {
+            labels.tracked_pauli_labels[idx] = label;
         }
     }
 
@@ -505,7 +507,7 @@ impl DemSampler {
     }
 
     /// Build a detector-event sampler from a [`DetectorErrorModel`], preserving
-    /// PECOS metadata for observables and tracked operators.
+    /// PECOS metadata for observables and tracked Paulis.
     #[must_use]
     pub fn from_detector_error_model(dem: &super::types::DetectorErrorModel) -> Self {
         let (mechanisms, _coords) = dem.to_mechanisms();
@@ -514,26 +516,28 @@ impl DemSampler {
         let mut sampler = Self::from_engine(engine);
         sampler.labels.dem_outputs = dem_outputs_by_id(dem.dem_outputs(), dem.num_dem_outputs());
         sampler.labels.dem_output_labels = labels_from_dem_outputs(&sampler.labels.dem_outputs);
-        sampler.labels.tracked_ops = dem_outputs_by_id(dem.tracked_ops(), dem.num_tracked_ops());
-        sampler.labels.tracked_op_labels = labels_from_dem_outputs(&sampler.labels.tracked_ops);
+        sampler.labels.tracked_paulis =
+            dem_outputs_by_id(dem.tracked_paulis(), dem.num_tracked_paulis());
+        sampler.labels.tracked_pauli_labels =
+            labels_from_dem_outputs(&sampler.labels.tracked_paulis);
         sampler
     }
 
-    /// Attach observable and tracked-operator metadata to an existing sampler.
+    /// Attach observable and tracked-Pauli metadata to an existing sampler.
     ///
     /// This is useful for parser paths where the sampling engine projects to
     /// detector/observable columns but the original PECOS DEM still declared
-    /// tracked operators in a separate ID space.
+    /// tracked Paulis in a separate ID space.
     #[must_use]
     pub fn with_dem_output_metadata(
         mut self,
         dem_outputs: Vec<Option<DemOutput>>,
-        tracked_ops: Vec<Option<DemOutput>>,
+        tracked_paulis: Vec<Option<DemOutput>>,
     ) -> Self {
         self.labels.dem_outputs = dem_outputs;
         self.labels.dem_output_labels = labels_from_dem_outputs(&self.labels.dem_outputs);
-        self.labels.tracked_ops = tracked_ops;
-        self.labels.tracked_op_labels = labels_from_dem_outputs(&self.labels.tracked_ops);
+        self.labels.tracked_paulis = tracked_paulis;
+        self.labels.tracked_pauli_labels = labels_from_dem_outputs(&self.labels.tracked_paulis);
         self
     }
 
@@ -562,8 +566,8 @@ impl DemSampler {
         let mut labels = SamplerLabels::default();
         labels.dem_outputs = dem_outputs_from_influence_map(influence_map, num_dem_outputs);
         labels.dem_output_labels = labels_from_dem_outputs(&labels.dem_outputs);
-        labels.tracked_ops = tracked_ops_from_influence_map(influence_map);
-        labels.tracked_op_labels = labels_from_dem_outputs(&labels.tracked_ops);
+        labels.tracked_paulis = tracked_paulis_from_influence_map(influence_map);
+        labels.tracked_pauli_labels = labels_from_dem_outputs(&labels.tracked_paulis);
         Self {
             inner,
             non_det_mask: Vec::new(),
@@ -601,10 +605,10 @@ impl DemSampler {
         self.num_dem_outputs
     }
 
-    /// Number of tracked operators.
+    /// Number of tracked Paulis.
     #[must_use]
-    pub fn num_tracked_ops(&self) -> usize {
-        self.labels.tracked_ops.len()
+    pub fn num_tracked_paulis(&self) -> usize {
+        self.labels.tracked_paulis.len()
     }
 
     /// Standard observable `L<n>` IDs selected from this sampler.
@@ -613,67 +617,65 @@ impl DemSampler {
         (0..self.num_dem_outputs).collect()
     }
 
-    /// PECOS tracked-operator IDs selected from this sampler.
+    /// PECOS tracked-Pauli IDs selected from this sampler.
     ///
-    /// Decoder-facing DEM samplers do not directly evaluate tracked operators:
-    /// tracked operators are preserved in metadata and in PECOS DEM fault
+    /// Decoder-facing DEM samplers do not directly evaluate tracked Paulis:
+    /// tracked Paulis are preserved in metadata and in PECOS DEM fault
     /// effects, but the sampled bit columns are detectors plus standard
     /// observable `L<n>` outputs only.
     ///
     /// # Errors
     ///
-    /// Returns [`TrackedOperatorSamplingError`] when tracked operators are
-    /// present and the caller is asking for a direct sampled tracked-operator
+    /// Returns [`TrackedPauliSamplingError`] when tracked Paulis are
+    /// present and the caller is asking for a direct sampled tracked-Pauli
     /// output space.
-    pub fn tracked_operator_ids(&self) -> Result<Vec<usize>, TrackedOperatorSamplingError> {
-        self.ensure_tracked_operator_sampling_supported()?;
+    pub fn tracked_pauli_ids(&self) -> Result<Vec<usize>, TrackedPauliSamplingError> {
+        self.ensure_tracked_pauli_sampling_supported()?;
         Ok(Vec::new())
     }
 
-    /// Sample direct tracked-operator flips.
+    /// Sample direct tracked-Pauli flips.
     ///
     /// This returns an empty vector when the sampler carries no tracked
-    /// operators. If tracked operators are present, this backend fails
+    /// Paulis. If tracked Paulis are present, this backend fails
     /// explicitly instead of returning silently empty data.
     ///
     /// # Errors
     ///
-    /// Returns [`TrackedOperatorSamplingError`] when tracked operators are
+    /// Returns [`TrackedPauliSamplingError`] when tracked Paulis are
     /// present because [`DemSampler`] samples detector and observable columns,
-    /// not tracked-operator columns.
-    pub fn sample_tracked_operator_flips<R: Rng>(
+    /// not tracked-Pauli columns.
+    pub fn sample_tracked_pauli_flips<R: Rng>(
         &self,
         _rng: &mut R,
-    ) -> Result<Vec<bool>, TrackedOperatorSamplingError> {
-        self.ensure_tracked_operator_sampling_supported()?;
+    ) -> Result<Vec<bool>, TrackedPauliSamplingError> {
+        self.ensure_tracked_pauli_sampling_supported()?;
         Ok(Vec::new())
     }
 
-    /// Sample direct tracked-operator flips for multiple shots.
+    /// Sample direct tracked-Pauli flips for multiple shots.
     ///
     /// # Errors
     ///
-    /// Returns [`TrackedOperatorSamplingError`] when tracked operators are
-    /// present for the same reason as [`Self::sample_tracked_operator_flips`].
-    pub fn sample_tracked_operator_batch<R: Rng>(
+    /// Returns [`TrackedPauliSamplingError`] when tracked Paulis are
+    /// present for the same reason as [`Self::sample_tracked_pauli_flips`].
+    pub fn sample_tracked_pauli_batch<R: Rng>(
         &self,
         num_shots: usize,
         _rng: &mut R,
-    ) -> Result<Vec<Vec<bool>>, TrackedOperatorSamplingError> {
-        self.ensure_tracked_operator_sampling_supported()?;
+    ) -> Result<Vec<Vec<bool>>, TrackedPauliSamplingError> {
+        self.ensure_tracked_pauli_sampling_supported()?;
         Ok(vec![Vec::new(); num_shots])
     }
 
-    fn ensure_tracked_operator_sampling_supported(
-        &self,
-    ) -> Result<(), TrackedOperatorSamplingError> {
-        let num_tracked_ops = self.num_tracked_ops();
-        if num_tracked_ops == 0 {
+    fn ensure_tracked_pauli_sampling_supported(&self) -> Result<(), TrackedPauliSamplingError> {
+        let num_tracked_paulis = self.num_tracked_paulis();
+        if num_tracked_paulis == 0 {
             Ok(())
         } else {
-            Err(TrackedOperatorSamplingError::new(
+            Err(TrackedPauliSamplingError::new(
                 "DemSampler",
-                num_tracked_ops,
+                num_tracked_paulis,
             ))
         }
     }
@@ -1062,14 +1064,14 @@ impl<'a> DemSamplerBuilder<'a> {
         self
     }
 
-    /// Extract detector, observable, and tracked-op definitions from a [`DagCircuit`]'s
+    /// Extract detector, observable, and tracked-Pauli definitions from a [`DagCircuit`]'s
     /// in-circuit annotations.
     ///
     /// Extract annotations from a [`DagCircuit`] and configure the sampler.
     ///
     /// Detector annotations are mapped to auto-detected detector indices.
     /// Observables are converted to measurement-record outputs. Tracked
-    /// operators remain unmeasured Pauli-operator annotations and are carried
+    /// Paulis remain unmeasured Pauli annotations and are carried
     /// through PECOS metadata only.
     #[must_use]
     pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
@@ -1166,14 +1168,14 @@ impl<'a> DemSamplerBuilder<'a> {
             self.labels.dem_output_labels = observable_labels;
         }
 
-        let tracked_op_labels: Vec<Option<String>> = circuit
+        let tracked_pauli_labels: Vec<Option<String>> = circuit
             .annotations()
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::TrackedOperator))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli))
             .map(|a| a.label.clone())
             .collect();
-        if !tracked_op_labels.is_empty() {
-            self.labels.tracked_op_labels = tracked_op_labels;
+        if !tracked_pauli_labels.is_empty() {
+            self.labels.tracked_pauli_labels = tracked_pauli_labels;
         }
 
         self
@@ -1246,7 +1248,7 @@ impl<'a> DemSamplerBuilder<'a> {
 
         let num_dem_outputs = inner.num_dem_outputs();
         let dem_outputs = dem_outputs_from_influence_map(self.influence_map, num_dem_outputs);
-        let tracked_ops = tracked_ops_from_influence_map(self.influence_map);
+        let tracked_paulis = tracked_paulis_from_influence_map(self.influence_map);
 
         DemSampler {
             inner,
@@ -1255,7 +1257,7 @@ impl<'a> DemSamplerBuilder<'a> {
             mode: OutputMode::RawMeasurements,
             num_outputs: num_measurements,
             num_dem_outputs,
-            labels: merge_dem_output_metadata(self.labels, dem_outputs, tracked_ops),
+            labels: merge_dem_output_metadata(self.labels, dem_outputs, tracked_paulis),
             raw_remap: None,
             measurement_deps: Vec::new(), // No expansion needed (engine covers all measurements)
         }
@@ -1337,7 +1339,7 @@ impl<'a> DemSamplerBuilder<'a> {
         let num_dem_outputs = inner.num_dem_outputs();
         let dem_outputs =
             dem_outputs_from_records(self.influence_map, &observable_records, num_dem_outputs);
-        let tracked_ops = tracked_ops_from_influence_map(self.influence_map);
+        let tracked_paulis = tracked_paulis_from_influence_map(self.influence_map);
 
         Ok(DemSampler {
             inner,
@@ -1346,7 +1348,7 @@ impl<'a> DemSamplerBuilder<'a> {
             mode: OutputMode::DetectorEvents,
             num_outputs: num_detectors,
             num_dem_outputs,
-            labels: merge_dem_output_metadata(self.labels, dem_outputs, tracked_ops),
+            labels: merge_dem_output_metadata(self.labels, dem_outputs, tracked_paulis),
             raw_remap: None,
             measurement_deps: Vec::new(),
         })
@@ -1668,7 +1670,7 @@ mod tests {
         assert_eq!(records_sampler.num_detectors(), 1);
         assert_eq!(records_sampler.num_dem_outputs(), 1);
         assert_eq!(records_sampler.num_observables(), 1);
-        assert_eq!(records_sampler.num_tracked_ops(), 0);
+        assert_eq!(records_sampler.num_tracked_paulis(), 0);
         assert_eq!(records_sampler.mode(), OutputMode::DetectorEvents);
 
         let json_sampler = DemSamplerBuilder::new(&im)
@@ -1682,46 +1684,46 @@ mod tests {
         assert_eq!(json_sampler.num_detectors(), 1);
         assert_eq!(json_sampler.num_dem_outputs(), 1);
         assert_eq!(json_sampler.num_observables(), 1);
-        assert_eq!(json_sampler.num_tracked_ops(), 0);
+        assert_eq!(json_sampler.num_tracked_paulis(), 0);
         assert_eq!(json_sampler.mode(), OutputMode::DetectorEvents);
     }
 
     #[test]
-    fn from_circuit_preserves_tracked_operator_ops() {
+    fn from_circuit_preserves_tracked_paulis() {
         use crate::fault_tolerance::dem_builder::NoiseConfig;
         use pecos_core::pauli::X;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.tracked_operator_labeled("x_check", X(0));
+        circuit.tracked_pauli_labeled("x_check", X(0));
 
         let noise = NoiseConfig::new(0.03, 0.0, 0.0, 0.0);
         let sampler = DemSampler::from_circuit(&circuit, &noise).unwrap();
 
-        assert_eq!(sampler.num_tracked_ops(), 1);
+        assert_eq!(sampler.num_tracked_paulis(), 1);
         assert_eq!(sampler.num_observables(), 0);
         assert_eq!(
-            sampler.labels().tracked_op_labels[0].as_deref(),
+            sampler.labels().tracked_pauli_labels[0].as_deref(),
             Some("x_check")
         );
-        let op = sampler.labels().tracked_ops[0].as_ref().unwrap();
+        let op = sampler.labels().tracked_paulis[0].as_ref().unwrap();
         assert_eq!(op.label.as_deref(), Some("x_check"));
         assert_eq!(
             op.kind,
-            Some(crate::fault_tolerance::DemOutputKind::TrackedOperator)
+            Some(crate::fault_tolerance::DemOutputKind::TrackedPauli)
         );
         assert_eq!(op.pauli.as_ref().unwrap().to_sparse_str(), "+X0");
     }
 
     #[test]
-    fn detector_mode_keeps_observables_unshifted_with_tracked_operators() {
+    fn detector_mode_keeps_observables_unshifted_with_tracked_paulis() {
         use pecos_core::pauli::X;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.tracked_operator_labeled("x_check", X(0));
+        circuit.tracked_pauli_labeled("x_check", X(0));
         circuit.mz(&[0]);
 
         let im = InfluenceBuilder::new(&circuit)
@@ -1736,15 +1738,15 @@ mod tests {
 
         assert_eq!(sampler.num_dem_outputs(), 1);
         assert_eq!(sampler.num_observables(), 1);
-        assert_eq!(sampler.num_tracked_ops(), 1);
+        assert_eq!(sampler.num_tracked_paulis(), 1);
         assert_eq!(sampler.labels().dem_outputs.len(), 1);
         assert_eq!(
             sampler.labels().dem_outputs[0].as_ref().unwrap().kind,
             Some(crate::fault_tolerance::DemOutputKind::Observable)
         );
         assert_eq!(
-            sampler.labels().tracked_ops[0].as_ref().unwrap().kind,
-            Some(crate::fault_tolerance::DemOutputKind::TrackedOperator)
+            sampler.labels().tracked_paulis[0].as_ref().unwrap().kind,
+            Some(crate::fault_tolerance::DemOutputKind::TrackedPauli)
         );
     }
 
@@ -1767,7 +1769,7 @@ mod tests {
 
         assert_eq!(sampler.num_dem_outputs(), 1);
         assert_eq!(sampler.num_observables(), 1);
-        assert_eq!(sampler.num_tracked_ops(), 0);
+        assert_eq!(sampler.num_tracked_paulis(), 0);
         assert_eq!(
             sampler.labels().dem_outputs[0]
                 .as_ref()
@@ -1791,7 +1793,7 @@ mod tests {
     }
 
     #[test]
-    fn from_detector_error_model_preserves_observable_and_tracked_operator_split() {
+    fn from_detector_error_model_preserves_observable_and_tracked_pauli_split() {
         use super::super::builder::DemBuilder;
         use pecos_core::pauli::X;
         use pecos_quantum::Attribute;
@@ -1799,7 +1801,7 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.tracked_operator_labeled("x_check", X(0));
+        circuit.tracked_pauli_labeled("x_check", X(0));
         circuit.mz(&[0]);
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(
@@ -1813,14 +1815,14 @@ mod tests {
 
         assert_eq!(sampler.num_dem_outputs(), 1);
         assert_eq!(sampler.num_observables(), 1);
-        assert_eq!(sampler.num_tracked_ops(), 1);
+        assert_eq!(sampler.num_tracked_paulis(), 1);
         assert_eq!(
             sampler.labels().dem_outputs[0].as_ref().unwrap().kind,
             Some(crate::fault_tolerance::DemOutputKind::Observable)
         );
         assert_eq!(
-            sampler.labels().tracked_ops[0].as_ref().unwrap().kind,
-            Some(crate::fault_tolerance::DemOutputKind::TrackedOperator)
+            sampler.labels().tracked_paulis[0].as_ref().unwrap().kind,
+            Some(crate::fault_tolerance::DemOutputKind::TrackedPauli)
         );
     }
 
@@ -1835,14 +1837,14 @@ mod tests {
             assert_eq!(sampler.num_detectors(), 1);
             assert_eq!(sampler.num_dem_outputs(), 1);
             assert_eq!(sampler.num_observables(), 1);
-            assert_eq!(sampler.num_tracked_ops(), 1);
+            assert_eq!(sampler.num_tracked_paulis(), 1);
             assert_eq!(sampler.observable_ids(), vec![0]);
-            let err = sampler.tracked_operator_ids().unwrap_err();
+            let err = sampler.tracked_pauli_ids().unwrap_err();
             assert_eq!(err.backend(), "DemSampler");
-            assert_eq!(err.num_tracked_ops(), 1);
+            assert_eq!(err.num_tracked_paulis(), 1);
             assert!(
                 err.to_string()
-                    .contains("cannot directly sample tracked operator flips")
+                    .contains("cannot directly sample tracked Pauli flips")
             );
             assert_eq!(
                 sampler.labels().dem_outputs[0]
@@ -1853,7 +1855,7 @@ mod tests {
                 Some("obs0")
             );
             assert_eq!(
-                sampler.labels().tracked_ops[0]
+                sampler.labels().tracked_paulis[0]
                     .as_ref()
                     .unwrap()
                     .label
@@ -1872,7 +1874,7 @@ mod tests {
         let meas = circuit.mz(&[0]);
         circuit.detector_labeled("det0", &[meas[0]]);
         circuit.observable_labeled("obs0", &[meas[0]]);
-        circuit.tracked_operator_labeled("tracked_x0", X(0));
+        circuit.tracked_pauli_labeled("tracked_x0", X(0));
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(
             "detectors",
@@ -1911,14 +1913,14 @@ mod tests {
     }
 
     #[test]
-    fn sampler_xors_detectors_and_observables_while_tracked_ops_stay_metadata() {
+    fn sampler_xors_detectors_and_observables_while_tracked_paulis_stay_metadata() {
         use super::super::types::{DetectorDef, DetectorErrorModel, FaultMechanism};
         use pecos_core::pauli::Z;
 
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0));
         dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("L0"));
-        dem.add_tracked_operator(DemOutput::new(0).with_pauli(Z(3)).with_label("tracked_z3"));
+        dem.add_tracked_pauli(DemOutput::new(0).with_pauli(Z(3)).with_label("tracked_z3"));
         dem.add_direct_contribution(FaultMechanism::from_unsorted([0], [0]), 1.0);
         dem.add_direct_contribution(FaultMechanism::from_unsorted([0], []), 1.0);
 
@@ -1927,9 +1929,9 @@ mod tests {
 
         assert_eq!(sampler.num_detectors(), 1);
         assert_eq!(sampler.num_observables(), 1);
-        assert_eq!(sampler.num_tracked_ops(), 1);
+        assert_eq!(sampler.num_tracked_paulis(), 1);
         assert_eq!(
-            sampler.labels().tracked_ops[0]
+            sampler.labels().tracked_paulis[0]
                 .as_ref()
                 .unwrap()
                 .label
@@ -1955,11 +1957,11 @@ mod tests {
 
         assert_eq!(sampler.num_dem_outputs(), 0);
         assert_eq!(sampler.num_observables(), 0);
-        assert_eq!(sampler.num_tracked_ops(), 0);
+        assert_eq!(sampler.num_tracked_paulis(), 0);
     }
 
     #[test]
-    fn observable_mask_ignores_tracked_operator_outputs() {
+    fn observable_mask_ignores_tracked_pauli_outputs() {
         use super::super::builder::DemBuilder;
         use pecos_core::pauli::X;
         use pecos_quantum::Attribute;
@@ -1967,7 +1969,7 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.tracked_operator_labeled("x_check", X(0));
+        circuit.tracked_pauli_labeled("x_check", X(0));
         circuit.mz(&[0]);
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(
@@ -1981,9 +1983,9 @@ mod tests {
         assert_eq!(sampler.observable_ids(), vec![0]);
         assert_eq!(
             sampler
-                .tracked_operator_ids()
+                .tracked_pauli_ids()
                 .unwrap_err()
-                .num_tracked_ops(),
+                .num_tracked_paulis(),
             1
         );
         assert_eq!(sampler.observable_dem_output_mask(), 1);
@@ -1992,14 +1994,14 @@ mod tests {
     }
 
     #[test]
-    fn tracked_operator_direct_sampling_fails_explicitly_when_unsupported() {
+    fn tracked_pauli_direct_sampling_fails_explicitly_when_unsupported() {
         use super::super::types::{DetectorErrorModel, FaultMechanism};
         use pecos_core::pauli::X;
 
         let mut dem = DetectorErrorModel::new();
-        dem.add_tracked_operator(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
+        dem.add_tracked_pauli(DemOutput::new(0).with_pauli(X(0)).with_label("tracked_x0"));
         dem.add_direct_contribution(
-            FaultMechanism::from_unsorted_with_tracked_ops([], [], [0]),
+            FaultMechanism::from_unsorted_with_tracked_paulis([], [], [0]),
             0.25,
         );
 
@@ -2007,27 +2009,27 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(17);
 
         let err = sampler
-            .sample_tracked_operator_flips(&mut rng)
-            .expect_err("DemSampler should reject direct tracked-op sampling");
+            .sample_tracked_pauli_flips(&mut rng)
+            .expect_err("DemSampler should reject direct tracked-Pauli sampling");
         assert_eq!(err.backend(), "DemSampler");
-        assert_eq!(err.num_tracked_ops(), 1);
+        assert_eq!(err.num_tracked_paulis(), 1);
         assert!(
             err.to_string()
                 .contains("samples decoder-facing detectors and observables only")
         );
 
         let err = sampler
-            .sample_tracked_operator_batch(4, &mut rng)
-            .expect_err("DemSampler should reject direct tracked-op batch sampling");
-        assert_eq!(err.num_tracked_ops(), 1);
+            .sample_tracked_pauli_batch(4, &mut rng)
+            .expect_err("DemSampler should reject direct tracked-Pauli batch sampling");
+        assert_eq!(err.num_tracked_paulis(), 1);
 
         let empty = DemSampler::from_detector_error_model(&DetectorErrorModel::new());
         assert_eq!(
-            empty.sample_tracked_operator_flips(&mut rng).unwrap(),
+            empty.sample_tracked_pauli_flips(&mut rng).unwrap(),
             Vec::<bool>::new()
         );
         assert_eq!(
-            empty.sample_tracked_operator_batch(3, &mut rng).unwrap(),
+            empty.sample_tracked_pauli_batch(3, &mut rng).unwrap(),
             vec![Vec::<bool>::new(), Vec::new(), Vec::new()]
         );
     }

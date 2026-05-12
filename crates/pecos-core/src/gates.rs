@@ -139,7 +139,7 @@ impl Gate {
             self.gate_type,
             GateType::Custom
                 | GateType::Channel
-                | GateType::PauliOperatorMeta
+                | GateType::TrackedPauliMeta
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::MeasCrosstalkLocalPayload
         ) {
@@ -1277,7 +1277,7 @@ mod tests {
         );
         assert_eq!(
             Gate::simple(
-                GateType::PauliOperatorMeta,
+                GateType::TrackedPauliMeta,
                 vec![QubitId::from(0), QubitId::from(1)]
             )
             .num_gates(),

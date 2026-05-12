@@ -135,7 +135,7 @@ class TestDemSamplerDetectorMode:
         assert len(obs_flips) == 1
         assert sampler.num_dem_outputs == 1
         assert sampler.num_observables == 1
-        assert sampler.num_tracked_ops == 0
+        assert sampler.num_tracked_paulis == 0
 
     def test_detector_mode_matches_dem_sampler_builder(self) -> None:
         """DemSampler detector mode should match DemSamplerBuilder exactly."""

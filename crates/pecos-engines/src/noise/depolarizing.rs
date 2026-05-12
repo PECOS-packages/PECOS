@@ -245,7 +245,7 @@ impl DepolarizingNoiseModel {
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::QFree
             | GateType::Custom
-            | GateType::PauliOperatorMeta => {
+            | GateType::TrackedPauliMeta => {
                 // Just pass through with no added noise.
             }
         }

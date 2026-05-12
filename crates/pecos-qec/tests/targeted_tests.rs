@@ -283,9 +283,9 @@ fn detector_derives_pauli_from_measurements() {
     assert_eq!(paulis[1].0, pecos_core::Pauli::Z);
 }
 
-/// Verify `tracked_operator` normalizes phase to +1.
+/// Verify `tracked_pauli` normalizes phase to +1.
 #[test]
-fn tracked_operator_normalizes_phase() {
+fn tracked_pauli_normalizes_phase() {
     let mut dag = DagCircuit::new();
     dag.pz(&[0]);
 
@@ -293,7 +293,7 @@ fn tracked_operator_normalizes_phase() {
     let neg_x = -X(0);
     assert_ne!(neg_x.get_phase(), pecos_core::QuarterPhase::PlusOne);
 
-    dag.tracked_operator(neg_x);
+    dag.tracked_pauli(neg_x);
 
     // After storage, phase should be normalized to +1
     let ann = &dag.annotations()[0];

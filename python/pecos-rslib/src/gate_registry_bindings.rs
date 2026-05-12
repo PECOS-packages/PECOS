@@ -59,6 +59,7 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "QAlloc" => Ok(GateType::QAlloc),
         "QFree" => Ok(GateType::QFree),
         "Idle" => Ok(GateType::Idle),
+        "TrackedPauli" | "TrackedPauliMeta" | "TP" => Ok(GateType::TrackedPauliMeta),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown gate type: '{name}'"
         ))),

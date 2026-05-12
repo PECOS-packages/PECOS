@@ -89,6 +89,43 @@ pub fn is_cuquantum_available() -> bool {
     pecos_cuquantum_sys::is_available()
 }
 
+/// Check if the cuStateVec backend can create a simulator on this machine.
+///
+/// This is stricter than [`is_cuquantum_available`]: it verifies not only that
+/// cuQuantum libraries can be loaded, but also that a CUDA device/runtime can
+/// initialize the cuStateVec handle and allocate a minimal state vector.
+#[must_use]
+pub fn is_custatevec_usable() -> bool {
+    CuStateVec::new(1).is_ok()
+}
+
+/// Check if the cuStabilizer backend can create a frame simulator.
+///
+/// This is stricter than [`is_cuquantum_available`] and catches environments
+/// where the libraries are present but the CUDA runtime cannot initialize.
+#[must_use]
+pub fn is_custabilizer_usable() -> bool {
+    CuFrameSimulator::new(1, 1, 1).is_ok()
+}
+
+/// Check if the cuTensorNet backend can create a handle.
+///
+/// This is stricter than [`is_cuquantum_available`] and catches environments
+/// where the libraries are present but the CUDA runtime cannot initialize.
+#[must_use]
+pub fn is_cutensornet_usable() -> bool {
+    CuTensorNet::new().is_ok()
+}
+
+/// Check if the cuDensityMat backend can create a simulator on this machine.
+///
+/// This is stricter than [`is_cuquantum_available`] and catches environments
+/// where the libraries are present but the CUDA runtime cannot initialize.
+#[must_use]
+pub fn is_cudensitymat_usable() -> bool {
+    CuDensityMat::new(1).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

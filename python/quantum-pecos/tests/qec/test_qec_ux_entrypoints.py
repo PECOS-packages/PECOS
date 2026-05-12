@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -79,6 +80,38 @@ def test_tick_circuit_metadata_helpers_build_detector_and_observable_json() -> N
     assert int(tc.get_meta("num_observables")) == 3
 
 
+def test_tracked_pauli_public_api_uses_current_names_only() -> None:
+    from pecos.quantum import DagCircuit, GateRegistry, GateType, TickCircuit, X
+
+    assert GateType.TrackedPauliMeta.name == "TrackedPauli"
+    assert repr(GateType.TrackedPauliMeta) == "GateType.TrackedPauli"
+
+    stub_text = (Path(__file__).parents[3] / "pecos-rslib" / "pecos_rslib.pyi").read_text()
+    assert "TrackedPauliMeta: GateType" in stub_text
+    assert "TrackedOperator" not in stub_text
+
+    for circuit in (DagCircuit(), TickCircuit()):
+        assert hasattr(circuit, "tracked_pauli")
+        assert not hasattr(circuit, "tracked_operator")
+        assert not hasattr(circuit, "tracked_op")
+
+        idx = circuit.tracked_pauli(X(0), label="x_probe")
+        assert idx == 0
+        assert circuit.annotations()[0]["kind"] == "tracked_pauli"
+        assert circuit.annotations()[0]["label"] == "x_probe"
+
+    for alias in ("TrackedPauli", "TrackedPauliMeta", "TP"):
+        registry = GateRegistry()
+        registry.define(f"Use{alias}", 1).step(alias, [0]).register_into(registry)
+        assert registry.decompose(f"Use{alias}", [7], []) == [
+            ("TrackedPauli", [7], [], {}),
+        ]
+
+    registry = GateRegistry()
+    with pytest.raises(ValueError, match="Unknown gate type"):
+        registry.define("Legacy", 1).step("TrackedOperator", [0])
+
+
 def test_tick_circuit_observable_helper_rejects_conflicting_label_id() -> None:
     from pecos.quantum import TickCircuit
 
@@ -94,7 +127,7 @@ def test_tick_circuit_reset_clears_annotations_and_measurement_records() -> None
     measurements = tc.tick().mz([0])
     tc.detector(measurements)
     tc.observable(measurements)
-    tc.tracked_operator(Z(0))
+    tc.tracked_pauli(Z(0))
 
     assert tc.num_measurements() == 1
     assert len(tc.annotations()) == 3

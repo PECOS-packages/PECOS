@@ -55,7 +55,7 @@ FaultCatalog, StochasticNoiseParams,
                 fault.kind,
                 fault.affected_detectors,
                 fault.affected_observables,
-                fault.affected_tracked_ops,
+                fault.affected_tracked_paulis,
                 fault.absolute_probability
             );
         }

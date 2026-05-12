@@ -887,9 +887,9 @@ class TickCircuitRenderer(CircuitRenderer):
         current_cx_round = 0
         final_meas_start = 0
 
-        # Store all tick metadata to apply at the end (workaround for metadata
-        # being lost when new ticks are created)
-        # Format: {tick_idx: {'phase': str, 'round': int, 'cx_round': int, 'gates': [(label, role), ...]}}
+        # Store tick-level metadata to apply at the end by tick index. Gate
+        # metadata is attached immediately as each gate is emitted so it
+        # participates in TickCircuit's batching decisions.
         all_tick_metadata: dict[int, dict] = {}
 
         def get_stabilizer_from_label(label: str) -> str:
@@ -982,7 +982,6 @@ class TickCircuitRenderer(CircuitRenderer):
                 "phase": current_phase,
                 "round": current_round,
                 "cx_round": current_cx_round,
-                "gates": [],
             }
             return current_tick_handle
 
@@ -1001,24 +1000,34 @@ class TickCircuitRenderer(CircuitRenderer):
             """Mark qubits as used in current tick."""
             qubits_in_current_tick.update(qubits)
 
-        def queue_gate_metadata(meta: dict | None = None) -> None:
-            """Queue metadata for the current gate.
+        def gate_metadata(meta: dict | None = None) -> dict:
+            """Build metadata for the current gate context.
 
             Args:
                 meta: Optional dict with gate metadata (e.g., {"label": "data[0]"})
             """
-            if current_tick_idx >= 0:
-                context = {
-                    "phase": current_phase,
-                }
-                if current_round >= 0:
-                    context["syndrome_round"] = current_round
-                if current_cx_round > 0:
-                    context["cx_round"] = current_cx_round
-                merged_meta = context
-                if meta:
-                    merged_meta = {**context, **meta}
-                all_tick_metadata[current_tick_idx]["gates"].append(merged_meta)
+            context: dict[str, object] = {
+                "phase": current_phase,
+            }
+            if current_round >= 0:
+                context["syndrome_round"] = current_round
+            if current_cx_round > 0:
+                context["cx_round"] = current_cx_round
+            if meta:
+                return {**context, **meta}
+            return context
+
+        def apply_gate_metadata(handle: TickHandle, meta: dict | None = None) -> None:
+            """Attach metadata to the gate most recently added to a handle."""
+            handle.metas(gate_metadata(meta))
+
+        def apply_measurement_metadata(meas_refs: list, meta: dict | None = None) -> None:
+            """Attach metadata to the measurement gate just emitted."""
+            if not meas_refs:
+                return
+            tick_idx, gate_idx, _ = meas_refs[0]
+            for key, value in gate_metadata(meta).items():
+                circuit.set_gate_meta(tick_idx, gate_idx, key, value)
 
         for op in ops:
             if op.op_type == OpType.COMMENT:
@@ -1049,58 +1058,58 @@ class TickCircuitRenderer(CircuitRenderer):
                     tick.qalloc([q])
                     allocated.add(q)
                 else:
-                    tick.pz([q])
+                    tick = tick.pz([q])
                 mark_qubits_used([q])
                 # Label helps identify which qubit (e.g., "data[0]", "ax0")
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.PREP:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).pz([q])
+                tick = get_tick_for_qubits([q]).pz([q])
                 mark_qubits_used([q])
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.H:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).h([q])
+                tick = get_tick_for_qubits([q]).h([q])
                 mark_qubits_used([q])
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.X:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).x([q])
+                tick = get_tick_for_qubits([q]).x([q])
                 mark_qubits_used([q])
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.Z:
                 q = op.qubits[0]
-                get_tick_for_qubits([q]).z([q])
+                tick = get_tick_for_qubits([q]).z([q])
                 mark_qubits_used([q])
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.CX:
                 qubits = op.qubits
-                get_tick_for_qubits(qubits).cx([(qubits[0], qubits[1])])
+                tick = get_tick_for_qubits(qubits).cx([(qubits[0], qubits[1])])
                 mark_qubits_used(qubits)
                 meta = get_cx_gate_metadata(qubits[0], qubits[1], op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
@@ -1110,7 +1119,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
-                queue_gate_metadata(meta or None)
+                apply_measurement_metadata(meas_refs, meta or None)
 
                 # Track measurement index and refs for detectors
                 if op.label.startswith("sx"):
@@ -1132,9 +1141,8 @@ class TickCircuitRenderer(CircuitRenderer):
                 current_tick_handle = None
                 qubits_in_current_tick = set()
 
-        # Apply tick-level and gate-level metadata
-        # We use the circuit's set_tick_meta and set_gate_meta methods
-        # which modify the ticks in place (unlike get_tick() which returns a copy)
+        # Apply tick-level metadata in place. Gate metadata is attached as each
+        # gate is emitted so batching decisions can account for it immediately.
         for tick_idx, tick_meta in all_tick_metadata.items():
             # Set tick-level metadata
             circuit.set_tick_meta(tick_idx, "phase", tick_meta["phase"])
@@ -1142,12 +1150,6 @@ class TickCircuitRenderer(CircuitRenderer):
                 circuit.set_tick_meta(tick_idx, "syndrome_round", tick_meta["round"])
             if tick_meta["cx_round"] > 0:
                 circuit.set_tick_meta(tick_idx, "cx_round", tick_meta["cx_round"])
-
-            # Set gate-level metadata (only for gates that have meaningful metadata)
-            for gate_idx, gate_meta in enumerate(tick_meta["gates"]):
-                if gate_meta:
-                    for key, value in gate_meta.items():
-                        circuit.set_gate_meta(tick_idx, gate_idx, key, value)
 
         # Add detector annotations as metadata
         if self.add_detectors:
@@ -2321,16 +2323,16 @@ def generate_dem_from_tick_circuit_via_autodetection(
 
     Args:
         tc: TickCircuit (detector annotations not required)
-        tracked_z_qubits: Qubit indices for a tracked Z operator (for X error tracking)
-        tracked_x_qubits: Qubit indices for a tracked X operator (for Z error tracking)
+        tracked_z_qubits: Qubit indices for a tracked Z Pauli (for X error tracking)
+        tracked_x_qubits: Qubit indices for a tracked X Pauli (for Z error tracking)
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
 
     Returns:
-        PECOS DEM string. With no tracked operators this is Stim-compatible;
-        tracked operators are represented with PECOS `pecos_tracked_op`
+        PECOS DEM string. With no tracked Paulis this is Stim-compatible;
+        tracked Paulis are represented with PECOS `pecos_tracked_pauli`
         metadata lines.
     """
     import json
@@ -2411,26 +2413,28 @@ def generate_dem_from_tick_circuit_via_autodetection(
             return "+I"
         return "+" + " ".join(f"{pauli}{q}" for q in qubits)
 
-    tracked_op_metadata = []
+    tracked_pauli_metadata = []
     if tracked_x_qubits:
-        tracked_op_metadata.append(
+        tracked_pauli_metadata.append(
             {
-                "id": len(tracked_op_metadata),
-                "kind": "tracked_operator",
+                "id": len(tracked_pauli_metadata),
+                "kind": "tracked_pauli",
                 "label": "tracked_x",
                 "pauli": _pauli_string("X", tracked_x_qubits),
             },
         )
     if tracked_z_qubits:
-        tracked_op_metadata.append(
+        tracked_pauli_metadata.append(
             {
-                "id": len(tracked_op_metadata),
-                "kind": "tracked_operator",
+                "id": len(tracked_pauli_metadata),
+                "kind": "tracked_pauli",
                 "label": "tracked_z",
                 "pauli": _pauli_string("Z", tracked_z_qubits),
             },
         )
-    lines.extend(f"pecos_tracked_op {json.dumps(metadata, separators=(',', ':'))}" for metadata in tracked_op_metadata)
+    lines.extend(
+        f"pecos_tracked_pauli {json.dumps(metadata, separators=(',', ':'))}" for metadata in tracked_pauli_metadata
+    )
 
     # Add error mechanisms
     for (dets, dem_outputs), prob in sorted(

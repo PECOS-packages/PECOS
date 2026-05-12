@@ -19,7 +19,9 @@
 use pecos_core::{Angle64, QubitId};
 use pecos_cuquantum::{
     ArbitraryRotationGateable, CliffordGateable, CuDensityMat, CuStabilizer, CuStateVec,
-    CuTensorNet, QuantumSimulator, is_cuquantum_available as cuquantum_available,
+    CuTensorNet, QuantumSimulator, is_cudensitymat_usable as cudensitymat_usable,
+    is_cuquantum_available as cuquantum_available, is_custabilizer_usable as custabilizer_usable,
+    is_custatevec_usable as custatevec_usable, is_cutensornet_usable as cutensornet_usable,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -30,6 +32,30 @@ use pyo3::prelude::*;
 #[pyfunction]
 fn is_cuquantum_available() -> bool {
     cuquantum_available()
+}
+
+/// Check if the cuStateVec backend can create a simulator on this system.
+#[pyfunction]
+fn is_custatevec_usable() -> bool {
+    custatevec_usable()
+}
+
+/// Check if the cuStabilizer backend can create a frame simulator on this system.
+#[pyfunction]
+fn is_custabilizer_usable() -> bool {
+    custabilizer_usable()
+}
+
+/// Check if the cuTensorNet backend can create a handle on this system.
+#[pyfunction]
+fn is_cutensornet_usable() -> bool {
+    cutensornet_usable()
+}
+
+/// Check if the cuDensityMat backend can create a simulator on this system.
+#[pyfunction]
+fn is_cudensitymat_usable() -> bool {
+    cudensitymat_usable()
 }
 
 /// GPU-accelerated state vector quantum simulator using cuQuantum.
@@ -851,8 +877,12 @@ impl PyCuDensityMat {
 fn pecos_rslib_cuda(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     log::debug!("pecos_rslib_cuda module initializing...");
 
-    // Add availability check function
+    // Add availability check functions
     m.add_function(wrap_pyfunction!(is_cuquantum_available, m)?)?;
+    m.add_function(wrap_pyfunction!(is_custatevec_usable, m)?)?;
+    m.add_function(wrap_pyfunction!(is_custabilizer_usable, m)?)?;
+    m.add_function(wrap_pyfunction!(is_cutensornet_usable, m)?)?;
+    m.add_function(wrap_pyfunction!(is_cudensitymat_usable, m)?)?;
 
     // Add simulator classes
     m.add_class::<PyCuStateVec>()?;

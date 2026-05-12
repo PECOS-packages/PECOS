@@ -320,10 +320,10 @@ impl HugrEngine {
 
             // Check the current block
             if let Some(block_info) = cfg_info.blocks.get(&active_cfg.current_block) {
-                // Check if this block has tracked ops that drive completion
-                // Quantum, calls, conditionals, bool, extension, and tailloops are tracked
-                // Classical_ops are not tracked (they complete when their inputs are ready)
-                let has_tracked_ops = !block_info.quantum_ops.is_empty()
+                // Check if this block has operations that drive completion.
+                // Quantum, calls, conditionals, bool, extension, and tailloops
+                // complete explicitly. Classical_ops complete when their inputs are ready.
+                let has_completion_driving_ops = !block_info.quantum_ops.is_empty()
                     || !block_info.call_nodes.is_empty()
                     || !block_info.conditional_nodes.is_empty()
                     || !block_info.bool_ops.is_empty()
@@ -331,7 +331,7 @@ impl HugrEngine {
                     || !block_info.tailloop_nodes.is_empty();
 
                 // Check if the processed node is in this block
-                let is_in_block = if has_tracked_ops {
+                let is_in_block = if has_completion_driving_ops {
                     block_info.quantum_ops.contains(&processed_node)
                         || block_info.call_nodes.contains(&processed_node)
                         || block_info.conditional_nodes.contains(&processed_node)
@@ -345,8 +345,8 @@ impl HugrEngine {
 
                 if is_in_block {
                     // Check completion based on block type
-                    let block_complete = if has_tracked_ops {
-                        // Block with tracked ops: wait for all tracked op types
+                    let block_complete = if has_completion_driving_ops {
+                        // Block with completion-driving ops: wait for all such op types.
                         let all_quantum_done = block_info
                             .quantum_ops
                             .iter()

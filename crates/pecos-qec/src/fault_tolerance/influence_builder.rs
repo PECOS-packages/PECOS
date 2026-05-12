@@ -51,7 +51,7 @@ struct ObservablePropagationWork<'a> {
 /// to create complete influence maps suitable for noisy sampling.
 /// Re-export `PauliString` as the type used for Pauli operator tracking.
 ///
-/// All circuit annotations (detectors, observables, operators) are Pauli
+/// All circuit annotations (detectors, observables, tracked Paulis) are Pauli
 /// strings tracked for flipping via backward propagation. The difference
 /// is role and readout:
 ///
@@ -59,13 +59,13 @@ struct ObservablePropagationWork<'a> {
 /// |------|---------|---------|-----|
 /// | Detector | Syndrome parity from measurements | measurement XOR = 0 | `dag.detector(&[...])` |
 /// | Observable | Standard `L<n>` output from measurements | measurement XOR | `dag.observable(&[...])` |
-/// | Tracked operator | User Pauli operator annotated at a circuit point | fault anticommutes with operator | `dag.tracked_operator(&[...])` |
+/// | Tracked Pauli | User Pauli string annotated at a circuit point | fault anticommutes with tracked Pauli | `dag.tracked_pauli(&[...])` |
 ///
-/// Observables and tracked operators both use backward Pauli propagation, but
+/// Observables and tracked Paulis both use backward Pauli propagation, but
 /// they are not the same concept. Observables are values observed through
 /// measurements, are defined by measurement records, and are decoder-visible
-/// `L<n>` outputs. Tracked operators are not measured and are not applied to the
-/// computation; they ask whether a fault would flip a Pauli operator placed as
+/// `L<n>` outputs. Tracked Paulis are not measured and are not applied to the
+/// computation; they ask whether a fault would flip the annotated Pauli placed as
 /// an annotation in the circuit, such as a logical operator, stabilizer, or
 /// other Pauli of interest. They live in a separate PECOS-only namespace.
 pub use pecos_core::PauliString;
@@ -105,31 +105,31 @@ impl<'a> InfluenceBuilder<'a> {
         }
     }
 
-    /// Add a tracked X operator (X on all specified qubits).
+    /// Add a tracked X Pauli (X on all specified qubits).
     #[must_use]
     pub fn with_x(mut self, qubits: &[usize]) -> Self {
         self.push_single_term_output(
-            DemOutputMetadata::tracked_operator(PauliString::xs(qubits)),
+            DemOutputMetadata::tracked_pauli(PauliString::xs(qubits)),
             None,
         );
         self
     }
 
-    /// Add a tracked Z operator (Z on all specified qubits).
+    /// Add a tracked Z Pauli (Z on all specified qubits).
     #[must_use]
     pub fn with_z(mut self, qubits: &[usize]) -> Self {
         self.push_single_term_output(
-            DemOutputMetadata::tracked_operator(PauliString::zs(qubits)),
+            DemOutputMetadata::tracked_pauli(PauliString::zs(qubits)),
             None,
         );
         self
     }
 
-    /// Add a tracked Y operator (Y on all specified qubits).
+    /// Add a tracked Y Pauli (Y on all specified qubits).
     #[must_use]
     pub fn with_y(mut self, qubits: &[usize]) -> Self {
         self.push_single_term_output(
-            DemOutputMetadata::tracked_operator(PauliString::ys(qubits)),
+            DemOutputMetadata::tracked_pauli(PauliString::ys(qubits)),
             None,
         );
         self
@@ -149,14 +149,14 @@ impl<'a> InfluenceBuilder<'a> {
     /// use pecos_quantum::DagCircuit;
     ///
     /// let dag = DagCircuit::new();
-    /// let builder = InfluenceBuilder::new(&dag).with_tracked_operator(
+    /// let builder = InfluenceBuilder::new(&dag).with_tracked_pauli(
     ///     PauliString::from_paulis(&[Pauli::X, Pauli::Z, Pauli::Z]),
     /// );
     /// let _map = builder.build();
     /// ```
     #[must_use]
-    pub fn with_tracked_operator(mut self, pauli: PauliString) -> Self {
-        self.push_single_term_output(DemOutputMetadata::tracked_operator(pauli), None);
+    pub fn with_tracked_pauli(mut self, pauli: PauliString) -> Self {
+        self.push_single_term_output(DemOutputMetadata::tracked_pauli(pauli), None);
         self
     }
 
@@ -170,14 +170,14 @@ impl<'a> InfluenceBuilder<'a> {
         });
     }
 
-    /// Extract observable and tracked-operator annotations from the circuit.
+    /// Extract observable and tracked-Pauli annotations from the circuit.
     ///
     /// Observable annotations define logical observables via measurement records.
     /// For backward propagation, each referenced measurement contributes its
     /// own Z-type propagation term starting at that measurement node. The terms
     /// accumulate into the same observable `L<n>` output.
     ///
-    /// Tracked-operator annotations have a corresponding `PauliOperatorMeta` node
+    /// Tracked-Pauli annotations have a corresponding `TrackedPauliMeta` node
     /// that marks their time position.
     ///
     /// Detector annotations are NOT handled here -- they are processed
@@ -185,8 +185,8 @@ impl<'a> InfluenceBuilder<'a> {
     /// to auto-detected detectors.
     #[must_use]
     pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
-        // Find PauliOperatorMeta nodes in topological order.
-        // The nth meta-gate corresponds to the nth Operator annotation.
+        // Find TrackedPauliMeta nodes in topological order.
+        // The nth meta-gate corresponds to the nth tracked-Pauli annotation.
         let meta_nodes: Vec<usize> = circuit
             .topological_order()
             .into_iter()
@@ -214,11 +214,11 @@ impl<'a> InfluenceBuilder<'a> {
                         terms,
                     });
                 }
-                pecos_quantum::AnnotationKind::TrackedOperator => {
+                pecos_quantum::AnnotationKind::TrackedPauli => {
                     let meta_node = meta_nodes.get(operator_idx).copied();
                     operator_idx += 1;
                     self.push_single_term_output(
-                        DemOutputMetadata::tracked_operator(ann.pauli.clone())
+                        DemOutputMetadata::tracked_pauli(ann.pauli.clone())
                             .with_optional_label(ann.label.clone()),
                         meta_node,
                     );
@@ -1056,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_tracked_operator() {
+    fn test_with_tracked_pauli() {
         let mut dag = DagCircuit::new();
         dag.pz(&[2]);
         dag.cx(&[(0, 2)]);
@@ -1076,16 +1076,16 @@ mod tests {
 
         let pauli =
             PauliString::from_paulis_with_phase(QuarterPhase::MinusI, &[Pauli::X, Pauli::Z]);
-        let metadata = DemOutputMetadata::tracked_operator(pauli).with_label("xz");
+        let metadata = DemOutputMetadata::tracked_pauli(pauli).with_label("xz");
 
-        assert_eq!(metadata.kind, DemOutputKind::TrackedOperator);
+        assert_eq!(metadata.kind, DemOutputKind::TrackedPauli);
         assert_eq!(metadata.label.as_deref(), Some("xz"));
         assert_eq!(metadata.pauli.phase(), QuarterPhase::PlusOne);
         assert_eq!(metadata.pauli.to_sparse_str(), "+X0 Z1");
     }
 
     #[test]
-    fn test_circuit_annotation_dem_output_metadata_tracks_observables_and_operators() {
+    fn test_circuit_annotation_dem_output_metadata_tracks_observables_and_tracked_paulis() {
         use pecos_core::pauli::X;
 
         let mut dag = DagCircuit::new();
@@ -1093,15 +1093,15 @@ mod tests {
         dag.h(&[0]);
         let meas = dag.mz(&[0]);
         dag.observable_labeled("record_obs", &[meas[0]]);
-        dag.tracked_operator_labeled("track_x", X(0));
+        dag.tracked_pauli_labeled("track_x", X(0));
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations(&dag)
             .build();
 
-        // 1 observable (record_obs) + 1 tracked operator (track_x) = 2 DEM outputs
+        // 1 observable (record_obs) + 1 tracked Pauli (track_x) = 2 DEM outputs
         assert_eq!(map.num_dem_outputs(), 1, "1 observable");
-        assert_eq!(map.num_tracked_ops(), 1, "1 tracked operator");
+        assert_eq!(map.num_tracked_paulis(), 1, "1 tracked Pauli");
         assert_eq!(map.dem_output_metadata.len(), 2);
 
         // Observable comes first (annotations are processed in order)
@@ -1111,11 +1111,8 @@ mod tests {
             Some("record_obs")
         );
 
-        // Tracked operator second
-        assert_eq!(
-            map.dem_output_metadata[1].kind,
-            DemOutputKind::TrackedOperator
-        );
+        // Tracked Pauli second
+        assert_eq!(map.dem_output_metadata[1].kind, DemOutputKind::TrackedPauli);
         assert_eq!(map.dem_output_metadata[1].label.as_deref(), Some("track_x"));
         assert_eq!(map.dem_output_metadata[1].pauli.to_sparse_str(), "+X0");
     }

@@ -167,7 +167,7 @@ The Python example uses a state vector simulator, which supports all quantum gat
 ## Next Steps
 
 - **[HUGR & Guppy Simulation](hugr-simulation.md)**: Measurement-based control flow and advanced Guppy features
-- **[PECOS Concepts](pecos-concepts.md)**: Detectors, observables, tracked operators, gates, channels, and fault locations
+- **[PECOS Concepts](pecos-concepts.md)**: Detectors, observables, tracked Paulis, gates, channels, and fault locations
 - **[QASM Simulation](qasm-simulation.md)**: Full QASM simulation API for existing OpenQASM code
 - **[Simulators](simulators.md)**: Choose the right simulation backend
 - **[Noise Model Builders](noise-model-builders.md)**: Add realistic noise to your simulations

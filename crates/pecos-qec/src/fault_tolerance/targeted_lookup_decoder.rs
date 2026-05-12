@@ -393,7 +393,7 @@ mod tests {
                         affected_measurements: Vec::new(),
                         affected_detectors: vec![0],
                         affected_observables: vec![9],
-                        affected_tracked_ops: Vec::new(),
+                        affected_tracked_paulis: Vec::new(),
                         conditional_probability: 1.0,
                         absolute_probability: 0.0,
                     }],
@@ -413,7 +413,7 @@ mod tests {
                         affected_measurements: vec![0],
                         affected_detectors: vec![0],
                         affected_observables: Vec::new(),
-                        affected_tracked_ops: Vec::new(),
+                        affected_tracked_paulis: Vec::new(),
                         conditional_probability: 1.0,
                         absolute_probability: 0.1,
                     }],
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_ignores_tracked_operator_effects() {
+    fn test_decode_ignores_tracked_pauli_effects() {
         let catalog = FaultCatalog {
             locations: vec![
                 FaultLocation {
@@ -449,7 +449,7 @@ mod tests {
                         affected_measurements: Vec::new(),
                         affected_detectors: vec![0],
                         affected_observables: vec![1],
-                        affected_tracked_ops: vec![0],
+                        affected_tracked_paulis: vec![0],
                         conditional_probability: 1.0,
                         absolute_probability: 0.2,
                     }],
@@ -469,7 +469,7 @@ mod tests {
                         affected_measurements: Vec::new(),
                         affected_detectors: vec![0],
                         affected_observables: Vec::new(),
-                        affected_tracked_ops: vec![3],
+                        affected_tracked_paulis: vec![3],
                         conditional_probability: 1.0,
                         absolute_probability: 0.1,
                     }],

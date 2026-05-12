@@ -59,7 +59,7 @@ impl fmt::Display for UnsupportedGateError {
              Supported: H, X, Y, Z, SZ, SZdg, SX, SXdg, SY, SYdg, F, Fdg, \
              CX, CY, CZ, SXX, SXXdg, SYY, SYYdg, SZZ, SZZdg, SWAP, \
              MZ/MeasureFree/MeasureLeaked, PZ, QAlloc, QFree, I, Idle, \
-             plus metadata (MeasCrosstalk*, PauliOperatorMeta).",
+             plus metadata (MeasCrosstalk*, TrackedPauliMeta).",
             self.gate_type, self.tick, self.gate_in_tick, self.qubits
         )
     }
@@ -129,7 +129,7 @@ fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
             | GateType::Idle
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
-            | GateType::PauliOperatorMeta
+            | GateType::TrackedPauliMeta
     )
 }
 
@@ -211,7 +211,7 @@ pub(crate) enum PauliType {
 ///
 /// **No-op** (pass through without noise or transformation):
 /// - `I`, `Idle`, `QFree`, `MeasCrosstalkGlobalPayload`,
-///   `MeasCrosstalkLocalPayload`, `PauliOperatorMeta`
+///   `MeasCrosstalkLocalPayload`, `TrackedPauliMeta`
 ///
 /// Any gate not in the above lists returns [`UnsupportedGateError`].
 ///
@@ -315,7 +315,7 @@ fn propagate_single_effect(
     start: usize,
     gates: &[GateLoc],
     meas_positions: &HashMap<usize, usize>,
-    tracked_ops: &[PauliString],
+    tracked_paulis: &[PauliString],
 ) -> PropagatedFaultEffect {
     let mut prop = BitmaskPauliProp::new();
     match pauli {
@@ -325,10 +325,10 @@ fn propagate_single_effect(
     }
 
     let affected_measurements = propagate_forward(&mut prop, start, gates, meas_positions);
-    let affected_tracked_ops = tracked_ops_flipped_by(&prop, tracked_ops);
+    let affected_tracked_paulis = tracked_paulis_flipped_by(&prop, tracked_paulis);
     PropagatedFaultEffect {
         affected_measurements,
-        affected_tracked_ops,
+        affected_tracked_paulis,
     }
 }
 
@@ -338,7 +338,7 @@ fn propagate_pair_effect(
     start: usize,
     gates: &[GateLoc],
     meas_positions: &HashMap<usize, usize>,
-    tracked_ops: &[PauliString],
+    tracked_paulis: &[PauliString],
 ) -> PropagatedFaultEffect {
     let mut prop = BitmaskPauliProp::new();
     for (pauli, qubit) in faults {
@@ -350,17 +350,17 @@ fn propagate_pair_effect(
     }
 
     let affected_measurements = propagate_forward(&mut prop, start, gates, meas_positions);
-    let affected_tracked_ops = tracked_ops_flipped_by(&prop, tracked_ops);
+    let affected_tracked_paulis = tracked_paulis_flipped_by(&prop, tracked_paulis);
     PropagatedFaultEffect {
         affected_measurements,
-        affected_tracked_ops,
+        affected_tracked_paulis,
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PropagatedFaultEffect {
     affected_measurements: BTreeSet<usize>,
-    affected_tracked_ops: Vec<usize>,
+    affected_tracked_paulis: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -381,12 +381,12 @@ impl PropagatedEffectCache {
         start: usize,
         gates: &[GateLoc],
         meas_positions: &HashMap<usize, usize>,
-        tracked_ops: &[PauliString],
+        tracked_paulis: &[PauliString],
     ) -> PropagatedFaultEffect {
         self.singles
             .entry((start, pauli, qubit))
             .or_insert_with(|| {
-                propagate_single_effect(pauli, qubit, start, gates, meas_positions, tracked_ops)
+                propagate_single_effect(pauli, qubit, start, gates, meas_positions, tracked_paulis)
             })
             .clone()
     }
@@ -405,9 +405,9 @@ fn xor_fault_effects(
 
     PropagatedFaultEffect {
         affected_measurements,
-        affected_tracked_ops: xor_sorted_unique_indices(
-            &left.affected_tracked_ops,
-            &right.affected_tracked_ops,
+        affected_tracked_paulis: xor_sorted_unique_indices(
+            &left.affected_tracked_paulis,
+            &right.affected_tracked_paulis,
         ),
     }
 }
@@ -583,8 +583,8 @@ pub struct FaultAlternative {
     pub affected_detectors: Vec<usize>,
     /// Observable indices flipped.
     pub affected_observables: Vec<usize>,
-    /// Tracked-operator indices flipped.
-    pub affected_tracked_ops: Vec<usize>,
+    /// Tracked-Pauli indices flipped.
+    pub affected_tracked_paulis: Vec<usize>,
     /// Probability of this alternative conditioned on the mechanism firing (`1/k`).
     pub conditional_probability: f64,
     /// Marginal probability of this specific alternative at this location: `p_i / k_i`.
@@ -655,8 +655,8 @@ pub struct FaultConfiguration {
     pub affected_detectors: Vec<usize>,
     /// Combined observable indices (XOR parity).
     pub affected_observables: Vec<usize>,
-    /// Combined tracked-operator indices (XOR parity).
-    pub affected_tracked_ops: Vec<usize>,
+    /// Combined tracked-Pauli indices (XOR parity).
+    pub affected_tracked_paulis: Vec<usize>,
     /// Product of selected alternatives' `absolute_probability`.
     pub selected_probability: f64,
     /// `selected_probability * product(unselected no_fault_probability)`.
@@ -872,7 +872,7 @@ impl FaultConfigCursor {
                 affected_measurements: Vec::new(),
                 affected_detectors: Vec::new(),
                 affected_observables: Vec::new(),
-                affected_tracked_ops: Vec::new(),
+                affected_tracked_paulis: Vec::new(),
                 selected_probability: 1.0,
                 configuration_probability: no_fault_prob,
             };
@@ -881,7 +881,7 @@ impl FaultConfigCursor {
         let mut meas_set = std::collections::BTreeSet::new();
         let mut det_set = std::collections::BTreeSet::new();
         let mut obs_set = std::collections::BTreeSet::new();
-        let mut tracked_op_set = std::collections::BTreeSet::new();
+        let mut tracked_pauli_set = std::collections::BTreeSet::new();
         let mut selected_prob = 1.0;
 
         for i in 0..self.k {
@@ -905,9 +905,9 @@ impl FaultConfigCursor {
                     obs_set.insert(o);
                 }
             }
-            for &op in &alt.affected_tracked_ops {
-                if !tracked_op_set.remove(&op) {
-                    tracked_op_set.insert(op);
+            for &op in &alt.affected_tracked_paulis {
+                if !tracked_pauli_set.remove(&op) {
+                    tracked_pauli_set.insert(op);
                 }
             }
         }
@@ -940,7 +940,7 @@ impl FaultConfigCursor {
             affected_measurements: meas_set.into_iter().collect(),
             affected_detectors: det_set.into_iter().collect(),
             affected_observables: obs_set.into_iter().collect(),
-            affected_tracked_ops: tracked_op_set.into_iter().collect(),
+            affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
             selected_probability: selected_prob,
             configuration_probability: selected_prob * unselected_no_fault,
         }
@@ -1014,9 +1014,9 @@ impl Iterator for OwnedFaultConfigIter {
 /// Build a fault catalog from a `TickCircuit` and noise parameters.
 ///
 /// Returns per-location, per-alternative fault data including Pauli labels,
-/// affected detectors, observables, tracked operators, and probability fields.
+/// affected detectors, observables, tracked Paulis, and probability fields.
 ///
-/// Reads detector/observable metadata and tracked-operator annotations
+/// Reads detector/observable metadata and tracked-Pauli annotations
 /// from the circuit when present.
 ///
 /// # Errors
@@ -1039,7 +1039,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
     // Parse detector/DEM-output records for measurement→detector/op mapping
     let det_records = parse_detector_records(tc);
     let obs_records = parse_observable_records(tc);
-    let tracked_op_annotations = parse_tracked_operator_annotations(tc);
+    let tracked_pauli_annotations = parse_tracked_pauli_annotations(tc);
     let num_meas = tc
         .get_meta("num_measurements")
         .and_then(|a| {
@@ -1076,7 +1076,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         loc_idx + 1,
                         &gates,
                         &meas_positions,
-                        &tracked_op_annotations,
+                        &tracked_pauli_annotations,
                     );
                     let pauli = pauli_type_to_string(pt, q);
                     let (affected, dets, obs, tracked) =
@@ -1087,7 +1087,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         affected_measurements: affected,
                         affected_detectors: dets,
                         affected_observables: obs,
-                        affected_tracked_ops: tracked,
+                        affected_tracked_paulis: tracked,
                         conditional_probability,
                         absolute_probability: 0.0,
                     });
@@ -1121,7 +1121,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                             loc_idx + 1,
                             &gates,
                             &meas_positions,
-                            &tracked_op_annotations,
+                            &tracked_pauli_annotations,
                         );
                         let right = effect_cache.single(
                             p2,
@@ -1129,7 +1129,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                             loc_idx + 1,
                             &gates,
                             &meas_positions,
-                            &tracked_op_annotations,
+                            &tracked_pauli_annotations,
                         );
                         let effect = xor_fault_effects(&left, &right);
                         let pauli = pauli_pair_to_string(p1, q1, p2, q2);
@@ -1141,7 +1141,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                             affected_measurements: affected,
                             affected_detectors: dets,
                             affected_observables: obs,
-                            affected_tracked_ops: tracked,
+                            affected_tracked_paulis: tracked,
                             conditional_probability,
                             absolute_probability: 0.0,
                         });
@@ -1155,7 +1155,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         loc_idx + 1,
                         &gates,
                         &meas_positions,
-                        &tracked_op_annotations,
+                        &tracked_pauli_annotations,
                     );
                     let pauli = pauli_type_to_string(p, q1);
                     let (affected, dets, obs, tracked) =
@@ -1166,7 +1166,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         affected_measurements: affected,
                         affected_detectors: dets,
                         affected_observables: obs,
-                        affected_tracked_ops: tracked,
+                        affected_tracked_paulis: tracked,
                         conditional_probability,
                         absolute_probability: 0.0,
                     });
@@ -1177,7 +1177,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         loc_idx + 1,
                         &gates,
                         &meas_positions,
-                        &tracked_op_annotations,
+                        &tracked_pauli_annotations,
                     );
                     let pauli = pauli_type_to_string(p, q2);
                     let (affected, dets, obs, tracked) =
@@ -1188,7 +1188,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         affected_measurements: affected,
                         affected_detectors: dets,
                         affected_observables: obs,
-                        affected_tracked_ops: tracked,
+                        affected_tracked_paulis: tracked,
                         conditional_probability,
                         absolute_probability: 0.0,
                     });
@@ -1215,7 +1215,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                     loc_idx + 1,
                     &gates,
                     &meas_positions,
-                    &tracked_op_annotations,
+                    &tracked_pauli_annotations,
                 );
                 let (affected, dets, obs, tracked) =
                     catalog_effect_parts(effect, &record_effect_index);
@@ -1234,7 +1234,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                         affected_measurements: affected,
                         affected_detectors: dets,
                         affected_observables: obs,
-                        affected_tracked_ops: tracked,
+                        affected_tracked_paulis: tracked,
                         conditional_probability: 1.0,
                         absolute_probability: 0.0,
                     }],
@@ -1261,7 +1261,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                             affected_measurements: affected,
                             affected_detectors: dets,
                             affected_observables: obs,
-                            affected_tracked_ops: Vec::new(),
+                            affected_tracked_paulis: Vec::new(),
                             conditional_probability: 1.0,
                             absolute_probability: 0.0,
                         }],
@@ -1318,10 +1318,10 @@ fn parse_observable_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
     parse_records_from_meta(tc, "observables")
 }
 
-fn parse_tracked_operator_annotations(tc: &TickCircuit) -> Vec<PauliString> {
+fn parse_tracked_pauli_annotations(tc: &TickCircuit) -> Vec<PauliString> {
     tc.annotations()
         .iter()
-        .filter(|ann| matches!(ann.kind, AnnotationKind::TrackedOperator))
+        .filter(|ann| matches!(ann.kind, AnnotationKind::TrackedPauli))
         .map(|ann| {
             let mut pauli = ann.pauli.clone();
             pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
@@ -1330,13 +1330,16 @@ fn parse_tracked_operator_annotations(tc: &TickCircuit) -> Vec<PauliString> {
         .collect()
 }
 
-fn tracked_ops_flipped_by(prop: &BitmaskPauliProp, tracked_ops: &[PauliString]) -> Vec<usize> {
-    tracked_ops
+fn tracked_paulis_flipped_by(
+    prop: &BitmaskPauliProp,
+    tracked_paulis: &[PauliString],
+) -> Vec<usize> {
+    tracked_paulis
         .iter()
         .enumerate()
-        .filter_map(|(idx, tracked_op)| {
+        .filter_map(|(idx, tracked_pauli)| {
             let mut parity = false;
-            for &(pauli, qubit) in tracked_op.paulis() {
+            for &(pauli, qubit) in tracked_pauli.paulis() {
                 let q = qubit.index();
                 match pauli {
                     Pauli::X => parity ^= prop.contains_z(q),
@@ -1418,7 +1421,7 @@ fn catalog_effect_parts(
     let affected: Vec<usize> = effect.affected_measurements.into_iter().collect();
     let dets = record_effect_index.detectors_for_measurements(&affected);
     let obs = record_effect_index.observables_for_measurements(&affected);
-    (affected, dets, obs, effect.affected_tracked_ops)
+    (affected, dets, obs, effect.affected_tracked_paulis)
 }
 
 fn records_by_measurement(records_by_output: &[Vec<i32>], num_meas: usize) -> Vec<Vec<usize>> {
@@ -1581,7 +1584,7 @@ pub fn symbolic_measurement_history(
                 | GateType::QFree
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::MeasCrosstalkLocalPayload
-                | GateType::PauliOperatorMeta => {}
+                | GateType::TrackedPauliMeta => {}
                 other => {
                     return Err(UnsupportedGateError {
                         gate_type: other,
@@ -2052,7 +2055,7 @@ mod tests {
         tc.get_tick_mut(1)
             .unwrap()
             .add_gate(pecos_core::Gate::simple(
-                GateType::PauliOperatorMeta,
+                GateType::TrackedPauliMeta,
                 vec![QubitId(1), QubitId(2)],
             ));
         tc.tick().mz(&[QubitId(0)]);
@@ -2235,22 +2238,23 @@ mod tests {
         tc.tick().cx(&[(QubitId(0), QubitId(1))]);
         tc.tick().h(&[QubitId(1)]);
         tc.tick().mz(&[QubitId(0), QubitId(1)]);
-        tc.tracked_operator_labeled("tracked_z0", PauliString::z(0));
-        tc.tracked_operator_labeled("tracked_z1", PauliString::z(1));
+        tc.tracked_pauli_labeled("tracked_z0", PauliString::z(0));
+        tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
         let (gates, meas_pos) = flatten_tick_circuit(&tc);
-        let tracked_ops = parse_tracked_operator_annotations(&tc);
+        let tracked_paulis = parse_tracked_pauli_annotations(&tc);
         let start = 1;
-        let left = propagate_single_effect(PauliType::X, 0, start, &gates, &meas_pos, &tracked_ops);
+        let left =
+            propagate_single_effect(PauliType::X, 0, start, &gates, &meas_pos, &tracked_paulis);
         let right =
-            propagate_single_effect(PauliType::Z, 1, start, &gates, &meas_pos, &tracked_ops);
+            propagate_single_effect(PauliType::Z, 1, start, &gates, &meas_pos, &tracked_paulis);
         let combined = xor_fault_effects(&left, &right);
         let direct = propagate_pair_effect(
             [(PauliType::X, 0), (PauliType::Z, 1)],
             start,
             &gates,
             &meas_pos,
-            &tracked_ops,
+            &tracked_paulis,
         );
 
         assert_eq!(combined, direct);
@@ -2261,22 +2265,22 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
         tc.tick().mz(&[QubitId(0)]);
-        tc.tracked_operator_labeled("tracked_x0", PauliString::x(0));
+        tc.tracked_pauli_labeled("tracked_x0", PauliString::x(0));
 
         let (gates, meas_pos) = flatten_tick_circuit(&tc);
-        let tracked_ops = parse_tracked_operator_annotations(&tc);
-        let fresh = propagate_single_effect(PauliType::Z, 0, 0, &gates, &meas_pos, &tracked_ops);
+        let tracked_paulis = parse_tracked_pauli_annotations(&tc);
+        let fresh = propagate_single_effect(PauliType::Z, 0, 0, &gates, &meas_pos, &tracked_paulis);
 
         let mut cache = PropagatedEffectCache::default();
-        let first = cache.single(PauliType::Z, 0, 0, &gates, &meas_pos, &tracked_ops);
+        let first = cache.single(PauliType::Z, 0, 0, &gates, &meas_pos, &tracked_paulis);
         assert_eq!(first, fresh);
         assert_eq!(cache.len(), 1);
 
         let mut mutated_clone = first.clone();
         mutated_clone.affected_measurements.clear();
-        mutated_clone.affected_tracked_ops.clear();
+        mutated_clone.affected_tracked_paulis.clear();
 
-        let second = cache.single(PauliType::Z, 0, 0, &gates, &meas_pos, &tracked_ops);
+        let second = cache.single(PauliType::Z, 0, 0, &gates, &meas_pos, &tracked_paulis);
         assert_eq!(second, fresh);
         assert_ne!(second, mutated_clone);
         assert_eq!(
@@ -2285,9 +2289,9 @@ mod tests {
             "repeating the same propagation key should reuse the cached entry"
         );
 
-        let other = cache.single(PauliType::X, 0, 0, &gates, &meas_pos, &tracked_ops);
+        let other = cache.single(PauliType::X, 0, 0, &gates, &meas_pos, &tracked_paulis);
         let other_fresh =
-            propagate_single_effect(PauliType::X, 0, 0, &gates, &meas_pos, &tracked_ops);
+            propagate_single_effect(PauliType::X, 0, 0, &gates, &meas_pos, &tracked_paulis);
         assert_eq!(other, other_fresh);
         assert_eq!(cache.len(), 2);
     }
@@ -2867,10 +2871,10 @@ mod tests {
     }
 
     #[test]
-    fn test_catalog_keeps_observables_and_tracked_ops_distinct() {
+    fn test_catalog_keeps_observables_and_tracked_paulis_distinct() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
-        tc.tracked_operator_labeled("tracked_z0", PauliString::z(0));
+        tc.tracked_pauli_labeled("tracked_z0", PauliString::z(0));
         tc.set_meta(
             "detectors",
             pecos_quantum::Attribute::String("[]".to_string()),
@@ -2913,21 +2917,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(x_fault.affected_observables, Vec::<usize>::new());
-        assert_eq!(x_fault.affected_tracked_ops, vec![0]);
-        assert_eq!(y_fault.affected_tracked_ops, vec![0]);
-        assert_eq!(z_fault.affected_tracked_ops, Vec::<usize>::new());
+        assert_eq!(x_fault.affected_tracked_paulis, vec![0]);
+        assert_eq!(y_fault.affected_tracked_paulis, vec![0]);
+        assert_eq!(z_fault.affected_tracked_paulis, Vec::<usize>::new());
 
         let configs: Vec<_> = catalog.fault_configurations(1).collect();
         assert!(
             configs
                 .iter()
-                .any(|config| config.affected_tracked_ops.as_slice() == [0]
+                .any(|config| config.affected_tracked_paulis.as_slice() == [0]
                     && config.affected_observables.is_empty())
         );
     }
 
     #[test]
-    fn test_catalog_after_tick_dag_round_trip_keeps_outputs_and_tracked_ops_separate() {
+    fn test_catalog_after_tick_dag_round_trip_keeps_outputs_and_tracked_paulis_separate() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0), QubitId(1)]);
         tc.tick().mz(&[QubitId(0)]);
@@ -2939,13 +2943,13 @@ mod tests {
             .unwrap();
         tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
             .unwrap();
-        tc.tracked_operator_labeled("tracked_z1", PauliString::z(1));
+        tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
         let round_tripped = TickCircuit::from(&pecos_quantum::DagCircuit::from(&tc));
         assert_eq!(round_tripped.annotations().len(), 1);
         assert!(matches!(
             round_tripped.annotations()[0].kind,
-            AnnotationKind::TrackedOperator
+            AnnotationKind::TrackedPauli
         ));
 
         let catalog = build_fault_catalog(
@@ -2972,7 +2976,7 @@ mod tests {
         assert_eq!(x_fault.affected_measurements, vec![0]);
         assert_eq!(x_fault.affected_detectors, vec![0]);
         assert_eq!(x_fault.affected_observables, vec![0]);
-        assert!(x_fault.affected_tracked_ops.is_empty());
+        assert!(x_fault.affected_tracked_paulis.is_empty());
 
         let tracked_h_loc = catalog
             .locations
@@ -2987,7 +2991,7 @@ mod tests {
         assert!(tracked_x_fault.affected_measurements.is_empty());
         assert!(tracked_x_fault.affected_detectors.is_empty());
         assert!(tracked_x_fault.affected_observables.is_empty());
-        assert_eq!(tracked_x_fault.affected_tracked_ops, vec![0]);
+        assert_eq!(tracked_x_fault.affected_tracked_paulis, vec![0]);
 
         let meas_fault = catalog
             .locations
@@ -2998,7 +3002,7 @@ mod tests {
         assert_eq!(meas_fault.affected_measurements, vec![0]);
         assert_eq!(meas_fault.affected_detectors, vec![0]);
         assert_eq!(meas_fault.affected_observables, vec![0]);
-        assert!(meas_fault.affected_tracked_ops.is_empty());
+        assert!(meas_fault.affected_tracked_paulis.is_empty());
 
         assert!(catalog.to_mechanisms().iter().any(|mechanism| {
             mechanism
@@ -3010,7 +3014,7 @@ mod tests {
 
     #[test]
     fn test_catalog_two_qubit_propagation_keeps_output_kinds_distinct() {
-        fn assert_case(gate_type: GateType, tracked_op: PauliString) {
+        fn assert_case(gate_type: GateType, tracked_pauli: PauliString) {
             let mut tc = TickCircuit::new();
             tc.tick().h(&[QubitId(0)]);
             match gate_type {
@@ -3037,7 +3041,7 @@ mod tests {
                 .unwrap();
             tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
                 .unwrap();
-            tc.tracked_operator_labeled("tracked", tracked_op);
+            tc.tracked_pauli_labeled("tracked", tracked_pauli);
 
             let catalog = build_fault_catalog(
                 &tc,
@@ -3064,7 +3068,7 @@ mod tests {
             assert_eq!(x_fault.affected_measurements, vec![0], "{gate_type:?}");
             assert_eq!(x_fault.affected_detectors, vec![0], "{gate_type:?}");
             assert_eq!(x_fault.affected_observables, vec![0], "{gate_type:?}");
-            assert_eq!(x_fault.affected_tracked_ops, vec![0], "{gate_type:?}");
+            assert_eq!(x_fault.affected_tracked_paulis, vec![0], "{gate_type:?}");
         }
 
         // X0 before CX becomes X0 X1.
@@ -3254,7 +3258,7 @@ mod tests {
             start: usize,
             gates: &[GateLoc],
             meas_positions: &HashMap<usize, usize>,
-            tracked_ops: &[PauliString],
+            tracked_paulis: &[PauliString],
         ) -> PropagatedFaultEffect {
             let terms: Vec<_> = pauli
                 .iter_pairs()
@@ -3262,14 +3266,14 @@ mod tests {
                 .collect();
             match terms.as_slice() {
                 [(p, q)] => {
-                    propagate_single_effect(*p, *q, start, gates, meas_positions, tracked_ops)
+                    propagate_single_effect(*p, *q, start, gates, meas_positions, tracked_paulis)
                 }
                 [(p0, q0), (p1, q1)] => propagate_pair_effect(
                     [(*p0, *q0), (*p1, *q1)],
                     start,
                     gates,
                     meas_positions,
-                    tracked_ops,
+                    tracked_paulis,
                 ),
                 other => panic!("expected one- or two-qubit Pauli alternative, got {other:?}"),
             }
@@ -3289,12 +3293,12 @@ mod tests {
                 .unwrap();
             tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
                 .unwrap();
-            tc.tracked_operator_labeled("tracked_x1", PauliString::x(1));
-            tc.tracked_operator_labeled("tracked_y1", PauliString::y(1));
-            tc.tracked_operator_labeled("tracked_z1", PauliString::z(1));
+            tc.tracked_pauli_labeled("tracked_x1", PauliString::x(1));
+            tc.tracked_pauli_labeled("tracked_y1", PauliString::y(1));
+            tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
             let (gates, meas_positions) = flatten_tick_circuit(&tc);
-            let tracked_ops = parse_tracked_operator_annotations(&tc);
+            let tracked_paulis = parse_tracked_pauli_annotations(&tc);
             let catalog = build_fault_catalog(
                 &tc,
                 &StochasticNoiseParams {
@@ -3325,7 +3329,7 @@ mod tests {
                     source_loc_idx + 1,
                     &gates,
                     &meas_positions,
-                    &tracked_ops,
+                    &tracked_paulis,
                 );
                 let measurements: Vec<_> = effect.affected_measurements.iter().copied().collect();
                 assert_eq!(
@@ -3341,7 +3345,7 @@ mod tests {
                     "{gate_type:?} {pauli:?}"
                 );
                 assert_eq!(
-                    fault.affected_tracked_ops, effect.affected_tracked_ops,
+                    fault.affected_tracked_paulis, effect.affected_tracked_paulis,
                     "{gate_type:?} {pauli:?}"
                 );
             }
@@ -3366,15 +3370,15 @@ mod tests {
                 .unwrap();
             tc.add_observable_metadata(&[-1], Some(1), Some("L1"))
                 .unwrap();
-            tc.tracked_operator_labeled("tracked_x2", PauliString::x(2));
-            tc.tracked_operator_labeled("tracked_y2", PauliString::y(2));
-            tc.tracked_operator_labeled("tracked_z2", PauliString::z(2));
-            tc.tracked_operator_labeled("tracked_x3", PauliString::x(3));
-            tc.tracked_operator_labeled("tracked_y3", PauliString::y(3));
-            tc.tracked_operator_labeled("tracked_z3", PauliString::z(3));
+            tc.tracked_pauli_labeled("tracked_x2", PauliString::x(2));
+            tc.tracked_pauli_labeled("tracked_y2", PauliString::y(2));
+            tc.tracked_pauli_labeled("tracked_z2", PauliString::z(2));
+            tc.tracked_pauli_labeled("tracked_x3", PauliString::x(3));
+            tc.tracked_pauli_labeled("tracked_y3", PauliString::y(3));
+            tc.tracked_pauli_labeled("tracked_z3", PauliString::z(3));
 
             let (gates, meas_positions) = flatten_tick_circuit(&tc);
-            let tracked_ops = parse_tracked_operator_annotations(&tc);
+            let tracked_paulis = parse_tracked_pauli_annotations(&tc);
             let catalog = build_fault_catalog(
                 &tc,
                 &StochasticNoiseParams {
@@ -3405,7 +3409,7 @@ mod tests {
                     source_loc_idx + 1,
                     &gates,
                     &meas_positions,
-                    &tracked_ops,
+                    &tracked_paulis,
                 );
                 let measurements: Vec<_> = effect.affected_measurements.iter().copied().collect();
                 assert_eq!(
@@ -3421,7 +3425,7 @@ mod tests {
                     "{gate_type:?} {pauli:?}"
                 );
                 assert_eq!(
-                    fault.affected_tracked_ops, effect.affected_tracked_ops,
+                    fault.affected_tracked_paulis, effect.affected_tracked_paulis,
                     "{gate_type:?} {pauli:?}"
                 );
             }
@@ -3429,7 +3433,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fault_configurations_xor_detectors_observables_and_tracked_ops_separately() {
+    fn test_fault_configurations_xor_detectors_observables_and_tracked_paulis_separately() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0), QubitId(1)]);
         tc.tick().cx(&[(QubitId(0), QubitId(2))]);
@@ -3442,7 +3446,7 @@ mod tests {
             .unwrap();
         tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
             .unwrap();
-        tc.tracked_operator_labeled("tracked_z2", PauliString::z(2));
+        tc.tracked_pauli_labeled("tracked_z2", PauliString::z(2));
 
         let catalog = build_fault_catalog(
             &tc,
@@ -3484,7 +3488,10 @@ mod tests {
 
         assert_eq!(catalog.locations[h0].faults[x0].affected_detectors, [0]);
         assert_eq!(catalog.locations[h0].faults[x0].affected_observables, [0]);
-        assert_eq!(catalog.locations[h0].faults[x0].affected_tracked_ops, [0]);
+        assert_eq!(
+            catalog.locations[h0].faults[x0].affected_tracked_paulis,
+            [0]
+        );
         assert_eq!(catalog.locations[h1].faults[x1].affected_detectors, [0]);
         assert!(
             catalog.locations[h1].faults[x1]
@@ -3493,22 +3500,22 @@ mod tests {
         );
         assert!(
             catalog.locations[h1].faults[x1]
-                .affected_tracked_ops
+                .affected_tracked_paulis
                 .is_empty()
         );
 
         assert_eq!(config.affected_measurements, [0, 1]);
         assert!(config.affected_detectors.is_empty());
         assert_eq!(config.affected_observables, [0]);
-        assert_eq!(config.affected_tracked_ops, [0]);
+        assert_eq!(config.affected_tracked_paulis, [0]);
     }
 
     #[test]
-    fn test_tracked_operator_phase_is_ignored_for_flip_tracking() {
+    fn test_tracked_pauli_phase_is_ignored_for_flip_tracking() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
-        tc.tracked_operator_labeled("plus_z0", PauliString::z(0));
-        tc.tracked_operator_labeled(
+        tc.tracked_pauli_labeled("plus_z0", PauliString::z(0));
+        tc.tracked_pauli_labeled(
             "minus_z0",
             PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::MinusOne,
@@ -3516,14 +3523,14 @@ mod tests {
             ),
         );
 
-        let tracked_ops = parse_tracked_operator_annotations(&tc);
-        assert_eq!(tracked_ops.len(), 2);
+        let tracked_paulis = parse_tracked_pauli_annotations(&tc);
+        assert_eq!(tracked_paulis.len(), 2);
         assert!(
-            tracked_ops
+            tracked_paulis
                 .iter()
                 .all(|op| op.phase() == pecos_core::QuarterPhase::PlusOne)
         );
-        assert_eq!(tracked_ops[0], tracked_ops[1]);
+        assert_eq!(tracked_paulis[0], tracked_paulis[1]);
 
         let catalog = build_fault_catalog(
             &tc,
@@ -3552,8 +3559,8 @@ mod tests {
             .find(|fault| fault.pauli.as_ref() == Some(&PauliString::z(0)))
             .unwrap();
 
-        assert_eq!(x_fault.affected_tracked_ops, vec![0, 1]);
-        assert_eq!(z_fault.affected_tracked_ops, Vec::<usize>::new());
+        assert_eq!(x_fault.affected_tracked_paulis, vec![0, 1]);
+        assert_eq!(z_fault.affected_tracked_paulis, Vec::<usize>::new());
     }
 
     #[test]
@@ -3655,7 +3662,7 @@ mod tests {
                 assert_eq!(af.affected_measurements, bf.affected_measurements);
                 assert_eq!(af.affected_detectors, bf.affected_detectors);
                 assert_eq!(af.affected_observables, bf.affected_observables);
-                assert_eq!(af.affected_tracked_ops, bf.affected_tracked_ops);
+                assert_eq!(af.affected_tracked_paulis, bf.affected_tracked_paulis);
                 assert_close(af.conditional_probability, bf.conditional_probability);
                 assert_close(af.absolute_probability, bf.absolute_probability);
             }
@@ -3785,7 +3792,7 @@ mod tests {
     fn test_tracked_only_effect_stays_in_catalog_but_not_raw_mechanisms() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[QubitId(0)]);
-        tc.tracked_operator_labeled("tracked_z0", PauliString::z(0));
+        tc.tracked_pauli_labeled("tracked_z0", PauliString::z(0));
 
         let mut catalog = FaultCatalog::from_circuit(&tc).unwrap();
         catalog.with_noise(&StochasticNoiseParams {
@@ -3801,7 +3808,7 @@ mod tests {
             .find(|loc| loc.channel == FaultChannel::P1)
             .unwrap();
         assert!(h_loc.faults.iter().any(|fault| {
-            fault.affected_measurements.is_empty() && !fault.affected_tracked_ops.is_empty()
+            fault.affected_measurements.is_empty() && !fault.affected_tracked_paulis.is_empty()
         }));
         assert!(catalog.to_mechanisms().is_empty());
     }

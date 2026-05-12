@@ -91,8 +91,8 @@ fn main() {
         let num_data = distance * distance;
 
         // Build influence map
-        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_op_qubits);
+        let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
+        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
         let influence_map = builder.build();
 
         let num_locations = influence_map.locations.len();
@@ -179,8 +179,8 @@ fn main() {
         let circuit = build_surface_code_grid(distance, num_rounds);
         let num_data = distance * distance;
 
-        let tracked_op_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_op_qubits);
+        let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
+        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
         let influence_map = builder.build();
 
         let (

@@ -16,7 +16,7 @@
 //! Example: Repetition code d=3 with 3 rounds of syndrome extraction.
 //!
 //! Demonstrates the full QEC workflow:
-//! 1. Build the circuit with annotations (detectors, observables, Pauli operators)
+//! 1. Build the circuit with annotations (detectors, observables, tracked Paulis)
 //! 2. Build the fault influence map
 //! 3. Enumerate fault combinations up to weight 3
 //! 4. Classify errors (detectable, undetectable, logical)
@@ -99,7 +99,7 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
     dag.observable_labeled("logical_Z", &[ms_data[0]]);
 
     // Pauli operator: track logical X = X_0 X_1 X_2
-    dag.tracked_operator_labeled("logical_X", X(0) & X(1) & X(2));
+    dag.tracked_pauli_labeled("logical_X", X(0) & X(1) & X(2));
 
     dag
 }
@@ -114,7 +114,7 @@ fn repetition_code_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::TrackedOperator => "tracked_operator",
+            pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
         println!("  {kind:10} {label:15} {}", ann.pauli);
@@ -289,12 +289,12 @@ fn repetition_code_labels() {
         .with_circuit_annotations(&dag)
         .build();
 
-    // Check DEM-output labels are populated (observables + tracked ops)
+    // Check DEM-output labels are populated (observables + tracked Paulis)
     println!("DEM output labels: {:?}", map.dem_output_labels);
-    // 1 observable (logical_Z) + 1 tracked operator (logical_X) = 2 labels
+    // 1 observable (logical_Z) + 1 tracked Pauli (logical_X) = 2 labels
     assert_eq!(map.dem_output_labels.len(), 2);
     assert_eq!(map.num_dem_outputs(), 1, "1 observable");
-    assert_eq!(map.num_tracked_ops(), 1, "1 tracked operator");
+    assert_eq!(map.num_tracked_paulis(), 1, "1 tracked Pauli");
 
     // Labels accessible via internal index
     assert_eq!(map.dem_output_label(0), Some("logical_Z"));
@@ -608,11 +608,11 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
     // Logical Z_2 = Z_0 Z_2
     dag.observable_labeled("logical_Z2", &[ms_data[0], ms_data[2]]);
 
-    // Pauli operators: logical X operators
+    // Tracked Paulis: logical X operators
     // Logical X_1 = X_0 X_2
-    dag.tracked_operator_labeled("logical_X1", X(0) & X(2));
+    dag.tracked_pauli_labeled("logical_X1", X(0) & X(2));
     // Logical X_2 = X_0 X_1
-    dag.tracked_operator_labeled("logical_X2", X(0) & X(1));
+    dag.tracked_pauli_labeled("logical_X2", X(0) & X(1));
 
     dag
 }
@@ -628,7 +628,7 @@ fn code_422_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::TrackedOperator => "tracked_operator",
+            pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
         println!("  {kind:10} {label:15} {}", ann.pauli);

@@ -76,7 +76,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => "XT",
         GateType::Channel => "Ch",
         GateType::Custom => "?",
-        GateType::PauliOperatorMeta => "PO",
+        GateType::TrackedPauliMeta => "TP",
     }
 }
 
@@ -221,7 +221,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::R1XY
         | GateType::RXXRYYRZZ
         | GateType::U2q
-        | GateType::PauliOperatorMeta => CellColor::None,
+        | GateType::TrackedPauliMeta => CellColor::None,
     }
 }
 

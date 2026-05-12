@@ -975,7 +975,7 @@ fn build_rust_tick_circuit_from_gates(
         create_annotations_from_json(&mut tc, &s, &all_meas_refs, false);
         tc.set_meta("observables", Attribute::String(s));
     }
-    copy_tracked_operator_annotations_from_python(py_tc, &mut tc)?;
+    copy_tracked_pauli_annotations_from_python(py_tc, &mut tc)?;
 
     // Compact for performance
     tc.compact_ticks();
@@ -983,7 +983,7 @@ fn build_rust_tick_circuit_from_gates(
     Ok(tc)
 }
 
-fn copy_tracked_operator_annotations_from_python(
+fn copy_tracked_pauli_annotations_from_python(
     py_tc: &pyo3::Bound<'_, pyo3::PyAny>,
     tc: &mut pecos_quantum::TickCircuit,
 ) -> PyResult<()> {
@@ -994,21 +994,21 @@ fn copy_tracked_operator_annotations_from_python(
     for ann in annotations.try_iter()? {
         let ann = ann?;
         let kind: String = ann.get_item("kind")?.extract()?;
-        if kind != "tracked_operator" {
+        if kind != "tracked_pauli" {
             continue;
         }
         let pauli_obj = ann.get_item("pauli")?;
         let pauli_text = pauli_obj.str()?.to_string();
         let pauli = parse_python_pauli_string(&pauli_text).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!(
-                "Could not parse tracked operator annotation: {pauli_text}"
+                "Could not parse tracked Pauli annotation: {pauli_text}"
             ))
         })?;
         let label: Option<String> = ann.get_item("label")?.extract()?;
         if let Some(label) = label {
-            tc.tracked_operator_labeled(&label, pauli);
+            tc.tracked_pauli_labeled(&label, pauli);
         } else {
-            tc.tracked_operator(pauli);
+            tc.tracked_pauli(pauli);
         }
     }
 
@@ -1399,9 +1399,9 @@ pub struct PyFaultAlternative {
     /// Observable indices flipped
     #[pyo3(get)]
     observables: Vec<usize>,
-    /// Tracked-operator indices flipped
+    /// Tracked-Pauli indices flipped
     #[pyo3(get)]
-    tracked_ops: Vec<usize>,
+    tracked_paulis: Vec<usize>,
     /// Probability of this alternative given the mechanism fires (1/k)
     #[pyo3(get)]
     conditional_probability: f64,
@@ -1468,7 +1468,7 @@ pub struct PyFaultConfiguration {
     #[pyo3(get)]
     observables: Vec<usize>,
     #[pyo3(get)]
-    tracked_ops: Vec<usize>,
+    tracked_paulis: Vec<usize>,
     #[pyo3(get)]
     selected_probability: f64,
     #[pyo3(get)]
@@ -1517,7 +1517,7 @@ impl PyFaultConfigurationIter {
             measurements: config.affected_measurements,
             detectors: config.affected_detectors,
             observables: config.affected_observables,
-            tracked_ops: config.affected_tracked_ops,
+            tracked_paulis: config.affected_tracked_paulis,
             selected_probability: config.selected_probability,
             configuration_probability: config.configuration_probability,
         })
@@ -1620,7 +1620,7 @@ fn py_locations_from_catalog(
                     measurements: fault.affected_measurements.clone(),
                     detectors: fault.affected_detectors.clone(),
                     observables: fault.affected_observables.clone(),
-                    tracked_ops: fault.affected_tracked_ops.clone(),
+                    tracked_paulis: fault.affected_tracked_paulis.clone(),
                     conditional_probability: fault.conditional_probability,
                     absolute_probability: fault.absolute_probability,
                     channel_probability: loc.channel_probability,
@@ -1788,7 +1788,7 @@ impl PyFaultCatalog {
 ///
 /// Each ``FaultAlternative`` has: ``fault.kind``, ``fault.pauli`` (a real
 /// PECOS ``PauliString`` or ``None``), ``fault.detectors``, ``fault.observables``,
-/// ``fault.tracked_ops``, ``fault.measurements``, ``fault.conditional_probability``,
+/// ``fault.tracked_paulis``, ``fault.measurements``, ``fault.conditional_probability``,
 /// ``fault.absolute_probability``, ``fault.channel_probability``.
 ///
 /// When noise is omitted, returns a structural catalog with zero probabilities.

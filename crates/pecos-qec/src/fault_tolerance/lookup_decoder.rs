@@ -478,17 +478,17 @@ mod tests {
     use pecos_quantum::DagCircuit;
 
     #[test]
-    fn observable_indices_use_compact_l_namespace_with_tracked_ops() {
+    fn observable_indices_use_compact_l_namespace_with_tracked_paulis() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
-        dag.tracked_operator_labeled("track_x", X(0));
+        dag.tracked_pauli_labeled("track_x", X(0));
         let meas = dag.mz(&[0]);
         dag.observable_labeled("obs0", &[meas[0]]);
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations(&dag)
             .build();
-        assert_eq!(map.num_tracked_ops(), 1);
+        assert_eq!(map.num_tracked_paulis(), 1);
         assert_eq!(map.num_observables(), 1);
 
         let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 1);

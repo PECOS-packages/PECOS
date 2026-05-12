@@ -213,10 +213,10 @@ impl PyDagFaultInfluenceMap {
         self.inner.num_observables()
     }
 
-    /// Number of tracked operators.
+    /// Number of tracked Paulis.
     #[getter]
-    fn num_tracked_ops(&self) -> usize {
-        self.inner.num_tracked_ops()
+    fn num_tracked_paulis(&self) -> usize {
+        self.inner.num_tracked_paulis()
     }
 
     /// Get all fault locations.
@@ -281,23 +281,23 @@ impl PyDagFaultInfluenceMap {
     /// Get raw internal non-detector influence indices flipped by a fault.
     ///
     /// These are implementation indices used to propagate both observables and
-    /// tracked operators. Prefer `get_dem_output_indices`,
-    /// `get_observable_indices`, or `get_tracked_op_indices` for public DEM
+    /// tracked Paulis. Prefer `get_dem_output_indices`,
+    /// `get_observable_indices`, or `get_tracked_pauli_indices` for public DEM
     /// semantics.
     fn get_internal_dem_output_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
         self.inner.get_dem_output_indices(loc_idx, pauli).to_vec()
     }
 
-    /// Get tracked-operator indices flipped by a fault.
+    /// Get tracked-Pauli indices flipped by a fault.
     ///
     /// Args:
     ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
-    ///     List of tracked-operator indices that are flipped by this fault.
-    fn get_tracked_op_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
-        self.inner.get_tracked_op_indices(loc_idx, pauli)
+    ///     List of tracked-Pauli indices that are flipped by this fault.
+    fn get_tracked_pauli_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
+        self.inner.get_tracked_pauli_indices(loc_idx, pauli)
     }
 
     /// Get observable indices flipped by a fault.
@@ -329,16 +329,16 @@ impl PyDagFaultInfluenceMap {
         self.inner.has_observable_flips(loc_idx, pauli)
     }
 
-    /// Check if a fault at the given location flips any tracked op.
+    /// Check if a fault at the given location flips any tracked Pauli.
     ///
     /// Args:
     ///     `loc_idx`: Location index.
     ///     pauli: Pauli type (1=X, 2=Y, 3=Z).
     ///
     /// Returns:
-    ///     True if the fault flips at least one tracked op.
-    fn has_tracked_op_flips(&self, loc_idx: usize, pauli: u8) -> bool {
-        self.inner.has_tracked_op_flips(loc_idx, pauli)
+    ///     True if the fault flips at least one tracked Pauli.
+    fn has_tracked_pauli_flips(&self, loc_idx: usize, pauli: u8) -> bool {
+        self.inner.has_tracked_pauli_flips(loc_idx, pauli)
     }
 
     /// Get memory statistics for this influence map.
@@ -399,7 +399,7 @@ impl PyDagFaultInfluenceMap {
         dict.set_item("num_dem_outputs", num_dem_outputs)?;
         dict.set_item("num_internal_dem_outputs", num_internal_dem_outputs)?;
         dict.set_item("num_observables", self.num_observables())?;
-        dict.set_item("num_tracked_ops", self.num_tracked_ops())?;
+        dict.set_item("num_tracked_paulis", self.num_tracked_paulis())?;
         dict.set_item("detector_offsets_x", det_off_x)?;
         dict.set_item("detector_data_x", det_data_x)?;
         dict.set_item("detector_offsets_y", det_off_y)?;
@@ -430,10 +430,10 @@ impl PyDagFaultInfluenceMap {
 
     fn __repr__(&self) -> String {
         format!(
-            "DagFaultInfluenceMap(locations={}, detectors={}, tracked_ops={})",
+            "DagFaultInfluenceMap(locations={}, detectors={}, tracked_paulis={})",
             self.num_locations(),
             self.num_detectors(),
-            self.num_tracked_ops()
+            self.num_tracked_paulis()
         )
     }
 
@@ -554,7 +554,7 @@ impl PyDagFaultAnalyzer {
 /// dag = DagCircuit()
 /// # ... build circuit ...
 ///
-/// # Build influence map with tracked Pauli operators
+/// # Build influence map with tracked Paulis
 /// builder = InfluenceBuilder(dag)
 /// builder.with_tracked_z([0, 1, 2])  # Track a Z string on these qubits
 /// influence_map = builder.build()
@@ -564,8 +564,8 @@ pub struct PyInfluenceBuilder {
     dag: DagCircuit,
     tracked_x_qubits: Vec<usize>,
     tracked_z_qubits: Vec<usize>,
-    tracked_operators: Vec<pecos_core::PauliString>,
-    use_circuit_tracked_operators: bool,
+    tracked_paulis: Vec<pecos_core::PauliString>,
+    use_circuit_tracked_paulis: bool,
 }
 
 #[pymethods]
@@ -580,17 +580,17 @@ impl PyInfluenceBuilder {
             dag: dag.inner.clone(),
             tracked_x_qubits: Vec::new(),
             tracked_z_qubits: Vec::new(),
-            tracked_operators: Vec::new(),
-            use_circuit_tracked_operators: false,
+            tracked_paulis: Vec::new(),
+            use_circuit_tracked_paulis: false,
         }
     }
 
-    /// Add an X-string tracked operator.
+    /// Add an X-string tracked Pauli.
     ///
-    /// The operator is X on all specified qubits and is sensitive to Z errors.
+    /// The tracked Pauli is X on all specified qubits and is sensitive to Z errors.
     ///
     /// Args:
-    ///     qubits: List of qubit indices for the tracked X operator.
+    ///     qubits: List of qubit indices for the tracked X Pauli.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -599,12 +599,12 @@ impl PyInfluenceBuilder {
         slf
     }
 
-    /// Add a Z-string tracked operator.
+    /// Add a Z-string tracked Pauli.
     ///
-    /// The operator is Z on all specified qubits and is sensitive to X errors.
+    /// The tracked Pauli is Z on all specified qubits and is sensitive to X errors.
     ///
     /// Args:
-    ///     qubits: List of qubit indices for the tracked Z operator.
+    ///     qubits: List of qubit indices for the tracked Z Pauli.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -613,7 +613,7 @@ impl PyInfluenceBuilder {
         slf
     }
 
-    /// Add a Pauli operator to track.
+    /// Add a tracked Pauli.
     ///
     /// Each entry is a `(qubit, pauli)` tuple where pauli is "X", "Y", or "Z".
     ///
@@ -622,7 +622,7 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_operator(
+    fn with_tracked_pauli(
         mut slf: PyRefMut<'_, Self>,
         entries: Vec<(usize, String)>,
     ) -> PyResult<PyRefMut<'_, Self>> {
@@ -640,7 +640,7 @@ impl PyInfluenceBuilder {
                 Ok((pauli, pecos_core::QubitId::from(*qubit)))
             })
             .collect::<PyResult<_>>()?;
-        slf.tracked_operators
+        slf.tracked_paulis
             .push(pecos_core::PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::PlusOne,
                 paulis,
@@ -648,16 +648,16 @@ impl PyInfluenceBuilder {
         Ok(slf)
     }
 
-    /// Use annotations from the circuit (observables and Pauli operators).
+    /// Use annotations from the circuit (observables and tracked Paulis).
     ///
-    /// Extracts observable and `tracked_operator()` annotations from the
-    /// circuit. Pauli operators are tracked with positional awareness
+    /// Extracts observable and `tracked_pauli()` annotations from the
+    /// circuit. Tracked Paulis are propagated with positional awareness
     /// (only faults before each annotation's position affect it).
     ///
     /// Returns:
     ///     Self for method chaining.
     fn with_circuit_annotations(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.use_circuit_tracked_operators = true;
+        slf.use_circuit_tracked_paulis = true;
         slf
     }
 
@@ -669,7 +669,7 @@ impl PyInfluenceBuilder {
     /// 3. Backward propagation to build the influence map
     ///
     /// Returns:
-    ///     `DagFaultInfluenceMap` with proper detector definitions and tracked operators.
+    ///     `DagFaultInfluenceMap` with proper detector definitions and tracked Paulis.
     fn build(&self) -> PyDagFaultInfluenceMap {
         let mut builder = RustInfluenceBuilder::new(&self.dag);
 
@@ -680,11 +680,11 @@ impl PyInfluenceBuilder {
             builder = builder.with_z(&self.tracked_z_qubits);
         }
 
-        if self.use_circuit_tracked_operators {
+        if self.use_circuit_tracked_paulis {
             builder = builder.with_circuit_annotations(&self.dag);
         }
-        for pauli in &self.tracked_operators {
-            builder = builder.with_tracked_operator(pauli.clone());
+        for pauli in &self.tracked_paulis {
+            builder = builder.with_tracked_pauli(pauli.clone());
         }
 
         let inner = builder.build();
@@ -693,11 +693,11 @@ impl PyInfluenceBuilder {
 
     fn __repr__(&self) -> String {
         format!(
-            "InfluenceBuilder(tracked_x={:?}, tracked_z={:?}, tracked_operators={}, circuit_annotations={})",
+            "InfluenceBuilder(tracked_x={:?}, tracked_z={:?}, tracked_paulis={}, circuit_annotations={})",
             self.tracked_x_qubits,
             self.tracked_z_qubits,
-            self.tracked_operators.len(),
-            self.use_circuit_tracked_operators,
+            self.tracked_paulis.len(),
+            self.use_circuit_tracked_paulis,
         )
     }
 }
@@ -744,18 +744,18 @@ fn split_dem_outputs_for_dem(
     }
 
     let mut observables = Vec::new();
-    let mut tracked_ops = Vec::new();
+    let mut tracked_paulis = Vec::new();
     for &output_id in dem_outputs {
         if let Some(output) = dem.dem_outputs().get(output_id as usize) {
             if output.is_observable() {
                 observables.push(output_id);
             }
-            if output.is_tracked_operator() {
-                tracked_ops.push(output_id);
+            if output.is_tracked_pauli() {
+                tracked_paulis.push(output_id);
             }
         }
     }
-    (observables, tracked_ops)
+    (observables, tracked_paulis)
 }
 
 fn contribution_summary_to_pydict(
@@ -766,10 +766,10 @@ fn contribution_summary_to_pydict(
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("detectors", summary.effect.detectors.to_vec())?;
     let dem_outputs = summary.effect.dem_outputs.to_vec();
-    let (observables, tracked_ops) = split_dem_outputs_for_dem(&dem_outputs, dem);
+    let (observables, tracked_paulis) = split_dem_outputs_for_dem(&dem_outputs, dem);
     dict.set_item("dem_outputs", &dem_outputs)?;
     dict.set_item("observables", observables)?;
-    dict.set_item("tracked_ops", tracked_ops)?;
+    dict.set_item("tracked_paulis", tracked_paulis)?;
     dict.set_item("num_contributions", summary.num_contributions)?;
     dict.set_item("total_probability", summary.total_probability)?;
     dict.set_item("direct_count", summary.direct_count)?;
@@ -791,10 +791,10 @@ fn contribution_render_summary_to_pydict(
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("detectors", summary.effect.detectors.to_vec())?;
     let dem_outputs = summary.effect.dem_outputs.to_vec();
-    let (observables, tracked_ops) = split_dem_outputs_for_dem(&dem_outputs, dem);
+    let (observables, tracked_paulis) = split_dem_outputs_for_dem(&dem_outputs, dem);
     dict.set_item("dem_outputs", &dem_outputs)?;
     dict.set_item("observables", observables)?;
-    dict.set_item("tracked_ops", tracked_ops)?;
+    dict.set_item("tracked_paulis", tracked_paulis)?;
     dict.set_item("rendered_targets", summary.rendered_targets)?;
     dict.set_item("num_contributions", summary.num_contributions)?;
     dict.set_item("total_probability", summary.total_probability)?;
@@ -869,10 +869,10 @@ fn contribution_record_to_pydict(
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("detectors", contribution.effect.detectors.to_vec())?;
     let dem_outputs = contribution.effect.dem_outputs.to_vec();
-    let (observables, tracked_ops) = split_dem_outputs_for_dem(&dem_outputs, dem);
+    let (observables, tracked_paulis) = split_dem_outputs_for_dem(&dem_outputs, dem);
     dict.set_item("dem_outputs", &dem_outputs)?;
     dict.set_item("observables", observables)?;
-    dict.set_item("tracked_ops", tracked_ops)?;
+    dict.set_item("tracked_paulis", tracked_paulis)?;
     dict.set_item("probability", contribution.probability)?;
     dict.set_item("location_indices", contribution.location_indices.to_vec())?;
     dict.set_item(
@@ -944,7 +944,7 @@ fn contribution_record_to_pydict(
 impl PyDetectorErrorModel {
     /// Build a DetectorErrorModel directly from a circuit and noise.
     ///
-    /// Accepts both `TickCircuit` and `DagCircuit`. Reads detector/tracked-op
+    /// Accepts both `TickCircuit` and `DagCircuit`. Reads detector/tracked-Pauli
     /// definitions from circuit metadata.
     ///
     /// Example:
@@ -981,6 +981,21 @@ impl PyDetectorErrorModel {
         }
     }
 
+    /// Build a DetectorErrorModel from PECOS DEM metadata JSON.
+    ///
+    /// This imports observable and tracked-Pauli metadata only; mechanism
+    /// errors must be provided through DEM text or built from a circuit.
+    ///
+    /// Raises:
+    ///     `ValueError`: If the metadata JSON is malformed or uses unsupported fields.
+    #[staticmethod]
+    fn from_pecos_metadata_json(json: &str) -> PyResult<Self> {
+        let inner = RustDetectorErrorModel::new()
+            .with_pecos_metadata_json(json)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        Ok(Self { inner })
+    }
+
     /// Number of detectors in the model.
     #[getter]
     fn num_detectors(&self) -> usize {
@@ -999,10 +1014,10 @@ impl PyDetectorErrorModel {
         self.inner.num_dem_outputs()
     }
 
-    /// Number of tracked operators in the model.
+    /// Number of tracked Paulis in the model.
     #[getter]
-    fn num_tracked_ops(&self) -> usize {
-        self.inner.num_tracked_ops()
+    fn num_tracked_paulis(&self) -> usize {
+        self.inner.num_tracked_paulis()
     }
 
     /// Convert the DEM to a string in standard DEM format.
@@ -1163,11 +1178,11 @@ impl PyDetectorErrorModel {
 
     fn __repr__(&self) -> String {
         format!(
-            "DetectorErrorModel(detectors={}, dem_outputs={}, observables={}, tracked_ops={}, contributions={})",
+            "DetectorErrorModel(detectors={}, dem_outputs={}, observables={}, tracked_paulis={}, contributions={})",
             self.num_detectors(),
             self.num_dem_outputs(),
             self.num_observables(),
-            self.num_tracked_ops(),
+            self.num_tracked_paulis(),
             self.num_contributions()
         )
     }
@@ -1296,7 +1311,7 @@ impl PyDemBuilder {
 
     /// Set the observable definitions from JSON.
     ///
-    /// Tracked operators are carried by the influence map; this helper is for
+    /// Tracked Paulis are carried by the influence map; this helper is for
     /// observable metadata.
     fn with_observables_json(mut slf: PyRefMut<'_, Self>, json: String) -> PyRefMut<'_, Self> {
         slf.observables_json = Some(json);
@@ -3319,10 +3334,10 @@ impl PyDemSampler {
         self.inner.num_dem_outputs()
     }
 
-    /// Number of tracked operators.
+    /// Number of tracked Paulis.
     #[getter]
-    fn num_tracked_ops(&self) -> usize {
-        self.inner.num_tracked_ops()
+    fn num_tracked_paulis(&self) -> usize {
+        self.inner.num_tracked_paulis()
     }
 
     /// Sample a single shot.
@@ -3370,13 +3385,13 @@ impl PyDemSampler {
         self.inner.sample_batch(num_shots, &mut rng)
     }
 
-    /// Sample direct tracked-operator flips.
+    /// Sample direct tracked-Pauli flips.
     ///
     /// Raises:
-    ///     RuntimeError: If this sampler carries tracked operators but the
-    ///         backend cannot evaluate tracked-operator flips directly.
+    ///     RuntimeError: If this sampler carries tracked Paulis but the
+    ///         backend cannot evaluate tracked-Pauli flips directly.
     #[pyo3(signature = (seed=None))]
-    fn sample_tracked_ops(&self, seed: Option<u64>) -> PyResult<Vec<bool>> {
+    fn sample_tracked_paulis(&self, seed: Option<u64>) -> PyResult<Vec<bool>> {
         use pecos_random::PecosRng;
         use rand::RngExt;
 
@@ -3386,17 +3401,17 @@ impl PyDemSampler {
         };
 
         self.inner
-            .sample_tracked_operator_flips(&mut rng)
+            .sample_tracked_pauli_flips(&mut rng)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
-    /// Sample direct tracked-operator flips for multiple shots.
+    /// Sample direct tracked-Pauli flips for multiple shots.
     ///
     /// Raises:
-    ///     RuntimeError: If this sampler carries tracked operators but the
-    ///         backend cannot evaluate tracked-operator flips directly.
+    ///     RuntimeError: If this sampler carries tracked Paulis but the
+    ///         backend cannot evaluate tracked-Pauli flips directly.
     #[pyo3(signature = (num_shots, seed=None))]
-    fn sample_tracked_op_batch(
+    fn sample_tracked_pauli_batch(
         &self,
         num_shots: usize,
         seed: Option<u64>,
@@ -3410,7 +3425,7 @@ impl PyDemSampler {
         };
 
         self.inner
-            .sample_tracked_operator_batch(num_shots, &mut rng)
+            .sample_tracked_pauli_batch(num_shots, &mut rng)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
@@ -3471,11 +3486,12 @@ impl PyDemSampler {
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
         let stats = self.inner.sample_statistics(num_shots, actual_seed);
         let observable_indices = self.inner.observable_ids();
-        let tracked_op_result = self.inner.tracked_operator_ids();
-        let tracked_op_statistics_error = tracked_op_result.as_ref().err().map(ToString::to_string);
-        let tracked_op_indices = tracked_op_result.unwrap_or_default();
+        let tracked_pauli_result = self.inner.tracked_pauli_ids();
+        let tracked_pauli_statistics_error =
+            tracked_pauli_result.as_ref().err().map(ToString::to_string);
+        let tracked_pauli_indices = tracked_pauli_result.unwrap_or_default();
         let per_observable = stats.observable_counts(&observable_indices);
-        let per_tracked_op: Vec<usize> = tracked_op_indices
+        let per_tracked_pauli: Vec<usize> = tracked_pauli_indices
             .iter()
             .filter_map(|&idx| stats.dem_output_counts().get(idx).copied())
             .collect();
@@ -3483,7 +3499,7 @@ impl PyDemSampler {
         #[allow(clippy::cast_precision_loss)] // Counts are converted to rates for Python reporting.
         let n = stats.total_shots as f64;
         #[allow(clippy::cast_precision_loss)] // Counts are converted to rates for Python reporting.
-        let tracked_op_rates: Vec<f64> = per_tracked_op
+        let tracked_pauli_rates: Vec<f64> = per_tracked_pauli
             .iter()
             .map(|&count| count as f64 / n)
             .collect();
@@ -3498,18 +3514,18 @@ impl PyDemSampler {
         dict.set_item("undetectable_rate", stats.undetectable_rate())?;
         dict.set_item("per_detector", &stats.per_detector)?;
         dict.set_item("per_observable", per_observable)?;
-        dict.set_item("per_tracked_op", per_tracked_op)?;
+        dict.set_item("per_tracked_pauli", per_tracked_pauli)?;
         dict.set_item("per_dem_output", stats.dem_output_counts())?;
         dict.set_item("detector_rates", stats.detector_rates())?;
         dict.set_item("logical_rates", logical_rates)?;
-        dict.set_item("tracked_op_rates", tracked_op_rates)?;
+        dict.set_item("tracked_pauli_rates", tracked_pauli_rates)?;
         dict.set_item("dem_output_rates", stats.dem_output_rates())?;
         dict.set_item(
-            "tracked_op_statistics_supported",
-            tracked_op_statistics_error.is_none(),
+            "tracked_pauli_statistics_supported",
+            tracked_pauli_statistics_error.is_none(),
         )?;
-        if let Some(error) = tracked_op_statistics_error {
-            dict.set_item("tracked_op_statistics_error", error)?;
+        if let Some(error) = tracked_pauli_statistics_error {
+            dict.set_item("tracked_pauli_statistics_error", error)?;
         }
         Ok(dict.unbind())
     }
@@ -3520,7 +3536,7 @@ impl PyDemSampler {
     ///     - `outputs`: labels for output channels (raw measurements or detectors)
     ///     - `dem_outputs`: labels for all DEM `L<n>` targets
     ///     - `observables`: labels for observables
-    ///     - `tracked_ops`: labels for tracked operators
+    ///     - `tracked_paulis`: labels for tracked Paulis
     ///     - `dual_detectors`: labels for dual-output detector channels
     fn labels(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
         let labels = self.inner.labels();
@@ -3528,7 +3544,7 @@ impl PyDemSampler {
         dict.set_item("outputs", &labels.outputs)?;
         dict.set_item("dem_outputs", &labels.dem_output_labels)?;
         dict.set_item("observables", &labels.dem_output_labels)?;
-        dict.set_item("tracked_ops", &labels.tracked_op_labels)?;
+        dict.set_item("tracked_paulis", &labels.tracked_pauli_labels)?;
         dict.set_item("dual_detectors", &labels.dual_detectors)?;
         Ok(dict.unbind())
     }
@@ -3662,12 +3678,12 @@ impl PyDemSampler {
 
     fn __repr__(&self) -> String {
         format!(
-            "DemSampler(mechanisms={}, outputs={}, dem_outputs={}, observables={}, tracked_ops={})",
+            "DemSampler(mechanisms={}, outputs={}, dem_outputs={}, observables={}, tracked_paulis={})",
             self.num_mechanisms(),
             self.num_outputs(),
             self.num_dem_outputs(),
             self.num_observables(),
-            self.num_tracked_ops(),
+            self.num_tracked_paulis(),
         )
     }
 }
@@ -3736,7 +3752,7 @@ impl PyDemSamplerBuilder {
 
     /// Set observable definitions from JSON.
     ///
-    /// Tracked operators are carried by the influence map; this helper is for
+    /// Tracked Paulis are carried by the influence map; this helper is for
     /// observable metadata.
     fn with_observables_json(mut slf: PyRefMut<'_, Self>, json: String) -> PyRefMut<'_, Self> {
         slf.observables_json = Some(json);
@@ -3979,10 +3995,10 @@ impl PyParsedDem {
         self.inner.num_dem_outputs()
     }
 
-    /// Number of tracked operators.
+    /// Number of tracked Paulis.
     #[getter]
-    fn num_tracked_ops(&self) -> u32 {
-        self.inner.num_tracked_ops()
+    fn num_tracked_paulis(&self) -> u32 {
+        self.inner.num_tracked_paulis()
     }
 
     /// Convert to a decomposed (graphlike) DEM string.
@@ -4088,12 +4104,12 @@ impl PyParsedDem {
 
     fn __repr__(&self) -> String {
         format!(
-            "ParsedDem(mechanisms={}, detectors={}, dem_outputs={}, observables={}, tracked_ops={})",
+            "ParsedDem(mechanisms={}, detectors={}, dem_outputs={}, observables={}, tracked_paulis={})",
             self.inner.mechanisms.len(),
             self.inner.num_detectors,
             self.inner.num_dem_outputs(),
             self.inner.num_observables(),
-            self.inner.num_tracked_ops()
+            self.inner.num_tracked_paulis()
         )
     }
 }

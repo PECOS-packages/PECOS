@@ -14,7 +14,7 @@
 //!
 //! This type tracks only the binary X/Z support of a propagating Pauli. It
 //! intentionally ignores global phase, matching the fault-catalog use case
-//! where only measurement flips and anticommutation with tracked operators
+//! where only measurement flips and anticommutation with tracked Paulis
 //! matter.
 
 use crate::clifford_gateable::{CliffordGateable, MeasurementResult};

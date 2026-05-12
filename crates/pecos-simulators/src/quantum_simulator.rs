@@ -19,7 +19,7 @@ pub trait QuantumSimulator {
     ///
     /// The exact meaning of reset depends on the simulator type:
     /// - For state vector simulators: resets to |0⟩ state
-    /// - For observable propagators: clears tracked operators
+    /// - For observable propagators: clears tracked Paulis
     /// - For stabilizer simulators: resets to trivial stabilizer group
     ///
     /// # Returns

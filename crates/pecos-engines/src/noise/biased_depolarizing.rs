@@ -233,7 +233,7 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree
                 | GateType::Custom
-                | GateType::PauliOperatorMeta => {}
+                | GateType::TrackedPauliMeta => {}
             }
         }
 

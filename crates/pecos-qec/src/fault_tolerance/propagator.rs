@@ -48,9 +48,9 @@
 //! let (has_syndrome, _flips_non_detector_output) = map.classify_fault(0, 1); // loc 0, X fault
 //! ```
 //!
-//! Observables and tracked operators are distinct. Observables are values
+//! Observables and tracked Paulis are distinct. Observables are values
 //! observed through measurement-record parities and become standard `L<n>`
-//! outputs in DEM text. Tracked operators are Pauli operators annotated at
+//! outputs in DEM text. Tracked Paulis are Pauli operators annotated at
 //! circuit points; they are not measured and are not applied to the computation.
 //! PECOS records whether each fault anticommutes with, and therefore would flip,
 //! the propagated operator.
@@ -116,7 +116,7 @@ pub use tick::TickFaultAnalyzer;
 pub use tick_batched::TickFaultAnalyzerBatched;
 pub use types::{
     DemOutputIdx, DetectorId, DetectorIdx, FaultInfluence, FaultInfluenceMap, LocationId,
-    MeasurementId, NodeId, Pauli, TrackedOpId, TrackedOpIdx,
+    MeasurementId, NodeId, Pauli, TrackedPauliId, TrackedPauliIdx,
 };
 
 // Internal imports
@@ -775,8 +775,10 @@ mod tests {
 
         // Get any fault location and check classification
         if let Some((loc, _)) = map.influences.iter().next() {
-            let (has_syndrome, flips_tracked_op) = checker.classify(loc, 1); // X fault
-            println!("Location {loc:?}: syndrome={has_syndrome}, tracked_op={flips_tracked_op}");
+            let (has_syndrome, flips_tracked_pauli) = checker.classify(loc, 1); // X fault
+            println!(
+                "Location {loc:?}: syndrome={has_syndrome}, tracked_pauli={flips_tracked_pauli}"
+            );
         }
     }
 
@@ -959,35 +961,35 @@ mod tests {
     }
 
     #[test]
-    fn test_backward_vs_forward_with_tracked_ops() {
-        // Test that tracked-operator propagation works with backward propagation
+    fn test_backward_vs_forward_with_tracked_paulis() {
+        // Test that tracked-Pauli propagation works with backward propagation
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1, 2]);
         circuit.tick().cx(&[(0, 2)]);
         circuit.tick().cx(&[(1, 2)]);
         circuit.tick().mz(&[2]);
 
-        // Define a simple tracked Z operator = Z0 Z1
-        let tracked_ops: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
+        // Define a simple tracked Z Pauli = Z0 Z1
+        let tracked_paulis: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
 
         let propagator = TickFaultAnalyzer::new(&circuit);
-        let map = propagator.build_influence_map_with_tracked_ops(tracked_ops);
+        let map = propagator.build_influence_map_with_tracked_paulis(tracked_paulis);
 
-        // Check that tracked-operator propagation is populated
-        assert_eq!(map.tracked_ops.len(), 1);
+        // Check that tracked-Pauli propagation is populated
+        assert_eq!(map.tracked_paulis.len(), 1);
 
-        // X errors on data qubits should flip the tracked operator
-        let mut found_tracked_op_flip = false;
+        // X errors on data qubits should flip the tracked Pauli
+        let mut found_tracked_pauli_flip = false;
         for (loc, influence) in &map.influences {
             if loc.qubits.iter().any(|q| q.index() == 0 || q.index() == 1)
-                && !influence.tracked_ops_for_pauli(1).is_empty()
+                && !influence.tracked_paulis_for_pauli(1).is_empty()
             {
-                found_tracked_op_flip = true;
+                found_tracked_pauli_flip = true;
             }
         }
         assert!(
-            found_tracked_op_flip,
-            "Should find X errors that flip tracked operator"
+            found_tracked_pauli_flip,
+            "Should find X errors that flip tracked Pauli"
         );
     }
 

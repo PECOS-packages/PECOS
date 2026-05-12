@@ -356,7 +356,7 @@ impl<'a> DemBuilder<'a> {
 
     /// Parses and sets observable definitions from JSON.
     ///
-    /// Tracked operators are carried by the influence map; this helper is only
+    /// Tracked Paulis are carried by the influence map; this helper is only
     /// for observable metadata.
     ///
     /// Each object accepts either `"id"` or `"observable_id"` as the identifier key.
@@ -410,7 +410,7 @@ impl<'a> DemBuilder<'a> {
 
         // Add non-detector outputs carried directly by the influence map.
         // Metadata-bearing outputs use separate compact ID spaces for standard
-        // observables and PECOS tracked operators.
+        // observables and PECOS tracked Paulis.
         if self.influence_map.dem_output_metadata.is_empty() {
             for dem_output_idx in 0..num_influence_dem_outputs {
                 #[allow(clippy::cast_possible_truncation)] // DEM output count fits in u32
@@ -424,9 +424,9 @@ impl<'a> DemBuilder<'a> {
                 let internal_id = internal_idx as u32;
                 if let Some(dem_output_id) = self
                     .influence_map
-                    .tracked_op_id_for_internal_dem_output(internal_id)
+                    .tracked_pauli_id_for_internal_dem_output(internal_id)
                 {
-                    dem.add_tracked_operator(DemOutput::from_metadata(dem_output_id, metadata));
+                    dem.add_tracked_pauli(DemOutput::from_metadata(dem_output_id, metadata));
                 } else if let Some(dem_output_id) = self
                     .influence_map
                     .observable_id_for_internal_dem_output(internal_id)
@@ -437,7 +437,7 @@ impl<'a> DemBuilder<'a> {
         }
 
         // Add observable definitions in the standard `L<n>` namespace.
-        // Observable IDs are not shifted by tracked operators.
+        // Observable IDs are not shifted by tracked Paulis.
         for obs in &self.observables {
             let def = DemOutput::new(obs.id).with_records(obs.records.iter().copied());
             dem.add_observable(def);
@@ -937,7 +937,7 @@ impl<'a> DemBuilder<'a> {
         // Convert to pre-defined detector IDs using XOR
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
         let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
-        let mut triggered_tracked_ops: SmallVec<[u32; 2]> = SmallVec::new();
+        let mut triggered_tracked_paulis: SmallVec<[u32; 2]> = SmallVec::new();
 
         for dem_output_idx in self
             .influence_map
@@ -945,11 +945,11 @@ impl<'a> DemBuilder<'a> {
         {
             xor_toggle_2(&mut triggered_obs, dem_output_idx);
         }
-        for tracked_op_idx in self
+        for tracked_pauli_idx in self
             .influence_map
-            .get_tracked_op_indices(loc_idx, pauli.as_u8())
+            .get_tracked_pauli_indices(loc_idx, pauli.as_u8())
         {
-            xor_toggle_2(&mut triggered_tracked_ops, tracked_op_idx);
+            xor_toggle_2(&mut triggered_tracked_paulis, tracked_pauli_idx);
         }
 
         for &rust_det in rust_dets {
@@ -973,12 +973,12 @@ impl<'a> DemBuilder<'a> {
         // Sort for canonical form
         triggered_dets.sort_unstable();
         triggered_obs.sort_unstable();
-        triggered_tracked_ops.sort_unstable();
+        triggered_tracked_paulis.sort_unstable();
 
-        FaultMechanism::from_sorted_with_tracked_ops(
+        FaultMechanism::from_sorted_with_tracked_paulis(
             triggered_dets,
             triggered_obs,
-            triggered_tracked_ops,
+            triggered_tracked_paulis,
         )
     }
 }
@@ -1411,44 +1411,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_from_circuit_tracks_tracked_operator() {
+    fn test_from_circuit_tracks_tracked_pauli() {
         use pecos_core::pauli::X;
         use pecos_quantum::DagCircuit;
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         circuit.h(&[0]);
-        circuit.tracked_operator_labeled("x_check", X(0));
+        circuit.tracked_pauli_labeled("x_check", X(0));
 
         let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.0, 0.0);
 
         assert_eq!(dem.num_dem_outputs(), 0);
-        assert_eq!(dem.num_tracked_ops(), 1);
+        assert_eq!(dem.num_tracked_paulis(), 1);
         assert_eq!(dem.num_observables(), 0);
         assert_eq!(
-            dem.tracked_ops()[0].kind,
-            Some(crate::fault_tolerance::DemOutputKind::TrackedOperator)
+            dem.tracked_paulis()[0].kind,
+            Some(crate::fault_tolerance::DemOutputKind::TrackedPauli)
         );
-        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("x_check"));
+        assert_eq!(dem.tracked_paulis()[0].label.as_deref(), Some("x_check"));
         assert_eq!(
-            dem.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            dem.tracked_paulis()[0]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
             "+X0"
         );
         assert!(!dem.to_string().contains("logical_observable"));
         assert!(!dem.to_string().contains("TP0"));
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("TP0"));
-        assert!(pecos_text.contains("pecos_tracked_op"));
+        assert!(pecos_text.contains("pecos_tracked_pauli"));
     }
 
     #[test]
-    fn test_tracked_operator_and_observable_use_distinct_tracked_ops() {
+    fn test_tracked_pauli_and_observable_use_distinct_tracked_paulis() {
         use pecos_core::pauli::Z;
         use pecos_quantum::{Attribute, DagCircuit};
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
-        circuit.tracked_operator_labeled("z_check", Z(0));
+        circuit.tracked_pauli_labeled("z_check", Z(0));
         circuit.mz(&[0]);
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(
@@ -1459,20 +1463,20 @@ mod tests {
         let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.02, 0.03);
 
         assert_eq!(dem.num_dem_outputs(), 1);
-        assert_eq!(dem.num_tracked_ops(), 1);
+        assert_eq!(dem.num_tracked_paulis(), 1);
         assert_eq!(dem.num_observables(), 1);
         assert_eq!(
             dem.dem_outputs()[0].kind,
             Some(crate::fault_tolerance::DemOutputKind::Observable)
         );
-        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("z_check"));
+        assert_eq!(dem.tracked_paulis()[0].label.as_deref(), Some("z_check"));
         let dem_str = dem.to_string();
         assert!(dem_str.contains("logical_observable L0"));
         assert!(!dem_str.contains("logical_observable L1"));
         assert!(!dem_str.contains("TP0"));
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("TP0"));
-        assert!(pecos_text.contains("pecos_tracked_op"));
+        assert!(pecos_text.contains("pecos_tracked_pauli"));
         let summaries = dem.contribution_effect_summaries();
         assert!(
             summaries
@@ -1483,20 +1487,20 @@ mod tests {
         assert!(
             summaries
                 .iter()
-                .any(|summary| summary.effect.tracked_ops.as_slice() == [0]),
-            "tracked operator should remain TP0"
+                .any(|summary| summary.effect.tracked_paulis.as_slice() == [0]),
+            "tracked Pauli should remain TP0"
         );
     }
 
     #[test]
-    fn test_tick_dag_tick_dem_keeps_detector_observable_and_tracked_operator_distinct() {
+    fn test_tick_dag_tick_dem_keeps_detector_observable_and_tracked_pauli_distinct() {
         use pecos_core::pauli::X;
         use pecos_quantum::{DagCircuit, TickCircuit};
 
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0, 1]);
         circuit.tick().h(&[0]);
-        circuit.tracked_operator_labeled("tracked_x0", X(0));
+        circuit.tracked_pauli_labeled("tracked_x0", X(0));
         circuit.tick().mz(&[0, 1]);
         circuit.set_meta(
             "num_measurements",
@@ -1515,22 +1519,26 @@ mod tests {
         assert_eq!(dem.num_observables(), 1);
         assert_eq!(dem.num_dem_outputs(), 1);
         assert_eq!(dem.dem_outputs()[0].id, 0);
-        assert_eq!(dem.num_tracked_ops(), 1);
-        assert_eq!(dem.tracked_ops()[0].id, 0);
-        assert_eq!(dem.tracked_ops()[0].label.as_deref(), Some("tracked_x0"));
+        assert_eq!(dem.num_tracked_paulis(), 1);
+        assert_eq!(dem.tracked_paulis()[0].id, 0);
+        assert_eq!(dem.tracked_paulis()[0].label.as_deref(), Some("tracked_x0"));
         assert_eq!(
-            dem.tracked_ops()[0].pauli.as_ref().unwrap().to_sparse_str(),
+            dem.tracked_paulis()[0]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
             "+X0"
         );
 
         let standard_text = dem.to_string();
         assert!(standard_text.contains("logical_observable L0"));
         assert!(!standard_text.contains("logical_observable L1"));
-        assert!(!standard_text.contains("pecos_tracked_op"));
+        assert!(!standard_text.contains("pecos_tracked_pauli"));
 
         let pecos_text = dem.to_pecos_string();
         assert!(pecos_text.contains("pecos_observable"));
-        assert!(pecos_text.contains("pecos_tracked_op"));
+        assert!(pecos_text.contains("pecos_tracked_pauli"));
 
         let summaries = dem.contribution_effect_summaries();
         assert!(
@@ -1931,7 +1939,7 @@ mod tests {
 
         assert_eq!(dem.num_dem_outputs(), 1);
         assert_eq!(dem.num_observables(), 1);
-        assert_eq!(dem.num_tracked_ops(), 0);
+        assert_eq!(dem.num_tracked_paulis(), 0);
         assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-1, -3]);
     }
 

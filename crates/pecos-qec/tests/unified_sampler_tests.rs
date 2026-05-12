@@ -66,7 +66,7 @@ fn from_influence_map_produces_reasonable_statistics() {
     let stats = sampler.sample_statistics(num_shots, seed);
 
     // At these noise levels, we should see some syndromes. The builder above
-    // uses `with_z`, which creates a tracked operator, not an observable, so
+    // uses `with_z`, which creates a tracked Pauli, not an observable, so
     // logical-error statistics and DEM output columns stay empty.
     assert!(
         stats.syndrome_rate() > 0.0,
@@ -77,7 +77,7 @@ fn from_influence_map_produces_reasonable_statistics() {
         "Should not have syndromes on every shot"
     );
     assert_eq!(sampler.num_observables(), 0);
-    assert_eq!(sampler.num_tracked_ops(), 1);
+    assert_eq!(sampler.num_tracked_paulis(), 1);
     assert_eq!(stats.logical_error_count, 0);
     assert!(stats.dem_output_counts().is_empty());
 }

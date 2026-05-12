@@ -6,7 +6,7 @@
 Generates random stabilizer circuits, runs them at two levels:
 1. Physical: single-qubit PECOS SparseStab (ground truth)
 2. Logical: encoded in a surface code via LogicalCircuitBuilder,
-   TickCircuit replayed on SparseStab with detector/tracked-op checking
+   TickCircuit replayed on SparseStab with detector/tracked-Pauli checking
 
 No Stim dependency. Pure PECOS end-to-end.
 """

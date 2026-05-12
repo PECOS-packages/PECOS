@@ -19,7 +19,7 @@ cargo run -p pecos-qec --example surface_d3_fault_catalog_lookup
 ```
 
 The expensive loop stays in Rust: for `k = 0..=2`, the example lazily walks
-`catalog.fault_configurations(k)`, XORs detector/tracked-op effects via the
+`catalog.fault_configurations(k)`, XORs detector/tracked-Pauli effects via the
 catalog iterator, and sums `configuration_probability` into a
 `syndrome -> logical -> probability` table.
 

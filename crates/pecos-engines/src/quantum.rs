@@ -572,7 +572,7 @@ fn process_general_message<
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::QFree
             | GateType::Custom
-            | GateType::PauliOperatorMeta => {}
+            | GateType::TrackedPauliMeta => {}
         }
         cmd_idx += 1;
     }
@@ -1134,7 +1134,7 @@ where
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::QFree
                 | GateType::Custom
-                | GateType::PauliOperatorMeta => {
+                | GateType::TrackedPauliMeta => {
                     // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                     // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)

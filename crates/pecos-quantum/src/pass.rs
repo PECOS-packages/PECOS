@@ -1292,6 +1292,7 @@ impl CircuitPass for AssignMissingMeasIds {
 #[allow(clippy::cast_precision_loss)]
 mod tests {
     use super::*;
+    use pecos_core::MeasId;
 
     // ==================== simplify_rotation unit tests ====================
 
@@ -2882,6 +2883,78 @@ mod tests {
         }
         assert!(saw_rewritten);
         assert!(saw_untouched);
+    }
+
+    #[test]
+    fn split_batched_tick_commands_preserves_payloads_attrs_and_counters() {
+        let mut tc = TickCircuit::new();
+        let initial_refs = tc.tick().mz(&[0, 1]);
+        assert_eq!(initial_refs[0].record_idx, 0);
+        assert_eq!(initial_refs[1].record_idx, 1);
+        tc.get_tick_mut(0).unwrap().set_gate_attr(
+            0,
+            "role",
+            Attribute::String("measurement".into()),
+        );
+        tc.tick()
+            .cx(&[(2, 3), (4, 5)])
+            .meta("role", Attribute::String("entangler".into()));
+
+        split_batched_tick_commands(&mut tc);
+
+        assert_eq!(tc.num_ticks(), 2);
+        assert_eq!(tc.next_tick_index(), 2);
+        assert_eq!(tc.num_measurements(), 2);
+
+        let meas_tick = tc.get_tick(0).unwrap();
+        assert_eq!(meas_tick.len(), 2);
+        assert_eq!(meas_tick.gate_count(), 2);
+        assert_eq!(
+            meas_tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(0)]
+        );
+        assert_eq!(
+            meas_tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId(0)]
+        );
+        assert_eq!(
+            meas_tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(1)]
+        );
+        assert_eq!(
+            meas_tick.gate_batches()[1].meas_ids.as_slice(),
+            &[MeasId(1)]
+        );
+        for batch in meas_tick.iter_gate_batches() {
+            assert_eq!(
+                batch.get_attr("role"),
+                Some(&Attribute::String("measurement".into()))
+            );
+        }
+
+        let entangler_tick = tc.get_tick(1).unwrap();
+        assert_eq!(entangler_tick.len(), 2);
+        assert_eq!(entangler_tick.gate_count(), 2);
+        assert_eq!(
+            entangler_tick.gate_batches()[0].qubits.as_slice(),
+            &[QubitId::from(2), QubitId::from(3)]
+        );
+        assert_eq!(
+            entangler_tick.gate_batches()[1].qubits.as_slice(),
+            &[QubitId::from(4), QubitId::from(5)]
+        );
+        for batch in entangler_tick.iter_gate_batches() {
+            assert_eq!(
+                batch.get_attr("role"),
+                Some(&Attribute::String("entangler".into()))
+            );
+        }
+
+        let later_refs = tc.tick().mz(&[6]);
+        assert_eq!(later_refs[0].record_idx, 2);
+        assert_eq!(later_refs[0].meas_id, MeasId(2));
+        assert_eq!(tc.next_tick_index(), 3);
+        assert_eq!(tc.num_measurements(), 3);
     }
 
     #[test]

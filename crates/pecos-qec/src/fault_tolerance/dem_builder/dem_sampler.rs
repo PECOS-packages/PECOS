@@ -250,7 +250,7 @@ impl SamplingEngine {
 
     /// Number of observables represented by `L<n>` columns.
     ///
-    /// When no PECOS tracked-operator metadata is present, every `L<n>` output
+    /// When no PECOS tracked-Pauli metadata is present, every `L<n>` output
     /// is treated as an observable.
     #[must_use]
     pub fn num_observables(&self) -> usize {
@@ -647,7 +647,7 @@ impl SamplingEngine {
     /// The sampler still reports per-DEM-output flip counts for every `L<n>`
     /// output. `logical_error_count` and `undetectable_count` are computed
     /// from the selected observable outputs only, so unmeasured tracked
-    /// operators do not affect decoder-style observable statistics.
+    /// Paulis do not affect decoder-style observable statistics.
     #[must_use]
     pub fn sample_statistics_for_observable_indices(
         &self,
@@ -1675,8 +1675,8 @@ impl SamplingEngine {
             stats.per_dem_output[obs_idx] = count;
         }
 
-        // Aggregate logical-error mask from observables only. Tracked
-        // operators remain in per_dem_output but do not define decoder failures.
+        // Aggregate logical-error mask from observables only. Tracked Paulis
+        // remain in per_dem_output but do not define decoder failures.
         let mut observable_words = vec![0u64; num_words];
         for &obs_idx in observable_indices {
             if let Some(col) = dem_output_words.get(obs_idx) {
@@ -3194,7 +3194,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_mechanisms_with_tracked_ops() {
+    fn test_from_mechanisms_with_tracked_paulis() {
         // Mechanism that flips D0 and L0
         let mechanisms = vec![(0.1, vec![0u32], vec![0u32])];
         let sampler = SamplingEngine::from_mechanisms(mechanisms, 1, 1);

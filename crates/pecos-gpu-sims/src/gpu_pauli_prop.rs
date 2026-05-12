@@ -652,7 +652,7 @@ impl GpuPauliProp {
     /// Check if a Pauli string anticommutes with the accumulated faults.
     ///
     /// This is used to check whether faults flip a tracked Pauli string:
-    /// an odd number of anticommutations means the tracked operator flips.
+    /// an odd number of anticommutations means the tracked Pauli flips.
     ///
     /// # Arguments
     /// * `x_qubits` - Qubits with X in the Pauli string
@@ -674,7 +674,7 @@ impl GpuPauliProp {
 
             let mut anticom_count = 0u32;
 
-            // X in the tracked operator anticommutes with Z faults.
+            // X in the tracked Pauli anticommutes with Z faults.
             for &q in x_qubits {
                 let base = q * self.shot_words as usize;
                 if (z_faults[base + word_idx] >> bit_idx) & 1 != 0 {
@@ -682,7 +682,7 @@ impl GpuPauliProp {
                 }
             }
 
-            // Z in the tracked operator anticommutes with X faults.
+            // Z in the tracked Pauli anticommutes with X faults.
             for &q in z_qubits {
                 let base = q * self.shot_words as usize;
                 if (x_faults[base + word_idx] >> bit_idx) & 1 != 0 {

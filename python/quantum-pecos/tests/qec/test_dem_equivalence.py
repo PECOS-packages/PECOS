@@ -25,10 +25,10 @@ class TestFaultMechanismParsing:
         assert dem.num_mechanisms == 1
         assert dem.num_detectors == 2
         assert dem.num_observables == 0
-        assert dem.num_tracked_ops == 0
+        assert dem.num_tracked_paulis == 0
 
-    def test_parse_mechanism_with_tracked_op(self) -> None:
-        """Parse mechanism with a Stim DEM output exposed as a tracked op."""
+    def test_parse_mechanism_with_tracked_pauli(self) -> None:
+        """Parse mechanism with a Stim DEM output exposed as a tracked Pauli."""
         dem_str = "error(0.02) D0 L0"
         dem = ParsedDem.from_string(dem_str)
 
@@ -36,7 +36,7 @@ class TestFaultMechanismParsing:
         assert dem.num_detectors == 1
         assert dem.num_dem_outputs == 1
         assert dem.num_observables == 1
-        assert dem.num_tracked_ops == 0
+        assert dem.num_tracked_paulis == 0
 
     def test_parse_decomposed_mechanism(self) -> None:
         """Parse a decomposed mechanism (XOR chain)."""
@@ -60,7 +60,7 @@ error(0.03) D0 D1 L0
         assert dem.num_detectors == 3
         assert dem.num_dem_outputs == 1
         assert dem.num_observables == 1
-        assert dem.num_tracked_ops == 0
+        assert dem.num_tracked_paulis == 0
 
     def test_parse_detector_declarations(self) -> None:
         """Parse detector declarations."""

@@ -83,7 +83,7 @@ fn main() {
     let circuit = build_repetition_code_circuit(2);
     println!("   Circuit built: {} gates", circuit.gate_count());
 
-    // Build influence map with a tracked Z operator (sensitive to X errors)
+    // Build influence map with a tracked Z Pauli (sensitive to X errors)
     let builder = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]);
 
     let influence_map = builder.build();
@@ -158,7 +158,7 @@ fn main() {
     let circuit = build_surface_code_plaquette(3);
     println!("   Circuit built: {} gates", circuit.gate_count());
 
-    // Build influence map with a tracked X operator (sensitive to Z errors on this plaquette)
+    // Build influence map with a tracked X Pauli (sensitive to Z errors on this plaquette)
     let builder = InfluenceBuilder::new(&circuit).with_x(&[0, 1, 2, 3]);
 
     let influence_map = builder.build();

@@ -23,13 +23,28 @@ from __future__ import annotations
 
 import pytest
 
-# Check if CUDA simulators are available
+# Check if CUDA simulator libraries and runtime-backed simulators are available.
 try:
-    from pecos_rslib_cuda import is_cuquantum_available
+    from pecos_rslib_cuda import (
+        is_cudensitymat_usable,
+        is_cuquantum_available,
+        is_custabilizer_usable,
+        is_custatevec_usable,
+        is_cutensornet_usable,
+    )
 
     CUQUANTUM_AVAILABLE = is_cuquantum_available()
 except ImportError:
     CUQUANTUM_AVAILABLE = False
+    CUSTATEVEC_USABLE = False
+    CUSTABILIZER_USABLE = False
+    CUTENSORNET_USABLE = False
+    CUDENSITYMAT_USABLE = False
+else:
+    CUSTATEVEC_USABLE = is_custatevec_usable()
+    CUSTABILIZER_USABLE = is_custabilizer_usable()
+    CUTENSORNET_USABLE = is_cutensornet_usable()
+    CUDENSITYMAT_USABLE = is_cudensitymat_usable()
 
 # Skip all tests in this module if cuQuantum is not available
 pytestmark = pytest.mark.skipif(
@@ -40,6 +55,11 @@ pytestmark = pytest.mark.skipif(
 
 class TestCudaStateVec:
     """Tests for CudaStateVec (Rust cuQuantum state vector simulator)."""
+
+    pytestmark = pytest.mark.skipif(
+        not CUSTATEVEC_USABLE,
+        reason="CudaStateVec runtime is not usable on this machine",
+    )
 
     def test_import(self) -> None:
         """Test that CudaStateVec can be imported."""
@@ -172,6 +192,11 @@ class TestCudaStateVec:
 class TestCudaStabilizer:
     """Tests for CudaStabilizer (Rust cuQuantum stabilizer simulator)."""
 
+    pytestmark = pytest.mark.skipif(
+        not CUSTABILIZER_USABLE,
+        reason="CudaStabilizer runtime is not usable on this machine",
+    )
+
     def test_import(self) -> None:
         """Test that CudaStabilizer can be imported."""
         from pecos.simulators import CudaStabilizer
@@ -275,6 +300,11 @@ class TestCudaStabilizer:
 class TestCuTensorNet:
     """Tests for CuTensorNet handle."""
 
+    pytestmark = pytest.mark.skipif(
+        not CUTENSORNET_USABLE,
+        reason="CuTensorNet runtime is not usable on this machine",
+    )
+
     def test_import(self) -> None:
         """Test that CuTensorNet can be imported from pecos_rslib_cuda."""
         from pecos_rslib_cuda import CuTensorNet
@@ -299,6 +329,11 @@ class TestCuTensorNet:
 
 class TestCuDensityMat:
     """Tests for CuDensityMat density matrix simulator."""
+
+    pytestmark = pytest.mark.skipif(
+        not CUDENSITYMAT_USABLE,
+        reason="CuDensityMat runtime is not usable on this machine",
+    )
 
     def test_import(self) -> None:
         """Test that CuDensityMat can be imported from pecos_rslib_cuda."""
@@ -337,6 +372,10 @@ class TestCuDensityMat:
 class TestQuantumSimulatorBackend:
     """Tests for QuantumSimulator with CUDA backends."""
 
+    @pytest.mark.skipif(
+        not CUSTATEVEC_USABLE,
+        reason="CudaStateVec runtime is not usable on this machine",
+    )
     def test_cuda_statevec_backend(self) -> None:
         """Test QuantumSimulator with CudaStateVec backend."""
         from pecos.simulators.quantum_simulator import QuantumSimulator
@@ -346,6 +385,10 @@ class TestQuantumSimulatorBackend:
 
         assert sim.num_qubits == 4
 
+    @pytest.mark.skipif(
+        not CUSTABILIZER_USABLE,
+        reason="CudaStabilizer runtime is not usable on this machine",
+    )
     def test_cuda_stabilizer_backend(self) -> None:
         """Test QuantumSimulator with CudaStabilizer backend."""
         from pecos.simulators.quantum_simulator import QuantumSimulator

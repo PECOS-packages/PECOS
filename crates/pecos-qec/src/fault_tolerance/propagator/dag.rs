@@ -37,15 +37,15 @@
 //! The influence map has one detector namespace plus one raw internal
 //! non-detector-output namespace. That raw namespace is only a storage detail:
 //! metadata maps each raw non-detector output to either a standard observable
-//! (`L<n>`) or a PECOS tracked operator. Decoder and sampler code should use
+//! (`L<n>`) or a PECOS tracked Pauli. Decoder and sampler code should use
 //! [`DagFaultInfluenceMap::observable_ids`],
 //! [`DagFaultInfluenceMap::observable_id_for_internal_dem_output`], and
-//! [`DagFaultInfluenceMap::tracked_op_id_for_internal_dem_output`] instead of
+//! [`DagFaultInfluenceMap::tracked_pauli_id_for_internal_dem_output`] instead of
 //! assuming raw indices are public `L<n>` IDs.
 //!
-//! Observables and tracked operators differ by definition, not just by name.
+//! Observables and tracked Paulis differ by definition, not just by name.
 //! Observables are values observed through measurement-record parities and are
-//! visible to DEM decoders as standard `L<n>` outputs. Tracked operators are
+//! visible to DEM decoders as standard `L<n>` outputs. Tracked Paulis are
 //! unmeasured Pauli operators annotated at a circuit point, such as logical
 //! operators, stabilizers, or other Paulis of interest; the influence map
 //! records whether a fault anticommutes with, and therefore would flip, the
@@ -382,7 +382,7 @@ pub struct InfluencesSoA {
     ///
     /// These raw indices may name either standard observables or PECOS tracked
     /// operators. Use [`DagFaultInfluenceMap`] metadata helpers to map them into
-    /// the public `L<n>` observable namespace or tracked-operator namespace.
+    /// the public `L<n>` observable namespace or tracked-Pauli namespace.
     pub dem_outputs_x: CsrArray,
 
     /// Internal non-detector output indices flipped by Y faults.
@@ -426,8 +426,8 @@ impl InfluencesSoA {
     /// These indices are not necessarily standard `L<n>` IDs. Callers that
     /// need public observable IDs should use
     /// [`DagFaultInfluenceMap::observable_id_for_internal_dem_output`]; callers
-    /// that need tracked-operator IDs should use
-    /// [`DagFaultInfluenceMap::tracked_op_id_for_internal_dem_output`].
+    /// that need tracked-Pauli IDs should use
+    /// [`DagFaultInfluenceMap::tracked_pauli_id_for_internal_dem_output`].
     #[inline]
     #[must_use]
     pub fn dem_outputs(&self, loc_idx: usize, pauli: Pauli) -> &[u32] {
@@ -522,8 +522,8 @@ impl InfluencesSoA {
     /// Returns the maximum raw non-detector output influence index, if any.
     ///
     /// When metadata is present, callers should use [`Self::num_dem_outputs`]
-    /// for the standard observable `L<n>` namespace and [`Self::num_tracked_ops`]
-    /// for PECOS tracked operators.
+    /// for the standard observable `L<n>` namespace and [`Self::num_tracked_paulis`]
+    /// for PECOS tracked Paulis.
     #[must_use]
     pub fn max_dem_output_index(&self) -> Option<usize> {
         let max_x = self.dem_outputs_x.data.iter().max();
@@ -585,10 +585,10 @@ pub struct DagFaultInfluenceMap {
 
     /// Optional metadata for non-detector outputs tracked by backward propagation.
     ///
-    /// These entries may be standard observables or PECOS tracked operators.
+    /// These entries may be standard observables or PECOS tracked Paulis.
     /// The metadata kind is the authority for translating raw influence indices
     /// into public namespaces; standard observables use compact `L<n>` IDs and
-    /// tracked operators use their own compact PECOS-only IDs.
+    /// tracked Paulis use their own compact PECOS-only IDs.
     pub dem_output_metadata: Vec<DemOutputMetadata>,
 }
 
@@ -626,8 +626,8 @@ impl DagFaultInfluenceMap {
     /// Returns all raw non-detector output indices flipped by a fault.
     ///
     /// Raw indices are an internal storage detail shared by observables and
-    /// tracked operators. Prefer [`Self::get_observable_indices`] or
-    /// [`Self::get_tracked_op_indices`] when a public namespace is needed.
+    /// tracked Paulis. Prefer [`Self::get_observable_indices`] or
+    /// [`Self::get_tracked_pauli_indices`] when a public namespace is needed.
     #[inline]
     #[must_use]
     pub fn get_dem_output_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {
@@ -637,7 +637,7 @@ impl DagFaultInfluenceMap {
     /// Returns the number of standard DEM `L<n>` observable outputs.
     ///
     /// This is a DEM-output alias for [`Self::num_observables`]. It does
-    /// not include PECOS tracked operators.
+    /// not include PECOS tracked Paulis.
     #[must_use]
     pub fn num_dem_outputs(&self) -> usize {
         if self.dem_output_metadata.is_empty() {
@@ -657,7 +657,7 @@ impl DagFaultInfluenceMap {
 
     /// Returns the standard observable `L<n>` IDs present in this map.
     ///
-    /// Tracked operators share internal propagation storage but never appear in
+    /// Tracked Paulis share internal propagation storage but never appear in
     /// this set. Public decoder and sampler paths should use this namespace
     /// rather than raw internal DEM-output indices.
     #[must_use]
@@ -667,22 +667,22 @@ impl DagFaultInfluenceMap {
             .collect()
     }
 
-    /// Returns the number of PECOS tracked operators.
+    /// Returns the number of PECOS tracked Paulis.
     #[must_use]
-    pub fn num_tracked_ops(&self) -> usize {
+    pub fn num_tracked_paulis(&self) -> usize {
         self.dem_output_metadata
             .iter()
-            .filter(|metadata| metadata.kind == DemOutputKind::TrackedOperator)
+            .filter(|metadata| metadata.kind == DemOutputKind::TrackedPauli)
             .count()
     }
 
-    /// Returns tracked-Pauli-operator output indices flipped by a fault.
+    /// Returns tracked-Pauli output indices flipped by a fault.
     #[must_use]
-    pub fn get_tracked_op_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
+    pub fn get_tracked_pauli_indices(&self, loc_idx: usize, pauli: u8) -> Vec<u32> {
         let outputs = self.get_dem_output_indices(loc_idx, pauli);
         outputs
             .iter()
-            .filter_map(|&idx| self.tracked_op_id_for_internal_dem_output(idx))
+            .filter_map(|&idx| self.tracked_pauli_id_for_internal_dem_output(idx))
             .collect()
     }
 
@@ -709,11 +709,11 @@ impl DagFaultInfluenceMap {
         self.output_id_for_kind(idx, DemOutputKind::Observable)
     }
 
-    /// Map an internal non-detector output index to the PECOS tracked-operator
+    /// Map an internal non-detector output index to the PECOS tracked-Pauli
     /// ID space.
     #[must_use]
-    pub fn tracked_op_id_for_internal_dem_output(&self, idx: u32) -> Option<u32> {
-        self.output_id_for_kind(idx, DemOutputKind::TrackedOperator)
+    pub fn tracked_pauli_id_for_internal_dem_output(&self, idx: u32) -> Option<u32> {
+        self.output_id_for_kind(idx, DemOutputKind::TrackedPauli)
     }
 
     /// Returns true if a fault flips any non-detector DEM output.
@@ -723,10 +723,10 @@ impl DagFaultInfluenceMap {
         !self.get_dem_output_indices(loc_idx, pauli).is_empty()
     }
 
-    /// Returns true if a fault flips any tracked Pauli operator.
+    /// Returns true if a fault flips any tracked Pauli.
     #[must_use]
-    pub fn has_tracked_op_flips(&self, loc_idx: usize, pauli: u8) -> bool {
-        !self.get_tracked_op_indices(loc_idx, pauli).is_empty()
+    pub fn has_tracked_pauli_flips(&self, loc_idx: usize, pauli: u8) -> bool {
+        !self.get_tracked_pauli_indices(loc_idx, pauli).is_empty()
     }
 
     /// Returns true if a fault flips any observable.
@@ -794,9 +794,9 @@ impl DagFaultInfluenceMap {
     /// Export CSR data for GPU use.
     ///
     /// The exported DEM-output arrays contain only standard observable `L<n>`
-    /// outputs. PECOS tracked operators share the internal backward-propagation
+    /// outputs. PECOS tracked Paulis share the internal backward-propagation
     /// storage but are intentionally filtered out here so decoder-oriented GPU
-    /// code cannot count tracked operators as logical errors.
+    /// code cannot count tracked Paulis as logical errors.
     ///
     /// Returns all CSR arrays needed to construct a GPU influence sampler:
     /// (`num_locations`, `num_detectors`, `num_dem_outputs`,
@@ -900,7 +900,7 @@ pub enum DemOutputKind {
     /// A standard `L<n>` observable defined by measurement records.
     Observable,
     /// An unmeasured Pauli-operator annotation, separate from measurement records.
-    TrackedOperator,
+    TrackedPauli,
 }
 
 impl DemOutputKind {
@@ -909,7 +909,7 @@ impl DemOutputKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Observable => "observable",
-            Self::TrackedOperator => "tracked_operator",
+            Self::TrackedPauli => "tracked_pauli",
         }
     }
 
@@ -918,7 +918,7 @@ impl DemOutputKind {
     pub fn from_metadata_str(kind: &str) -> Option<Self> {
         match kind {
             "observable" => Some(Self::Observable),
-            "tracked_operator" => Some(Self::TrackedOperator),
+            "tracked_pauli" => Some(Self::TrackedPauli),
             _ => None,
         }
     }
@@ -928,7 +928,7 @@ impl DemOutputKind {
 ///
 /// Standard DEM text only has `L<n>` observable markers. PECOS keeps this richer
 /// record alongside the DEM so callers can distinguish those measurement-record
-/// observables from tracked Pauli operators, which live in a separate
+/// observables from tracked Paulis, which live in a separate
 /// PECOS-only namespace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DemOutputMetadata {
@@ -937,7 +937,7 @@ pub struct DemOutputMetadata {
     /// Pauli string whose flip is tracked.
     ///
     /// For observables this is the Pauli associated with the measurement-record
-    /// observable. For tracked operators this is the unmeasured Pauli operator
+    /// observable. For tracked Paulis this is the unmeasured tracked Pauli
     /// annotated at a circuit point.
     pub pauli: PauliString,
     /// Optional user label.
@@ -954,10 +954,10 @@ impl DemOutputMetadata {
         Self { kind, pauli, label }
     }
 
-    /// Creates metadata for a tracked operator.
+    /// Creates metadata for a tracked Pauli.
     #[must_use]
-    pub fn tracked_operator(pauli: PauliString) -> Self {
-        Self::new(DemOutputKind::TrackedOperator, pauli, None)
+    pub fn tracked_pauli(pauli: PauliString) -> Self {
+        Self::new(DemOutputKind::TrackedPauli, pauli, None)
     }
 
     /// Creates metadata for an observable.
@@ -2713,7 +2713,7 @@ mod tests {
     }
 
     #[test]
-    fn test_export_csr_filters_tracked_operators_from_dem_outputs() {
+    fn test_export_csr_filters_tracked_paulis_from_dem_outputs() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
         dag.h(&[0]);
@@ -2723,10 +2723,10 @@ mod tests {
             .build();
 
         assert_eq!(map.num_dem_outputs(), 0);
-        assert_eq!(map.num_tracked_ops(), 1);
+        assert_eq!(map.num_tracked_paulis(), 1);
         assert!(
             map.influences.max_dem_output_index().is_some(),
-            "tracked operator should still use internal propagation storage"
+            "tracked Pauli should still use internal propagation storage"
         );
 
         let (
@@ -2767,9 +2767,9 @@ mod tests {
             idle_duration: 0,
         });
         map.dem_output_metadata = vec![
-            DemOutputMetadata::tracked_operator(pecos_core::PauliString::xs(&[0])),
+            DemOutputMetadata::tracked_pauli(pecos_core::PauliString::xs(&[0])),
             DemOutputMetadata::observable(pecos_core::PauliString::zs(&[0])),
-            DemOutputMetadata::tracked_operator(pecos_core::PauliString::zs(&[1])),
+            DemOutputMetadata::tracked_pauli(pecos_core::PauliString::zs(&[1])),
         ];
 
         map.influences.dem_outputs_x.extend([0, 1, 2]);
@@ -2782,9 +2782,12 @@ mod tests {
         map.influences.num_locations = 1;
 
         assert_eq!(map.num_dem_outputs(), 1);
-        assert_eq!(map.num_tracked_ops(), 2);
+        assert_eq!(map.num_tracked_paulis(), 2);
         assert_eq!(map.get_observable_indices(0, Pauli::X.as_u8()), vec![0]);
-        assert_eq!(map.get_tracked_op_indices(0, Pauli::X.as_u8()), vec![0, 1]);
+        assert_eq!(
+            map.get_tracked_pauli_indices(0, Pauli::X.as_u8()),
+            vec![0, 1]
+        );
 
         let (
             _num_locations,

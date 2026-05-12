@@ -86,7 +86,7 @@ impl ParsedMechanism {
             components: vec![MechanismComponent {
                 detectors,
                 observables,
-                tracked_ops: Vec::new(),
+                tracked_paulis: Vec::new(),
             }],
         }
     }
@@ -102,7 +102,7 @@ impl ParsedMechanism {
     pub fn combined_effect(&self) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
         let mut all_dets: BTreeSet<u32> = BTreeSet::new();
         let mut all_obs: BTreeSet<u32> = BTreeSet::new();
-        let mut all_tracked_ops: BTreeSet<u32> = BTreeSet::new();
+        let mut all_tracked_paulis: BTreeSet<u32> = BTreeSet::new();
 
         for comp in &self.components {
             for &d in &comp.detectors {
@@ -119,11 +119,11 @@ impl ParsedMechanism {
                     all_obs.insert(o);
                 }
             }
-            for &op in &comp.tracked_ops {
-                if all_tracked_ops.contains(&op) {
-                    all_tracked_ops.remove(&op);
+            for &op in &comp.tracked_paulis {
+                if all_tracked_paulis.contains(&op) {
+                    all_tracked_paulis.remove(&op);
                 } else {
-                    all_tracked_ops.insert(op);
+                    all_tracked_paulis.insert(op);
                 }
             }
         }
@@ -131,18 +131,18 @@ impl ParsedMechanism {
         // BTreeSet is already sorted, so just collect
         let dets: Vec<u32> = all_dets.into_iter().collect();
         let obs: Vec<u32> = all_obs.into_iter().collect();
-        let tracked_ops: Vec<u32> = all_tracked_ops.into_iter().collect();
-        (dets, obs, tracked_ops)
+        let tracked_paulis: Vec<u32> = all_tracked_paulis.into_iter().collect();
+        (dets, obs, tracked_paulis)
     }
 
     /// Creates an effect key for this mechanism (for aggregation).
     #[must_use]
     pub fn effect_key(&self) -> EffectKey {
-        let (dets, obs, tracked_ops) = self.combined_effect();
+        let (dets, obs, tracked_paulis) = self.combined_effect();
         EffectKey {
             detectors: dets,
             observables: obs,
-            tracked_ops,
+            tracked_paulis,
         }
     }
 
@@ -160,7 +160,7 @@ impl ParsedMechanism {
                 for &o in &comp.observables {
                     tokens.push(format!("L{o}"));
                 }
-                for &op in &comp.tracked_ops {
+                for &op in &comp.tracked_paulis {
                     tokens.push(format!("TP{op}"));
                 }
                 tokens.join(" ")
@@ -177,8 +177,8 @@ pub struct MechanismComponent {
     pub detectors: Vec<u32>,
     /// Observable IDs in this component.
     pub observables: Vec<u32>,
-    /// PECOS tracked-Pauli operator IDs in this component.
-    pub tracked_ops: Vec<u32>,
+    /// PECOS tracked-Pauli IDs in this component.
+    pub tracked_paulis: Vec<u32>,
 }
 
 /// Key for aggregating mechanisms by their effect.
@@ -188,8 +188,8 @@ pub struct EffectKey {
     pub detectors: Vec<u32>,
     /// Sorted observable IDs.
     pub observables: Vec<u32>,
-    /// Sorted tracked-Pauli operator IDs.
-    pub tracked_ops: Vec<u32>,
+    /// Sorted tracked-Pauli IDs.
+    pub tracked_paulis: Vec<u32>,
 }
 
 impl EffectKey {
@@ -201,7 +201,7 @@ impl EffectKey {
         Self {
             detectors,
             observables,
-            tracked_ops: Vec::new(),
+            tracked_paulis: Vec::new(),
         }
     }
 }
@@ -215,7 +215,7 @@ impl fmt::Display for EffectKey {
         for &o in &self.observables {
             parts.push(format!("L{o}"));
         }
-        for &op in &self.tracked_ops {
+        for &op in &self.tracked_paulis {
             parts.push(format!("TP{op}"));
         }
         if parts.is_empty() {
@@ -241,8 +241,8 @@ pub struct ParsedDem {
     pub num_dem_outputs: u32,
     /// PECOS metadata for `L<n>` observables, indexed by `L<n>`.
     pub dem_outputs: Vec<Option<DemOutput>>,
-    /// PECOS metadata for tracked operators in their own ID space.
-    pub tracked_ops: Vec<Option<DemOutput>>,
+    /// PECOS metadata for tracked Paulis in their own ID space.
+    pub tracked_paulis: Vec<Option<DemOutput>>,
 }
 
 impl ParsedDem {
@@ -254,7 +254,7 @@ impl ParsedDem {
             num_detectors: 0,
             num_dem_outputs: 0,
             dem_outputs: Vec::new(),
-            tracked_ops: Vec::new(),
+            tracked_paulis: Vec::new(),
         }
     }
 
@@ -281,10 +281,10 @@ impl ParsedDem {
         self.num_dem_outputs
     }
 
-    /// Number of tracked operators.
+    /// Number of tracked Paulis.
     #[must_use]
-    pub fn num_tracked_ops(&self) -> u32 {
-        u32::try_from(self.tracked_ops.len()).unwrap_or(u32::MAX)
+    pub fn num_tracked_paulis(&self) -> u32 {
+        u32::try_from(self.tracked_paulis.len()).unwrap_or(u32::MAX)
     }
 
     fn record_metadata(ops: &mut Vec<Option<DemOutput>>, op: DemOutput) {
@@ -339,7 +339,7 @@ impl ParsedDem {
     fn parse_component(s: &str) -> Result<MechanismComponent, DemParseError> {
         let mut detectors = Vec::new();
         let mut observables = Vec::new();
-        let mut tracked_ops = Vec::new();
+        let mut tracked_paulis = Vec::new();
 
         for token in s.split_whitespace() {
             if let Some(id_str) = token.strip_prefix('D') {
@@ -355,8 +355,8 @@ impl ParsedDem {
             } else if let Some(id_str) = token.strip_prefix("TP") {
                 let id: u32 = id_str
                     .parse()
-                    .map_err(|_| DemParseError::InvalidTrackedOpId(token.to_string()))?;
-                tracked_ops.push(id);
+                    .map_err(|_| DemParseError::InvalidTrackedPauliId(token.to_string()))?;
+                tracked_paulis.push(id);
             } else {
                 return Err(DemParseError::InvalidTarget(token.to_string()));
             }
@@ -364,12 +364,12 @@ impl ParsedDem {
 
         detectors.sort_unstable();
         observables.sort_unstable();
-        tracked_ops.sort_unstable();
+        tracked_paulis.sort_unstable();
 
         Ok(MechanismComponent {
             detectors,
             observables,
-            tracked_ops,
+            tracked_paulis,
         })
     }
 
@@ -406,8 +406,8 @@ impl ParsedDem {
                 // For decomposed mechanisms, each component fires independently
                 for comp in &mech.components {
                     let mut key = EffectKey::new(comp.detectors.clone(), comp.observables.clone());
-                    key.tracked_ops.clone_from(&comp.tracked_ops);
-                    key.tracked_ops.sort_unstable();
+                    key.tracked_paulis.clone_from(&comp.tracked_paulis);
+                    key.tracked_paulis.sort_unstable();
                     aggregated
                         .entry(key)
                         .and_modify(|p| *p = combine_probabilities(*p, mech.probability))
@@ -503,7 +503,7 @@ impl ParsedDem {
         // Use combined_effect() to get the union of all detectors/observables
         // since all components fire together when the error occurs
         let mechanisms = self.mechanisms.iter().map(|mech| {
-            let (dets, obs, _tracked_ops) = mech.combined_effect();
+            let (dets, obs, _tracked_paulis) = mech.combined_effect();
             (mech.probability, dets, obs)
         });
 
@@ -529,18 +529,18 @@ impl ParsedDem {
                 })
             })
             .collect();
-        let tracked_ops = self
-            .tracked_ops
+        let tracked_paulis = self
+            .tracked_paulis
             .iter()
             .enumerate()
             .map(|(id, output)| {
                 output.clone().or_else(|| {
                     #[allow(clippy::cast_possible_truncation)]
-                    // parsed tracked-op count fits in u32
+                    // parsed tracked-Pauli count fits in u32
                     {
                         Some(
                             DemOutput::new(id as u32)
-                                .with_kind(crate::fault_tolerance::DemOutputKind::TrackedOperator),
+                                .with_kind(crate::fault_tolerance::DemOutputKind::TrackedPauli),
                         )
                     }
                 })
@@ -548,7 +548,7 @@ impl ParsedDem {
             .collect();
 
         super::sampler::DemSampler::from_engine(engine)
-            .with_dem_output_metadata(dem_outputs, tracked_ops)
+            .with_dem_output_metadata(dem_outputs, tracked_paulis)
     }
 
     /// Convert to a decomposed (graphlike) DEM string.
@@ -633,9 +633,9 @@ impl FromStr for ParsedDem {
         let mut mechanisms = Vec::new();
         let mut max_det: i32 = -1;
         let mut max_obs: i32 = -1;
-        let mut max_tracked_op: i32 = -1;
+        let mut max_tracked_pauli: i32 = -1;
         let mut dem_outputs: Vec<Option<DemOutput>> = Vec::new();
-        let mut tracked_ops: Vec<Option<DemOutput>> = Vec::new();
+        let mut tracked_paulis: Vec<Option<DemOutput>> = Vec::new();
 
         for line in dem_str.lines() {
             let line = line.trim();
@@ -663,10 +663,10 @@ impl FromStr for ParsedDem {
                             max_obs = max_obs.max(o as i32);
                         }
                     }
-                    for &op in &comp.tracked_ops {
-                        #[allow(clippy::cast_possible_wrap)] // tracked-op ID fits in i32
+                    for &op in &comp.tracked_paulis {
+                        #[allow(clippy::cast_possible_wrap)] // tracked-Pauli ID fits in i32
                         {
-                            max_tracked_op = max_tracked_op.max(op as i32);
+                            max_tracked_pauli = max_tracked_pauli.max(op as i32);
                         }
                     }
                 }
@@ -696,15 +696,17 @@ impl FromStr for ParsedDem {
                 );
             }
             // Parse PECOS DEM-superset metadata declarations.
-            else if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_op") {
+            else if line.starts_with("pecos_observable")
+                || line.starts_with("pecos_tracked_pauli")
+            {
                 let op = parse_pecos_dem_metadata_line(line)
                     .map_err(|err| DemParseError::InvalidPecosMetadata(err.to_string()))?;
-                if op.is_tracked_operator() {
-                    #[allow(clippy::cast_possible_wrap)] // tracked-op ID fits in i32
+                if op.is_tracked_pauli() {
+                    #[allow(clippy::cast_possible_wrap)] // tracked-Pauli ID fits in i32
                     {
-                        max_tracked_op = max_tracked_op.max(op.id as i32);
+                        max_tracked_pauli = max_tracked_pauli.max(op.id as i32);
                     }
-                    Self::record_metadata(&mut tracked_ops, op);
+                    Self::record_metadata(&mut tracked_paulis, op);
                 } else {
                     #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
                     {
@@ -729,10 +731,10 @@ impl FromStr for ParsedDem {
                 dem_outputs.resize(max_obs as usize + 1, None);
             }
         }
-        if max_tracked_op >= 0 {
+        if max_tracked_pauli >= 0 {
             #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
             {
-                tracked_ops.resize(max_tracked_op as usize + 1, None);
+                tracked_paulis.resize(max_tracked_pauli as usize + 1, None);
             }
         }
 
@@ -755,7 +757,7 @@ impl FromStr for ParsedDem {
                 0
             },
             dem_outputs,
-            tracked_ops,
+            tracked_paulis,
         })
     }
 }
@@ -775,8 +777,8 @@ pub enum DemParseError {
     InvalidDetectorId(String),
     /// Invalid observable ID.
     InvalidObservableId(String),
-    /// Invalid tracked-Pauli operator ID.
-    InvalidTrackedOpId(String),
+    /// Invalid tracked-Pauli ID.
+    InvalidTrackedPauliId(String),
     /// Invalid target token in an error line.
     InvalidTarget(String),
     /// Invalid PECOS DEM-superset metadata.
@@ -790,7 +792,7 @@ impl std::fmt::Display for DemParseError {
             Self::InvalidProbability(s) => write!(f, "Invalid probability: {s}"),
             Self::InvalidDetectorId(s) => write!(f, "Invalid detector ID: {s}"),
             Self::InvalidObservableId(s) => write!(f, "Invalid observable ID: {s}"),
-            Self::InvalidTrackedOpId(s) => write!(f, "Invalid tracked Pauli ID: {s}"),
+            Self::InvalidTrackedPauliId(s) => write!(f, "Invalid tracked Pauli ID: {s}"),
             Self::InvalidTarget(s) => write!(f, "Invalid DEM error target: {s}"),
             Self::InvalidPecosMetadata(s) => write!(f, "Invalid PECOS DEM metadata: {s}"),
         }
@@ -1259,7 +1261,7 @@ mod tests {
     fn test_parse_accepts_pecos_dem_superset_metadata() {
         let dem_str = r#"
             error(0.02) D0 TP0
-            pecos_tracked_op {"id":0,"kind":"tracked_operator","label":"track","pauli":"+X0 Z2","records":[]}
+            pecos_tracked_pauli {"id":0,"kind":"tracked_pauli","label":"track","pauli":"+X0 Z2","records":[]}
         "#;
         let dem = ParsedDem::from_str(dem_str).unwrap();
 
@@ -1267,22 +1269,22 @@ mod tests {
         assert_eq!(dem.num_detectors, 1);
         assert_eq!(dem.num_dem_outputs(), 0);
         assert_eq!(dem.num_observables(), 0);
-        assert_eq!(dem.num_tracked_ops(), 1);
-        assert_eq!(dem.mechanisms[0].components[0].tracked_ops, vec![0]);
+        assert_eq!(dem.num_tracked_paulis(), 1);
+        assert_eq!(dem.mechanisms[0].components[0].tracked_paulis, vec![0]);
         assert_eq!(dem.mechanisms[0].format_targets(), "D0 TP0");
         assert_eq!(dem.mechanisms[0].effect_key().to_string(), "D0 TP0");
-        let op = dem.tracked_ops[0].as_ref().unwrap();
+        let op = dem.tracked_paulis[0].as_ref().unwrap();
         assert_eq!(op.label.as_deref(), Some("track"));
         assert_eq!(
             op.kind,
-            Some(crate::fault_tolerance::DemOutputKind::TrackedOperator)
+            Some(crate::fault_tolerance::DemOutputKind::TrackedPauli)
         );
         assert_eq!(op.pauli.as_ref().unwrap().to_sparse_str(), "+X0 Z2");
     }
 
     #[test]
     fn test_parse_rejects_malformed_pecos_dem_superset_metadata() {
-        let err = ParsedDem::from_str("pecos_tracked_op not-json").unwrap_err();
+        let err = ParsedDem::from_str("pecos_tracked_pauli not-json").unwrap_err();
         assert!(matches!(err, DemParseError::InvalidPecosMetadata(_)));
     }
 
@@ -1292,39 +1294,39 @@ mod tests {
 
         assert_eq!(dem.num_detectors, 2);
         assert_eq!(dem.num_dem_outputs(), 1);
-        assert_eq!(dem.num_tracked_ops(), 3);
+        assert_eq!(dem.num_tracked_paulis(), 3);
         assert_eq!(dem.mechanisms[0].components[0].detectors, vec![1]);
         assert_eq!(dem.mechanisms[0].components[0].observables, vec![0]);
-        assert_eq!(dem.mechanisms[0].components[0].tracked_ops, vec![2]);
+        assert_eq!(dem.mechanisms[0].components[0].tracked_paulis, vec![2]);
         assert_eq!(dem.mechanisms[0].effect_key().to_string(), "D1 L0 TP2");
     }
 
     #[test]
     fn test_decomposed_tracked_pauli_targets_xor_by_parity() {
         let cancels = ParsedDem::from_str("error(0.5) TP0 ^ TP0").unwrap();
-        let (dets, obs, tracked_ops) = cancels.mechanisms[0].combined_effect();
+        let (dets, obs, tracked_paulis) = cancels.mechanisms[0].combined_effect();
         assert!(dets.is_empty());
         assert!(obs.is_empty());
-        assert!(tracked_ops.is_empty());
+        assert!(tracked_paulis.is_empty());
         assert_eq!(cancels.mechanisms[0].effect_key().to_string(), "(empty)");
 
         let leaves_detector = ParsedDem::from_str("error(0.5) D0 TP0 ^ TP0").unwrap();
-        let (dets, obs, tracked_ops) = leaves_detector.mechanisms[0].combined_effect();
+        let (dets, obs, tracked_paulis) = leaves_detector.mechanisms[0].combined_effect();
         assert_eq!(dets, vec![0]);
         assert!(obs.is_empty());
-        assert!(tracked_ops.is_empty());
+        assert!(tracked_paulis.is_empty());
         assert_eq!(leaves_detector.mechanisms[0].effect_key().to_string(), "D0");
     }
 
     #[test]
     fn test_duplicate_tracked_pauli_targets_cancel_by_parity() {
         let dem = ParsedDem::from_str("error(0.1) TP0 TP0").unwrap();
-        assert_eq!(dem.mechanisms[0].components[0].tracked_ops, vec![0, 0]);
+        assert_eq!(dem.mechanisms[0].components[0].tracked_paulis, vec![0, 0]);
 
-        let (dets, obs, tracked_ops) = dem.mechanisms[0].combined_effect();
+        let (dets, obs, tracked_paulis) = dem.mechanisms[0].combined_effect();
         assert!(dets.is_empty());
         assert!(obs.is_empty());
-        assert!(tracked_ops.is_empty());
+        assert!(tracked_paulis.is_empty());
         assert_eq!(dem.mechanisms[0].effect_key().to_string(), "(empty)");
     }
 
@@ -1340,7 +1342,7 @@ mod tests {
         for target in ["TP", "TPx", "TP-1"] {
             let err = ParsedDem::from_str(&format!("error(0.125) {target}")).unwrap_err();
             assert!(
-                matches!(err, DemParseError::InvalidTrackedOpId(_)),
+                matches!(err, DemParseError::InvalidTrackedPauliId(_)),
                 "{target} should be rejected as a malformed tracked-Pauli target"
             );
         }
@@ -1352,20 +1354,20 @@ mod tests {
         let sampler = dem.to_dem_sampler();
         let mut rng = PecosRng::seed_from_u64(123);
 
-        assert_eq!(dem.num_tracked_ops(), 1);
+        assert_eq!(dem.num_tracked_paulis(), 1);
         assert_eq!(sampler.num_detectors(), 0);
         assert_eq!(sampler.num_dem_outputs(), 0);
-        assert_eq!(sampler.num_tracked_ops(), 1);
+        assert_eq!(sampler.num_tracked_paulis(), 1);
         let (detectors, dem_outputs) = sampler.sample(&mut rng);
         assert!(detectors.is_empty());
         assert!(dem_outputs.is_empty());
-        let err = sampler.sample_tracked_operator_flips(&mut rng).unwrap_err();
+        let err = sampler.sample_tracked_pauli_flips(&mut rng).unwrap_err();
         assert_eq!(err.backend(), "DemSampler");
-        assert_eq!(err.num_tracked_ops(), 1);
+        assert_eq!(err.num_tracked_paulis(), 1);
     }
 
     #[test]
-    fn test_parsed_dem_samplers_project_different_tracked_ops_the_same() {
+    fn test_parsed_dem_samplers_project_different_tracked_paulis_the_same() {
         let dem1 = ParsedDem::from_str("error(1.0) D0 TP0").unwrap();
         let dem2 = ParsedDem::from_str("error(1.0) D0 TP1").unwrap();
         let sampler1 = dem1.to_dem_sampler();
@@ -1377,8 +1379,8 @@ mod tests {
         assert_eq!(sampler2.num_detectors(), 1);
         assert_eq!(sampler1.num_dem_outputs(), 0);
         assert_eq!(sampler2.num_dem_outputs(), 0);
-        assert_eq!(sampler1.num_tracked_ops(), 1);
-        assert_eq!(sampler2.num_tracked_ops(), 2);
+        assert_eq!(sampler1.num_tracked_paulis(), 1);
+        assert_eq!(sampler2.num_tracked_paulis(), 2);
         assert_eq!(sampler1.sample(&mut rng1), sampler2.sample(&mut rng2));
     }
 
@@ -1515,10 +1517,10 @@ error(0.02) D1 D2
         let dem = ParsedDem::from_str("error(0.5) D0 ^ D0").unwrap();
 
         // The combined effect should be empty
-        let (dets, obs, tracked_ops) = dem.mechanisms[0].combined_effect();
+        let (dets, obs, tracked_paulis) = dem.mechanisms[0].combined_effect();
         assert!(dets.is_empty());
         assert!(obs.is_empty());
-        assert!(tracked_ops.is_empty());
+        assert!(tracked_paulis.is_empty());
 
         // Sample and verify D0 never fires
         let mut rng = PecosRng::seed_from_u64(42);

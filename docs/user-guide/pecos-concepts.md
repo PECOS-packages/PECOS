@@ -10,7 +10,7 @@ the public API should make the distinction clear.
 |---|---|---|---|
 | Detector | A parity check on measurement records | Measurement record metadata | Syndrome bit |
 | Observable | A measured logical or experiment output | Measurement record metadata | Logical class decoded from the syndrome |
-| Tracked operator | A Pauli operator inserted as a non-physical probe | Circuit annotation | Analysis output, ignored by ordinary DEM decoders |
+| Tracked Pauli | A Pauli operator inserted as a non-physical probe | Circuit annotation | Analysis output, ignored by ordinary DEM decoders |
 | Gate | An ideal operation in a circuit | Circuit builder | No noise unless a noise model attaches it |
 | Channel | A physical CPTP map, often noise | Noise model or explicit channel op | Source of stochastic or coherent faults |
 | Fault location | One independent place a modeled fault can occur | Fault catalog | Unit of fault enumeration and sampling |
@@ -28,20 +28,20 @@ measurement records, so they are things the experiment can observe directly or
 infer from recorded measurement data. Logical error rate terminology in PECOS
 continues to refer to errors in these logical observables.
 
-**Tracked operators** are Pauli operators placed at a circuit point as probes.
+**Tracked Paulis** are Pauli strings placed at a circuit point as probes.
 They are not measured by that annotation and do not become detector syndrome
 bits. Fault-analysis code asks whether propagated faults anticommute with the
-tracked operator at that point. A tracked operator might be a logical operator,
-a stabilizer, or another Pauli probe useful for analysis.
+tracked Pauli at that point. A tracked Pauli might be a logical operator,
+a stabilizer, or another tracked Pauli useful for analysis.
 
 Error events can therefore flip three independent kinds of output:
 
 - detectors: what syndrome bits changed
 - observables: what measured logical or experiment outputs changed
-- tracked operators: what Pauli probes anticommute with the propagated fault
+- tracked Paulis: which tracked Paulis anticommute with the propagated fault
 
-Do not merge observable IDs and tracked-operator IDs. Observable `0` is always
-observable `0`; tracked operators have their own ID space and their own metadata.
+Do not merge observable IDs and tracked-Pauli IDs. Observable `0` is always
+observable `0`; tracked Paulis have their own ID space and their own metadata.
 
 ## Operator Construction
 
@@ -115,7 +115,7 @@ This keeps two actions separate:
 
 PECOS detector-error models represent detector and observable effects that
 ordinary decoders consume. PECOS-specific metadata can also carry tracked
-operators for analysis, but tracked operators are not logical observables and
+Paulis for analysis, but tracked Paulis are not logical observables and
 ordinary DEM decoders should ignore them.
 
 The fault catalog gives the most detailed per-location view:
@@ -123,7 +123,7 @@ The fault catalog gives the most detailed per-location view:
 - `affected_measurements`: raw measurement flips
 - `affected_detectors`: syndrome flips
 - `affected_observables`: measurement-defined logical or experiment outputs
-- `affected_tracked_ops`: Pauli probes flipped by anticommutation
+- `affected_tracked_paulis`: tracked Paulis flipped by anticommutation
 
 ## Recommended Surface-Code Memory Path
 

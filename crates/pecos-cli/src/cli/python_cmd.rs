@@ -3,7 +3,7 @@
 use pecos_build::Result;
 use pecos_build::errors::Error;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Run the python subcommand
@@ -118,6 +118,8 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             }
         );
 
+        remove_stale_extension_artifacts(&repo_root, profile, crate_name)?;
+
         let maturin = venv_bin.join("maturin");
         let mut cmd = Command::new(&maturin);
         cmd.args(["develop", "--uv"]);
@@ -190,5 +192,114 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         Err(e) => Err(Error::Config(format!(
             "Failed to install quantum-pecos: {e}"
         ))),
+    }
+}
+
+fn cargo_profile_dir(profile: &str) -> &'static str {
+    if matches!(profile, "release" | "native") {
+        "release"
+    } else {
+        "debug"
+    }
+}
+
+fn extension_library_filename(crate_name: &str) -> String {
+    let module_name = crate_name.replace('-', "_");
+
+    #[cfg(target_os = "windows")]
+    {
+        format!("{module_name}.dll")
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        format!("lib{module_name}.dylib")
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        format!("lib{module_name}.so")
+    }
+}
+
+fn extension_artifact_candidates(
+    repo_root: &Path,
+    profile: &str,
+    crate_name: &str,
+) -> [PathBuf; 3] {
+    let filename = extension_library_filename(crate_name);
+    let target_dir = repo_root.join("target");
+    let profile_dir = target_dir.join(cargo_profile_dir(profile));
+
+    [
+        profile_dir.join(&filename),
+        profile_dir.join("deps").join(&filename),
+        target_dir.join("maturin").join(&filename),
+    ]
+}
+
+fn remove_stale_extension_artifacts(
+    repo_root: &Path,
+    profile: &str,
+    crate_name: &str,
+) -> Result<()> {
+    let [profile_artifact, deps_artifact, maturin_staging_artifact] =
+        extension_artifact_candidates(repo_root, profile, crate_name);
+
+    for path in [profile_artifact, deps_artifact] {
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() == 0 => {
+                println!(
+                    "Removing zero-byte extension artifact before rebuild: {}",
+                    path.display()
+                );
+                fs::remove_file(path)?;
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    match fs::metadata(&maturin_staging_artifact) {
+        Ok(metadata) if metadata.is_file() => {
+            println!(
+                "Removing stale maturin staging artifact before rebuild: {}",
+                maturin_staging_artifact.display()
+            );
+            fs::remove_file(maturin_staging_artifact)?;
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_profile_dir_maps_native_to_release() {
+        assert_eq!(cargo_profile_dir("debug"), "debug");
+        assert_eq!(cargo_profile_dir("release"), "release");
+        assert_eq!(cargo_profile_dir("native"), "release");
+    }
+
+    #[test]
+    fn extension_artifact_candidates_use_python_module_name() {
+        let repo = PathBuf::from("/repo");
+        let candidates = extension_artifact_candidates(&repo, "debug", "pecos-rslib-llvm");
+        let filename = extension_library_filename("pecos-rslib-llvm");
+
+        assert!(filename.contains("pecos_rslib_llvm"));
+        assert_eq!(candidates[0], repo.join("target/debug").join(&filename));
+        assert_eq!(
+            candidates[1],
+            repo.join("target/debug/deps").join(&filename)
+        );
+        assert_eq!(candidates[2], repo.join("target/maturin").join(&filename));
     }
 }

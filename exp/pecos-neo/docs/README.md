@@ -93,7 +93,7 @@ Full guide: [Events, Signals, and Handlers](user-guides/events.md)
 ### Run simple circuits or control the simulation step-by-step
 
 `CircuitRunner` is a good fit when you just want to run a circuit without the
-full `sim_neo` orchestration, or when you want direct control over the
+full `sim_neo` execution stack, or when you want direct control over the
 simulation process -- stepping through gates, inspecting state between
 operations, or integrating into your own execution loop.
 

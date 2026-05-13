@@ -2,8 +2,24 @@
 
 ## Overview
 
-This document describes the Bevy-inspired `Tool` architecture for pecos-neo, providing a
-flexible, plugin-based system for building various quantum simulation and validation tools.
+PECOS is a QEC/QCVV library for solving concrete research and engineering
+tasks by forming tools. A tool is the runnable workflow the user cares about:
+quantum simulation, DEM sampling, fault catalog generation, decoding,
+validation, tomography, or a related analysis workflow.
+
+Common tools are usually exposed through convenience functions that return
+specialized builders. Those builders often use a builder-of-builders pattern:
+users pass smaller builders for quantum engines, classical engines, noise
+models, sampling strategies, decoders, and other role-specific components.
+Those component builders can come from PECOS or from external crates/packages,
+as long as they implement the relevant traits and capability contracts. This
+keeps PECOS flexible without requiring every extension to be hard-coded into a
+central backend enum.
+
+Underneath those public builders, pecos-neo uses a `Tool` architecture inspired
+by Bevy's `App` approach: resources, systems, plugins, schedules, and
+data-oriented execution plans. This lets different tools share implementation
+components without forcing the public API into one generic abstraction.
 
 ## Design Goals
 
@@ -12,6 +28,37 @@ flexible, plugin-based system for building various quantum simulation and valida
 3. **Reusable**: Build once, run many times with reconfiguration between runs
 4. **Convenient**: Specialized builders like `sim_neo()` mirror `sim()` ergonomics
 5. **Extensible**: Easy to add new tool types (simulation, FT validation, etc.)
+
+## Public API Framing
+
+PECOS should expose domain-specific tool builders, not one generic backend
+switch. Entry points such as `sim_neo(...)`, future DEM sampling helpers, fault
+catalog builders, and validation tools are convenience functions that assemble a
+`Tool` from shared components. Most of these entry points follow a
+builder-of-builders pattern:
+
+```rust
+sim_neo(circuit)
+    .classical(qasm_engine())
+    .quantum(stabilizer())
+    .sampling(importance_sampling())
+    .build()
+    .run();
+```
+
+The public method names should describe the domain role of each component:
+
+- `.quantum(...)` selects a quantum simulator/engine for circuit-like sources.
+- `.sampling(...)` selects the statistical strategy, such as Monte Carlo or
+  rare-event sampling.
+- `.noise(...)` configures noise modeling when the tool supports it.
+
+Avoid exposing a broad `.backend(...)` concept at the main user layer. A DEM
+sampler, a quantum state simulator, and a fault-catalog enumerator can share
+execution infrastructure internally, but they are different tools from the
+user's perspective. Internally, runner/driver/factory traits can stay generic
+and capability-based; externally, the API should remain scientific-domain
+specific and immediately readable.
 
 ## Architecture
 
@@ -183,7 +230,7 @@ impl SimNeoBuilder {
             .insert_resource(self.config)
             .insert_resource(QuantumBackendResource(self.quantum_backend));
 
-        Simulation { tool, orchestrator: self.orchestrator, parallel_data }
+        Simulation { tool, sampling: self.sampling, parallel_data }
     }
 }
 ```
@@ -195,7 +242,7 @@ Reusable handle that wraps a configured Tool:
 ```rust
 pub struct Simulation {
     tool: Tool,
-    orchestrator: Orchestrator,
+    sampling: Sampling,
     parallel_data: Option<ParallelExecutionData>,
 }
 
@@ -293,7 +340,7 @@ impl Plugin for NoisePlugin {
 
 ### `ImportanceSamplingSimPlugin`
 
-When the importance sampling orchestrator is selected, this plugin replaces
+When the importance sampling strategy is selected, this plugin replaces
 `UnifiedSimulationPlugin`. It uses `ImportanceSamplingRunner` internally for
 biased noise with weight tracking, running through the same Stage/Schedule
 system as Monte Carlo execution.
@@ -319,7 +366,7 @@ just as they do for Monte Carlo.
 
 A standalone plugin for manual weight tracking (pre-shot reset, post-shot
 recording, finish statistics). Available for users building custom Tool
-configurations. Not used by the IS orchestrator path, which handles its own
+configurations. Not used by the IS sampling path, which handles its own
 weight storage via `SimulationResults.weights`.
 
 ## Results
@@ -415,7 +462,7 @@ let results = tool.resource::<MyResults>();
 
 ### Phase 3: Advanced Features
 - [x] `ImportanceSamplingPlugin`
-- [x] Parallel execution (MonteCarlo orchestrator with workers > 1)
+- [x] Parallel execution (MonteCarlo sampling with workers > 1)
 - [ ] `FTValidatorBuilder` and FT validation
 
 ### Phase 4: Integration

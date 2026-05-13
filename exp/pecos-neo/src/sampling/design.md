@@ -538,7 +538,7 @@ fn enumerate_paths(
    - Implements `CommandSource` to bridge to pecos-neo infrastructure
    - Conversion utilities: `gate_to_command`, `gates_to_command_queue`, `command_queue_to_gates`
    - `ByteMessage` <-> `CommandQueue` / `MeasurementOutcomes` conversion
-   - Feature-gated via `engines-adapter` feature
+   - Always available as part of the core `pecos-neo` builder integration
 
 ### Next Steps
 

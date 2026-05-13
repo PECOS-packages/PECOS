@@ -20,7 +20,7 @@ This works well for standard quantum simulation, but real-world use cases need
 richer communication between pipeline participants:
 
 - A classical engine annotating qubits with zone temperatures or timing metadata
-- An orchestrator marking QEC round boundaries for importance sampling sync points
+- A sampling controller marking QEC round boundaries for importance sampling sync points
 - A noise model receiving backend-specific hints (e.g., "use approximate mode")
 - A simulator receiving custom instructions that aren't standard gates
 - Per-qubit calibration data flowing from a device model
@@ -591,7 +591,7 @@ for round in 0..num_rounds {
     // ... syndrome extraction circuit ...
 }
 
-// Orchestrator reads round boundaries via signal handler
+// Sampling controller reads round boundaries via signal handler
 runner.on_signal::<RoundBoundary>(|round| {
     // round.0 is the round number
 });
@@ -657,7 +657,7 @@ impl NoiseChannel for AdaptiveNoise {
     fn name(&self) -> &'static str { "adaptive" }
 }
 
-// Orchestrator also sees the same signal (observe-only)
+// Sampling controller also sees the same signal (observe-only)
 runner.on_signal::<RoundBoundary>(|round| {
     // sync point for importance sampling
 });
@@ -784,28 +784,28 @@ simple data is fast, complex data costs more. No artificial distinction needed.
    `QubitId`s as fields. Most signals (temperatures, round boundaries, flags)
    don't need them.
 
-2. **Signals are per-entity; orchestrator gets its own store.** Each entity
+2. **Signals are per-entity; sampling controller gets its own store.** Each entity
    processes its own `CommandQueue` with its own signals -- this is the common
-   case. The orchestrator can also hold signals in the `World` as a shared
+   case. The sampling controller can also hold signals in the `World` as a shared
    resource (e.g., a `SignalStore` component on a well-known entity or a
-   dedicated `World` resource). This keeps orchestrator-level signals inside
+   dedicated `World` resource). This keeps sampling-level signals inside
    the `World` rather than as external state.
 
 3. **Signals are one-directional.** The forward path is
    engine -> `CommandQueue` -> runner -> consumers. The existing backward
    paths already cover responses:
    - `NoiseResponse` (noise channels respond to events including signals)
-   - `MeasurementOutcomes` (results flow back to the orchestrator)
-   - Orchestrator inspection of per-shot results (weights, outcomes, etc.)
+   - `MeasurementOutcomes` (results flow back to the sampling controller)
+   - Sampling controller inspection of per-shot results (weights, outcomes, etc.)
 
    If request/response semantics are needed, define two signal types and use
-   the orchestrator as intermediary: `CalibrationRequest` flows forward in
-   shot N, the orchestrator observes results, then injects `CalibrationUpdate`
+   the sampling controller as intermediary: `CalibrationRequest` flows forward in
+   shot N, the sampling controller observes results, then injects `CalibrationUpdate`
    into shot N+1's `CommandQueue`. No special bidirectional infrastructure.
 
 4. **Signals are transient per-shot.** Signals live in the `CommandQueue` and
    are consumed during shot execution. They do not persist across shots. The
-   orchestrator can observe results and decide to inject new signals into
+   sampling controller can observe results and decide to inject new signals into
    subsequent shots, but the signals themselves are re-emitted each time.
 
 5. **`Signal` trait and `impl_signal!` macro live in pecos-core.** The trait

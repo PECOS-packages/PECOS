@@ -26,11 +26,8 @@ rand_core.workspace = true
 rayon.workspace = true
 num_cpus = "1.16"
 
-# Optional: for adapter to wrap classical engines
-pecos-engines = { workspace = true, optional = true }
-
-# Optional: for program types (Qasm, Program enum, etc.)
-pecos-programs = { workspace = true, optional = true }
+pecos-engines.workspace = true
+pecos-programs.workspace = true
 # Optional: for QASM support
 pecos-qasm = { workspace = true, optional = true }
 # Optional: for direct HUGR interpreter support
@@ -39,7 +36,6 @@ pecos-hugr = { workspace = true, optional = true }
 [dev-dependencies]
 rand.workspace = true
 num-complex.workspace = true
-pecos-engines.workspace = true
 pecos-qasm.workspace = true
 pecos-hugr.workspace = true
 criterion.workspace = true
@@ -53,9 +49,8 @@ harness = false
 
 [features]
 default = []
-engines-adapter = ["dep:pecos-engines", "dep:pecos-programs"]
-qasm = ["engines-adapter", "dep:pecos-qasm"]
-hugr = ["engines-adapter", "dep:pecos-hugr"]
+qasm = ["dep:pecos-qasm"]
+hugr = ["dep:pecos-hugr"]
 
 [lints]
 workspace = true

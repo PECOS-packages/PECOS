@@ -122,7 +122,9 @@ use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use pecos_random::PecosRng;
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, SparseStab, StateVec};
+use pecos_simulators::{
+    ArbitraryRotationGateable, CliffordGateable, SparseStab, Stabilizer, StateVec,
+};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
@@ -144,11 +146,23 @@ pub enum QuantumBackend {
     #[default]
     SparseStab,
 
+    /// Public stabilizer simulator.
+    ///
+    /// Uses PECOS's stable stabilizer simulator interface while preserving
+    /// Clifford-only semantics.
+    Stabilizer,
+
     /// State vector simulator.
     ///
     /// Supports arbitrary gates including non-Clifford (T, rotations).
     /// Memory scales as 2^n for n qubits.
     StateVec,
+
+    /// Adapted `pecos-engines` quantum-engine builder.
+    ///
+    /// This path uses `QuantumEngineProgramRunner` to execute `sim_neo` command
+    /// batches through the gate-by-gate `QuantumEngine` protocol.
+    AdaptedQuantumEngine(Box<dyn AdaptedQuantumEngineFactory>),
 
     /// Custom simulator backend via factory function.
     ///
@@ -164,7 +178,9 @@ impl std::fmt::Debug for QuantumBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SparseStab => write!(f, "SparseStab"),
+            Self::Stabilizer => write!(f, "Stabilizer"),
             Self::StateVec => write!(f, "StateVec"),
+            Self::AdaptedQuantumEngine(_) => write!(f, "AdaptedQuantumEngine(...)"),
             Self::Custom(_) => write!(f, "Custom(...)"),
         }
     }
@@ -187,6 +203,27 @@ impl SparseStabBuilder {
 impl From<SparseStabBuilder> for QuantumBackend {
     fn from(_: SparseStabBuilder) -> Self {
         QuantumBackend::SparseStab
+    }
+}
+
+/// Builder for the public stabilizer backend configuration.
+///
+/// Currently a simple marker type; future versions may add configuration
+/// options while preserving the stable simulator interface.
+#[derive(Debug, Clone, Default)]
+pub struct StabilizerBuilder;
+
+impl StabilizerBuilder {
+    /// Create a new stabilizer builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl From<StabilizerBuilder> for QuantumBackend {
+    fn from(_: StabilizerBuilder) -> Self {
+        QuantumBackend::Stabilizer
     }
 }
 
@@ -234,6 +271,30 @@ pub fn sparse_stab() -> SparseStabBuilder {
     SparseStabBuilder::new()
 }
 
+/// Create a stabilizer backend builder.
+///
+/// This is the stable public stabilizer backend for Clifford circuits. Use
+/// [`sparse_stab()`] when you specifically want the current sparse-tableau
+/// implementation.
+///
+/// # Example
+///
+/// ```no_run
+/// use pecos_neo::tool::{sim_neo, stabilizer};
+/// use pecos_neo::prelude::*;
+///
+/// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
+/// let results = sim_neo(circuit)
+///     .quantum(stabilizer())
+///     .shots(1000)
+///     .build()
+///     .run();
+/// ```
+#[must_use]
+pub fn stabilizer() -> StabilizerBuilder {
+    StabilizerBuilder::new()
+}
+
 /// Create a state vector backend builder.
 ///
 /// The state vector simulator supports arbitrary gates including non-Clifford
@@ -269,6 +330,15 @@ pub fn state_vector() -> StateVecBuilder {
 /// Implement this directly only for advanced use cases (e.g., simulators that
 /// need custom noise injection or seed handling).
 pub trait SimulatorFactory: Send + Sync {
+    /// Short diagnostic label for error messages.
+    ///
+    /// This is not used for dispatch; execution is selected by the trait
+    /// object itself. The label only keeps unsupported-configuration errors
+    /// readable after type erasure.
+    fn diagnostic_label(&self) -> &'static str {
+        "custom backend"
+    }
+
     /// Create a program runner for the given number of qubits.
     ///
     /// Called once during simulation startup. The returned runner handles
@@ -284,6 +354,58 @@ pub trait SimulatorFactory: Send + Sync {
         noise: Option<ComposableNoiseModel>,
         seed: Option<u64>,
     ) -> Box<dyn DynProgramRunner>;
+}
+#[doc(hidden)]
+pub trait AdaptedQuantumEngineFactory: Send + Sync {
+    fn create_runner(&self, num_qubits: usize, seed: Option<u64>) -> Box<dyn DynProgramRunner>;
+
+    fn create_parallel_runner_factory(
+        &self,
+        num_qubits: usize,
+    ) -> Box<dyn ParallelQuantumRunnerFactory>;
+}
+struct QuantumEngineSimulatorFactory<B>
+where
+    B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
+{
+    builder: B,
+}
+impl<B> AdaptedQuantumEngineFactory for QuantumEngineSimulatorFactory<B>
+where
+    B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
+{
+    fn create_runner(&self, num_qubits: usize, seed: Option<u64>) -> Box<dyn DynProgramRunner> {
+        let mut builder = self.builder.clone();
+        builder.set_qubits_if_needed(num_qubits);
+        let mut engine = builder
+            .build()
+            .expect("Failed to build quantum engine backend");
+        if let Some(seed) = seed {
+            engine.set_seed(seed);
+        }
+        Box::new(crate::adapter::QuantumEngineProgramRunner::new(engine))
+    }
+
+    fn create_parallel_runner_factory(
+        &self,
+        num_qubits: usize,
+    ) -> Box<dyn ParallelQuantumRunnerFactory> {
+        Box::new(AdaptedQuantumEngineRunnerFactory {
+            builder: self.builder.clone(),
+            num_qubits,
+        })
+    }
+}
+impl<B> From<B> for QuantumBackend
+where
+    B: pecos_engines::IntoQuantumEngineBuilder + 'static,
+    B::Builder: Clone + 'static,
+{
+    fn from(builder: B) -> Self {
+        QuantumBackend::AdaptedQuantumEngine(Box::new(QuantumEngineSimulatorFactory {
+            builder: builder.into_quantum_engine_builder(),
+        }))
+    }
 }
 
 /// Blanket implementation for closures that create simulators.
@@ -482,6 +604,13 @@ impl SimNeoInput for CommandQueue {
     }
 }
 
+/// Implementation for boxed dynamic command sources.
+impl SimNeoInput for Box<dyn CommandSource + Send + Sync> {
+    fn into_sim_neo_builder(self) -> SimNeoBuilder {
+        SimNeoBuilder::with_command_source(self)
+    }
+}
+
 /// Implementation for `TickCircuit`.
 impl SimNeoInput for pecos_quantum::TickCircuit {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
@@ -525,7 +654,6 @@ impl SimNeoInput for &pecos_quantum::DagCircuit {
 ///     .build()
 ///     .run();
 /// ```
-#[cfg(feature = "engines-adapter")]
 impl SimNeoInput for &str {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         SimNeoBuilder::with_program_source(self.to_string())
@@ -533,7 +661,6 @@ impl SimNeoInput for &str {
 }
 
 /// Implementation for `String` (program source code).
-#[cfg(feature = "engines-adapter")]
 impl SimNeoInput for String {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         SimNeoBuilder::with_program_source(self)
@@ -566,7 +693,6 @@ impl SimNeoInput for String {
 ///     .build()
 ///     .run();
 /// ```
-#[cfg(feature = "engines-adapter")]
 impl SimNeoInput for pecos_programs::Qasm {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         SimNeoBuilder::with_typed_program(TypedProgram::Qasm(self))
@@ -588,7 +714,6 @@ impl SimNeoInput for pecos_programs::Qasm {
 ///     .build()
 ///     .run();
 /// ```
-#[cfg(feature = "engines-adapter")]
 impl SimNeoInput for pecos_programs::Hugr {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         SimNeoBuilder::with_typed_program(TypedProgram::Hugr(self))
@@ -611,7 +736,6 @@ impl SimNeoInput for pecos_programs::Hugr {
 ///     .build()
 ///     .run();
 /// ```
-#[cfg(feature = "engines-adapter")]
 impl SimNeoInput for pecos_programs::Program {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         let typed = match self {
@@ -647,7 +771,7 @@ impl Default for SimConfig {
     }
 }
 
-/// Builder for importance sampling orchestration.
+/// Builder for importance sampling configuration.
 ///
 /// Specifies the true error rates and boost factor for biased sampling.
 /// Use the [`importance_sampling()`] function to create an instance.
@@ -735,7 +859,7 @@ impl ImportanceSamplingBuilder {
         self
     }
 
-    /// Build the sampling.
+    /// Build the sampling strategy.
     #[must_use]
     pub fn build(self) -> Sampling {
         Sampling::ImportanceSampling { config: self }
@@ -778,7 +902,7 @@ impl From<ImportanceSamplingBuilder> for Sampling {
     }
 }
 
-/// Create an importance sampling sampling builder.
+/// Create an importance sampling strategy builder.
 ///
 /// Importance sampling biases noise toward higher error rates to observe
 /// rare events more frequently, then reweights results for unbiased estimates.
@@ -812,7 +936,7 @@ pub fn importance_sampling() -> ImportanceSamplingBuilder {
     ImportanceSamplingBuilder::new()
 }
 
-/// Orchestration strategy for simulation execution.
+/// Sampling strategy for simulation execution.
 ///
 /// This enum defines how shots are executed. Different strategies offer
 /// trade-offs between simplicity, parallelism, and specialized sampling.
@@ -853,13 +977,13 @@ impl Default for Sampling {
 }
 
 impl Sampling {
-    /// Create a Monte Carlo sampling with specified workers.
+    /// Create a Monte Carlo sampling strategy with specified workers.
     #[must_use]
     pub fn monte_carlo(workers: usize) -> Self {
         Self::MonteCarlo { workers }
     }
 
-    /// Create a Monte Carlo sampling with auto-detected worker count.
+    /// Create a Monte Carlo sampling strategy with auto-detected worker count.
     #[must_use]
     pub fn monte_carlo_auto() -> Self {
         let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
@@ -1060,6 +1184,8 @@ struct MaxDecompDepthResource(usize);
 pub enum StoredOverrides {
     /// Overrides for the sparse stabilizer backend.
     SparseStab(GateOverrides<SparseStab>),
+    /// Overrides for the public stabilizer backend.
+    Stabilizer(GateOverrides<Stabilizer>),
     /// Overrides for the state vector backend.
     StateVec(GateOverrides<StateVec>),
 }
@@ -1067,6 +1193,12 @@ pub enum StoredOverrides {
 impl From<GateOverrides<SparseStab>> for StoredOverrides {
     fn from(overrides: GateOverrides<SparseStab>) -> Self {
         Self::SparseStab(overrides)
+    }
+}
+
+impl From<GateOverrides<Stabilizer>> for StoredOverrides {
+    fn from(overrides: GateOverrides<Stabilizer>) -> Self {
+        Self::Stabilizer(overrides)
     }
 }
 
@@ -1087,8 +1219,10 @@ struct EventHandlersResource(EventHandlers);
 /// Trait for type-erased engine building.
 ///
 /// This allows storing different engine builder types uniformly.
-#[cfg(feature = "engines-adapter")]
 pub trait BoxedEngineBuilder: Send + Sync {
+    /// Clone this builder into a boxed trait object for independent workers.
+    fn clone_box(&self) -> Box<dyn BoxedEngineBuilder>;
+
     /// Build the classical engine and wrap it in an adapter.
     ///
     /// # Errors
@@ -1105,23 +1239,31 @@ pub trait BoxedEngineBuilder: Send + Sync {
     #[allow(dead_code)]
     fn num_qubits_hint(&self) -> Option<usize>;
 }
+impl Clone for Box<dyn BoxedEngineBuilder> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
 
 /// Wrapper for concrete classical engine builders.
-#[cfg(feature = "engines-adapter")]
 struct EngineBuilderWrapper<B>
 where
-    B: pecos_engines::ClassicalControlEngineBuilder + Send + Sync,
+    B: pecos_engines::ClassicalControlEngineBuilder + Clone + Send + Sync,
     B::Engine: 'static,
 {
     builder: B,
 }
-
-#[cfg(feature = "engines-adapter")]
 impl<B> BoxedEngineBuilder for EngineBuilderWrapper<B>
 where
-    B: pecos_engines::ClassicalControlEngineBuilder + Send + Sync,
+    B: pecos_engines::ClassicalControlEngineBuilder + Clone + Send + Sync + 'static,
     B::Engine: 'static,
 {
+    fn clone_box(&self) -> Box<dyn BoxedEngineBuilder> {
+        Box::new(EngineBuilderWrapper {
+            builder: self.builder.clone(),
+        })
+    }
+
     fn build_adapter(
         self: Box<Self>,
     ) -> Result<Box<dyn CommandSource + Send + Sync>, pecos_core::errors::PecosError> {
@@ -1137,44 +1279,39 @@ where
     }
 }
 
-/// Engine builder stored as data, waiting for source to be configured at build time.
+/// Engine builder stored as data, waiting for source text to be configured at build time.
 ///
-/// This enum holds engine builders in their unconfigured state. At `.build()` time,
-/// the source code is injected and the builder is configured. This follows the
-/// "everything is data" principle - we store configuration as data and defer
-/// actual construction to build time.
-#[cfg(feature = "engines-adapter")]
-pub enum PendingEngineBuilder {
-    /// QASM engine builder (requires `qasm` feature)
-    #[cfg(feature = "qasm")]
-    Qasm(pecos_qasm::QasmEngineBuilder),
-    /// HUGR engine builder (requires `hugr` feature)
-    #[cfg(feature = "hugr")]
-    Hugr(pecos_hugr::HugrEngineBuilder),
+/// This keeps `.classical(builder)` shape-based instead of tying it to a closed
+/// list of built-in language frontends. Built-in QASM/HUGR builders provide
+/// `From` impls when those optional frontend features are enabled, and external
+/// crates can construct this wrapper with [`PendingEngineBuilder::from_source_builder`].
+pub struct PendingEngineBuilder {
+    configure: Box<dyn FnOnce(String) -> Box<dyn BoxedEngineBuilder> + Send + Sync>,
 }
 
-#[cfg(feature = "engines-adapter")]
 impl PendingEngineBuilder {
+    /// Create a pending source builder from a function that accepts raw source
+    /// and returns a configured classical-engine builder.
+    pub fn from_source_builder<B, F>(configure: F) -> Self
+    where
+        B: pecos_engines::ClassicalControlEngineBuilder + Clone + Send + Sync + 'static,
+        B::Engine: 'static,
+        F: FnOnce(String) -> B + Send + Sync + 'static,
+    {
+        Self {
+            configure: Box::new(move |source| {
+                Box::new(EngineBuilderWrapper {
+                    builder: configure(source),
+                })
+            }),
+        }
+    }
+
     /// Configure this builder with source and return a boxed engine builder.
     ///
     /// Called at `.build()` time to inject the source into the stored builder.
     fn configure_with_source(self, source: String) -> Box<dyn BoxedEngineBuilder> {
-        match self {
-            #[cfg(feature = "qasm")]
-            Self::Qasm(builder) => {
-                let configured = builder.qasm(source);
-                Box::new(EngineBuilderWrapper {
-                    builder: configured,
-                })
-            }
-            #[cfg(feature = "hugr")]
-            Self::Hugr(builder) => {
-                let configured = builder.hugr_bytes(source.into_bytes());
-                Box::new(EngineBuilderWrapper {
-                    builder: configured,
-                })
-            }
-        }
+        (self.configure)(source)
     }
 }
 
@@ -1182,7 +1319,7 @@ impl PendingEngineBuilder {
 #[cfg(feature = "qasm")]
 impl From<pecos_qasm::QasmEngineBuilder> for PendingEngineBuilder {
     fn from(builder: pecos_qasm::QasmEngineBuilder) -> Self {
-        Self::Qasm(builder)
+        Self::from_source_builder(move |source| builder.qasm(source))
     }
 }
 
@@ -1190,7 +1327,7 @@ impl From<pecos_qasm::QasmEngineBuilder> for PendingEngineBuilder {
 #[cfg(feature = "hugr")]
 impl From<pecos_hugr::HugrEngineBuilder> for PendingEngineBuilder {
     fn from(builder: pecos_hugr::HugrEngineBuilder) -> Self {
-        Self::Hugr(builder)
+        Self::from_source_builder(move |source| builder.hugr_bytes(source.into_bytes()))
     }
 }
 
@@ -1198,21 +1335,19 @@ impl From<pecos_hugr::HugrEngineBuilder> for PendingEngineBuilder {
 pub enum ProgramSource {
     /// A static circuit (no mid-circuit feedback).
     Static(CommandQueue),
+    /// A dynamic command source.
+    Dynamic(Box<dyn CommandSource + Send + Sync>),
     /// Raw program source code (needs engine factory to interpret).
-    #[cfg(feature = "engines-adapter")]
     RawSource(String),
     /// A typed program (knows its type, can use `.auto()` for engine selection).
-    #[cfg(feature = "engines-adapter")]
     Typed(TypedProgram),
     /// A classical engine builder (supports mid-circuit feedback).
-    #[cfg(feature = "engines-adapter")]
     Classical(Box<dyn BoxedEngineBuilder>),
 }
 
 /// Typed program variants for automatic engine selection.
 ///
 /// When using `.auto()`, the appropriate engine is selected based on the variant.
-#[cfg(feature = "engines-adapter")]
 #[derive(Debug, Clone)]
 pub enum TypedProgram {
     /// QASM program - uses `qasm_engine()`
@@ -1228,6 +1363,15 @@ pub struct ProgramSourceResource(pub ProgramSource);
 
 /// Temporary storage for current shot outcomes.
 struct CurrentOutcomes(MeasurementOutcomes);
+
+fn infer_num_qubits_from_circuit(circuit: &CommandQueue) -> usize {
+    circuit
+        .iter()
+        .flat_map(|cmd| cmd.qubits.iter())
+        .map(|q| q.0)
+        .max()
+        .map_or(1, |max| max + 1)
+}
 
 // --- SimNeoBuilder ---
 
@@ -1290,7 +1434,6 @@ pub struct SimNeoBuilder {
     /// The program source (circuit, raw source, or engine builder).
     source: Option<ProgramSource>,
     /// Engine builder stored as data, waiting for source at build time.
-    #[cfg(feature = "engines-adapter")]
     pending_builder: Option<PendingEngineBuilder>,
     /// Noise model (collected as data, used at build time).
     noise: Option<ComposableNoiseModel>,
@@ -1298,7 +1441,7 @@ pub struct SimNeoBuilder {
     definitions: Option<GateDefinitions>,
     /// Simulation configuration (data).
     config: SimConfig,
-    /// Orchestration strategy (data).
+    /// Sampling strategy (data).
     sampling: Sampling,
     /// Quantum backend configuration (data).
     quantum_backend: QuantumBackend,
@@ -1318,7 +1461,24 @@ impl SimNeoBuilder {
     pub fn with_circuit(circuit: CommandQueue) -> Self {
         Self {
             source: Some(ProgramSource::Static(circuit)),
-            #[cfg(feature = "engines-adapter")]
+            pending_builder: None,
+            noise: None,
+            definitions: None,
+            config: SimConfig::default(),
+            sampling: Sampling::default(),
+            quantum_backend: QuantumBackend::default(),
+            explicit_num_qubits: None,
+            max_decomp_depth: None,
+            overrides: None,
+            event_handlers: None,
+        }
+    }
+
+    /// Create a simulation builder for a dynamic command source.
+    #[must_use]
+    pub fn with_command_source(source: Box<dyn CommandSource + Send + Sync>) -> Self {
+        Self {
+            source: Some(ProgramSource::Dynamic(source)),
             pending_builder: None,
             noise: None,
             definitions: None,
@@ -1336,7 +1496,6 @@ impl SimNeoBuilder {
     ///
     /// Use `.classical(builder)` to specify how to interpret the source.
     #[must_use]
-    #[cfg(feature = "engines-adapter")]
     pub fn with_program_source(source: String) -> Self {
         Self {
             source: Some(ProgramSource::RawSource(source)),
@@ -1358,7 +1517,6 @@ impl SimNeoBuilder {
     /// Use `.auto()` to automatically select the engine, or
     /// `.classical(builder)` for explicit control.
     #[must_use]
-    #[cfg(feature = "engines-adapter")]
     pub fn with_typed_program(program: TypedProgram) -> Self {
         Self {
             source: Some(ProgramSource::Typed(program)),
@@ -1388,7 +1546,6 @@ impl SimNeoBuilder {
     pub fn empty() -> Self {
         Self {
             source: None,
-            #[cfg(feature = "engines-adapter")]
             pending_builder: None,
             noise: None,
             definitions: None,
@@ -1417,7 +1574,7 @@ impl SimNeoBuilder {
     /// let results = sim_neo(qasm_code)
     ///     .classical(qasm_engine())  // stores builder as data
     ///     .shots(1000)
-    ///     .build()  // orchestrates: configures builder, builds engine, creates Tool
+    ///     .build()  // configures builder, builds engine, creates Tool
     ///     .run();
     /// ```
     ///
@@ -1438,7 +1595,6 @@ impl SimNeoBuilder {
     /// # Panics
     ///
     /// Panics if no raw source was provided via `sim_neo(source_code)`.
-    #[cfg(feature = "engines-adapter")]
     #[must_use]
     pub fn classical<B>(mut self, builder: B) -> Self
     where
@@ -1471,6 +1627,12 @@ impl SimNeoBuilder {
             Some(ProgramSource::Static(_)) => {
                 panic!(
                     "Cannot use .classical() with a static circuit. \
+                     Use sim_neo(source_code).classical(builder) for classical engines."
+                );
+            }
+            Some(ProgramSource::Dynamic(_)) => {
+                panic!(
+                    "Cannot use .classical() with an existing dynamic command source. \
                      Use sim_neo(source_code).classical(builder) for classical engines."
                 );
             }
@@ -1508,11 +1670,10 @@ impl SimNeoBuilder {
     ///     .build()
     ///     .run();
     /// ```
-    #[cfg(feature = "engines-adapter")]
     #[must_use]
     pub fn with_engine<B>(mut self, engine_builder: B) -> Self
     where
-        B: pecos_engines::ClassicalControlEngineBuilder + Send + Sync + 'static,
+        B: pecos_engines::ClassicalControlEngineBuilder + Clone + Send + Sync + 'static,
         B::Engine: 'static,
     {
         self.source = Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
@@ -1548,58 +1709,54 @@ impl SimNeoBuilder {
     /// - No typed program was provided (use `sim_neo(Qasm::from_string(...))`)
     /// - The program type is not yet supported for auto-selection
     ///
-    /// Note: `.auto()` also sets the orchestration strategy automatically:
-    /// - **Static circuits**: Monte Carlo with auto-detected parallel workers
-    /// - **Classical engines** (QASM, HUGR, etc.): single-worker Monte Carlo
-    ///   (classical engines maintain state across operations and cannot be parallelized)
-    #[cfg(feature = "engines-adapter")]
+    /// Note: `.auto()` also selects the default Monte Carlo sampling strategy. The
+    /// parallel execution plan decides whether the selected command source and
+    /// quantum backend can safely build independent worker state.
     #[must_use]
     pub fn auto(mut self) -> Self {
-        let is_classical = match self.source.take() {
-            Some(ProgramSource::Typed(typed)) => {
-                match typed {
-                    #[cfg(feature = "qasm")]
-                    TypedProgram::Qasm(qasm) => {
-                        // Auto-select qasm_engine() and configure with the program
-                        let builder = pecos_qasm::qasm_engine().qasm(qasm.source);
-                        self.source =
-                            Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
-                                builder,
-                            })));
-                        true
-                    }
-                    #[cfg(not(feature = "qasm"))]
-                    TypedProgram::Qasm(_) => {
-                        panic!(
-                            "QASM auto-selection requires the 'qasm' feature. \
-                             Enable it with: features = [\"qasm\"]"
-                        );
-                    }
-                    #[cfg(feature = "hugr")]
-                    TypedProgram::Hugr(hugr) => {
-                        // Auto-select hugr_engine() and configure with the program
-                        let builder = pecos_hugr::hugr_engine().hugr_bytes(hugr.hugr);
-                        self.source =
-                            Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
-                                builder,
-                            })));
-                        true
-                    }
-                    #[cfg(not(feature = "hugr"))]
-                    TypedProgram::Hugr(_) => {
-                        panic!(
-                            "HUGR auto-selection requires the 'hugr' feature. \
-                             Enable it with: features = [\"hugr\"]"
-                        );
-                    }
-                    TypedProgram::Unsupported(type_name) => {
-                        panic!(
-                            "Program type '{type_name}' is not yet supported for auto-selection. \
-                             Use .classical(engine) to specify the engine explicitly."
-                        );
-                    }
+        match self.source.take() {
+            Some(ProgramSource::Typed(typed)) => match typed {
+                #[cfg(feature = "qasm")]
+                TypedProgram::Qasm(qasm) => {
+                    // Auto-select qasm_engine() and configure with the program.
+                    let builder = pecos_qasm::qasm_engine().qasm(qasm.source);
+                    self.source = Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
+                        builder,
+                    })));
+                    self.sampling = Sampling::monte_carlo_auto();
+                    self
                 }
-            }
+                #[cfg(not(feature = "qasm"))]
+                TypedProgram::Qasm(_) => {
+                    panic!(
+                        "QASM auto-selection requires the 'qasm' feature. \
+                         Enable it with: features = [\"qasm\"]"
+                    );
+                }
+                #[cfg(feature = "hugr")]
+                TypedProgram::Hugr(hugr) => {
+                    // Auto-select hugr_engine() and configure with the program.
+                    let builder = pecos_hugr::hugr_engine().hugr_bytes(hugr.hugr);
+                    self.source = Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
+                        builder,
+                    })));
+                    self.sampling = Sampling::monte_carlo_auto();
+                    self
+                }
+                #[cfg(not(feature = "hugr"))]
+                TypedProgram::Hugr(_) => {
+                    panic!(
+                        "HUGR auto-selection requires the 'hugr' feature. \
+                         Enable it with: features = [\"hugr\"]"
+                    );
+                }
+                TypedProgram::Unsupported(type_name) => {
+                    panic!(
+                        "Program type '{type_name}' is not yet supported for auto-selection. \
+                         Use .classical(engine) to specify the engine explicitly."
+                    );
+                }
+            },
             Some(ProgramSource::RawSource(_)) => {
                 panic!(
                     "Cannot use .auto() with raw string source. \
@@ -1611,6 +1768,12 @@ impl SimNeoBuilder {
                 panic!(
                     "Cannot use .auto() with static circuits. \
                      Static circuits don't need an engine - just call .build() directly."
+                );
+            }
+            Some(ProgramSource::Dynamic(_)) => {
+                panic!(
+                    "Cannot use .auto() with an existing dynamic command source. \
+                     Command sources are already executable."
                 );
             }
             Some(ProgramSource::Classical(_)) => {
@@ -1625,16 +1788,7 @@ impl SimNeoBuilder {
                      Use sim_neo(Qasm::from_string(...)).auto() or similar."
                 );
             }
-        };
-
-        // Classical engines are stateful and cannot be parallelized across workers.
-        // Static circuits can run in parallel since each worker gets its own simulator.
-        if is_classical {
-            self.sampling = Sampling::MonteCarlo { workers: 1 };
-        } else {
-            self.sampling = Sampling::monte_carlo_auto();
         }
-        self
     }
 
     /// Set the number of qubits explicitly.
@@ -1661,7 +1815,7 @@ impl SimNeoBuilder {
         self
     }
 
-    /// Set the orchestration strategy for simulation execution.
+    /// Set the sampling strategy for simulation execution.
     ///
     /// # Example
     ///
@@ -1754,7 +1908,12 @@ impl SimNeoBuilder {
         self
     }
 
-    /// Set the noise model.
+    /// Set the `sim_neo` noise model.
+    ///
+    /// This configures `sim_neo`'s noise-modeling layer. It is intentionally
+    /// separate from the quantum-engine builder protocol; backends that only
+    /// provide quantum execution reject this configuration instead of silently
+    /// ignoring it.
     ///
     /// Accepts any type that implements `Into<ComposableNoiseModel>`:
     /// - `ComposableNoiseModel` directly
@@ -1952,7 +2111,6 @@ impl SimNeoBuilder {
     #[must_use]
     pub fn build(self) -> Simulation {
         // Resolve the program source - configure pending builder with source if needed
-        #[cfg(feature = "engines-adapter")]
         let source = {
             match (self.source, self.pending_builder) {
                 // Raw source + pending builder = configure and use
@@ -1993,54 +2151,17 @@ impl SimNeoBuilder {
             }
         };
 
-        #[cfg(not(feature = "engines-adapter"))]
-        let source = self
-            .source
-            .expect("No program source set. Use sim_neo(circuit) to provide a circuit.");
-
-        // Extract parallel execution data for static circuits using built-in backends.
-        // Custom backends can't be parallelized (factory is consumed at startup).
-        let parallel_data = match (&source, &self.quantum_backend) {
-            (ProgramSource::Static(circuit), QuantumBackend::SparseStab) => {
-                let inferred_qubits = circuit
-                    .iter()
-                    .flat_map(|cmd| cmd.qubits.iter())
-                    .map(|q| q.0)
-                    .max()
-                    .map_or(1, |max| max + 1);
-                let num_qubits = self.explicit_num_qubits.unwrap_or(inferred_qubits);
-
-                Some(ParallelExecutionData {
-                    circuit: circuit.clone(),
-                    num_qubits,
-                    backend: BuiltinBackend::SparseStab,
-                    noise: self.noise.clone(),
-                    definitions: self.definitions.clone(),
-                    max_decomp_depth: self.max_decomp_depth,
-                    overrides: self.overrides.clone(),
-                    event_handlers: self.event_handlers.clone(),
-                })
-            }
-            (ProgramSource::Static(circuit), QuantumBackend::StateVec) => {
-                let inferred_qubits = circuit
-                    .iter()
-                    .flat_map(|cmd| cmd.qubits.iter())
-                    .map(|q| q.0)
-                    .max()
-                    .map_or(1, |max| max + 1);
-                let num_qubits = self.explicit_num_qubits.unwrap_or(inferred_qubits);
-
-                Some(ParallelExecutionData {
-                    circuit: circuit.clone(),
-                    num_qubits,
-                    backend: BuiltinBackend::StateVec,
-                    noise: self.noise.clone(),
-                    definitions: self.definitions.clone(),
-                    max_decomp_depth: self.max_decomp_depth,
-                    overrides: self.overrides.clone(),
-                    event_handlers: self.event_handlers.clone(),
-                })
-            }
+        let parallel_plan = match self.sampling {
+            Sampling::MonteCarlo { workers } if workers > 1 => build_parallel_execution_plan(
+                &source,
+                &self.quantum_backend,
+                self.explicit_num_qubits,
+                self.noise.clone(),
+                self.definitions.clone(),
+                self.max_decomp_depth,
+                self.overrides.clone(),
+                self.event_handlers.clone(),
+            ),
             _ => None,
         };
 
@@ -2091,7 +2212,7 @@ impl SimNeoBuilder {
         Simulation {
             tool,
             sampling: self.sampling,
-            parallel_data,
+            parallel_plan,
         }
     }
 
@@ -2162,6 +2283,8 @@ impl Plugin for UnifiedSimulationPlugin {
 pub enum QuantumRunner {
     /// Sparse stabilizer simulator (Clifford-only).
     SparseStab(ProgramRunner<SparseStab>),
+    /// Public stabilizer simulator (Clifford-only).
+    Stabilizer(ProgramRunner<Stabilizer>),
     /// State vector simulator (supports arbitrary gates).
     StateVec(ProgramRunner<StateVec>),
     /// Custom simulator backend via dynamic dispatch.
@@ -2173,6 +2296,7 @@ impl QuantumRunner {
     pub fn run_shot(&mut self, source: &mut dyn CommandSource) -> crate::program::ProgramResult {
         match self {
             Self::SparseStab(runner) => runner.run_shot(source),
+            Self::Stabilizer(runner) => runner.run_shot(source),
             Self::StateVec(runner) => runner.run_shot(source),
             Self::Custom(runner) => runner.run_shot(source),
         }
@@ -2182,6 +2306,7 @@ impl QuantumRunner {
     pub fn set_full_seed(&mut self, seed: u64) {
         match self {
             Self::SparseStab(pr) => pr.set_full_seed(seed),
+            Self::Stabilizer(pr) => pr.set_full_seed(seed),
             Self::StateVec(pr) => pr.set_full_seed(seed),
             Self::Custom(runner) => runner.set_full_seed(seed),
         }
@@ -2196,6 +2321,138 @@ pub struct UnifiedShotState {
     pub command_source: Box<dyn CommandSource + Send + Sync>,
     /// Current shot index.
     pub shot_index: usize,
+}
+
+fn reject_dynamic_runner_config(
+    backend_name: &str,
+    definitions: Option<&GateDefinitionsResource>,
+    max_depth: Option<&MaxDecompDepthResource>,
+    overrides: Option<&GateOverridesResource>,
+    event_handlers: Option<&EventHandlersResource>,
+) {
+    assert!(
+        definitions.is_none(),
+        "{backend_name} does not support sim_neo gate definitions. \
+         Put custom gate handling inside the backend runner/factory instead."
+    );
+    assert!(
+        max_depth.is_none(),
+        "{backend_name} does not support sim_neo gate decomposition depth. \
+         Put decomposition handling inside the backend runner/factory instead."
+    );
+    assert!(
+        overrides.is_none(),
+        "{backend_name} does not support sim_neo gate overrides. \
+         Put override handling inside the backend runner/factory instead."
+    );
+    assert!(
+        event_handlers.is_none(),
+        "{backend_name} does not support sim_neo event handlers. \
+         Use a ProgramRunner-based backend when event hooks are required."
+    );
+}
+fn reject_parallel_adapted_engine_config(
+    noise: Option<&ComposableNoiseModel>,
+    definitions: Option<&GateDefinitions>,
+    max_depth: Option<&usize>,
+    overrides: Option<&StoredOverrides>,
+    event_handlers: Option<&EventHandlers>,
+) {
+    assert!(
+        noise.is_none(),
+        "QuantumEngineBuilder backends do not support sim_neo noise modeling. \
+         Use a noise-modeling runner/backend instead."
+    );
+    assert!(
+        definitions.is_none(),
+        "QuantumEngineBuilder backend does not support sim_neo gate definitions. \
+         Put custom gate handling inside the backend runner/factory instead."
+    );
+    assert!(
+        max_depth.is_none(),
+        "QuantumEngineBuilder backend does not support sim_neo gate decomposition depth. \
+         Put decomposition handling inside the backend runner/factory instead."
+    );
+    assert!(
+        overrides.is_none(),
+        "QuantumEngineBuilder backend does not support sim_neo gate overrides. \
+         Put override handling inside the backend runner/factory instead."
+    );
+    assert!(
+        event_handlers.is_none(),
+        "QuantumEngineBuilder backend does not support sim_neo event handlers. \
+         Use a ProgramRunner-based backend when event hooks are required."
+    );
+}
+
+fn apply_standard_runner_config<S>(
+    mut runner: ProgramRunner<S>,
+    noise: Option<NoiseResource>,
+    seed: Option<u64>,
+    max_depth: Option<MaxDecompDepthResource>,
+) -> ProgramRunner<S>
+where
+    S: CliffordGateable,
+{
+    if let Some(n) = noise {
+        runner = runner.with_noise(n.0);
+    }
+    if let Some(seed) = seed {
+        runner = runner.with_seed(seed);
+    }
+    if let Some(d) = max_depth {
+        runner = runner.with_max_decomp_depth(d.0);
+    }
+    runner
+}
+
+fn apply_event_handlers<S>(
+    mut runner: ProgramRunner<S>,
+    event_handlers: Option<EventHandlersResource>,
+) -> ProgramRunner<S>
+where
+    S: CliffordGateable,
+{
+    if let Some(eh) = event_handlers {
+        runner = runner.with_event_handlers(eh.0);
+    }
+    runner
+}
+
+fn clifford_runner<S>(
+    simulator: S,
+    definitions: Option<GateDefinitionsResource>,
+    noise: Option<NoiseResource>,
+    seed: Option<u64>,
+    max_depth: Option<MaxDecompDepthResource>,
+) -> ProgramRunner<S>
+where
+    S: CliffordGateable,
+{
+    let runner = if let Some(defs) = definitions {
+        ProgramRunner::with_definitions(simulator, defs.0)
+    } else {
+        ProgramRunner::new(simulator)
+    };
+    apply_standard_runner_config(runner, noise, seed, max_depth)
+}
+
+fn rotation_runner<S>(
+    simulator: S,
+    definitions: Option<GateDefinitionsResource>,
+    noise: Option<NoiseResource>,
+    seed: Option<u64>,
+    max_depth: Option<MaxDecompDepthResource>,
+) -> ProgramRunner<S>
+where
+    S: CliffordGateable + ArbitraryRotationGateable,
+{
+    let runner = if let Some(defs) = definitions {
+        ProgramRunner::rotations_with_definitions(simulator, defs.0)
+    } else {
+        ProgramRunner::rotations(simulator)
+    };
+    apply_standard_runner_config(runner, noise, seed, max_depth)
 }
 
 /// Startup system for unified simulation.
@@ -2234,7 +2491,10 @@ fn unified_simulation_startup(resources: &mut Resources) {
                 let program = StaticProgram::new(circuit, num_qubits);
                 (Box::new(program), num_qubits)
             }
-            #[cfg(feature = "engines-adapter")]
+            ProgramSource::Dynamic(source) => {
+                let num_qubits = explicit_qubits.unwrap_or_else(|| source.num_qubits());
+                (source, num_qubits)
+            }
             ProgramSource::RawSource(_) => {
                 // This should never happen - build() resolves RawSource with engine factory
                 unreachable!(
@@ -2242,7 +2502,6 @@ fn unified_simulation_startup(resources: &mut Resources) {
                      This is a bug in the simulation builder."
                 );
             }
-            #[cfg(feature = "engines-adapter")]
             ProgramSource::Typed(_) => {
                 // This should never happen - build() catches Typed without .auto()
                 unreachable!(
@@ -2250,7 +2509,6 @@ fn unified_simulation_startup(resources: &mut Resources) {
                      This is a bug in the simulation builder."
                 );
             }
-            #[cfg(feature = "engines-adapter")]
             ProgramSource::Classical(engine_builder) => {
                 // Build the engine adapter
                 let adapter = engine_builder
@@ -2273,25 +2531,23 @@ fn unified_simulation_startup(resources: &mut Resources) {
     let event_handlers = resources.try_remove::<EventHandlersResource>();
     let quantum_runner = match backend {
         QuantumBackend::SparseStab => {
-            let sim = SparseStab::new(num_qubits);
-            let mut runner = if let Some(defs) = definitions {
-                ProgramRunner::with_definitions(sim, defs.0)
-            } else {
-                ProgramRunner::new(sim)
-            };
-            if let Some(n) = noise {
-                runner = runner.with_noise(n.0);
-            }
-            if let Some(seed) = config.seed {
-                runner = runner.with_seed(seed);
-            }
-            if let Some(ref d) = max_depth {
-                runner = runner.with_max_decomp_depth(d.0);
-            }
-            if let Some(ref o) = overrides {
+            let mut runner = clifford_runner(
+                SparseStab::new(num_qubits),
+                definitions,
+                noise,
+                config.seed,
+                max_depth,
+            );
+            if let Some(o) = overrides {
                 match o.0 {
-                    StoredOverrides::SparseStab(ref ov) => {
-                        runner = runner.with_overrides(ov.clone());
+                    StoredOverrides::SparseStab(ov) => {
+                        runner = runner.with_overrides(ov);
+                    }
+                    StoredOverrides::Stabilizer(_) => {
+                        panic!(
+                            "Stabilizer gate overrides used with SparseStab backend. \
+                             Use GateOverrides::<SparseStab> instead."
+                        );
                     }
                     StoredOverrides::StateVec(_) => {
                         panic!(
@@ -2301,31 +2557,57 @@ fn unified_simulation_startup(resources: &mut Resources) {
                     }
                 }
             }
-            if let Some(ref eh) = event_handlers {
-                runner = runner.with_event_handlers(eh.0.clone());
-            }
+            runner = apply_event_handlers(runner, event_handlers);
             QuantumRunner::SparseStab(runner)
         }
-        QuantumBackend::StateVec => {
-            let sim = StateVec::new(num_qubits);
-            let mut runner = if let Some(defs) = definitions {
-                ProgramRunner::rotations_with_definitions(sim, defs.0)
-            } else {
-                ProgramRunner::rotations(sim)
-            };
-            if let Some(n) = noise {
-                runner = runner.with_noise(n.0);
-            }
-            if let Some(seed) = config.seed {
-                runner = runner.with_seed(seed);
-            }
-            if let Some(ref d) = max_depth {
-                runner = runner.with_max_decomp_depth(d.0);
-            }
-            if let Some(ref o) = overrides {
+        QuantumBackend::Stabilizer => {
+            let mut runner = clifford_runner(
+                Stabilizer::new(num_qubits),
+                definitions,
+                noise,
+                config.seed,
+                max_depth,
+            );
+            if let Some(o) = overrides {
                 match o.0 {
-                    StoredOverrides::StateVec(ref ov) => {
-                        runner = runner.with_overrides(ov.clone());
+                    StoredOverrides::Stabilizer(ov) => {
+                        runner = runner.with_overrides(ov);
+                    }
+                    StoredOverrides::SparseStab(_) => {
+                        panic!(
+                            "SparseStab gate overrides used with Stabilizer backend. \
+                             Use GateOverrides::<Stabilizer> instead."
+                        );
+                    }
+                    StoredOverrides::StateVec(_) => {
+                        panic!(
+                            "StateVec gate overrides used with Stabilizer backend. \
+                             Use GateOverrides::<Stabilizer> instead."
+                        );
+                    }
+                }
+            }
+            runner = apply_event_handlers(runner, event_handlers);
+            QuantumRunner::Stabilizer(runner)
+        }
+        QuantumBackend::StateVec => {
+            let mut runner = rotation_runner(
+                StateVec::new(num_qubits),
+                definitions,
+                noise,
+                config.seed,
+                max_depth,
+            );
+            if let Some(o) = overrides {
+                match o.0 {
+                    StoredOverrides::StateVec(ov) => {
+                        runner = runner.with_overrides(ov);
+                    }
+                    StoredOverrides::Stabilizer(_) => {
+                        panic!(
+                            "Stabilizer gate overrides used with StateVec backend. \
+                             Use GateOverrides::<StateVec> instead."
+                        );
                     }
                     StoredOverrides::SparseStab(_) => {
                         panic!(
@@ -2335,12 +2617,33 @@ fn unified_simulation_startup(resources: &mut Resources) {
                     }
                 }
             }
-            if let Some(ref eh) = event_handlers {
-                runner = runner.with_event_handlers(eh.0.clone());
-            }
+            runner = apply_event_handlers(runner, event_handlers);
             QuantumRunner::StateVec(runner)
         }
+        QuantumBackend::AdaptedQuantumEngine(factory) => {
+            reject_dynamic_runner_config(
+                "QuantumEngineBuilder backend",
+                definitions.as_ref(),
+                max_depth.as_ref(),
+                overrides.as_ref(),
+                event_handlers.as_ref(),
+            );
+            assert!(
+                noise.is_none(),
+                "QuantumEngineBuilder backends do not support sim_neo noise modeling. \
+                 Use a noise-modeling runner/backend instead."
+            );
+            let runner = factory.create_runner(num_qubits, config.seed);
+            QuantumRunner::Custom(runner)
+        }
         QuantumBackend::Custom(factory) => {
+            reject_dynamic_runner_config(
+                factory.diagnostic_label(),
+                definitions.as_ref(),
+                max_depth.as_ref(),
+                overrides.as_ref(),
+                event_handlers.as_ref(),
+            );
             // Custom backends create their own runner; gate definitions
             // should be captured in the factory closure if needed.
             let runner = factory.create_runner(num_qubits, noise.map(|n| n.0), config.seed);
@@ -2399,7 +2702,7 @@ fn unified_simulation_post_shot(resources: &mut Resources) {
 
 /// Plugin for importance-sampling simulation.
 ///
-/// Replaces [`UnifiedSimulationPlugin`] when the IS sampling is selected.
+/// Replaces [`UnifiedSimulationPlugin`] when importance sampling is selected.
 /// Uses [`ImportanceSamplingRunner`] for biased noise with weight tracking.
 struct ImportanceSamplingSimPlugin {
     is_config: ImportanceSamplingBuilder,
@@ -2461,12 +2764,12 @@ fn is_sim_startup(resources: &mut Resources) {
     let source_resource = resources.remove::<ProgramSourceResource>();
     let is_config = resources.remove::<ISConfigResource>().0;
 
-    #[cfg(not(feature = "engines-adapter"))]
-    let ProgramSource::Static(circuit) = source_resource.0;
-    #[cfg(feature = "engines-adapter")]
     let circuit = match source_resource.0 {
         ProgramSource::Static(circuit) => circuit,
-        ProgramSource::RawSource(_) | ProgramSource::Typed(_) | ProgramSource::Classical(_) => {
+        ProgramSource::Dynamic(_)
+        | ProgramSource::RawSource(_)
+        | ProgramSource::Typed(_)
+        | ProgramSource::Classical(_) => {
             panic!(
                 "Importance sampling requires a static circuit. \
                  Classical engines are not supported."
@@ -2569,41 +2872,275 @@ fn is_sim_post_shot(resources: &mut Resources) {
 /// ```
 pub struct Simulation {
     tool: Tool,
-    /// Orchestration strategy (stored as data).
+    /// Sampling strategy (stored as data).
     sampling: Sampling,
-    /// Data for parallel execution (if applicable).
-    /// Stored separately from Tool to allow cloning for workers.
-    parallel_data: Option<ParallelExecutionData>,
+    /// Data-oriented plan for parallel execution (if applicable).
+    parallel_plan: Option<ParallelExecutionPlan>,
 }
 
-/// Which built-in backend to use for parallel/importance-sampling execution.
+/// Native backend used by the internal parallel runner factory.
 #[derive(Debug, Clone, Copy)]
-enum BuiltinBackend {
+enum NativeParallelBackend {
     SparseStab,
+    Stabilizer,
     StateVec,
 }
 
-/// Data stored for parallel execution support.
-///
-/// This is populated for static circuits using built-in backends.
-/// For classical engines or custom backends, this is None and execution falls back to sequential.
-struct ParallelExecutionData {
-    /// The circuit to execute (cloned for each worker).
+trait ParallelCommandSourceFactory: Send + Sync {
+    fn create_source(&self) -> Box<dyn CommandSource + Send + Sync>;
+}
+
+#[doc(hidden)]
+pub trait ParallelQuantumRunnerFactory: Send + Sync {
+    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner;
+}
+
+struct ParallelExecutionPlan {
+    command_source_factory: Box<dyn ParallelCommandSourceFactory>,
+    quantum_runner_factory: Box<dyn ParallelQuantumRunnerFactory>,
+}
+
+struct StaticCommandSourceFactory {
     circuit: CommandQueue,
-    /// Number of qubits for simulators.
     num_qubits: usize,
-    /// Which built-in backend to use.
-    backend: BuiltinBackend,
-    /// Noise model (cloned per worker for parallel execution).
+}
+
+impl ParallelCommandSourceFactory for StaticCommandSourceFactory {
+    fn create_source(&self) -> Box<dyn CommandSource + Send + Sync> {
+        Box::new(StaticProgram::new(self.circuit.clone(), self.num_qubits))
+    }
+}
+struct ClassicalCommandSourceFactory {
+    builder: Box<dyn BoxedEngineBuilder>,
+}
+impl ParallelCommandSourceFactory for ClassicalCommandSourceFactory {
+    fn create_source(&self) -> Box<dyn CommandSource + Send + Sync> {
+        self.builder
+            .clone()
+            .build_adapter()
+            .expect("Failed to build classical engine for worker")
+    }
+}
+
+struct NativeQuantumRunnerFactory {
+    backend: NativeParallelBackend,
+    num_qubits: usize,
     noise: Option<ComposableNoiseModel>,
-    /// Gate definitions (cloned per worker for parallel execution).
     definitions: Option<GateDefinitions>,
-    /// Max decomposition depth (cloned per worker for parallel execution).
     max_decomp_depth: Option<usize>,
-    /// Gate overrides (cloned per worker for parallel execution).
     overrides: Option<StoredOverrides>,
-    /// Event handlers (cloned per worker for parallel execution).
     event_handlers: Option<EventHandlers>,
+}
+
+impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
+    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner {
+        let noise = self.noise.clone().map(NoiseResource);
+        let definitions = self.definitions.clone().map(GateDefinitionsResource);
+        let max_depth = self.max_decomp_depth.map(MaxDecompDepthResource);
+        let event_handlers = self.event_handlers.clone().map(EventHandlersResource);
+
+        match self.backend {
+            NativeParallelBackend::SparseStab => {
+                let mut runner = clifford_runner(
+                    SparseStab::new(self.num_qubits),
+                    definitions,
+                    noise,
+                    seed,
+                    max_depth,
+                );
+                if let Some(overrides) = self.overrides.clone() {
+                    match overrides {
+                        StoredOverrides::SparseStab(ov) => runner = runner.with_overrides(ov),
+                        StoredOverrides::Stabilizer(_) => {
+                            panic!(
+                                "Stabilizer gate overrides used with SparseStab backend. \
+                                 Use GateOverrides::<SparseStab> instead."
+                            );
+                        }
+                        StoredOverrides::StateVec(_) => {
+                            panic!(
+                                "StateVec gate overrides used with SparseStab backend. \
+                                 Use GateOverrides::<SparseStab> instead."
+                            );
+                        }
+                    }
+                }
+                runner = apply_event_handlers(runner, event_handlers);
+                QuantumRunner::SparseStab(runner)
+            }
+            NativeParallelBackend::Stabilizer => {
+                let mut runner = clifford_runner(
+                    Stabilizer::new(self.num_qubits),
+                    definitions,
+                    noise,
+                    seed,
+                    max_depth,
+                );
+                if let Some(overrides) = self.overrides.clone() {
+                    match overrides {
+                        StoredOverrides::Stabilizer(ov) => runner = runner.with_overrides(ov),
+                        StoredOverrides::SparseStab(_) => {
+                            panic!(
+                                "SparseStab gate overrides used with Stabilizer backend. \
+                                 Use GateOverrides::<Stabilizer> instead."
+                            );
+                        }
+                        StoredOverrides::StateVec(_) => {
+                            panic!(
+                                "StateVec gate overrides used with Stabilizer backend. \
+                                 Use GateOverrides::<Stabilizer> instead."
+                            );
+                        }
+                    }
+                }
+                runner = apply_event_handlers(runner, event_handlers);
+                QuantumRunner::Stabilizer(runner)
+            }
+            NativeParallelBackend::StateVec => {
+                let mut runner = rotation_runner(
+                    StateVec::new(self.num_qubits),
+                    definitions,
+                    noise,
+                    seed,
+                    max_depth,
+                );
+                if let Some(overrides) = self.overrides.clone() {
+                    match overrides {
+                        StoredOverrides::StateVec(ov) => runner = runner.with_overrides(ov),
+                        StoredOverrides::SparseStab(_) => {
+                            panic!(
+                                "SparseStab gate overrides used with StateVec backend. \
+                                 Use GateOverrides::<StateVec> instead."
+                            );
+                        }
+                        StoredOverrides::Stabilizer(_) => {
+                            panic!(
+                                "Stabilizer gate overrides used with StateVec backend. \
+                                 Use GateOverrides::<StateVec> instead."
+                            );
+                        }
+                    }
+                }
+                runner = apply_event_handlers(runner, event_handlers);
+                QuantumRunner::StateVec(runner)
+            }
+        }
+    }
+}
+struct AdaptedQuantumEngineRunnerFactory<B>
+where
+    B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
+{
+    builder: B,
+    num_qubits: usize,
+}
+impl<B> ParallelQuantumRunnerFactory for AdaptedQuantumEngineRunnerFactory<B>
+where
+    B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
+{
+    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner {
+        let mut builder = self.builder.clone();
+        builder.set_qubits_if_needed(self.num_qubits);
+        let mut engine = builder
+            .build()
+            .expect("Failed to build quantum engine backend for worker");
+        if let Some(seed) = seed {
+            engine.set_seed(seed);
+        }
+        QuantumRunner::Custom(Box::new(crate::adapter::QuantumEngineProgramRunner::new(
+            engine,
+        )))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_parallel_execution_plan(
+    source: &ProgramSource,
+    backend: &QuantumBackend,
+    explicit_num_qubits: Option<usize>,
+    noise: Option<ComposableNoiseModel>,
+    definitions: Option<GateDefinitions>,
+    max_decomp_depth: Option<usize>,
+    overrides: Option<StoredOverrides>,
+    event_handlers: Option<EventHandlers>,
+) -> Option<ParallelExecutionPlan> {
+    let (source_factory, num_qubits): (Box<dyn ParallelCommandSourceFactory>, usize) = match source
+    {
+        ProgramSource::Static(circuit) => {
+            let num_qubits =
+                explicit_num_qubits.unwrap_or_else(|| infer_num_qubits_from_circuit(circuit));
+            (
+                Box::new(StaticCommandSourceFactory {
+                    circuit: circuit.clone(),
+                    num_qubits,
+                }),
+                num_qubits,
+            )
+        }
+        ProgramSource::Dynamic(_) => return None,
+        ProgramSource::Classical(engine_builder) => {
+            let probe = engine_builder
+                .clone()
+                .build_adapter()
+                .expect("Failed to build classical engine while preparing parallel plan");
+            let num_qubits = explicit_num_qubits.unwrap_or_else(|| probe.num_qubits());
+            (
+                Box::new(ClassicalCommandSourceFactory {
+                    builder: engine_builder.clone(),
+                }),
+                num_qubits,
+            )
+        }
+        ProgramSource::RawSource(_) | ProgramSource::Typed(_) => {
+            unreachable!("raw and typed sources should be resolved before plan construction")
+        }
+    };
+
+    let runner_factory: Box<dyn ParallelQuantumRunnerFactory> = match backend {
+        QuantumBackend::SparseStab => Box::new(NativeQuantumRunnerFactory {
+            backend: NativeParallelBackend::SparseStab,
+            num_qubits,
+            noise,
+            definitions,
+            max_decomp_depth,
+            overrides,
+            event_handlers,
+        }),
+        QuantumBackend::Stabilizer => Box::new(NativeQuantumRunnerFactory {
+            backend: NativeParallelBackend::Stabilizer,
+            num_qubits,
+            noise,
+            definitions,
+            max_decomp_depth,
+            overrides,
+            event_handlers,
+        }),
+        QuantumBackend::StateVec => Box::new(NativeQuantumRunnerFactory {
+            backend: NativeParallelBackend::StateVec,
+            num_qubits,
+            noise,
+            definitions,
+            max_decomp_depth,
+            overrides,
+            event_handlers,
+        }),
+        QuantumBackend::AdaptedQuantumEngine(factory) => {
+            reject_parallel_adapted_engine_config(
+                noise.as_ref(),
+                definitions.as_ref(),
+                max_decomp_depth.as_ref(),
+                overrides.as_ref(),
+                event_handlers.as_ref(),
+            );
+            factory.create_parallel_runner_factory(num_qubits)
+        }
+        QuantumBackend::Custom(_) => return None,
+    };
+
+    Some(ParallelExecutionPlan {
+        command_source_factory: source_factory,
+        quantum_runner_factory: runner_factory,
+    })
 }
 
 impl Simulation {
@@ -2624,28 +3161,29 @@ impl Simulation {
     /// Returns the simulation results. The simulation can be run again
     /// after reconfiguring with [`shots()`](Self::shots) or [`seed()`](Self::seed).
     ///
-    /// Execution strategy depends on the sampling:
+    /// Execution strategy depends on the sampling strategy:
     /// - `MonteCarlo { workers: 1 }`: Runs shots via the Tool (default)
     /// - `MonteCarlo { workers: n }`: Parallelizes shots across n workers
     /// - `ImportanceSampling`: Runs via the Tool with `ImportanceSamplingSimPlugin`
     ///
     /// # Panics
-    /// Panics if parallel Monte Carlo is used without a static circuit and built-in backend.
+    /// Panics if parallel Monte Carlo is used without per-worker runner construction support.
     pub fn run(&mut self) -> SimulationResults {
         let config = self.tool.resource::<SimConfig>().clone();
 
-        // Dispatch based on orchestration strategy
+        // Dispatch based on sampling strategy
         match &self.sampling {
             Sampling::MonteCarlo { workers } if *workers > 1 => {
-                let data = self.parallel_data.as_ref().unwrap_or_else(|| {
+                let plan = self.parallel_plan.as_ref().unwrap_or_else(|| {
                     panic!(
-                        "Parallel Monte Carlo requires a static circuit \
-                         using a built-in backend (SparseStab or StateVec). \
-                         Remove .workers() / .auto_workers() for single-worker execution, \
-                         or switch to a built-in backend."
+                        "Parallel Monte Carlo requires per-worker runner construction support. \
+                         Dynamic programs need a command-source factory, and custom backends \
+                         need a quantum-runner factory. Remove .workers() / .auto_workers() \
+                         for single-worker execution, or use a backend/source path with \
+                         explicit per-worker construction."
                     )
                 });
-                self.run_parallel(&config, data, *workers)
+                self.run_parallel(&config, plan, *workers)
             }
             _ => {
                 // Both MonteCarlo{workers:1} and ImportanceSampling run via the Tool.
@@ -2669,7 +3207,7 @@ impl Simulation {
     fn run_parallel(
         &self,
         config: &SimConfig,
-        data: &ParallelExecutionData,
+        plan: &ParallelExecutionPlan,
         num_workers: usize,
     ) -> SimulationResults {
         let shots = config.shots;
@@ -2698,32 +3236,16 @@ impl Simulation {
                     shots: worker_shots,
                     seed: config.seed,
                 });
-                resources.insert(ProgramSourceResource(ProgramSource::Static(
-                    data.circuit.clone(),
-                )));
-                resources.insert(QuantumBackendResource(match data.backend {
-                    BuiltinBackend::SparseStab => QuantumBackend::SparseStab,
-                    BuiltinBackend::StateVec => QuantumBackend::StateVec,
-                }));
-                resources.insert(ExplicitNumQubits(Some(data.num_qubits)));
+                resources.insert(ExplicitNumQubits(None));
                 resources.insert(SimulationResults::new());
-                if let Some(ref noise) = data.noise {
-                    resources.insert(NoiseResource(noise.clone()));
-                }
-                if let Some(ref defs) = data.definitions {
-                    resources.insert(GateDefinitionsResource(defs.clone()));
-                }
-                if let Some(depth) = data.max_decomp_depth {
-                    resources.insert(MaxDecompDepthResource(depth));
-                }
-                if let Some(ref overrides) = data.overrides {
-                    resources.insert(GateOverridesResource(overrides.clone()));
-                }
-                if let Some(ref handlers) = data.event_handlers {
-                    resources.insert(EventHandlersResource(handlers.clone()));
-                }
+                resources.insert(UnifiedShotState {
+                    quantum_runner: plan.quantum_runner_factory.create_runner(config.seed),
+                    command_source: plan.command_source_factory.create_source(),
+                    shot_index: 0,
+                });
 
-                // Run Startup (creates runner/simulator via UnifiedSimulationPlugin systems)
+                // Run Startup. Since the worker state is already assembled, the
+                // unified startup system only resets the command source and clears results.
                 schedule.run_stage(Stage::Startup, &mut resources);
 
                 // Set global starting shot index so per-shot seeding matches sequential
@@ -2904,6 +3426,7 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use crate::noise::{ComposableNoiseModel, SingleQubitChannel};
+    use crate::program::ConditionalProgram;
     use pecos_core::QubitId;
 
     #[test]
@@ -3283,8 +3806,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sim_neo_monte_carlo_orchestrator() {
-        // Test Monte Carlo orchestration with multiple workers
+    fn test_sim_neo_monte_carlo_sampling() {
+        // Test Monte Carlo sampling with multiple workers
         let circuit = CommandBuilder::new()
             .pz(&[0])
             .x(&[0]) // Flip to |1>
@@ -3329,7 +3852,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sim_neo_orchestrator_explicit() {
+    fn test_sim_neo_sampling_explicit() {
         // Test explicit sampling configuration
         use super::Sampling;
 
@@ -3503,6 +4026,396 @@ mod tests {
     }
 
     #[test]
+    fn test_sim_neo_quantum_stabilizer() {
+        // Test explicitly selecting the stable public stabilizer backend.
+        use super::stabilizer;
+
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+
+        let results = sim_neo(circuit)
+            .quantum(stabilizer())
+            .shots(10)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 10);
+
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+        }
+    }
+    #[test]
+    fn test_sim_neo_quantum_engine_builder_adapter() {
+        let circuit = CommandBuilder::new()
+            .pz(&[0])
+            .x(&[0])
+            .mz(&[0])
+            .pz(&[1])
+            .h(&[1])
+            .mz(&[1])
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .shots(12)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 12);
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).unwrap(),
+                "X gate should produce |1>"
+            );
+            assert!(
+                outcome.get_bit(QubitId(1)).is_some(),
+                "QuantumEngine adapter should return measurement outcomes by qubit"
+            );
+        }
+    }
+    #[test]
+    fn test_sim_neo_quantum_engine_builder_adapter_preserves_engine_gate_capabilities() {
+        let circuit = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .t(&[0])
+            .mz(&[0])
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(pecos_engines::state_vector())
+            .shots(8)
+            .seed(123)
+            .run();
+
+        assert_eq!(results.len(), 8);
+        for outcome in &results.outcomes {
+            assert!(
+                outcome.get_bit(QubitId(0)).is_some(),
+                "QuantumEngine adapter should preserve state-vector support for T gates"
+            );
+        }
+    }
+    #[test]
+    #[should_panic(
+        expected = "QuantumEngineBuilder backends do not support sim_neo noise modeling"
+    )]
+    fn test_sim_neo_quantum_engine_builder_rejects_composable_noise() {
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.1));
+
+        let _ = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .noise(noise)
+            .shots(1)
+            .run();
+    }
+    #[test]
+    #[should_panic(
+        expected = "QuantumEngineBuilder backends do not support sim_neo noise modeling"
+    )]
+    fn test_sim_neo_quantum_engine_builder_parallel_rejects_composable_noise() {
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.1));
+
+        let _ = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .noise(noise)
+            .workers(2)
+            .shots(2)
+            .run();
+    }
+    #[test]
+    #[should_panic(
+        expected = "QuantumEngineBuilder backend does not support sim_neo gate definitions"
+    )]
+    fn test_sim_neo_quantum_engine_builder_rejects_gate_definitions() {
+        use crate::extensible::GateDefinitions;
+
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+
+        let _ = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .gate_definitions(GateDefinitions::new())
+            .shots(1)
+            .run();
+    }
+    #[test]
+    #[should_panic(
+        expected = "QuantumEngineBuilder backend does not support sim_neo gate decomposition depth"
+    )]
+    fn test_sim_neo_quantum_engine_builder_rejects_max_decomp_depth() {
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+
+        let _ = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .max_decomp_depth(20)
+            .shots(1)
+            .run();
+    }
+    #[test]
+    #[should_panic(
+        expected = "QuantumEngineBuilder backend does not support sim_neo gate overrides"
+    )]
+    fn test_sim_neo_quantum_engine_builder_rejects_gate_overrides() {
+        use crate::extensible::gates;
+        use crate::runner::GateOverrides;
+
+        let overrides =
+            GateOverrides::<SparseStab>::new().register(gates::X, |_sim, _angles, _qubits| true);
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+
+        let _ = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .gate_overrides(overrides)
+            .shots(1)
+            .run();
+    }
+    #[test]
+    #[should_panic(
+        expected = "QuantumEngineBuilder backend does not support sim_neo event handlers"
+    )]
+    fn test_sim_neo_quantum_engine_builder_rejects_event_handlers() {
+        let handlers =
+            EventHandlers::new().on_before_gate(|_ctx| crate::noise::NoiseResponse::None);
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+
+        let _ = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .event_handlers(handlers)
+            .shots(1)
+            .run();
+    }
+    #[test]
+    fn test_sim_neo_quantum_engine_builder_parallel_static_circuit() {
+        let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+
+        let results = sim_neo(circuit)
+            .quantum(pecos_engines::stabilizer())
+            .workers(2)
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.len(), 1);
+        }
+    }
+    #[test]
+    fn test_sim_neo_quantum_engine_builder_parallel_preserves_gate_capabilities() {
+        let circuit = CommandBuilder::new()
+            .pz(&[0])
+            .x(&[0])
+            .t(&[0])
+            .mz(&[0])
+            .build();
+
+        let results = sim_neo(circuit)
+            .quantum(pecos_engines::state_vector())
+            .workers(2)
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.len(), 1);
+        }
+    }
+
+    fn deterministic_conditional_program() -> Box<dyn CommandSource + Send + Sync> {
+        let initial = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
+        let branch = |outcomes: &MeasurementOutcomes| {
+            if outcomes.get_bit(QubitId(0)) == Some(true) {
+                Some(CommandBuilder::new().x(&[1]).mz(&[1]).build())
+            } else {
+                Some(CommandBuilder::new().mz(&[1]).build())
+            }
+        };
+        Box::new(ConditionalProgram::new(initial, branch, 2))
+    }
+
+    #[cfg(feature = "qasm")]
+    fn deterministic_conditional_qasm() -> &'static str {
+        r#"
+            OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            creg c[2];
+            x q[0];
+            measure q[0] -> c[0];
+            if (c[0] == 1) x q[1];
+            measure q[1] -> c[1];
+        "#
+    }
+
+    #[test]
+    fn test_sim_neo_dynamic_command_source_native_stabilizer() {
+        let results = sim_neo(deterministic_conditional_program())
+            .quantum(stabilizer())
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_sim_neo_dynamic_command_source_rerun() {
+        let mut sim = sim_neo(deterministic_conditional_program())
+            .quantum(stabilizer())
+            .shots(2)
+            .seed(42)
+            .build();
+
+        let first = sim.run();
+        assert_eq!(first.len(), 2);
+        for outcome in &first.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+        }
+
+        sim.shots(4);
+        let second = sim.run();
+        assert_eq!(second.len(), 4);
+        for outcome in &second.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+        }
+    }
+
+    #[cfg(feature = "qasm")]
+    #[test]
+    fn test_sim_neo_qasm_conditional_native_stabilizer() {
+        let results = sim_neo(deterministic_conditional_qasm())
+            .classical(pecos_qasm::qasm_engine())
+            .quantum(stabilizer())
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+    #[test]
+    fn test_sim_neo_dynamic_command_source_quantum_engine_adapter() {
+        let results = sim_neo(deterministic_conditional_program())
+            .quantum(pecos_engines::stabilizer())
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+
+    #[cfg(feature = "qasm")]
+    #[test]
+    fn test_sim_neo_qasm_conditional_quantum_engine_adapter() {
+        let results = sim_neo(deterministic_conditional_qasm())
+            .classical(pecos_qasm::qasm_engine())
+            .quantum(pecos_engines::stabilizer())
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+
+    #[cfg(feature = "qasm")]
+    #[test]
+    fn test_sim_neo_qasm_conditional_native_stabilizer_parallel() {
+        let results = sim_neo(deterministic_conditional_qasm())
+            .classical(pecos_qasm::qasm_engine())
+            .quantum(stabilizer())
+            .workers(2)
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+
+    #[cfg(feature = "qasm")]
+    #[test]
+    fn test_sim_neo_qasm_conditional_quantum_engine_adapter_parallel() {
+        let results = sim_neo(deterministic_conditional_qasm())
+            .classical(pecos_qasm::qasm_engine())
+            .quantum(pecos_engines::stabilizer())
+            .workers(2)
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+
+    #[cfg(feature = "qasm")]
+    #[test]
+    fn test_sim_neo_qasm_auto_conditional_parallel_after_worker_selection() {
+        let program = pecos_programs::Qasm::from_string(deterministic_conditional_qasm());
+        let results = sim_neo(program)
+            .auto()
+            .workers(2)
+            .quantum(pecos_engines::stabilizer())
+            .shots(6)
+            .seed(42)
+            .run();
+
+        assert_eq!(results.len(), 6);
+        for outcome in &results.outcomes {
+            assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
+            assert_eq!(outcome.get_bit(QubitId(1)), Some(true));
+            assert_eq!(outcome.len(), 2);
+        }
+    }
+    #[test]
+    #[should_panic(
+        expected = "Parallel Monte Carlo requires per-worker runner construction support"
+    )]
+    fn test_sim_neo_dynamic_command_source_quantum_engine_adapter_rejects_parallel_workers() {
+        let _ = sim_neo(deterministic_conditional_program())
+            .quantum(pecos_engines::stabilizer())
+            .workers(2)
+            .shots(2)
+            .run();
+    }
+
+    #[test]
     fn test_sim_neo_quantum_state_vector() {
         // Test state vector backend
         use super::state_vector;
@@ -3599,7 +4512,18 @@ mod tests {
         }
     }
 
-    // --- Importance Sampling Sampling Tests ---
+    // --- Importance Sampling Strategy Tests ---
+
+    #[test]
+    #[should_panic(expected = "Importance sampling requires a static circuit")]
+    fn test_sim_neo_importance_sampling_rejects_dynamic_command_source() {
+        use super::importance_sampling;
+
+        let _ = sim_neo(deterministic_conditional_program())
+            .sampling(importance_sampling())
+            .shots(1)
+            .run();
+    }
 
     #[test]
     fn test_sim_neo_importance_sampling_basic() {

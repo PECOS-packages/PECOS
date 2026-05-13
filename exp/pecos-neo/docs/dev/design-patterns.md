@@ -30,7 +30,7 @@ Need to run a quantum circuit simulation?
 ├─► Estimating rare event probabilities?
 │   │
 │   ├─► P ~ 10^-3 to 10^-6?
-│   │   └─► Use sim_neo() with importance_sampling() orchestrator
+│   │   └─► Use sim_neo() with importance_sampling()
 │   │
 │   └─► P ~ 10^-6 or smaller?
 │       └─► Use SubsetSimulation or ProperSubsetSimulation
@@ -68,7 +68,7 @@ let results = sim_neo(circuit)
 
 // With importance sampling
 let results = sim_neo(circuit)
-    .orchestrator(importance_sampling()
+    .sampling(importance_sampling()
         .with_p1(0.001)
         .with_boost(10.0))
     .shots(10000)
@@ -224,7 +224,7 @@ Complex configuration uses nested builders that compose naturally:
 ```rust
 // Top-level builder accepts nested builders
 sim_neo(circuit)
-    .orchestrator(importance_sampling()  // Nested builder
+    .sampling(importance_sampling()  // Nested builder
         .with_p1(0.001)
         .with_boost(10.0))
     .quantum(sparse_stab())              // Another nested builder

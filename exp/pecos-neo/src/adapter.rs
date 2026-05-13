@@ -30,8 +30,6 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! #[cfg(feature = "engines-adapter")]
-//! fn example() {
 //! use std::str::FromStr;
 //! use pecos_neo::adapter::ClassicalEngineAdapter;
 //! use pecos_neo::prelude::*;
@@ -62,14 +60,11 @@
 //!     .with_noise(noise);
 //!
 //! let result = runner.run_shot(&mut program);
-//! }
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType as NeoGateType};
-#[cfg(feature = "engines-adapter")]
-use crate::outcome::MeasurementOutcomes;
-#[cfg(feature = "engines-adapter")]
-use crate::program::CommandSource;
+use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
+use crate::program::{CommandSource, DynProgramRunner, ProgramResult};
 use pecos_core::gate_type::GateType as CoreGateType;
 use pecos_core::gates::Gate;
 use pecos_core::{Angle64, QubitId};
@@ -164,7 +159,6 @@ fn convert_gate(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosErr
 /// # Errors
 /// Returns `PecosError` if the byte message cannot be decoded or contains a
 /// gate unsupported by the pecos-neo command representation.
-#[cfg(feature = "engines-adapter")]
 pub fn byte_message_to_command_queue(
     message: &pecos_engines::ByteMessage,
 ) -> Result<CommandQueue, pecos_core::errors::PecosError> {
@@ -182,7 +176,6 @@ pub fn byte_message_to_command_queue(
 /// Convert `MeasurementOutcomes` to a `ByteMessage` containing outcomes.
 ///
 /// The outcomes are ordered by qubit ID for consistency with the engine's expectations.
-#[cfg(feature = "engines-adapter")]
 #[must_use]
 pub fn outcomes_to_byte_message(outcomes: &MeasurementOutcomes) -> pecos_engines::ByteMessage {
     let mut builder = pecos_engines::ByteMessage::outcomes_builder();
@@ -198,7 +191,6 @@ pub fn outcomes_to_byte_message(outcomes: &MeasurementOutcomes) -> pecos_engines
 ///
 /// This allows existing engines (`QASMEngine`, `HugrEngine`, etc.) to be used
 /// with pecos-neo's `ProgramRunner` and sampling infrastructure.
-#[cfg(feature = "engines-adapter")]
 pub struct ClassicalEngineAdapter<E> {
     /// The wrapped classical control engine.
     engine: E,
@@ -211,8 +203,6 @@ pub struct ClassicalEngineAdapter<E> {
     /// Track measurement count for outcome ordering.
     measurement_count: usize,
 }
-
-#[cfg(feature = "engines-adapter")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AdapterState {
     /// Not yet started.
@@ -222,8 +212,6 @@ enum AdapterState {
     /// Complete.
     Complete,
 }
-
-#[cfg(feature = "engines-adapter")]
 impl<E> ClassicalEngineAdapter<E>
 where
     E: pecos_engines::ClassicalControlEngine,
@@ -296,8 +284,6 @@ where
         }
     }
 }
-
-#[cfg(feature = "engines-adapter")]
 impl<E> CommandSource for ClassicalEngineAdapter<E>
 where
     E: pecos_engines::ClassicalControlEngine,
@@ -353,6 +339,123 @@ where
 
     fn num_qubits(&self) -> usize {
         self.num_qubits
+    }
+}
+
+/// Runner adapter for executing pecos-neo command sources through a
+/// `pecos_engines::QuantumEngine`.
+///
+/// This lets `sim_neo()` accept the same Rust quantum engine builders as the
+/// stable `sim()` API without identifying backends by name. The adapter only
+/// translates between the two execution protocols; unsupported behavior is
+/// rejected by the surrounding builder before this runner is constructed.
+pub struct QuantumEngineProgramRunner {
+    engine: Box<dyn pecos_engines::QuantumEngine>,
+}
+impl QuantumEngineProgramRunner {
+    /// Create a new runner around a quantum engine.
+    #[must_use]
+    pub fn new(engine: Box<dyn pecos_engines::QuantumEngine>) -> Self {
+        Self { engine }
+    }
+
+    fn commands_to_message(commands: &CommandQueue) -> pecos_engines::ByteMessage {
+        let gates = command_queue_to_gates(commands);
+        let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
+        builder.add_gate_commands(&gates);
+        builder.build()
+    }
+
+    fn measured_qubits(commands: &CommandQueue) -> Vec<QubitId> {
+        commands
+            .iter()
+            .filter(|cmd| {
+                matches!(
+                    cmd.gate_type,
+                    NeoGateType::MZ | NeoGateType::MeasureLeaked | NeoGateType::MeasureFree
+                )
+            })
+            .flat_map(|cmd| cmd.qubits.iter().copied())
+            .collect()
+    }
+
+    fn outcomes_from_message(
+        message: &pecos_engines::ByteMessage,
+        measured_qubits: &[QubitId],
+    ) -> Result<MeasurementOutcomes, pecos_core::errors::PecosError> {
+        let values = message.outcomes()?;
+        if values.len() != measured_qubits.len() {
+            return Err(pecos_core::errors::PecosError::Processing(format!(
+                "quantum engine returned {} measurement outcomes for {} measured qubits",
+                values.len(),
+                measured_qubits.len()
+            )));
+        }
+
+        let mut outcomes = MeasurementOutcomes::with_capacity(values.len());
+        for (&qubit, value) in measured_qubits.iter().zip(values.iter().copied()) {
+            match value {
+                0 => outcomes.record(MeasurementOutcome::new(qubit, false, false)),
+                1 => outcomes.record(MeasurementOutcome::new(qubit, true, false)),
+                2 => outcomes.record(MeasurementOutcome::leaked(qubit)),
+                other => {
+                    return Err(pecos_core::errors::PecosError::Processing(format!(
+                        "quantum engine returned invalid measurement outcome {other}"
+                    )));
+                }
+            }
+        }
+
+        Ok(outcomes)
+    }
+}
+impl DynProgramRunner for QuantumEngineProgramRunner {
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult {
+        source.reset();
+        self.engine
+            .reset()
+            .expect("quantum engine reset should not fail");
+
+        let mut all_outcomes = MeasurementOutcomes::new();
+        let mut num_batches = 0;
+        let mut last_outcomes: Option<MeasurementOutcomes> = None;
+
+        loop {
+            let commands = source.next_commands(last_outcomes.as_ref());
+
+            match commands {
+                Some(cmds) if !cmds.is_empty() => {
+                    let measured_qubits = Self::measured_qubits(&cmds);
+                    let message = Self::commands_to_message(&cmds);
+                    let response = self
+                        .engine
+                        .process(message)
+                        .expect("quantum engine command batch should execute");
+                    let outcomes = Self::outcomes_from_message(&response, &measured_qubits)
+                        .expect("quantum engine outcomes should match measured qubits");
+
+                    num_batches += 1;
+                    for outcome in outcomes.iter() {
+                        all_outcomes.record(*outcome);
+                    }
+                    last_outcomes = Some(outcomes);
+                }
+                _ => break,
+            }
+
+            if source.is_complete() {
+                break;
+            }
+        }
+
+        ProgramResult {
+            outcomes: all_outcomes,
+            num_batches,
+        }
+    }
+
+    fn set_full_seed(&mut self, seed: u64) {
+        self.engine.set_seed(seed);
     }
 }
 

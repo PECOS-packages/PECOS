@@ -92,7 +92,7 @@ jobs:
           - os: macos-latest
             architecture: aarch64
             runner: macos-latest  # ARM64 Mac
-          - os: windows-latest
+          - os: windows-2022
             architecture: x86_64
 
     steps:
@@ -144,9 +144,8 @@ jobs:
 
       - name: Set up Visual Studio environment on Windows
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+        shell: pwsh
+        run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
 
       - name: Build library (Windows)
         if: runner.os == 'Windows'
@@ -249,8 +248,8 @@ jobs:
           - runner: ubuntu-latest
             os: ubuntu-latest
             architecture: x86_64
-          - runner: windows-latest
-            os: windows-latest
+          - runner: windows-2022
+            os: windows-2022
             architecture: x86_64
           - runner: macos-15-intel
             os: macos-15-intel
@@ -264,7 +263,7 @@ jobs:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia ${{ matrix.julia-version }}
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.julia-version }}
 
@@ -342,7 +341,7 @@ jobs:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: '1.10'
 

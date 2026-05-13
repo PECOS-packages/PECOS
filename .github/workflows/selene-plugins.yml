@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
 
     steps:
       - uses: actions/checkout@v6
@@ -52,6 +52,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.11.14"
           enable-cache: true
 
       - name: Set up Rust
@@ -59,6 +60,11 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          key: ${{ matrix.os }}
+          prefix-key: v1-rust-no-bin
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -116,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
         plugin:
           - name: pecos-selene-stabilizer
             package: pecos_selene_stabilizer
@@ -140,6 +146,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.11.14"
           enable-cache: true
 
       - name: Set up Rust
@@ -147,6 +154,11 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          key: ${{ matrix.os }}-${{ matrix.plugin.name }}
+          prefix-key: v1-rust-no-bin
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'

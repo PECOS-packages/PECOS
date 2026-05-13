@@ -9,7 +9,7 @@ reweighting the results. Much more efficient than brute-force Monte Carlo.
 use pecos_neo::tool::{sim_neo, importance_sampling};
 
 let results = sim_neo(circuit)
-    .orchestrator(importance_sampling()
+    .sampling(importance_sampling()
         .with_p1(0.001)      // Single-qubit error rate
         .with_p2(0.01)       // Two-qubit error rate
         .with_boost(10.0))   // Sample 10x more errors
@@ -22,7 +22,7 @@ For uniform rates across all gate types:
 
 ```rust
 sim_neo(circuit)
-    .orchestrator(importance_sampling()
+    .sampling(importance_sampling()
         .with_uniform_error(0.001)
         .with_boost(10.0))
     .shots(10000)

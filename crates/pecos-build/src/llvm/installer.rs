@@ -46,10 +46,20 @@ pub fn install_llvm(force: bool, no_configure: bool) -> Result<PathBuf> {
     let llvm_dir = crate::home::get_versioned_dep_path("llvm", crate::home::LLVM_VERSION)?;
 
     // Check if already installed
-    if !force && llvm_dir.exists() && is_valid_installation(&llvm_dir) {
-        return Err(Error::Llvm(
-            "LLVM is already installed. Use --force to reinstall.".into(),
-        ));
+    if llvm_dir.exists() {
+        if is_valid_installation(&llvm_dir) {
+            if !force {
+                return Err(Error::Llvm(
+                    "LLVM is already installed. Use --force to reinstall.".into(),
+                ));
+            }
+        } else if !force {
+            return Err(Error::Llvm(format!(
+                "Existing LLVM directory is not a valid LLVM 14 installation: {}. \
+                 Use --force to reinstall.",
+                llvm_dir.display()
+            )));
+        }
     }
 
     // Remove existing if force
@@ -419,7 +429,7 @@ pub fn is_valid_installation(path: &Path) -> bool {
         }
     }
 
-    true
+    super::get_llvm_version(path).is_ok_and(|version| version.starts_with("14."))
 }
 
 fn verify_llvm_runtime(llvm_dir: &Path) -> Result<()> {

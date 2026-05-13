@@ -17,6 +17,7 @@ on:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
       - 'Cargo.toml'
+      - 'Justfile'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
   pull_request:
@@ -29,6 +30,7 @@ on:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
       - 'Cargo.toml'
+      - 'Justfile'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
 
@@ -56,13 +58,18 @@ jobs:
       - name: Set up Rust
         run: rustup override set stable && rustup update
 
+      - name: Install just
+        uses: extractions/setup-just@v4
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit
         with:
           cuda: '12.6.3'
@@ -72,20 +79,13 @@ jobs:
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-      - name: Install LLVM ${{ env.LLVM_VERSION }}
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: cargo run -p pecos-cli --release -- install llvm
-
-      - name: Configure LLVM
-        run: |
-          PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
-          echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
-          echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        run: just ci-env
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -110,6 +110,8 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Check formatting
@@ -143,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2022]
 
     steps:
       - uses: actions/checkout@v6
@@ -155,15 +157,15 @@ jobs:
           sudo apt-get clean
 
       - name: Install Rust (for local testing)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         run: |
           curl -sSf -o rustup-init.exe https://win.rustup.rs
-          ./rustup-init.exe -y --default-toolchain stable --profile minimal
+          ./rustup-init.exe -y --default-toolchain stable --default-host x86_64-pc-windows-msvc --profile minimal
           echo "$HOME\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $env:Path += ";$HOME\.cargo\bin"
 
       - name: Install Rust (for local testing)
-        if: matrix.os != 'windows-latest'
+        if: runner.os != 'Windows'
         run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -172,51 +174,34 @@ jobs:
       - name: Set up Rust
         run: rustup show
 
+      - name: Install just
+        uses: extractions/setup-just@v4
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install LLVM ${{ env.LLVM_VERSION }} (Unix)
-        if: steps.cache-llvm.outputs.cache-hit != 'true' && matrix.os != 'windows-latest'
-        run: cargo run -p pecos-cli --release -- install llvm
-
-      - name: Install LLVM ${{ env.LLVM_VERSION }} (Windows)
-        if: steps.cache-llvm.outputs.cache-hit != 'true' && matrix.os == 'windows-latest'
-        run: cargo run -p pecos-cli --release -- install llvm
-
-      - name: Configure LLVM (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
-          echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
-          echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
-
-      - name: Configure LLVM (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $env:PECOS_LLVM = (cargo run -p pecos-cli --release -- llvm find 2>$null)
-          $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
-          "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Set up Visual Studio environment on Windows
-        if: matrix.os == 'windows-latest'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        run: just ci-env
 
       - name: Install CUDA Toolkit (Linux)
         if: matrix.os == 'ubuntu-latest'
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit-test
         with:
           cuda: '12.6.3'
@@ -236,7 +221,7 @@ jobs:
           cargo build -p pecos-cli --release
 
       - name: Compile tests (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         run: cargo build -p pecos-cli --release
 
       - name: Run tests (macOS)
@@ -254,5 +239,5 @@ jobs:
           cargo run -p pecos-cli --release -- rust test
 
       - name: Run tests (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         run: cargo run -p pecos-cli --release -- rust test

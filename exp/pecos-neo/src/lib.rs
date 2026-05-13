@@ -248,10 +248,10 @@ pub use runner::{CircuitRunner, EventHandlers, ExecutionError, GateExecutorFn, G
 // Re-export adapter utilities (always available)
 pub use adapter::{command_queue_to_gates, gate_to_command, gates_to_command_queue};
 
-// Re-export ClassicalEngineAdapter when engines-adapter feature is enabled
-#[cfg(feature = "engines-adapter")]
+// Re-export classical/quantum engine adapter utilities.
 pub use adapter::{
-    ClassicalEngineAdapter, byte_message_to_command_queue, outcomes_to_byte_message,
+    ClassicalEngineAdapter, QuantumEngineProgramRunner, byte_message_to_command_queue,
+    outcomes_to_byte_message,
 };
 
 /// Prelude module for convenient imports.

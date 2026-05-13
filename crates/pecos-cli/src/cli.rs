@@ -162,6 +162,16 @@ pub enum LlvmCommands {
         #[arg(short, long)]
         quiet: bool,
     },
+    /// Ensure LLVM 14 is installed and runtime-valid
+    Ensure {
+        /// Require the PECOS-managed installation under ~/.pecos/deps
+        #[arg(long)]
+        managed: bool,
+
+        /// Skip automatic .cargo/config.toml configuration
+        #[arg(long)]
+        no_configure: bool,
+    },
     /// Configure .cargo/config.toml with LLVM path
     Configure,
     /// Find LLVM installation path

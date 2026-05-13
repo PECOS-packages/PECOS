@@ -37,14 +37,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest, windows-2022, macOS-latest]
         julia-version: ["1"]  # Latest stable (experimental bindings)
 
     steps:
     - uses: actions/checkout@v6
 
     - name: Set up Julia ${{ matrix.julia-version }}
-      uses: julia-actions/setup-julia@v2
+      uses: julia-actions/setup-julia@v3
       with:
         version: ${{ matrix.julia-version }}
 
@@ -90,13 +90,14 @@ jobs:
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
       with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
         workspaces: julia/pecos-julia-ffi
 
     - name: Set up Visual Studio environment on Windows
       if: runner.os == 'Windows'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
+      shell: pwsh
+      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
 
     - name: Build Rust FFI library (Windows)
       if: runner.os == 'Windows'

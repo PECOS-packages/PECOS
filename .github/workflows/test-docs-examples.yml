@@ -5,10 +5,14 @@ on:
     branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
+      - 'Justfile'
+      - '.github/workflows/test-docs-examples.yml'
   pull_request:
     branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
+      - 'Justfile'
+      - '.github/workflows/test-docs-examples.yml'
   workflow_dispatch:
 
 env:
@@ -32,37 +36,37 @@ jobs:
       - name: Install the latest version of uv
         uses: astral-sh/setup-uv@v7
         with:
+          version: "0.11.14"
           enable-cache: true
 
       - name: Set up Rust
-        run: rustup show
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup show
 
       - name: Install just
-        uses: extractions/setup-just@v3
+        uses: extractions/setup-just@v4
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
           workspaces: |
             python/pecos-rslib
             python/pecos-rslib-llvm
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-      - name: Install LLVM ${{ env.LLVM_VERSION }}
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: cargo run -p pecos-cli --release -- install llvm
-
-      - name: Configure LLVM
-        run: |
-          PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
-          echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
-          echo "LLVM_SYS_140_PREFIX=$PECOS_LLVM" >> $GITHUB_ENV
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        run: just ci-env
 
       - name: Install dependencies and build
         run: |

@@ -35,6 +35,14 @@ pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool, quiet: bool) -> R
         setup_cuquantum(mode)?;
     }
 
+    // Python CUDA packages: only relevant when toolkit + NVIDIA GPU are present.
+    // The Justfile/`pecos python build` flow auto-detects this too; offering it
+    // here means an interactive `pecos setup` puts the user in a fully-ready
+    // state without a follow-up command.
+    if !skip_cuda && super::cuda_cmd::should_install_cuda_python() {
+        setup_cuda_python(mode)?;
+    }
+
     if !quiet || anything_missing {
         println!();
         println!("Setup complete. Run `just build` to build PECOS.");
@@ -188,6 +196,35 @@ fn setup_cuquantum(mode: PromptMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── Python CUDA packages ────────────────────────────────────────────────────
+
+fn setup_cuda_python(mode: PromptMode) -> Result<()> {
+    if cupy_already_installed() {
+        return Ok(());
+    }
+
+    if confirm(
+        "Install CUDA Python packages? (cupy, cuquantum, pytket-cutensornet via `uv sync --group cuda`)",
+        true, // default yes when CUDA toolkit + NVIDIA GPU are present
+        mode,
+    ) {
+        super::cuda_cmd::install_cuda_python_packages()?;
+    } else {
+        println!("  Skipping CUDA Python packages. Install later with `pecos cuda setup-python`.");
+    }
+
+    Ok(())
+}
+
+/// Cheap check: is cupy already importable in the active uv environment?
+/// Used to avoid re-prompting users who already have the CUDA group synced.
+fn cupy_already_installed() -> bool {
+    std::process::Command::new("uv")
+        .args(["run", "--frozen", "python", "-c", "import cupy"])
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

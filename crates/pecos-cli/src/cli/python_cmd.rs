@@ -13,8 +13,36 @@ pub fn run(command: &super::PythonCommands) -> Result<()> {
             profile,
             rustflags,
             cuda,
-        } => run_build(profile, rustflags.as_deref(), *cuda),
+            no_cuda,
+        } => {
+            let cuda_resolved = resolve_cuda_choice(*cuda, *no_cuda);
+            run_build(profile, rustflags.as_deref(), cuda_resolved)
+        }
     }
+}
+
+/// Decide whether to install CUDA Python packages for this build.
+///
+/// Resolution order:
+/// - `--cuda`     -> always on (caller knows what they want)
+/// - `--no-cuda`  -> always off (caller opts out)
+/// - neither      -> auto-detect: include CUDA Python packages when both the
+///   toolkit and an NVIDIA GPU are present, otherwise skip
+fn resolve_cuda_choice(cuda: bool, no_cuda: bool) -> bool {
+    if cuda {
+        return true;
+    }
+    if no_cuda {
+        return false;
+    }
+    let detected = super::cuda_cmd::should_install_cuda_python();
+    if detected {
+        println!(
+            "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages \
+             (cupy, cuquantum, pytket-cutensornet). Pass --no-cuda to skip."
+        );
+    }
+    detected
 }
 
 /// Get the repository root

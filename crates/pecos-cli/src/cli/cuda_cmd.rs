@@ -1,10 +1,39 @@
 //! Implementation of the `cuda` subcommand
 
+use std::process::Command;
+
 use pecos_build::Result;
 use pecos_build::cuda::{
     find_cuda, get_cuda_version, get_pecos_cuda_dir, is_valid_cuda_installation,
 };
 use pecos_build::errors::Error;
+
+/// Check whether an NVIDIA GPU is present and accessible via the driver.
+///
+/// Used to decide whether to install Python CUDA packages (cupy, cuquantum,
+/// pytket-cutensornet) alongside the toolkit. We only auto-include them when
+/// both the toolkit and a usable GPU are present, so build/CI machines with
+/// just the toolkit don't pull large GPU-only wheels they can't use.
+///
+/// Note: distinct from `probe_gpu_availability()` in `rust_cmd.rs`, which
+/// uses wgpu and matches any adapter (NVIDIA, AMD, Intel, Apple). cupy needs
+/// NVIDIA specifically.
+pub(super) fn has_nvidia_gpu() -> bool {
+    let Ok(output) = Command::new("nvidia-smi").arg("-L").output() else {
+        return false;
+    };
+    output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.starts_with("GPU "))
+}
+
+/// Whether Python CUDA packages should be auto-included for this machine.
+///
+/// True iff the CUDA toolkit is installed and an NVIDIA GPU is detected.
+pub(super) fn should_install_cuda_python() -> bool {
+    find_cuda().is_some() && has_nvidia_gpu()
+}
 
 /// Run the cuda subcommand
 pub fn run(command: super::CudaCommands) -> Result<()> {
@@ -169,11 +198,9 @@ fn run_validate(path: Option<String>) -> Result<()> {
     }
 }
 
-/// Install CUDA Python packages
+/// CLI entry point for `pecos cuda setup-python`. Validates the toolkit is
+/// present, then runs `uv sync --group cuda` and prints next-step hints.
 fn run_setup_python() -> Result<()> {
-    use std::process::Command;
-
-    // First check if CUDA toolkit is available
     if find_cuda().is_none() {
         eprintln!("Error: CUDA toolkit not found.");
         eprintln!();
@@ -186,10 +213,22 @@ fn run_setup_python() -> Result<()> {
         ));
     }
 
+    install_cuda_python_packages()?;
+    println!();
+    println!("Verify with:");
+    println!("  python -c \"import cupy; print('cupy:', cupy.cuda.is_available())\"");
+    Ok(())
+}
+
+/// Run `uv sync --group cuda` to install Python CUDA packages.
+///
+/// Reusable from other CLI commands (e.g. `pecos setup`) once they've already
+/// confirmed the user wants this. Does NOT validate toolkit presence -- caller
+/// is responsible for that check.
+pub(super) fn install_cuda_python_packages() -> Result<()> {
     println!("Installing CUDA Python packages (cupy, cuquantum, pytket-cutensornet)...");
     println!();
 
-    // Run uv sync --group cuda to install CUDA packages via dependency group
     let status = Command::new("uv")
         .args(["sync", "--group", "cuda"])
         .status();
@@ -198,9 +237,6 @@ fn run_setup_python() -> Result<()> {
         Ok(s) if s.success() => {
             println!();
             println!("CUDA Python packages installed successfully.");
-            println!();
-            println!("Verify with:");
-            println!("  python -c \"import cupy; print('cupy:', cupy.cuda.is_available())\"");
             Ok(())
         }
         Ok(_) => {

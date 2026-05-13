@@ -72,9 +72,13 @@ pub enum PythonCommands {
         #[arg(long)]
         rustflags: Option<String>,
 
-        /// Build with CUDA support
-        #[arg(long)]
+        /// Force CUDA support on (overrides auto-detection)
+        #[arg(long, conflicts_with = "no_cuda")]
         cuda: bool,
+
+        /// Force CUDA support off (overrides auto-detection)
+        #[arg(long = "no-cuda")]
+        no_cuda: bool,
     },
 }
 

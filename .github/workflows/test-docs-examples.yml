@@ -46,7 +46,7 @@ jobs:
           rustup show
 
       - name: Install just
-        uses: extractions/setup-just@v3
+        uses: extractions/setup-just@v4
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -59,7 +59,7 @@ jobs:
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2

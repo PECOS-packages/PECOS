@@ -61,7 +61,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          key: ${{ matrix.os }}
           prefix-key: v1-rust-no-bin
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -152,7 +154,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          key: ${{ matrix.os }}-${{ matrix.plugin.name }}
           prefix-key: v1-rust-no-bin
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'

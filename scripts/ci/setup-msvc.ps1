@@ -96,4 +96,15 @@ if ($after.ContainsKey("Path")) {
     }
 }
 
+$linkPath = Get-ChildItem -Path (Join-Path $vsPath "VC\Tools\MSVC") -Recurse -Filter "link.exe" |
+    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
+    Select-Object -First 1 -ExpandProperty FullName
+
+if (-not $linkPath) {
+    throw "Could not find MSVC link.exe for x64"
+}
+
+Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath
+
 Write-Host "Configured Visual Studio environment from $vsPath for $Arch"
+Write-Host "Configured Cargo MSVC linker: $linkPath"

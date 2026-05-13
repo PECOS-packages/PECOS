@@ -49,11 +49,12 @@ pub fn collect_env() -> BTreeMap<String, String> {
         // Add LLVM bin to PATH
         let bin_path = llvm_path.join("bin");
         if bin_path.exists() {
-            let current_path = std::env::var("PATH").unwrap_or_default();
-            env.insert(
-                "PATH".into(),
-                format!("{}:{current_path}", bin_path.display()),
-            );
+            let current_path = std::env::var_os("PATH").unwrap_or_default();
+            let path_entries =
+                std::iter::once(bin_path).chain(std::env::split_paths(&current_path));
+            if let Ok(path) = std::env::join_paths(path_entries) {
+                env.insert("PATH".into(), path.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -197,26 +198,27 @@ mod tests {
         let env_path = std::env::temp_dir().join(format!("pecos-gh-env-{unique}"));
         let path_path = std::env::temp_dir().join(format!("pecos-gh-path-{unique}"));
 
+        let llvm_prefix = Path::new("/opt/pecos/llvm-14");
+        let llvm_prefix_str = llvm_prefix.display().to_string();
+        let llvm_bin_str = llvm_prefix.join("bin").display().to_string();
+
         let mut env = BTreeMap::new();
-        env.insert(
-            "LLVM_SYS_140_PREFIX".to_string(),
-            "/opt/pecos/llvm-14".to_string(),
-        );
+        env.insert("LLVM_SYS_140_PREFIX".to_string(), llvm_prefix_str.clone());
         env.insert(
             "PATH".to_string(),
             "/opt/pecos/llvm-14/bin:/usr/bin".to_string(),
         );
-        env.insert("PECOS_LLVM".to_string(), "/opt/pecos/llvm-14".to_string());
+        env.insert("PECOS_LLVM".to_string(), llvm_prefix_str.clone());
 
         write_github_actions_files(&env, &env_path, &path_path).unwrap();
 
         let env_file = std::fs::read_to_string(&env_path).unwrap();
         let path_file = std::fs::read_to_string(&path_path).unwrap();
 
-        assert!(env_file.contains("LLVM_SYS_140_PREFIX=/opt/pecos/llvm-14"));
-        assert!(env_file.contains("PECOS_LLVM=/opt/pecos/llvm-14"));
+        assert!(env_file.contains(&format!("LLVM_SYS_140_PREFIX={llvm_prefix_str}")));
+        assert!(env_file.contains(&format!("PECOS_LLVM={llvm_prefix_str}")));
         assert!(!env_file.contains("PATH="));
-        assert_eq!(path_file.trim(), "/opt/pecos/llvm-14/bin");
+        assert_eq!(path_file.trim(), llvm_bin_str);
 
         let _ = std::fs::remove_file(env_path);
         let _ = std::fs::remove_file(path_path);

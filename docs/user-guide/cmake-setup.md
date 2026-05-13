@@ -95,6 +95,7 @@ Optional decoders:
 
 ```python
 import pecos_rslib
+
 pecos_rslib.qec.create_observable_decoder(dem_str, "mwpf")  # should not raise
 ```
 

@@ -182,10 +182,7 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
 
 def _tree_has_any_file(directory: Path) -> bool:
     """True if any regular file (or symlink) exists anywhere under `directory`."""
-    for child in directory.rglob("*"):
-        if child.is_file() or child.is_symlink():
-            return True
-    return False
+    return any(child.is_file() or child.is_symlink() for child in directory.rglob("*"))
 
 
 def clean_selene(root: Path, *, dry_run: bool = False) -> None:
@@ -215,10 +212,9 @@ def clean_selene(root: Path, *, dry_run: bool = False) -> None:
                 dist_dir = python_pkg / "_dist"
                 if rmtree_safe(dist_dir, dry_run=dry_run):
                     dist_count += 1
-        elif not _tree_has_any_file(plugin_dir):
+        elif not _tree_has_any_file(plugin_dir) and rmtree_safe(plugin_dir, dry_run=dry_run):
             # File-less leftover scaffolding — safe to remove.
-            if rmtree_safe(plugin_dir, dry_run=dry_run):
-                stale_count += 1
+            stale_count += 1
 
     if dist_count > 0:
         print(f"  Removed {dist_count} _dist directories")

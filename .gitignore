@@ -213,3 +213,9 @@ cython_debug/
 clib/*/.venv/
 clib/*/uv.lock
 python/selene-plugins/*/uv.lock
+
+# Generated Rust doc-test fixture: the crate is its own (empty) workspace
+# whose only purpose is to compile extracted markdown examples. cargo test
+# regenerates Cargo.lock on demand; tracking it just creates dependabot
+# noise for transitive bumps that don't affect anything we ship.
+python/quantum-pecos/tests/docs/rust_crate/Cargo.lock

@@ -1213,6 +1213,14 @@ def _generate_unified_rust_crate(markdown_files: list[Path], docs_dir: Path, cra
         if old_file.name != "README.rs":
             old_file.unlink()
 
+    # Drop the lockfile so cargo resolves dependencies fresh against the
+    # (possibly updated) Cargo.toml and against the path-dep crates in this
+    # workspace. Cargo.lock is gitignored for this fixture, so a stale local
+    # copy would otherwise persist across pulls.
+    lockfile = crate_dir / "Cargo.lock"
+    if lockfile.exists():
+        lockfile.unlink()
+
     total_tests = 0
 
     for md_file in sorted(markdown_files):

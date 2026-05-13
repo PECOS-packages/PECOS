@@ -30,6 +30,7 @@ flate2.workspace = true
 bzip2.workspace = true
 xz2.workspace = true
 sevenz-rust.workspace = true
+zip.workspace = true
 
 # Error handling
 thiserror.workspace = true

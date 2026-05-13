@@ -99,6 +99,28 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         std::env::var("PATH").unwrap_or_default()
     );
 
+    // Enable the mwpf decoder when cmake is reachable. Whichever cmake
+    // find_cmake() resolves (PECOS-managed install or system) is exported as
+    // $CMAKE via env_cmd::collect_env() below, so highs-sys's cmake-rs picks
+    // it up without any PATH plumbing here.
+    let cmake_available = pecos_build::cmake::find_cmake().is_some();
+    let mwpf_override = std::env::var("PECOS_BUILD_MWPF").ok();
+    let mwpf_enabled = match mwpf_override.as_deref() {
+        Some("1" | "true" | "yes") => true,
+        Some("0" | "false" | "no") => false,
+        _ => cmake_available,
+    };
+    if mwpf_enabled && !cmake_available {
+        eprintln!(
+            "  Warning: PECOS_BUILD_MWPF requested but cmake was not found. \
+             Build will likely fail; run `pecos install cmake` or install cmake \
+             system-wide, or unset PECOS_BUILD_MWPF."
+        );
+    }
+    if !mwpf_enabled {
+        println!("  (mwpf decoder disabled — cmake not detected; run `pecos setup` to enable)");
+    }
+
     // Build all rslib crates via maturin (incremental — cargo inside maturin
     // handles change detection, skips recompilation when nothing changed)
     let crates = ["pecos-rslib", "pecos-rslib-llvm"];
@@ -125,6 +147,9 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         cmd.args(["develop", "--uv"]);
         if maturin_release {
             cmd.arg("--release");
+        }
+        if mwpf_enabled && crate_name == "pecos-rslib" {
+            cmd.args(["--features", "mwpf"]);
         }
         cmd.current_dir(&crate_dir);
         // On macOS, add rpath for system libc++ and clean Homebrew paths

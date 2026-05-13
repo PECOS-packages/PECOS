@@ -171,10 +171,18 @@ fn is_tool_available(tool: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// Run a cargo command and return success status
+/// Run a cargo command and return success status.
+///
+/// Applies the PECOS build environment (`CMAKE`, `LLVM_SYS_140_PREFIX`,
+/// `SDKROOT`, etc.) so build scripts like highs-sys's cmake-rs invocation
+/// find the PECOS-managed cmake without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
-    let status = Command::new("cargo").args(args).status();
-    matches!(status, Ok(s) if s.success())
+    let mut cmd = Command::new("cargo");
+    cmd.args(args);
+    for (key, value) in super::env_cmd::collect_env() {
+        cmd.env(key, value);
+    }
+    matches!(cmd.status(), Ok(s) if s.success())
 }
 
 /// Run cargo check with GPU-aware feature handling

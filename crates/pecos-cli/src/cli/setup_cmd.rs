@@ -10,15 +10,21 @@ use pecos_build::prompt::{PromptMode, confirm};
 ///
 /// Shows a summary of what's installed and what's missing, then offers
 /// to install each missing dependency with Y/n prompts.
-pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool, quiet: bool) -> Result<()> {
+pub fn run(
+    mode: PromptMode,
+    skip_llvm: bool,
+    skip_cuda: bool,
+    skip_cmake: bool,
+    quiet: bool,
+) -> Result<()> {
     // Check for legacy installs that should be migrated
     check_legacy_deps(mode)?;
 
-    let anything_missing = has_missing_deps(skip_llvm, skip_cuda);
+    let anything_missing = has_missing_deps(skip_llvm, skip_cuda, skip_cmake);
 
     // Show summary: always when not quiet, or when something needs action
     if !quiet || anything_missing {
-        print_status_summary(skip_llvm, skip_cuda);
+        print_status_summary(skip_llvm, skip_cuda, skip_cmake);
         println!();
     }
 
@@ -35,6 +41,10 @@ pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool, quiet: bool) -> R
         setup_cuquantum(mode)?;
     }
 
+    if !skip_cmake {
+        setup_cmake(mode)?;
+    }
+
     if !quiet || anything_missing {
         println!();
         println!("Setup complete. Run `just build` to build PECOS.");
@@ -42,7 +52,7 @@ pub fn run(mode: PromptMode, skip_llvm: bool, skip_cuda: bool, quiet: bool) -> R
     Ok(())
 }
 
-fn has_missing_deps(skip_llvm: bool, skip_cuda: bool) -> bool {
+fn has_missing_deps(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) -> bool {
     if !skip_llvm && pecos_build::llvm::find_llvm_14(None).is_none() {
         return true;
     }
@@ -55,10 +65,13 @@ fn has_missing_deps(skip_llvm: bool, skip_cuda: bool) -> bool {
     {
         return true;
     }
+    if !skip_cmake && pecos_build::cmake::find_cmake().is_none() {
+        return true;
+    }
     false
 }
 
-fn print_status_summary(skip_llvm: bool, skip_cuda: bool) {
+fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
     println!("PECOS dependency status:");
     println!();
 
@@ -89,6 +102,15 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool) {
         } else {
             println!("  cuQuantum:  not found (~200 MB, GPU-accelerated quantum simulation)");
         }
+    }
+
+    // cmake (optional, used for the MWPF decoder)
+    if skip_cmake {
+        println!("  cmake:      skipped (--skip-cmake)");
+    } else if let Some(path) = pecos_build::cmake::find_cmake() {
+        println!("  cmake:      {}", path.display());
+    } else {
+        println!("  cmake:      not found (optional, enables the MWPF decoder)");
     }
 }
 
@@ -185,6 +207,37 @@ fn setup_cuquantum(mode: PromptMode) -> Result<()> {
         pecos_build::cuquantum::installer::install_cuquantum(false)?;
     } else {
         println!("  Skipping cuQuantum.");
+    }
+
+    Ok(())
+}
+
+// ── cmake (optional, MWPF decoder) ──────────────────────────────────────────
+
+// cmake is optional, so install failures degrade gracefully (mwpf disabled)
+// instead of aborting setup. Returns Result for symmetry with setup_llvm etc.
+#[allow(clippy::unnecessary_wraps)]
+fn setup_cmake(mode: PromptMode) -> Result<()> {
+    if pecos_build::cmake::find_cmake().is_some() {
+        return Ok(());
+    }
+
+    let docs_url = pecos_build::cmake::DOCS_URL;
+    let version = pecos_build::cmake::CMAKE_VERSION;
+    let prompt = format!(
+        "Install cmake {version}? (~50MB download to ~/.pecos/deps/cmake-{version}/, \
+         enables the optional MWPF decoder)"
+    );
+    if !confirm(&prompt, true, mode) {
+        println!("  Skipping cmake. MWPF decoder will not be available.");
+        println!("  To install manually later: pecos install cmake");
+        println!("  Or install cmake system-wide: {docs_url}");
+        return Ok(());
+    }
+
+    if let Err(e) = pecos_build::cmake::installer::install_cmake(false) {
+        eprintln!("  Warning: cmake install failed: {e}");
+        eprintln!("  See {docs_url} for manual install instructions.");
     }
 
     Ok(())

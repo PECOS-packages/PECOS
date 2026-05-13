@@ -162,6 +162,17 @@ pub fn resolve_dep_path(name: &str, version: &str) -> Result<PathBuf> {
 /// LLVM major version used by PECOS
 pub const LLVM_VERSION: &str = "14";
 
+/// Get the vendored cmake installation directory path (without creating it)
+///
+/// Returns `$PECOS_HOME/deps/cmake-{CMAKE_VERSION}/`.
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_cmake_dir_path() -> Result<PathBuf> {
+    resolve_dep_path("cmake", crate::cmake::CMAKE_VERSION)
+}
+
 /// Get the LLVM installation directory path (without creating it)
 ///
 /// # Errors

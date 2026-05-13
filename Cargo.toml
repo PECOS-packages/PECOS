@@ -132,6 +132,7 @@ tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
 sevenz-rust = "0.6"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 # --- Logging ---
 log = "0.4"

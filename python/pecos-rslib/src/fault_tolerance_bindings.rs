@@ -2379,12 +2379,14 @@ fn create_observable_decoder(
             // via the PyCssUfDecoder Python class.
             create_observable_decoder(dem, "pecos_uf:balanced")
         }
+        #[cfg(feature = "mwpf")]
         "mwpf" => {
             let d =
                 pecos_decoders::MwpfDecoder::from_dem(dem, pecos_decoders::MwpfConfig::default())
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             Ok(Box::new(d))
         }
+        #[cfg(feature = "mwpf")]
         s if s.starts_with("mwpf:") => {
             // Parse "mwpf:key=val,key=val" config overrides.
             // Keys: c/cluster_node_limit, t/timeout, once/only_solve_primal_once, solver
@@ -2418,6 +2420,14 @@ fn create_observable_decoder(
             let d = pecos_decoders::MwpfDecoder::from_dem(dem, config)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             Ok(Box::new(d))
+        }
+        #[cfg(not(feature = "mwpf"))]
+        s if s == "mwpf" || s.starts_with("mwpf:") => {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "MWPF decoder is not available in this build. \
+                 Install cmake (run `pecos setup`) and rebuild. \
+                 See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
+            ))
         }
         s if s.starts_with("perturbed") => {
             // Perturbed-weight ensemble: "perturbed" or "perturbed:K=15,sigma=0.7,inner=TYPE"

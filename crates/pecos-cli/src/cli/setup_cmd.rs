@@ -5,6 +5,8 @@
 
 use pecos_build::Result;
 use pecos_build::prompt::{PromptMode, confirm};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Run the setup command.
 ///
@@ -19,6 +21,10 @@ pub fn run(
 ) -> Result<()> {
     // Check for legacy installs that should be migrated
     check_legacy_deps(mode)?;
+
+    // Remove stale Selene plugin scaffolding (file-less leftover directories)
+    // that fail the workspace hygiene test. Quiet unless something is removed.
+    sweep_stale_selene_plugins();
 
     let anything_missing = has_missing_deps(skip_llvm, skip_cuda, skip_cmake);
 
@@ -111,6 +117,108 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
         println!("  cmake:      {}", path.display());
     } else {
         println!("  cmake:      not found (optional, enables the MWPF decoder)");
+    }
+}
+
+// ── Selene plugin hygiene ───────────────────────────────────────────────────
+
+/// Silently remove stale `pecos-selene-*` plugin directories that contain
+/// only empty subdirectories (no `Cargo.toml`, no `pyproject.toml`, no files
+/// anywhere).
+///
+/// These leftovers fail the `test_selene_plugin_workspace_members_are_explicit_and_complete`
+/// hygiene gate and confuse new developers. Real plugins (Cargo.toml +
+/// pyproject.toml present) and work-in-progress dirs with any file content
+/// are left untouched, so this is safe to run on every `pecos setup`.
+fn sweep_stale_selene_plugins() {
+    let Some(repo_root) = find_repo_root() else {
+        return;
+    };
+    let selene_dir = repo_root.join("python").join("selene-plugins");
+    if !selene_dir.is_dir() {
+        return;
+    }
+
+    let Ok(read_dir) = fs::read_dir(&selene_dir) else {
+        return;
+    };
+
+    let mut stale: Vec<PathBuf> = Vec::new();
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("pecos-selene-") || !path.is_dir() {
+            continue;
+        }
+        // Real plugins are clearly identifiable; skip them.
+        if path.join("Cargo.toml").is_file() && path.join("pyproject.toml").is_file() {
+            continue;
+        }
+        // Preserve WIP: only remove if the tree has zero files anywhere.
+        if tree_has_any_file(&path) {
+            continue;
+        }
+        stale.push(path);
+    }
+
+    if stale.is_empty() {
+        return;
+    }
+
+    for p in &stale {
+        match fs::remove_dir_all(p) {
+            Ok(()) => {
+                let display = p.strip_prefix(&repo_root).unwrap_or(p);
+                println!(
+                    "  Removed stale Selene plugin scaffolding: {}",
+                    display.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("  Warning: failed to remove {}: {e}", p.display());
+            }
+        }
+    }
+}
+
+/// Walk the directory tree and report whether any regular file (or symlink)
+/// exists anywhere under `dir`. Empty directories don't count.
+fn tree_has_any_file(dir: &Path) -> bool {
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        // Unreadable — assume content to avoid accidental deletion.
+        return true;
+    };
+    for entry in read_dir.flatten() {
+        let Ok(ft) = entry.file_type() else {
+            return true;
+        };
+        if ft.is_file() || ft.is_symlink() {
+            return true;
+        }
+        if ft.is_dir() && tree_has_any_file(&entry.path()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Find the repository root by walking upward from CWD looking for the
+/// workspace `Cargo.toml`. Returns `None` if `pecos setup` is invoked outside
+/// a PECOS checkout (in which case there's nothing for us to sweep).
+fn find_repo_root() -> Option<PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+    loop {
+        let cargo_toml = current.join("Cargo.toml");
+        if let Ok(content) = fs::read_to_string(&cargo_toml)
+            && content.contains("[workspace]")
+        {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
     }
 }
 

@@ -180,20 +180,50 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
         print("  Would run: uv cache clean --force pecos-rslib")
 
 
+def _tree_has_any_file(directory: Path) -> bool:
+    """True if any regular file (or symlink) exists anywhere under `directory`."""
+    for child in directory.rglob("*"):
+        if child.is_file() or child.is_symlink():
+            return True
+    return False
+
+
 def clean_selene(root: Path, *, dry_run: bool = False) -> None:
-    """Clean Selene plugin artifacts."""
+    """Clean Selene plugin artifacts.
+
+    Removes per-plugin ``_dist`` directories, and additionally sweeps stale
+    ``pecos-selene-*`` directories that contain only empty subdirectories
+    (no ``Cargo.toml``/``pyproject.toml``, no files anywhere). Plugin dirs
+    with any file content are preserved so work-in-progress scaffolding is
+    not destroyed.
+    """
     print("Cleaning Selene plugin artifacts...")
     selene_dir = root / "python" / "selene-plugins"
-    if selene_dir.exists():
-        count = 0
-        for plugin_dir in selene_dir.iterdir():
-            if plugin_dir.is_dir():
-                for python_pkg in (plugin_dir / "python").glob("*"):
-                    dist_dir = python_pkg / "_dist"
-                    if rmtree_safe(dist_dir, dry_run=dry_run):
-                        count += 1
-        if count > 0:
-            print(f"  Removed {count} _dist directories")
+    if not selene_dir.exists():
+        return
+
+    dist_count = 0
+    stale_count = 0
+    for plugin_dir in selene_dir.iterdir():
+        if not plugin_dir.is_dir() or not plugin_dir.name.startswith("pecos-selene-"):
+            continue
+
+        is_real_plugin = (plugin_dir / "Cargo.toml").is_file() and (plugin_dir / "pyproject.toml").is_file()
+
+        if is_real_plugin:
+            for python_pkg in (plugin_dir / "python").glob("*"):
+                dist_dir = python_pkg / "_dist"
+                if rmtree_safe(dist_dir, dry_run=dry_run):
+                    dist_count += 1
+        elif not _tree_has_any_file(plugin_dir):
+            # File-less leftover scaffolding — safe to remove.
+            if rmtree_safe(plugin_dir, dry_run=dry_run):
+                stale_count += 1
+
+    if dist_count > 0:
+        print(f"  Removed {dist_count} _dist directories")
+    if stale_count > 0:
+        print(f"  Removed {stale_count} stale plugin scaffold directories")
 
 
 def clean_pecos_home(what: str, *, dry_run: bool = False) -> None:

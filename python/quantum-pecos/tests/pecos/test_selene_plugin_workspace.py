@@ -62,7 +62,12 @@ def test_selene_plugin_workspace_members_are_explicit_and_complete() -> None:
     ), "uv workspace should list Selene plugins explicitly instead of using a wildcard"
 
     actual_plugin_dirs, stray_dirs = _nonempty_selene_plugin_dirs(repo_root)
-    msg = f"Found non-empty pecos-selene-* directories that are not real plugin packages: {stray_dirs}"
+    msg = (
+        f"Found non-empty pecos-selene-* directories that are not real plugin packages: {stray_dirs}\n"
+        "These are usually leftover empty scaffolding from a previous experiment. "
+        "Run `pecos setup` (or `just clean --selene`) to remove them automatically; "
+        "see `python/quantum-pecos/tests/pecos/test_selene_plugin_workspace.py` for what counts as a real plugin."
+    )
     assert stray_dirs == [], msg
     assert cargo_plugin_members == actual_plugin_dirs, (
         "Cargo workspace Selene plugin members are out of sync with the actual plugin packages on disk: "

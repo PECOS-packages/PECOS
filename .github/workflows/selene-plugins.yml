@@ -59,6 +59,9 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -147,6 +150,9 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
 
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'

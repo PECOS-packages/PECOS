@@ -263,7 +263,7 @@ jobs:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia ${{ matrix.julia-version }}
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.julia-version }}
 
@@ -341,7 +341,7 @@ jobs:
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: '1.10'
 

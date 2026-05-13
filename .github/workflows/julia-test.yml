@@ -44,7 +44,7 @@ jobs:
     - uses: actions/checkout@v6
 
     - name: Set up Julia ${{ matrix.julia-version }}
-      uses: julia-actions/setup-julia@v2
+      uses: julia-actions/setup-julia@v3
       with:
         version: ${{ matrix.julia-version }}
 
@@ -90,6 +90,8 @@ jobs:
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
       with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
         workspaces: julia/pecos-julia-ffi
 
     - name: Set up Visual Studio environment on Windows

@@ -95,6 +95,8 @@ jobs:
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
       with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
         workspaces: |
           python/pecos-rslib
           python/pecos-rslib-llvm

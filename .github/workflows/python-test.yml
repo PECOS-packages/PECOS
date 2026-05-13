@@ -34,9 +34,9 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           # Windows/macOS: only test oldest and newest stable Python (slow platforms)
-          - os: windows-latest
+          - os: windows-2022
             python-version: "3.10"
-          - os: windows-latest
+          - os: windows-2022
             python-version: "3.14"
           - os: macOS-latest
             python-version: "3.10"
@@ -74,9 +74,8 @@ jobs:
 
     - name: Set up Visual Studio environment on Windows
       if: runner.os == 'Windows'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
+      shell: pwsh
+      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
 
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v7

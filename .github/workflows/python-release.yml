@@ -118,16 +118,15 @@ jobs:
       # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
       - name: Set up Visual Studio environment (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+        shell: pwsh
+        run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
 
       # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
       # Uses specific sub-packages to avoid VS 17.3.x bug that hangs on NSight/VS Integration
       # See: https://github.com/Jimver/cuda-toolkit/issues/382
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.5.1'
           method: 'local'
@@ -336,7 +335,7 @@ jobs:
           - runner: ubuntu-latest
             os: ubuntu-latest
             architecture: x86_64
-          - runner: windows-latest
+          - runner: windows-2022
             os: windows-2022
             architecture: x86_64
           - runner: macos-15-intel

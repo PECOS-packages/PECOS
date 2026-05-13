@@ -14,6 +14,10 @@ pub fn run(command: LlvmCommands) -> Result<()> {
             run_check(quiet);
             Ok(())
         }
+        LlvmCommands::Ensure {
+            managed,
+            no_configure,
+        } => run_ensure(managed, no_configure),
         LlvmCommands::Configure => run_configure(),
         LlvmCommands::Find { export } => {
             run_find(export);
@@ -55,6 +59,44 @@ fn run_check(quiet: bool) {
         }
         std::process::exit(1);
     }
+}
+
+fn run_ensure(managed: bool, no_configure: bool) -> Result<()> {
+    let llvm_path = if managed {
+        ensure_managed_llvm(no_configure)?
+    } else if let Some(path) = find_llvm_14(get_repo_root_from_manifest()) {
+        if !no_configure {
+            auto_configure_llvm(None)?;
+        }
+        path
+    } else {
+        pecos_build::llvm::installer::install_llvm(false, no_configure)?
+    };
+
+    let version = get_llvm_version(&llvm_path)?;
+    println!("LLVM {version} ready at {}", llvm_path.display());
+    Ok(())
+}
+
+fn ensure_managed_llvm(no_configure: bool) -> Result<std::path::PathBuf> {
+    let llvm_path =
+        pecos_build::home::get_versioned_dep_path("llvm", pecos_build::home::LLVM_VERSION)?;
+
+    if !pecos_build::llvm::installer::is_valid_installation(&llvm_path) {
+        if llvm_path.exists() {
+            println!(
+                "Existing LLVM at {} failed runtime validation; reinstalling.",
+                llvm_path.display()
+            );
+            pecos_build::llvm::installer::install_llvm(true, no_configure)?;
+        } else {
+            pecos_build::llvm::installer::install_llvm(false, no_configure)?;
+        }
+    } else if !no_configure {
+        auto_configure_llvm(None)?;
+    }
+
+    Ok(llvm_path)
 }
 
 fn run_configure() -> Result<()> {

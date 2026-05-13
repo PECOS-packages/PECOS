@@ -121,10 +121,15 @@ enum Commands {
     /// Example: eval $(pecos env)
     /// Example: pecos env --format show
     /// Example: pecos env --format json
+    /// Example: pecos env --github-actions
     Env {
         /// Output format: shell (default), json, show
         #[arg(long, default_value = "shell")]
         format: String,
+
+        /// Write variables to GitHub Actions environment files
+        #[arg(long)]
+        github_actions: bool,
     },
 
     /// Set up build environment (detect and install missing dependencies)
@@ -692,7 +697,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Llvm { command } => cli::llvm_cmd::run(command.clone())?,
         Commands::Selene { command } => cli::selene_cmd::run(command.clone())?,
         Commands::Deps { command } => cli::manifest_cmd::run(command.clone())?,
-        Commands::Env { format } => cli::env_cmd::run(format),
+        Commands::Env {
+            format,
+            github_actions,
+        } => cli::env_cmd::run(format, *github_actions)?,
         Commands::Setup {
             yes,
             no,

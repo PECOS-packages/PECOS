@@ -52,6 +52,12 @@ setup:
 setup-ci:
     {{pecos}} setup --yes
 
+# Ensure CI has a runtime-valid LLVM and export PECOS build env files
+[group('setup')]
+ci-env:
+    {{pecos}} llvm ensure --managed --no-configure
+    {{pecos}} env --github-actions
+
 # Check development environment for common problems
 [group('setup')]
 doctor:

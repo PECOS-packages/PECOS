@@ -20,10 +20,17 @@
 //! Usage:
 //!   eval $(pecos env)           # bash/zsh — set variables in current shell
 //!   pecos env --format json     # machine-readable output
-//!   pecos env --show            # human-readable display
+//!   pecos env --format show     # human-readable display
+//!   pecos env --github-actions  # write GitHub Actions env/path files
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::fs::OpenOptions;
+use std::io::Write as IoWrite;
+use std::path::Path;
+
+use pecos_build::Result;
+use pecos_build::errors::Error;
 
 /// Collect the build environment for the current platform.
 ///
@@ -36,6 +43,7 @@ pub fn collect_env() -> BTreeMap<String, String> {
     // LLVM
     if let Some(llvm_path) = pecos_build::llvm::find_llvm_14(None) {
         let llvm_str = llvm_path.display().to_string();
+        env.insert("PECOS_LLVM".into(), llvm_str.clone());
         env.insert("LLVM_SYS_140_PREFIX".into(), llvm_str);
 
         // Add LLVM bin to PATH
@@ -119,12 +127,98 @@ pub fn print_show(env: &BTreeMap<String, String>) {
     }
 }
 
+/// Write environment variables to GitHub Actions environment files.
+pub fn write_github_actions(env: &BTreeMap<String, String>) -> Result<()> {
+    let github_env = std::env::var("GITHUB_ENV").map_err(|_| {
+        Error::Config(
+            "GITHUB_ENV is not set; --github-actions must run inside GitHub Actions".into(),
+        )
+    })?;
+    let github_path = std::env::var("GITHUB_PATH").map_err(|_| {
+        Error::Config(
+            "GITHUB_PATH is not set; --github-actions must run inside GitHub Actions".into(),
+        )
+    })?;
+
+    write_github_actions_files(env, Path::new(&github_env), Path::new(&github_path))
+}
+
+fn write_github_actions_files(
+    env: &BTreeMap<String, String>,
+    github_env: &Path,
+    github_path: &Path,
+) -> Result<()> {
+    let mut env_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(github_env)?;
+    for (key, value) in env {
+        if key != "PATH" {
+            writeln!(env_file, "{key}={value}")?;
+        }
+    }
+
+    let mut path_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(github_path)?;
+    if let Some(llvm_path) = env.get("LLVM_SYS_140_PREFIX") {
+        writeln!(path_file, "{}", Path::new(llvm_path).join("bin").display())?;
+    }
+
+    Ok(())
+}
+
 /// Run the env subcommand.
-pub fn run(format: &str) {
+pub fn run(format: &str, github_actions: bool) -> Result<()> {
     let env = collect_env();
+    if github_actions {
+        return write_github_actions(&env);
+    }
+
     match format {
         "json" => print_json(&env),
         "show" => print_show(&env),
         _ => print_shell(&env),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_actions_writer_uses_env_file_and_path_file() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let env_path = std::env::temp_dir().join(format!("pecos-gh-env-{unique}"));
+        let path_path = std::env::temp_dir().join(format!("pecos-gh-path-{unique}"));
+
+        let mut env = BTreeMap::new();
+        env.insert(
+            "LLVM_SYS_140_PREFIX".to_string(),
+            "/opt/pecos/llvm-14".to_string(),
+        );
+        env.insert(
+            "PATH".to_string(),
+            "/opt/pecos/llvm-14/bin:/usr/bin".to_string(),
+        );
+        env.insert("PECOS_LLVM".to_string(), "/opt/pecos/llvm-14".to_string());
+
+        write_github_actions_files(&env, &env_path, &path_path).unwrap();
+
+        let env_file = std::fs::read_to_string(&env_path).unwrap();
+        let path_file = std::fs::read_to_string(&path_path).unwrap();
+
+        assert!(env_file.contains("LLVM_SYS_140_PREFIX=/opt/pecos/llvm-14"));
+        assert!(env_file.contains("PECOS_LLVM=/opt/pecos/llvm-14"));
+        assert!(!env_file.contains("PATH="));
+        assert_eq!(path_file.trim(), "/opt/pecos/llvm-14/bin");
+
+        let _ = std::fs::remove_file(env_path);
+        let _ = std::fs::remove_file(path_path);
     }
 }

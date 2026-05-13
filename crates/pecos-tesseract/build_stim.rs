@@ -22,8 +22,10 @@ pub fn collect_stim_sources(stim_src_dir: &Path) -> Vec<PathBuf> {
         "stim/circuit/gate_data.cc",
         "stim/circuit/gate_target.cc",
         "stim/circuit/gate_decomposition.cc", // For decompose_mpp_operation, etc.
-        // Memory management
-        "stim/mem/simd_word.cc",
+        // Memory management. simd_word.cc is an upstream Stim
+        // "translation-unit anchor" file for the header-only simd_word type:
+        // it's just `#include "stim/mem/simd_word.h"` and compiles to an
+        // empty .o with no symbols, triggering macOS BSD ranlib warnings.
         "stim/mem/simd_util.cc",
         "stim/mem/bit_ref.cc", // For bit_ref::bit_ref
         // I/O for reading files

@@ -36,7 +36,7 @@ ARCHITECTURAL SOLUTIONS:
 - Use separate ancilla qubits instead of array elements for verification
 - Or restructure the verification pattern to avoid the loop issue
 
-See tests/slr-tests/guppy/test_partial_array_returns.py for correct usage patterns.
+See tests/slr_tests/guppy/test_partial_array_returns.py for correct usage patterns.
 """
 
 from __future__ import annotations

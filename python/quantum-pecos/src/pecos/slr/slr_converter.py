@@ -170,7 +170,7 @@ class SlrConverter:
         """
         return self._generate_guppy()
 
-    def hugr(self):
+    def hugr(self, *, _force_ast: bool = False):
         """Compile the SLR block to HUGR via Guppy.
 
         Returns:
@@ -180,6 +180,9 @@ class SlrConverter:
             ImportError: If guppylang is not available
             RuntimeError: If compilation fails
         """
+        if _force_ast:
+            return self._compile_ast_guppy_to_hugr()
+
         # Generate Guppy code
         self._generate_guppy()
 
@@ -199,6 +202,52 @@ class SlrConverter:
 
         compiler = HugrCompiler(generator)
         return compiler.compile_to_hugr()
+
+    def _compile_ast_guppy_to_hugr(self):
+        # Audit-only AST -> Guppy -> HUGR route used before cutover.
+        guppy_code = self._generate_guppy()
+
+        import importlib.util
+        import linecache
+        import sys
+        import tempfile
+        from contextlib import suppress
+        from pathlib import Path
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            temp_file = Path(f.name)
+            f.write(guppy_code)
+
+        module_name = f"_ast_guppy_generated_{temp_file.stem}"
+        linecache.cache[str(temp_file)] = (
+            len(guppy_code),
+            None,
+            guppy_code.splitlines(keepends=True),
+            str(temp_file),
+        )
+
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, temp_file)
+            if spec is None or spec.loader is None:
+                msg = "Failed to create module spec for AST-generated Guppy source"
+                raise RuntimeError(msg)
+
+            module = importlib.util.module_from_spec(spec)
+            module.__file__ = str(temp_file)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+            main_func = getattr(module, "main", None)
+            if main_func is None:
+                msg = "No main function found in AST-generated Guppy source"
+                raise RuntimeError(msg)
+
+            return main_func.compile_function()
+        finally:
+            sys.modules.pop(module_name, None)
+            linecache.cache.pop(str(temp_file), None)
+            with suppress(OSError, FileNotFoundError):
+                temp_file.unlink()
 
     def stim(self) -> stim.Circuit:
         """Generate a Stim circuit from the SLR block.

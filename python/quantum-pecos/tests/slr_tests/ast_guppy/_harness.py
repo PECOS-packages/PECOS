@@ -22,12 +22,16 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from pecos.slr import Block, SlrConverter
+from pecos.slr import SlrConverter
+
+if TYPE_CHECKING:
+    from pecos.slr import Block
 
 
 @dataclass(frozen=True)
-class CompileFailure(AssertionError):
+class CompileFailureError(AssertionError):
     """Raised when generated Guppy source fails to compile.
 
     Carries the generated source for diagnostics. The exception type
@@ -82,12 +86,12 @@ def assert_ast_guppy_compiles(slr_program: Block) -> None:
     try:
         spec.loader.exec_module(module)
     except BaseException as exc:
-        raise CompileFailure(source=source, cause=exc) from exc
+        raise CompileFailureError(source=source, cause=exc) from exc
 
     main = getattr(module, "main", None)
     if main is None:
         msg = "Generated Guppy source has no `main` function"
-        raise CompileFailure(
+        raise CompileFailureError(
             source=source,
             cause=AttributeError(msg),
         )
@@ -95,4 +99,4 @@ def assert_ast_guppy_compiles(slr_program: Block) -> None:
     try:
         main.compile_function()
     except BaseException as exc:
-        raise CompileFailure(source=source, cause=exc) from exc
+        raise CompileFailureError(source=source, cause=exc) from exc

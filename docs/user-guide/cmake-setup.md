@@ -94,9 +94,10 @@ Optional decoders:
 `pecos python build` will detect cmake automatically and pass `--features mwpf` to maturin. To check the decoder from Python:
 
 ```python
-import pecos_rslib
+from pecos_rslib.qec import ObservableSubgraphDecoder  # MWPF-capable decoder
 
-pecos_rslib.qec.create_observable_decoder(dem_str, "mwpf")  # should not raise
+# Construct with a real DEM + stabilizer coords:
+#   decoder = ObservableSubgraphDecoder(dem_str, stab_coords, inner_decoder="mwpf")
 ```
 
 Set `PECOS_BUILD_MWPF=0` to force MWPF off even when cmake is present (useful for reproducing the lean build locally). `PECOS_BUILD_MWPF=1` forces it on, which is what CI sets.

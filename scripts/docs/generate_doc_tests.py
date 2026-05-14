@@ -1364,10 +1364,16 @@ def main() -> None:
         # Generate test file
         test_content = generate_test_file(md_file, pytest_blocks)
 
-        # Create output path preserving directory structure
+        # Create output path preserving directory structure. Sanitize each
+        # directory component so the output tree is a valid Python package
+        # (no dashes, etc.); otherwise pytest's importlib mode resolves
+        # `tests/docs/generated/foo-bar/test_x.py` to a module name with a
+        # dash, and any duplicate basename elsewhere in the tree silently
+        # aliases via sys.modules. See also: tests/slr_tests/__init__.py.
         relative_path = md_file.relative_to(args.docs_dir)
         test_file_name = f"test_{_sanitize_name(relative_path.stem)}.py"
-        output_subdir = args.output_dir / relative_path.parent
+        sanitized_parent = Path(*[_sanitize_name(p) for p in relative_path.parent.parts])
+        output_subdir = args.output_dir / sanitized_parent
         output_path = output_subdir / test_file_name
 
         if args.dry_run:

@@ -79,6 +79,12 @@ fn has_missing_deps(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) -> bool 
     {
         return true;
     }
+    if !skip_cuda
+        && super::cuda_cmd::should_install_cuda_python()
+        && !super::cuda_cmd::cuda_python_packages_installed()
+    {
+        return true;
+    }
     if !skip_cmake && pecos_build::cmake::find_cmake().is_none() {
         return true;
     }
@@ -115,6 +121,17 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
             println!("  cuQuantum:  {}", path.display());
         } else {
             println!("  cuQuantum:  not found (~200 MB, GPU-accelerated quantum simulation)");
+        }
+    }
+
+    // CUDA Python packages (only show when toolkit + NVIDIA GPU are present;
+    // mirrors the gate used by setup_cuda_python so the summary matches what
+    // the orchestrator will actually do).
+    if !skip_cuda && super::cuda_cmd::should_install_cuda_python() {
+        if super::cuda_cmd::cuda_python_packages_installed() {
+            println!("  cupy:       installed (CUDA Python packages synced)");
+        } else {
+            println!("  cupy:       not installed (~500 MB via `uv sync --group cuda`)");
         }
     }
 
@@ -331,7 +348,7 @@ fn setup_cuquantum(mode: PromptMode) -> Result<()> {
 // ── Python CUDA packages ────────────────────────────────────────────────────
 
 fn setup_cuda_python(mode: PromptMode) -> Result<()> {
-    if cupy_already_installed() {
+    if super::cuda_cmd::cuda_python_packages_installed() {
         return Ok(());
     }
 
@@ -346,15 +363,6 @@ fn setup_cuda_python(mode: PromptMode) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Cheap check: is cupy already importable in the active uv environment?
-/// Used to avoid re-prompting users who already have the CUDA group synced.
-fn cupy_already_installed() -> bool {
-    std::process::Command::new("uv")
-        .args(["run", "--frozen", "python", "-c", "import cupy"])
-        .output()
-        .is_ok_and(|o| o.status.success())
 }
 
 // ── cmake (optional, MWPF decoder) ──────────────────────────────────────────

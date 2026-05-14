@@ -1,6 +1,7 @@
 //! Implementation of the `cuda` subcommand
 
 use std::process::Command;
+use std::sync::OnceLock;
 
 use pecos_build::Result;
 use pecos_build::cuda::{
@@ -33,6 +34,24 @@ pub(super) fn has_nvidia_gpu() -> bool {
 /// True iff the CUDA toolkit is installed and an NVIDIA GPU is detected.
 pub(super) fn should_install_cuda_python() -> bool {
     find_cuda().is_some() && has_nvidia_gpu()
+}
+
+/// Cheap proxy for "are the CUDA Python packages synced into the active
+/// environment?". Spawns `uv run --frozen python -c "import cupy"`, so the
+/// result is cached for the lifetime of this process — `pecos setup` calls it
+/// from `has_missing_deps`, `print_status_summary`, and the install step itself,
+/// and the cache keeps that to one subprocess instead of three.
+///
+/// We probe `cupy` specifically because it's the package most likely to fail
+/// at runtime when missing (others in the group degrade more silently).
+pub(super) fn cuda_python_packages_installed() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        Command::new("uv")
+            .args(["run", "--frozen", "python", "-c", "import cupy"])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    })
 }
 
 /// Run the cuda subcommand

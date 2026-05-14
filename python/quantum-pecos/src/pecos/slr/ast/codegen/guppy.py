@@ -104,6 +104,9 @@ BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
     BinaryOp.RSHIFT: ">>",
 }
 
+BOOL_OPERAND_BINARY_OPS = {BinaryOp.AND, BinaryOp.OR, BinaryOp.XOR}
+BOOL_COMPARISON_OPS = {BinaryOp.EQ, BinaryOp.NE}
+
 
 class GuppyCodegenError(LinearityError):
     """Raised when the v1 AST -> Guppy emitter rejects an unsupported construct."""
@@ -404,8 +407,9 @@ class AstToGuppy:
         return lines
 
     def _emit_assign(self, node: AssignOp) -> list[str]:
-        target = self._render_bit_ref(node.target) if isinstance(node.target, BitRef) else str(node.target)
-        value = self._render_expression(node.value)
+        is_bit_target = isinstance(node.target, BitRef)
+        target = self._render_bit_ref(node.target) if is_bit_target else str(node.target)
+        value = self._render_expression(node.value, bool_context=is_bit_target)
         return [f"{self.context.indent()}{target} = {value}"]
 
     def _emit_barrier(self, _node: BarrierOp) -> list[str]:
@@ -420,7 +424,7 @@ class AstToGuppy:
         linearity = self._linearity()
         before = linearity.snapshot()
 
-        cond = self._render_expression(node.condition)
+        cond = self._render_expression(node.condition, bool_context=True)
         lines = [f"{self.context.indent()}if {cond}:"]
 
         self.context.push_indent()
@@ -626,9 +630,9 @@ class AstToGuppy:
             raise GuppyCodegenError(msg)
         return f"{ref.register}[{ref.index}]"
 
-    def _render_expression(self, expr: Expression) -> str:
+    def _render_expression(self, expr: Expression, *, bool_context: bool = False) -> str:
         if isinstance(expr, LiteralExpr):
-            return self._render_literal(expr)
+            return self._render_literal(expr, bool_context=bool_context)
         if isinstance(expr, VarExpr):
             return expr.name
         if isinstance(expr, BitExpr):
@@ -636,32 +640,61 @@ class AstToGuppy:
         if isinstance(expr, BinaryExpr):
             return self._render_binary(expr)
         if isinstance(expr, UnaryExpr):
-            return self._render_unary(expr)
+            return self._render_unary(expr, bool_context=bool_context)
         msg = f"Unsupported Guppy expression {expr!r}"
         raise GuppyCodegenError(msg)
 
-    def _render_literal(self, expr: LiteralExpr) -> str:
+    def _render_literal(self, expr: LiteralExpr, *, bool_context: bool = False) -> str:
         if isinstance(expr.value, bool):
             return "True" if expr.value else "False"
+        if bool_context and isinstance(expr.value, int):
+            if expr.value in {0, 1}:
+                return "True" if expr.value else "False"
+            msg = f"Cannot render integer literal {expr.value!r} as a Guppy bool"
+            raise GuppyCodegenError(msg)
         return str(expr.value)
 
     def _render_binary(self, expr: BinaryExpr) -> str:
-        left = self._render_expression(expr.left)
-        right = self._render_expression(expr.right)
         op = BINARY_OP_TO_PYTHON.get(expr.op)
         if op is None:
             msg = f"Unsupported Guppy binary op {expr.op.name}"
             raise GuppyCodegenError(msg)
+
+        compares_bool_expression = expr.op in BOOL_COMPARISON_OPS and (
+            self._is_bool_expression(expr.left) or self._is_bool_expression(expr.right)
+        )
+        operand_bool_context = expr.op in BOOL_OPERAND_BINARY_OPS or compares_bool_expression
+        left = self._render_expression(expr.left, bool_context=operand_bool_context)
+        right = self._render_expression(expr.right, bool_context=operand_bool_context)
         return f"({left} {op} {right})"
 
-    def _render_unary(self, expr: UnaryExpr) -> str:
-        operand = self._render_expression(expr.operand)
+    def _render_unary(self, expr: UnaryExpr, *, bool_context: bool = False) -> str:
+        operand = self._render_expression(expr.operand, bool_context=bool_context or expr.op == UnaryOp.NOT)
         if expr.op == UnaryOp.NOT:
             return f"(not {operand})"
         if expr.op == UnaryOp.NEG:
             return f"(-{operand})"
         msg = f"Unsupported Guppy unary op {expr.op.name}"
         raise GuppyCodegenError(msg)
+
+    def _is_bool_expression(self, expr: Expression) -> bool:
+        if isinstance(expr, BitExpr):
+            return True
+        if isinstance(expr, LiteralExpr):
+            return isinstance(expr.value, bool)
+        if isinstance(expr, UnaryExpr):
+            return expr.op == UnaryOp.NOT
+        return isinstance(expr, BinaryExpr) and expr.op in {
+            BinaryOp.AND,
+            BinaryOp.OR,
+            BinaryOp.XOR,
+            BinaryOp.EQ,
+            BinaryOp.NE,
+            BinaryOp.LT,
+            BinaryOp.LE,
+            BinaryOp.GT,
+            BinaryOp.GE,
+        }
 
     def _parse_indexed_ref(self, ref: str) -> tuple[str, int] | None:
         match = re.fullmatch(r"([A-Za-z_]\w*)\[(\d+)\]", ref)

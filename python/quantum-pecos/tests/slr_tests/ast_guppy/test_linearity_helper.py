@@ -176,6 +176,24 @@ def test_permute_clean_swap() -> None:
     assert state.live(Slot("q", 1)) == "q_0"
 
 
+def test_permute_empty_mapping_is_noop() -> None:
+    state = GuppyLinearityState.from_allocators({"q": 1})
+    before = list(state.bindings())
+
+    state.permute({}, label="empty Permute")
+
+    assert list(state.bindings()) == before
+
+
+def test_permute_identity_mapping_is_noop() -> None:
+    state = GuppyLinearityState.from_allocators({"q": 1})
+    before = list(state.bindings())
+
+    state.permute({Slot("q", 0): Slot("q", 0)}, label="identity Permute")
+
+    assert list(state.bindings()) == before
+
+
 def test_permute_cross_allocator_cycle() -> None:
     state = GuppyLinearityState.from_allocators({"a": 1, "b": 1, "c": 1})
 

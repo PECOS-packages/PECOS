@@ -112,6 +112,18 @@ class TestMeasurement:
         assert_ast_guppy_compiles(prog)
 
 
+class TestClassical:
+    """Classical bit operations that must typecheck against bool arrays."""
+
+    def test_creg_bit_set_int_literal(self) -> None:
+        prog = Main(
+            c := CReg("c", 2),
+            c[0].set(1),
+            c[1].set(0),
+        )
+        assert_ast_guppy_compiles(prog)
+
+
 class TestPrep:
     """Prep as reset (live slot) or fresh allocation (consumed slot)."""
 

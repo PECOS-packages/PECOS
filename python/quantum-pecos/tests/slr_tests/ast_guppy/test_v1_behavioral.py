@@ -26,7 +26,7 @@ Test classes per stage 4 plan (`step4-cutover-plan.md`):
 
 from __future__ import annotations
 
-from pecos.slr import CReg, If, Main, QReg
+from pecos.slr import CReg, If, Main, Permute, QReg
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -84,6 +84,48 @@ class TestDeterministic:
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
         assert all(r["measurement_1"] == 0 for r in records)
+
+    def test_measure_prep_x_remeasure_is_one(self) -> None:
+        """Prep after measurement produces a fresh |0> that can be inverted."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 2),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            qb.Prep(q[0]),
+            qb.X(q[0]),
+            Measure(q[0]) > c[1],
+        )
+        records = run_ast_guppy_via_selene(prog, shots=10)
+        assert all(r["measurement_0"] == 1 for r in records)
+        assert all(r["measurement_1"] == 1 for r in records)
+
+    def test_h_z_h_then_measure_is_one(self) -> None:
+        """HZH is equivalent to X, covering deterministic Z-basis behavior."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.H(q[0]),
+            qb.Z(q[0]),
+            qb.H(q[0]),
+            Measure(q[0]) > c[0],
+        )
+        records = run_ast_guppy_via_selene(prog, shots=10)
+        assert all(r["measurement_0"] == 1 for r in records)
+
+    def test_quantum_permute_is_observed_by_later_measurements(self) -> None:
+        """Qubit slot permutation must remap the owned local, not just typecheck."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.X(q[0]),
+            Permute([q[0], q[1]], [q[1], q[0]]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+        )
+        records = run_ast_guppy_via_selene(prog, shots=10)
+        assert all(r["measurement_0"] == 0 for r in records)
+        assert all(r["measurement_1"] == 1 for r in records)
 
 
 # ── Bell / GHZ correlation tests ──────────────────────────────────────────
@@ -179,3 +221,30 @@ class TestConditionalCorrectness:
         records = run_ast_guppy_via_selene(prog_one, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
         assert all(r["measurement_1"] == 1 for r in records)
+
+    def test_creg_permute_remaps_condition_bit(self) -> None:
+        """CReg Permute must affect a later If condition."""
+        prog_without_permute = Main(
+            q := QReg("q", 1),
+            flag := CReg("flag", 2, result=False),
+            out := CReg("out", 1),
+            flag[0].set(1),
+            flag[1].set(0),
+            If(flag[1]).Then(qb.X(q[0])),
+            Measure(q[0]) > out[0],
+        )
+        records = run_ast_guppy_via_selene(prog_without_permute, shots=10)
+        assert all(r["measurement_0"] == 0 for r in records)
+
+        prog_with_permute = Main(
+            q := QReg("q", 1),
+            flag := CReg("flag", 2, result=False),
+            out := CReg("out", 1),
+            flag[0].set(1),
+            flag[1].set(0),
+            Permute([flag[0], flag[1]], [flag[1], flag[0]]),
+            If(flag[1]).Then(qb.X(q[0])),
+            Measure(q[0]) > out[0],
+        )
+        records = run_ast_guppy_via_selene(prog_with_permute, shots=10)
+        assert all(r["measurement_0"] == 1 for r in records)

@@ -20,6 +20,10 @@ doctest = false
 [features]
 default = ["wasm"]
 wasm = ["dep:pecos-wasm"]
+# MWPF decoder — pulls in the highs LP solver which requires cmake at build time.
+# Off by default for local dev so cmake is not required. Wheel builds in CI enable
+# this so end users get MWPF support out of the box.
+mwpf = ["pecos-decoders/mwpf"]
 
 [dependencies]
 # Core PECOS crates (direct deps instead of metacrate)
@@ -48,8 +52,17 @@ pecos-wasm = { workspace = true, optional = true }
 # C++ simulator backends
 pecos-cppsparsestab.workspace = true
 
-# Decoders (all backends)
-pecos-decoders = { workspace = true, features = ["all"] }
+# Decoders (all backends except mwpf, which requires cmake — opt in via the
+# top-level `mwpf` feature on this crate).
+pecos-decoders = { workspace = true, features = [
+    "ldpc",
+    "fusion-blossom",
+    "pymatching",
+    "tesseract",
+    "chromobius",
+    "relay-bp",
+    "uf",
+] }
 
 # QEC (fault tolerance)
 pecos-qec.workspace = true

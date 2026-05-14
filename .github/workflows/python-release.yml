@@ -2,6 +2,10 @@ name: Python Artifacts
 
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  # Must match pecos_build::cmake::CMAKE_VERSION. The MWPF decoder feature
+  # uses highs-sys, which needs cmake; the wheel build installs this version
+  # via `pecos install cmake` and points highs-sys's cmake-rs at it via $CMAKE.
+  PECOS_CMAKE_VERSION: "3.31.12"
 
 on:
   push:
@@ -186,10 +190,12 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           # Linux configuration - GCC Toolset and CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:/usr/local/cuda-12.6/bin:$PATH
+            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin:/usr/local/cuda-12.6/bin:$PATH
             LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
+            CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin/cmake
             CUDA_PATH=/usr/local/cuda-12.6
+            MATURIN_PEP517_ARGS=--features=mwpf
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -211,20 +217,24 @@ jobs:
               echo "Skipping CUDA installation (GPU support not enabled for this build)"
             fi
             cargo run --release -p pecos-cli -- install llvm --force
+            cargo run --release -p pecos-cli -- install cmake --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # macOS configuration
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin:$PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
+            CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin/cmake
             MACOSX_DEPLOYMENT_TARGET=13.2
             SDKROOT=$(xcrun --show-sdk-path)
+            MATURIN_PEP517_ARGS=--features=mwpf
           CIBW_BEFORE_ALL_MACOS: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             rustup update
             cargo run --release -p pecos-cli -- install llvm --force
+            cargo run --release -p pecos-cli -- install cmake --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
             mkdir -p $HOME/.pecos/bin
@@ -235,12 +245,15 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
           # Windows configuration - CUDA via Jimver/cuda-toolkit (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;$PATH"
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
+            CMAKE="C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin\\cmake.exe"
+            MATURIN_PEP517_ARGS=--features=mwpf
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
             rustup update &&
             cargo run --release -p pecos-cli -- install llvm --force &&
+            cargo run --release -p pecos-cli -- install cmake --force &&
             echo "=== Checking LLVM installation ===" &&
             (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14" && echo "LLVM directory exists") || (echo "ERROR: LLVM directory not found!" && exit 1)
           # Install delvewheel and patch it to ignore ext-ms-win-* API sets

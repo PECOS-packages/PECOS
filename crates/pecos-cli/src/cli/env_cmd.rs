@@ -91,6 +91,15 @@ pub fn collect_env() -> BTreeMap<String, String> {
         );
     }
 
+    // cmake — set CMAKE explicitly so cmake-rs (used by highs-sys via the
+    // MWPF decoder) finds the binary without depending on PATH. When the user
+    // has system cmake, this is redundant but harmless; when they're using the
+    // PECOS-managed install, this is what lets `cargo test` / `cargo check`
+    // build the mwpf dep tree without further plumbing.
+    if let Some(cmake_bin) = pecos_build::cmake::find_cmake() {
+        env.insert("CMAKE".into(), cmake_bin.display().to_string());
+    }
+
     env
 }
 

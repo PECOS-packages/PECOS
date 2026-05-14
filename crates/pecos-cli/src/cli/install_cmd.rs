@@ -5,7 +5,7 @@ use pecos_build::errors::Error;
 use pecos_build::prompt::{PromptMode, confirm};
 
 /// Known installable targets
-const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum"];
+const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum", "cmake"];
 
 /// Run the install command
 pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Result<()> {
@@ -85,6 +85,7 @@ fn find_existing(target: &str) -> Option<std::path::PathBuf> {
         "cuda" => pecos_build::cuda::find_cuda(),
         "llvm" => pecos_build::llvm::find_llvm_14(None),
         "cuquantum" => pecos_build::cuquantum::find_cuquantum(),
+        "cmake" => pecos_build::cmake::find_cmake(),
         _ => None,
     }
 }
@@ -100,6 +101,9 @@ fn install_target(target: &str, force: bool, no_configure: bool) -> Result<()> {
         }
         "cuquantum" => {
             pecos_build::cuquantum::installer::install_cuquantum(force)?;
+        }
+        "cmake" => {
+            pecos_build::cmake::installer::install_cmake(force)?;
         }
         _ => unreachable!("target was validated above"),
     }

@@ -19,11 +19,13 @@ pub fn collect_stim_sources(stim_src_dir: &Path) -> Vec<PathBuf> {
         "stim/circuit/gate_data.cc",
         "stim/circuit/gate_target.cc",
         "stim/circuit/gate_decomposition.cc",
-        // Memory management
+        // Memory management. simd_word.cc and sparse_xor_vec.cc are upstream
+        // Stim "translation-unit anchor" files for header-only types: their
+        // contents are just `#include "<header>.h"`, so they compile to empty
+        // .o files with no symbols. Including them adds nothing at link time
+        // and triggers macOS BSD ranlib's `has no symbols` warnings.
         "stim/mem/bit_ref.cc",
-        "stim/mem/simd_word.cc",
         "stim/mem/simd_util.cc",
-        "stim/mem/sparse_xor_vec.cc",
         // Stabilizer operations (needed for MWPM)
         "stim/stabilizers/pauli_string.cc",
         "stim/stabilizers/flex_pauli_string.cc",

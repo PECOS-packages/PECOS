@@ -76,6 +76,7 @@ nav:
   - Parallel Execution: user-guide/parallel-execution.md
   - LLVM Setup: user-guide/llvm-setup.md
   - CUDA Setup: user-guide/cuda-setup.md
+  - cmake Setup (MWPF): user-guide/cmake-setup.md
 - Concepts:
   - concepts/index.md
   - StabVec Simulator: concepts/clifford-rz-simulator.md

@@ -157,6 +157,10 @@ enum Commands {
         #[arg(long)]
         skip_cuda: bool,
 
+        /// Skip cmake setup (cmake is only needed for the optional MWPF decoder)
+        #[arg(long)]
+        skip_cmake: bool,
+
         /// Suppress output when all dependencies are already found
         #[arg(short, long)]
         quiet: bool,
@@ -706,6 +710,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             no,
             skip_llvm,
             skip_cuda,
+            skip_cmake,
             quiet,
         } => {
             let mode = if *yes {
@@ -715,7 +720,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 pecos_build::prompt::PromptMode::Interactive
             };
-            cli::setup_cmd::run(mode, *skip_llvm, *skip_cuda, *quiet)?;
+            cli::setup_cmd::run(mode, *skip_llvm, *skip_cuda, *skip_cmake, *quiet)?;
         }
         Commands::Migrate => cli::migrate_cmd::run()?,
         Commands::Install {

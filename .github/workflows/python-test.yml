@@ -6,6 +6,9 @@ env:
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
   LLVM_VERSION: "14.0.6"
+  # Force the MWPF decoder feature on in CI so we exercise the cmake-dependent
+  # build path and catch regressions. GitHub-hosted runners ship cmake.
+  PECOS_BUILD_MWPF: "1"
 
 on:
   push:
@@ -100,6 +103,9 @@ jobs:
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         export PATH="$HOME/.cargo/bin:$PATH"
         rustup show
+
+    - name: Verify cmake is available (MWPF decoder build)
+      run: cmake --version
 
     - name: Install just
       uses: extractions/setup-just@v4

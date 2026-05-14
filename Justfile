@@ -109,6 +109,32 @@ doctor:
     fi
     echo ""
 
+    echo "Optional decoders:"
+    CMAKE_BIN=""
+    # Prefer PECOS-managed install (mirrors find_cmake() in pecos-build).
+    for d in "$HOME"/.pecos/deps/cmake-*; do
+        [ -d "$d" ] || continue
+        # macOS layout nests cmake inside CMake.app/Contents/bin/.
+        for candidate in "$d/CMake.app/Contents/bin/cmake" "$d/bin/cmake" "$d/bin/cmake.exe"; do
+            if [ -x "$candidate" ]; then
+                CMAKE_BIN="$candidate"
+                break 2
+            fi
+        done
+    done
+    if [ -z "$CMAKE_BIN" ] && command -v cmake >/dev/null 2>&1; then
+        CMAKE_BIN=$(command -v cmake)
+    fi
+    if [ -n "$CMAKE_BIN" ]; then
+        CMAKE_VER=$("$CMAKE_BIN" --version 2>/dev/null | head -1 | awk '{print $3}')
+        ok "cmake" "$CMAKE_VER (MWPF decoder available) at $CMAKE_BIN"
+    else
+        echo "  [--] cmake: not found — MWPF decoder disabled"
+        echo "       Install via 'pecos setup' / 'pecos install cmake', or see:"
+        echo "       https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md"
+    fi
+    echo ""
+
     if [ "$PROBLEMS" -eq 0 ]; then
         echo "No problems found."
     else

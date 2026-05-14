@@ -27,7 +27,7 @@ from ._harness import assert_ast_guppy_compiles
 
 
 pytestmark = pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason="awaiting feat/ast-guppy-v1 emitter rewrite (Codex PR sequence)",
 )
 
@@ -216,36 +216,11 @@ class TestReturn:
         assert_ast_guppy_compiles(prog)
 
 
-class TestRejection:
-    """v1 must REJECT these with clear errors (not silently miscompile)."""
-
-    @pytest.mark.xfail(
-        strict=False,
-        reason="awaiting emitter rejection logic; will assert specific exception once landed",
-    )
-    def test_divergent_branch_post_state_rejected(self) -> None:
-        """Then-branch consumes q[1], else (implicit) does not -> rejected."""
-        prog = Main(
-            q := QReg("q", 2),
-            c := CReg("c", 2),
-            Measure(q[0]) > c[0],
-            If(c[0]).Then(Measure(q[1]) > c[1]),
-            # q[1] state diverges between branches -> codegen must reject
-        )
-        with pytest.raises(Exception):  # noqa: BLE001 -- placeholder until specific type lands
-            assert_ast_guppy_compiles(prog)
-
-    @pytest.mark.xfail(
-        strict=False,
-        reason="awaiting emitter rejection logic for unsupported gates",
-    )
-    def test_unsupported_sx_rejected(self) -> None:
-        """SX/SY have no direct Guppy mapping in v1; emitter rejects."""
-        prog = Main(
-            q := QReg("q", 1),
-            c := CReg("c", 1),
-            qb.SX(q[0]),
-            Measure(q[0]) > c[0],
-        )
-        with pytest.raises(Exception):  # noqa: BLE001
-            assert_ast_guppy_compiles(prog)
+# Rejection tests for divergent control flow + unsupported gates land
+# in a follow-up PR once Codex's emitter has a specific `LinearityError`
+# (or analogous typed error) to assert against. Asserting `Exception`
+# today would silently pass on the AST path's pre-existing breakage --
+# a fallback the design philosophy explicitly disallows. See:
+#   ~/Repos/pecos-docs/design/slr/stage5-integrity-review.md (finding 6)
+#   ~/Repos/pecos-docs/design/slr/v1-feature-matrix.md ("Explicitly
+#       unsupported in v1" table)

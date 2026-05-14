@@ -41,14 +41,12 @@ import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pecos.slr import CReg, If, Main, QReg, Repeat, SlrConverter
+from pecos.slr import Block, CReg, If, Main, QReg, Repeat, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from pecos.slr import Block
 
 
 @dataclass(frozen=True)
@@ -108,18 +106,165 @@ def _repeat_idle() -> Block:
     )
 
 
-def _curated_cases() -> list[AuditCase]:
-    """v1 acceptance baseline; grows during Workstream B as gaps surface.
+def _legacy_individual_measurements() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_individual_measurements_compile."""
+    return Main(
+        q := QReg("q", 4),
+        c := CReg("c", 4),
+        Measure(q[0]) > c[0],
+        Measure(q[1]) > c[1],
+        Measure(q[2]) > c[2],
+        Measure(q[3]) > c[3],
+    )
 
-    Initial list mirrors the v1 acceptance corpus. As the audit
-    runner is exercised against examples/ and qeclib, additional
-    cases are added here. Each new case is a candidate manifest row.
+
+def _legacy_multiple_qregs() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_multiple_qregs_compile."""
+    return Main(
+        q1 := QReg("q1", 2),
+        q2 := QReg("q2", 2),
+        c1 := CReg("c1", 2),
+        c2 := CReg("c2", 2),
+        qb.H(q1[0]),
+        qb.H(q2[0]),
+        qb.CX(q1[0], q2[0]),
+        Measure(q1) > c1,
+        Measure(q2) > c2,
+    )
+
+
+def _legacy_empty_main() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_empty_main_compiles."""
+    return Main()
+
+
+def _legacy_gates_only_no_measurement() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_gates_only_with_cleanup_compiles."""
+    return Main(
+        q := QReg("q", 3),
+        qb.H(q[0]),
+        qb.CX(q[0], q[1]),
+        qb.CX(q[1], q[2]),
+    )
+
+
+def _legacy_partial_consumption_with_block() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_partial_consumption_compiles.
+
+    Uses a `Block` subclass `MeasureAncillas` that takes data + ancilla and
+    measures the ancilla. v1 flattens nested blocks (BlockCall is v2), so
+    this is the cleanest test of "did flattening preserve linearity correctly?"
+    """
+
+    class MeasureAncillas(Block):
+        def __init__(self, data: QReg, ancilla: QReg, syndrome: CReg) -> None:
+            super().__init__()
+            self.data = data
+            self.ancilla = ancilla
+            self.syndrome = syndrome
+            self.ops = [
+                qb.CX(data[0], ancilla[0]),
+                Measure(ancilla) > syndrome,
+            ]
+
+    return Main(
+        data := QReg("data", 2),
+        ancilla := QReg("ancilla", 1),
+        syndrome := CReg("syndrome", 1),
+        result := CReg("result", 2),
+        MeasureAncillas(data, ancilla, syndrome),
+        qb.H(data[0]),
+        Measure(data) > result,
+    )
+
+
+def _legacy_function_with_returns() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_function_with_returns_compiles.
+
+    ProcessQubits Block uses qubits without measuring them; the outer scope
+    measures. Tests that nested-block flattening preserves "live qubits flow
+    out" semantics.
+    """
+
+    class ProcessQubits(Block):
+        def __init__(self, q: QReg) -> None:
+            super().__init__()
+            self.q = q
+            self.ops = [
+                qb.H(q[0]),
+                qb.CX(q[0], q[1]),
+            ]
+
+    return Main(
+        q := QReg("q", 2),
+        c := CReg("c", 2),
+        ProcessQubits(q),
+        Measure(q) > c,
+    )
+
+
+def _legacy_nested_blocks() -> Block:
+    """tests/slr_tests/guppy/test_hugr_compilation.py::test_nested_blocks_compile.
+
+    Two-level nesting: OuterBlock contains InnerBlock. v1 flattening must
+    preserve the InnerBlock's measurement consuming q[0] for the outer
+    sequence to remain linearity-valid.
+    """
+
+    class InnerBlock(Block):
+        def __init__(self, q: QReg, c: CReg) -> None:
+            super().__init__()
+            self.q = q
+            self.c = c
+            self.ops = [
+                Measure(q[0]) > c[0],
+            ]
+
+    class OuterBlock(Block):
+        def __init__(self, q: QReg, c: CReg) -> None:
+            super().__init__()
+            self.q = q
+            self.c = c
+            self.ops = [
+                qb.H(q[0]),
+                InnerBlock(q, c),
+                qb.H(q[1]),
+                Measure(q[1]) > c[1],
+            ]
+
+    return Main(
+        q := QReg("q", 2),
+        c := CReg("c", 2),
+        OuterBlock(q, c),
+    )
+
+
+def _curated_cases() -> list[AuditCase]:
+    """v1 acceptance baseline + legacy HUGR-test corpus.
+
+    The v1.* prefix is the curated acceptance baseline (mirrors
+    test_v1_acceptance.py). The legacy.* prefix is the corpus from
+    `tests/slr_tests/guppy/test_hugr_compilation.py` -- programs
+    that currently pass via the legacy IR generator. Any failure on
+    the AST path is a real gap candidate (manifest row).
+
+    As the audit progresses, additional cases come from `examples/`
+    and `qeclib/`.
     """
     return [
+        # v1 acceptance baseline (all should pass; sanity checks)
         AuditCase("v1.bell", _bell),
         AuditCase("v1.ghz_three", _ghz_three),
         AuditCase("v1.conditional_correction", _conditional_correction),
         AuditCase("v1.repeat_idle", _repeat_idle),
+        # Legacy HUGR corpus (passes on legacy IR; failures = real gaps)
+        AuditCase("legacy.individual_measurements", _legacy_individual_measurements),
+        AuditCase("legacy.multiple_qregs", _legacy_multiple_qregs),
+        AuditCase("legacy.empty_main", _legacy_empty_main),
+        AuditCase("legacy.gates_only_no_measurement", _legacy_gates_only_no_measurement),
+        AuditCase("legacy.partial_consumption_with_block", _legacy_partial_consumption_with_block),
+        AuditCase("legacy.function_with_returns", _legacy_function_with_returns),
+        AuditCase("legacy.nested_blocks", _legacy_nested_blocks),
     ]
 
 

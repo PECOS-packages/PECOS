@@ -200,10 +200,10 @@ class TestGuppyEquivalence:
 
         # Both should have H and CX gates
         assert "quantum.h" in direct_guppy.lower() or ".h(" in direct_guppy.lower()
-        assert "quantum.h" in ast_guppy.lower() or ".h(" in ast_guppy.lower()
+        assert " = h(" in ast_guppy.lower()
 
         assert "quantum.cx" in direct_guppy.lower() or ".cx(" in direct_guppy.lower()
-        assert "quantum.cx" in ast_guppy.lower() or ".cx(" in ast_guppy.lower()
+        assert " = cx(" in ast_guppy.lower()
 
 
 class TestQIREquivalence:

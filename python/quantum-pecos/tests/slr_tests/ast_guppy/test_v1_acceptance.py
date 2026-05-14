@@ -17,19 +17,11 @@ errors).
 
 from __future__ import annotations
 
-import pytest
-
 from pecos.slr import Block, CReg, If, Main, QReg, Repeat
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
-from ._harness import assert_ast_guppy_compiles
-
-
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    reason="awaiting feat/ast-guppy-v1 emitter rewrite (Codex PR sequence)",
-)
+from ._harness import assert_ast_guppy_compiles  # noqa: TID252
 
 
 class TestStraightLine:

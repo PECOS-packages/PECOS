@@ -28,7 +28,8 @@ class TestAstToGuppyBasic:
         code = ast_to_guppy(ast)
 
         assert "from guppylang import guppy" in code
-        assert "from guppylang.std import quantum" in code
+        assert "from guppylang.std.builtins import array, owned" in code
+        assert "from guppylang.std.quantum import discard, measure, qubit" in code
         assert "@guppy" in code
         assert "def main" in code
 
@@ -71,9 +72,9 @@ class TestAstToGuppyGates:
 
         code = ast_to_guppy(ast)
 
-        # Should generate gate with reassignment for linearity
-        assert "quantum.h" in code
-        assert "q[0] = quantum.h(q[0])" in code
+        assert "q_0, = q" in code
+        assert "q_0 = h(q_0)" in code
+        assert "discard(q_0)" in code
 
     def test_two_qubit_gate(self) -> None:
         """Two-qubit gate generates tuple assignment."""
@@ -85,9 +86,8 @@ class TestAstToGuppyGates:
 
         code = ast_to_guppy(ast)
 
-        # Two-qubit gates return tuple
-        assert "quantum.cx" in code
-        assert "q[0], q[1] = quantum.cx" in code
+        assert "q_0, q_1 = q" in code
+        assert "q_0, q_1 = cx(q_0, q_1)" in code
 
     def test_multiple_gates(self) -> None:
         """Multiple gates generate correct sequence."""
@@ -101,9 +101,9 @@ class TestAstToGuppyGates:
 
         code = ast_to_guppy(ast)
 
-        assert "quantum.h" in code
-        assert "quantum.x" in code
-        assert "quantum.cz" in code
+        assert "q_0 = h(q_0)" in code
+        assert "q_1 = x(q_1)" in code
+        assert "q_0, q_1 = cz(q_0, q_1)" in code
 
 
 class TestAstToGuppyPrepMeasure:
@@ -120,12 +120,10 @@ class TestAstToGuppyPrepMeasure:
 
         code = ast_to_guppy(ast)
 
-        assert "quantum.measure" in code
-        # Measurement results use local variable names (c_0 instead of c[0])
-        assert "c_0 = quantum.measure(q[0])" in code
-        # Return type should be bool since all qubits are measured
-        assert "-> bool:" in code
-        assert "return c_0" in code
+        assert "c = array(False)" in code
+        assert "c[0] = measure(q_0)" in code
+        assert "-> array[bool, 1]:" in code
+        assert "return c" in code
 
 
 class TestAstToGuppyControlFlow:
@@ -145,7 +143,7 @@ class TestAstToGuppyControlFlow:
         code = ast_to_guppy(ast)
 
         assert "if" in code
-        assert "quantum.h" in code
+        assert "q_0 = h(q_0)" in code
 
     def test_if_else_statement(self) -> None:
         """If-else statement generates both branches."""
@@ -166,8 +164,8 @@ class TestAstToGuppyControlFlow:
 
         assert "if" in code
         assert "else:" in code
-        assert "quantum.h" in code
-        assert "quantum.x" in code
+        assert "q_0 = h(q_0)" in code
+        assert "q_0 = x(q_0)" in code
 
     def test_repeat_statement(self) -> None:
         """Repeat statement generates for-range loop."""
@@ -183,7 +181,7 @@ class TestAstToGuppyControlFlow:
 
         # Repeat becomes for _ in range(n)
         assert "for _ in range(3):" in code
-        assert "quantum.h" in code
+        assert "q_0 = h(q_0)" in code
 
 
 class TestAstToGuppyQEC:
@@ -208,8 +206,9 @@ class TestAstToGuppyQEC:
         assert "ancilla: array[qubit, 1]" in code
 
         # Check operations
-        assert "quantum.cx" in code
-        assert "quantum.measure" in code
+        assert "data_0, ancilla_0 = cx(data_0, ancilla_0)" in code
+        assert "data_1, ancilla_0 = cx(data_1, ancilla_0)" in code
+        assert "c[0] = measure(ancilla_0)" in code
 
 
 class TestAstToGuppyGenerator:
@@ -235,8 +234,8 @@ class TestAstToGuppyGenerator:
         code1 = "\n".join(generator.generate(ast1))
         code2 = "\n".join(generator.generate(ast2))
 
-        assert "q[0]" in code1
-        assert "r[0]" in code2
+        assert "q_0 = h(q_0)" in code1
+        assert "r_0 = x(r_0)" in code2
 
     def test_indentation(self) -> None:
         """Generated code has proper indentation for nested blocks."""
@@ -291,10 +290,10 @@ class TestAstToGuppyFullPipeline:
         assert "from guppylang import guppy" in code
         assert "@guppy" in code
         assert "def main" in code
-        assert "quantum.h" in code
-        assert "quantum.cx" in code
+        assert "q_0 = h(q_0)" in code
+        assert "q_0, q_1 = cx(q_0, q_1)" in code
         assert "if" in code
-        assert "quantum.x" in code
+        assert "q_2 = x(q_2)" in code
 
     def test_bell_state_circuit(self) -> None:
         """Test a simple Bell state circuit."""
@@ -318,5 +317,5 @@ class TestAstToGuppyFullPipeline:
         assert any("def main" in line for line in lines)
 
         # Check gates are in function body (indented)
-        gate_lines = [line for line in lines if "quantum." in line]
+        gate_lines = [line for line in lines if " = h(" in line or " = cx(" in line]
         assert all(line.startswith("    ") for line in gate_lines)

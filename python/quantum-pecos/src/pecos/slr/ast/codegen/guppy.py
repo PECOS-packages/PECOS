@@ -11,46 +11,48 @@
 
 """AST to Guppy Python code generator.
 
-This module provides a visitor that transforms AST nodes into Guppy Python code.
-Guppy is a quantum programming language that compiles to HUGR.
-
-Example:
-    from pecos.slr.ast import slr_to_ast, Program
-    from pecos.slr.ast.codegen import AstToGuppy
-
-    # Convert SLR to AST
-    ast = slr_to_ast(slr_program)
-
-    # Generate Guppy code
-    generator = AstToGuppy()
-    guppy_code = generator.generate(ast)
+This emitter lowers SLR's allocator-style AST to Guppy source. Guppy has
+linear qubit ownership, so quantum arrays are unpacked to stable local qubit
+variables at function entry and the Guppy-only `GuppyLinearityState` tracks
+which local owns each logical slot while recursive descent emits statements.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen.guppy_linearity import (
+    GuppyLinearityState,
+    LinearityError,
+    Slot,
+    SlotState,
+)
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BinaryExpr,
     BinaryOp,
     BitExpr,
     BitRef,
+    BitTypeExpr,
     ForStmt,
     GateKind,
+    GateOp,
     IfStmt,
     LiteralExpr,
     MeasureOp,
     ParallelBlock,
+    PrepareOp,
+    QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ReturnOp,
     UnaryExpr,
     UnaryOp,
     VarExpr,
     WhileStmt,
 )
-from pecos.slr.ast.visitor import BaseVisitor
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
@@ -58,64 +60,32 @@ if TYPE_CHECKING:
         BarrierOp,
         CommentOp,
         Expression,
-        GateOp,
         PermuteOp,
-        PrepareOp,
         Program,
-        ReturnOp,
         SlotRef,
+        Statement,
     )
 
 
-# Mapping from AST GateKind to Guppy function names
-GATE_TO_GUPPY: dict[GateKind, str] = {
-    # Single-qubit Paulis
-    GateKind.X: "quantum.x",
-    GateKind.Y: "quantum.y",
-    GateKind.Z: "quantum.z",
-    # Hadamard
-    GateKind.H: "quantum.h",
-    # Phase gates
-    GateKind.S: "quantum.s",
-    GateKind.Sdg: "quantum.sdg",
-    GateKind.T: "quantum.t",
-    GateKind.Tdg: "quantum.tdg",
-    # Square root gates
-    GateKind.SX: "quantum.sx",
-    GateKind.SY: "quantum.sy",
-    GateKind.SZ: "quantum.sz",
-    GateKind.SXdg: "quantum.sxdg",
-    GateKind.SYdg: "quantum.sydg",
-    GateKind.SZdg: "quantum.szdg",
-    # Rotation gates
-    GateKind.RX: "quantum.rx",
-    GateKind.RY: "quantum.ry",
-    GateKind.RZ: "quantum.rz",
-    # Two-qubit gates
-    GateKind.CX: "quantum.cx",
-    GateKind.CY: "quantum.cy",
-    GateKind.CZ: "quantum.cz",
-    GateKind.CH: "quantum.ch",
-    # Two-qubit rotation gates
-    GateKind.SXX: "quantum.sxx",
-    GateKind.SYY: "quantum.syy",
-    GateKind.SZZ: "quantum.szz",
-    GateKind.SXXdg: "quantum.sxxdg",
-    GateKind.SYYdg: "quantum.syydg",
-    GateKind.SZZdg: "quantum.szzdg",
-    GateKind.RZZ: "quantum.rzz",
-    # Controlled rotation gates
-    GateKind.CRX: "quantum.crx",
-    GateKind.CRY: "quantum.cry",
-    GateKind.CRZ: "quantum.crz",
-    # Face rotations
-    GateKind.F: "quantum.f",
-    GateKind.Fdg: "quantum.fdg",
-    GateKind.F4: "quantum.f4",
-    GateKind.F4dg: "quantum.f4dg",
+FUNCTIONAL_GATES: dict[GateKind, str] = {
+    GateKind.X: "x",
+    GateKind.Y: "y",
+    GateKind.Z: "z",
+    GateKind.H: "h",
+    GateKind.S: "s",
+    GateKind.Sdg: "sdg",
+    GateKind.T: "t",
+    GateKind.Tdg: "tdg",
+    GateKind.SZ: "s",
+    GateKind.SZdg: "sdg",
+    GateKind.CX: "cx",
+    GateKind.CY: "cy",
+    GateKind.CZ: "cz",
+    GateKind.CH: "ch",
 }
 
-# Mapping from AST BinaryOp to Python operators
+FUNCTIONAL_GATE_IMPORTS = ", ".join(sorted(set(FUNCTIONAL_GATES.values()) | {"reset"}))
+
 BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
     BinaryOp.ADD: "+",
     BinaryOp.SUB: "-",
@@ -134,32 +104,21 @@ BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
     BinaryOp.RSHIFT: ">>",
 }
 
-# Mapping from AST UnaryOp to Python operators
-UNARY_OP_TO_PYTHON: dict[UnaryOp, str] = {
-    UnaryOp.NOT: "not",
-    UnaryOp.NEG: "-",
-}
+
+class GuppyCodegenError(LinearityError):
+    """Raised when the v1 AST -> Guppy emitter rejects an unsupported construct."""
 
 
 @dataclass
-class CodeGenContext:
-    """Context for code generation."""
+class GuppyContext:
+    """Mutable state for one Guppy emission run."""
 
     indent_level: int = 0
-    allocators: dict[str, int] = field(default_factory=dict)  # name -> capacity
-    allocator_parents: dict[str, str | None] = field(
-        default_factory=dict,
-    )  # name -> parent
-    allocator_offsets: dict[str, int] = field(
-        default_factory=dict,
-    )  # name -> offset in parent
-    registers: dict[str, int] = field(default_factory=dict)  # name -> size
-    measured_slots: set[tuple[str, int]] = field(
-        default_factory=set,
-    )  # (allocator, index)
-    measurement_vars: list[str] = field(
-        default_factory=list,
-    )  # variable names for results
+    root_allocators: dict[str, int] = field(default_factory=dict)
+    child_allocators: set[str] = field(default_factory=set)
+    registers: dict[str, RegisterDecl] = field(default_factory=dict)
+    linearity: GuppyLinearityState | None = None
+    temp_counter: int = 0
 
     def indent(self) -> str:
         """Return current indentation string."""
@@ -173,117 +132,51 @@ class CodeGenContext:
         """Decrease indentation level."""
         self.indent_level = max(0, self.indent_level - 1)
 
-    def mark_measured(self, allocator: str, index: int) -> None:
-        """Mark a qubit slot as consumed by measurement."""
-        self.measured_slots.add((allocator, index))
-
-    def is_allocator_fully_consumed(self, name: str) -> bool:
-        """Check if all slots of an allocator have been measured."""
-        if name not in self.allocators:
-            return False
-        capacity = self.allocators[name]
-        return all((name, i) in self.measured_slots for i in range(capacity))
-
-    def get_root_allocator(self, name: str) -> str:
-        """Get the root allocator for a given allocator name."""
-        current = name
-        while self.allocator_parents.get(current) is not None:
-            current = self.allocator_parents[current]
-        return current
-
-    def get_absolute_index(self, allocator: str, index: int) -> int:
-        """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
-        return offset + index
+    def temp(self, prefix: str) -> str:
+        """Return a unique temporary local name."""
+        name = f"_{prefix}_{self.temp_counter}"
+        self.temp_counter += 1
+        return name
 
 
-class AstToGuppy(BaseVisitor[list[str]]):
-    """Visitor that generates Guppy Python code from AST.
-
-    Generates clean Guppy code that can be compiled to HUGR.
-
-    Usage:
-        generator = AstToGuppy()
-        lines = generator.generate(ast_program)
-        code = "\\n".join(lines)
-    """
+class AstToGuppy:
+    """Recursive-descent Guppy code generator for AST programs."""
 
     def __init__(self) -> None:
         """Initialize the generator."""
-        self.context = CodeGenContext()
+        self.context = GuppyContext()
 
     def generate(self, program: Program) -> list[str]:
-        """Generate Guppy code for a program.
+        """Generate Guppy code for a program."""
+        self.context = GuppyContext()
+        self._collect_declarations(program)
+        self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
+        self._reject_child_allocators()
 
-        Args:
-            program: The AST Program to generate code for.
+        body = list(program.body)
+        explicit_return = self._validate_return_position(body)
+        emitted_body = body[:-1] if explicit_return else body
 
-        Returns:
-            List of code lines.
-        """
-        self.context = CodeGenContext()
-        return self.visit(program)
-
-    def default_result(self) -> list[str]:
-        """Return empty list as default."""
-        return []
-
-    def combine_results(self, results: list[list[str]]) -> list[str]:
-        """Combine multiple results into a single list."""
-        combined = []
-        for r in results:
-            combined.extend(r)
-        return combined
-
-    # === Program ===
-
-    def visit_program(self, node: Program) -> list[str]:
-        """Generate code for a complete program."""
-        lines = []
-
-        # Standard imports
-        lines.append("from guppylang import guppy")
-        lines.append("from guppylang.std import quantum")
-        lines.append("from guppylang.std.quantum import qubit")
+        lines = self._imports()
         lines.append("")
-
-        # Process declarations to build context
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl):
-                self.context.allocators[decl.name] = decl.capacity
-                self.context.allocator_parents[decl.name] = decl.parent
-            elif isinstance(decl, RegisterDecl):
-                self.context.registers[decl.name] = decl.size
-
-        if node.allocator:
-            self.context.allocators[node.allocator.name] = node.allocator.capacity
-            self.context.allocator_parents[node.allocator.name] = node.allocator.parent
-
-        # Calculate offsets for child allocators (sequential allocation within parent)
-        self._calculate_allocator_offsets(node)
-
-        # First pass: scan body to find measurements (to determine return type)
-        self._scan_for_measurements(node.body)
-
-        # Generate function signature
-        func_name = node.name.lower()
-        params = self._generate_params(node)
-        return_type = self._generate_return_type(node)
-
         lines.append("@guppy")
-        lines.append(f"def {func_name}({params}) -> {return_type}:")
+        lines.append(f"def {program.name.lower()}({self._render_params()}) -> {self._return_type(explicit_return)}:")
 
-        # Generate body
         self.context.push_indent()
+        body_lines: list[str] = []
+        body_lines.extend(self._emit_entry_unpacks())
+        body_lines.extend(self._emit_register_initializers())
 
-        body_lines = []
-        for stmt in node.body:
-            body_lines.extend(self.visit(stmt))
+        for stmt in emitted_body:
+            body_lines.extend(self._emit_stmt(stmt))
 
-        # Add return statement
-        return_lines = self._generate_return_statement(node)
-        if return_lines:
-            body_lines.extend(return_lines)
+        if explicit_return is not None:
+            body_lines.extend(self._emit_explicit_return(explicit_return))
+        else:
+            body_lines.extend(self._emit_end_cleanup())
+            auto_return = self._auto_return_expr()
+            if auto_return is not None:
+                body_lines.append(f"{self.context.indent()}return {auto_return}")
 
         if body_lines:
             lines.extend(body_lines)
@@ -291,539 +184,520 @@ class AstToGuppy(BaseVisitor[list[str]]):
             lines.append(f"{self.context.indent()}pass")
 
         self.context.pop_indent()
-
         return lines
 
-    def _scan_for_measurements(self, stmts: tuple) -> None:
-        """Scan statements to find all measurements and mark consumed qubits.
-
-        Also pre-registers measurement variable names for return type generation.
-        """
-        for stmt in stmts:
-            if isinstance(stmt, MeasureOp):
-                for i, target in enumerate(stmt.targets):
-                    self.context.mark_measured(target.allocator, target.index)
-                    # Pre-register measurement variable name
-                    if i < len(stmt.results):
-                        result = stmt.results[i]
-                        var_name = f"{result.register}_{result.index}"
-                    else:
-                        var_name = f"_m{len(self.context.measurement_vars)}"
-                    self.context.measurement_vars.append(var_name)
-            elif isinstance(stmt, IfStmt):
-                self._scan_for_measurements(stmt.then_body)
-                if stmt.else_body:
-                    self._scan_for_measurements(stmt.else_body)
-            elif isinstance(stmt, (ForStmt, WhileStmt, RepeatStmt, ParallelBlock)):
-                self._scan_for_measurements(stmt.body)
-
-    def _calculate_allocator_offsets(self, node: Program) -> None:
-        """Calculate the offset of each child allocator within its parent.
-
-        Children are allocated sequentially within their parent's capacity.
-        This allows translating child[i] to parent[offset + i].
-        """
-        # Track allocated space per parent
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if node.allocator and node.allocator.parent is None:
-            self.context.allocator_offsets[node.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                # Get parent's offset (for nested hierarchies)
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-
-                # This child's offset is parent's offset + next available slot
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-
-                # Reserve space in parent
-                parent_next_offset[parent] += decl.capacity
-
-    def _generate_params(self, node: Program) -> str:
-        """Generate function parameters from declarations.
-
-        Only includes root allocators (those without parents) as function parameters.
-        Child allocators are derived from parent allocators within the function.
-        """
-        params = []
-
-        # Add allocator parameters (only root allocators without parents)
-        for decl in node.declarations:
+    def _collect_declarations(self, program: Program) -> None:
+        for decl in program.declarations:
             if isinstance(decl, AllocatorDecl):
-                # Skip child allocators - they're derived from parents
-                if decl.parent is not None:
-                    continue
-                params.append(f"{decl.name}: array[qubit, {decl.capacity}] @owned")
+                self._add_allocator_decl(decl)
+            elif isinstance(decl, RegisterDecl):
+                self.context.registers[decl.name] = decl
 
-        if node.allocator and node.allocator.parent is None:
-            params.append(
-                f"{node.allocator.name}: array[qubit, {node.allocator.capacity}] @owned",
-            )
+        if program.allocator is not None:
+            self._add_allocator_decl(program.allocator)
 
-        return ", ".join(params)
+    def _add_allocator_decl(self, decl: AllocatorDecl) -> None:
+        if decl.parent is not None:
+            self.context.child_allocators.add(decl.name)
+            return
+        self.context.root_allocators.setdefault(decl.name, decl.capacity)
 
-    def _generate_return_type(self, node: Program) -> str:
-        """Generate return type annotation based on consumed/unconsumed qubits."""
-        return_types = []
+    def _reject_child_allocators(self) -> None:
+        if self.context.child_allocators:
+            names = ", ".join(sorted(self.context.child_allocators))
+            msg = f"AST -> Guppy v1 does not support child allocators: {names}"
+            raise GuppyCodegenError(msg)
 
-        # Only include qubit arrays that are NOT fully consumed by measurement
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl):
-                # Skip child allocators - only include root allocators in params/returns
-                if decl.parent is not None:
-                    continue
-                if not self.context.is_allocator_fully_consumed(decl.name):
-                    return_types.append(f"array[qubit, {decl.capacity}]")
-
-        if node.allocator and not self.context.is_allocator_fully_consumed(
-            node.allocator.name,
-        ):
-            return_types.append(f"array[qubit, {node.allocator.capacity}]")
-
-        # Add measurement results (bools)
-        if self.context.measurement_vars:
-            return_types.extend("bool" for _ in self.context.measurement_vars)
-
-        if not return_types:
-            return "None"
-        if len(return_types) == 1:
-            return return_types[0]
-        return f"tuple[{', '.join(return_types)}]"
-
-    def _generate_return_statement(self, node: Program) -> list[str]:
-        """Generate return statement with unconsumed qubits and measurement results."""
-        return_values = []
-
-        # Return unconsumed qubit arrays
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl):
-                # Skip child allocators
-                if decl.parent is not None:
-                    continue
-                if not self.context.is_allocator_fully_consumed(decl.name):
-                    return_values.append(decl.name)
-
-        if node.allocator and not self.context.is_allocator_fully_consumed(
-            node.allocator.name,
-        ):
-            return_values.append(node.allocator.name)
-
-        # Return measurement results
-        return_values.extend(self.context.measurement_vars)
-
-        if not return_values:
-            return []
-
-        return [f"{self.context.indent()}return {', '.join(return_values)}"]
-
-    # === Declarations ===
-
-    def visit_allocator_decl(self, _node: AllocatorDecl) -> list[str]:
-        """Allocator declarations are handled at program level."""
-        return []
-
-    def visit_register_decl(self, _node: RegisterDecl) -> list[str]:
-        """Register declarations are handled at program level."""
-        return []
-
-    # === Gates ===
-
-    def visit_gate(self, node: GateOp) -> list[str]:
-        """Generate gate operation."""
-        gate_func = GATE_TO_GUPPY.get(node.gate, f"quantum.{node.gate.name.lower()}")
-
-        # Generate target references
-        targets = [self._render_slot_ref(t) for t in node.targets]
-
-        # Handle parameterized gates
-        if node.params:
-            params = [self._render_expression(p) for p in node.params]
-            args = ", ".join(params + targets)
-        else:
-            args = ", ".join(targets)
-
-        # Single qubit gates need reassignment for linearity
-        if node.gate.arity == 1:
-            target = targets[0]
-            return [f"{self.context.indent()}{target} = {gate_func}({target})"]
-        # Two-qubit gates return a tuple
+    def _imports(self) -> list[str]:
         return [
-            f"{self.context.indent()}{targets[0]}, {targets[1]} = {gate_func}({args})",
+            "from guppylang import guppy",
+            "from guppylang.std.builtins import array, owned",
+            "from guppylang.std.mem import mem_swap",
+            "from guppylang.std.quantum import discard, measure, qubit",
+            f"from guppylang.std.quantum.functional import {FUNCTIONAL_GATE_IMPORTS}",
         ]
 
-    def visit_prepare(self, node: PrepareOp) -> list[str]:
-        """Generate prepare/reset operation."""
-        lines = []
+    def _render_params(self) -> str:
+        return ", ".join(
+            f"{name}: array[qubit, {size}] @ owned" for name, size in self.context.root_allocators.items()
+        )
 
-        if node.slots is None:
-            # Prepare all - would need array iteration
-            lines.append(
-                f"{self.context.indent()}# Prepare all slots in {node.allocator}",
-            )
-        else:
-            for slot in node.slots:
-                ref = f"{node.allocator}[{slot}]"
-                # In Guppy, qubits start in |0⟩ state from allocation
-                # For re-preparation after measurement, we'd use reset
-                lines.append(
-                    f"{self.context.indent()}{ref} = quantum.reset({ref})",
-                )
+    def _return_type(self, explicit_return: ReturnOp | None) -> str:
+        if explicit_return is not None:
+            types = [self._return_value_type(value) for value in explicit_return.values]
+            return self._tuple_type(types)
 
+        types = [
+            f"array[bool, {decl.size}]"
+            for decl in self.context.registers.values()
+            if decl.is_result
+        ]
+        return self._tuple_type(types)
+
+    def _return_value_type(self, value: Expression | str) -> str:
+        if isinstance(value, str):
+            if value in self.context.root_allocators:
+                return f"array[qubit, {self.context.root_allocators[value]}]"
+            if value in self.context.registers:
+                return f"array[bool, {self.context.registers[value].size}]"
+            msg = f"Unsupported Guppy return value {value!r}"
+            raise GuppyCodegenError(msg)
+
+        if isinstance(value, BitExpr):
+            return "bool"
+        if isinstance(value, LiteralExpr) and isinstance(value.value, bool):
+            return "bool"
+        if isinstance(value, LiteralExpr) and isinstance(value.value, int):
+            return "int"
+        msg = f"Unsupported Guppy return expression {value!r}"
+        raise GuppyCodegenError(msg)
+
+    def _tuple_type(self, types: list[str]) -> str:
+        if not types:
+            return "None"
+        if len(types) == 1:
+            return types[0]
+        return f"tuple[{', '.join(types)}]"
+
+    def _emit_entry_unpacks(self) -> list[str]:
+        lines: list[str] = []
+        linearity = self._linearity()
+        for allocator, size in self.context.root_allocators.items():
+            if size == 0:
+                continue
+            locals_for_allocator = [
+                binding.local
+                for slot, binding in linearity.bindings()
+                if slot.allocator == allocator
+            ]
+            lhs = ", ".join(locals_for_allocator)
+            if size == 1:
+                lhs += ","
+            lines.append(f"{self.context.indent()}{lhs} = {allocator}")
         return lines
 
-    def visit_measure(self, node: MeasureOp) -> list[str]:
-        """Generate measurement operation.
+    def _emit_register_initializers(self) -> list[str]:
+        lines: list[str] = []
+        for decl in self.context.registers.values():
+            values = ", ".join("False" for _ in range(decl.size))
+            lines.append(f"{self.context.indent()}{decl.name} = array({values})")
+        return lines
 
-        In Guppy, quantum.measure() consumes the qubit and returns a bool.
-        We use local variable names for measurement results.
-        Variable names are pre-registered during scan phase for return type generation.
-        """
-        lines = []
+    def _validate_return_position(self, body: list[Statement]) -> ReturnOp | None:
+        return_count = self._count_returns(body)
+        if return_count == 0:
+            return None
+        if return_count == 1 and body and isinstance(body[-1], ReturnOp):
+            return body[-1]
+        msg = "AST -> Guppy v1 supports only one final root-level Return"
+        raise GuppyCodegenError(msg)
 
-        for i, target in enumerate(node.targets):
-            target_ref = self._render_slot_ref(target)
+    def _count_returns(self, body: list[Statement] | tuple[Statement, ...]) -> int:
+        count = 0
+        for stmt in body:
+            if isinstance(stmt, ReturnOp):
+                count += 1
+            elif isinstance(stmt, IfStmt):
+                count += self._count_returns(stmt.then_body)
+                count += self._count_returns(stmt.else_body)
+            elif isinstance(stmt, WhileStmt | ForStmt | RepeatStmt | ParallelBlock):
+                count += self._count_returns(stmt.body)
+        return count
 
-            if i < len(node.results):
-                result = node.results[i]
-                # Use a proper local variable name instead of array indexing
-                var_name = f"{result.register}_{result.index}"
+    def _emit_stmt(self, stmt: Statement) -> list[str]:
+        if isinstance(stmt, GateOp):
+            return self._emit_gate(stmt)
+        if isinstance(stmt, PrepareOp):
+            return self._emit_prepare(stmt)
+        if isinstance(stmt, MeasureOp):
+            return self._emit_measure(stmt)
+        if isinstance(stmt, IfStmt):
+            return self._emit_if(stmt)
+        if isinstance(stmt, RepeatStmt):
+            return self._emit_repeat(stmt)
+        if isinstance(stmt, ForStmt):
+            return self._emit_for(stmt)
+        if isinstance(stmt, WhileStmt):
+            msg = "AST -> Guppy v1 does not support While loops"
+            raise GuppyCodegenError(msg)
+        if isinstance(stmt, ParallelBlock):
+            return self._emit_parallel(stmt)
+        if isinstance(stmt, ReturnOp):
+            msg = "AST -> Guppy v1 supports Return only as the final root-level statement"
+            raise GuppyCodegenError(msg)
+
+        from pecos.slr.ast.nodes import AssignOp, BarrierOp, CommentOp, PermuteOp  # noqa: PLC0415
+
+        if isinstance(stmt, AssignOp):
+            return self._emit_assign(stmt)
+        if isinstance(stmt, BarrierOp):
+            return self._emit_barrier(stmt)
+        if isinstance(stmt, CommentOp):
+            return self._emit_comment(stmt)
+        if isinstance(stmt, PermuteOp):
+            return self._emit_permute(stmt)
+
+        msg = f"Unsupported AST statement for Guppy codegen: {type(stmt).__name__}"
+        raise GuppyCodegenError(msg)
+
+    def _emit_gate(self, node: GateOp) -> list[str]:
+        gate = FUNCTIONAL_GATES.get(node.gate)
+        if gate is None:
+            self._raise_unsupported_gate(node.gate)
+
+        if node.params:
+            msg = f"AST -> Guppy v1 does not support parameterized gate {node.gate.name}"
+            raise GuppyCodegenError(msg)
+
+        slots = [self._slot_from_ref(target) for target in node.targets]
+        if len(slots) != len(set(slots)):
+            msg = f"Gate {node.gate.name} uses the same qubit slot more than once"
+            raise GuppyCodegenError(msg)
+
+        linearity = self._linearity()
+        locals_ = [linearity.live(slot) for slot in slots]
+
+        if node.gate.arity == 1:
+            local = locals_[0]
+            linearity.set_live(slots[0], local)
+            return [f"{self.context.indent()}{local} = {gate}({local})"]
+
+        if node.gate.arity == 2:
+            left, right = locals_
+            linearity.set_live(slots[0], left)
+            linearity.set_live(slots[1], right)
+            return [f"{self.context.indent()}{left}, {right} = {gate}({left}, {right})"]
+
+        msg = f"AST -> Guppy v1 does not support {node.gate.arity}-qubit gate {node.gate.name}"
+        raise GuppyCodegenError(msg)
+
+    def _raise_unsupported_gate(self, gate: GateKind) -> None:
+        if gate in {GateKind.SX, GateKind.SXdg, GateKind.SY, GateKind.SYdg}:
+            msg = f"AST -> Guppy v1 rejects {gate.name}; decompose it before Guppy emission"
+            raise GuppyCodegenError(msg)
+        if gate.is_parameterized:
+            msg = f"AST -> Guppy v1 does not support parameterized gate {gate.name}"
+            raise GuppyCodegenError(msg)
+        msg = f"AST -> Guppy v1 does not support gate {gate.name}"
+        raise GuppyCodegenError(msg)
+
+    def _emit_prepare(self, node: PrepareOp) -> list[str]:
+        lines: list[str] = []
+        slots = range(self.context.root_allocators[node.allocator]) if node.slots is None else node.slots
+        linearity = self._linearity()
+        for index in slots:
+            slot = Slot(node.allocator, index)
+            local = self._local_name(slot)
+            if linearity.status(slot) is SlotState.LIVE:
+                old_local = linearity.live(slot)
+                lines.append(f"{self.context.indent()}{old_local} = reset({old_local})")
+                linearity.set_live(slot, old_local)
             else:
-                # No result specified - use indexed name
-                var_name = f"_m{i}"
-
-            lines.append(
-                f"{self.context.indent()}{var_name} = quantum.measure({target_ref})",
-            )
-
+                lines.append(f"{self.context.indent()}{local} = qubit()")
+                linearity.set_live(slot, local)
         return lines
 
-    # === Statements ===
+    def _emit_measure(self, node: MeasureOp) -> list[str]:
+        lines: list[str] = []
+        linearity = self._linearity()
+        for index, target in enumerate(node.targets):
+            slot = self._slot_from_ref(target)
+            local = linearity.consume(slot)
+            if index < len(node.results):
+                result = self._render_bit_ref(node.results[index])
+                lines.append(f"{self.context.indent()}{result} = measure({local})")
+            else:
+                temp = self.context.temp("measurement")
+                lines.append(f"{self.context.indent()}{temp} = measure({local})")
+        return lines
 
-    def visit_assign(self, node: AssignOp) -> list[str]:
-        """Generate assignment operation."""
-        target = f"{node.target.register}[{node.target.index}]" if isinstance(node.target, BitRef) else str(node.target)
-
+    def _emit_assign(self, node: AssignOp) -> list[str]:
+        target = self._render_bit_ref(node.target) if isinstance(node.target, BitRef) else str(node.target)
         value = self._render_expression(node.value)
         return [f"{self.context.indent()}{target} = {value}"]
 
-    def visit_barrier(self, node: BarrierOp) -> list[str]:
-        """Generate barrier (as comment - no direct Guppy equivalent)."""
-        if node.allocators:
-            allocs = ", ".join(node.allocators)
-            return [f"{self.context.indent()}# barrier({allocs})"]
+    def _emit_barrier(self, _node: BarrierOp) -> list[str]:
         return [f"{self.context.indent()}# barrier"]
 
-    def visit_comment(self, node: CommentOp) -> list[str]:
-        """Generate comment."""
-        if node.text:
-            return [f"{self.context.indent()}# {node.text}"]
-        return []
+    def _emit_comment(self, node: CommentOp) -> list[str]:
+        if not node.text:
+            return []
+        return [f"{self.context.indent()}# {line.strip()}" for line in node.text.splitlines()]
 
-    def visit_return(self, node: ReturnOp) -> list[str]:
-        """Generate return statement."""
-        if not node.values:
-            return [f"{self.context.indent()}return"]
-
-        values = []
-        for v in node.values:
-            if isinstance(v, str):
-                values.append(v)
-            else:
-                values.append(self._render_expression(v))
-
-        return [f"{self.context.indent()}return {', '.join(values)}"]
-
-    def visit_permute(self, node: PermuteOp) -> list[str]:
-        """Generate permutation (register swap) code.
-
-        Generates temp variable assignments to swap register references.
-        For Permute(a, b), generates:
-            # Swap a and b
-            _temp_a = a
-            a = b
-            b = _temp_a
-        """
-        lines = []
-
-        if len(node.sources) != len(node.targets):
-            lines.append(
-                f"{self.context.indent()}# ERROR: Permute sources/targets length mismatch",
-            )
-            return lines
-
-        if len(node.sources) == 0:
-            return lines
-
-        # Add comment if requested
-        if node.add_comment:
-            names = " and ".join(node.sources)
-            lines.append(f"{self.context.indent()}# Swap {names}")
-
-        # For a simple two-way swap: a, b = b, a
-        if len(node.sources) == 1 and node.sources[0] != node.targets[0]:
-            src = node.sources[0]
-            tgt = node.targets[0]
-            temp = f"_temp_{src}"
-            lines.append(f"{self.context.indent()}{temp} = {src}")
-            lines.append(f"{self.context.indent()}{src} = {tgt}")
-            lines.append(f"{self.context.indent()}{tgt} = {temp}")
-        elif len(node.sources) == 2 and set(node.sources) == set(node.targets):
-            # Simple swap: Permute([a, b], [b, a])
-            # Can use Python tuple swap
-            a, b = node.sources
-            lines.append(f"{self.context.indent()}{a}, {b} = {b}, {a}")
-        else:
-            # General case: use temp variables
-            temps = []
-            for src in node.sources:
-                temp = f"_temp_{src}"
-                temps.append(temp)
-                lines.append(f"{self.context.indent()}{temp} = {src}")
-
-            for i, src in enumerate(node.sources):
-                tgt = node.targets[i]
-                lines.append(f"{self.context.indent()}{src} = {tgt}")
-
-            for i, tgt in enumerate(node.targets):
-                lines.append(f"{self.context.indent()}{tgt} = {temps[i]}")
-
-        return lines
-
-    # === Control Flow ===
-
-    def visit_if(self, node: IfStmt) -> list[str]:
-        """Generate if statement."""
-        lines = []
+    def _emit_if(self, node: IfStmt) -> list[str]:
+        linearity = self._linearity()
+        before = linearity.snapshot()
 
         cond = self._render_expression(node.condition)
-        lines.append(f"{self.context.indent()}if {cond}:")
+        lines = [f"{self.context.indent()}if {cond}:"]
 
-        # Then block
         self.context.push_indent()
-        then_lines = []
-        for stmt in node.then_body:
-            then_lines.extend(self.visit(stmt))
-
-        if then_lines:
-            lines.extend(then_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        then_lines = self._emit_block(node.then_body)
+        lines.extend(then_lines or [f"{self.context.indent()}pass"])
         self.context.pop_indent()
+        then_state = linearity.snapshot()
 
-        # Else block
+        linearity.restore(before)
+        else_state = None
         if node.else_body:
             lines.append(f"{self.context.indent()}else:")
             self.context.push_indent()
-            else_lines = []
-            for stmt in node.else_body:
-                else_lines.extend(self.visit(stmt))
-
-            if else_lines:
-                lines.extend(else_lines)
-            else:
-                lines.append(f"{self.context.indent()}pass")
+            else_lines = self._emit_block(node.else_body)
+            lines.extend(else_lines or [f"{self.context.indent()}pass"])
             self.context.pop_indent()
+            else_state = linearity.snapshot()
 
+        linearity.merge_if(before, then_state, else_state, label="If")
         return lines
 
-    def visit_while(self, node: WhileStmt) -> list[str]:
-        """Generate while loop."""
-        lines = []
-
-        cond = self._render_expression(node.condition)
-        lines.append(f"{self.context.indent()}while {cond}:")
+    def _emit_repeat(self, node: RepeatStmt) -> list[str]:
+        linearity = self._linearity()
+        before = linearity.snapshot()
+        lines = [f"{self.context.indent()}for _ in range({node.count}):"]
 
         self.context.push_indent()
-        body_lines = []
-        for stmt in node.body:
-            body_lines.extend(self.visit(stmt))
-
-        if body_lines:
-            lines.extend(body_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        body_lines = self._emit_block(node.body)
+        lines.extend(body_lines or [f"{self.context.indent()}pass"])
         self.context.pop_indent()
 
+        after = linearity.snapshot()
+        linearity.assert_same(before, after, label=f"Repeat({node.count})")
         return lines
 
-    def visit_for(self, node: ForStmt) -> list[str]:
-        """Generate for loop."""
-        lines = []
-
+    def _emit_for(self, node: ForStmt) -> list[str]:
+        linearity = self._linearity()
         start = self._render_expression(node.start)
         stop = self._render_expression(node.stop)
-
-        if node.step:
+        if node.step is not None:
             step = self._render_expression(node.step)
-            lines.append(
-                f"{self.context.indent()}for {node.variable} in range({start}, {stop}, {step}):",
-            )
+            header = f"for {node.variable} in range({start}, {stop}, {step}):"
         else:
-            lines.append(
-                f"{self.context.indent()}for {node.variable} in range({start}, {stop}):",
-            )
+            header = f"for {node.variable} in range({start}, {stop}):"
 
+        before = linearity.snapshot()
+        lines = [f"{self.context.indent()}{header}"]
         self.context.push_indent()
-        body_lines = []
-        for stmt in node.body:
-            body_lines.extend(self.visit(stmt))
-
-        if body_lines:
-            lines.extend(body_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        body_lines = self._emit_block(node.body)
+        lines.extend(body_lines or [f"{self.context.indent()}pass"])
         self.context.pop_indent()
 
+        after = linearity.snapshot()
+        linearity.assert_same(before, after, label=f"For({node.variable})")
         return lines
 
-    def visit_repeat(self, node: RepeatStmt) -> list[str]:
-        """Generate repeat loop (as for _ in range(n))."""
-        lines = []
+    def _emit_parallel(self, node: ParallelBlock) -> list[str]:
+        return self._emit_block(node.body)
 
-        lines.append(f"{self.context.indent()}for _ in range({node.count}):")
+    def _emit_block(self, body: tuple[Statement, ...]) -> list[str]:
+        lines: list[str] = []
+        for stmt in body:
+            lines.extend(self._emit_stmt(stmt))
+        return lines
 
-        self.context.push_indent()
-        body_lines = []
-        for stmt in node.body:
-            body_lines.extend(self.visit(stmt))
+    def _emit_permute(self, node: PermuteOp) -> list[str]:
+        if len(node.sources) != len(node.targets):
+            msg = "Permute source/target length mismatch"
+            raise GuppyCodegenError(msg)
 
-        if body_lines:
-            lines.extend(body_lines)
+        quantum_mapping: dict[Slot, Slot] = {}
+        classical_mapping: dict[BitRef, BitRef] = {}
+        for source, target in zip(node.sources, node.targets, strict=True):
+            source_refs = self._expand_permute_ref(source)
+            target_refs = self._expand_permute_ref(target)
+            if len(source_refs) != len(target_refs):
+                msg = f"Permute element count mismatch for {source!r} -> {target!r}"
+                raise GuppyCodegenError(msg)
+            for source_ref, target_ref in zip(source_refs, target_refs, strict=True):
+                if isinstance(source_ref, Slot) and isinstance(target_ref, Slot):
+                    quantum_mapping[source_ref] = target_ref
+                elif isinstance(source_ref, BitRef) and isinstance(target_ref, BitRef):
+                    classical_mapping[source_ref] = target_ref
+                else:
+                    msg = f"Permute cannot map quantum and classical refs together: {source!r} -> {target!r}"
+                    raise GuppyCodegenError(msg)
+
+        lines: list[str] = []
+        if quantum_mapping:
+            self._linearity().permute(quantum_mapping, label="Permute")
+
+        if classical_mapping:
+            lines.extend(self._emit_classical_permute(classical_mapping))
+
+        if node.add_comment and (quantum_mapping or classical_mapping):
+            pairs = ", ".join(
+                f"{source} -> {target}" for source, target in zip(node.sources, node.targets, strict=True)
+            )
+            lines.insert(0, f"{self.context.indent()}# Permute: {pairs}")
+        return lines
+
+    def _expand_permute_ref(self, ref: str) -> list[Slot | BitRef]:
+        parsed = self._parse_indexed_ref(ref)
+        if parsed is not None:
+            name, index = parsed
+            if name in self.context.root_allocators:
+                return [Slot(name, index)]
+            if name in self.context.registers:
+                return [BitRef(register=name, index=index)]
+            msg = f"Unknown Permute ref {ref!r}"
+            raise GuppyCodegenError(msg)
+
+        if ref in self.context.root_allocators:
+            return [Slot(ref, index) for index in range(self.context.root_allocators[ref])]
+        if ref in self.context.registers:
+            return [BitRef(register=ref, index=index) for index in range(self.context.registers[ref].size)]
+
+        msg = f"Unknown Permute ref {ref!r}"
+        raise GuppyCodegenError(msg)
+
+    def _emit_classical_permute(self, mapping: dict[BitRef, BitRef]) -> list[str]:
+        if set(mapping) != set(mapping.values()):
+            msg = "Classical Permute must be bijective over the same bit set"
+            raise GuppyCodegenError(msg)
+
+        lines: list[str] = []
+        visited: set[BitRef] = set()
+        for start, target in mapping.items():
+            if start in visited or target == start:
+                visited.add(start)
+                continue
+            cycle = [start]
+            visited.add(start)
+            current = target
+            while current != start:
+                if current in visited:
+                    msg = "Classical Permute contains a malformed cycle"
+                    raise GuppyCodegenError(msg)
+                cycle.append(current)
+                visited.add(current)
+                current = mapping[current]
+
+            lines.extend(
+                f"{self.context.indent()}mem_swap({self._render_bit_ref(cycle[index])}, "
+                f"{self._render_bit_ref(cycle[index + 1])})"
+                for index in range(len(cycle) - 1)
+            )
+        return lines
+
+    def _emit_end_cleanup(self) -> list[str]:
+        return [f"{self.context.indent()}discard({local})" for _slot, local in self._linearity().discard_live()]
+
+    def _auto_return_expr(self) -> str | None:
+        values = [decl.name for decl in self.context.registers.values() if decl.is_result]
+        if not values:
+            return None
+        return ", ".join(values)
+
+    def _emit_explicit_return(self, node: ReturnOp) -> list[str]:
+        values = [self._return_value_expr(value) for value in node.values]
+        lines = self._emit_end_cleanup()
+        if values:
+            lines.append(f"{self.context.indent()}return {', '.join(values)}")
         else:
-            lines.append(f"{self.context.indent()}pass")
-        self.context.pop_indent()
-
+            lines.append(f"{self.context.indent()}return")
         return lines
 
-    def visit_parallel(self, node: ParallelBlock) -> list[str]:
-        """Generate parallel block (as comment + sequential for now)."""
-        lines = []
-        lines.append(f"{self.context.indent()}# parallel begin")
+    def _return_value_expr(self, value: Expression | str) -> str:
+        if isinstance(value, str):
+            if value in self.context.root_allocators:
+                return self._consume_allocator_for_return(value)
+            if value in self.context.registers:
+                return value
+            msg = f"Unsupported Guppy return value {value!r}"
+            raise GuppyCodegenError(msg)
+        return self._render_expression(value)
 
-        for stmt in node.body:
-            lines.extend(self.visit(stmt))
+    def _consume_allocator_for_return(self, allocator: str) -> str:
+        linearity = self._linearity()
+        locals_ = [
+            linearity.consume(Slot(allocator, index))
+            for index in range(self.context.root_allocators[allocator])
+        ]
+        return f"array({', '.join(locals_)})"
 
-        lines.append(f"{self.context.indent()}# parallel end")
-        return lines
+    def _linearity(self) -> GuppyLinearityState:
+        if self.context.linearity is None:
+            msg = "Guppy linearity state was not initialized"
+            raise GuppyCodegenError(msg)
+        return self.context.linearity
 
-    # === References ===
+    def _slot_from_ref(self, ref: SlotRef) -> Slot:
+        if ref.allocator not in self.context.root_allocators:
+            msg = f"AST -> Guppy v1 does not support allocator {ref.allocator!r}"
+            raise GuppyCodegenError(msg)
+        return Slot(ref.allocator, ref.index)
 
-    def visit_slot_ref(self, node: SlotRef) -> list[str]:
-        """Slot refs are rendered inline."""
-        return [self._render_slot_ref(node)]
+    def _local_name(self, slot: Slot) -> str:
+        return f"{slot.allocator}_{slot.index}"
 
-    def visit_bit_ref(self, node: BitRef) -> list[str]:
-        """Bit refs are rendered inline."""
-        return [f"{node.register}[{node.index}]"]
-
-    # === Expressions ===
-
-    def visit_literal(self, node: LiteralExpr) -> list[str]:
-        """Literals are rendered inline."""
-        return [self._render_literal(node)]
-
-    def visit_var(self, node: VarExpr) -> list[str]:
-        """Variables are rendered inline."""
-        return [node.name]
-
-    def visit_bit_expr(self, node: BitExpr) -> list[str]:
-        """Bit expressions are rendered inline."""
-        return [f"{node.ref.register}[{node.ref.index}]"]
-
-    def visit_binary(self, node: BinaryExpr) -> list[str]:
-        """Binary expressions are rendered inline."""
-        return [self._render_binary(node)]
-
-    def visit_unary(self, node: UnaryExpr) -> list[str]:
-        """Unary expressions are rendered inline."""
-        return [self._render_unary(node)]
-
-    # === Type expressions ===
-
-    def visit_qubit_type(self, _node: object) -> list[str]:
-        return ["qubit"]
-
-    def visit_bit_type(self, _node: object) -> list[str]:
-        return ["bool"]
-
-    def visit_array_type(self, node) -> list[str]:
-        elem = self.visit(node.element)[0] if self.visit(node.element) else "qubit"
-        return [f"array[{elem}, {node.size}]"]
-
-    def visit_allocator_type(self, node) -> list[str]:
-        return [f"array[qubit, {node.capacity}]"]
-
-    # === Helper methods ===
-
-    def _render_slot_ref(self, node: SlotRef) -> str:
-        """Render a slot reference as array access.
-
-        For child allocators, translates to root allocator with computed offset.
-        E.g., data[0] -> base[0], ancilla[0] -> base[4]
-        """
-        # Get the root allocator and absolute index
-        root = self.context.get_root_allocator(node.allocator)
-        abs_index = self.context.get_absolute_index(node.allocator, node.index)
-
-        return f"{root}[{abs_index}]"
+    def _render_bit_ref(self, ref: BitRef) -> str:
+        if ref.register not in self.context.registers:
+            msg = f"Unknown classical register {ref.register!r}"
+            raise GuppyCodegenError(msg)
+        return f"{ref.register}[{ref.index}]"
 
     def _render_expression(self, expr: Expression) -> str:
-        """Render an expression to a string."""
         if isinstance(expr, LiteralExpr):
             return self._render_literal(expr)
         if isinstance(expr, VarExpr):
             return expr.name
         if isinstance(expr, BitExpr):
-            # Use underscore naming to match measurement variable names
-            return f"{expr.ref.register}_{expr.ref.index}"
+            return self._render_bit_ref(expr.ref)
         if isinstance(expr, BinaryExpr):
             return self._render_binary(expr)
         if isinstance(expr, UnaryExpr):
             return self._render_unary(expr)
-        return str(expr)
+        msg = f"Unsupported Guppy expression {expr!r}"
+        raise GuppyCodegenError(msg)
 
-    def _render_literal(self, node: LiteralExpr) -> str:
-        """Render a literal value."""
-        if isinstance(node.value, bool):
-            return "True" if node.value else "False"
-        return str(node.value)
+    def _render_literal(self, expr: LiteralExpr) -> str:
+        if isinstance(expr.value, bool):
+            return "True" if expr.value else "False"
+        return str(expr.value)
 
-    def _render_binary(self, node: BinaryExpr) -> str:
-        """Render a binary expression."""
-        left = self._render_expression(node.left)
-        right = self._render_expression(node.right)
-        op = BINARY_OP_TO_PYTHON.get(node.op, str(node.op))
+    def _render_binary(self, expr: BinaryExpr) -> str:
+        left = self._render_expression(expr.left)
+        right = self._render_expression(expr.right)
+        op = BINARY_OP_TO_PYTHON.get(expr.op)
+        if op is None:
+            msg = f"Unsupported Guppy binary op {expr.op.name}"
+            raise GuppyCodegenError(msg)
         return f"({left} {op} {right})"
 
-    def _render_unary(self, node: UnaryExpr) -> str:
-        """Render a unary expression."""
-        operand = self._render_expression(node.operand)
-        op = UNARY_OP_TO_PYTHON.get(node.op, str(node.op))
-        return f"({op} {operand})"
+    def _render_unary(self, expr: UnaryExpr) -> str:
+        operand = self._render_expression(expr.operand)
+        if expr.op == UnaryOp.NOT:
+            return f"(not {operand})"
+        if expr.op == UnaryOp.NEG:
+            return f"(-{operand})"
+        msg = f"Unsupported Guppy unary op {expr.op.name}"
+        raise GuppyCodegenError(msg)
+
+    def _parse_indexed_ref(self, ref: str) -> tuple[str, int] | None:
+        match = re.fullmatch(r"([A-Za-z_]\w*)\[(\d+)\]", ref)
+        if match is None:
+            return None
+        return match.group(1), int(match.group(2))
+
+    def visit_qubit_type(self, _node: QubitTypeExpr) -> list[str]:
+        """Render a qubit type expression."""
+        return ["qubit"]
+
+    def visit_bit_type(self, _node: BitTypeExpr) -> list[str]:
+        """Render a bit type expression."""
+        return ["bool"]
+
+    def visit_array_type(self, node: object) -> list[str]:
+        """Render an array type expression."""
+        if isinstance(node.element, QubitTypeExpr):
+            elem = "qubit"
+        elif isinstance(node.element, BitTypeExpr):
+            elem = "bool"
+        else:
+            elem = "qubit"
+        return [f"array[{elem}, {node.size}]"]
 
 
 def ast_to_guppy(program: Program) -> str:
-    """Convert an AST Program to Guppy Python code.
-
-    Convenience function for simple code generation.
-
-    Args:
-        program: The AST Program to convert.
-
-    Returns:
-        Generated Guppy Python code as a string.
-    """
+    """Convert an AST Program to Guppy Python code."""
     generator = AstToGuppy()
-    lines = generator.generate(program)
-    return "\n".join(lines)
+    return "\n".join(generator.generate(program))

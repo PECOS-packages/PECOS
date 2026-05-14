@@ -48,11 +48,7 @@ class CompileFailureError(AssertionError):
         max_lines = 80
         lines = self.source.splitlines()
         shown = "\n".join(lines[:max_lines])
-        suffix = (
-            f"\n... ({len(lines) - max_lines} more lines truncated)"
-            if len(lines) > max_lines
-            else ""
-        )
+        suffix = f"\n... ({len(lines) - max_lines} more lines truncated)" if len(lines) > max_lines else ""
         return f"{cause_msg}\n--- generated Guppy source ---\n{shown}{suffix}"
 
 

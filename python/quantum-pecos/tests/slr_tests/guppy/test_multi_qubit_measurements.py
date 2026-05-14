@@ -57,8 +57,7 @@ class TestMultiQubitMeasurementEdgeCases:
         prog = Main(
             q := QReg("q", 7),
             c := CReg("c", 7),
-            qubit.Measure(q[0], q[1], q[2], q[3], q[4], q[5], q[6])
-            > (c[0], c[1], c[2], c[3], c[4], c[5], c[6]),
+            qubit.Measure(q[0], q[1], q[2], q[3], q[4], q[5], q[6]) > (c[0], c[1], c[2], c[3], c[4], c[5], c[6]),
         )
         assert_ast_guppy_compiles(prog)
 

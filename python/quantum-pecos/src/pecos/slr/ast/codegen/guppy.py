@@ -218,20 +218,14 @@ class AstToGuppy:
         ]
 
     def _render_params(self) -> str:
-        return ", ".join(
-            f"{name}: array[qubit, {size}] @ owned" for name, size in self.context.root_allocators.items()
-        )
+        return ", ".join(f"{name}: array[qubit, {size}] @ owned" for name, size in self.context.root_allocators.items())
 
     def _return_type(self, explicit_return: ReturnOp | None) -> str:
         if explicit_return is not None:
             types = [self._return_value_type(value) for value in explicit_return.values]
             return self._tuple_type(types)
 
-        types = [
-            f"array[bool, {decl.size}]"
-            for decl in self.context.registers.values()
-            if decl.is_result
-        ]
+        types = [f"array[bool, {decl.size}]" for decl in self.context.registers.values() if decl.is_result]
         return self._tuple_type(types)
 
     def _return_value_type(self, value: Expression | str) -> str:
@@ -266,9 +260,7 @@ class AstToGuppy:
             if size == 0:
                 continue
             locals_for_allocator = [
-                binding.local
-                for slot, binding in linearity.bindings()
-                if slot.allocator == allocator
+                binding.local for slot, binding in linearity.bindings() if slot.allocator == allocator
             ]
             lhs = ", ".join(locals_for_allocator)
             if size == 1:
@@ -609,8 +601,7 @@ class AstToGuppy:
     def _consume_allocator_for_return(self, allocator: str) -> str:
         linearity = self._linearity()
         locals_ = [
-            linearity.consume(Slot(allocator, index))
-            for index in range(self.context.root_allocators[allocator])
+            linearity.consume(Slot(allocator, index)) for index in range(self.context.root_allocators[allocator])
         ]
         return f"array({', '.join(locals_)})"
 

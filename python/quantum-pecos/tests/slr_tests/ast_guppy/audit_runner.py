@@ -41,7 +41,9 @@ import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pecos.slr import Block, CReg, If, Main, QReg, Repeat, SlrConverter
+from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.schedule import compute_cnot_schedule
+from pecos.slr import Barrier, Block, CReg, If, Main, Parallel, QReg, Repeat, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -239,17 +241,164 @@ def _legacy_nested_blocks() -> Block:
     )
 
 
+def _examples_surface_d3_z_1round() -> Block:
+    """Surface-code memory experiment from
+    examples/surface_code_slr_exploration.ipynb::build_surface_code_slr.
+
+    distance=3, num_rounds=1, basis="Z". Pure-v1 gate surface
+    (Prep, H, CX, Measure, Barrier) over multi-QReg. Real-shaped
+    program: 9 data + 4 X-anc + 4 Z-anc, 4 CNOT rounds.
+    """
+    patch = SurfacePatch.create(distance=3)
+    geom = patch.geometry
+    cnot_rounds = compute_cnot_schedule(patch)
+    num_x = len(geom.x_stabilizers)
+    num_z = len(geom.z_stabilizers)
+
+    data = QReg("data", geom.num_data)
+    x_anc = QReg("ax", num_x)
+    z_anc = QReg("az", num_z)
+
+    ops: list = []
+    ops.extend(qb.Prep(data[i]) for i in range(geom.num_data))
+    ops.append(Barrier())
+
+    ops.extend(qb.Prep(x_anc[i]) for i in range(num_x))
+    ops.extend(qb.Prep(z_anc[i]) for i in range(num_z))
+    ops.append(Barrier())
+
+    ops.extend(qb.H(x_anc[i]) for i in range(num_x))
+    ops.append(Barrier())
+
+    for cx_round in cnot_rounds:
+        for stab_type, stab_idx, data_q in cx_round:
+            if stab_type == "X":
+                ops.append(qb.CX(x_anc[stab_idx], data[data_q]))
+            else:
+                ops.append(qb.CX(data[data_q], z_anc[stab_idx]))
+        ops.append(Barrier())
+
+    ops.extend(qb.H(x_anc[i]) for i in range(num_x))
+    ops.append(Barrier())
+
+    ops.extend(Measure(x_anc[i]) for i in range(num_x))
+    ops.extend(Measure(z_anc[i]) for i in range(num_z))
+    ops.append(Barrier())
+
+    ops.extend(Measure(data[i]) for i in range(geom.num_data))
+
+    return Main(data, x_anc, z_anc, *ops)
+
+
+def _examples_surface_d3_x_1round() -> Block:
+    """X-basis variant of the surface-code memory experiment.
+
+    Same as Z variant plus H wrapping on data qubits at the start and
+    before final measurement. Tiny diff but covers the X-basis path
+    distinctly in case wrap-around H scheduling surfaces anything.
+    """
+    patch = SurfacePatch.create(distance=3)
+    geom = patch.geometry
+    cnot_rounds = compute_cnot_schedule(patch)
+    num_x = len(geom.x_stabilizers)
+    num_z = len(geom.z_stabilizers)
+
+    data = QReg("data", geom.num_data)
+    x_anc = QReg("ax", num_x)
+    z_anc = QReg("az", num_z)
+
+    ops: list = []
+    ops.extend(qb.Prep(data[i]) for i in range(geom.num_data))
+    ops.extend(qb.H(data[i]) for i in range(geom.num_data))
+    ops.append(Barrier())
+
+    ops.extend(qb.Prep(x_anc[i]) for i in range(num_x))
+    ops.extend(qb.Prep(z_anc[i]) for i in range(num_z))
+    ops.append(Barrier())
+
+    ops.extend(qb.H(x_anc[i]) for i in range(num_x))
+    ops.append(Barrier())
+
+    for cx_round in cnot_rounds:
+        for stab_type, stab_idx, data_q in cx_round:
+            if stab_type == "X":
+                ops.append(qb.CX(x_anc[stab_idx], data[data_q]))
+            else:
+                ops.append(qb.CX(data[data_q], z_anc[stab_idx]))
+        ops.append(Barrier())
+
+    ops.extend(qb.H(x_anc[i]) for i in range(num_x))
+    ops.append(Barrier())
+
+    ops.extend(Measure(x_anc[i]) for i in range(num_x))
+    ops.extend(Measure(z_anc[i]) for i in range(num_z))
+    ops.append(Barrier())
+
+    ops.extend(qb.H(data[i]) for i in range(geom.num_data))
+    ops.append(Barrier())
+    ops.extend(Measure(data[i]) for i in range(geom.num_data))
+
+    return Main(data, x_anc, z_anc, *ops)
+
+
+def _examples_parallel_bell_pairs() -> Block:
+    """Parallel/Block bell pairs lifted from
+    examples/Dusting off color code code.ipynb.
+
+    Tests v1 emitter handling of Parallel + nested Block constructs
+    over a 6-qubit register with register-broadcast measurement.
+    """
+    return Main(
+        q := QReg("q", 6),
+        c := CReg("m", 6),
+        Parallel(
+            Block(
+                qb.H(q[0]),
+                qb.CX(q[0], q[1]),
+            ),
+            Block(
+                qb.H(q[2]),
+                qb.CX(q[2], q[3]),
+            ),
+            Block(
+                qb.H(q[4]),
+                qb.CX(q[4], q[5]),
+            ),
+        ),
+        Measure(q) > c,
+    )
+
+
+def _examples_measure_register_to_creg() -> Block:
+    """Register-broadcast measure-to-creg at 4q scale.
+
+    Distinct from v1.bell (2q->2c) in size; same shape. Confirms v1
+    emitter handles per-element fanout from QReg to CReg at >2-bit
+    width without relying on Parallel/Block scaffolding.
+    """
+    return Main(
+        q := QReg("q", 4),
+        c := CReg("c", 4),
+        qb.H(q[0]),
+        qb.CX(q[0], q[1]),
+        qb.H(q[2]),
+        qb.CX(q[2], q[3]),
+        Measure(q) > c,
+    )
+
+
 def _curated_cases() -> list[AuditCase]:
-    """v1 acceptance baseline + legacy HUGR-test corpus.
+    """v1 acceptance baseline + legacy HUGR-test corpus + examples/.
 
     The v1.* prefix is the curated acceptance baseline (mirrors
     test_v1_acceptance.py). The legacy.* prefix is the corpus from
     `tests/slr_tests/guppy/test_hugr_compilation.py` -- programs
-    that currently pass via the legacy IR generator. Any failure on
-    the AST path is a real gap candidate (manifest row).
+    that currently pass via the legacy IR generator. The examples.*
+    prefix is curated SLR programs lifted from
+    `/home/ciaranra/Repos/PECOS/examples/`. Any failure on the AST
+    path is a real gap candidate (manifest row).
 
-    As the audit progresses, additional cases come from `examples/`
-    and `qeclib/`.
+    As the audit progresses, additional cases come from `qeclib/`.
     """
     return [
         # v1 acceptance baseline (all should pass; sanity checks)
@@ -265,6 +414,11 @@ def _curated_cases() -> list[AuditCase]:
         AuditCase("legacy.partial_consumption_with_block", _legacy_partial_consumption_with_block),
         AuditCase("legacy.function_with_returns", _legacy_function_with_returns),
         AuditCase("legacy.nested_blocks", _legacy_nested_blocks),
+        # examples/ corpus (pass 2)
+        AuditCase("examples.surface_d3_z_1round", _examples_surface_d3_z_1round),
+        AuditCase("examples.surface_d3_x_1round", _examples_surface_d3_x_1round),
+        AuditCase("examples.parallel_bell_pairs", _examples_parallel_bell_pairs),
+        AuditCase("examples.measure_register_to_creg", _examples_measure_register_to_creg),
     ]
 
 

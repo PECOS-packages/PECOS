@@ -53,6 +53,7 @@ from pecos.slr.ast.nodes import (
     RepeatStmt,
     ResourceEffect,
     ReturnOp,
+    SingleQubitArg,
     UnaryExpr,
     UnaryOp,
     VarExpr,
@@ -225,10 +226,17 @@ class AstToGuppy:
     def _validate_block_decl(self, decl: BlockDecl) -> None:
         """Reject BlockDecl shapes that the v1 Guppy emitter cannot lower."""
         for inp in decl.inputs:
-            if not isinstance(inp.type_expr, ArrayTypeExpr) or not isinstance(inp.type_expr.element, QubitTypeExpr):
+            # Phase 3a.3 iter 5a: array[qubit, N]. Iter 5b adds single qubit
+            # (bare `QubitTypeExpr`). Later iters add single bit + bundles.
+            is_qubit = isinstance(inp.type_expr, QubitTypeExpr)
+            is_qubit_array = isinstance(inp.type_expr, ArrayTypeExpr) and isinstance(
+                inp.type_expr.element, QubitTypeExpr,
+            )
+            if not (is_qubit or is_qubit_array):
                 msg = (
-                    f"BlockDecl {decl.name!r} input {inp.name!r}: only array[qubit, N] inputs "
-                    f"are supported in Phase 3a.1 (got {type(inp.type_expr).__name__})"
+                    f"BlockDecl {decl.name!r} input {inp.name!r}: only array[qubit, N] "
+                    f"and bare qubit inputs are supported in Phase 3a.3 iter 5b "
+                    f"(got {type(inp.type_expr).__name__})"
                 )
                 raise GuppyCodegenError(msg)
             if inp.effect not in {ResourceEffect.LIVE_PRESERVED, ResourceEffect.CONSUMED}:
@@ -245,43 +253,88 @@ class AstToGuppy:
             raise GuppyCodegenError(msg)
 
     def _generate_block_decl(self, decl: BlockDecl) -> list[str]:
-        """Emit a BlockDecl as a top-level Guppy @guppy def function."""
+        """Emit a BlockDecl as a top-level Guppy @guppy def function.
+
+        Each input is one of (Phase 3a.3 iter 5b scope):
+        - `array[qubit, N]`: parameter `name: array[qubit, N] @ owned`,
+          unpacks at entry into `name_0..name_{N-1}` slots.
+        - bare `qubit`: parameter `name: qubit @ owned`, aliased to its
+          1-slot linearity binding at entry.
+
+        Future iters add single-bit (`array[bool, 1]` proxy), bundle args,
+        and PRODUCED/DROPPED effects.
+        """
         saved_context = self.context
         self.context = GuppyContext()
-        # _validate_block_decl guarantees every type_expr is ArrayTypeExpr[QubitTypeExpr].
-        input_arrays: list[tuple[str, int]] = [
-            (inp.name, cast("ArrayTypeExpr", inp.type_expr).size) for inp in decl.inputs
-        ]
-        for name, size in input_arrays:
+        # Categorize each input as either a single qubit (size 1, not unpacked)
+        # or an array[qubit, N] (size N, unpacked at entry). `_validate_block_decl`
+        # guarantees the type_expr is one of those two shapes.
+        input_shapes: list[tuple[str, int, bool]] = []  # (name, size, is_array)
+        for inp in decl.inputs:
+            if isinstance(inp.type_expr, QubitTypeExpr):
+                input_shapes.append((inp.name, 1, False))
+            else:
+                arr = cast("ArrayTypeExpr", inp.type_expr)
+                input_shapes.append((inp.name, arr.size, True))
+        for name, size, _ in input_shapes:
             self.context.root_allocators[name] = size
         self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
 
-        live_inputs = tuple(inp for inp in decl.inputs if inp.effect is ResourceEffect.LIVE_PRESERVED)
-        live_sizes = [cast("ArrayTypeExpr", inp.type_expr).size for inp in live_inputs]
-        return_types = [f"array[qubit, {size}]" for size in live_sizes]
+        live_inputs = tuple(
+            (inp, shape)
+            for inp, shape in zip(decl.inputs, input_shapes, strict=True)
+            if inp.effect is ResourceEffect.LIVE_PRESERVED
+        )
+
+        return_types: list[str] = []
+        for _inp, (_name, size, is_array) in live_inputs:
+            return_types.append(f"array[qubit, {size}]" if is_array else "qubit")
         return_type_str = self._tuple_type(return_types)
 
-        params = ", ".join(f"{name}: array[qubit, {size}] @ owned" for name, size in input_arrays)
+        param_parts: list[str] = []
+        for name, size, is_array in input_shapes:
+            if is_array:
+                param_parts.append(f"{name}: array[qubit, {size}] @ owned")
+            else:
+                param_parts.append(f"{name}: qubit @ owned")
+        params = ", ".join(param_parts)
 
         lines: list[str] = ["@guppy", f"def {decl.name}({params}) -> {return_type_str}:"]
 
         self.context.push_indent()
         body_lines: list[str] = []
-        body_lines.extend(self._emit_entry_unpacks())
+        linearity = self._linearity()
+        # Per-input entry bindings: array inputs unpack into per-slot locals;
+        # single-qubit inputs alias the param to its single slot's linearity local.
+        for name, size, is_array in input_shapes:
+            if is_array:
+                locals_for = [binding.local for slot, binding in linearity.bindings() if slot.allocator == name]
+                lhs = ", ".join(locals_for)
+                if size == 1:
+                    lhs += ","
+                body_lines.append(f"{self.context.indent()}{lhs} = {name}")
+            else:
+                slot_local = linearity.live(Slot(name, 0))
+                body_lines.append(f"{self.context.indent()}{slot_local} = {name}")
 
         for stmt in decl.body:
             body_lines.extend(self._emit_stmt(stmt))
 
         # Auto-emit return for live_preserved inputs; consume their slots so the
-        # linearity tracker reflects ownership leaving the function.
+        # linearity tracker reflects ownership leaving the function. Single-qubit
+        # live_preserved inputs return their single slot's local directly; array
+        # inputs repack the per-slot locals into `array(...)`.
         if live_inputs:
-            arrays = [self._consume_allocator_for_return(inp.name) for inp in live_inputs]
-            if len(arrays) == 1:
-                body_lines.append(f"{self.context.indent()}return {arrays[0]}")
+            return_exprs: list[str] = []
+            for _inp, (name, _size, is_array) in live_inputs:
+                if is_array:
+                    return_exprs.append(self._consume_allocator_for_return(name))
+                else:
+                    return_exprs.append(linearity.consume(Slot(name, 0)))
+            if len(return_exprs) == 1:
+                body_lines.append(f"{self.context.indent()}return {return_exprs[0]}")
             else:
-                body_lines.append(f"{self.context.indent()}return {', '.join(arrays)}")
-        # consumed inputs must be discarded inside the body (caller's responsibility
-        # to ensure the body does so; the smoke test covers this).
+                body_lines.append(f"{self.context.indent()}return {', '.join(return_exprs)}")
         else:
             body_lines.extend(self._emit_end_cleanup())
 
@@ -857,12 +910,18 @@ class AstToGuppy:
         return self._emit_block(node.body)
 
     def _emit_block_call(self, node: BlockCall) -> list[str]:
-        """Lower a BlockCall to a packed array(...) call + unpack pattern.
+        """Lower a BlockCall to a packed-array call + unpack pattern.
 
-        For each input the caller's outer-allocator locals are packed into an
-        array literal. The call's return tuple unpacks back into locals for
-        every `LIVE_PRESERVED` input. `CONSUMED` inputs leave their outer
-        slots in the CONSUMED state.
+        Per-input dispatch (Phase 3a.3 iter 5b scope):
+        - `array[qubit, N]` input + `AllocatorArg(name=outer)`: pack the
+          outer allocator's slots into `array(outer_0, outer_1, ...)`,
+          unpack the returned array back into the same slots.
+        - bare `qubit` input + `SingleQubitArg(slot=outer[i])`: pass the
+          outer slot's local directly (no array wrap), rebind it from the
+          returned single qubit value.
+
+        Other BlockArg subclasses (`SingleBitArg`, `QubitBundleArg`,
+        `BitBundleArg`) raise -- they land with later iterations.
         """
         decl = self._block_decls.get(node.callee)
         if decl is None:
@@ -879,36 +938,13 @@ class AstToGuppy:
         # Phase 1: validate every arg + out binding BEFORE touching linearity state, so
         # a late-raised GuppyCodegenError can't leave the tracker half-consumed (Codex
         # 2026-05-15 review).
-        # Phase 3a.3 iter 5a: arg_bindings are typed BlockArg now. This emitter
-        # currently only supports AllocatorArg (whole-allocator binding); richer
-        # arg shapes (SingleQubitArg/SingleBitArg/QubitBundleArg/BitBundleArg) land
-        # with their respective Phase 3a.3 iterations.
-        validated_args: list[tuple[BlockInput, str, int]] = []
+        # Each validated_args entry is tagged with "array" or "single_qubit" so the
+        # Phase-2 emit step knows how to pack the call argument.
+        validated_args: list[tuple[BlockInput, str, tuple]] = []
         live_inputs_out: list[BlockInput] = []
         for inp, arg in zip(decl.inputs, node.arg_bindings, strict=True):
-            if not isinstance(arg, AllocatorArg):
-                msg = (
-                    f"BlockCall {node.callee!r} arg for input {inp.name!r}: only "
-                    f"AllocatorArg is supported in Phase 3a.3 iter 5a (got "
-                    f"{type(arg).__name__})"
-                )
-                raise GuppyCodegenError(msg)
-            arg_name = arg.name
-            input_size = cast("ArrayTypeExpr", inp.type_expr).size
-            if arg_name not in self.context.root_allocators:
-                msg = (
-                    f"BlockCall {node.callee!r} arg {arg_name!r} must be an outer root "
-                    "allocator name"
-                )
-                raise GuppyCodegenError(msg)
-            outer_size = self.context.root_allocators[arg_name]
-            if outer_size != input_size:
-                msg = (
-                    f"BlockCall {node.callee!r} arg {arg_name!r} size {outer_size} "
-                    f"does not match input {inp.name!r} size {input_size}"
-                )
-                raise GuppyCodegenError(msg)
-            validated_args.append((inp, arg_name, outer_size))
+            kind, info = self._validate_block_call_arg(node.callee, inp, arg)
+            validated_args.append((inp, kind, info))
             if inp.effect is ResourceEffect.LIVE_PRESERVED:
                 live_inputs_out.append(inp)
 
@@ -920,24 +956,25 @@ class AstToGuppy:
             )
             raise GuppyCodegenError(msg)
 
-        validated_outs: list[str] = []
+        validated_outs: list[tuple[str, tuple]] = []
         for out, inp in zip(node.out_bindings, live_inputs_out, strict=True):
-            if not isinstance(out, AllocatorArg):
-                msg = (
-                    f"BlockCall {node.callee!r} out_binding for input {inp.name!r}: "
-                    f"only AllocatorArg is supported in Phase 3a.3 iter 5a (got "
-                    f"{type(out).__name__})"
-                )
-                raise GuppyCodegenError(msg)
-            self._require_out_binding_matches(node.callee, out.name, inp)
-            validated_outs.append(out.name)
+            kind, info = self._validate_block_call_arg(node.callee, inp, out, is_out=True)
+            validated_outs.append((kind, info))
 
         # Phase 2: now that every check passed, consume slots and emit code.
         linearity = self._linearity()
         arg_exprs: list[str] = []
-        for _inp, arg_name, outer_size in validated_args:
-            locals_ = [linearity.consume(Slot(arg_name, i)) for i in range(outer_size)]
-            arg_exprs.append(f"array({', '.join(locals_)})")
+        for _inp, kind, info in validated_args:
+            if kind == "array":
+                arg_name, outer_size = info
+                locals_ = [linearity.consume(Slot(arg_name, i)) for i in range(outer_size)]
+                arg_exprs.append(f"array({', '.join(locals_)})")
+            elif kind == "single_qubit":
+                outer_alloc, outer_index = info
+                arg_exprs.append(linearity.consume(Slot(outer_alloc, outer_index)))
+            else:
+                msg = f"Unsupported validated arg kind {kind!r}"  # pragma: no cover
+                raise GuppyCodegenError(msg)
 
         call_expr = f"{node.callee}({', '.join(arg_exprs)})"
         lines: list[str] = []
@@ -947,17 +984,103 @@ class AstToGuppy:
             return lines
 
         if len(live_inputs_out) == 1:
-            out_name = validated_outs[0]
+            kind, info = validated_outs[0]
             ret_temp = self.context.temp("call_ret")
             lines.append(f"{self.context.indent()}{ret_temp} = {call_expr}")
-            lines.extend(self._unpack_return_array(out_name, ret_temp))
+            lines.extend(self._unpack_block_call_return(kind, info, ret_temp))
             return lines
 
         ret_temps = [self.context.temp("call_ret") for _ in live_inputs_out]
         lines.append(f"{self.context.indent()}{', '.join(ret_temps)} = {call_expr}")
-        for ret_temp, out_name in zip(ret_temps, validated_outs, strict=True):
-            lines.extend(self._unpack_return_array(out_name, ret_temp))
+        for ret_temp, (kind, info) in zip(ret_temps, validated_outs, strict=True):
+            lines.extend(self._unpack_block_call_return(kind, info, ret_temp))
         return lines
+
+    def _validate_block_call_arg(
+        self,
+        callee: str,
+        inp: BlockInput,
+        arg: object,
+        *,
+        is_out: bool = False,
+    ) -> tuple[str, tuple]:
+        """Cross-check input type and BlockArg shape; return (kind, info).
+
+        kind is "array" with info = (outer_alloc_name, outer_size), or
+        "single_qubit" with info = (outer_alloc_name, outer_index).
+        """
+        position = "out_binding" if is_out else "arg"
+        if isinstance(arg, AllocatorArg):
+            if not isinstance(inp.type_expr, ArrayTypeExpr):
+                msg = (
+                    f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                    f"AllocatorArg requires an array[qubit, N] input (got "
+                    f"{type(inp.type_expr).__name__})"
+                )
+                raise GuppyCodegenError(msg)
+            input_size = inp.type_expr.size
+            if arg.name not in self.context.root_allocators:
+                msg = (
+                    f"BlockCall {callee!r} {position} {arg.name!r} must be an outer root "
+                    "allocator name"
+                )
+                raise GuppyCodegenError(msg)
+            outer_size = self.context.root_allocators[arg.name]
+            if outer_size != input_size:
+                msg = (
+                    f"BlockCall {callee!r} {position} {arg.name!r} size {outer_size} "
+                    f"does not match input {inp.name!r} size {input_size}"
+                )
+                raise GuppyCodegenError(msg)
+            return "array", (arg.name, outer_size)
+
+        if isinstance(arg, SingleQubitArg):
+            if not isinstance(inp.type_expr, QubitTypeExpr):
+                msg = (
+                    f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                    f"SingleQubitArg requires a bare qubit input (got "
+                    f"{type(inp.type_expr).__name__})"
+                )
+                raise GuppyCodegenError(msg)
+            slot = arg.slot
+            if slot.allocator not in self.context.root_allocators:
+                msg = (
+                    f"BlockCall {callee!r} {position} for input {inp.name!r}: slot "
+                    f"{slot.allocator}[{slot.index}] references an unknown outer allocator"
+                )
+                raise GuppyCodegenError(msg)
+            outer_size = self.context.root_allocators[slot.allocator]
+            if not (0 <= slot.index < outer_size):
+                msg = (
+                    f"BlockCall {callee!r} {position} for input {inp.name!r}: slot "
+                    f"index {slot.index} out of bounds for allocator "
+                    f"{slot.allocator!r} of size {outer_size}"
+                )
+                raise GuppyCodegenError(msg)
+            return "single_qubit", (slot.allocator, slot.index)
+
+        msg = (
+            f"BlockCall {callee!r} {position} for input {inp.name!r}: BlockArg "
+            f"{type(arg).__name__} is not yet supported in Phase 3a.3 iter 5b"
+        )
+        raise GuppyCodegenError(msg)
+
+    def _unpack_block_call_return(self, kind: str, info: tuple, ret_temp: str) -> list[str]:
+        """Unpack a single return value back into outer-scope linearity bindings."""
+        linearity = self._linearity()
+        if kind == "array":
+            out_name, _outer_size = info
+            return self._unpack_return_array(out_name, ret_temp)
+        if kind == "single_qubit":
+            outer_alloc, outer_index = info
+            # Bind the returned qubit to a fresh local that the linearity tracker
+            # treats as the new owner of the outer slot. Uses the standard
+            # `{allocator}_{index}` naming so subsequent gates resolve cleanly.
+            new_local = f"{outer_alloc}_{outer_index}"
+            linearity.set_live(Slot(outer_alloc, outer_index), new_local)
+            return [f"{self.context.indent()}{new_local} = {ret_temp}"]
+        msg = f"Unsupported return kind {kind!r}"  # pragma: no cover
+        raise GuppyCodegenError(msg)
 
     def _require_out_binding_matches(self, callee: str, out_name: str, inp: BlockInput) -> None:
         # _validate_block_decl guarantees type_expr is ArrayTypeExpr[QubitTypeExpr].

@@ -207,7 +207,7 @@ class TestBlockCallValidation:
             block_decls=(bell,),
             body=(),
         )
-        with pytest.raises(GuppyCodegenError, match=r"only array\[qubit, N\] inputs"):
+        with pytest.raises(GuppyCodegenError, match=r"only array\[qubit, N\] and bare qubit inputs"):
             ast_to_guppy(prog)
 
     def test_size_mismatch_rejected(self) -> None:
@@ -642,12 +642,165 @@ class TestAstOptimizationPreservesBlockDecls:
         assert result.program.block_decls == prog.block_decls
 
 
+class TestSingleQubitInputSupport:
+    """Phase 3a.3 iter 5b: single-qubit (bare `qubit`) input + `SingleQubitArg`
+    at the call site. Validator accepts `QubitTypeExpr` as a BlockInput type;
+    emitter renders `name: qubit @ owned` and passes the outer slot's local
+    directly (no array wrap); LIVE_PRESERVED rebinds the slot from the
+    returned single qubit value.
+    """
+
+    def _build_single_qubit_program(self, *, consumed: bool) -> Program:
+        from pecos.slr.ast.nodes import SingleQubitArg
+
+        effect = ResourceEffect.CONSUMED if consumed else ResourceEffect.LIVE_PRESERVED
+        body: tuple = (GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),)
+        if consumed:
+            # Consumed inputs must be measured / discarded inside the body.
+            body = (*body, MeasureOp(targets=(SlotRef(allocator="q", index=0),)))
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="q", effect=effect, type_expr=QubitTypeExpr()),
+            ),
+            body=body,
+        )
+        out_bindings = (
+            () if consumed else (SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),)
+        )
+        # For LIVE_PRESERVED, measure outer_q[1] after the call (it's still live).
+        # For CONSUMED, outer_q[1] is consumed by the call; measure a different
+        # slot (outer_q[0]) so the linearity tracker stays sound.
+        trailing_measure = MeasureOp(
+            targets=(SlotRef(allocator="outer_q", index=0 if consumed else 1),),
+            results=(BitRef(register="c", index=0),),
+        )
+        return Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=3),
+            declarations=(RegisterDecl(name="c", size=1),),
+            block_decls=(decl,),
+            body=(
+                PrepareOp(allocator="outer_q"),
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
+                    out_bindings=out_bindings,
+                ),
+                trailing_measure,
+            ),
+        )
+
+    def test_single_qubit_live_preserved_renders_bare_qubit_param(self) -> None:
+        source = ast_to_guppy(self._build_single_qubit_program(consumed=False))
+        # Block decl: `def b(q: qubit @ owned) -> qubit:`
+        assert re.search(r"@guppy\s*\n\s*def b\(q: qubit @ owned\) -> qubit:", source)
+        # Body: aliased entry, H on q_0, return q_0
+        assert "q_0 = q\n" in source
+        assert "q_0 = h(q_0)" in source
+        assert "return q_0" in source
+        # Call site: pass outer_q_1 directly (no array wrap)
+        assert re.search(r"_call_ret_\d+\s*=\s*b\(outer_q_1\)", source)
+        # Unpack: rebinds outer_q_1 from the returned single qubit
+        assert re.search(r"outer_q_1\s*=\s*_call_ret_\d+", source)
+
+    def test_single_qubit_consumed_no_return_type(self) -> None:
+        source = ast_to_guppy(self._build_single_qubit_program(consumed=True))
+        # No live_preserved input -> return type is None
+        assert re.search(r"@guppy\s*\n\s*def b\(q: qubit @ owned\) -> None:", source)
+        # Bare call (no ret_temp assignment) since no live outputs
+        assert re.search(r"^\s*b\(outer_q_1\)$", source, re.MULTILINE)
+
+    def test_single_qubit_arg_mismatched_input_type_rejected(self) -> None:
+        """A SingleQubitArg paired with an array[qubit, N] input must raise."""
+        from pecos.slr.ast.nodes import SingleQubitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(
+                    name="q",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=2),
+                ),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=3),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
+                    out_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"SingleQubitArg requires a bare qubit input"):
+            ast_to_guppy(prog)
+
+    def test_allocator_arg_with_single_qubit_input_rejected(self) -> None:
+        """Symmetric: AllocatorArg paired with a bare-qubit input must raise."""
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(
+                    name="q",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=QubitTypeExpr(),
+                ),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=2),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(AllocatorArg(name="outer_q"),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"AllocatorArg requires an array\[qubit, N\] input"):
+            ast_to_guppy(prog)
+
+    def test_single_qubit_slot_index_out_of_bounds_rejected(self) -> None:
+        from pecos.slr.ast.nodes import SingleQubitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=2),  # only indices 0..1
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=5)),),
+                    out_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=5)),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"slot index 5 out of bounds"):
+            ast_to_guppy(prog)
+
+
 class TestDeferredBlockArgRejection:
-    """Phase 3a.3 iter 5a scope: only `AllocatorArg` is supported by the
-    emitter / flatten paths. The four deferred BlockArg subclasses
-    (`SingleQubitArg`, `SingleBitArg`, `QubitBundleArg`, `BitBundleArg`) MUST
-    raise cleanly in BOTH the Guppy emitter AND the non-Guppy flatten pass --
-    silently inlining a deferred shape would mask user errors (Codex
+    """Phase 3a.3 iter 5b scope: `AllocatorArg` and `SingleQubitArg` are
+    supported by the emitter / flatten paths. The three remaining deferred
+    BlockArg subclasses (`SingleBitArg`, `QubitBundleArg`, `BitBundleArg`)
+    MUST raise cleanly in BOTH the Guppy emitter AND the non-Guppy flatten
+    pass -- silently inlining a deferred shape would mask user errors (Codex
     2026-05-15 fix-pass-5 review caught this on `out_bindings`).
     """
 
@@ -657,14 +810,11 @@ class TestDeferredBlockArgRejection:
             BitRef,
             QubitBundleArg,
             SingleBitArg,
-            SingleQubitArg,
             SlotRef,
         )
 
         # Build a representative instance of the deferred subclass.
-        if arg_subclass is SingleQubitArg:
-            deferred = SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0))
-        elif arg_subclass is SingleBitArg:
+        if arg_subclass is SingleBitArg:
             deferred = SingleBitArg(bit=BitRef(register="c", index=0))
         elif arg_subclass is QubitBundleArg:
             deferred = QubitBundleArg(slots=(SlotRef(allocator="outer_q", index=0),))
@@ -711,10 +861,9 @@ class TestDeferredBlockArgRejection:
             BitBundleArg,
             QubitBundleArg,
             SingleBitArg,
-            SingleQubitArg,
         )
 
-        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=True, arg_subclass=subclass)
             with pytest.raises(NotImplementedError, match=subclass.__name__):
                 flatten_block_calls(prog)
@@ -729,10 +878,9 @@ class TestDeferredBlockArgRejection:
             BitBundleArg,
             QubitBundleArg,
             SingleBitArg,
-            SingleQubitArg,
         )
 
-        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=False, arg_subclass=subclass)
             with pytest.raises(NotImplementedError, match=subclass.__name__):
                 flatten_block_calls(prog)
@@ -742,10 +890,9 @@ class TestDeferredBlockArgRejection:
             BitBundleArg,
             QubitBundleArg,
             SingleBitArg,
-            SingleQubitArg,
         )
 
-        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=True, arg_subclass=subclass)
             with pytest.raises(GuppyCodegenError, match=subclass.__name__):
                 ast_to_guppy(prog)
@@ -755,10 +902,9 @@ class TestDeferredBlockArgRejection:
             BitBundleArg,
             QubitBundleArg,
             SingleBitArg,
-            SingleQubitArg,
         )
 
-        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=False, arg_subclass=subclass)
             with pytest.raises(GuppyCodegenError, match=subclass.__name__):
                 ast_to_guppy(prog)

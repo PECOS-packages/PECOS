@@ -467,26 +467,30 @@ class TestInlineCRegDefiniteAssignment:
     acknowledgement of the zero-init.
     """
 
-    def test_print_before_measure_on_inline_creg_rejected(self) -> None:
-        """The exact case Codex flagged in the tracer-bullet review."""
+    def test_print_bit_before_measure_on_inline_creg_rejected(self) -> None:
+        """Codex's original tracer-bullet bug case, lifted to bit-level form.
+
+        Print(inline[0]) before Measure(...) > inline[0] is rejected because
+        bit-level definite-assignment hasn't been established for index 0.
+        """
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
             qb.X(q[0]),
-            Print(inline, tag="before_measure"),
+            Print(inline[0], tag="before_measure"),
             Measure(q[0]) > inline[0],
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
 
-    def test_print_after_measure_on_inline_creg_accepted(self) -> None:
-        """Same shape, Print after Measure → OK."""
+    def test_print_bit_after_measure_on_inline_creg_accepted(self) -> None:
+        """Print(inline[0]) after Measure(...) > inline[0] → OK."""
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
             qb.X(q[0]),
             Measure(q[0]) > inline[0],
-            Print(inline, tag="after_measure"),
+            Print(inline[0], tag="after_measure"),
         )
         SlrConverter(prog).hugr()
 
@@ -516,7 +520,7 @@ class TestInlineCRegDefiniteAssignment:
             SlrConverter(prog).hugr()
 
     def test_inline_creg_assigned_in_both_if_branches_propagates(self) -> None:
-        """Measure in both Then and Else marks the CReg assigned after the If."""
+        """Measure-into-bit on both Then and Else marks the bit assigned after the If."""
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 2),
@@ -524,12 +528,12 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1]), Measure(q[1]) > inline[0]).Else(Measure(q[1]) > inline[0]),
-            Print(inline, tag="post_if"),
+            Print(inline[0], tag="post_if"),
         )
         SlrConverter(prog).hugr()
 
     def test_inline_creg_assigned_only_in_then_does_not_propagate(self) -> None:
-        """Measure in Then only → after-If, inline still not definitely assigned."""
+        """Measure-into-bit in Then only → after-If, that bit still not definitely assigned."""
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
@@ -537,28 +541,28 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             If(c[0]).Then(Measure(q[0]) > inline[0]),
-            Print(inline, tag="maybe"),
+            Print(inline[0], tag="maybe"),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
 
     def test_inline_creg_assigned_in_repeat_body_propagates(self) -> None:
-        """Repeat(n) with n>=1 runs body at least once; assignment propagates out."""
+        """Repeat(n) with n>=1 runs body at least once; bit assignment propagates out."""
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
             Repeat(3).block(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
-            Print(inline, tag="post_repeat"),
+            Print(inline[0], tag="post_repeat"),
         )
         SlrConverter(prog).hugr()
 
     def test_inline_creg_assigned_in_static_for_propagates(self) -> None:
-        """Static For with trip>=1 propagates assignment."""
+        """Static For with trip>=1 propagates bit assignment."""
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
             For("i", 0, 2).Do(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
-            Print(inline, tag="post_for"),
+            Print(inline[0], tag="post_for"),
         )
         SlrConverter(prog).hugr()
 
@@ -581,8 +585,16 @@ class TestInlineCRegDefiniteAssignment:
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
 
-    def test_print_whole_inline_creg_with_all_bits_measured_accepted(self) -> None:
-        """Print(inline) is OK when every inferred bit has been Measure-assigned."""
+    def test_whole_inline_creg_print_rejected_outright(self) -> None:
+        """Phase 1 rejects whole-CReg Print of an inline CReg unconditionally.
+
+        Even when every inferred bit has been Measure-assigned, whole-CReg
+        Print of an inline CReg silently shrinks the register relative to the
+        user's CReg(name, size) intent -- inline-from-Measure inference only
+        sees Measure-targeted indices, so the inferred RegisterDecl.size can
+        be smaller than what the user wrote. Phase 1 fail-fast: require
+        explicit Main(...) declaration or per-bit Print.
+        """
         inline = CReg("inline", 2)
         prog = Main(
             q := QReg("q", 2),
@@ -591,28 +603,42 @@ class TestInlineCRegDefiniteAssignment:
             Measure(q[1]) > inline[1],
             Print(inline, tag="full"),
         )
-        SlrConverter(prog).hugr()
+        with pytest.raises(GuppyCodegenError, match=r"Print\(whole-CReg\) of inline CReg"):
+            SlrConverter(prog).hugr()
 
-    def test_print_whole_inline_creg_with_partial_assignment_rejected(self) -> None:
-        """Print(inline) where one bit was only assigned in If.Then is rejected
-        after the If join (intersection of paths excludes the Then-only bit).
+    def test_whole_inline_creg_print_codex_shrink_case_rejected(self) -> None:
+        """Regression for Codex's tracer-bullet review v2: whole-CReg Print of an
+        inline CReg silently emitting a register smaller than the user declared.
 
-        Error message lists the unassigned indices to point at what's missing.
+        Before this fix, `inline = CReg("inline", 2)` with only inline[0]
+        measured + `Print(inline)` would compile and emit `result("result.whole",
+        inline)` against a size-1 inferred register (max_measured_index + 1),
+        silently losing the user's stated size 2.
         """
         inline = CReg("inline", 2)
         prog = Main(
-            q := QReg("q", 1),
-            c := CReg("c", 1),
+            q := QReg("q", 2),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
-            qb.Prep(q[0]),
-            Measure(q[0]) > inline[0],  # inline[0] always assigned
-            If(c[0]).Then(qb.Prep(q[0]), Measure(q[0]) > inline[1]).Else(),
-            # inline[1] only assigned on the Then branch -> partial
-            Print(inline, tag="partial"),
+            Measure(q[0]) > inline[0],
+            Print(inline, tag="whole"),
         )
-        with pytest.raises(GuppyCodegenError, match=r"not all bits"):
+        with pytest.raises(GuppyCodegenError, match=r"Print\(whole-CReg\) of inline CReg"):
             SlrConverter(prog).hugr()
+
+    def test_whole_declared_creg_print_accepted(self) -> None:
+        """When the CReg is declared in Main(...), it's no longer inline and
+        whole-CReg Print is allowed (user-acknowledged size).
+        """
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),  # declared positional -> not inline
+            qb.X(q[0]),
+            qb.X(q[1]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            Print(c, tag="whole"),
+        )
+        SlrConverter(prog).hugr()
 
 
 # ── Additional path-signature edge cases per Codex's review ─────────────
@@ -666,9 +692,47 @@ class TestPathSignatureEdgeCases:
         prog = Main(
             q := QReg("q", 1),
             Repeat(0).block(
-                Print(inline, tag="never_runs"),  # inline never written anywhere
+                Print(inline[0], tag="never_runs"),  # inline[0] never written anywhere
             ),
             Measure(q[0]) > inline[0],
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
+
+    def test_non_static_for_with_print_via_ast_rejected(self) -> None:
+        """Direct AST-level test for non-static For body containing Print.
+
+        v1's public SLR API doesn't allow non-static For bounds (start/stop
+        must be int literals), so this case isn't reachable via Main/Print
+        construction. Build the AST directly to pin the validator's defensive
+        rejection in `_static_for_trip_count`.
+        """
+        from pecos.slr.ast import (
+            AllocatorDecl,
+            ForStmt,
+            LiteralExpr,
+            PrintOp,
+            Program,
+            VarExpr,
+        )
+        from pecos.slr.ast.codegen.guppy import AstToGuppy
+
+        # main(q: array[qubit, 1] @ owned):
+        #   for i in range(x, 3):     # start is a VarExpr (non-literal) -> non-static
+        #       Print(c, tag="loop")  # rejected: Print inside non-static For
+        prog = Program(
+            name="main",
+            declarations=(AllocatorDecl(name="q", capacity=1, parent=None),),
+            body=(
+                ForStmt(
+                    variable="i",
+                    start=VarExpr(name="x"),
+                    stop=LiteralExpr(value=3),
+                    body=(PrintOp(value="c", tag="loop", namespace="result"),),
+                ),
+            ),
+        )
+
+        emitter = AstToGuppy()
+        with pytest.raises(GuppyCodegenError, match=r"non-static `For`"):
+            emitter.generate(prog)

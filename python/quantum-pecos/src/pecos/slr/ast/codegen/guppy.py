@@ -554,19 +554,22 @@ class AstToGuppy:
             reg = op.value
             if reg not in inline_cregs:
                 return
-            decl = self.context.registers.get(reg)
-            if decl is None:
-                return  # unknown; emit-time check handles it
-            unassigned = [i for i in range(decl.size) if (reg, i) not in assigned]
-            if unassigned:
-                msg = (
-                    f"Print(whole-CReg) references inline CReg {reg!r} but not all bits have "
-                    f"been written by Measure. Inferred register size is {decl.size}; "
-                    f"unassigned bit indices: {unassigned}. Move the Print after Measures that "
-                    f"cover every bit of {reg!r}, or declare {reg!r} explicitly as a positional "
-                    f"in Main(...)."
-                )
-                raise GuppyCodegenError(msg)
+            # Reject whole-CReg Print of an inline CReg outright in Phase 1.
+            # The user-stated `CReg(name, size)` size is lost during inline-from-
+            # Measure inference (only Measure-targeted bit indices contribute to
+            # the inferred RegisterDecl.size). Emitting `result(tag, c)` for the
+            # inferred c can silently shrink the register relative to the user's
+            # intent. Require either an explicit Main(...) declaration (then the
+            # CReg is no longer inline and whole-CReg Print is allowed) or per-bit
+            # `Print(c[i], ...)` calls.
+            msg = (
+                f"Print(whole-CReg) of inline CReg {reg!r} is rejected in Phase 1. "
+                "Whole-register Print can silently shrink an inline CReg because the "
+                "original `CReg(name, size)` size is lost during inline-from-Measure "
+                f"inference. Declare {reg!r} as a positional in `Main(...)` (then whole-"
+                f"CReg Print is allowed) or print individual bits via `Print({reg}[i], ...)`."
+            )
+            raise GuppyCodegenError(msg)
 
     def _emit_stmt(self, stmt: Statement) -> list[str]:
         if isinstance(stmt, GateOp):

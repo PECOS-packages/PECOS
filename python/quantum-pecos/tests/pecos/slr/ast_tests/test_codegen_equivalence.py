@@ -19,7 +19,6 @@ from pecos.slr import CReg, If, Main, Permute, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import generate
 from pecos.slr.gen_codes import (
-    GuppyGenerator,
     QASMGenerator,
     QIRGenerator,
     QuantumCircuitGenerator,
@@ -172,38 +171,6 @@ class TestStimEquivalence:
         ast_lines = set(normalize_whitespace(ast_stim).split("\n"))
 
         assert direct_lines == ast_lines
-
-
-class TestGuppyEquivalence:
-    """Compare Guppy output from direct SLR vs AST."""
-
-    def test_bell_state_guppy_structure(self) -> None:
-        """Test Bell state produces structurally similar Guppy."""
-        prog = Main(
-            q := QReg("q", 2),
-            qb.H(q[0]),
-            qb.CX(q[0], q[1]),
-        )
-
-        # AST path first (before direct generator mutates prog)
-        ast = slr_to_ast(prog)
-        ast_guppy = generate(ast, "guppy")
-
-        # Direct SLR path
-        gen = GuppyGenerator(_internal=True)
-        gen.generate_block(prog)
-        direct_guppy = gen.get_output()
-
-        # Both should have key elements
-        assert "@guppy" in direct_guppy or "guppy" in direct_guppy.lower()
-        assert "@guppy" in ast_guppy or "guppy" in ast_guppy.lower()
-
-        # Both should have H and CX gates
-        assert "quantum.h" in direct_guppy.lower() or ".h(" in direct_guppy.lower()
-        assert " = h(" in ast_guppy.lower()
-
-        assert "quantum.cx" in direct_guppy.lower() or ".cx(" in direct_guppy.lower()
-        assert " = cx(" in ast_guppy.lower()
 
 
 class TestQIREquivalence:

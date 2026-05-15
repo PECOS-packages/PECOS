@@ -85,11 +85,6 @@ from typing import TYPE_CHECKING
 from pecos.slr import ast, qeclib
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
-from pecos.slr.gen_codes.guppy.qubit_state_validator import (
-    QubitStateValidator,
-    StateViolation,
-    validate_qubit_states,
-)
 from pecos.slr.loop_block import For, While
 from pecos.slr.main import Main
 from pecos.slr.main import (
@@ -188,14 +183,11 @@ __all__ = [
     "QReg",
     "Qubit",
     "QubitRef",
-    # State validation
-    "QubitStateValidator",
     "QubitType",
     "Repeat",
     "Return",
     "SlotState",
     "SlrConverter",
-    "StateViolation",
     "Vars",
     "While",
     # AST module
@@ -204,5 +196,4 @@ __all__ = [
     "generate",
     # QEC library
     "qeclib",
-    "validate_qubit_states",
 ]

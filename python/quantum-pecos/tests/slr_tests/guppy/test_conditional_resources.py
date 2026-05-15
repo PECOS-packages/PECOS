@@ -7,9 +7,8 @@ explicitly rejects those patterns -- the v1 acceptance corpus covers
 the supported state-preserving conditional in
 ``tests/slr_tests/ast_guppy/test_v1_acceptance.py::TestControlFlow``.
 
-The remaining test below targets the legacy ``SlrConverter.hugr()``
-path, which still routes through the legacy IR generator and is
-unaffected by the AST emitter rewrite.
+The remaining test below exercises a supported state-preserving
+conditional through ``SlrConverter.hugr()`` (AST-routed post-cutover).
 """
 
 import pytest

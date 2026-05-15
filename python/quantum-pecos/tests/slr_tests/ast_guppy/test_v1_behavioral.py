@@ -127,6 +127,47 @@ class TestDeterministic:
         assert all(r["measurement_0"] == 0 for r in records)
         assert all(r["measurement_1"] == 1 for r in records)
 
+    def test_quantum_permute_three_cycle(self) -> None:
+        """3-cycle Permute (q0, q1, q2) -> (q2, q0, q1).
+
+        State before permute: |1>|0>|0> (X on q[0]). Permute moves the X
+        excitation from slot 0 to slot 1 in the post-permute view, so a
+        per-slot measurement should read out (0, 1, 0).
+        """
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 3),
+            qb.X(q[0]),
+            Permute([q[0], q[1], q[2]], [q[2], q[0], q[1]]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            Measure(q[2]) > c[2],
+        )
+        records = run_ast_guppy_via_selene(prog, shots=10)
+        assert all(r["measurement_0"] == 0 for r in records)
+        assert all(r["measurement_1"] == 1 for r in records)
+        assert all(r["measurement_2"] == 0 for r in records)
+
+    def test_quantum_permute_cross_register(self) -> None:
+        """Permute spanning two QRegs must remap slots across owned-local groups."""
+        prog = Main(
+            a := QReg("a", 2),
+            b := QReg("b", 2),
+            c := CReg("c", 4),
+            qb.X(a[0]),
+            qb.X(b[1]),
+            Permute([a[0], a[1], b[0], b[1]], [b[1], b[0], a[1], a[0]]),
+            Measure(a[0]) > c[0],
+            Measure(a[1]) > c[1],
+            Measure(b[0]) > c[2],
+            Measure(b[1]) > c[3],
+        )
+        records = run_ast_guppy_via_selene(prog, shots=10)
+        assert all(r["measurement_0"] == 1 for r in records)
+        assert all(r["measurement_1"] == 0 for r in records)
+        assert all(r["measurement_2"] == 0 for r in records)
+        assert all(r["measurement_3"] == 1 for r in records)
+
 
 # ── Bell / GHZ correlation tests ──────────────────────────────────────────
 

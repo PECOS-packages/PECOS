@@ -185,7 +185,26 @@ class SlrConverter:
         return self._compile_hugr()
 
     def _compile_hugr(self):
+        from pecos.slr.ast import AllocatorDecl, RegisterDecl
+
         guppy_code = self._generate_guppy()
+        program = self._to_ast()
+
+        allocator_sizes: dict[str, int] = {}
+        for decl in getattr(program, "declarations", ()):
+            if isinstance(decl, AllocatorDecl) and decl.parent is None:
+                allocator_sizes.setdefault(decl.name, decl.capacity)
+        if getattr(program, "allocator", None) is not None:
+            top = program.allocator
+            if isinstance(top, AllocatorDecl) and top.parent is None:
+                allocator_sizes.setdefault(top.name, top.capacity)
+
+        result_cregs: list[RegisterDecl] = [
+            decl for decl in getattr(program, "declarations", ()) if isinstance(decl, RegisterDecl) and decl.is_result
+        ]
+
+        wrapper = _build_no_arg_entry_wrapper(allocator_sizes, result_cregs)
+        full_source = guppy_code + wrapper
 
         import importlib.util
         import linecache
@@ -196,13 +215,13 @@ class SlrConverter:
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             temp_file = Path(f.name)
-            f.write(guppy_code)
+            f.write(full_source)
 
         module_name = f"_ast_guppy_generated_{temp_file.stem}"
         linecache.cache[str(temp_file)] = (
-            len(guppy_code),
+            len(full_source),
             None,
-            guppy_code.splitlines(keepends=True),
+            full_source.splitlines(keepends=True),
             str(temp_file),
         )
 
@@ -217,12 +236,21 @@ class SlrConverter:
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
 
-            main_func = getattr(module, "main", None)
-            if main_func is None:
-                msg = "No main function found in AST-generated Guppy source"
+            entry_func = getattr(module, "entry", None)
+            if entry_func is None:
+                msg = "No entry function found in AST-generated Guppy source"
                 raise RuntimeError(msg)
 
-            return main_func.compile_function()
+            try:
+                return entry_func.compile()
+            except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+                truncated = _truncate_source_for_error(full_source)
+                msg = (
+                    f"Failed to compile AST-generated Guppy to HUGR.\n\n"
+                    f"Error: {type(exc).__name__}: {exc}\n\n"
+                    f"Generated Guppy source (truncated):\n{truncated}"
+                )
+                raise RuntimeError(msg) from exc
         finally:
             sys.modules.pop(module_name, None)
             linecache.cache.pop(str(temp_file), None)
@@ -307,3 +335,52 @@ class SlrConverter:
             optimizer = ParallelOptimizer()
             slr_block = optimizer.transform(slr_block)
         return slr_block
+
+
+def _build_no_arg_entry_wrapper(allocator_sizes, result_cregs) -> str:
+    """Generate a no-arg `entry()` wrapper around AST-emitted parameterized `main(...)`.
+
+    The AST emitter produces `main(q: array[qubit, N] @ owned, ...)`. Downstream
+    HUGR consumers (Hugr adapter, Selene) require a no-arg entrypoint, matching
+    the legacy IR generator's shape. This wrapper allocates each root allocator
+    and forwards to main, returning result CReg bits as a flat tuple of bools.
+    """
+    body_lines: list[str] = [
+        f"    {allocator} = array(qubit() for _ in range({size}))" for allocator, size in allocator_sizes.items()
+    ]
+    call_args = ", ".join(allocator_sizes.keys())
+    call_expr = f"main({call_args})"
+
+    if result_cregs:
+        if len(result_cregs) == 1:
+            body_lines.append(f"    {result_cregs[0].name} = {call_expr}")
+        else:
+            result_names = ", ".join(decl.name for decl in result_cregs)
+            body_lines.append(f"    {result_names} = {call_expr}")
+
+        return_parts: list[str] = []
+        for decl in result_cregs:
+            return_parts.extend(f"{decl.name}[{i}]" for i in range(decl.size))
+        return_expr = ", ".join(return_parts)
+        if len(return_parts) == 1:
+            return_expr += ","
+        body_lines.append(f"    return {return_expr}")
+
+        bool_count = sum(decl.size for decl in result_cregs)
+        return_ann = "tuple[bool]" if bool_count == 1 else "tuple[" + ", ".join(["bool"] * bool_count) + "]"
+    else:
+        body_lines.append(f"    {call_expr}")
+        return_ann = "None"
+
+    body = "\n".join(body_lines) if body_lines else "    pass"
+    return f"\n\n@guppy\ndef entry() -> {return_ann}:\n{body}\n"
+
+
+def _truncate_source_for_error(source: str, max_lines: int = 80) -> str:
+    """Truncate Guppy source for an error message. Shows first max_lines plus tail."""
+    lines = source.splitlines()
+    if len(lines) <= max_lines:
+        return source
+    head = lines[: max_lines - 10]
+    tail = lines[-10:]
+    return "\n".join([*head, f"... ({len(lines) - max_lines} lines elided) ...", *tail])

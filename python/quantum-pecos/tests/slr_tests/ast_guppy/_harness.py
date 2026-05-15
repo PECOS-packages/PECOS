@@ -6,13 +6,11 @@ AST path: `slr_to_ast` -> `AstToGuppy`), writes the source to a temp
 file, imports it as a fresh module, and calls `main.compile_function()`
 on the resulting Guppy function.
 
-This is intentionally NOT routed through `SlrConverter.hugr()`. That
-path still falls back to the legacy IR generator and would mask
-AST-path failures.
-
-Reference for the compile machinery:
-`pecos/slr/gen_codes/guppy/hugr_compiler.py::HugrCompiler.compile_to_hugr`
-does the same dance for the legacy IR path; we lift the technique.
+Post-cutover, `SlrConverter.hugr()` also routes through the AST path
+(wrapping `main(...)` in a no-arg `entry()` and calling
+`entry.compile()`). This harness compiles `main.compile_function()`
+directly so failures point at the parameterized function, not at the
+entry wrapper.
 """
 
 from __future__ import annotations

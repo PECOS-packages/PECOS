@@ -14,7 +14,8 @@ Tests start as xfail because the AST Guppy emitter is being rewritten
 on this branch (`feat/ast-guppy-v1`). As features land, the xfail
 mark comes off the corresponding test.
 
-Do not route acceptance through `SlrConverter.hugr()` until cutover
-(Step 4 in the forward path); `hugr()` still falls back to the
-legacy IR generator and would mask AST-path failures.
+Post-cutover, `SlrConverter.hugr()` is also AST-routed (wraps `main`
+in a no-arg `entry()` and compiles that). Acceptance tests prefer
+`SlrConverter.guppy()` / `_harness.assert_ast_guppy_compiles` so
+failures point at the parameterized function, not the entry wrapper.
 """

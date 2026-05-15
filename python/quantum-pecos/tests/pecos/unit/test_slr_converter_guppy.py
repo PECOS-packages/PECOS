@@ -12,8 +12,9 @@
 """Tests for SlrConverter Guppy functionality.
 
 The v1 AST -> Guppy emitter is exercised via compile-and-run acceptance tests
-under ``tests/slr_tests/ast_guppy/``. Tests here cover surviving non-string
-checks (`SlrConverter.hugr()` legacy IR path, basic structural sanity) only.
+under ``tests/slr_tests/ast_guppy/``. Tests here cover basic structural sanity
+of `SlrConverter.hugr()` (AST-routed post-cutover, wraps `main` in a no-arg
+`entry()` and compiles that).
 """
 
 from pecos.slr import CReg, Main, QReg, SlrConverter

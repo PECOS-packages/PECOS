@@ -67,3 +67,31 @@ def test_hugr_accepts_inline_measure_creg_result() -> None:
     hugr = SlrConverter(prog).hugr()
 
     assert hugr is not None
+
+
+def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
+    """Pin the post-cutover entrypoint contract.
+
+    `SlrConverter.hugr()` must return a Package whose `to_str()` produces
+    HUGR JSON for a no-arg entrypoint -- the same shape `Guppy(func).compile()`
+    would produce. This is required for downstream consumers (`pecos.Hugr(bytes)`,
+    Selene runtime, `pecos_rslib.HugrProgram`) that expect a runnable program,
+    not a parameterized function definition.
+    """
+    from pecos import Hugr, selene_engine, sim
+
+    prog = Main(
+        q := QReg("q", 2),
+        c := CReg("c", 2),
+        qb.H(q[0]),
+        qb.CX(q[0], q[1]),
+        Measure(q) > c,
+    )
+
+    package = SlrConverter(prog).hugr()
+    hugr_bytes = package.to_str().encode("utf-8")
+
+    result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(2).seed(42).run(10)
+
+    raw = result.to_dict() if hasattr(result, "to_dict") else result
+    assert raw, "Hugr adapter produced no measurement records from .hugr() output"

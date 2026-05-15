@@ -5,24 +5,25 @@ use pecos_build::errors::Error;
 use serde_json::Value;
 use std::process::Command;
 
-/// FFI crates that should be excluded from workspace-wide cargo commands.
+/// FFI crates that need a non-Rust toolchain to check / clippy / test.
 ///
-/// All five entries are cdylibs that bind PECOS to another language: the four
-/// pecos-rslib* crates use pyo3 (Python) and pecos-julia-ffi / pecos-go-ffi
-/// expose C ABIs for Julia and Go. None of them have meaningful Rust unit
-/// tests -- they're exercised through their respective language test suites
-/// (pytest, julia-test, go-test) -- so excluding them from `cargo test
-/// --workspace` is a no-coverage-loss simplification. It also avoids forcing
-/// the workspace test to find a linkable libpython, which would otherwise
-/// fail on macOS where `/usr/bin/python3` is an Apple stub.
-const FFI_CRATES: &[&str] = &[
-    "pecos-rslib",
-    "pecos-rslib-cuda",
-    "pecos-rslib-exp",
-    "pecos-rslib-llvm",
-    "pecos-julia-ffi",
-    "pecos-go-ffi",
-];
+/// pecos-rslib needs cmake (for mwpf via highs-sys) under `--all-features`,
+/// pecos-julia-ffi needs Julia, pecos-go-ffi needs Go. These are excluded
+/// from the default workspace check / clippy / test invocations and only
+/// touched when the caller opts in with `--include-ffi`.
+const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-julia-ffi", "pecos-go-ffi"];
+
+/// Extra pyo3 cdylib crates excluded only from `cargo test --workspace`.
+///
+/// They're pyo3 cdylibs whose `extension-module` feature is opt-in (see
+/// python/pecos-rslib*/Cargo.toml), so `cargo test --workspace` would try to
+/// link the test binary against libpython and fail on systems where the
+/// active Python is a stub (e.g. macOS `/usr/bin/python3`). They have no
+/// Rust unit tests of their own, so this exclusion is no-coverage-loss.
+/// Default `pecos rust check` and `pecos rust clippy` still cover them
+/// because check/clippy don't link.
+const PYO3_CDYLIB_TEST_EXCLUDES: &[&str] =
+    &["pecos-rslib-cuda", "pecos-rslib-exp", "pecos-rslib-llvm"];
 
 /// Warn if shared C++ dependencies differ across per-crate pecos.toml files.
 /// This is informational -- different crates may legitimately pin different versions.
@@ -436,9 +437,9 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     // to ensure the pecos binary has PHIR/QIS support for integration tests.
     let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr"];
 
-    for crate_name in FFI_CRATES {
+    for crate_name in FFI_CRATES.iter().chain(PYO3_CDYLIB_TEST_EXCLUDES) {
         args.push("--exclude");
-        args.push(crate_name);
+        args.push(*crate_name);
     }
 
     args.extend(&[

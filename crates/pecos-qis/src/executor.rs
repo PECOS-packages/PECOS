@@ -1070,11 +1070,14 @@ impl QisHeliosInterface {
     /// Get the entry point and matching setjmp wrapper from the libraries.
     ///
     /// QIR programs can use one of two entry-point signatures:
-    /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. PECOS's own
-    ///   pecos-phir and pecos-hugr-qis compilers emit this, and `qis_pipeline_tests`
-    ///   uses it. The return value is an error code.
-    /// - `void @main()` -- the "base profile" form. PECOS's QIR text tests use
-    ///   this, and it's the most common form for externally-authored programs.
+    /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. pecos-hugr-qis
+    ///   emits this (its `LLVM_MAIN` constant in compiler.rs is `"qmain"`),
+    ///   and the pecos-phir RON pipeline fixtures (`ron_support.rs`,
+    ///   `qis_pipeline_tests`) use it. The return value is an error code.
+    /// - `void @main()` -- the "base profile" form. pecos-phir's MLIR/QIR text
+    ///   path matches `@main` directly (see mlir_toolchain.rs), and PECOS's QIR
+    ///   text tests use this. It's also the most common form for
+    ///   externally-authored programs.
     ///
     /// Calling a `void @main()` function through the qmain ABI (`u64 fn(u64)`)
     /// is undefined behaviour: the return register is never set, so what looks

@@ -1,4 +1,4 @@
-"""Audit-only `SlrConverter.hugr(_force_ast=True)` hook tests."""
+"""Lock-in tests for `SlrConverter.hugr()` AST-routed path (post-cutover)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
 
-def test_force_ast_hugr_compiles_via_ast_guppy_path() -> None:
+def test_hugr_compiles_via_ast_guppy_path() -> None:
     prog = Main(
         q := QReg("q", 2),
         c := CReg("c", 2),
@@ -18,12 +18,12 @@ def test_force_ast_hugr_compiles_via_ast_guppy_path() -> None:
         Measure(q) > c,
     )
 
-    hugr = SlrConverter(prog).hugr(_force_ast=True)
+    hugr = SlrConverter(prog).hugr()
 
     assert hugr is not None
 
 
-def test_force_ast_rejects_while_before_parallel_optimizer_erases_it() -> None:
+def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
     prog = Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
@@ -34,20 +34,20 @@ def test_force_ast_rejects_while_before_parallel_optimizer_erases_it() -> None:
     )
 
     with pytest.raises(GuppyCodegenError, match="does not support While loops"):
-        SlrConverter(prog).hugr(_force_ast=True)
+        SlrConverter(prog).hugr()
 
 
-def test_force_ast_rejects_non_z_prep_basis_before_ast_drops_it() -> None:
+def test_hugr_rejects_non_z_prep_basis_before_ast_drops_it() -> None:
     prog = Main(
         q := QReg("q", 1),
         qb.Prep(q[0], "X"),
     )
 
     with pytest.raises(GuppyCodegenError, match="supports only Z-basis Prep"):
-        SlrConverter(prog).hugr(_force_ast=True)
+        SlrConverter(prog).hugr()
 
 
-def test_force_ast_rejects_symbolic_loopvar_indexing_cleanly() -> None:
+def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
     i = LoopVar("i")
     prog = Main(
         q := QReg("q", 4),
@@ -55,15 +55,15 @@ def test_force_ast_rejects_symbolic_loopvar_indexing_cleanly() -> None:
     )
 
     with pytest.raises(GuppyCodegenError, match="symbolic LoopVar indexing"):
-        SlrConverter(prog).hugr(_force_ast=True)
+        SlrConverter(prog).hugr()
 
 
-def test_force_ast_accepts_inline_measure_creg_result() -> None:
+def test_hugr_accepts_inline_measure_creg_result() -> None:
     prog = Main(
         q := QReg("q", 2),
         Measure(q) > CReg("final", 2),
     )
 
-    hugr = SlrConverter(prog).hugr(_force_ast=True)
+    hugr = SlrConverter(prog).hugr()
 
     assert hugr is not None

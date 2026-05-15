@@ -13,9 +13,8 @@
 
 Iterates a curated list of `(source_label, slr_program_factory)`
 pairs from PECOS examples, qeclib, and existing test fixtures.
-Runs each through the AST -> Guppy path via
-`SlrConverter.hugr(_force_ast=True)` (private kwarg added by
-Codex; see step4-cutover-plan.md) and captures any failures.
+Runs each through `SlrConverter.hugr()` (now AST-routed by default
+post-cutover) and captures any failures.
 
 This is NOT a pytest test file. It's an audit tool grug runs
 during Workstream B and at cutover. Output is the seed for new
@@ -826,29 +825,7 @@ def _run_case(case: AuditCase) -> AuditResult:
         )
 
     try:
-        # _force_ast is a private kwarg that routes SlrConverter.hugr()
-        # through the AST path even before cutover. Audit-only.
-        SlrConverter(prog).hugr(_force_ast=True)
-    except TypeError as exc:
-        expected = _expected_result(case, exc)
-        if expected is not None:
-            return expected
-        # _force_ast not yet plumbed -- emit a clear marker so the runner
-        # output points at the missing kwarg instead of looking like a
-        # real audit failure.
-        if "_force_ast" in str(exc):
-            return AuditResult(
-                label=case.label,
-                passed=False,
-                exception_type="MissingKwarg",
-                exception_message="SlrConverter.hugr() does not accept _force_ast yet (Codex emitter PR pending)",
-            )
-        return AuditResult(
-            label=case.label,
-            passed=False,
-            exception_type=type(exc).__name__,
-            exception_message=str(exc).splitlines()[0][:200],
-        )
+        SlrConverter(prog).hugr()
     except BaseException as exc:
         expected = _expected_result(case, exc)
         if expected is not None:

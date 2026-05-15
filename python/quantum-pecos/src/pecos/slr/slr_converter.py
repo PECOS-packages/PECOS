@@ -172,7 +172,7 @@ class SlrConverter:
         """
         return self._generate_guppy()
 
-    def hugr(self, *, _force_ast: bool = False):
+    def hugr(self):
         """Compile the SLR block to HUGR via Guppy.
 
         Returns:
@@ -182,31 +182,9 @@ class SlrConverter:
             ImportError: If guppylang is not available
             RuntimeError: If compilation fails
         """
-        if _force_ast:
-            return self._compile_ast_guppy_to_hugr()
+        return self._compile_hugr()
 
-        # Generate Guppy code
-        self._generate_guppy()
-
-        # Compile to HUGR
-        try:
-            from pecos.slr.gen_codes.guppy.hugr_compiler import HugrCompiler
-        except ImportError as e:
-            msg = "Failed to import HugrCompiler. Make sure guppylang is installed."
-            raise ImportError(msg) from e
-
-        # HugrCompiler needs the generator object for its internal state
-        # For now, fall back to the old path
-        from pecos.slr.gen_codes.guppy import IRGuppyGenerator
-
-        generator = IRGuppyGenerator(_internal=True)
-        generator.generate_block(self._block)
-
-        compiler = HugrCompiler(generator)
-        return compiler.compile_to_hugr()
-
-    def _compile_ast_guppy_to_hugr(self):
-        # Audit-only AST -> Guppy -> HUGR route used before cutover.
+    def _compile_hugr(self):
         guppy_code = self._generate_guppy()
 
         import importlib.util

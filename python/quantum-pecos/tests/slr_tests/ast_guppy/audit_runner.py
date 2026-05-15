@@ -43,7 +43,20 @@ from typing import TYPE_CHECKING
 
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
-from pecos.slr import Barrier, Block, CReg, If, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import (
+    Barrier,
+    Block,
+    CReg,
+    For,
+    If,
+    LoopVar,
+    Main,
+    Parallel,
+    QReg,
+    Repeat,
+    SlrConverter,
+    While,
+)
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.color488 import Color488Patch
 from pecos.slr.qeclib.generic.check import Check
@@ -492,6 +505,156 @@ def _qeclib_color488_syn_extract_bare_preexisting() -> Block:
     )
 
 
+def _docs_for_static_indexing() -> Block:
+    """v1-shaped For loop: string iteration variable, integer bounds, fixed-slot body.
+
+    From `test_unified_resource_planner.py` shape per v1-feature-matrix:
+    v1 supports For("i", 0, 3) over fixed slots, no symbolic indexing.
+    """
+    return Main(
+        q := QReg("q", 3),
+        c := CReg("c", 3),
+        For("i", 0, 3).Do(
+            qb.H(q[0]),
+        ),
+        Measure(q) > c,
+    )
+
+
+def _docs_flat_parallel_h_gates() -> Block:
+    """Parallel of flat gates (no Block scaffolding), from
+    docs/development/slr-qeclib.md::test_slr_qeclib_block_4."""
+    return Main(
+        q := QReg("q", 4),
+        c := CReg("c", 4),
+        Parallel(
+            qb.H(q[0]),
+            qb.H(q[1]),
+            qb.H(q[2]),
+            qb.H(q[3]),
+        ),
+        Measure(q) > c,
+    )
+
+
+def _docs_repeat_state_preserving() -> Block:
+    """Repeat block lifted from docs/development/slr-qeclib.md::test_slr_qeclib_block_6.
+
+    Single-H body iterates 3 times. Slot stays live across iterations.
+    """
+    return Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        Repeat(3).block(
+            qb.H(q[0]),
+        ),
+        Measure(q) > c,
+    )
+
+
+def _docs_while_loop_v2_defer() -> Block:
+    """Deliberate red-light: While loop is v2-defer per v1-feature-matrix.
+
+    Body consumes-and-replaces the qubit slot inside an unbounded loop;
+    "Fixed-point linear state through unknown iteration count is too large
+    for first sound emitter."
+    """
+    return Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        While(c[0] == 0).Do(
+            qb.H(q[0]),
+            Measure(q[0]) > c[0],
+        ),
+    )
+
+
+def _docs_for_loopvar_symbolic_v2_defer() -> Block:
+    """Deliberate red-light: For with LoopVar + symbolic q[i] is v2-defer.
+
+    Per v1-feature-matrix: "Current AST converter cannot represent symbolic
+    SlotRef.index; supporting it would touch shared conversion semantics."
+    """
+    i = LoopVar("i")
+    return Main(
+        q := QReg("q", 4),
+        c := CReg("c", 4),
+        For(i, range(4)).Do(
+            qb.H(q[i]),
+        ),
+        Measure(q) > c,
+    )
+
+
+def _docs_prep_basis_x_v2_defer() -> Block:
+    """Deliberate red-light: Prep with explicit "X" basis is v2-defer.
+
+    Per v1-feature-matrix: "Current Prep gate is reset-to-zero in the AST.
+    V1 supports Z reset only. Use Prep(q); H(q) for X-basis prep."
+    """
+    return Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        qb.Prep(q[0], "X"),
+        Measure(q) > c,
+    )
+
+
+def _docs_rotation_rx_probe() -> Block:
+    """Probe: RX rotation gate from docs/development/slr-qeclib.md.
+
+    Per v1-feature-matrix: rotations need design; doc-test form
+    `RX(q[0], 0.5)` "currently looks like extra qargs." Probe to record.
+    """
+    return Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        qb.RX(q[0], 0.5),
+        Measure(q) > c,
+    )
+
+
+def _docs_inline_measure_creg() -> Block:
+    """Inline measurement result CReg without a root declaration."""
+    return Main(
+        q := QReg("q", 2),
+        Measure(q) > CReg("final", 2),
+    )
+
+
+def _docs_surface_syndrome_block18_probe() -> Block:
+    """Probe: surface_code_syndrome doc-test shape from test_slr_qeclib_block_18.
+
+    Uses basis-arg Prep("Z") and Prep("X") plus Block-grouped operations.
+    Likely XFAIL on the Prep basis arg (v2-defer); probe to record exact
+    failure or surface a real gap.
+    """
+    d = 2
+    num_data = d * d
+    num_ancilla = 2
+    return Main(
+        data := QReg("data", num_data),
+        ancilla := QReg("anc", num_ancilla),
+        syn := CReg("syn", num_ancilla),
+        Block(*[qb.Prep(data[i], "Z") for i in range(num_data)]),
+        Block(
+            qb.Prep(ancilla[0], "X"),
+            qb.H(ancilla[0]),
+            qb.CX(ancilla[0], data[0]),
+            qb.CX(ancilla[0], data[1]),
+            qb.H(ancilla[0]),
+            Measure(ancilla[0]) > syn[0],
+        ),
+        Block(
+            qb.Prep(ancilla[1], "Z"),
+            qb.CX(data[0], ancilla[1]),
+            qb.CX(data[3], ancilla[1]),
+            Measure(ancilla[1]) > syn[1],
+        ),
+        Measure(data) > CReg("final", num_data),
+    )
+
+
 def _curated_cases() -> list[AuditCase]:
     """v1 acceptance baseline + legacy HUGR-test corpus + examples/ + qeclib.
 
@@ -559,6 +722,61 @@ def _curated_cases() -> list[AuditCase]:
                 message_contains="'float' object cannot be interpreted as an integer",
                 classification="pre-existing",
                 reason="Color488 bare extraction fails while building the SLR program",
+            ),
+        ),
+        # docs/ corpus (pass 4)
+        AuditCase("docs.for_static_indexing", _docs_for_static_indexing),
+        AuditCase("docs.flat_parallel_h_gates", _docs_flat_parallel_h_gates),
+        AuditCase("docs.repeat_state_preserving", _docs_repeat_state_preserving),
+        AuditCase("docs.inline_measure_creg", _docs_inline_measure_creg),
+        AuditCase(
+            "docs.while_loop",
+            _docs_while_loop_v2_defer,
+            expected_failure=ExpectedFailure(
+                exception_type="GuppyCodegenError",
+                message_contains="does not support While loops",
+                classification="v2-defer",
+                reason="While loop linearity fixed-points are outside v1 scope",
+            ),
+        ),
+        AuditCase(
+            "docs.for_loopvar_symbolic",
+            _docs_for_loopvar_symbolic_v2_defer,
+            expected_failure=ExpectedFailure(
+                exception_type="GuppyCodegenError",
+                message_contains="symbolic LoopVar indexing",
+                classification="v2-defer",
+                reason="Symbolic SlotRef indices require shared AST/converter design",
+            ),
+        ),
+        AuditCase(
+            "docs.prep_basis_x",
+            _docs_prep_basis_x_v2_defer,
+            expected_failure=ExpectedFailure(
+                exception_type="GuppyCodegenError",
+                message_contains="supports only Z-basis Prep",
+                classification="v2-defer",
+                reason="Non-Z Prep basis semantics are not represented in the v1 AST",
+            ),
+        ),
+        AuditCase(
+            "docs.rotation_rx",
+            _docs_rotation_rx_probe,
+            expected_failure=ExpectedFailure(
+                exception_type="GuppyCodegenError",
+                message_contains="does not support parameterized gate RX",
+                classification="v2-defer",
+                reason="Parameterized rotations need design beyond v1 fixed Clifford emission",
+            ),
+        ),
+        AuditCase(
+            "docs.surface_syndrome_block18",
+            _docs_surface_syndrome_block18_probe,
+            expected_failure=ExpectedFailure(
+                exception_type="GuppyCodegenError",
+                message_contains="supports only Z-basis Prep",
+                classification="v2-defer",
+                reason="Doc-test includes Prep('X'); inline result CReg shape is covered separately",
             ),
         ),
     ]

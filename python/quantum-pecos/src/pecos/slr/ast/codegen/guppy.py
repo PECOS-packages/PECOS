@@ -55,6 +55,8 @@ from pecos.slr.ast.nodes import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pecos.slr.ast.nodes import (
         AssignOp,
         BarrierOp,
@@ -153,6 +155,7 @@ class AstToGuppy:
         """Generate Guppy code for a program."""
         self.context = GuppyContext()
         self._collect_declarations(program)
+        self._collect_implicit_measure_registers(program.body)
         self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
         self._reject_child_allocators()
 
@@ -204,6 +207,39 @@ class AstToGuppy:
             self.context.child_allocators.add(decl.name)
             return
         self.context.root_allocators.setdefault(decl.name, decl.capacity)
+
+    def _collect_implicit_measure_registers(self, body: tuple[Statement, ...]) -> None:
+        """Add result registers introduced only as measurement outputs."""
+        max_indices: dict[str, int] = {}
+        for stmt in body:
+            self._collect_implicit_measure_register_refs(stmt, max_indices)
+
+        for register, max_index in max_indices.items():
+            if register not in self.context.registers:
+                self.context.registers[register] = RegisterDecl(name=register, size=max_index + 1, is_result=True)
+
+    def _collect_implicit_measure_register_refs(self, stmt: Statement, max_indices: dict[str, int]) -> None:
+        if isinstance(stmt, MeasureOp):
+            for ref in stmt.results:
+                if ref.register not in self.context.registers:
+                    max_indices[ref.register] = max(max_indices.get(ref.register, -1), ref.index)
+            return
+
+        if isinstance(stmt, IfStmt):
+            self._collect_implicit_measure_registers_in_body(stmt.then_body, max_indices)
+            self._collect_implicit_measure_registers_in_body(stmt.else_body, max_indices)
+            return
+
+        if isinstance(stmt, RepeatStmt | ForStmt | WhileStmt | ParallelBlock):
+            self._collect_implicit_measure_registers_in_body(stmt.body, max_indices)
+
+    def _collect_implicit_measure_registers_in_body(
+        self,
+        body: tuple[Statement, ...],
+        max_indices: dict[str, int],
+    ) -> None:
+        for stmt in body:
+            self._collect_implicit_measure_register_refs(stmt, max_indices)
 
     def _reject_child_allocators(self) -> None:
         if self.context.child_allocators:
@@ -725,3 +761,66 @@ def ast_to_guppy(program: Program) -> str:
     """Convert an AST Program to Guppy Python code."""
     generator = AstToGuppy()
     return "\n".join(generator.generate(program))
+
+
+def validate_slr_for_guppy_v1(block: object | None) -> None:
+    """Reject SLR constructs that the v1 AST -> Guppy path cannot represent soundly."""
+    if block is None:
+        return
+    _validate_slr_node_for_guppy_v1(block)
+
+
+def _validate_slr_node_for_guppy_v1(node: object) -> None:
+    node_type = type(node).__name__
+    if node_type == "While":
+        msg = "AST -> Guppy v1 does not support While loops"
+        raise GuppyCodegenError(msg)
+
+    if getattr(node, "is_qgate", False):
+        _validate_slr_gate_for_guppy_v1(node)
+
+    for child in getattr(node, "ops", ()) or ():
+        _validate_slr_node_for_guppy_v1(child)
+
+    else_block = getattr(node, "else_block", None)
+    if else_block is not None:
+        _validate_slr_node_for_guppy_v1(else_block)
+
+
+def _validate_slr_gate_for_guppy_v1(gate: object) -> None:
+    qargs = getattr(gate, "qargs", ()) or ()
+    cout = getattr(gate, "cout", ()) or ()
+
+    if _contains_symbolic_index(qargs) or _contains_symbolic_index(cout):
+        msg = "AST -> Guppy v1 does not support symbolic LoopVar indexing"
+        raise GuppyCodegenError(msg)
+
+    if getattr(gate, "sym", None) != "Prep":
+        return
+
+    for basis in _string_args(qargs):
+        if basis.strip().upper() not in {"Z", "+Z"}:
+            msg = "AST -> Guppy v1 supports only Z-basis Prep; use Prep(q); H(q) for X-basis prep"
+            raise GuppyCodegenError(msg)
+
+
+def _contains_symbolic_index(value: object) -> bool:
+    for item in _nested_items(value):
+        if hasattr(item, "index_var") or type(item).__name__.startswith("Symbolic"):
+            return True
+    return False
+
+
+def _string_args(value: object) -> list[str]:
+    return [item for item in _nested_items(value) if isinstance(item, str)]
+
+
+def _nested_items(value: object) -> Iterator[object]:
+    if isinstance(value, str):
+        yield value
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            yield from _nested_items(item)
+        return
+    yield value

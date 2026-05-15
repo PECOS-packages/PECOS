@@ -43,6 +43,7 @@ class SlrConverter:
             optimize_parallel: Whether to apply ParallelOptimizer transformation (default: True).
                              Only affects blocks containing Parallel() statements.
         """
+        self._original_block = block
         self._block = block
         self._optimize_parallel = optimize_parallel
 
@@ -106,8 +107,9 @@ class SlrConverter:
 
     def _generate_guppy(self) -> str:
         """Generate Guppy code using AST-based codegen."""
-        from pecos.slr.ast.codegen.guppy import ast_to_guppy
+        from pecos.slr.ast.codegen.guppy import ast_to_guppy, validate_slr_for_guppy_v1
 
+        validate_slr_for_guppy_v1(self._original_block)
         ast = self._to_ast()
         return ast_to_guppy(ast)
 

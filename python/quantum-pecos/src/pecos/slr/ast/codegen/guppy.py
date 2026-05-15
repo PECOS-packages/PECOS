@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         CommentOp,
         Expression,
         PermuteOp,
+        PrintOp,
         Program,
         SlotRef,
         Statement,
@@ -357,7 +358,7 @@ class AstToGuppy:
             msg = "AST -> Guppy v1 supports Return only as the final root-level statement"
             raise GuppyCodegenError(msg)
 
-        from pecos.slr.ast.nodes import AssignOp, BarrierOp, CommentOp, PermuteOp  # noqa: PLC0415
+        from pecos.slr.ast.nodes import AssignOp, BarrierOp, CommentOp, PermuteOp, PrintOp  # noqa: PLC0415
 
         if isinstance(stmt, AssignOp):
             return self._emit_assign(stmt)
@@ -367,6 +368,8 @@ class AstToGuppy:
             return self._emit_comment(stmt)
         if isinstance(stmt, PermuteOp):
             return self._emit_permute(stmt)
+        if isinstance(stmt, PrintOp):
+            return self._emit_print(stmt)
 
         msg = f"Unsupported AST statement for Guppy codegen: {type(stmt).__name__}"
         raise GuppyCodegenError(msg)
@@ -525,6 +528,42 @@ class AstToGuppy:
         for stmt in body:
             lines.extend(self._emit_stmt(stmt))
         return lines
+
+    def _emit_print(self, node: PrintOp) -> list[str]:
+        """Lower PrintOp to a Guppy `result(<namespace>.<tag>, <value>)` call.
+
+        Per v2-print.md, Print is scope-orthogonal: it does not allocate, does
+        not touch the result-register set, and does not affect main's return
+        type. Path-signature consistency for Print inside If branches and
+        inline-CReg definite-assignment are enforced by separate validation
+        passes; this emitter assumes both have already accepted the AST.
+        """
+        full_tag = f"{node.namespace}.{node.tag}"
+
+        value_expr: str
+        if isinstance(node.value, BitRef):
+            register = node.value.register
+            if register not in self.context.registers:
+                msg = (
+                    f"Print(c[{node.value.index}]) references unknown CReg {register!r}; "
+                    "declare the CReg or measure into it before Print."
+                )
+                raise GuppyCodegenError(msg)
+            value_expr = f"{register}[{node.value.index}]"
+        elif isinstance(node.value, str):
+            register = node.value
+            if register not in self.context.registers:
+                msg = (
+                    f"Print({register}) references unknown CReg {register!r}; "
+                    "declare the CReg or measure into it before Print."
+                )
+                raise GuppyCodegenError(msg)
+            value_expr = register
+        else:
+            msg = f"Unsupported Print value type for Guppy codegen: {type(node.value).__name__}"
+            raise GuppyCodegenError(msg)
+
+        return [f'{self.context.indent()}result("{full_tag}", {value_expr})']
 
     def _emit_permute(self, node: PermuteOp) -> list[str]:
         if len(node.sources) != len(node.targets):

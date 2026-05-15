@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         ParallelBlock,
         PermuteOp,
         PrepareOp,
+        PrintOp,
         Program,
         QubitTypeExpr,
         RegisterDecl,
@@ -87,6 +88,8 @@ class AstVisitor(Protocol[T_co]):
     def visit_return(self, node: ReturnOp) -> T_co: ...
 
     def visit_permute(self, node: PermuteOp) -> T_co: ...
+
+    def visit_print(self, node: PrintOp) -> T_co: ...
 
     # Control flow
     def visit_if(self, node: IfStmt) -> T_co: ...
@@ -201,6 +204,10 @@ class BaseVisitor(ABC, Generic[T]):
 
     def visit_permute(self, _node: PermuteOp) -> T:
         return self.default_result()
+
+    def visit_print(self, node: PrintOp) -> T:
+        results = self.visit_children(node)
+        return self.combine_results(results)
 
     # Control flow
 

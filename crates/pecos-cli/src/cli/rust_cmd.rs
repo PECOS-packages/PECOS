@@ -5,25 +5,37 @@ use pecos_build::errors::Error;
 use serde_json::Value;
 use std::process::Command;
 
-/// FFI crates that need a non-Rust toolchain to check / clippy / test.
+/// FFI crates that need a non-Rust toolchain or external SDK to check /
+/// clippy / test.
 ///
-/// pecos-rslib needs cmake (for mwpf via highs-sys) under `--all-features`,
-/// pecos-julia-ffi needs Julia, pecos-go-ffi needs Go. These are excluded
-/// from the default workspace check / clippy / test invocations and only
-/// touched when the caller opts in with `--include-ffi`.
-const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-julia-ffi", "pecos-go-ffi"];
+/// - pecos-rslib needs cmake (for mwpf via highs-sys) under `--all-features`.
+/// - pecos-rslib-cuda transitively depends on pecos-cuquantum, whose build.rs
+///   calls `ensure_cutensor()` on Linux -- that will silently download cuTensor
+///   over the network if it's not already cached in `~/.pecos/deps/`, which we
+///   don't want a routine `cargo check` to do. Dedicated CUDA workflows can
+///   opt in via `--include-ffi` or by setting up the cache first.
+/// - pecos-julia-ffi needs Julia.
+/// - pecos-go-ffi needs Go.
+///
+/// All four are excluded from the default workspace check / clippy / test
+/// invocations and only touched when the caller opts in with `--include-ffi`.
+const FFI_CRATES: &[&str] = &[
+    "pecos-rslib",
+    "pecos-rslib-cuda",
+    "pecos-julia-ffi",
+    "pecos-go-ffi",
+];
 
 /// Extra pyo3 cdylib crates excluded only from `cargo test --workspace`.
 ///
-/// They're pyo3 cdylibs whose `extension-module` feature is opt-in (see
-/// python/pecos-rslib*/Cargo.toml), so `cargo test --workspace` would try to
-/// link the test binary against libpython and fail on systems where the
-/// active Python is a stub (e.g. macOS `/usr/bin/python3`). They have no
-/// Rust unit tests of their own, so this exclusion is no-coverage-loss.
-/// Default `pecos rust check` and `pecos rust clippy` still cover them
-/// because check/clippy don't link.
-const PYO3_CDYLIB_TEST_EXCLUDES: &[&str] =
-    &["pecos-rslib-cuda", "pecos-rslib-exp", "pecos-rslib-llvm"];
+/// pecos-rslib-exp and pecos-rslib-llvm are pyo3 cdylibs whose
+/// `extension-module` feature is opt-in (see python/pecos-rslib*/Cargo.toml),
+/// so `cargo test --workspace` would try to link the test binary against
+/// libpython and fail on systems where the active Python is a stub (e.g.
+/// macOS `/usr/bin/python3`). They have no Rust unit tests of their own, so
+/// this exclusion is no-coverage-loss. Default `pecos rust check` and
+/// `pecos rust clippy` still cover them because check/clippy don't link.
+const PYO3_CDYLIB_TEST_EXCLUDES: &[&str] = &["pecos-rslib-exp", "pecos-rslib-llvm"];
 
 /// Warn if shared C++ dependencies differ across per-crate pecos.toml files.
 /// This is informational -- different crates may legitimately pin different versions.

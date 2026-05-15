@@ -46,11 +46,43 @@ class SlrConverter:
         self._original_block = block
         self._block = block
         self._optimize_parallel = optimize_parallel
+        # Phase 2: fire deprecation warning once per SlrConverter for any
+        # program that relies on the implicit-return rule. Cached so multiple
+        # codegen calls on the same converter do not spam the user.
+        self._implicit_return_warned = False
 
         # Apply transformations if requested and block is provided
         if block is not None and optimize_parallel:
             optimizer = ParallelOptimizer()
             self._block = optimizer.transform(self._block)
+
+    def _maybe_warn_implicit_return_deprecation(self) -> None:
+        """Phase 2 deprecation: warn once per converter when implicit return is in use.
+
+        Fires from every user-facing codegen entry point (`.qasm()`,
+        `.qir()`, `.qir_bc()`, `.guppy()`, `.hugr()`, `.stim()`,
+        `.quantum_circuit()`, `.generate(...)`). SLR-wide rather than
+        Guppy/HUGR-only -- the v2 Phase 3b breaking change is an SLR-API
+        change (drop `result=` kwarg + mandatory Return) that affects every
+        downstream codegen consumer.
+
+        Walks the SLR block directly (not the AST) so we don't trip the
+        slr-to-ast converter on programs the Guppy v1 preflight is supposed
+        to reject (e.g. symbolic LoopVar indexing). Means we read SLR-level
+        Measure.cout and CReg.result, not AST MeasureOp.results / RegisterDecl.is_result.
+
+        Stacklevel attribution: this method is called directly from the
+        public entry point, so `warnings.warn(..., stacklevel=3)` walks
+        past the warn site, past this method, past the public method, and
+        attributes the warning to the user's call site.
+        """
+        if self._implicit_return_warned or self._original_block is None:
+            return
+        self._implicit_return_warned = True  # Cache early to avoid re-walk on cycle.
+        import warnings
+
+        if _slr_block_relies_on_implicit_return(self._original_block):
+            warnings.warn(_IMPLICIT_RETURN_WARNING_MSG, DeprecationWarning, stacklevel=3)
 
     def _to_ast(self):
         """Convert the SLR block to AST."""
@@ -80,6 +112,7 @@ class SlrConverter:
             Generated code as a string
         """
         del add_versions  # Deprecated parameter, kept for backwards compatibility
+        self._maybe_warn_implicit_return_deprecation()
         if target == Language.QASM:
             return self._generate_qasm(include_header=not skip_headers)
         if target in [Language.QIR, Language.QIRBC]:
@@ -146,6 +179,7 @@ class SlrConverter:
             Generated QASM code as a string
         """
         del add_versions  # Deprecated parameter, kept for backwards compatibility
+        self._maybe_warn_implicit_return_deprecation()
         return self._generate_qasm(include_header=not skip_headers)
 
     def qir(self) -> str:
@@ -154,6 +188,7 @@ class SlrConverter:
         Returns:
             Generated QIR code as a string
         """
+        self._maybe_warn_implicit_return_deprecation()
         return self._generate_qir()
 
     def qir_bc(self) -> bytes:
@@ -162,6 +197,7 @@ class SlrConverter:
         Returns:
             Generated QIR bytecode
         """
+        self._maybe_warn_implicit_return_deprecation()
         return self._generate_qir(bytecode=True)
 
     def guppy(self) -> str:
@@ -170,6 +206,7 @@ class SlrConverter:
         Returns:
             Generated Guppy code as a string
         """
+        self._maybe_warn_implicit_return_deprecation()
         return self._generate_guppy()
 
     def hugr(self):
@@ -182,6 +219,7 @@ class SlrConverter:
             ImportError: If guppylang is not available
             RuntimeError: If compilation fails
         """
+        self._maybe_warn_implicit_return_deprecation()
         return self._compile_hugr()
 
     def _compile_hugr(self):
@@ -236,6 +274,7 @@ class SlrConverter:
         """
         from pecos.slr.ast.codegen.stim import ast_to_stim
 
+        self._maybe_warn_implicit_return_deprecation()
         ast = self._to_ast()
         return ast_to_stim(ast)
 
@@ -247,6 +286,7 @@ class SlrConverter:
         """
         from pecos.slr.ast.codegen.quantum_circuit import ast_to_quantum_circuit
 
+        self._maybe_warn_implicit_return_deprecation()
         ast = self._to_ast()
         return ast_to_quantum_circuit(ast)
 
@@ -306,6 +346,89 @@ class SlrConverter:
             optimizer = ParallelOptimizer()
             slr_block = optimizer.transform(slr_block)
         return slr_block
+
+
+def _slr_block_relies_on_implicit_return(block) -> bool:
+    """True if the v1 emitter would expose any CReg via the implicit-return rule.
+
+    Walks the SLR-level Main block (`block.vars`, `block.ops`) rather than the
+    AST so we don't trigger slr-to-ast conversion on programs the Guppy v1
+    preflight should reject (e.g. symbolic LoopVar indexing in `For(i,
+    range(n))` where `i` is a `LoopVar`).
+
+    Implicit return fires when both:
+
+    1. The block has no top-level `Return(...)` (no explicit Return).
+    2. There exists at least one CReg the emitter would include in `main`'s
+       return tuple:
+       a. A declared CReg in `block.vars` with `result=True` (the default) --
+          exposed even if never measured (auto-init to all-False).
+       b. A CReg referenced as a `Measure(...) > c[i]` target where `c` is
+          NOT in `block.vars` -- inline CRegs inferred at AST time get
+          `is_result=True` automatically.
+
+    Programs with `Measure(q[0])` (no `> c[i]`) or measuring exclusively
+    into declared `result=False` CRegs do NOT trigger.
+    """
+    # Class names used for SLR-level type matching. Avoids cyclic imports
+    # at module load time.
+    if _slr_block_has_explicit_return(block):
+        return False
+
+    declared_creg_names: set[str] = set()
+    has_declared_result_creg = False
+    for var in getattr(block, "vars", ()):
+        if type(var).__name__ == "CReg":
+            declared_creg_names.add(getattr(var, "sym", ""))
+            if getattr(var, "result", True):
+                has_declared_result_creg = True
+    if has_declared_result_creg:
+        return True
+
+    return _slr_walk_for_inline_measure_target(getattr(block, "ops", ()), declared_creg_names)
+
+
+def _slr_block_has_explicit_return(block) -> bool:
+    """True if `block` has a top-level Return statement."""
+    return any(type(op).__name__ == "Return" for op in getattr(block, "ops", ()))
+
+
+def _slr_walk_for_inline_measure_target(ops, declared_creg_names: set[str]) -> bool:
+    """Recurse SLR ops for any Measure-into-inline-CReg target."""
+    for op in ops:
+        type_name = type(op).__name__
+        if type_name == "Measure":
+            cout = getattr(op, "cout", None)
+            if cout is not None:
+                for bit in cout:
+                    reg = getattr(bit, "reg", None)
+                    reg_name = getattr(reg, "sym", None) if reg is not None else None
+                    if reg_name is not None and reg_name not in declared_creg_names:
+                        return True  # Inline target -- inferred is_result=True.
+        elif type_name == "If":
+            # If has `.ops` (Then-branch) and `.else_block` (an Else Block or None).
+            if _slr_walk_for_inline_measure_target(getattr(op, "ops", ()), declared_creg_names):
+                return True
+            else_block = getattr(op, "else_block", None)
+            if else_block is not None and _slr_walk_for_inline_measure_target(
+                getattr(else_block, "ops", ()),
+                declared_creg_names,
+            ):
+                return True
+        elif hasattr(op, "ops"):
+            # Any other Block subclass (Repeat, For, While, Parallel, plain Block) has `.ops`.
+            if _slr_walk_for_inline_measure_target(op.ops, declared_creg_names):
+                return True
+    return False
+
+
+_IMPLICIT_RETURN_WARNING_MSG = (
+    "Implicit return of result-flagged CRegs from `Main(...)` is deprecated "
+    "and will be removed in the SLR v2 breaking transition (Phase 3b). Add "
+    "an explicit `Return(...)` listing the CRegs (or values) you want exposed; "
+    "mid-program measurement output can use `Print(...)`. See pecos-docs "
+    "design/slr/v2-breaking-migration.md for migration guidance."
+)
 
 
 def _load_and_compile_entry(temp_file, module_name: str):

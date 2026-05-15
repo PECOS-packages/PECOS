@@ -169,6 +169,7 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     # Program
     Program,
     QubitTypeExpr,
@@ -240,6 +241,7 @@ __all__ = [
     "ParallelBlock",
     "PermuteOp",
     "PrepareOp",
+    "PrintOp",
     # Program
     "Program",
     "QubitStateTracker",

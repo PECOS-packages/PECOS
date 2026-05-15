@@ -532,6 +532,34 @@ class ReturnOp(Statement):
 
 
 @dataclass(frozen=True, kw_only=True)
+class PrintOp(Statement):
+    """Emit an intermediate streamed value at the call site.
+
+    Lowers to Guppy's `result(name, value)`. Scope-orthogonal side-effect:
+    does not allocate, does not modify the result-register set used for
+    return-shape computation.
+
+    `value` is either a `BitRef` (single bit) or a register name string
+    (whole-CReg emission). `tag` is the resolved tag (the SLR-side
+    conversion derives the default from the value's name when the user
+    did not pass `tag=` explicitly). `namespace` is the tag prefix; the
+    full emitted Guppy tag is `f"{namespace}.{tag}"`.
+    """
+
+    value: BitRef | str
+    tag: str
+    namespace: str = "result"
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_print(self)
+
+    def children(self) -> Sequence[AstNode]:
+        if isinstance(self.value, AstNode):
+            return (self.value,)
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True)
 class PermuteOp(Statement):
     """Permute qubit register assignments.
 

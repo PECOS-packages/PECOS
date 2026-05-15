@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         ParallelBlock,
         PermuteOp,
         PrepareOp,
+        PrintOp,
         Program,
         RepeatStmt,
         ReturnOp,
@@ -258,6 +259,11 @@ class AstPrettyPrinter(BaseVisitor[str]):
         sources = ", ".join(node.sources)
         targets = ", ".join(node.targets)
         return f"Permute([{sources}], [{targets}])"
+
+    def visit_print(self, node: PrintOp) -> str:
+        """Visit print."""
+        value = node.value if isinstance(node.value, str) else f"{node.value.register}[{node.value.index}]"
+        return f'Print({value}, tag="{node.tag}", namespace="{node.namespace}")'
 
     # Control flow
 

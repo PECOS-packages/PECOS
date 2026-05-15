@@ -69,6 +69,7 @@ if TYPE_CHECKING:
         CommentOp,
         Expression,
         PermuteOp,
+        PrintOp,
         Program,
         SlotRef,
         Statement,
@@ -183,6 +184,11 @@ class AstToGuppy:
         self._collect_implicit_measure_registers(program.body)
         self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
         self._reject_child_allocators()
+
+        # Phase 1 Print AST-level validators (run before emission so failures
+        # point at the source program, not the generated Guppy).
+        self._validate_print_paths(program.body)
+        self._validate_print_inline_creg_assignment(program)
 
         body = list(program.body)
         explicit_return = self._validate_return_position(body)
@@ -345,7 +351,7 @@ class AstToGuppy:
     def _imports(self) -> list[str]:
         return [
             "from guppylang import guppy",
-            "from guppylang.std.builtins import array, owned",
+            "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.mem import mem_swap",
             "from guppylang.std.quantum import discard, measure, qubit",
             f"from guppylang.std.quantum.functional import {FUNCTIONAL_GATE_IMPORTS}",
@@ -430,6 +436,236 @@ class AstToGuppy:
                 count += self._count_returns(stmt.body)
         return count
 
+    def _validate_print_paths(self, body: tuple[Statement, ...]) -> None:
+        """Validate Print path-signature consistency across If/Elif branches.
+
+        Walks the body once, descending into nested control flow. For each
+        If, both `then_body` and `else_body` (recursively) must emit the
+        same ordered sequence of Print events. `Repeat(n)` and static-bound
+        `For(name, start, stop[, step])` multiply inner signatures by the
+        static trip count. Non-static `For` and `While` reject Prints in
+        Phase 1 since the trip count is not statically known.
+
+        Side effect: raises `GuppyCodegenError` if any validation fails.
+        """
+        from pecos.slr.ast.nodes import PrintOp  # noqa: PLC0415
+
+        self._collect_print_path_signature(body, PrintOp)
+
+    def _collect_print_path_signature(
+        self,
+        body: tuple[Statement, ...],
+        print_op_cls: type,
+    ) -> tuple[tuple[str, str, str, int], ...]:
+        """Return the ordered Print signature for `body`, validating as we go.
+
+        Each Print emission contributes one signature tuple:
+        `(namespace, tag, value_kind, value_shape)` where `value_kind` is
+        `"creg"` (whole register) or `"bit"` (single bit) and
+        `value_shape` is the register size (or 1 for bit refs).
+
+        Side effects:
+        - Raises `GuppyCodegenError` if an `If` body has asymmetric Print
+          signatures across `then_body` / `else_body`.
+        - Raises `GuppyCodegenError` if a non-static `For` or any `While`
+          contains a Print in its body.
+        """
+        signature: list[tuple[str, str, str, int]] = []
+        for stmt in body:
+            if isinstance(stmt, print_op_cls):
+                signature.append(self._print_op_event(stmt))
+            elif isinstance(stmt, IfStmt):
+                then_sig = self._collect_print_path_signature(stmt.then_body, print_op_cls)
+                else_sig = self._collect_print_path_signature(stmt.else_body, print_op_cls)
+                if then_sig != else_sig:
+                    msg = (
+                        "Print path-signature mismatch across If branches:\n"
+                        f"  Then: {then_sig}\n"
+                        f"  Else: {else_sig}\n"
+                        "Phase 1 requires symmetric Print emission across all branches of an "
+                        "If/Elif chain. Either add the missing Print(s) to the lighter branch, "
+                        "or move the Print outside the If."
+                    )
+                    raise GuppyCodegenError(msg)
+                signature.extend(then_sig)
+            elif isinstance(stmt, RepeatStmt):
+                inner = self._collect_print_path_signature(stmt.body, print_op_cls)
+                signature.extend(inner * stmt.count)
+            elif isinstance(stmt, ForStmt):
+                inner = self._collect_print_path_signature(stmt.body, print_op_cls)
+                if inner:
+                    trip = self._static_for_trip_count(stmt)
+                    if trip is None:
+                        msg = (
+                            "Print inside non-static `For` is not supported in Phase 1. "
+                            "Use `Repeat(n)` or `For(name, start, stop)` with literal int "
+                            "start/stop/step, or move the Print outside the For body."
+                        )
+                        raise GuppyCodegenError(msg)
+                    signature.extend(inner * trip)
+            elif isinstance(stmt, WhileStmt):
+                inner = self._collect_print_path_signature(stmt.body, print_op_cls)
+                if inner:
+                    msg = (
+                        "Print inside `While` is not supported in Phase 1 (no static trip "
+                        "count). Move the Print outside the While body."
+                    )
+                    raise GuppyCodegenError(msg)
+            elif isinstance(stmt, ParallelBlock):
+                signature.extend(self._collect_print_path_signature(stmt.body, print_op_cls))
+        return tuple(signature)
+
+    def _print_op_event(self, op) -> tuple[str, str, str, int]:
+        if isinstance(op.value, BitRef):
+            return (op.namespace, op.tag, "bit", 1)
+        # str = whole CReg name
+        decl = self.context.registers.get(op.value)
+        shape = decl.size if decl is not None else 0
+        return (op.namespace, op.tag, "creg", shape)
+
+    def _static_for_trip_count(self, stmt: ForStmt) -> int | None:
+        """Compute static trip count for a `For(name, start, stop[, step])`.
+
+        Returns the integer trip count when start/stop/step are all integer
+        literals; returns None otherwise (Phase 1 then rejects Print in the
+        loop body via `_collect_print_path_signature`).
+        """
+        start = self._static_int(stmt.start)
+        stop = self._static_int(stmt.stop)
+        if start is None or stop is None:
+            return None
+        step = 1
+        if stmt.step is not None:
+            step_val = self._static_int(stmt.step)
+            if step_val is None:
+                return None
+            step = step_val
+        if step == 0:
+            return None
+        return len(range(start, stop, step))
+
+    def _static_int(self, expr) -> int | None:
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
+            return expr.value
+        return None
+
+    def _validate_print_inline_creg_assignment(self, program: Program) -> None:
+        """Reject Print of an inline CReg bit before Measure has written to it.
+
+        Inline CRegs are those introduced only by `Measure(q) > CReg(...)` --
+        they appear in `context.registers` via `_collect_implicit_measure_registers`
+        but not in `program.declarations`. Without explicit user declaration in
+        `Main(...)`, the runtime sees an auto-initialized all-False register if a
+        Print runs before any Measure has populated it. That silent zero-emission
+        is the bug; this validator rejects it.
+
+        Declared CRegs (those in `program.declarations`) are NOT validated --
+        users who explicitly declare a CReg are acknowledging the zero-init.
+
+        Granularity: **bit-level**. The validator tracks `(register, bit_index)`
+        pairs. `Print(c[i])` requires the specific `(c, i)` to be assigned;
+        whole-CReg `Print(c)` requires every bit `0..size-1` (inferred size) to
+        be assigned. Bit-level tracking also acts as a bounds check: a `Print`
+        referencing an index past the inferred size is rejected because that
+        `(reg, index)` cannot have been added by any Measure.
+        """
+        declared = {d.name for d in program.declarations if isinstance(d, RegisterDecl)}
+        inline_cregs = {name for name in self.context.registers if name not in declared}
+        if not inline_cregs:
+            return
+        assigned: set[tuple[str, int]] = set()
+        self._check_print_inline_assignment(program.body, assigned, inline_cregs)
+
+    def _check_print_inline_assignment(
+        self,
+        body: tuple[Statement, ...],
+        assigned: set[tuple[str, int]],
+        inline_cregs: set[str],
+    ) -> None:
+        """Walk body left-to-right; mutate `assigned` in-place across the path.
+
+        At control-flow joins, merge per-path assignment sets:
+        - `If(...)`: definite-after = intersection of `then`/`else` post-states.
+        - `Repeat(n>=1)` / static `For(count>=1)`: body runs at least once, so
+          inner assignments propagate.
+        - `Repeat(0)` / static `For(count<=0)` / non-static `For` / `While`:
+          body may not run. Walk for validation (catch unreachable invalid
+          Prints), but do NOT propagate inner assignments to the outer scope.
+        - `Parallel`: treated as sequential (matches the emitter's flatten
+          behavior).
+        """
+        from pecos.slr.ast.nodes import PrintOp  # noqa: PLC0415
+
+        for stmt in body:
+            if isinstance(stmt, MeasureOp):
+                for ref in stmt.results:
+                    if ref.register in inline_cregs:
+                        assigned.add((ref.register, ref.index))
+            elif isinstance(stmt, PrintOp):
+                self._check_print_inline_read(stmt, assigned, inline_cregs)
+            elif isinstance(stmt, IfStmt):
+                then_assigned = set(assigned)
+                self._check_print_inline_assignment(stmt.then_body, then_assigned, inline_cregs)
+                else_assigned = set(assigned)
+                self._check_print_inline_assignment(stmt.else_body, else_assigned, inline_cregs)
+                assigned.update(then_assigned & else_assigned)
+            elif isinstance(stmt, RepeatStmt):
+                if stmt.count >= 1:
+                    inner_assigned = set(assigned)
+                    self._check_print_inline_assignment(stmt.body, inner_assigned, inline_cregs)
+                    assigned.update(inner_assigned)
+                else:
+                    # count == 0: body doesn't run. Walk for validation; do not propagate.
+                    self._check_print_inline_assignment(stmt.body, set(assigned), inline_cregs)
+            elif isinstance(stmt, ForStmt):
+                trip = self._static_for_trip_count(stmt)
+                if trip is not None and trip >= 1:
+                    inner_assigned = set(assigned)
+                    self._check_print_inline_assignment(stmt.body, inner_assigned, inline_cregs)
+                    assigned.update(inner_assigned)
+                else:
+                    self._check_print_inline_assignment(stmt.body, set(assigned), inline_cregs)
+            elif isinstance(stmt, WhileStmt):
+                self._check_print_inline_assignment(stmt.body, set(assigned), inline_cregs)
+            elif isinstance(stmt, ParallelBlock):
+                self._check_print_inline_assignment(stmt.body, assigned, inline_cregs)
+
+    def _check_print_inline_read(self, op, assigned: set[tuple[str, int]], inline_cregs: set[str]) -> None:
+        if isinstance(op.value, BitRef):
+            reg = op.value.register
+            if reg not in inline_cregs:
+                return
+            if (reg, op.value.index) not in assigned:
+                msg = (
+                    f"Print references inline CReg bit {reg}[{op.value.index}] before any "
+                    f"Measure has written to it. Print would emit the auto-initialized False "
+                    f"value (or read past the inferred register bound), not a measurement "
+                    f"result. Move the Print after a Measure(...) > {reg}[{op.value.index}] "
+                    f"that runs on every path, or declare {reg!r} explicitly as a positional "
+                    f"in Main(...) if you intend to print the zero-initialized state."
+                )
+                raise GuppyCodegenError(msg)
+        elif isinstance(op.value, str):
+            reg = op.value
+            if reg not in inline_cregs:
+                return
+            # Reject whole-CReg Print of an inline CReg outright in Phase 1.
+            # The user-stated `CReg(name, size)` size is lost during inline-from-
+            # Measure inference (only Measure-targeted bit indices contribute to
+            # the inferred RegisterDecl.size). Emitting `result(tag, c)` for the
+            # inferred c can silently shrink the register relative to the user's
+            # intent. Require either an explicit Main(...) declaration (then the
+            # CReg is no longer inline and whole-CReg Print is allowed) or per-bit
+            # `Print(c[i], ...)` calls.
+            msg = (
+                f"Print(whole-CReg) of inline CReg {reg!r} is rejected in Phase 1. "
+                "Whole-register Print can silently shrink an inline CReg because the "
+                "original `CReg(name, size)` size is lost during inline-from-Measure "
+                f"inference. Declare {reg!r} as a positional in `Main(...)` (then whole-"
+                f"CReg Print is allowed) or print individual bits via `Print({reg}[i], ...)`."
+            )
+            raise GuppyCodegenError(msg)
+
     def _emit_stmt(self, stmt: Statement) -> list[str]:
         if isinstance(stmt, GateOp):
             return self._emit_gate(stmt)
@@ -454,7 +690,7 @@ class AstToGuppy:
             msg = "AST -> Guppy v1 supports Return only as the final root-level statement"
             raise GuppyCodegenError(msg)
 
-        from pecos.slr.ast.nodes import AssignOp, BarrierOp, CommentOp, PermuteOp  # noqa: PLC0415
+        from pecos.slr.ast.nodes import AssignOp, BarrierOp, CommentOp, PermuteOp, PrintOp  # noqa: PLC0415
 
         if isinstance(stmt, AssignOp):
             return self._emit_assign(stmt)
@@ -464,6 +700,8 @@ class AstToGuppy:
             return self._emit_comment(stmt)
         if isinstance(stmt, PermuteOp):
             return self._emit_permute(stmt)
+        if isinstance(stmt, PrintOp):
+            return self._emit_print(stmt)
 
         msg = f"Unsupported AST statement for Guppy codegen: {type(stmt).__name__}"
         raise GuppyCodegenError(msg)
@@ -731,6 +969,42 @@ class AstToGuppy:
         for stmt in body:
             lines.extend(self._emit_stmt(stmt))
         return lines
+
+    def _emit_print(self, node: PrintOp) -> list[str]:
+        """Lower PrintOp to a Guppy `result(<namespace>.<tag>, <value>)` call.
+
+        Per v2-print.md, Print is scope-orthogonal: it does not allocate, does
+        not touch the result-register set, and does not affect main's return
+        type. Path-signature consistency for Print inside If branches and
+        inline-CReg definite-assignment are enforced by separate validation
+        passes; this emitter assumes both have already accepted the AST.
+        """
+        full_tag = f"{node.namespace}.{node.tag}"
+
+        value_expr: str
+        if isinstance(node.value, BitRef):
+            register = node.value.register
+            if register not in self.context.registers:
+                msg = (
+                    f"Print(c[{node.value.index}]) references unknown CReg {register!r}; "
+                    "declare the CReg or measure into it before Print."
+                )
+                raise GuppyCodegenError(msg)
+            value_expr = f"{register}[{node.value.index}]"
+        elif isinstance(node.value, str):
+            register = node.value
+            if register not in self.context.registers:
+                msg = (
+                    f"Print({register}) references unknown CReg {register!r}; "
+                    "declare the CReg or measure into it before Print."
+                )
+                raise GuppyCodegenError(msg)
+            value_expr = register
+        else:
+            msg = f"Unsupported Print value type for Guppy codegen: {type(node.value).__name__}"
+            raise GuppyCodegenError(msg)
+
+        return [f'{self.context.indent()}result("{full_tag}", {value_expr})']
 
     def _emit_permute(self, node: PermuteOp) -> list[str]:
         if len(node.sources) != len(node.targets):

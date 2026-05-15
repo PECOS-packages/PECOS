@@ -90,7 +90,7 @@ from pecos.slr.main import Main
 from pecos.slr.main import (
     Main as SLR,
 )
-from pecos.slr.misc import Barrier, Comment, Parallel, Permute, Return
+from pecos.slr.misc import Barrier, Comment, Parallel, Permute, Print, Return
 from pecos.slr.qalloc import QAlloc, QubitRef, SlotState
 from pecos.slr.slr_converter import SlrConverter
 from pecos.slr.types import Array
@@ -177,6 +177,7 @@ __all__ = [
     "Main",
     "Parallel",
     "Permute",
+    "Print",
     # Qubit allocator (new)
     "QAlloc",
     # Legacy register (kept for compatibility)

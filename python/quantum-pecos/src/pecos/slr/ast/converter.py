@@ -57,6 +57,7 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     Program,
     QubitTypeExpr,
     RegisterDecl,
@@ -368,6 +369,9 @@ class SlrToAst:
 
         if op_class == "Permute":
             return self._convert_permute(op)
+
+        if op_class == "Print":
+            return self._convert_print(op)
 
         # Assignment operations
         if op_class == "SET":
@@ -754,6 +758,27 @@ class SlrToAst:
             targets=tuple(targets),
             add_comment=add_comment,
         )
+
+    def _convert_print(self, op: Any) -> PrintOp:
+        """Convert an SLR Print to an AST PrintOp.
+
+        SLR-side already validated tag/namespace characters, derived the tag
+        from the value's name when omitted, and rejected non-CReg/Bit values.
+        AST conversion lowers the value into AST shape: a `BitRef` for
+        Bit values, or a CReg name string for whole-register Print.
+        """
+        value: BitRef | str
+        if hasattr(op.value, "reg") and hasattr(op.value, "index"):
+            # Bit reference (e.g., c[0]).
+            value = self._convert_bit_ref(op.value)
+        elif hasattr(op.value, "sym"):
+            # Whole CReg.
+            value = op.value.sym
+        else:
+            msg = f"Print value must be a CReg or Bit; got {type(op.value).__name__}"
+            raise TypeError(msg)
+
+        return PrintOp(value=value, tag=op.tag, namespace=op.namespace)
 
     def _convert_assignment(self, op: Any) -> AssignOp:
         """Convert an SLR SET operation to an AST AssignOp."""

@@ -61,6 +61,7 @@ if TYPE_CHECKING:
         ParallelBlock,
         PermuteOp,
         PrepareOp,
+        PrintOp,
         Program,
         RepeatStmt,
         ReturnOp,
@@ -445,6 +446,11 @@ class AstToQasm(BaseVisitor[list[str]]):
     def visit_return(self, _node: ReturnOp) -> list[str]:
         """Return is not a QASM concept - ignored."""
         return []
+
+    def visit_print(self, node: PrintOp) -> list[str]:
+        """Print has no native QASM equivalent; emit as a comment for traceability."""
+        value_repr = node.value if isinstance(node.value, str) else f"{node.value.register}[{node.value.index}]"
+        return [f"// Print {node.namespace}.{node.tag} {value_repr}"]
 
     def visit_permute(self, node: PermuteOp) -> list[str]:
         """Handle permutation.

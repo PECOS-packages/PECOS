@@ -32,6 +32,7 @@ from pecos.slr.ast import (
     AllocatorDecl,
     ArrayTypeExpr,
     BitRef,
+    BitTypeExpr,
     BlockCall,
     BlockDecl,
     BlockInput,
@@ -207,7 +208,7 @@ class TestBlockCallValidation:
             block_decls=(bell,),
             body=(),
         )
-        with pytest.raises(GuppyCodegenError, match=r"only array\[qubit, N\] and bare qubit inputs"):
+        with pytest.raises(GuppyCodegenError, match=r"only array\[qubit, N\], bare qubit, and bare bit inputs"):
             ast_to_guppy(prog)
 
     def test_size_mismatch_rejected(self) -> None:
@@ -856,17 +857,180 @@ class TestSingleQubitInputSupport:
             ast_to_guppy(prog)
 
 
+class TestSingleBitInputSupport:
+    """Phase 3a.3 iter 5c: single classical-bit (bare `BitTypeExpr`) input +
+    `SingleBitArg` at the call site. The bit is modeled as an
+    `array[bool, 1] @ owned` write-back proxy: the callee mutates `name[0]`,
+    returns the array, and the caller writes it back into the outer CReg bit.
+    """
+
+    def _build_single_bit_program(self) -> Program:
+        from pecos.slr.ast.nodes import SingleBitArg, SingleQubitArg
+
+        # Block: measure a borrowed qubit into a single-bit write-back input.
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="a", effect=ResourceEffect.CONSUMED, type_expr=QubitTypeExpr()),
+                BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),
+            ),
+            body=(
+                GateOp(gate=GateKind.H, targets=(SlotRef(allocator="a", index=0),)),
+                MeasureOp(
+                    targets=(SlotRef(allocator="a", index=0),),
+                    results=(BitRef(register="out", index=0),),
+                ),
+            ),
+        )
+        return Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=2),
+            declarations=(RegisterDecl(name="c", size=2),),
+            block_decls=(decl,),
+            body=(
+                PrepareOp(allocator="outer_q"),
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(
+                        SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0)),
+                        SingleBitArg(bit=BitRef(register="c", index=1)),
+                    ),
+                    out_bindings=(SingleBitArg(bit=BitRef(register="c", index=1)),),
+                ),
+                MeasureOp(
+                    targets=(SlotRef(allocator="outer_q", index=1),),
+                    results=(BitRef(register="c", index=0),),
+                ),
+            ),
+        )
+
+    def test_single_bit_renders_array_bool_proxy(self) -> None:
+        source = ast_to_guppy(self._build_single_bit_program())
+        # Param uses the array[bool, 1] write-back proxy.
+        assert re.search(r"def b\(a: qubit @ owned, out: array\[bool, 1\] @ owned\) -> array\[bool, 1\]:", source)
+        # Body writes the measurement into out[0] and returns the array.
+        assert "out[0] = measure(a_0)" in source
+        assert "return out" in source
+        # Call site wraps the outer CReg bit, then writes it back.
+        assert re.search(r"_call_ret_\d+\s*=\s*b\(outer_q_0, array\(c\[1\]\)\)", source)
+        assert re.search(r"c\[1\]\s*=\s*_call_ret_\d+\[0\]", source)
+
+    def test_single_bit_must_be_live_preserved(self) -> None:
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="out", effect=ResourceEffect.CONSUMED, type_expr=BitTypeExpr()),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=1),
+            block_decls=(decl,),
+            body=(),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"bare bit inputs\s+must be LIVE_PRESERVED"):
+            ast_to_guppy(prog)
+
+    def test_single_bit_arg_mismatched_input_type_rejected(self) -> None:
+        from pecos.slr.ast.nodes import SingleBitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(
+                    name="q",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=2),
+                ),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=2),
+            declarations=(RegisterDecl(name="c", size=1),),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleBitArg(bit=BitRef(register="c", index=0)),),
+                    out_bindings=(SingleBitArg(bit=BitRef(register="c", index=0)),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"SingleBitArg requires a bare bit input"):
+            ast_to_guppy(prog)
+
+    def test_single_bit_index_out_of_bounds_rejected(self) -> None:
+        from pecos.slr.ast.nodes import SingleBitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=1),
+            declarations=(RegisterDecl(name="c", size=2),),  # indices 0..1
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleBitArg(bit=BitRef(register="c", index=9)),),
+                    out_bindings=(SingleBitArg(bit=BitRef(register="c", index=9)),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"bit index 9 out of bounds"):
+            ast_to_guppy(prog)
+
+
 class TestDeferredBlockArgRejection:
-    """Phase 3a.3 iter 5b scope:
+    """Phase 3a.3 iter 5c scope:
     - `AllocatorArg` is supported in BOTH the Guppy emitter AND the non-Guppy
       flatten path.
-    - `SingleQubitArg` is supported in the Guppy emitter ONLY; flatten support
-      is deferred (full slot-level body rewriting needed). See
-      `test_single_qubit_arg_rejected_in_flatten_pass` below.
-    - `SingleBitArg`, `QubitBundleArg`, `BitBundleArg` MUST raise cleanly in
-      BOTH paths -- silently inlining a deferred shape would mask user errors
-      (Codex 2026-05-15 fix-pass-5 + iter-5b reviews caught this family).
+    - `SingleQubitArg` and `SingleBitArg` are supported in the Guppy emitter
+      ONLY; flatten support is deferred (full slot/bit-level body rewriting
+      needed). See `test_single_qubit_arg_rejected_in_flatten_pass` and
+      `test_single_bit_arg_rejected_in_flatten_pass` below.
+    - `QubitBundleArg`, `BitBundleArg` MUST raise cleanly in BOTH paths --
+      silently inlining a deferred shape would mask user errors (Codex
+      2026-05-15 fix-pass-5 + iter-5b reviews caught this family).
     """
+
+    def test_single_bit_arg_rejected_in_flatten_pass(self) -> None:
+        """SingleBitArg in flatten path: deferred until bit-level body rewriting
+        lands. Lock-in: clean NotImplementedError, no silent inline.
+        """
+        from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+        from pecos.slr.ast.nodes import SingleBitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=1),
+            declarations=(RegisterDecl(name="c", size=1),),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleBitArg(bit=BitRef(register="c", index=0)),),
+                    out_bindings=(SingleBitArg(bit=BitRef(register="c", index=0)),),
+                ),
+            ),
+        )
+        with pytest.raises(NotImplementedError, match=r"SingleBitArg"):
+            flatten_block_calls(prog)
 
     def test_single_qubit_arg_rejected_in_flatten_pass(self) -> None:
         """SingleQubitArg in flatten path: deferred until full slot-level body
@@ -902,14 +1066,11 @@ class TestDeferredBlockArgRejection:
             BitBundleArg,
             BitRef,
             QubitBundleArg,
-            SingleBitArg,
             SlotRef,
         )
 
         # Build a representative instance of the deferred subclass.
-        if arg_subclass is SingleBitArg:
-            deferred = SingleBitArg(bit=BitRef(register="c", index=0))
-        elif arg_subclass is QubitBundleArg:
+        if arg_subclass is QubitBundleArg:
             deferred = QubitBundleArg(slots=(SlotRef(allocator="outer_q", index=0),))
         elif arg_subclass is BitBundleArg:
             deferred = BitBundleArg(bits=(BitRef(register="c", index=0),))
@@ -950,13 +1111,9 @@ class TestDeferredBlockArgRejection:
 
     def test_deferred_arg_bindings_raise_in_flatten(self) -> None:
         from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-        from pecos.slr.ast.nodes import (
-            BitBundleArg,
-            QubitBundleArg,
-            SingleBitArg,
-        )
+        from pecos.slr.ast.nodes import BitBundleArg, QubitBundleArg
 
-        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=True, arg_subclass=subclass)
             with pytest.raises(NotImplementedError, match=subclass.__name__):
                 flatten_block_calls(prog)
@@ -967,37 +1124,25 @@ class TestDeferredBlockArgRejection:
         BlockArg shape, while Guppy correctly rejected them.
         """
         from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-        from pecos.slr.ast.nodes import (
-            BitBundleArg,
-            QubitBundleArg,
-            SingleBitArg,
-        )
+        from pecos.slr.ast.nodes import BitBundleArg, QubitBundleArg
 
-        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=False, arg_subclass=subclass)
             with pytest.raises(NotImplementedError, match=subclass.__name__):
                 flatten_block_calls(prog)
 
     def test_deferred_arg_bindings_raise_in_guppy(self) -> None:
-        from pecos.slr.ast.nodes import (
-            BitBundleArg,
-            QubitBundleArg,
-            SingleBitArg,
-        )
+        from pecos.slr.ast.nodes import BitBundleArg, QubitBundleArg
 
-        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=True, arg_subclass=subclass)
             with pytest.raises(GuppyCodegenError, match=subclass.__name__):
                 ast_to_guppy(prog)
 
     def test_deferred_out_bindings_raise_in_guppy(self) -> None:
-        from pecos.slr.ast.nodes import (
-            BitBundleArg,
-            QubitBundleArg,
-            SingleBitArg,
-        )
+        from pecos.slr.ast.nodes import BitBundleArg, QubitBundleArg
 
-        for subclass in (SingleBitArg, QubitBundleArg, BitBundleArg):
+        for subclass in (QubitBundleArg, BitBundleArg):
             prog = self._program_with_deferred_arg(deferred_in_args=False, arg_subclass=subclass)
             with pytest.raises(GuppyCodegenError, match=subclass.__name__):
                 ast_to_guppy(prog)

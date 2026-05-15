@@ -36,7 +36,7 @@ ARCHITECTURAL SOLUTIONS:
 - Use separate ancilla qubits instead of array elements for verification
 - Or restructure the verification pattern to avoid the loop issue
 
-See tests/slr-tests/guppy/test_partial_array_returns.py for correct usage patterns.
+See tests/slr_tests/guppy/test_partial_array_returns.py for correct usage patterns.
 """
 
 from __future__ import annotations
@@ -151,6 +151,15 @@ class IRBuilder:
         self.variable_remapping: dict[str, str] = {}
         # Track version numbers for generating unique variable names
         self.variable_version_counter: dict[str, int] = {}
+
+        # Unified variable-state tracking: replaces ad-hoc dicts like
+        # `unpacked_vars`, `refreshed_arrays`, etc. (See variable_state.py
+        # for rationale.) Migration is incremental -- legacy dicts still
+        # populated, this object is consulted at sites that need a coherent
+        # view of "what Guppy form is this SLR variable in right now?".
+        from pecos.slr.gen_codes.guppy.variable_state import VariableState
+
+        self.var_state = VariableState()
 
     def _get_unique_var_name(self, base_name: str, index: int | None = None) -> str:
         """Generate a unique variable name that doesn't conflict with existing names.
@@ -1967,6 +1976,22 @@ class IRBuilder:
                     if not was_consumed and hasattr(self, "consumed_resources"):
                         was_consumed = fresh_name in self.consumed_resources
 
+                    # If the fresh array was unpacked into element vars, the
+                    # array itself was moved by the unpack -- discard_array
+                    # would error. Element-level cleanup is handled separately
+                    # (or the elements were consumed by gates/measurements).
+                    # The unpacked-state tracker keys by the *original* SLR
+                    # symbol, so we look up via the original; the fresh name
+                    # itself doesn't appear in unpacked_vars.
+                    original_name = info.get("original")
+                    if (
+                        original_name
+                        and self.var_state.is_unpacked(original_name)
+                        and hasattr(self, "refreshed_arrays")
+                        and self.refreshed_arrays.get(original_name) == fresh_name
+                    ):
+                        was_consumed = True
+
                     if not was_consumed and info.get("is_quantum_array"):
                         # Add discard statement
                         discard_stmt = FunctionCall(
@@ -3019,6 +3044,36 @@ class IRBuilder:
                 # Regular pre-allocated array - use measure_array
                 qreg_ref = self._convert_qubit_ref(qreg)
 
+                # If the array was previously unpacked (e.g., to access an
+                # individual element after a function call returned it),
+                # Guppy considers the original variable name consumed by
+                # the unpack. Repack from the element vars so measure_array
+                # can take the whole array as input. We emit the repack
+                # statement *prepended* to whatever statement(s) the rest
+                # of this branch produces (see `_prepend_to_result`).
+                #
+                # var_state and the legacy `unpacked_vars` dict are both
+                # updated so other code paths agree the array is whole again.
+                repack_stmt = None
+                if hasattr(qreg, "sym") and self.var_state.is_unpacked(qreg.sym):
+                    binding = self.var_state.get(qreg.sym)
+                    repack_stmt = Assignment(
+                        target=VariableRef(qreg.sym),
+                        value=self._create_array_reconstruction(list(binding.element_names)),
+                    )
+                    self.var_state.bind_whole(qreg.sym, qreg.sym)
+                    if hasattr(self, "unpacked_vars") and qreg.sym in self.unpacked_vars:
+                        del self.unpacked_vars[qreg.sym]
+                    if hasattr(self, "context"):
+                        var = self.context.lookup_variable(qreg.sym)
+                        if var:
+                            var.is_unpacked = False
+                            var.unpacked_names = []
+                    # qreg_ref was computed *before* the repack -- recompute
+                    # so it points at the now-whole array, not stale unpacked
+                    # element variables.
+                    qreg_ref = self._convert_qubit_ref(qreg)
+
                 # Mark fresh variable as used if this is measuring a fresh variable
                 if hasattr(self, "fresh_variables_to_track") and hasattr(
                     self,
@@ -3120,7 +3175,10 @@ class IRBuilder:
                             func_name="quantum.measure_array",
                             args=[qreg_ref],
                         )
-                        return Assignment(target=creg_ref, value=call)
+                        result = Assignment(target=creg_ref, value=call)
+                        if repack_stmt is not None:
+                            return Block(statements=[repack_stmt, result])
+                        return result
 
                 # No target - just measure
                 call = FunctionCall(
@@ -3139,7 +3197,10 @@ class IRBuilder:
                     def render(self, context):
                         return self.expr.render(context)
 
-                return ExpressionStatement(call)
+                result = ExpressionStatement(call)
+                if repack_stmt is not None:
+                    return Block(statements=[repack_stmt, result])
+                return result
 
         # Handle single qubit measurement
         if len(meas.qargs) == 1:
@@ -6656,12 +6717,19 @@ class IRBuilder:
                         )
                         element_names = [f"{name}_{i}{unpack_suffix}" for i in range(return_array_size)]
 
-                        # Add unpacking statement using ArrayUnpack IR class
+                        # Add unpacking statement using ArrayUnpack IR class.
+                        # When the array was refreshed by a function call (e.g.,
+                        # q → q_fresh), unpack from the refreshed name -- the
+                        # original is moved/consumed at this point. Without
+                        # this, generated Guppy looks like `q_0_ret, = q` and
+                        # Guppy rejects with WrongNumberOfUnpacksError or
+                        # AlreadyUsedError.
                         from pecos.slr.gen_codes.guppy.ir import ArrayUnpack
 
+                        unpack_source = self.refreshed_arrays.get(name, name)
                         unpack_stmt = ArrayUnpack(
                             targets=element_names,
-                            source=name,
+                            source=unpack_source,
                         )
                         statements.append(unpack_stmt)
 
@@ -6673,14 +6741,19 @@ class IRBuilder:
                         # CRITICAL: Track index mapping for partial consumption
                         # If live_qubits tells us which original indices are in the returned array,
                         # create a mapping from original index → unpacked variable index
+                        index_map: dict[int, int] | None = None
                         if name in live_qubits:
                             original_indices = sorted(live_qubits[name])
                             if not hasattr(self, "index_mapping"):
                                 self.index_mapping = {}
                             # Map original index to position in returned/unpacked array
-                            self.index_mapping[name] = {
+                            index_map = {
                                 orig_idx: new_idx for new_idx, orig_idx in enumerate(original_indices)
                             }
+                            self.index_mapping[name] = index_map
+
+                        # Mirror to unified variable state (see variable_state.py)
+                        self.var_state.bind_unpacked(name, list(element_names), index_map)
 
                         # Update context
                         if hasattr(self, "context"):

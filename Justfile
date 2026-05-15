@@ -768,7 +768,15 @@ sync-deps:
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
-    uv sync --project . --all-packages
+    SYNC_ARGS=(--project . --all-packages)
+    # Include CUDA Python packages (cupy, cuquantum, pytket-cutensornet) when
+    # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
+    # and machines without a GPU skip this -- mirrors `pecos python build`.
+    if {{pecos}} cuda check -q 2>/dev/null && nvidia-smi -L 2>/dev/null | grep -q "^GPU "; then
+        echo "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages"
+        SYNC_ARGS+=(--group cuda)
+    fi
+    uv sync "${SYNC_ARGS[@]}"
 
 [private]
 build-selene profile="release":

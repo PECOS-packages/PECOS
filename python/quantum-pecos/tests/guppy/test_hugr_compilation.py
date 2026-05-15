@@ -1,7 +1,13 @@
-"""Test HUGR compilation and LLVM IR generation."""
+"""Test HUGR compilation and LLVM IR generation.
+
+Rust-side coverage (compilation, unit tests) lives in `cargo test
+-p pecos-hugr-qis` and is run by `just rstest` / `pecos rust test
+--workspace --features=runtime,hugr`. Don't re-invoke cargo from pytest --
+duplicates work, hides Rust build errors as Python test failures, and
+runs under a different env than the canonical Rust test path.
+"""
 
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -37,91 +43,6 @@ def _find_llvm_as() -> str | None:
 
 class TestHUGRCompilation:
     """Test suite for HUGR compilation and related functionality."""
-
-    def test_rust_hugr_crate_compilation(self) -> None:
-        """Test that the Rust HUGR support compiles."""
-        # Check if cargo is available
-        cargo_path = shutil.which("cargo")
-        if not cargo_path:
-            pytest.skip("Cargo not available")
-
-        try:
-            result = subprocess.run(
-                [cargo_path, "--version"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                pytest.skip("Cargo not available")
-        except FileNotFoundError:
-            pytest.skip("Cargo not found in PATH")
-
-        # Check if pecos-hugr-qis crate exists
-        project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
-        hugr_crate = project_root / "crates" / "pecos-hugr-qis"
-
-        if not hugr_crate.exists():
-            pytest.skip("pecos-hugr-qis crate not found")
-
-        # Test compilation of pecos-hugr-qis crate
-        result = subprocess.run(
-            [cargo_path, "check", "-p", "pecos-hugr-qis", "--features", "llvm"],
-            capture_output=True,
-            text=True,
-            cwd=project_root,
-            check=False,
-        )
-
-        # returncode == 0 means SUCCESS, not failure!
-        assert result.returncode == 0, f"HUGR crate compilation failed: {result.stderr[:500]}"
-
-    def test_rust_hugr_unit_tests(self) -> None:
-        """Test that HUGR unit tests pass."""
-        # Check cargo availability
-        cargo_path = shutil.which("cargo")
-        if not cargo_path:
-            pytest.skip("Cargo not available")
-
-        try:
-            subprocess.run(
-                [cargo_path, "--version"],
-                capture_output=True,
-                check=False,
-            )
-        except FileNotFoundError:
-            pytest.skip("Cargo not available")
-
-        project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
-        hugr_crate = project_root / "crates" / "pecos-hugr-qis"
-
-        if not hugr_crate.exists():
-            pytest.skip("pecos-hugr-qis crate not found")
-
-        # Run HUGR-specific unit tests
-        result = subprocess.run(
-            [
-                cargo_path,
-                "test",
-                "-p",
-                "pecos-hugr-qis",
-                "--features",
-                "llvm",
-                "--",
-                "--nocapture",
-            ],
-            capture_output=True,
-            text=True,
-            cwd=project_root,
-            check=False,
-        )
-
-        assert result.returncode == 0, f"HUGR unit tests failed: {result.stderr[:500]}"
-
-        # Count successful tests if output is available
-        if "test result: ok" in result.stdout:
-            test_count = result.stdout.count("test result: ok")
-            assert test_count > 0, "Should have at least one passing test"
 
     def test_llvm_ir_format_validation(self) -> None:
         """Test that generated LLVM IR follows HUGR conventions."""

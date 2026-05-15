@@ -47,6 +47,14 @@ pub fn run(
         setup_cuquantum(mode)?;
     }
 
+    // Python CUDA packages: only relevant when toolkit + NVIDIA GPU are present.
+    // The Justfile/`pecos python build` flow auto-detects this too; offering it
+    // here means an interactive `pecos setup` puts the user in a fully-ready
+    // state without a follow-up command.
+    if !skip_cuda && super::cuda_cmd::should_install_cuda_python() {
+        setup_cuda_python(mode)?;
+    }
+
     if !skip_cmake {
         setup_cmake(mode)?;
     }
@@ -68,6 +76,12 @@ fn has_missing_deps(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) -> bool 
     if !skip_cuda
         && pecos_build::cuda::find_cuda().is_some()
         && pecos_build::cuquantum::find_cuquantum().is_none()
+    {
+        return true;
+    }
+    if !skip_cuda
+        && super::cuda_cmd::should_install_cuda_python()
+        && !super::cuda_cmd::cuda_python_packages_installed()
     {
         return true;
     }
@@ -107,6 +121,17 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
             println!("  cuQuantum:  {}", path.display());
         } else {
             println!("  cuQuantum:  not found (~200 MB, GPU-accelerated quantum simulation)");
+        }
+    }
+
+    // CUDA Python packages (only show when toolkit + NVIDIA GPU are present;
+    // mirrors the gate used by setup_cuda_python so the summary matches what
+    // the orchestrator will actually do).
+    if !skip_cuda && super::cuda_cmd::should_install_cuda_python() {
+        if super::cuda_cmd::cuda_python_packages_installed() {
+            println!("  cupy:       installed (CUDA Python packages synced)");
+        } else {
+            println!("  cupy:       not installed (~500 MB via `uv sync --group cuda`)");
         }
     }
 
@@ -315,6 +340,26 @@ fn setup_cuquantum(mode: PromptMode) -> Result<()> {
         pecos_build::cuquantum::installer::install_cuquantum(false)?;
     } else {
         println!("  Skipping cuQuantum.");
+    }
+
+    Ok(())
+}
+
+// ── Python CUDA packages ────────────────────────────────────────────────────
+
+fn setup_cuda_python(mode: PromptMode) -> Result<()> {
+    if super::cuda_cmd::cuda_python_packages_installed() {
+        return Ok(());
+    }
+
+    if confirm(
+        "Install CUDA Python packages? (cupy, cuquantum, pytket-cutensornet via `uv sync --group cuda`)",
+        true, // default yes when CUDA toolkit + NVIDIA GPU are present
+        mode,
+    ) {
+        super::cuda_cmd::install_cuda_python_packages()?;
+    } else {
+        println!("  Skipping CUDA Python packages. Install later with `pecos cuda setup-python`.");
     }
 
     Ok(())

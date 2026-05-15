@@ -21,7 +21,7 @@ def _check_cuda_available() -> bool:
     # Check for CUDA toolkit using pecos CLI (same as Justfile pattern)
     try:
         result = subprocess.run(
-            ["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],
+            ["cargo", "run", "-p", "pecos-cli", "--quiet", "--", "cuda", "check", "-q"],
             capture_output=True,
             timeout=30,
             check=False,

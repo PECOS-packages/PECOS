@@ -8,7 +8,7 @@ fn test_user_guide_circuit_representation_rust_1() {
     use pecos::core::{Gate, QubitId};
     use pecos::dag::DAG;
     use pecos::digraph::DiGraph;
-    use pecos::quantum::{Attribute, DagCircuit, TickCircuit, TickGateError};
+    use pecos::quantum::{Attribute, DagCircuit, TickCircuit};
 
 // Fluent builder API
 let mut circuit = DagCircuit::new();

@@ -864,7 +864,7 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
                 "",
                 "    try:",
                 "        result = subprocess.run(",
-                '            ["cargo", "run", "-p", "pecos", "--features", "cli",',
+                '            ["cargo", "run", "-p", "pecos-cli", "--quiet",',
                 '             "--", "cuda", "check", "-q"],',
                 "            capture_output=True, timeout=30, check=False,",
                 "        )",
@@ -957,7 +957,7 @@ def _check_cuda_available() -> bool:
     # Check for CUDA toolkit using pecos CLI (same as Justfile pattern)
     try:
         result = subprocess.run(
-            ["cargo", "run", "-p", "pecos", "--features", "cli", "--", "cuda", "check", "-q"],
+            ["cargo", "run", "-p", "pecos-cli", "--quiet", "--", "cuda", "check", "-q"],
             capture_output=True,
             timeout=30,
             check=False,
@@ -1324,6 +1324,7 @@ def main() -> None:
     total_rust_blocks = 0
     total_skipped = 0
     files_generated = 0
+    generated_paths: set[Path] = set()
 
     for md_file in markdown_files:
         # Extract Python and Rust blocks
@@ -1363,10 +1364,16 @@ def main() -> None:
         # Generate test file
         test_content = generate_test_file(md_file, pytest_blocks)
 
-        # Create output path preserving directory structure
+        # Create output path preserving directory structure. Sanitize each
+        # directory component so the output tree is a valid Python package
+        # (no dashes, etc.); otherwise pytest's importlib mode resolves
+        # `tests/docs/generated/foo-bar/test_x.py` to a module name with a
+        # dash, and any duplicate basename elsewhere in the tree silently
+        # aliases via sys.modules. See also: tests/slr_tests/__init__.py.
         relative_path = md_file.relative_to(args.docs_dir)
         test_file_name = f"test_{_sanitize_name(relative_path.stem)}.py"
-        output_subdir = args.output_dir / relative_path.parent
+        sanitized_parent = Path(*[_sanitize_name(p) for p in relative_path.parent.parts])
+        output_subdir = args.output_dir / sanitized_parent
         output_path = output_subdir / test_file_name
 
         if args.dry_run:
@@ -1381,9 +1388,21 @@ def main() -> None:
                 init_file.write_text('"""Auto-generated doc test package."""\n')
             output_path.write_text(test_content)
             files_generated += 1
+            generated_paths.add(output_path.resolve())
             print(
                 f"Generated: {output_path} ({len(python_blocks)} Python, {len(rust_blocks)} Rust blocks)",
             )
+
+    # Prune stale auto-generated test files whose source markdown was deleted
+    # or now skips every block. Only touch files matching `test_*.py` under the
+    # output dir so __init__.py, conftest.py, and __pycache__ are left alone.
+    stale_removed = 0
+    if not args.dry_run and args.output_dir.exists():
+        for stale in args.output_dir.rglob("test_*.py"):
+            if stale.resolve() not in generated_paths:
+                stale.unlink()
+                stale_removed += 1
+                print(f"Removed stale: {stale}")
 
     # Generate unified Rust test crate
     if not args.dry_run:
@@ -1397,6 +1416,8 @@ def main() -> None:
     print(f"  Total code blocks: {total_python_blocks + total_rust_blocks}")
     print(f"  Blocks with skip markers: {total_skipped}")
     print(f"  Test files generated: {files_generated}")
+    if stale_removed:
+        print(f"  Stale test files removed: {stale_removed}")
     print(f"\nRun tests with: pytest {args.output_dir} -v")
     print(f"Run Rust doc tests: cargo test --manifest-path {rust_crate_dir}/Cargo.toml")
 

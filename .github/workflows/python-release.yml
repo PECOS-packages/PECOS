@@ -139,15 +139,21 @@ jobs:
       # On Windows, Git Bash's /usr/bin/link.exe shadows MSVC's link.exe.
       # Create .cargo/config.toml with the explicit MSVC linker path so cargo
       # uses the correct linker inside cibuildwheel (which runs on the host).
+      # Must pick the NEWEST installed MSVC toolset to match VsDevCmd.bat's
+      # LIB/INCLUDE env (see scripts/ci/setup-msvc.ps1 for the same rationale);
+      # picking the lexically-first link.exe selects the OLDEST toolset and
+      # produces LNK1181 against the newer SDK's LIB paths.
       - name: Configure MSVC linker for Cargo (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vsPath = & $vsWhere -latest -property installationPath
-          $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
-                      Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
-                      Select-Object -First 1 -ExpandProperty FullName
+          $latestMsvcDir = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Directory |
+                           Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
+                           Select-Object -First 1 -ExpandProperty FullName
+          $linkPath = if ($latestMsvcDir) { Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe" } else { $null }
+          if ($linkPath -and -not (Test-Path $linkPath)) { $linkPath = $null }
 
           if ($linkPath) {
             $escapedPath = $linkPath.Replace('\', '/')

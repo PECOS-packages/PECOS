@@ -96,12 +96,22 @@ if ($after.ContainsKey("Path")) {
     }
 }
 
-$linkPath = Get-ChildItem -Path (Join-Path $vsPath "VC\Tools\MSVC") -Recurse -Filter "link.exe" |
-    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
+# Pick link.exe from the NEWEST installed MSVC toolset. VsDevCmd.bat (above)
+# already configured LIB / INCLUDE / etc. against the newest toolset, and runners
+# can have multiple MSVC versions side-by-side (14.29 from VS 2019 + 14.40+ from
+# VS 2022). Naive `Select-Object -First 1` returns the lexically-first directory,
+# which is the OLDEST -- mismatching it with the newest-MSVC LIB paths makes the
+# linker fail with `LNK1181: cannot open input file 'kernel32.lib'` when
+# anything outside cache (e.g. cold debug-profile build scripts) needs to link.
+$latestMsvcDir = Get-ChildItem -Path (Join-Path $vsPath "VC\Tools\MSVC") -Directory |
+    Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
     Select-Object -First 1 -ExpandProperty FullName
-
-if (-not $linkPath) {
-    throw "Could not find MSVC link.exe for x64"
+if (-not $latestMsvcDir) {
+    throw "Could not find any MSVC toolset under $vsPath\VC\Tools\MSVC"
+}
+$linkPath = Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe"
+if (-not (Test-Path $linkPath)) {
+    throw "MSVC link.exe not found at $linkPath"
 }
 
 Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath

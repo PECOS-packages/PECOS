@@ -127,24 +127,33 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-    # Configure MSVC linker BEFORE any cargo build (Git's link.exe conflicts with MSVC's)
+    # Configure MSVC linker BEFORE any cargo build (Git's link.exe conflicts with MSVC's).
+    # Must pick the NEWEST installed MSVC toolset to match the LIB/INCLUDE env that
+    # VsDevCmd.bat (in setup-msvc.ps1) configured for that newest toolset -- runners
+    # often have 14.29 (VS 2019) and 14.40+ (VS 2022) side-by-side, and a naive
+    # `Select-Object -First 1` lexical sort picks the OLDEST, which then fails to
+    # find kernel32.lib in the newer SDK's LIB paths (LNK1181).
     - name: Configure MSVC linker (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         $vsPath = & $vsWhere -latest -property installationPath
-        $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
-                    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
-                    Select-Object -First 1 -ExpandProperty FullName
-        if ($linkPath) {
-          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-          $escapedPath = $linkPath.Replace('\', '/')
-          "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"" | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
-        } else {
-          Write-Error "Could not find MSVC link.exe"
+        $latestMsvcDir = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Directory |
+                         Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
+                         Select-Object -First 1 -ExpandProperty FullName
+        if (-not $latestMsvcDir) {
+          Write-Error "Could not find any MSVC toolset under $vsPath\VC\Tools\MSVC"
           exit 1
         }
+        $linkPath = Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe"
+        if (-not (Test-Path $linkPath)) {
+          Write-Error "MSVC link.exe not found at $linkPath"
+          exit 1
+        }
+        New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+        $escapedPath = $linkPath.Replace('\', '/')
+        "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"" | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -159,11 +168,14 @@ jobs:
 
         # Rewrite .cargo/config.toml with both linker and LLVM config
         # (pecos install llvm may have already written this, so overwrite cleanly)
+        # Use newest MSVC toolset to match VsDevCmd.bat's LIB/INCLUDE env -- see
+        # the "Configure MSVC linker (Windows)" step above for the rationale.
         $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         $vsPath = & $vsWhere -latest -property installationPath
-        $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
-                    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
-                    Select-Object -First 1 -ExpandProperty FullName
+        $latestMsvcDir = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Directory |
+                         Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
+                         Select-Object -First 1 -ExpandProperty FullName
+        $linkPath = Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe"
         $escapedLinker = $linkPath.Replace('\', '/')
         $escapedLLVM = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
         @"

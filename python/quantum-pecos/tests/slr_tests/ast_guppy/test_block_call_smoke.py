@@ -28,6 +28,7 @@ from typing import ClassVar
 
 import pytest
 from pecos.slr.ast import (
+    AllocatorArg,
     AllocatorDecl,
     ArrayTypeExpr,
     BitRef,
@@ -79,8 +80,8 @@ def _bell_program() -> Program:
             PrepareOp(allocator="outer_q"),
             BlockCall(
                 callee="bell",
-                arg_bindings=("outer_q",),
-                out_bindings=("outer_q",),
+                arg_bindings=(AllocatorArg(name="outer_q"),),
+                out_bindings=(AllocatorArg(name="outer_q"),),
             ),
             MeasureOp(
                 targets=(
@@ -126,7 +127,11 @@ class TestBlockCallValidation:
             name="main",
             allocator=AllocatorDecl(name="outer_q", capacity=2),
             body=(
-                BlockCall(callee="missing_block", arg_bindings=("outer_q",), out_bindings=("outer_q",)),
+                BlockCall(
+                    callee="missing_block",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(AllocatorArg(name="outer_q"),),
+                ),
             ),
         )
         with pytest.raises(GuppyCodegenError, match=r"undefined block 'missing_block'"):
@@ -149,7 +154,11 @@ class TestBlockCallValidation:
             allocator=AllocatorDecl(name="outer_q", capacity=2),
             block_decls=(bell,),
             body=(
-                BlockCall(callee="bell", arg_bindings=("outer_q", "outer_q"), out_bindings=("outer_q",)),
+                BlockCall(
+                    callee="bell",
+                    arg_bindings=(AllocatorArg(name="outer_q"), AllocatorArg(name="outer_q")),
+                    out_bindings=(AllocatorArg(name="outer_q"),),
+                ),
             ),
         )
         with pytest.raises(GuppyCodegenError, match=r"2 arg_bindings but BlockDecl declares 1"):
@@ -218,7 +227,11 @@ class TestBlockCallValidation:
             allocator=AllocatorDecl(name="outer_q", capacity=3),
             block_decls=(bell,),
             body=(
-                BlockCall(callee="bell", arg_bindings=("outer_q",), out_bindings=("outer_q",)),
+                BlockCall(
+                    callee="bell",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(AllocatorArg(name="outer_q"),),
+                ),
             ),
         )
         with pytest.raises(GuppyCodegenError, match=r"size 3 does not match input 'q' size 2"):
@@ -372,7 +385,11 @@ class TestConsumedEffect:
             block_decls=(consume,),
             body=(
                 PrepareOp(allocator="outer_q"),
-                BlockCall(callee="consume", arg_bindings=("outer_q",), out_bindings=()),
+                BlockCall(
+                    callee="consume",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(),
+                ),
                 # After the call outer_q[0] is CONSUMED; reusing it must raise.
                 MeasureOp(
                     targets=(SlotRef(allocator="outer_q", index=0),),
@@ -448,8 +465,8 @@ class TestNestedConvertedBlocks:
         assert len(nested_calls) == 1, nested_calls
         nested = nested_calls[0]
         assert nested.callee == inner_decl.name
-        assert nested.arg_bindings == ("q",), nested.arg_bindings
-        assert nested.out_bindings == ("q",), nested.out_bindings
+        assert nested.arg_bindings == (AllocatorArg(name="q"),), nested.arg_bindings
+        assert nested.out_bindings == (AllocatorArg(name="q"),), nested.out_bindings
 
     def test_top_level_inner_plus_outer_containing_inner_have_unique_names(self) -> None:
         """Codex review #2: same Block class top-level AND nested must not collide."""
@@ -529,7 +546,11 @@ class TestPrettyPrintHandlesBlockNodes:
             allocator=AllocatorDecl(name="outer_q", capacity=2),
             block_decls=(decl,),
             body=(
-                BlockCall(callee="bell", arg_bindings=("outer_q",), out_bindings=("outer_q",)),
+                BlockCall(
+                    callee="bell",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(AllocatorArg(name="outer_q"),),
+                ),
             ),
         )
         # Pre-fix this raised NotImplementedError from BaseVisitor.default_result().
@@ -591,7 +612,11 @@ class TestAstOptimizationPreservesBlockDecls:
             allocator=AllocatorDecl(name="outer_q", capacity=1),
             block_decls=(decl,),
             body=(
-                BlockCall(callee="b", arg_bindings=("outer_q",), out_bindings=("outer_q",)),
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(AllocatorArg(name="outer_q"),),
+                ),
             ),
         )
 
@@ -768,8 +793,8 @@ class TestSlrBlockInputsWiring:
         calls = [s for s in ast.body if isinstance(s, BlockCall)]
         assert len(calls) == 1
         assert calls[0].callee == decl.name
-        assert calls[0].arg_bindings == ("outer_q",)
-        assert calls[0].out_bindings == ("outer_q",)
+        assert calls[0].arg_bindings == (AllocatorArg(name="outer_q"),)
+        assert calls[0].out_bindings == (AllocatorArg(name="outer_q"),)
 
     def test_slr_block_inputs_end_to_end_selene_bell_correlation(self) -> None:
         """SLR Block with block_inputs -> AST -> Guppy -> Hugr -> Selene: Bell-state correlation."""

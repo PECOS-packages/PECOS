@@ -35,12 +35,14 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.nodes import (
+    AllocatorArg,
     AllocatorDecl,
     ArrayTypeExpr,
     AssignOp,
     BarrierOp,
     BinaryExpr,
     BinaryOp,
+    BitBundleArg,
     BitExpr,
     BitRef,
     BitTypeExpr,
@@ -59,11 +61,14 @@ from pecos.slr.ast.nodes import (
     PrepareOp,
     PrintOp,
     Program,
+    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
     ResourceEffect,
     ReturnOp,
+    SingleBitArg,
+    SingleQubitArg,
     SlotRef,
     UnaryExpr,
     UnaryOp,
@@ -73,6 +78,7 @@ from pecos.slr.ast.nodes import (
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
+        BlockArg,
         Expression,
         Statement,
         TypeExpr,
@@ -456,9 +462,15 @@ class SlrToAst:
         self._block_decls.extend(sub._block_decls)
         self._block_decls.append(decl)
 
-        # Build the BlockCall referencing the outer-scope names.
-        arg_bindings = tuple(outer for _name, _eff, outer, _sz in bindings)
-        live_out = tuple(outer for _name, eff, outer, _sz in bindings if eff is ResourceEffect.LIVE_PRESERVED)
+        # Build the BlockCall referencing the outer-scope names. Whole-allocator
+        # binding is the only shape produced by SLR-side wiring today; other
+        # BlockArg shapes (SingleQubitArg, SingleBitArg, QubitBundleArg,
+        # BitBundleArg) are direct-AST constructions only until later iter 5x
+        # SLR-side support lands.
+        arg_bindings: tuple[BlockArg, ...] = tuple(AllocatorArg(name=outer) for _n, _e, outer, _s in bindings)
+        live_out: tuple[BlockArg, ...] = tuple(
+            AllocatorArg(name=outer) for _n, eff, outer, _s in bindings if eff is ResourceEffect.LIVE_PRESERVED
+        )
         return BlockCall(callee=decl_name, arg_bindings=arg_bindings, out_bindings=live_out)
 
     def _convert_gate(self, gate: Any) -> Statement:
@@ -970,8 +982,8 @@ def _substitute_stmt(stmt: Any, mapping: dict[str, str]) -> Any:
         # to use the parent Block's parameter names (Codex 2026-05-15 review #1).
         return BlockCall(
             callee=stmt.callee,
-            arg_bindings=tuple(mapping.get(a, a) for a in stmt.arg_bindings),
-            out_bindings=tuple(mapping.get(a, a) for a in stmt.out_bindings),
+            arg_bindings=tuple(_substitute_block_arg(a, mapping) for a in stmt.arg_bindings),
+            out_bindings=tuple(_substitute_block_arg(a, mapping) for a in stmt.out_bindings),
             location=stmt.location,
         )
     return stmt
@@ -981,6 +993,38 @@ def _substitute_slot(ref: SlotRef, mapping: dict[str, str]) -> SlotRef:
     if ref.allocator not in mapping:
         return ref
     return SlotRef(allocator=mapping[ref.allocator], index=ref.index, location=ref.location)
+
+
+def _substitute_bit_ref(ref: BitRef, mapping: dict[str, str]) -> BitRef:
+    if ref.register not in mapping:
+        return ref
+    return BitRef(register=mapping[ref.register], index=ref.index, location=ref.location)
+
+
+def _substitute_block_arg(arg: BlockArg, mapping: dict[str, str]) -> BlockArg:
+    """Rewrite a BlockArg through the outer -> parameter-name mapping.
+
+    Used when a parent converted Block's body contains a nested BlockCall;
+    the nested call's arg_bindings/out_bindings reference outer allocator
+    or register names that must be renamed to parent input parameter names.
+    """
+    if isinstance(arg, AllocatorArg):
+        return AllocatorArg(name=mapping.get(arg.name, arg.name), location=arg.location)
+    if isinstance(arg, SingleQubitArg):
+        return SingleQubitArg(slot=_substitute_slot(arg.slot, mapping), location=arg.location)
+    if isinstance(arg, SingleBitArg):
+        return SingleBitArg(bit=_substitute_bit_ref(arg.bit, mapping), location=arg.location)
+    if isinstance(arg, QubitBundleArg):
+        return QubitBundleArg(
+            slots=tuple(_substitute_slot(s, mapping) for s in arg.slots),
+            location=arg.location,
+        )
+    if isinstance(arg, BitBundleArg):
+        return BitBundleArg(
+            bits=tuple(_substitute_bit_ref(b, mapping) for b in arg.bits),
+            location=arg.location,
+        )
+    return arg
 
 
 _PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(\[\d+\])?$")

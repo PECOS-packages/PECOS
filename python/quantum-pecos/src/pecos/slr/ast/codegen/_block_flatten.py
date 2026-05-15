@@ -28,7 +28,10 @@ import re
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
+    AllocatorArg,
     BarrierOp,
+    BitBundleArg,
+    BitRef,
     BlockCall,
     ForStmt,
     GateOp,
@@ -38,7 +41,10 @@ from pecos.slr.ast.nodes import (
     PermuteOp,
     PrepareOp,
     Program,
+    QubitBundleArg,
     RepeatStmt,
+    SingleBitArg,
+    SingleQubitArg,
     SlotRef,
     WhileStmt,
 )
@@ -46,7 +52,7 @@ from pecos.slr.ast.nodes import (
 _PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(\[\d+\])?$")
 
 if TYPE_CHECKING:
-    from pecos.slr.ast.nodes import BlockDecl, Statement
+    from pecos.slr.ast.nodes import BlockArg, BlockDecl, Statement
 
 
 def validate_unique_block_decl_names(program: Program) -> None:
@@ -155,7 +161,21 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
             f"BlockDecl declares {len(decl.inputs)} inputs"
         )
         raise ValueError(msg)
-    mapping = {inp.name: arg for inp, arg in zip(decl.inputs, call.arg_bindings, strict=True)}
+    # Build a name-level mapping from BlockDecl input parameter names to the outer
+    # binding name. Only AllocatorArg is supported in the iter 5a flatten path;
+    # richer args (single qubit/bit, bundles) need full slot-level rewriting
+    # which lands with their respective flatten support iterations.
+    mapping: dict[str, str] = {}
+    for inp, arg in zip(decl.inputs, call.arg_bindings, strict=True):
+        if isinstance(arg, AllocatorArg):
+            mapping[inp.name] = arg.name
+        else:
+            msg = (
+                f"Flatten pass does not yet support BlockArg {type(arg).__name__} for "
+                f"input {inp.name!r} of {call.callee!r}; only AllocatorArg is supported "
+                "in Phase 3a.3 iter 5a"
+            )
+            raise NotImplementedError(msg)
     return tuple(_substitute(stmt, mapping) for stmt in decl.body)
 
 
@@ -227,12 +247,39 @@ def _substitute(stmt: Statement, mapping: dict[str, str]) -> Statement:
         # input parameter names. Codex 2026-05-15 review #1.
         return BlockCall(
             callee=stmt.callee,
-            arg_bindings=tuple(mapping.get(a, a) for a in stmt.arg_bindings),
-            out_bindings=tuple(mapping.get(a, a) for a in stmt.out_bindings),
+            arg_bindings=tuple(_sub_block_arg(a, mapping) for a in stmt.arg_bindings),
+            out_bindings=tuple(_sub_block_arg(a, mapping) for a in stmt.out_bindings),
             location=stmt.location,
         )
     # Pass through statements that don't reference slot allocators directly.
     return stmt
+
+
+def _sub_block_arg(arg: BlockArg, mapping: dict[str, str]) -> BlockArg:
+    """Rewrite a BlockArg's referenced names per the mapping (for nested calls)."""
+    if isinstance(arg, AllocatorArg):
+        return AllocatorArg(name=mapping.get(arg.name, arg.name), location=arg.location)
+    if isinstance(arg, SingleQubitArg):
+        return SingleQubitArg(slot=_sub_slot(arg.slot, mapping), location=arg.location)
+    if isinstance(arg, SingleBitArg):
+        return SingleBitArg(bit=_sub_bit_ref(arg.bit, mapping), location=arg.location)
+    if isinstance(arg, QubitBundleArg):
+        return QubitBundleArg(
+            slots=tuple(_sub_slot(s, mapping) for s in arg.slots),
+            location=arg.location,
+        )
+    if isinstance(arg, BitBundleArg):
+        return BitBundleArg(
+            bits=tuple(_sub_bit_ref(b, mapping) for b in arg.bits),
+            location=arg.location,
+        )
+    return arg
+
+
+def _sub_bit_ref(ref: BitRef, mapping: dict[str, str]) -> BitRef:
+    if ref.register not in mapping:
+        return ref
+    return BitRef(register=mapping[ref.register], index=ref.index, location=ref.location)
 
 
 def _sub_permute_ref(ref: str, mapping: dict[str, str]) -> str:

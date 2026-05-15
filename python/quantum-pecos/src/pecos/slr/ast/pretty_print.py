@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         BarrierOp,
         BinaryExpr,
         BitExpr,
+        BlockArg,
         BlockCall,
         BlockDecl,
         BlockInput,
@@ -359,11 +360,35 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_block_call(self, node: BlockCall) -> str:
         """Visit a BlockCall as a parenthesized invocation site."""
-        args = ", ".join(node.arg_bindings)
+        args = ", ".join(self._format_block_arg(a) for a in node.arg_bindings)
         if node.out_bindings:
-            outs = ", ".join(node.out_bindings)
+            outs = ", ".join(self._format_block_arg(a) for a in node.out_bindings)
             return f"({outs}) = BlockCall({node.callee!r}, {args})"
         return f"BlockCall({node.callee!r}, {args})"
+
+    def _format_block_arg(self, arg: BlockArg) -> str:
+        """Render a BlockArg inline (for visit_block_call)."""
+        from pecos.slr.ast.nodes import (  # noqa: PLC0415  -- subclass dispatch
+            AllocatorArg,
+            BitBundleArg,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+
+        if isinstance(arg, AllocatorArg):
+            return arg.name
+        if isinstance(arg, SingleQubitArg):
+            return self.visit_slot_ref(arg.slot)
+        if isinstance(arg, SingleBitArg):
+            return self.visit_bit_ref(arg.bit)
+        if isinstance(arg, QubitBundleArg):
+            inner = ", ".join(self.visit_slot_ref(s) for s in arg.slots)
+            return f"[{inner}]"
+        if isinstance(arg, BitBundleArg):
+            inner = ", ".join(self.visit_bit_ref(b) for b in arg.bits)
+            return f"[{inner}]"
+        return repr(arg)
 
     def _format_type_expr(self, type_expr: TypeExpr) -> str:
         """Render a TypeExpr inline (BlockInput rendering uses this)."""

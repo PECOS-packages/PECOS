@@ -24,12 +24,14 @@ from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
+        AllocatorArg,
         AllocatorDecl,
         AllocatorTypeExpr,
         ArrayTypeExpr,
         AssignOp,
         BarrierOp,
         BinaryExpr,
+        BitBundleArg,
         BitExpr,
         BitRef,
         BitTypeExpr,
@@ -47,10 +49,13 @@ if TYPE_CHECKING:
         PrepareOp,
         PrintOp,
         Program,
+        QubitBundleArg,
         QubitTypeExpr,
         RegisterDecl,
         RepeatStmt,
         ReturnOp,
+        SingleBitArg,
+        SingleQubitArg,
         SlotRef,
         UnaryExpr,
         VarExpr,
@@ -100,6 +105,17 @@ class AstVisitor(Protocol[T_co]):
     def visit_block_input(self, node: BlockInput) -> T_co: ...
 
     def visit_block_call(self, node: BlockCall) -> T_co: ...
+
+    # BlockCall argument bindings (Phase 3a.3 iter 5a)
+    def visit_allocator_arg(self, node: AllocatorArg) -> T_co: ...
+
+    def visit_single_qubit_arg(self, node: SingleQubitArg) -> T_co: ...
+
+    def visit_single_bit_arg(self, node: SingleBitArg) -> T_co: ...
+
+    def visit_qubit_bundle_arg(self, node: QubitBundleArg) -> T_co: ...
+
+    def visit_bit_bundle_arg(self, node: BitBundleArg) -> T_co: ...
 
     # Control flow
     def visit_if(self, node: IfStmt) -> T_co: ...
@@ -229,8 +245,30 @@ class BaseVisitor(ABC, Generic[T]):
         results = self.visit_children(node)
         return self.combine_results(results)
 
-    def visit_block_call(self, _node: BlockCall) -> T:
+    def visit_block_call(self, node: BlockCall) -> T:
+        results = self.visit_children(node)
+        return self.combine_results(results)
+
+    # BlockCall argument bindings
+
+    def visit_allocator_arg(self, _node: AllocatorArg) -> T:
         return self.default_result()
+
+    def visit_single_qubit_arg(self, node: SingleQubitArg) -> T:
+        results = self.visit_children(node)
+        return self.combine_results(results)
+
+    def visit_single_bit_arg(self, node: SingleBitArg) -> T:
+        results = self.visit_children(node)
+        return self.combine_results(results)
+
+    def visit_qubit_bundle_arg(self, node: QubitBundleArg) -> T:
+        results = self.visit_children(node)
+        return self.combine_results(results)
+
+    def visit_bit_bundle_arg(self, node: BitBundleArg) -> T:
+        results = self.visit_children(node)
+        return self.combine_results(results)
 
     # Control flow
 

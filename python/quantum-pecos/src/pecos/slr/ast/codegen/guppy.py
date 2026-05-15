@@ -31,6 +31,7 @@ from pecos.slr.ast.codegen.guppy_linearity import (
     SlotState,
 )
 from pecos.slr.ast.nodes import (
+    AllocatorArg,
     AllocatorDecl,
     ArrayTypeExpr,
     BinaryExpr,
@@ -878,10 +879,21 @@ class AstToGuppy:
         # Phase 1: validate every arg + out binding BEFORE touching linearity state, so
         # a late-raised GuppyCodegenError can't leave the tracker half-consumed (Codex
         # 2026-05-15 review).
+        # Phase 3a.3 iter 5a: arg_bindings are typed BlockArg now. This emitter
+        # currently only supports AllocatorArg (whole-allocator binding); richer
+        # arg shapes (SingleQubitArg/SingleBitArg/QubitBundleArg/BitBundleArg) land
+        # with their respective Phase 3a.3 iterations.
         validated_args: list[tuple[BlockInput, str, int]] = []
         live_inputs_out: list[BlockInput] = []
-        for inp, arg_name in zip(decl.inputs, node.arg_bindings, strict=True):
-            # _validate_block_decl guarantees type_expr is ArrayTypeExpr[QubitTypeExpr].
+        for inp, arg in zip(decl.inputs, node.arg_bindings, strict=True):
+            if not isinstance(arg, AllocatorArg):
+                msg = (
+                    f"BlockCall {node.callee!r} arg for input {inp.name!r}: only "
+                    f"AllocatorArg is supported in Phase 3a.3 iter 5a (got "
+                    f"{type(arg).__name__})"
+                )
+                raise GuppyCodegenError(msg)
+            arg_name = arg.name
             input_size = cast("ArrayTypeExpr", inp.type_expr).size
             if arg_name not in self.context.root_allocators:
                 msg = (
@@ -903,13 +915,22 @@ class AstToGuppy:
         if len(node.out_bindings) != len(live_inputs_out):
             expected = [inp.name for inp in live_inputs_out]
             msg = (
-                f"BlockCall {node.callee!r}: out_bindings {node.out_bindings} count "
-                f"does not match expected return positions {expected}"
+                f"BlockCall {node.callee!r}: out_bindings count "
+                f"({len(node.out_bindings)}) does not match expected return positions {expected}"
             )
             raise GuppyCodegenError(msg)
 
-        for out_name, inp in zip(node.out_bindings, live_inputs_out, strict=True):
-            self._require_out_binding_matches(node.callee, out_name, inp)
+        validated_outs: list[str] = []
+        for out, inp in zip(node.out_bindings, live_inputs_out, strict=True):
+            if not isinstance(out, AllocatorArg):
+                msg = (
+                    f"BlockCall {node.callee!r} out_binding for input {inp.name!r}: "
+                    f"only AllocatorArg is supported in Phase 3a.3 iter 5a (got "
+                    f"{type(out).__name__})"
+                )
+                raise GuppyCodegenError(msg)
+            self._require_out_binding_matches(node.callee, out.name, inp)
+            validated_outs.append(out.name)
 
         # Phase 2: now that every check passed, consume slots and emit code.
         linearity = self._linearity()
@@ -926,7 +947,7 @@ class AstToGuppy:
             return lines
 
         if len(live_inputs_out) == 1:
-            out_name = node.out_bindings[0]
+            out_name = validated_outs[0]
             ret_temp = self.context.temp("call_ret")
             lines.append(f"{self.context.indent()}{ret_temp} = {call_expr}")
             lines.extend(self._unpack_return_array(out_name, ret_temp))
@@ -934,7 +955,7 @@ class AstToGuppy:
 
         ret_temps = [self.context.temp("call_ret") for _ in live_inputs_out]
         lines.append(f"{self.context.indent()}{', '.join(ret_temps)} = {call_expr}")
-        for ret_temp, out_name in zip(ret_temps, node.out_bindings, strict=True):
+        for ret_temp, out_name in zip(ret_temps, validated_outs, strict=True):
             lines.extend(self._unpack_return_array(out_name, ret_temp))
         return lines
 

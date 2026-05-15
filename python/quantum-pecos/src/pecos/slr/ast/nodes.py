@@ -706,24 +706,101 @@ class BlockDecl(AstNode):
         return nodes
 
 
+# ---- BlockCall argument types (Phase 3a.3 iter 5a typed sum type) ----
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockArg(AstNode, ABC):
+    """Base class for `BlockCall` argument bindings.
+
+    Each BlockInput on the callee is bound to exactly one BlockArg at the
+    caller, describing what outer-scope state the input refers to.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class AllocatorArg(BlockArg):
+    """Whole-allocator binding: every slot of an outer-scope allocator."""
+
+    name: str
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_allocator_arg(self)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SingleQubitArg(BlockArg):
+    """Single-qubit slot binding."""
+
+    slot: SlotRef
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_single_qubit_arg(self)
+
+    def children(self) -> Sequence[AstNode]:
+        return (self.slot,)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SingleBitArg(BlockArg):
+    """Single classical-bit binding (write-back via array[bool, 1] proxy in emitter)."""
+
+    bit: BitRef
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_single_bit_arg(self)
+
+    def children(self) -> Sequence[AstNode]:
+        return (self.bit,)
+
+
+@dataclass(frozen=True, kw_only=True)
+class QubitBundleArg(BlockArg):
+    """Non-contiguous bundle of qubit slots packed into a single array[qubit, N]."""
+
+    slots: tuple[SlotRef, ...]
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_qubit_bundle_arg(self)
+
+    def children(self) -> Sequence[AstNode]:
+        return self.slots
+
+
+@dataclass(frozen=True, kw_only=True)
+class BitBundleArg(BlockArg):
+    """Non-contiguous bundle of classical bits packed into a single array[bool, N]."""
+
+    bits: tuple[BitRef, ...]
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_bit_bundle_arg(self)
+
+    def children(self) -> Sequence[AstNode]:
+        return self.bits
+
+
 @dataclass(frozen=True, kw_only=True)
 class BlockCall(Statement):
     """Invoke a `BlockDecl` from the outer scope.
 
-    `arg_bindings` lists outer-scope binding names in the same order as the
-    callee's declared inputs (one per input).
-    `out_bindings` lists outer-scope names that receive the callee's outputs
-    (`live_preserved`/`produced` inputs + explicit `Return` values, in
-    declaration order then return order). Empty for callees that return
+    `arg_bindings` lists outer-scope bindings (typed `BlockArg`) in the same
+    order as the callee's declared inputs (one per input).
+    `out_bindings` lists outer-scope bindings that receive the callee's
+    outputs (`live_preserved`/`produced` inputs + explicit `Return` values,
+    in declaration order then return order). Empty for callees that return
     nothing.
     """
 
     callee: str
-    arg_bindings: tuple[str, ...]
-    out_bindings: tuple[str, ...] = ()
+    arg_bindings: tuple[BlockArg, ...]
+    out_bindings: tuple[BlockArg, ...] = ()
 
     def accept(self, visitor: AstVisitor[T]) -> T:
         return visitor.visit_block_call(self)
+
+    def children(self) -> Sequence[AstNode]:
+        return (*self.arg_bindings, *self.out_bindings)
 
 
 # =============================================================================

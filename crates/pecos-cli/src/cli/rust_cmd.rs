@@ -491,8 +491,14 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     }
 
     if include_ffi {
+        // Don't use --all-features here: pecos-rslib's `extension-module` feature
+        // tells pyo3 to skip linking libpython, which is correct when maturin
+        // builds the cdylib but produces unresolved Python C API symbols in a
+        // `cargo test` binary. We instead enable the non-pyo3-linking features
+        // we actually want to exercise (wasm is in default; mwpf pulls in the
+        // optional decoder).
         println!("Testing pecos-rslib...");
-        let mut args = vec!["test", "-p", "pecos-rslib", "--all-features"];
+        let mut args = vec!["test", "-p", "pecos-rslib", "--features=mwpf"];
         args.extend(profile_args);
         if !run(&args) {
             return Err(Error::Config("cargo test (pecos-rslib) failed".to_string()));

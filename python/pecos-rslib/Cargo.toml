@@ -24,6 +24,23 @@ wasm = ["dep:pecos-wasm"]
 # Off by default for local dev so cmake is not required. Wheel builds in CI enable
 # this so end users get MWPF support out of the box.
 mwpf = ["pecos-decoders/mwpf"]
+# Bundle of pyo3 features that maturin needs for the Python cdylib but that
+# break a plain `cargo test`:
+#   - extension-module: tell the linker NOT to link libpython
+#   - abi3-py310:        use the limited API; pyo3 then skips emitting
+#                        `rustc-link-lib=python` directives
+#   - generate-import-lib: Windows-only, generates abi3 import library
+# With these enabled, `cargo test` produces a test binary with unresolved
+# Python C API symbols (__Py_IncRef, __Py_NoneStruct, ...). Gating them behind
+# an opt-in feature lets maturin enable it (via `features =
+# ["extension-module"]` in pyproject.toml) while leaving `cargo test` working.
+# All four pecos-rslib* crates must agree on this to avoid feature unification
+# silently re-enabling it for the whole workspace.
+extension-module = [
+    "pyo3/extension-module",
+    "pyo3/abi3-py310",
+    "pyo3/generate-import-lib",
+]
 
 [dependencies]
 # Core PECOS crates (direct deps instead of metacrate)
@@ -74,7 +91,7 @@ pecos-build.workspace = true
 pecos-experimental.workspace = true
 
 # Third-party
-pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
+pyo3 = { workspace = true, features = ["num-complex"] }
 rayon.workspace = true
 rand.workspace = true
 ndarray.workspace = true

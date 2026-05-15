@@ -36,6 +36,7 @@ build-backend = "maturin"
 
 [tool.maturin]
 module-name = "pecos_rslib_cuda"
+features = ["extension-module"]
 
 [dependency-groups]
 dev = []

@@ -16,10 +16,18 @@ name = "pecos_rslib_llvm"
 crate-type = ["cdylib", "rlib"]
 doctest = false
 
+[features]
+# See pecos-rslib's Cargo.toml for why this bundle is opt-in.
+extension-module = [
+    "pyo3/extension-module",
+    "pyo3/abi3-py310",
+    "pyo3/generate-import-lib",
+]
+
 [dependencies]
 pecos-llvm.workspace = true
 inkwell = { workspace = true, features = ["llvm14-0"] }
-pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
+pyo3.workspace = true
 regex.workspace = true
 tempfile.workspace = true
 log.workspace = true

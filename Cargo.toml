@@ -48,7 +48,12 @@ clap_complete = "4.5"
 cargo_metadata = "0.23"
 
 # --- Python bindings ---
-pyo3 = { version = "0.28", features = ["extension-module"] }
+# Note: `extension-module`/`abi3-py310`/`generate-import-lib` are intentionally
+# NOT enabled at the workspace level. They tell pyo3 to skip linking libpython
+# at build time, which is what we want when maturin builds the cdylib but is
+# fatal for plain `cargo test`. Each pecos-rslib* crate gates them behind its
+# own `extension-module` feature; maturin opts in via pyproject.toml.
+pyo3 = "0.28"
 
 # --- C/C++ FFI & build ---
 bindgen = "0.72"

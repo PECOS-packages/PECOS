@@ -164,8 +164,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         let mut cmd = Command::new(&maturin);
         cmd.args(["develop", "--uv"]);
         cmd.args(cargo_profile_flag);
+        // Maturin's CLI --features REPLACES (not merges with) the features list
+        // in pyproject.toml's [tool.maturin], so any time we pass extra features
+        // we must also pass `extension-module` -- otherwise the cdylib loses
+        // pyo3's extension-module + abi3 settings and the resulting wheel either
+        // links libpython directly (wrong) or fails entirely on machines without
+        // a linkable libpython. The same applies to CI's MATURIN_PEP517_ARGS.
         if mwpf_enabled && crate_name == "pecos-rslib" {
-            cmd.args(["--features", "mwpf"]);
+            cmd.args(["--features", "extension-module,mwpf"]);
         }
         cmd.current_dir(&crate_dir);
         // On macOS, add rpath for system libc++ and clean Homebrew paths

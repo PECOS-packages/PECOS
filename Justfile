@@ -404,7 +404,9 @@ clean *target:
             esac
         done
     fi
-    uv run python scripts/clean.py "${ARGS[@]}"
+    # macOS bash 3.2: ${arr[@]+"${arr[@]}"} expands to nothing when arr is empty/unset
+    # under `set -u` (which otherwise trips on empty @-expansion).
+    uv run python scripts/clean.py ${ARGS[@]+"${ARGS[@]}"}
 
 # =============================================================================
 # Documentation
@@ -799,8 +801,10 @@ build-selene profile="release":
     # source is newer. We compare against target/<profile>/ (cargo's output) rather
     # than _dist/lib/ (the installed copy) so switching profile correctly triggers
     # a rebuild even when sources are unchanged.
+    # macOS bash 3.2: ${arr[@]+"${arr[@]}"} expands to nothing when arr is
+    # empty/unset under `set -u` (which otherwise trips on empty @-expansion).
     NEEDS_BUILD=false
-    for DIR in "${PLUGIN_DIRS[@]}"; do
+    for DIR in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do
         PKG=$(basename "$DIR")
         LIB="$TARGET_DIR/${LIB_PREFIX}${PKG//-/_}.${LIB_EXT}"
         if [ ! -f "$LIB" ]; then
@@ -816,12 +820,10 @@ build-selene profile="release":
     if [ "$NEEDS_BUILD" = true ]; then
         echo "Building Selene plugins ($PROFILE)..."
         CARGO_PKG_ARGS=()
-        for DIR in "${PLUGIN_DIRS[@]}"; do
+        for DIR in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do
             CARGO_PKG_ARGS+=(-p "$(basename "$DIR")")
         done
         if [ ${#CARGO_PKG_ARGS[@]} -gt 0 ]; then
-            # macOS bash 3.2: ${arr[@]+"${arr[@]}"} expands to nothing when arr is
-            # empty/unset under `set -u` (which otherwise trips on empty @-expansion).
             cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} "${CARGO_PKG_ARGS[@]}"
         fi
     else

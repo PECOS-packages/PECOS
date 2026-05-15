@@ -5,8 +5,24 @@ use pecos_build::errors::Error;
 use serde_json::Value;
 use std::process::Command;
 
-/// FFI crates that should be excluded from workspace-wide cargo commands
-const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-julia-ffi", "pecos-go-ffi"];
+/// FFI crates that should be excluded from workspace-wide cargo commands.
+///
+/// All five entries are cdylibs that bind PECOS to another language: the four
+/// pecos-rslib* crates use pyo3 (Python) and pecos-julia-ffi / pecos-go-ffi
+/// expose C ABIs for Julia and Go. None of them have meaningful Rust unit
+/// tests -- they're exercised through their respective language test suites
+/// (pytest, julia-test, go-test) -- so excluding them from `cargo test
+/// --workspace` is a no-coverage-loss simplification. It also avoids forcing
+/// the workspace test to find a linkable libpython, which would otherwise
+/// fail on macOS where `/usr/bin/python3` is an Apple stub.
+const FFI_CRATES: &[&str] = &[
+    "pecos-rslib",
+    "pecos-rslib-cuda",
+    "pecos-rslib-exp",
+    "pecos-rslib-llvm",
+    "pecos-julia-ffi",
+    "pecos-go-ffi",
+];
 
 /// Warn if shared C++ dependencies differ across per-crate pecos.toml files.
 /// This is informational -- different crates may legitimately pin different versions.

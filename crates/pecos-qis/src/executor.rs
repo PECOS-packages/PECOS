@@ -1070,15 +1070,26 @@ impl QisHeliosInterface {
     /// Get the entry point and matching setjmp wrapper from the libraries.
     ///
     /// QIR programs can use one of two entry-point signatures:
-    /// - `i64 @qmain(i64)` -- the Helios profile (and what `qis_pipeline_tests`
-    ///   generates). The return value is an error code.
-    /// - `void @main()` -- the simpler "base profile" form. Some tests use this.
+    /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. PECOS's own
+    ///   pecos-phir and pecos-hugr-qis compilers emit this, and `qis_pipeline_tests`
+    ///   uses it. The return value is an error code.
+    /// - `void @main()` -- the "base profile" form. PECOS's QIR text tests use
+    ///   this, and it's the most common form for externally-authored programs.
     ///
     /// Calling a `void @main()` function through the qmain ABI (`u64 fn(u64)`)
     /// is undefined behaviour: the return register is never set, so what looks
     /// like a "random error code" is actually whatever was in the register on
     /// return. We dispatch on the symbol that's present so each kind is called
     /// with the correct ABI.
+    ///
+    /// **Known limitation:** dispatch is name-only. A program with the
+    /// off-spec signature `void @qmain()` or `i64 @main(i64)` would be
+    /// misclassified. The robust fix would be to inspect the LLVM module's
+    /// function type before linking and reject (or dispatch on) any signature
+    /// other than the two canonical shapes; that requires plumbing the IR
+    /// through to this lookup, so it's deferred until we encounter such a
+    /// program in practice. Until then, callers should stick to the two
+    /// canonical signatures above.
     fn get_execution_symbols<'a>(
         program_lib: &'a Library,
         shim_lib: &'a Library,

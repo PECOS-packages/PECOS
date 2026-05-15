@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pecos.slr import CReg, For, LoopVar, Main, QReg, Return, SlrConverter, While
+from pecos.slr import CReg, For, LoopVar, Main, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -139,3 +139,60 @@ def test_hugr_inline_measure_creg_round_trips_through_selene() -> None:
 
     raw = result.to_dict() if hasattr(result, "to_dict") else result
     assert raw, "Inline-CReg .hugr() output produced no measurement records"
+
+
+def test_hugr_inline_measure_creg_inside_nested_repeat() -> None:
+    """Walker must descend into nested control-flow bodies (Repeat/If/For/While/Parallel).
+
+    `Measure(q[0]) > CReg("flag", 1)` is buried inside a Repeat body. The wrapper's
+    `_walk_for_measure_results` must still find "flag" as an inline result register
+    and the entry wrapper must capture+flatten it -- otherwise the package compiles
+    but downstream sees no measurement record from the nested Measure.
+    """
+    from pecos import Hugr, selene_engine, sim
+
+    prog = Main(
+        q := QReg("q", 1),
+        Repeat(2).block(
+            qb.X(q[0]),
+            Measure(q[0]) > CReg("flag", 1),
+            qb.Prep(q[0]),
+        ),
+    )
+
+    package = SlrConverter(prog).hugr()
+    hugr_bytes = package.to_str().encode("utf-8")
+
+    result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(1).seed(42).run(5)
+
+    raw = result.to_dict() if hasattr(result, "to_dict") else result
+    assert raw, "Nested inline-CReg .hugr() output produced no measurement records"
+
+
+def test_hugr_explicit_return_of_non_result_creg() -> None:
+    """Pin entry_wrapper / emitter parity on declared non-result CRegs.
+
+    The emitter's `_return_value_type` resolves any declared CReg name in
+    `Return(...)` -- `is_result` is not consulted. The wrapper must mirror
+    this exactly so it can't silently diverge. Without this fix the wrapper's
+    `_explicit_return_type` looked up only `info.result_cregs` (filtered to
+    `is_result=True`), so `Return(c)` for `c = CReg(..., result=False)` would
+    raise `ValueError` while the emitter happily compiled.
+
+    Note: the combo `result=False` + `Return(c)` is itself a design quirk
+    (the two flags say opposite things). Whether v1 should reject this in
+    preflight, or whether SLR should adopt a `result()` / explicit-output
+    mechanism instead, is a separate v1-followup question. This test only
+    pins wrapper/emitter parity for the current semantics.
+    """
+    prog = Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1, result=False),
+        qb.Prep(q[0]),
+        Measure(q[0]) > c[0],
+        Return(c),
+    )
+
+    hugr = SlrConverter(prog).hugr()
+
+    assert hugr is not None

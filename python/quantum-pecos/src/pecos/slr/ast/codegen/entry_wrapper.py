@@ -51,11 +51,19 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class EntryWrapperInfo:
-    """Metadata extracted from the AST program for building the wrapper."""
+    """Metadata extracted from the AST program for building the wrapper.
+
+    `all_creg_sizes` mirrors the emitter's `context.registers` lookup view
+    used by `AstToGuppy._return_value_type`: every declared CReg (regardless
+    of `is_result`) plus every inline-Measure-introduced result CReg. Needed
+    so an explicit `Return(...)` referencing a non-result-flagged declared
+    CReg resolves the same way the emitter does (not as `ValueError`).
+    """
 
     allocator_sizes: dict[str, int]
     result_cregs: list[RegisterDecl]
     explicit_return: ReturnOp | None
+    all_creg_sizes: dict[str, int]
 
 
 def build_no_arg_entry_wrapper(program: Program) -> tuple[str, EntryWrapperInfo]:
@@ -94,12 +102,17 @@ def _collect_info(program: Program) -> EntryWrapperInfo:
     for name, max_index in inline_max.items():
         result_cregs.append(RegisterDecl(name=name, size=max_index + 1, is_result=True))
 
+    all_creg_sizes: dict[str, int] = {name: decl.size for name, decl in declared.items()}
+    for name, max_index in inline_max.items():
+        all_creg_sizes[name] = max_index + 1
+
     explicit_return = body[-1] if body and isinstance(body[-1], ReturnOp) else None
 
     return EntryWrapperInfo(
         allocator_sizes=allocator_sizes,
         result_cregs=result_cregs,
         explicit_return=explicit_return,
+        all_creg_sizes=all_creg_sizes,
     )
 
 
@@ -157,8 +170,9 @@ def _render_wrapper(info: EntryWrapperInfo) -> str:
 
 def _explicit_return_type(info: EntryWrapperInfo) -> str:
     assert info.explicit_return is not None  # noqa: S101
-    creg_sizes = {decl.name: decl.size for decl in info.result_cregs}
-    types = [_return_value_type(value, info.allocator_sizes, creg_sizes) for value in info.explicit_return.values]
+    types = [
+        _return_value_type(value, info.allocator_sizes, info.all_creg_sizes) for value in info.explicit_return.values
+    ]
     return _tuple_type(types)
 
 

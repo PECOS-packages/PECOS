@@ -68,15 +68,11 @@ doctor:
     fail() { echo "  [!!] $1: $2"; PROBLEMS=$((PROBLEMS + 1)); }
 
     echo "LLVM 14:"
-    LLVM_DIR=""
-    for d in "$HOME/.pecos/deps/llvm-14" "$HOME/.pecos/deps/llvm"; do
-        [ -d "$d/bin" ] && LLVM_DIR="$d" && break
-    done
-    if [ -n "$LLVM_DIR" ]; then
-        VERSION=$("$LLVM_DIR/bin/llvm-config" --version 2>/dev/null || echo "unknown")
+    if LLVM_DIR=$({{pecos}} llvm find 2>/dev/null); then
+        VERSION=$("$LLVM_DIR/bin/llvm-config" --version 2>/dev/null || {{pecos}} llvm version 2>/dev/null | head -1 || echo "unknown")
         ok "installed" "$VERSION at $LLVM_DIR"
     else
-        fail "installed" "not found (run: pecos setup)"
+        fail "installed" "not found (run: just setup)"
     fi
     if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_140_PREFIX" .cargo/config.toml 2>/dev/null; then
         ok ".cargo/config.toml" "LLVM_SYS_140_PREFIX configured"
@@ -155,24 +151,35 @@ list-deps:
 # Building
 # =============================================================================
 
-# Build PECOS (profile: debug, release, native)
+# Build PECOS (profile: dev/debug, release, native)
 [group('build')]
-build profile="debug": setup-quiet sync-deps build-selene
+build profile="debug": (validate-profile "build" profile) setup-quiet sync-deps (build-selene profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    {{pecos}} python build --profile {{profile}}
-    command -v julia >/dev/null 2>&1 && just julia-build {{profile}} || true
-    command -v go >/dev/null 2>&1 && just go-build {{profile}} || true
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE"
+    if command -v julia >/dev/null 2>&1; then
+        just julia-build "$PROFILE"
+    fi
+    if command -v go >/dev/null 2>&1; then
+        just go-build "$PROFILE"
+    fi
 
-# Build PECOS without dependency setup or sync (profile: debug, release, native)
+# Build PECOS without dependency setup or sync (profile: dev/debug, release, native)
 [group('build')]
-build-lite profile="debug": build-selene
-    {{pecos}} python build --profile {{profile}}
+build-lite profile="debug": (validate-profile "build-lite" profile) (build-selene profile)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE"
 
-# Build PECOS with CUDA Python extras (profile: debug, release, native)
+# Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": setup-quiet
-    {{pecos}} python build --profile {{profile}} --cuda
+build-cuda profile="debug": (validate-profile "build-cuda" profile) setup-quiet
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --cuda
 
 # =============================================================================
 # Testing
@@ -192,31 +199,29 @@ pytest *args:
         uv run pytest python/selene-plugins
     fi
 
-# Run Rust tests (CUDA-aware; mode: debug or release)
+# Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
-rstest mode="release":
+rstest mode="release": (validate-test-mode "rstest" mode)
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ "{{mode}}" = "release" ]; then
-        {{pecos}} rust test --release
-    else
-        {{pecos}} rust test
-    fi
+    MODE="{{mode}}"
+    {{pecos}} rust test --profile "$MODE"
 
-# Run all tests (Rust + Python + Julia + Go if available)
+# Run all tests (Rust + Python + Julia + Go if available; mode: dev/debug, release, native)
 [group('test')]
-test mode="release": (rstest mode) pytest
+test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
     #!/usr/bin/env bash
     set -euo pipefail
+    MODE="{{mode}}"
     if command -v julia >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
-        just julia-test
+        just julia-test "$MODE"
     else
         echo "Julia not detected, skipping Julia tests"
     fi
     if command -v go >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
-        just go-test
+        just go-test "$MODE"
     else
         echo "Go not detected, skipping Go tests"
     fi
@@ -227,9 +232,10 @@ test mode="release": (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": python-workspace-check
+lint mode="fix": (validate-lint-mode mode) python-workspace-check
     #!/usr/bin/env bash
     set -euo pipefail
+    MODE="{{mode}}"
     # Detect CUDA: only use --all-features when CUDA toolkit is available
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
         CLIPPY_FEATURES="--all-features"
@@ -239,7 +245,7 @@ lint mode="fix": python-workspace-check
         echo "(No CUDA -- linting with default features only)"
     fi
 
-    if [ "{{mode}}" = "check" ]; then
+    if [ "$MODE" = "check" ]; then
         echo "==> Checking Rust formatting..."
         cargo fmt --all -- --check
         echo "==> Running clippy..."
@@ -302,19 +308,36 @@ fmt:
 
 # Run benchmarks (profile: release/native; features: optional; pattern: filter)
 [group('test')]
-bench profile="release" features="" pattern="":
+bench profile="release" features="" pattern="": (validate-bench-profile "bench" profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    ARGS="bench -p benchmarks --bench benchmarks"
-    if [ "{{profile}}" = "native" ]; then
-        ARGS="$ARGS --profile=native"
+    PROFILE="{{profile}}"
+    FEATURES="{{features}}"
+    PATTERN="{{pattern}}"
+    case "$FEATURES" in
+        features=*)
+            VALUE="${FEATURES#features=}"
+            echo "Invalid features argument: $FEATURES"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE $VALUE"
+            exit 2
+            ;;
+    esac
+    case "$PATTERN" in
+        pattern=*)
+            VALUE="${PATTERN#pattern=}"
+            echo "Invalid pattern argument: $PATTERN"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '$FEATURES' '$VALUE'"
+            exit 2
+            ;;
+    esac
+    ARGS=(bench -p benchmarks --bench benchmarks)
+    if [ "$PROFILE" = "native" ]; then
+        ARGS+=(--profile=native)
         export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
-    elif [ "{{profile}}" != "release" ]; then
-        echo "Unknown profile: {{profile}}. Use release or native."; exit 1
     fi
-    if [ -n "{{features}}" ]; then ARGS="$ARGS --features={{features}}"; fi
-    if [ -n "{{pattern}}" ]; then ARGS="$ARGS -- {{pattern}}"; fi
-    cargo $ARGS
+    if [ -n "$FEATURES" ]; then ARGS+=(--features "$FEATURES"); fi
+    if [ -n "$PATTERN" ]; then ARGS+=(-- "$PATTERN"); fi
+    cargo "${ARGS[@]}"
 
 # =============================================================================
 # Dev Workflows
@@ -322,10 +345,11 @@ bench profile="release" features="" pattern="":
 
 # Dev cycle: build + test (lang: all, rust, python, julia, go)
 [group('dev')]
-dev lang="all":
+dev lang="all": (validate-dev-lang lang)
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{lang}}" in
+    DEV_LANG="{{lang}}"
+    case "$DEV_LANG" in
         all)
             just build
             just test debug
@@ -346,7 +370,7 @@ dev lang="all":
             just go-test
             ;;
         *)
-            echo "Unknown language: {{lang}}. Use: all, rust, python, julia, go"
+            echo "Unknown language: $DEV_LANG. Use: all, rust, python, julia, go"
             exit 1
             ;;
     esac
@@ -355,10 +379,32 @@ dev lang="all":
 [group('dev')]
 check-all: clean (build "release") (test "release") (lint "check")
 
-# Clean build artifacts (or: just clean cache/deps/all/dry-run)
+# Clean build artifacts (or: just clean cache/deps/selene/all/dry-run; multiple OK, e.g. just clean selene deps)
 [group('clean')]
 clean *target:
-    uv run python scripts/clean.py {{ if target == "cache" { "--cache" } else if target == "deps" { "--deps" } else if target == "all" { "--all" } else if target == "dry-run" { "--dry-run" } else { "" } }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TARGETS="{{target}}"
+    ARGS=()
+    if [ -n "$TARGETS" ]; then
+        for TARGET in $TARGETS; do
+            case "$TARGET" in
+                cache|deps|selene|all|dry-run) ARGS+=("--$TARGET") ;;
+                target=*)
+                    VALUE="${TARGET#target=}"
+                    echo "Invalid clean target argument: $TARGET"
+                    echo "Just variadic arguments are positional. Use: just clean $VALUE"
+                    exit 2
+                    ;;
+                *)
+                    echo "Unknown clean target: $TARGET"
+                    echo "Supported targets: cache, deps, selene, all, dry-run"
+                    exit 2
+                    ;;
+            esac
+        done
+    fi
+    uv run python scripts/clean.py "${ARGS[@]}"
 
 # =============================================================================
 # Documentation
@@ -366,7 +412,7 @@ clean *target:
 
 # Serve documentation locally (port: default 8000)
 [group('docs')]
-docs port="8000":
+docs port="8000": (validate-port port)
     uv run mkdocs serve -a "127.0.0.1:{{port}}"
 
 # Build documentation
@@ -413,24 +459,48 @@ check-cuda:
 # Julia Bindings
 # =============================================================================
 
-# Build Julia FFI library (profile: debug, release, native; rustflags: optional)
+# Build Julia FFI library (profile: dev/debug, release, native; rustflags: optional)
 [group('julia')]
-julia-build profile="release" rustflags="":
+julia-build profile="release" rustflags="": (validate-profile "julia-build" profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -n "{{rustflags}}" ]; then
-        export RUSTFLAGS="${RUSTFLAGS:-} {{rustflags}}"
+    PROFILE="{{profile}}"
+    RUSTFLAGS_ARG="{{rustflags}}"
+    case "$RUSTFLAGS_ARG" in
+        rustflags=*)
+            VALUE="${RUSTFLAGS_ARG#rustflags=}"
+            echo "Invalid rustflags argument: $RUSTFLAGS_ARG"
+            echo "Just recipe parameters are positional. Use: just julia-build $PROFILE '$VALUE'"
+            exit 2
+            ;;
+    esac
+    if [ -n "$RUSTFLAGS_ARG" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} $RUSTFLAGS_ARG"
     fi
-    case "{{profile}}" in
+    # The native profile inherits release; -C target-cpu=native is injected here
+    # rather than via profile.native.rustflags (which is still unstable in cargo).
+    if [ "$PROFILE" = "native" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
+    fi
+    case "$PROFILE" in
         native)  cargo build --profile native -p pecos-julia-ffi ;;
         release) cargo build --release -p pecos-julia-ffi ;;
         dev|debug) cargo build -p pecos-julia-ffi ;;
-        *) echo "Unknown profile: {{profile}}"; exit 1 ;;
+        *) echo "Unknown profile: $PROFILE"; exit 1 ;;
     esac
 
-# Run Julia tests
+# Run Julia tests (profile: dev/debug, release, native)
 [group('julia')]
-julia-test: (julia-build "release")
+julia-test profile="release": (validate-profile "julia-test" profile) (julia-build profile)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    case "$PROFILE" in
+        native) LIB_DIR="$(pwd)/target/native" ;;
+        release) LIB_DIR="$(pwd)/target/release" ;;
+        dev|debug) LIB_DIR="$(pwd)/target/debug" ;;
+    esac
+    export PECOS_JULIA_LIB_DIR="$LIB_DIR"
     cd julia/PECOS.jl && julia --project=. -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'
 
 # Format Julia code
@@ -458,27 +528,48 @@ julia-lint: (julia-build "release")
 # Go Bindings
 # =============================================================================
 
-# Build Go FFI library (profile: debug, release, native; rustflags: optional)
+# Build Go FFI library (profile: dev/debug, release, native; rustflags: optional)
 [group('go')]
-go-build profile="release" rustflags="":
+go-build profile="release" rustflags="": (validate-profile "go-build" profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -n "{{rustflags}}" ]; then
-        export RUSTFLAGS="${RUSTFLAGS:-} {{rustflags}}"
+    PROFILE="{{profile}}"
+    RUSTFLAGS_ARG="{{rustflags}}"
+    case "$RUSTFLAGS_ARG" in
+        rustflags=*)
+            VALUE="${RUSTFLAGS_ARG#rustflags=}"
+            echo "Invalid rustflags argument: $RUSTFLAGS_ARG"
+            echo "Just recipe parameters are positional. Use: just go-build $PROFILE '$VALUE'"
+            exit 2
+            ;;
+    esac
+    if [ -n "$RUSTFLAGS_ARG" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} $RUSTFLAGS_ARG"
     fi
-    case "{{profile}}" in
+    # See julia-build for why -C target-cpu=native is injected here.
+    if [ "$PROFILE" = "native" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
+    fi
+    case "$PROFILE" in
         native)  cargo build --profile native -p pecos-go-ffi ;;
         release) cargo build --release -p pecos-go-ffi ;;
         dev|debug) cargo build -p pecos-go-ffi ;;
-        *) echo "Unknown profile: {{profile}}"; exit 1 ;;
+        *) echo "Unknown profile: $PROFILE"; exit 1 ;;
     esac
 
-# Run Go tests
+# Run Go tests (profile: dev/debug, release, native)
 [group('go')]
-go-test: (go-build "release")
+go-test profile="release": (validate-profile "go-test" profile) (go-build profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    LIB_DIR="$(pwd)/target/release"
+    PROFILE="{{profile}}"
+    case "$PROFILE" in
+        native) LIB_DIR="$(pwd)/target/native" ;;
+        release) LIB_DIR="$(pwd)/target/release" ;;
+        dev|debug) LIB_DIR="$(pwd)/target/debug" ;;
+    esac
+    export CGO_LDFLAGS="-L$LIB_DIR ${CGO_LDFLAGS:-}"
+    export LIBRARY_PATH="$LIB_DIR:${LIBRARY_PATH:-}"
     export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
     export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"
     cd go/pecos && go test -v
@@ -493,12 +584,19 @@ go-fmt:
 go-fmt-check:
     @test -z "$(gofmt -l go/pecos)" || (gofmt -l go/pecos && exit 1)
 
-# Run Go linting with go vet
+# Run Go linting with go vet (profile: dev/debug, release, native)
 [group('go')]
-go-lint: (go-build "release")
+go-lint profile="release": (validate-profile "go-lint" profile) (go-build profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    LIB_DIR="$(pwd)/target/release"
+    PROFILE="{{profile}}"
+    case "$PROFILE" in
+        native) LIB_DIR="$(pwd)/target/native" ;;
+        release) LIB_DIR="$(pwd)/target/release" ;;
+        dev|debug) LIB_DIR="$(pwd)/target/debug" ;;
+    esac
+    export CGO_LDFLAGS="-L$LIB_DIR ${CGO_LDFLAGS:-}"
+    export LIBRARY_PATH="$LIB_DIR:${LIBRARY_PATH:-}"
     export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
     export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"
     cd go/pecos && go vet ./...
@@ -531,6 +629,129 @@ pytest-slow:
 # =============================================================================
 
 [private]
+validate-profile recipe profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RECIPE="{{recipe}}"
+    PROFILE="{{profile}}"
+    case "$PROFILE" in
+        dev|debug|release|native) ;;
+        profile=*)
+            VALUE="${PROFILE#profile=}"
+            echo "Invalid profile argument: $PROFILE"
+            echo "Just recipe parameters are positional. Use: just $RECIPE $VALUE"
+            exit 2
+            ;;
+        *)
+            echo "Unknown profile: $PROFILE"
+            echo "Supported profiles: dev, debug, release, native"
+            exit 2
+            ;;
+    esac
+
+[private]
+validate-test-mode recipe mode:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RECIPE="{{recipe}}"
+    MODE="{{mode}}"
+    case "$MODE" in
+        dev|debug|release|native) ;;
+        mode=*)
+            VALUE="${MODE#mode=}"
+            echo "Invalid mode argument: $MODE"
+            echo "Just recipe parameters are positional. Use: just $RECIPE $VALUE"
+            exit 2
+            ;;
+        *)
+            echo "Unknown test mode: $MODE"
+            echo "Supported modes: dev, debug, release, native"
+            exit 2
+            ;;
+    esac
+
+[private]
+validate-lint-mode mode:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MODE="{{mode}}"
+    case "$MODE" in
+        fix|check) ;;
+        mode=*)
+            VALUE="${MODE#mode=}"
+            echo "Invalid mode argument: $MODE"
+            echo "Just recipe parameters are positional. Use: just lint $VALUE"
+            exit 2
+            ;;
+        *)
+            echo "Unknown lint mode: $MODE"
+            echo "Supported modes: fix, check"
+            exit 2
+            ;;
+    esac
+
+[private]
+validate-bench-profile recipe profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RECIPE="{{recipe}}"
+    PROFILE="{{profile}}"
+    case "$PROFILE" in
+        release|native) ;;
+        profile=*)
+            VALUE="${PROFILE#profile=}"
+            echo "Invalid benchmark profile argument: $PROFILE"
+            echo "Just recipe parameters are positional. Use: just $RECIPE $VALUE"
+            exit 2
+            ;;
+        *)
+            echo "Unknown benchmark profile: $PROFILE"
+            echo "Supported benchmark profiles: release, native"
+            exit 2
+            ;;
+    esac
+
+[private]
+validate-dev-lang lang:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DEV_LANG="{{lang}}"
+    case "$DEV_LANG" in
+        all|rust|python|julia|go) ;;
+        lang=*)
+            VALUE="${DEV_LANG#lang=}"
+            echo "Invalid language argument: $DEV_LANG"
+            echo "Just recipe parameters are positional. Use: just dev $VALUE"
+            exit 2
+            ;;
+        *)
+            echo "Unknown language: $DEV_LANG"
+            echo "Supported languages: all, rust, python, julia, go"
+            exit 2
+            ;;
+    esac
+
+[private]
+validate-port port:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PORT="{{port}}"
+    case "$PORT" in
+        port=*)
+            VALUE="${PORT#port=}"
+            echo "Invalid port argument: $PORT"
+            echo "Just recipe parameters are positional. Use: just docs $VALUE"
+            exit 2
+            ;;
+        *) ;;
+    esac
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+        echo "Invalid docs port: $PORT"
+        echo "Port must be an integer from 1 to 65535"
+        exit 2
+    fi
+
+[private]
 setup-quiet:
     {{pecos}} setup --quiet
 
@@ -548,9 +769,25 @@ sync-deps:
     uv sync --project . --all-packages
 
 [private]
-build-selene:
+build-selene profile="release":
     #!/usr/bin/env bash
     set -euo pipefail
+    PROFILE="{{profile}}"
+    case "$PROFILE" in
+        native)    CARGO_PROFILE_FLAGS=(--profile native); TARGET_DIR="target/native" ;;
+        release)   CARGO_PROFILE_FLAGS=(--release);        TARGET_DIR="target/release" ;;
+        dev|debug) CARGO_PROFILE_FLAGS=();                 TARGET_DIR="target/debug" ;;
+        *) echo "build-selene: unknown profile $PROFILE" >&2; exit 2 ;;
+    esac
+    # See julia-build for why -C target-cpu=native is injected here.
+    if [ "$PROFILE" = "native" ]; then
+        export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
+    fi
+    case "$(uname -s)" in
+        Darwin)               LIB_PREFIX="lib"; LIB_EXT="dylib" ;;
+        MINGW*|MSYS*|CYGWIN*) LIB_PREFIX="";    LIB_EXT="dll" ;;
+        *)                    LIB_PREFIX="lib"; LIB_EXT="so" ;;
+    esac
     PLUGIN_DIRS=()
     for DIR in python/selene-plugins/pecos-selene-*/; do
         [ -d "$DIR" ] || continue
@@ -558,38 +795,41 @@ build-selene:
         [ -f "$DIR/pyproject.toml" ] || continue
         PLUGIN_DIRS+=("$DIR")
     done
-    # Check if any selene source changed since last install
+    # Skip cargo if the cargo output for this profile already exists and no Rust
+    # source is newer. We compare against target/<profile>/ (cargo's output) rather
+    # than _dist/lib/ (the installed copy) so switching profile correctly triggers
+    # a rebuild even when sources are unchanged.
     NEEDS_BUILD=false
     for DIR in "${PLUGIN_DIRS[@]}"; do
         PKG=$(basename "$DIR")
-        DEST="$DIR/python/${PKG//-/_}/_dist/lib/"
-        SO=$(find "$DEST" -name "*.so" 2>/dev/null | head -1 || true)
-        if [ -z "$SO" ]; then
+        LIB="$TARGET_DIR/${LIB_PREFIX}${PKG//-/_}.${LIB_EXT}"
+        if [ ! -f "$LIB" ]; then
             NEEDS_BUILD=true
             break
         fi
-        # Check if any Rust source is newer than the installed .so
-        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$SO" 2>/dev/null | head -1 || true)
+        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
         if [ -n "$NEWER" ]; then
             NEEDS_BUILD=true
             break
         fi
     done
-    if [ "$NEEDS_BUILD" = false ]; then
-        echo "Selene plugins: up to date"
-        exit 0
+    if [ "$NEEDS_BUILD" = true ]; then
+        echo "Building Selene plugins ($PROFILE)..."
+        CARGO_PKG_ARGS=()
+        for DIR in "${PLUGIN_DIRS[@]}"; do
+            CARGO_PKG_ARGS+=(-p "$(basename "$DIR")")
+        done
+        if [ ${#CARGO_PKG_ARGS[@]} -gt 0 ]; then
+            # macOS bash 3.2: ${arr[@]+"${arr[@]}"} expands to nothing when arr is
+            # empty/unset under `set -u` (which otherwise trips on empty @-expansion).
+            cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} "${CARGO_PKG_ARGS[@]}"
+        fi
+    else
+        echo "Selene plugins: cargo output up to date ($PROFILE)"
     fi
-    echo "Building Selene plugins..."
-    CARGO_ARGS=""
-    for DIR in "${PLUGIN_DIRS[@]}"; do
-        CARGO_ARGS="$CARGO_ARGS -p $(basename "$DIR")"
-    done
-    if [ -n "$CARGO_ARGS" ]; then
-        cargo build --release $CARGO_ARGS
-    fi
-    echo "Copying libraries to Python packages..."
-    {{pecos}} selene install --profile release
-    echo "Selene plugins built and installed successfully"
+    echo "Installing Selene plugin libraries ($PROFILE)..."
+    {{pecos}} selene install --profile "$PROFILE"
+    echo "Selene plugins ready ($PROFILE)"
 
 
 # Convenience aliases
@@ -597,6 +837,8 @@ build-selene:
 build-debug: (build "debug")
 [private]
 build-release: (build "release")
+[private]
+build-native: (build "native")
 
 # Regenerate all lockfiles from scratch
 [group('setup')]
@@ -621,6 +863,7 @@ julia-examples: (julia-build "debug")
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v julia >/dev/null 2>&1; then
+        export PECOS_JULIA_LIB_DIR="$(pwd)/target/debug"
         cd julia/PECOS.jl && julia --project=. examples/demo.jl
         cd julia/PECOS.jl && julia --project=. examples/basic_usage.jl
     else

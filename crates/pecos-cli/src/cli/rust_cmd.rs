@@ -40,9 +40,9 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
         super::RustCommands::Check { include_ffi } => run_check(*include_ffi),
         super::RustCommands::Clippy { include_ffi, fix } => run_clippy(*include_ffi, *fix),
         super::RustCommands::Test {
-            release,
+            profile,
             include_ffi,
-        } => run_test(*release, *include_ffi),
+        } => run_test(*profile, *include_ffi),
     }
 }
 
@@ -177,10 +177,19 @@ fn is_tool_available(tool: &str) -> bool {
 /// `SDKROOT`, etc.) so build scripts like highs-sys's cmake-rs invocation
 /// find the PECOS-managed cmake without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
+    run_cargo_command_with_rustflags(args, None)
+}
+
+/// Like `run_cargo_command` but lets the caller override `RUSTFLAGS`. Used by
+/// `run_test` to inject `-C target-cpu=native` for the native profile.
+fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> bool {
     let mut cmd = Command::new("cargo");
     cmd.args(args);
     for (key, value) in super::env_cmd::collect_env() {
         cmd.env(key, value);
+    }
+    if let Some(rf) = rustflags {
+        cmd.env("RUSTFLAGS", rf);
     }
     matches!(cmd.status(), Ok(s) if s.success())
 }
@@ -368,15 +377,41 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 }
 
 /// Run cargo test with GPU-aware feature handling
-fn run_test(release: bool, include_ffi: bool) -> Result<()> {
+fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     // Warn about any C++ dependency version differences across crates
     check_dep_consistency();
 
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
-    let release_flag = if release { "--release" } else { "" };
 
     maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+
+    // Map our profile to the cargo flags that select the corresponding profile.
+    // Native goes through `--profile native` (not `--release`) so artifacts land
+    // in target/native/ and the C++ build.rs files (pecos-pymatching et al.)
+    // can detect "native" via OUT_DIR and add -march=native to their builds.
+    let profile_args: &[&str] = match profile {
+        super::BuildProfile::Dev | super::BuildProfile::Debug => &[],
+        super::BuildProfile::Release => &["--release"],
+        super::BuildProfile::Native => &["--profile", "native"],
+    };
+
+    // For native, append -C target-cpu=native to RUSTFLAGS. profile.native.rustflags
+    // in Cargo.toml is still gated on nightly so we inject per-process here, matching
+    // what `pecos python build --profile native` and the Justfile recipes do.
+    let inherited_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+    let computed_rustflags: Option<String> = if matches!(profile, super::BuildProfile::Native) {
+        let mut rf = inherited_rustflags;
+        if !rf.is_empty() {
+            rf.push(' ');
+        }
+        rf.push_str("-C target-cpu=native");
+        Some(rf)
+    } else {
+        None
+    };
+    let rustflags = computed_rustflags.as_deref();
+    let run = |args: &[&str]| -> bool { run_cargo_command_with_rustflags(args, rustflags) };
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
@@ -401,11 +436,9 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
     ]);
 
-    if !release_flag.is_empty() {
-        args.push(release_flag);
-    }
+    args.extend(profile_args);
 
-    if !run_cargo_command(&args) {
+    if !run(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));
     }
 
@@ -416,10 +449,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     // binary. Testing separately ensures the binary is built correctly.
     println!("Testing pecos-cli with runtime features...");
     let mut cli_args: Vec<&str> = vec!["test", "-p", "pecos-cli", "--features=runtime"];
-    if !release_flag.is_empty() {
-        cli_args.push(release_flag);
-    }
-    if !run_cargo_command(&cli_args) {
+    cli_args.extend(profile_args);
+    if !run(&cli_args) {
         return Err(Error::Config(
             "cargo test (pecos-cli with runtime) failed".to_string(),
         ));
@@ -429,10 +460,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     if probe_cuquantum_availability() {
         println!("cuQuantum runtime available - testing pecos-cuquantum");
         let mut args = vec!["test", "-p", "pecos-cuquantum"];
-        if !release_flag.is_empty() {
-            args.push(release_flag);
-        }
-        if !run_cargo_command(&args) {
+        args.extend(profile_args);
+        if !run(&args) {
             return Err(Error::Config(
                 "cargo test (pecos-cuquantum) failed".to_string(),
             ));
@@ -444,10 +473,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     if include_gpu_sims {
         println!("Including pecos-gpu-sims in Rust tests");
         let mut args = vec!["test", "-p", "pecos-gpu-sims"];
-        if !release_flag.is_empty() {
-            args.push(release_flag);
-        }
-        if !run_cargo_command(&args) {
+        args.extend(profile_args);
+        if !run(&args) {
             return Err(Error::Config(
                 "cargo test (pecos-gpu-sims) failed".to_string(),
             ));
@@ -456,10 +483,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
 
     println!("Testing pecos-decoders...");
     let mut args = vec!["test", "-p", "pecos-decoders", "--all-features"];
-    if !release_flag.is_empty() {
-        args.push(release_flag);
-    }
-    if !run_cargo_command(&args) {
+    args.extend(profile_args);
+    if !run(&args) {
         return Err(Error::Config(
             "cargo test (pecos-decoders) failed".to_string(),
         ));
@@ -468,10 +493,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     if include_ffi {
         println!("Testing pecos-rslib...");
         let mut args = vec!["test", "-p", "pecos-rslib", "--all-features"];
-        if !release_flag.is_empty() {
-            args.push(release_flag);
-        }
-        if !run_cargo_command(&args) {
+        args.extend(profile_args);
+        if !run(&args) {
             return Err(Error::Config("cargo test (pecos-rslib) failed".to_string()));
         }
     }

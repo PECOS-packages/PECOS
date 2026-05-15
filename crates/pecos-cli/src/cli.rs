@@ -26,7 +26,7 @@ pub mod setup_cmd;
 pub mod uninstall_cmd;
 pub mod upgrade_cmd;
 
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 #[derive(Subcommand, Clone)]
 pub enum RustCommands {
@@ -50,9 +50,9 @@ pub enum RustCommands {
 
     /// Run cargo test with CUDA-aware feature handling
     Test {
-        /// Use release mode for tests
-        #[arg(long)]
-        release: bool,
+        /// Build profile for tests (dev/debug, release, native)
+        #[arg(long, value_enum, default_value = "dev")]
+        profile: BuildProfile,
 
         /// Also test FFI crates
         #[arg(long)]
@@ -60,13 +60,32 @@ pub enum RustCommands {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum BuildProfile {
+    Dev,
+    Debug,
+    Release,
+    Native,
+}
+
+impl BuildProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Debug => "debug",
+            Self::Release => "release",
+            Self::Native => "native",
+        }
+    }
+}
+
 #[derive(Subcommand, Clone)]
 pub enum PythonCommands {
     /// Build pecos-rslib and quantum-pecos via maturin
     Build {
         /// Build profile (dev/debug, release, native)
-        #[arg(long, default_value = "dev")]
-        profile: String,
+        #[arg(long, value_enum, default_value = "dev")]
+        profile: BuildProfile,
 
         /// Additional RUSTFLAGS
         #[arg(long)]

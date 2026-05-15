@@ -238,9 +238,13 @@ inherits = "release"
 strip = false
 debug = 1            # line tables only — minimal size impact
 
-# Native profile: release + CPU-specific optimizations
-# Use with: cargo build --profile native
-# Build scripts detect this via PROFILE=native env var and add --march=native for C++ code
+# Native profile: release + CPU-specific optimizations.
+# Use with: cargo build --profile native (or just <recipe> native).
+# Build scripts detect this via PROFILE=native env var and add --march=native for C++ code.
+# Rust code gets -C target-cpu=native via RUSTFLAGS supplied by the caller (Justfile
+# recipes, pecos python build --profile native, etc.). Setting it here as
+# `profile.native.rustflags` would be cleaner but that field is still unstable in
+# stable cargo as of 1.93.
 [profile.native]
 inherits = "release"
 

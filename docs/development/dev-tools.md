@@ -14,10 +14,14 @@ pecos --help
 # Rust commands (CUDA-aware)
 pecos rust check              # Run cargo check (auto-excludes CUDA if unavailable)
 pecos rust clippy             # Run cargo clippy (CUDA-aware)
-pecos rust test               # Run cargo test (CUDA-aware)
+pecos rust test               # Run cargo test (CUDA-aware; default profile=dev)
+pecos rust test --profile release   # Same but with release optimisations
+pecos rust test --profile native    # Release + -C target-cpu=native + --march=native for C++
 
 # Python build (maturin + quantum-pecos)
-pecos python build            # Build pecos-rslib with maturin
+pecos python build            # Build pecos-rslib with maturin (default profile=dev)
+pecos python build --profile release  # Release build
+pecos python build --profile native   # Release + native-CPU codegen (Rust and C++)
 
 # Dependency installation
 pecos install llvm            # Install LLVM 14 to ~/.pecos/deps/llvm-14/

@@ -18,12 +18,15 @@
 //
 // Before using this package, you need to build the Rust library:
 //
-//	cd go/pecos-go-ffi
-//	cargo build --release
+//	just go-build release
 //
-// Then set the library path:
+// Then set the compile-time and runtime library paths. The -lpecos_go link
+// flag is supplied by the #cgo LDFLAGS directive below, so CGO_LDFLAGS only
+// needs to add the -L search path:
 //
-//	export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/PECOS/target/release
+//	export CGO_LDFLAGS="-L/path/to/PECOS/target/release"
+//	export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/path/to/PECOS/target/release"
+//	export DYLD_LIBRARY_PATH="$DYLD_LIBRARY_PATH:/path/to/PECOS/target/release" # macOS
 //
 // # Example
 //
@@ -43,8 +46,7 @@
 package pecos
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/../pecos-go-ffi/target/release -lpecos_go
-#cgo LDFLAGS: -L${SRCDIR}/../../target/release -lpecos_go
+#cgo LDFLAGS: -lpecos_go
 
 #include <stdlib.h>
 

@@ -26,9 +26,6 @@ include("Simulator.jl")
 
 # Determine library path based on environment
 const libpecos_julia = begin
-    # Check if we're in development mode (library built locally)
-    dev_lib_path = joinpath(@__DIR__, "..", "..", "..", "target", "release")
-
     lib_name = if Sys.iswindows()
         "pecos_julia.dll"
     elseif Sys.isapple()
@@ -37,28 +34,36 @@ const libpecos_julia = begin
         "libpecos_julia.so"
     end
 
-    dev_lib = joinpath(dev_lib_path, lib_name)
-
-    if isfile(dev_lib)
-        # Development mode: use locally built library
-        dev_lib
+    explicit_lib_dir = get(ENV, "PECOS_JULIA_LIB_DIR", "")
+    candidate_dirs = if isempty(explicit_lib_dir)
+        [
+            joinpath(@__DIR__, "..", "..", "..", "target", "release"),
+            joinpath(@__DIR__, "..", "..", "..", "target", "native"),
+            joinpath(@__DIR__, "..", "..", "..", "target", "debug"),
+        ]
     else
-        # Try debug build as fallback
-        debug_lib = joinpath(@__DIR__, "..", "..", "..", "target", "debug", lib_name)
-        if isfile(debug_lib)
-            debug_lib
-        else
-            error("""
-                PECOS Julia library not found!
-
-                Please build the library first:
-                    cd julia/pecos-julia-ffi && cargo build --release
-
-                Or for debug mode:
-                    cd julia/pecos-julia-ffi && cargo build
-            """)
-        end
+        [explicit_lib_dir]
     end
+
+    candidates = [joinpath(candidate_dir, lib_name) for candidate_dir in candidate_dirs]
+    found_index = findfirst(isfile, candidates)
+
+    if found_index === nothing
+        searched = join(candidate_dirs, "\n                    ")
+        error("""
+            PECOS Julia library not found!
+
+            Searched:
+                $searched
+
+            Build it with:
+                just julia-build release
+
+            Or select a specific build directory with PECOS_JULIA_LIB_DIR.
+        """)
+    end
+
+    candidates[found_index]
 end
 
 struct QubitId

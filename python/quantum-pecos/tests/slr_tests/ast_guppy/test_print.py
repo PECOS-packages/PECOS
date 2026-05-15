@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import pytest
 from pecos import Hugr, selene_engine, sim
-from pecos.slr import CReg, For, Main, Print, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, For, If, Main, Print, QReg, Repeat, SlrConverter
+from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -310,3 +311,141 @@ class TestPrintAndSeleneOutput:
         for shot_events in events:
             assert len(shot_events) == 2, f"expected 2 events per shot, got {len(shot_events)}"
             assert all(int(bit) == 1 for bit in shot_events), shot_events
+
+
+# ── Path-signature validator (If/Elif symmetry) ──────────────────────────
+
+
+class TestPathSignatureValidator:
+    """Reject asymmetric Print emission across If/Elif branches.
+
+    Phase 1 requires that the ordered sequence of Print events along every
+    conditional path is identical. Selene's parsed-result dict expects
+    rectangular tag emission per shot; asymmetric emission triggers a
+    register-count mismatch at runtime, so the AST validator fails fast.
+    """
+
+    def test_then_only_print_rejected(self) -> None:
+        """Print in `Then` with no Else (or empty Else) → asymmetric."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0]).Then(Print(c, tag="only_then")),
+        )
+        with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
+            SlrConverter(prog).hugr()
+
+    def test_symmetric_if_then_else_accepted(self) -> None:
+        """Same Print on both branches compiles."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0]).Then(Print(c, tag="branch_taken")).Else(Print(c, tag="branch_taken")),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_asymmetric_tag_rejected(self) -> None:
+        """Same shape, different tags across branches → reject."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0]).Then(Print(c, tag="branch_a")).Else(Print(c, tag="branch_b")),
+        )
+        with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
+            SlrConverter(prog).hugr()
+
+    def test_asymmetric_multiplicity_rejected(self) -> None:
+        """Two Prints in Then, one in Else → reject."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0])
+            .Then(
+                Print(c, tag="event"),
+                Print(c, tag="event"),
+            )
+            .Else(Print(c, tag="event")),
+        )
+        with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
+            SlrConverter(prog).hugr()
+
+    def test_asymmetric_namespace_rejected(self) -> None:
+        """Same tag, different namespace across branches → reject."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0]).Then(Print(c, tag="x")).Else(Print(c, namespace="debug", tag="x")),
+        )
+        with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
+            SlrConverter(prog).hugr()
+
+    def test_static_repeat_with_print_compiles(self) -> None:
+        """Repeat(n) with Print inside is fine (static trip count)."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            Repeat(3).block(
+                qb.X(q[0]),
+                Measure(q[0]) > c[0],
+                qb.Prep(q[0]),
+                Print(c, tag="iter"),
+            ),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_static_for_with_print_compiles(self) -> None:
+        """For with literal start/stop and Print inside compiles."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            For("i", 0, 3).Do(
+                qb.X(q[0]),
+                Measure(q[0]) > c[0],
+                qb.Prep(q[0]),
+                Print(c, tag="loop"),
+            ),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_nested_if_with_symmetric_prints_accepted(self) -> None:
+        """Outer If has symmetric Prints; inner If has symmetric Prints."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            If(c[0])
+            .Then(
+                If(c[1]).Then(Print(c, tag="inner")).Else(Print(c, tag="inner")),
+                Print(c, tag="outer"),
+            )
+            .Else(
+                If(c[1]).Then(Print(c, tag="inner")).Else(Print(c, tag="inner")),
+                Print(c, tag="outer"),
+            ),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_nested_if_with_asymmetric_inner_rejected(self) -> None:
+        """Inner If has asymmetric Prints; rejected at the inner If."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            If(c[0]).Then(If(c[1]).Then(Print(c, tag="leak"))),  # Else missing on inner
+        )
+        with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
+            SlrConverter(prog).hugr()

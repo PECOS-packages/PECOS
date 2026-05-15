@@ -160,6 +160,10 @@ class AstToGuppy:
         self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
         self._reject_child_allocators()
 
+        # Phase 1 Print AST-level validators (run before emission so failures
+        # point at the source program, not the generated Guppy).
+        self._validate_print_paths(program.body)
+
         body = list(program.body)
         explicit_return = self._validate_return_position(body)
         emitted_body = body[:-1] if explicit_return else body
@@ -335,6 +339,119 @@ class AstToGuppy:
             elif isinstance(stmt, WhileStmt | ForStmt | RepeatStmt | ParallelBlock):
                 count += self._count_returns(stmt.body)
         return count
+
+    def _validate_print_paths(self, body: tuple[Statement, ...]) -> None:
+        """Validate Print path-signature consistency across If/Elif branches.
+
+        Walks the body once, descending into nested control flow. For each
+        If, both `then_body` and `else_body` (recursively) must emit the
+        same ordered sequence of Print events. `Repeat(n)` and static-bound
+        `For(name, start, stop[, step])` multiply inner signatures by the
+        static trip count. Non-static `For` and `While` reject Prints in
+        Phase 1 since the trip count is not statically known.
+
+        Side effect: raises `GuppyCodegenError` if any validation fails.
+        """
+        from pecos.slr.ast.nodes import PrintOp  # noqa: PLC0415
+
+        self._collect_print_path_signature(body, PrintOp)
+
+    def _collect_print_path_signature(
+        self,
+        body: tuple[Statement, ...],
+        print_op_cls: type,
+    ) -> tuple[tuple[str, str, str, int], ...]:
+        """Return the ordered Print signature for `body`, validating as we go.
+
+        Each Print emission contributes one signature tuple:
+        `(namespace, tag, value_kind, value_shape)` where `value_kind` is
+        `"creg"` (whole register) or `"bit"` (single bit) and
+        `value_shape` is the register size (or 1 for bit refs).
+
+        Side effects:
+        - Raises `GuppyCodegenError` if an `If` body has asymmetric Print
+          signatures across `then_body` / `else_body`.
+        - Raises `GuppyCodegenError` if a non-static `For` or any `While`
+          contains a Print in its body.
+        """
+        signature: list[tuple[str, str, str, int]] = []
+        for stmt in body:
+            if isinstance(stmt, print_op_cls):
+                signature.append(self._print_op_event(stmt))
+            elif isinstance(stmt, IfStmt):
+                then_sig = self._collect_print_path_signature(stmt.then_body, print_op_cls)
+                else_sig = self._collect_print_path_signature(stmt.else_body, print_op_cls)
+                if then_sig != else_sig:
+                    msg = (
+                        "Print path-signature mismatch across If branches:\n"
+                        f"  Then: {then_sig}\n"
+                        f"  Else: {else_sig}\n"
+                        "Phase 1 requires symmetric Print emission across all branches of an "
+                        "If/Elif chain. Either add the missing Print(s) to the lighter branch, "
+                        "or move the Print outside the If."
+                    )
+                    raise GuppyCodegenError(msg)
+                signature.extend(then_sig)
+            elif isinstance(stmt, RepeatStmt):
+                inner = self._collect_print_path_signature(stmt.body, print_op_cls)
+                signature.extend(inner * stmt.count)
+            elif isinstance(stmt, ForStmt):
+                inner = self._collect_print_path_signature(stmt.body, print_op_cls)
+                if inner:
+                    trip = self._static_for_trip_count(stmt)
+                    if trip is None:
+                        msg = (
+                            "Print inside non-static `For` is not supported in Phase 1. "
+                            "Use `Repeat(n)` or `For(name, start, stop)` with literal int "
+                            "start/stop/step, or move the Print outside the For body."
+                        )
+                        raise GuppyCodegenError(msg)
+                    signature.extend(inner * trip)
+            elif isinstance(stmt, WhileStmt):
+                inner = self._collect_print_path_signature(stmt.body, print_op_cls)
+                if inner:
+                    msg = (
+                        "Print inside `While` is not supported in Phase 1 (no static trip "
+                        "count). Move the Print outside the While body."
+                    )
+                    raise GuppyCodegenError(msg)
+            elif isinstance(stmt, ParallelBlock):
+                signature.extend(self._collect_print_path_signature(stmt.body, print_op_cls))
+        return tuple(signature)
+
+    def _print_op_event(self, op) -> tuple[str, str, str, int]:
+        if isinstance(op.value, BitRef):
+            return (op.namespace, op.tag, "bit", 1)
+        # str = whole CReg name
+        decl = self.context.registers.get(op.value)
+        shape = decl.size if decl is not None else 0
+        return (op.namespace, op.tag, "creg", shape)
+
+    def _static_for_trip_count(self, stmt: ForStmt) -> int | None:
+        """Compute static trip count for a `For(name, start, stop[, step])`.
+
+        Returns the integer trip count when start/stop/step are all integer
+        literals; returns None otherwise (Phase 1 then rejects Print in the
+        loop body via `_collect_print_path_signature`).
+        """
+        start = self._static_int(stmt.start)
+        stop = self._static_int(stmt.stop)
+        if start is None or stop is None:
+            return None
+        step = 1
+        if stmt.step is not None:
+            step_val = self._static_int(stmt.step)
+            if step_val is None:
+                return None
+            step = step_val
+        if step == 0:
+            return None
+        return len(range(start, stop, step))
+
+    def _static_int(self, expr) -> int | None:
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
+            return expr.value
+        return None
 
     def _emit_stmt(self, stmt: Statement) -> list[str]:
         if isinstance(stmt, GateOp):

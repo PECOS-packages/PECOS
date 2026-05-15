@@ -736,3 +736,181 @@ class TestPathSignatureEdgeCases:
         emitter = AstToGuppy()
         with pytest.raises(GuppyCodegenError, match=r"non-static `For`"):
             emitter.generate(prog)
+
+
+# ── Cross-codegen byte-identity (per Codex review v2-blockcall-resource-effects) ─
+
+
+class TestCrossCodegenPrintEmission:
+    """Pin the behavior of each non-Guppy codegen when Print is inserted.
+
+    Empirically probed 2026-05-14 against a Bell-state program with and without
+    a trailing `Print(c, tag="debug")`:
+
+    - **QASM**: emits `// Print result.debug c` as a comment line; output is
+      *not* byte-identical (intentional, per the doc's "comment-only across
+      non-Guppy" plan).
+    - **QIR**, **Stim**, **QuantumCircuit**: silently skip PrintOp via their
+      isinstance-dispatch fallback (no else clause). Output is byte-identical.
+
+    These tests pin both behaviors. If a future change starts emitting in
+    QIR/Stim/QC, this catches it. If QASM stops emitting the comment, this
+    catches it.
+    """
+
+    @staticmethod
+    def _bell_no_print() -> Main:
+        return Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.H(q[0]),
+            qb.CX(q[0], q[1]),
+            Measure(q) > c,
+        )
+
+    @staticmethod
+    def _bell_with_print() -> Main:
+        return Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.H(q[0]),
+            qb.CX(q[0], q[1]),
+            Measure(q) > c,
+            Print(c, tag="debug"),
+        )
+
+    def test_qasm_emits_print_as_exactly_one_comment_line(self) -> None:
+        """QASM adds exactly one `// Print result.debug c` line; otherwise identical.
+
+        Per Codex round-3 review: "in `added_lines`" is too loose -- a future
+        regression could add extra lines silently and the test would still pass.
+        Assert the added line is exactly `[expected_comment]` (one line, no more).
+        """
+        a = SlrConverter(self._bell_no_print()).qasm()
+        b = SlrConverter(self._bell_with_print()).qasm()
+        assert a != b, "expected QASM to emit a Print comment, not silently skip"
+        expected_added = "// Print result.debug c"
+        # Set-diff the line lists to detect ALL additions, not just whether
+        # the expected line is somewhere among them.
+        added_lines = [line for line in b.splitlines() if line not in a.splitlines()]
+        assert added_lines == [expected_added], f"expected exactly [{expected_added!r}] added lines, got {added_lines}"
+
+    def test_qir_byte_identical(self) -> None:
+        """QIR silently drops Print; pre/post output is byte-identical."""
+        a = SlrConverter(self._bell_no_print()).qir()
+        b = SlrConverter(self._bell_with_print()).qir()
+        assert a == b, "QIR Print emission must be a silent skip (Phase 1 policy)"
+
+    def test_stim_byte_identical(self) -> None:
+        a = str(SlrConverter(self._bell_no_print()).stim())
+        b = str(SlrConverter(self._bell_with_print()).stim())
+        assert a == b, "Stim Print emission must be a silent skip (Phase 1 policy)"
+
+    def test_quantum_circuit_byte_identical(self) -> None:
+        a = str(SlrConverter(self._bell_no_print()).quantum_circuit())
+        b = str(SlrConverter(self._bell_with_print()).quantum_circuit())
+        assert a == b, "QuantumCircuit Print emission must be a silent skip (Phase 1 policy)"
+
+
+# ── Selene shape edge cases (probed 2026-05-14) ──────────────────────────
+
+
+class TestSeleneShapeEdgeCases:
+    """Pin non-obvious Selene `to_dict()` shapes that grug guessed wrong about.
+
+    These tests use empirically-probed reference shapes. If Selene's
+    representation changes, the test fails loudly and the doc text in
+    `v2-print.md` needs updating.
+    """
+
+    def test_multibit_creg_print_in_repeat_flattens_iterations_into_inner_list(self) -> None:
+        """Selene flattens iteration x bit into a single inner list per shot.
+
+        Empirical shape for 2-shot x 2-iter x 2-bit:
+            {'result.iter': [[1, 0, 1, 0], [1, 0, 1, 0]]}
+        NOT nested per-iteration like `[[[1,0],[1,0]], [[1,0],[1,0]]]`.
+
+        Pinning matters: a future Selene change could nest by iteration, which
+        would break user code that consumes the flat layout.
+        """
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            Repeat(2).block(
+                qb.X(q[0]),
+                Measure(q[0]) > c[0],
+                qb.Prep(q[0]),
+                Print(c, tag="iter"),
+            ),
+        )
+        raw = _run_and_get_result_dict(prog, shots=3, qubits=2)
+        assert "result.iter" in raw
+        events = raw["result.iter"]
+        assert len(events) == 3, f"expected 3 per-shot lists, got {len(events)}"
+        # Each shot: 2 iterations x 2 bits = 4 ints flat.
+        # X on q[0] each iter -> c[0] = 1; c[1] never measured -> 0.
+        # Iteration order: [c[0]_iter0, c[1]_iter0, c[0]_iter1, c[1]_iter1].
+        expected_per_shot = [1, 0, 1, 0]
+        for shot_events in events:
+            assert list(shot_events) == expected_per_shot, shot_events
+
+    def test_empty_main_returns_empty_dict_no_measurements(self) -> None:
+        """Empty Main() compiles to a no-op program; Selene to_dict() is empty."""
+        from pecos import Hugr, selene_engine, sim
+
+        prog = Main()
+        package = SlrConverter(prog).hugr()
+        hugr_bytes = package.to_str().encode("utf-8")
+        result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(1).seed(42).run(2)
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        assert raw == {}, f"expected empty result dict for empty Main(), got {raw}"
+
+    def test_single_print_single_bit_creg_flat_per_shot_list(self) -> None:
+        """Selene shape: ONE Print of a single-bit declared CReg → flat int per shot.
+
+        Empirical shape: `{'result.zero_init': [0, 0]}` for 2 shots.
+
+        NOT `[[0], [0]]` -- when there's exactly one event per shot and the
+        event is a single bit, Selene flattens to a plain int. Pin this so
+        users writing `result.tag[shot]` get a stable contract.
+        """
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            Print(c, tag="zero_init"),  # before Measure: bit is the False init
+            Measure(q[0]) > c[0],
+        )
+        raw = _run_and_get_result_dict(prog, shots=2)
+        assert "result.zero_init" in raw
+        events = raw["result.zero_init"]
+        assert len(events) == 2
+        # Each shot is a bare int, not a list.
+        for shot_value in events:
+            assert isinstance(shot_value, int), f"expected int per shot, got {type(shot_value).__name__}"
+            assert shot_value == 0  # Print before Measure -> auto-init False
+
+    def test_single_print_multibit_creg_list_per_shot(self) -> None:
+        """Selene shape: ONE Print of a multi-bit declared CReg → list of bits per shot.
+
+        Empirical: `{'result.tag': [[1, 0], [1, 0]]}` for 2 shots x 2-bit CReg.
+        Contrast with the single-bit case above which returns a flat int per shot.
+        """
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            Print(c, tag="pair"),
+        )
+        raw = _run_and_get_result_dict(prog, shots=2, qubits=2)
+        assert "result.pair" in raw
+        events = raw["result.pair"]
+        assert len(events) == 2
+        for shot_value in events:
+            # Multi-bit: list of 2 ints per shot.
+            assert hasattr(shot_value, "__len__"), f"expected list per shot, got {type(shot_value).__name__}"
+            assert len(shot_value) == 2
+            # X on q[0] -> c[0]=1; c[1]=0.
+            assert int(shot_value[0]) == 1
+            assert int(shot_value[1]) == 0

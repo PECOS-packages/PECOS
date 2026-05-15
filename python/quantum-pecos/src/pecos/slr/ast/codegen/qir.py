@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pecos as pc
+from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     AssignOp,
@@ -181,6 +182,8 @@ class AstToQir:
         if not LLVM_AVAILABLE:
             msg = "LLVM dependencies not available. Install with 'pip install pecos[qir]'"
             raise ImportError(msg)
+
+        program = flatten_block_calls(program)
 
         self.context = QirCodeGenContext()
         self._gate_cache = {}

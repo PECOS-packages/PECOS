@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BarrierOp,
@@ -165,6 +166,8 @@ class AstToQuantumCircuit:
             A QuantumCircuit object.
         """
         from pecos.circuits.quantum_circuit import QuantumCircuit  # noqa: PLC0415
+
+        program = flatten_block_calls(program)
 
         self.context = QCCodeGenContext()
         self.circuit = QuantumCircuit()

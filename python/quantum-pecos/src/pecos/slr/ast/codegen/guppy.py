@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from pecos.slr.ast.codegen._block_flatten import validate_unique_block_decl_names
 from pecos.slr.ast.codegen.guppy_linearity import (
     GuppyLinearityState,
     LinearityError,
@@ -31,11 +32,13 @@ from pecos.slr.ast.codegen.guppy_linearity import (
 )
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    ArrayTypeExpr,
     BinaryExpr,
     BinaryOp,
     BitExpr,
     BitRef,
     BitTypeExpr,
+    BlockCall,
     ForStmt,
     GateKind,
     GateOp,
@@ -47,6 +50,7 @@ from pecos.slr.ast.nodes import (
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
     UnaryExpr,
     UnaryOp,
@@ -60,6 +64,8 @@ if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
         AssignOp,
         BarrierOp,
+        BlockDecl,
+        BlockInput,
         CommentOp,
         Expression,
         PermuteOp,
@@ -150,9 +156,28 @@ class AstToGuppy:
     def __init__(self) -> None:
         """Initialize the generator."""
         self.context = GuppyContext()
+        self._block_decls: dict[str, BlockDecl] = {}
 
     def generate(self, program: Program) -> list[str]:
         """Generate Guppy code for a program."""
+        validate_unique_block_decl_names(program)
+        self.context = GuppyContext()
+        self._block_decls = {decl.name: decl for decl in program.block_decls}
+        for decl in program.block_decls:
+            self._validate_block_decl(decl)
+
+        lines = self._imports()
+
+        for decl in program.block_decls:
+            lines.append("")
+            lines.extend(self._generate_block_decl(decl))
+
+        lines.append("")
+        lines.extend(self._generate_main(program))
+        return lines
+
+    def _generate_main(self, program: Program) -> list[str]:
+        """Emit the main Guppy function for the program body."""
         self.context = GuppyContext()
         self._collect_declarations(program)
         self._collect_implicit_measure_registers(program.body)
@@ -163,9 +188,7 @@ class AstToGuppy:
         explicit_return = self._validate_return_position(body)
         emitted_body = body[:-1] if explicit_return else body
 
-        lines = self._imports()
-        lines.append("")
-        lines.append("@guppy")
+        lines: list[str] = ["@guppy"]
         lines.append(f"def {program.name.lower()}({self._render_params()}) -> {self._return_type(explicit_return)}:")
 
         self.context.push_indent()
@@ -190,6 +213,78 @@ class AstToGuppy:
             lines.append(f"{self.context.indent()}pass")
 
         self.context.pop_indent()
+        return lines
+
+    def _validate_block_decl(self, decl: BlockDecl) -> None:
+        """Reject BlockDecl shapes that the v1 Guppy emitter cannot lower."""
+        for inp in decl.inputs:
+            if not isinstance(inp.type_expr, ArrayTypeExpr) or not isinstance(inp.type_expr.element, QubitTypeExpr):
+                msg = (
+                    f"BlockDecl {decl.name!r} input {inp.name!r}: only array[qubit, N] inputs "
+                    f"are supported in Phase 3a.1 (got {type(inp.type_expr).__name__})"
+                )
+                raise GuppyCodegenError(msg)
+            if inp.effect not in {ResourceEffect.LIVE_PRESERVED, ResourceEffect.CONSUMED}:
+                msg = (
+                    f"BlockDecl {decl.name!r} input {inp.name!r}: only LIVE_PRESERVED and "
+                    f"CONSUMED effects are supported in Phase 3a.1 (got {inp.effect.name})"
+                )
+                raise GuppyCodegenError(msg)
+        if decl.return_op is not None:
+            msg = (
+                f"BlockDecl {decl.name!r}: explicit Return inside BlockDecl is not yet "
+                "supported in Phase 3a.1; live_preserved inputs are returned implicitly"
+            )
+            raise GuppyCodegenError(msg)
+
+    def _generate_block_decl(self, decl: BlockDecl) -> list[str]:
+        """Emit a BlockDecl as a top-level Guppy @guppy def function."""
+        saved_context = self.context
+        self.context = GuppyContext()
+        # _validate_block_decl guarantees every type_expr is ArrayTypeExpr[QubitTypeExpr].
+        input_arrays: list[tuple[str, int]] = [
+            (inp.name, cast("ArrayTypeExpr", inp.type_expr).size) for inp in decl.inputs
+        ]
+        for name, size in input_arrays:
+            self.context.root_allocators[name] = size
+        self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
+
+        live_inputs = tuple(inp for inp in decl.inputs if inp.effect is ResourceEffect.LIVE_PRESERVED)
+        live_sizes = [cast("ArrayTypeExpr", inp.type_expr).size for inp in live_inputs]
+        return_types = [f"array[qubit, {size}]" for size in live_sizes]
+        return_type_str = self._tuple_type(return_types)
+
+        params = ", ".join(f"{name}: array[qubit, {size}] @ owned" for name, size in input_arrays)
+
+        lines: list[str] = ["@guppy", f"def {decl.name}({params}) -> {return_type_str}:"]
+
+        self.context.push_indent()
+        body_lines: list[str] = []
+        body_lines.extend(self._emit_entry_unpacks())
+
+        for stmt in decl.body:
+            body_lines.extend(self._emit_stmt(stmt))
+
+        # Auto-emit return for live_preserved inputs; consume their slots so the
+        # linearity tracker reflects ownership leaving the function.
+        if live_inputs:
+            arrays = [self._consume_allocator_for_return(inp.name) for inp in live_inputs]
+            if len(arrays) == 1:
+                body_lines.append(f"{self.context.indent()}return {arrays[0]}")
+            else:
+                body_lines.append(f"{self.context.indent()}return {', '.join(arrays)}")
+        # consumed inputs must be discarded inside the body (caller's responsibility
+        # to ensure the body does so; the smoke test covers this).
+        else:
+            body_lines.extend(self._emit_end_cleanup())
+
+        if body_lines:
+            lines.extend(body_lines)
+        else:
+            lines.append(f"{self.context.indent()}pass")
+
+        self.context.pop_indent()
+        self.context = saved_context
         return lines
 
     def _collect_declarations(self, program: Program) -> None:
@@ -353,6 +448,8 @@ class AstToGuppy:
             raise GuppyCodegenError(msg)
         if isinstance(stmt, ParallelBlock):
             return self._emit_parallel(stmt)
+        if isinstance(stmt, BlockCall):
+            return self._emit_block_call(stmt)
         if isinstance(stmt, ReturnOp):
             msg = "AST -> Guppy v1 supports Return only as the final root-level statement"
             raise GuppyCodegenError(msg)
@@ -519,6 +616,115 @@ class AstToGuppy:
 
     def _emit_parallel(self, node: ParallelBlock) -> list[str]:
         return self._emit_block(node.body)
+
+    def _emit_block_call(self, node: BlockCall) -> list[str]:
+        """Lower a BlockCall to a packed array(...) call + unpack pattern.
+
+        For each input the caller's outer-allocator locals are packed into an
+        array literal. The call's return tuple unpacks back into locals for
+        every `LIVE_PRESERVED` input. `CONSUMED` inputs leave their outer
+        slots in the CONSUMED state.
+        """
+        decl = self._block_decls.get(node.callee)
+        if decl is None:
+            msg = f"BlockCall references undefined block {node.callee!r}"
+            raise GuppyCodegenError(msg)
+
+        if len(node.arg_bindings) != len(decl.inputs):
+            msg = (
+                f"BlockCall {node.callee!r}: {len(node.arg_bindings)} arg_bindings "
+                f"but BlockDecl declares {len(decl.inputs)} inputs"
+            )
+            raise GuppyCodegenError(msg)
+
+        # Phase 1: validate every arg + out binding BEFORE touching linearity state, so
+        # a late-raised GuppyCodegenError can't leave the tracker half-consumed (Codex
+        # 2026-05-15 review).
+        validated_args: list[tuple[BlockInput, str, int]] = []
+        live_inputs_out: list[BlockInput] = []
+        for inp, arg_name in zip(decl.inputs, node.arg_bindings, strict=True):
+            # _validate_block_decl guarantees type_expr is ArrayTypeExpr[QubitTypeExpr].
+            input_size = cast("ArrayTypeExpr", inp.type_expr).size
+            if arg_name not in self.context.root_allocators:
+                msg = (
+                    f"BlockCall {node.callee!r} arg {arg_name!r} must be an outer root "
+                    "allocator name"
+                )
+                raise GuppyCodegenError(msg)
+            outer_size = self.context.root_allocators[arg_name]
+            if outer_size != input_size:
+                msg = (
+                    f"BlockCall {node.callee!r} arg {arg_name!r} size {outer_size} "
+                    f"does not match input {inp.name!r} size {input_size}"
+                )
+                raise GuppyCodegenError(msg)
+            validated_args.append((inp, arg_name, outer_size))
+            if inp.effect is ResourceEffect.LIVE_PRESERVED:
+                live_inputs_out.append(inp)
+
+        if len(node.out_bindings) != len(live_inputs_out):
+            expected = [inp.name for inp in live_inputs_out]
+            msg = (
+                f"BlockCall {node.callee!r}: out_bindings {node.out_bindings} count "
+                f"does not match expected return positions {expected}"
+            )
+            raise GuppyCodegenError(msg)
+
+        for out_name, inp in zip(node.out_bindings, live_inputs_out, strict=True):
+            self._require_out_binding_matches(node.callee, out_name, inp)
+
+        # Phase 2: now that every check passed, consume slots and emit code.
+        linearity = self._linearity()
+        arg_exprs: list[str] = []
+        for _inp, arg_name, outer_size in validated_args:
+            locals_ = [linearity.consume(Slot(arg_name, i)) for i in range(outer_size)]
+            arg_exprs.append(f"array({', '.join(locals_)})")
+
+        call_expr = f"{node.callee}({', '.join(arg_exprs)})"
+        lines: list[str] = []
+
+        if not live_inputs_out:
+            lines.append(f"{self.context.indent()}{call_expr}")
+            return lines
+
+        if len(live_inputs_out) == 1:
+            out_name = node.out_bindings[0]
+            ret_temp = self.context.temp("call_ret")
+            lines.append(f"{self.context.indent()}{ret_temp} = {call_expr}")
+            lines.extend(self._unpack_return_array(out_name, ret_temp))
+            return lines
+
+        ret_temps = [self.context.temp("call_ret") for _ in live_inputs_out]
+        lines.append(f"{self.context.indent()}{', '.join(ret_temps)} = {call_expr}")
+        for ret_temp, out_name in zip(ret_temps, node.out_bindings, strict=True):
+            lines.extend(self._unpack_return_array(out_name, ret_temp))
+        return lines
+
+    def _require_out_binding_matches(self, callee: str, out_name: str, inp: BlockInput) -> None:
+        # _validate_block_decl guarantees type_expr is ArrayTypeExpr[QubitTypeExpr].
+        input_size = cast("ArrayTypeExpr", inp.type_expr).size
+        if out_name not in self.context.root_allocators:
+            msg = f"BlockCall {callee!r} out_binding {out_name!r} is not an outer allocator"
+            raise GuppyCodegenError(msg)
+        outer_size = self.context.root_allocators[out_name]
+        if outer_size != input_size:
+            msg = (
+                f"BlockCall {callee!r} out_binding {out_name!r} size {outer_size} "
+                f"does not match input {inp.name!r} size {input_size}"
+            )
+            raise GuppyCodegenError(msg)
+
+    def _unpack_return_array(self, out_name: str, ret_temp: str) -> list[str]:
+        size = self.context.root_allocators[out_name]
+        new_locals = [f"{out_name}_{i}" for i in range(size)]
+        if size == 1:
+            line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
+        else:
+            line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
+        linearity = self._linearity()
+        for i, local in enumerate(new_locals):
+            linearity.set_live(Slot(out_name, i), local)
+        return [line]
 
     def _emit_block(self, body: tuple[Statement, ...]) -> list[str]:
         lines: list[str] = []

@@ -77,6 +77,7 @@ class RotationMergingPass(OptimizationPass):
             body=optimized_body,
             returns=program.returns,
             allocator=program.allocator,
+            block_decls=program.block_decls,
             location=program.location,
         )
 

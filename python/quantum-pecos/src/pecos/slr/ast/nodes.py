@@ -214,6 +214,18 @@ class UnaryOp(Enum):
     NEG = auto()
 
 
+class ResourceEffect(Enum):
+    """Effect declared by a `BlockDecl` input on the outer scope's binding.
+
+    See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
+    """
+
+    LIVE_PRESERVED = auto()  # caller binding survives the call unchanged
+    CONSUMED = auto()  # caller binding is invalidated by the call
+    PRODUCED = auto()  # callee writes; caller's binding is rebound from return
+    DROPPED = auto()  # callee discards; caller binding is invalidated
+
+
 # =============================================================================
 # References
 # =============================================================================
@@ -621,6 +633,72 @@ class ParallelBlock(Statement):
 
 
 # =============================================================================
+# Reusable block declarations (Phase 3a.1)
+# =============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockInput(AstNode):
+    """One declared input parameter to a `BlockDecl`.
+
+    See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
+    """
+
+    name: str
+    effect: ResourceEffect
+    type_expr: TypeExpr
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_block_input(self)
+
+    def children(self) -> Sequence[AstNode]:
+        return (self.type_expr,)
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockDecl(AstNode):
+    """Reusable Block declaration that lowers to a top-level Guppy function.
+
+    Non-Guppy codegens inline `body` at every `BlockCall` site.
+    """
+
+    name: str
+    inputs: tuple[BlockInput, ...]
+    body: tuple[Statement, ...]
+    return_op: ReturnOp | None = None
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_block_decl(self)
+
+    def children(self) -> Sequence[AstNode]:
+        nodes: list[AstNode] = list(self.inputs)
+        nodes.extend(self.body)
+        if self.return_op is not None:
+            nodes.append(self.return_op)
+        return nodes
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockCall(Statement):
+    """Invoke a `BlockDecl` from the outer scope.
+
+    `arg_bindings` lists outer-scope binding names in the same order as the
+    callee's declared inputs (one per input).
+    `out_bindings` lists outer-scope names that receive the callee's outputs
+    (`live_preserved`/`produced` inputs + explicit `Return` values, in
+    declaration order then return order). Empty for callees that return
+    nothing.
+    """
+
+    callee: str
+    arg_bindings: tuple[str, ...]
+    out_bindings: tuple[str, ...] = ()
+
+    def accept(self, visitor: AstVisitor[T]) -> T:
+        return visitor.visit_block_call(self)
+
+
+# =============================================================================
 # Program
 # =============================================================================
 
@@ -641,6 +719,7 @@ class Program(AstNode):
     body: tuple[Statement, ...] = ()
     returns: tuple[TypeExpr, ...] = ()
     allocator: AllocatorDecl | None = None  # Base allocator
+    block_decls: tuple[BlockDecl, ...] = ()
 
     def accept(self, visitor: AstVisitor[T]) -> T:
         return visitor.visit_program(self)
@@ -650,9 +729,17 @@ class Program(AstNode):
         if self.allocator:
             nodes.append(self.allocator)
         nodes.extend(self.declarations)
+        nodes.extend(self.block_decls)
         nodes.extend(self.body)
         nodes.extend(self.returns)
         return nodes
+
+    def get_block_decl(self, name: str) -> BlockDecl | None:
+        """Find a BlockDecl by name."""
+        for decl in self.block_decls:
+            if decl.name == name:
+                return decl
+        return None
 
     def get_allocator(self, name: str) -> AllocatorDecl | None:
         """Find an allocator declaration by name."""

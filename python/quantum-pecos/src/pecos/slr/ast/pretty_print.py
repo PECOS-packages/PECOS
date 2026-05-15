@@ -31,9 +31,12 @@ from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    ArrayTypeExpr,
     BinaryOp,
     BitRef,
+    BitTypeExpr,
     Expression,
+    QubitTypeExpr,
     RegisterDecl,
     UnaryOp,
 )
@@ -47,6 +50,9 @@ if TYPE_CHECKING:
         BarrierOp,
         BinaryExpr,
         BitExpr,
+        BlockCall,
+        BlockDecl,
+        BlockInput,
         CommentOp,
         ForStmt,
         GateOp,
@@ -61,6 +67,7 @@ if TYPE_CHECKING:
         ReturnOp,
         SlotRef,
         Statement,
+        TypeExpr,
         UnaryExpr,
         VarExpr,
         WhileStmt,
@@ -134,7 +141,14 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_program(self, node: Program) -> str:
         """Visit program node."""
-        lines = ["Main("]
+        # BlockDecls are hoisted above the Main block in the rendering so the
+        # output reads top-down (defs first, call sites below).
+        lines: list[str] = []
+        for decl in node.block_decls:
+            lines.append(self.visit_block_decl(decl))
+            lines.append("")
+
+        lines.append("Main(")
         self._level += 1
 
         # Allocator
@@ -315,6 +329,45 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
         lines.append(")")
         return "\n".join(lines)
+
+    # Reusable blocks (Phase 3a.1)
+
+    def visit_block_decl(self, node: BlockDecl) -> str:
+        """Visit a BlockDecl, rendering it as a reusable function-like declaration."""
+        inputs_str = ", ".join(self.visit_block_input(inp) for inp in node.inputs)
+        lines = [f'BlockDecl("{node.name}", inputs=[{inputs_str}]):']
+
+        self._level += 1
+        if not node.body and node.return_op is None:
+            lines.append(self._indented("pass"))
+        else:
+            lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
+            if node.return_op is not None:
+                lines.append(self._indented(f"{self.format_statement(node.return_op)},"))
+        self._level -= 1
+        return "\n".join(lines)
+
+    def visit_block_input(self, node: BlockInput) -> str:
+        """Visit a BlockInput, rendering it as `name: type @ effect`."""
+        return f"{node.name}: {self._format_type_expr(node.type_expr)} @ {node.effect.name.lower()}"
+
+    def visit_block_call(self, node: BlockCall) -> str:
+        """Visit a BlockCall as a parenthesized invocation site."""
+        args = ", ".join(node.arg_bindings)
+        if node.out_bindings:
+            outs = ", ".join(node.out_bindings)
+            return f"({outs}) = BlockCall({node.callee!r}, {args})"
+        return f"BlockCall({node.callee!r}, {args})"
+
+    def _format_type_expr(self, type_expr: TypeExpr) -> str:
+        """Render a TypeExpr inline (BlockInput rendering uses this)."""
+        if isinstance(type_expr, ArrayTypeExpr):
+            return f"array[{self._format_type_expr(type_expr.element)}, {type_expr.size}]"
+        if isinstance(type_expr, QubitTypeExpr):
+            return "qubit"
+        if isinstance(type_expr, BitTypeExpr):
+            return "bit"
+        return type_expr.accept(self)
 
     # References
 

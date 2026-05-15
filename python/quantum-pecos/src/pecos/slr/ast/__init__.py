@@ -152,6 +152,10 @@ from pecos.slr.ast.nodes import (
     # References
     BitRef,
     BitTypeExpr,
+    # Reusable blocks
+    BlockCall,
+    BlockDecl,
+    BlockInput,
     CommentOp,
     Declaration,
     Expression,
@@ -170,6 +174,7 @@ from pecos.slr.ast.nodes import (
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
     SlotRef,
     SourceLocation,
@@ -210,6 +215,10 @@ __all__ = [
     "BitExpr",
     "BitRef",
     "BitTypeExpr",
+    # Reusable blocks (Phase 3a.1)
+    "BlockCall",
+    "BlockDecl",
+    "BlockInput",
     "CodegenOptions",
     "CodegenResult",
     "CollectingVisitor",
@@ -239,6 +248,7 @@ __all__ = [
     "RepeatStmt",
     "ResourceCount",
     "ResourceCounter",
+    "ResourceEffect",
     "ReturnOp",
     # References
     "SlotRef",

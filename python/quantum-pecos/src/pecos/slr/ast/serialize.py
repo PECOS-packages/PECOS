@@ -43,6 +43,9 @@ from pecos.slr.ast.nodes import (
     BitExpr,
     BitRef,
     BitTypeExpr,
+    BlockCall,
+    BlockDecl,
+    BlockInput,
     CommentOp,
     ForStmt,
     GateKind,
@@ -57,6 +60,7 @@ from pecos.slr.ast.nodes import (
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
     SlotRef,
     SourceLocation,
@@ -82,6 +86,9 @@ _NODE_CLASSES: dict[str, type[AstNode]] = {
     "BitExpr": BitExpr,
     "BitRef": BitRef,
     "BitTypeExpr": BitTypeExpr,
+    "BlockCall": BlockCall,
+    "BlockDecl": BlockDecl,
+    "BlockInput": BlockInput,
     "CommentOp": CommentOp,
     "ForStmt": ForStmt,
     "GateOp": GateOp,
@@ -108,6 +115,7 @@ _ENUM_CLASSES: dict[str, type] = {
     "GateKind": GateKind,
     "BinaryOp": BinaryOp,
     "UnaryOp": UnaryOp,
+    "ResourceEffect": ResourceEffect,
 }
 
 
@@ -139,7 +147,7 @@ def _serialize_value(value: Any) -> Any:
         return None
     if isinstance(value, (int, float, bool, str)):
         return value
-    if isinstance(value, (GateKind, BinaryOp, UnaryOp)):
+    if isinstance(value, (GateKind, BinaryOp, UnaryOp, ResourceEffect)):
         return {"_enum": type(value).__name__, "value": value.name}
     if isinstance(value, tuple):
         return [_serialize_value(v) for v in value]

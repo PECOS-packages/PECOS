@@ -15,6 +15,8 @@ transversal operations that preserve the quantum error correction properties.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from typing import ClassVar
+
 from pecos.slr import Block, Comment, QReg
 from pecos.slr.qeclib import qubit
 
@@ -27,6 +29,8 @@ class X(Block):
 
     Y -> -Y
     """
+
+    block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
 
     def __init__(self, q: QReg) -> None:
         """Initialize a logical Pauli X gate on the Steane code.
@@ -42,7 +46,9 @@ class X(Block):
             msg = f"Size of register {len(q.elems)} != 7"
             raise Exception(msg)
 
-        super().__init__(
+        super().__init__()
+        self.q = q
+        self.extend(
             Comment("Logical X"),
             qubit.X(q[4]),
             qubit.X(q[5]),
@@ -59,6 +65,8 @@ class Y(Block):
     Y -> Y
     """
 
+    block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
     def __init__(self, q: QReg) -> None:
         """Initialize a logical Pauli Y gate on the Steane code.
 
@@ -73,7 +81,9 @@ class Y(Block):
             msg = f"Size of register {len(q.elems)} != 7"
             raise Exception(msg)
 
-        super().__init__(
+        super().__init__()
+        self.q = q
+        self.extend(
             Comment("Logical Y"),
             qubit.Y(q[4]),
             qubit.Y(q[5]),
@@ -90,6 +100,8 @@ class Z(Block):
     Y -> -Y
     """
 
+    block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
     def __init__(self, q: QReg) -> None:
         """Initialize a logical Pauli Z gate on the Steane code.
 
@@ -104,7 +116,9 @@ class Z(Block):
             msg = f"Size of register {len(q.elems)} != 7"
             raise Exception(msg)
 
-        super().__init__(
+        super().__init__()
+        self.q = q
+        self.extend(
             Comment("Logical Z"),
             qubit.Z(q[4]),
             qubit.Z(q[5]),

@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BinaryExpr,
@@ -218,6 +219,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         Returns:
             List of code lines.
         """
+        program = flatten_block_calls(program)
         self.context = QasmContext()
         return self.visit(program)
 

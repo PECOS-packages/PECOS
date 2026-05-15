@@ -15,6 +15,8 @@ operations that preserve the error correction properties of the code.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from typing import ClassVar
+
 from pecos.slr import Block, Comment, QReg
 from pecos.slr.qeclib import qubit
 
@@ -27,6 +29,8 @@ class H(Block):
 
     Y -> -Y
     """
+
+    block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
 
     def __init__(self, q: QReg) -> None:
         """Initialize a logical Hadamard gate on the Steane code.
@@ -42,7 +46,9 @@ class H(Block):
             msg = f"Size of register {len(q.elems)} != 7"
             raise Exception(msg)
 
-        super().__init__(
+        super().__init__()
+        self.q = q
+        self.extend(
             Comment("Logical H"),
             qubit.H(q),
         )

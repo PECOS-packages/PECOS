@@ -31,6 +31,7 @@ Example:
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.nodes import (
@@ -43,6 +44,9 @@ from pecos.slr.ast.nodes import (
     BitExpr,
     BitRef,
     BitTypeExpr,
+    BlockCall,
+    BlockDecl,
+    BlockInput,
     CommentOp,
     ForStmt,
     GateKind,
@@ -57,6 +61,7 @@ from pecos.slr.ast.nodes import (
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
     SlotRef,
     UnaryExpr,
@@ -159,6 +164,8 @@ class SlrToAst:
     def __init__(self) -> None:
         """Initialize the converter."""
         self._position = 0  # Track position for source locations
+        self._block_decls: list[BlockDecl] = []  # Hoisted BlockDecls accumulated during convert()
+        self._decl_counter = 0
 
     def convert(self, block: Main | Block) -> Program:
         """Convert an SLR Main/Block to an AST Program.
@@ -170,6 +177,8 @@ class SlrToAst:
             An AST Program node.
         """
         self._position = 0
+        self._block_decls = []
+        self._decl_counter = 0
 
         # Get the block name
         name = getattr(block, "block_name", block.__class__.__name__)
@@ -200,6 +209,7 @@ class SlrToAst:
             body=tuple(body),
             returns=returns,
             allocator=allocator,
+            block_decls=tuple(self._block_decls),
         )
 
     def _convert_declarations(self, block: Block) -> list:
@@ -365,11 +375,87 @@ class SlrToAst:
 
         # Nested blocks (Block subclasses)
         if hasattr(op, "ops"):
-            # This is a nested block - flatten its statements into the parent
-            # We return a special marker that _convert_statements will handle
+            # Phase 3a.1: a Block subclass that declares `block_inputs` opts in to
+            # BlockDecl/BlockCall lowering. Without it, the legacy flatten path
+            # remains the default for all qeclib Blocks until Phase 3a.3.
+            if _has_block_inputs(op):
+                return self._convert_block_call(op)
+
+            # Legacy flatten path.
             return ("__FLATTEN__", self._convert_statements(op.ops))
 
         return None
+
+    def _convert_block_call(self, block: Block) -> BlockCall:
+        """Build a BlockDecl + BlockCall pair from a Block subclass with `block_inputs`.
+
+        Each call site emits a fresh BlockDecl (no dedup in Phase 3a.1; dedup is
+        a Phase 3a.3 optimization once qeclib conversion lands). The BlockDecl
+        body is the block's `ops` with allocator names rewritten from the
+        outer-scope binding name to the input parameter name.
+        """
+        inputs_spec = type(block).block_inputs  # type: ignore[attr-defined]
+        # Map input name -> (resource effect enum, outer-scope binding name, size, kind="qubit"|"bit")
+        bindings: list[tuple[str, ResourceEffect, str, int]] = []
+        substitution: dict[str, str] = {}  # outer allocator/register name -> input param name
+        for input_name, effect_value in inputs_spec.items():
+            if not hasattr(block, input_name):
+                msg = (
+                    f"Block {type(block).__name__!r} declares input {input_name!r} but the "
+                    f"instance does not bind self.{input_name} (set it in __init__ after super().__init__())"
+                )
+                raise ValueError(msg)
+            var = getattr(block, input_name)
+            outer_name = getattr(var, "sym", None) or getattr(var, "name", None)
+            if outer_name is None:
+                msg = (
+                    f"Block {type(block).__name__!r} input {input_name!r} bound to "
+                    f"{var!r} which has no .sym/.name attribute"
+                )
+                raise ValueError(msg)
+            size = getattr(var, "size", None) or getattr(var, "capacity", None)
+            if size is None:
+                msg = f"Block {type(block).__name__!r} input {input_name!r}: cannot determine size from {var!r}"
+                raise ValueError(msg)
+            effect = _normalize_effect(effect_value, where=f"Block {type(block).__name__!r} input {input_name!r}")
+            bindings.append((input_name, effect, outer_name, size))
+            substitution[outer_name] = input_name
+
+        # Build the BlockDecl body by converting block.ops in a NEW sub-converter, then
+        # rewriting allocator names from outer -> input parameter via _substitute.
+        # Share `_decl_counter` so nested converted Blocks get globally-unique names
+        # (Codex 2026-05-15 review #2: nested same-class Blocks were colliding on
+        # `inner_0` because each sub-converter restarted its counter at 0).
+        sub = SlrToAst()
+        sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
+        sub_body = sub._convert_statements(block.ops)  # type: ignore[attr-defined]
+        self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
+        rewritten_body = tuple(_substitute_stmt(stmt, substitution) for stmt in sub_body)
+
+        # Inputs are array[qubit, N] (Phase 3a.1 only supports quantum arrays).
+        block_inputs: list[BlockInput] = []
+        for input_name, effect, _outer, size in bindings:
+            block_inputs.append(
+                BlockInput(
+                    name=input_name,
+                    effect=effect,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=size),
+                ),
+            )
+
+        # Unique decl name per call site (Phase 3a.1; dedup arrives in Phase 3a.3).
+        decl_name = f"{type(block).__name__.lower()}_{self._decl_counter}"
+        self._decl_counter += 1
+
+        decl = BlockDecl(name=decl_name, inputs=tuple(block_inputs), body=rewritten_body)
+        # Hoist any block_decls emitted by the sub-converter (nested BlockCalls) first.
+        self._block_decls.extend(sub._block_decls)
+        self._block_decls.append(decl)
+
+        # Build the BlockCall referencing the outer-scope names.
+        arg_bindings = tuple(outer for _name, _eff, outer, _sz in bindings)
+        live_out = tuple(outer for _name, eff, outer, _sz in bindings if eff is ResourceEffect.LIVE_PRESERVED)
+        return BlockCall(callee=decl_name, arg_bindings=arg_bindings, out_bindings=live_out)
 
     def _convert_gate(self, gate: Any) -> Statement:
         """Convert an SLR gate to an AST GateOp, PrepareOp, or MeasureOp."""
@@ -752,3 +838,146 @@ def slr_to_ast(block: Main | Block) -> Program:
     """
     converter = SlrToAst()
     return converter.convert(block)
+
+
+# === Phase 3a.1 BlockDecl/BlockCall helpers ===
+
+_EFFECT_NAME_MAP: dict[str, ResourceEffect] = {
+    "live_preserved": ResourceEffect.LIVE_PRESERVED,
+    "consumed": ResourceEffect.CONSUMED,
+    "produced": ResourceEffect.PRODUCED,
+    "dropped": ResourceEffect.DROPPED,
+}
+
+
+def _has_block_inputs(block: Block) -> bool:
+    return isinstance(getattr(type(block), "block_inputs", None), dict)
+
+
+def _normalize_effect(value: Any, *, where: str) -> ResourceEffect:
+    """Accept either a ResourceEffect enum or its lowercased string name."""
+    if isinstance(value, ResourceEffect):
+        return value
+    if isinstance(value, str):
+        normalized = value.lower()
+        if normalized in _EFFECT_NAME_MAP:
+            return _EFFECT_NAME_MAP[normalized]
+    msg = (
+        f"{where}: effect {value!r} is not a valid ResourceEffect. "
+        f"Expected one of: ResourceEffect enum, or strings {sorted(_EFFECT_NAME_MAP)}"
+    )
+    raise ValueError(msg)
+
+
+def _substitute_stmt(stmt: Any, mapping: dict[str, str]) -> Any:
+    """Rewrite SlotRef allocator + PrepareOp/BarrierOp allocator names per mapping.
+
+    Used to build a BlockDecl body that references parameter names rather than
+    the outer-scope binding names captured during the instance walk.
+    """
+    if isinstance(stmt, GateOp):
+        return GateOp(
+            gate=stmt.gate,
+            targets=tuple(_substitute_slot(t, mapping) for t in stmt.targets),
+            params=stmt.params,
+            location=stmt.location,
+        )
+    if isinstance(stmt, MeasureOp):
+        return MeasureOp(
+            targets=tuple(_substitute_slot(t, mapping) for t in stmt.targets),
+            results=stmt.results,
+            location=stmt.location,
+        )
+    if isinstance(stmt, PrepareOp):
+        return PrepareOp(
+            allocator=mapping.get(stmt.allocator, stmt.allocator),
+            slots=stmt.slots,
+            location=stmt.location,
+        )
+    if isinstance(stmt, BarrierOp):
+        return BarrierOp(
+            allocators=tuple(mapping.get(a, a) for a in stmt.allocators),
+            location=stmt.location,
+        )
+    if isinstance(stmt, IfStmt):
+        return IfStmt(
+            condition=stmt.condition,
+            then_body=tuple(_substitute_stmt(s, mapping) for s in stmt.then_body),
+            else_body=tuple(_substitute_stmt(s, mapping) for s in stmt.else_body),
+            location=stmt.location,
+        )
+    if isinstance(stmt, RepeatStmt):
+        return RepeatStmt(
+            count=stmt.count,
+            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
+            location=stmt.location,
+        )
+    if isinstance(stmt, ForStmt):
+        return ForStmt(
+            variable=stmt.variable,
+            start=stmt.start,
+            stop=stmt.stop,
+            step=stmt.step,
+            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
+            location=stmt.location,
+        )
+    if isinstance(stmt, WhileStmt):
+        return WhileStmt(
+            condition=stmt.condition,
+            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
+            location=stmt.location,
+        )
+    if isinstance(stmt, ParallelBlock):
+        return ParallelBlock(
+            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
+            location=stmt.location,
+        )
+    if isinstance(stmt, PermuteOp):
+        return PermuteOp(
+            sources=tuple(_substitute_permute_ref(r, mapping) for r in stmt.sources),
+            targets=tuple(_substitute_permute_ref(r, mapping) for r in stmt.targets),
+            add_comment=stmt.add_comment,
+            location=stmt.location,
+        )
+    if isinstance(stmt, BlockCall):
+        # Nested BlockCall inside a converted Block: arg_bindings/out_bindings were
+        # captured against the OUTER scope when the sub-converter ran. Rewrite them
+        # to use the parent Block's parameter names (Codex 2026-05-15 review #1).
+        return BlockCall(
+            callee=stmt.callee,
+            arg_bindings=tuple(mapping.get(a, a) for a in stmt.arg_bindings),
+            out_bindings=tuple(mapping.get(a, a) for a in stmt.out_bindings),
+            location=stmt.location,
+        )
+    return stmt
+
+
+def _substitute_slot(ref: SlotRef, mapping: dict[str, str]) -> SlotRef:
+    if ref.allocator not in mapping:
+        return ref
+    return SlotRef(allocator=mapping[ref.allocator], index=ref.index, location=ref.location)
+
+
+_PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(\[\d+\])?$")
+
+
+def _substitute_permute_ref(ref: str, mapping: dict[str, str]) -> str:
+    """Rewrite PermuteOp source/target strings (`name` or `name[idx]`).
+
+    If the ref doesn't match the bare-name / indexed-name regex, pass it
+    through unchanged UNLESS the ref textually mentions a mapped allocator,
+    in which case raise -- silently leaking the outer name into the BlockDecl
+    body would be a fragile failure mode (Codex 2026-05-15 review).
+    """
+    match = _PERMUTE_REF_RE.fullmatch(ref)
+    if match is None:
+        for key in mapping:
+            if key in ref:
+                msg = (
+                    f"Cannot substitute PermuteOp ref {ref!r}: unsupported "
+                    f"ref form mentions mapped allocator {key!r}"
+                )
+                raise ValueError(msg)
+        return ref
+    name, suffix = match.group(1), match.group(2) or ""
+    return f"{mapping.get(name, name)}{suffix}"

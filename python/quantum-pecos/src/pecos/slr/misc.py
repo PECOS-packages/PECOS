@@ -152,10 +152,11 @@ class Print(Statement):
 
         if tag is None:
             tag = self._derive_tag(value)
-        elif not _TAG_RE.match(tag):
+        if not _TAG_RE.match(tag):
             msg = (
                 f"Print tag {tag!r} must match [A-Za-z_][A-Za-z0-9_]* "
-                "(Python identifier rules). The dot is reserved as the namespace-tag separator."
+                "(Python identifier rules). The dot is reserved as the namespace-tag separator. "
+                "Tags derived from non-identifier register names are rejected; pass tag=... explicitly."
             )
             raise ValueError(msg)
 

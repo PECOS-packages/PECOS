@@ -251,7 +251,7 @@ class AstToGuppy:
     def _imports(self) -> list[str]:
         return [
             "from guppylang import guppy",
-            "from guppylang.std.builtins import array, owned",
+            "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.mem import mem_swap",
             "from guppylang.std.quantum import discard, measure, qubit",
             f"from guppylang.std.quantum.functional import {FUNCTIONAL_GATE_IMPORTS}",

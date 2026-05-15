@@ -39,6 +39,7 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     RegisterDecl,
     RepeatStmt,
     WhileStmt,
@@ -259,6 +260,10 @@ class AstToQuantumCircuit:
             self._process_parallel(stmt)
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
+        elif isinstance(stmt, PrintOp):
+            # Phase 1: Print is Guppy-only. Other codegens drop the streamed
+            # value silently. Revisit per-codegen if a user need surfaces.
+            return
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""

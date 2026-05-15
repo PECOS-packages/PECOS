@@ -1075,7 +1075,7 @@ impl QisHeliosInterface {
     ///   and the pecos-phir RON pipeline fixtures (`ron_support.rs`,
     ///   `qis_pipeline_tests`) use it. The return value is an error code.
     /// - `void @main()` -- the "base profile" form. pecos-phir's MLIR/QIR text
-    ///   path matches `@main` directly (see mlir_toolchain.rs), and PECOS's QIR
+    ///   path matches `@main` directly (see `mlir_toolchain.rs`), and PECOS's QIR
     ///   text tests use this. It's also the most common form for
     ///   externally-authored programs.
     ///

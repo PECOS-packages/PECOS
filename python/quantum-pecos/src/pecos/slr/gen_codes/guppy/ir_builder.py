@@ -6747,9 +6747,7 @@ class IRBuilder:
                             if not hasattr(self, "index_mapping"):
                                 self.index_mapping = {}
                             # Map original index to position in returned/unpacked array
-                            index_map = {
-                                orig_idx: new_idx for new_idx, orig_idx in enumerate(original_indices)
-                            }
+                            index_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(original_indices)}
                             self.index_mapping[name] = index_map
 
                         # Mirror to unified variable state (see variable_state.py)

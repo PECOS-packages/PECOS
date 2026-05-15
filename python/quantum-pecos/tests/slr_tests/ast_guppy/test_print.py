@@ -449,3 +449,115 @@ class TestPathSignatureValidator:
         )
         with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
             SlrConverter(prog).hugr()
+
+
+# ── Inline-CReg definite-assignment validator ────────────────────────────
+
+
+class TestInlineCRegDefiniteAssignment:
+    """Reject `Print(inline_creg)` when no prior Measure has populated it.
+
+    Inline CRegs (those introduced only via `Measure(q) > CReg(...)` without
+    being declared as a positional in `Main(...)`) auto-initialize to all-False
+    at the start of `main()` in the generated Guppy. A `Print` running before
+    any Measure has written to such a CReg silently emits zeros, which the
+    user almost certainly did not intend.
+
+    Declared CRegs are NOT validated: explicit declaration is the user's
+    acknowledgement of the zero-init.
+    """
+
+    def test_print_before_measure_on_inline_creg_rejected(self) -> None:
+        """The exact case Codex flagged in the tracer-bullet review."""
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 1),
+            qb.X(q[0]),
+            Print(inline, tag="before_measure"),
+            Measure(q[0]) > inline[0],
+        )
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg .* before any Measure"):
+            SlrConverter(prog).hugr()
+
+    def test_print_after_measure_on_inline_creg_accepted(self) -> None:
+        """Same shape, Print after Measure → OK."""
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > inline[0],
+            Print(inline, tag="after_measure"),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_print_of_declared_creg_before_measure_accepted(self) -> None:
+        """Declared CReg (in Main.vars) is user-acknowledged zero-init; Print OK."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),  # declared positional, not inline
+            Print(c, tag="zero_init"),  # user knows c starts all-False
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            Print(c, tag="after"),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_print_bit_ref_before_measure_on_inline_creg_rejected(self) -> None:
+        """Print(c[0]) where c is inline-only also rejected."""
+        inline = CReg("inline", 2)
+        prog = Main(
+            q := QReg("q", 2),
+            qb.X(q[0]),
+            Print(inline[0], tag="early"),
+            Measure(q[0]) > inline[0],
+            Measure(q[1]) > inline[1],
+        )
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg .* before any Measure"):
+            SlrConverter(prog).hugr()
+
+    def test_inline_creg_assigned_in_both_if_branches_propagates(self) -> None:
+        """Measure in both Then and Else marks the CReg assigned after the If."""
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0]).Then(qb.X(q[1]), Measure(q[1]) > inline[0]).Else(Measure(q[1]) > inline[0]),
+            Print(inline, tag="post_if"),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_inline_creg_assigned_only_in_then_does_not_propagate(self) -> None:
+        """Measure in Then only → after-If, inline still not definitely assigned."""
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            If(c[0]).Then(Measure(q[0]) > inline[0]),
+            Print(inline, tag="maybe"),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg .* before any Measure"):
+            SlrConverter(prog).hugr()
+
+    def test_inline_creg_assigned_in_repeat_body_propagates(self) -> None:
+        """Repeat(n) with n>=1 runs body at least once; assignment propagates out."""
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 1),
+            Repeat(3).block(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
+            Print(inline, tag="post_repeat"),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_inline_creg_assigned_in_static_for_propagates(self) -> None:
+        """Static For with trip>=1 propagates assignment."""
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 1),
+            For("i", 0, 2).Do(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
+            Print(inline, tag="post_for"),
+        )
+        SlrConverter(prog).hugr()

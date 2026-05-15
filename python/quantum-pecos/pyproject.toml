@@ -99,6 +99,8 @@ packages = ["src/pecos"]
 
 [tool.black]
 line-length = 120
+# See top-level pyproject.toml's [tool.black] for why this is pinned to py310.
+target-version = ["py310"]
 
 [tool.pytest.ini_options]
 markers = [

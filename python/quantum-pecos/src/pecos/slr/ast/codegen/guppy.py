@@ -957,8 +957,29 @@ class AstToGuppy:
             raise GuppyCodegenError(msg)
 
         validated_outs: list[tuple[str, tuple]] = []
-        for out, inp in zip(node.out_bindings, live_inputs_out, strict=True):
+        # Build a quick lookup of (validated_args index) for each LIVE_PRESERVED input.
+        live_arg_index: dict[int, int] = {}
+        live_count = 0
+        for arg_index, inp in enumerate(decl.inputs):
+            if inp.effect is ResourceEffect.LIVE_PRESERVED:
+                live_arg_index[live_count] = arg_index
+                live_count += 1
+        for out_idx, (out, inp) in enumerate(zip(node.out_bindings, live_inputs_out, strict=True)):
             kind, info = self._validate_block_call_arg(node.callee, inp, out, is_out=True)
+            # Cross-check: a LIVE_PRESERVED input's out_binding MUST reference the same
+            # outer-scope slot/allocator as its arg_binding. Otherwise the emitter would
+            # blindly set_live() on a slot that was never consumed, producing invalid
+            # Guppy where the never-consumed slot is overwritten (Codex 2026-05-15
+            # iter-5b review).
+            arg_kind, arg_info = validated_args[live_arg_index[out_idx]][1:]
+            if (kind, info) != (arg_kind, arg_info):
+                msg = (
+                    f"BlockCall {node.callee!r}: LIVE_PRESERVED input {inp.name!r} "
+                    f"must use matching arg_binding and out_binding (same slot for "
+                    f"SingleQubitArg, same allocator name for AllocatorArg); got "
+                    f"arg={arg_kind}{arg_info} vs out={kind}{info}"
+                )
+                raise GuppyCodegenError(msg)
             validated_outs.append((kind, info))
 
         # Phase 2: now that every check passed, consume slots and emit code.

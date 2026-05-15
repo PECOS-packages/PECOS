@@ -769,6 +769,67 @@ class TestSingleQubitInputSupport:
         with pytest.raises(GuppyCodegenError, match=r"AllocatorArg requires an array\[qubit, N\] input"):
             ast_to_guppy(prog)
 
+    def test_single_qubit_mismatched_arg_out_slot_rejected(self) -> None:
+        """Codex 2026-05-15 iter-5b review: a LIVE_PRESERVED single-qubit input
+        whose `arg_binding` and `out_binding` reference DIFFERENT outer slots
+        used to produce invalid Guppy (set_live() overwriting a never-consumed
+        slot). The emitter must reject this with a clean GuppyCodegenError.
+        """
+        from pecos.slr.ast.nodes import SingleQubitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=3),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
+                    out_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=2)),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"must use matching arg_binding and out_binding"):
+            ast_to_guppy(prog)
+
+    def test_allocator_mismatched_arg_out_name_rejected(self) -> None:
+        """Symmetric: AllocatorArg arg_binding != out_binding name for a
+        LIVE_PRESERVED input must also raise (same bug class).
+        """
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(
+                    name="q",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=2),
+                ),
+            ),
+            body=(),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=2),
+            declarations=(AllocatorDecl(name="other_q", capacity=2),),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(AllocatorArg(name="outer_q"),),
+                    out_bindings=(AllocatorArg(name="other_q"),),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"must use matching arg_binding and out_binding"):
+            ast_to_guppy(prog)
+
     def test_single_qubit_slot_index_out_of_bounds_rejected(self) -> None:
         from pecos.slr.ast.nodes import SingleQubitArg
 
@@ -796,13 +857,45 @@ class TestSingleQubitInputSupport:
 
 
 class TestDeferredBlockArgRejection:
-    """Phase 3a.3 iter 5b scope: `AllocatorArg` and `SingleQubitArg` are
-    supported by the emitter / flatten paths. The three remaining deferred
-    BlockArg subclasses (`SingleBitArg`, `QubitBundleArg`, `BitBundleArg`)
-    MUST raise cleanly in BOTH the Guppy emitter AND the non-Guppy flatten
-    pass -- silently inlining a deferred shape would mask user errors (Codex
-    2026-05-15 fix-pass-5 review caught this on `out_bindings`).
+    """Phase 3a.3 iter 5b scope:
+    - `AllocatorArg` is supported in BOTH the Guppy emitter AND the non-Guppy
+      flatten path.
+    - `SingleQubitArg` is supported in the Guppy emitter ONLY; flatten support
+      is deferred (full slot-level body rewriting needed). See
+      `test_single_qubit_arg_rejected_in_flatten_pass` below.
+    - `SingleBitArg`, `QubitBundleArg`, `BitBundleArg` MUST raise cleanly in
+      BOTH paths -- silently inlining a deferred shape would mask user errors
+      (Codex 2026-05-15 fix-pass-5 + iter-5b reviews caught this family).
     """
+
+    def test_single_qubit_arg_rejected_in_flatten_pass(self) -> None:
+        """SingleQubitArg in flatten path: deferred until full slot-level body
+        rewriting lands. Lock-in: clean NotImplementedError, no silent inline.
+        """
+        from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+        from pecos.slr.ast.nodes import SingleQubitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),
+            ),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=3),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
+                    out_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
+                ),
+            ),
+        )
+        with pytest.raises(NotImplementedError, match=r"SingleQubitArg"):
+            flatten_block_calls(prog)
 
     def _program_with_deferred_arg(self, *, deferred_in_args: bool, arg_subclass: type) -> Program:
         from pecos.slr.ast.nodes import (
